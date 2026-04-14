@@ -115,6 +115,12 @@ Start the local operator UI:
 python -m sg_preflight ui
 ```
 
+Or use the PowerShell launcher/check script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowser
+```
+
 The operator UI serves locally at `http://127.0.0.1:8765/ui` by default.
 It provides:
 
@@ -127,6 +133,7 @@ UI-triggered runs persist under `out\operator-ui\runs`.
 Mirror-audit cache lives under `out\operator-ui\cache`.
 
 Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-workflow.md).
+Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate-pilot-playbook.md).
 
 Run the full smoke-test flow:
 

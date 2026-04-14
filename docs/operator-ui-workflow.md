@@ -20,6 +20,12 @@ From the repository root:
 python -m sg_preflight ui
 ```
 
+PowerShell launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowser
+```
+
 Default address:
 
 ```text

@@ -13,6 +13,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Canonical live-profile registry for `G70`, `G65`, and `G45`
 - Shared Python service layer for bundle execution, report generation, and persistent run records
 - Local FastAPI/Jinja operator UI with Home, Run, Result, and Evidence views
+- PowerShell operator-UI launcher/check script for teammate sessions
 - Cached fast mirror audit plus on-demand deep mirror audit for the mirrored SVN
 - CLI surfaces for `list-profiles`, `run-profile`, and `ui`
 - `retro-extract` CLI command for turning Whiteboard retro exports into structured pain/action artifacts
@@ -43,6 +44,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Smoke-test summary output now includes an executive snapshot and grouped takeaways
 - Smoke-test flow now generates markdown handoff artifacts in addition to JSON and HTML reports
 - README now documents the current local source-drop workflow and intended branch/release hygiene
+- README and docs now include a teammate pilot playbook for real operator-session validation
 - Generated outputs and local retro/source-drop folders are now ignored cleanly for a publishable repo state
 - HTML reporting now stays compatible with Python 3.11 in CI
 - GitHub Actions now use Node 24-ready `actions/checkout@v5` and `actions/setup-python@v6`
