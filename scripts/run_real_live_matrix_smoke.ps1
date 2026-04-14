@@ -13,56 +13,6 @@ if (-not $OutputRoot) {
     $OutputRoot = Join-Path $repoRoot "out\real-live-matrix\latest"
 }
 
-$sgRepoRoot = Join-Path $repoRoot "repositories\trunk"
-if (-not (Test-Path $sgRepoRoot)) {
-    throw "Live SG mirror not found at $sgRepoRoot"
-}
-
-$profiles = @{
-    "G70" = [pscustomobject]@{
-        Name        = "G70"
-        ProjectRoot = Join-Path $sgRepoRoot "Cars_IDCevo\BMW\G70"
-        ConfigPath  = Join-Path $repoRoot "config\sg_rules_live.json"
-        Context     = [ordered]@{
-            car_model      = "G70"
-            trim_line      = "Basis"
-            delivery_phase = "svn_live_preflight"
-            review_target  = "g70_end_to_end"
-            evidence_source = "local_svn_mirror"
-        }
-    }
-    "G65" = [pscustomobject]@{
-        Name        = "G65"
-        ProjectRoot = Join-Path $sgRepoRoot "Cars_IDCevo\BMW\G65"
-        ConfigPath  = Join-Path $repoRoot "config\sg_rules_live_g65.json"
-        Context     = [ordered]@{
-            car_model      = "G65"
-            trim_line      = "Basis"
-            delivery_phase = "svn_live_preflight"
-            review_target  = "g65_end_to_end"
-            evidence_source = "local_svn_mirror"
-        }
-    }
-    "G45" = [pscustomobject]@{
-        Name        = "G45"
-        ProjectRoot = Join-Path $sgRepoRoot "Cars\BMW\G45"
-        ConfigPath  = Join-Path $repoRoot "config\sg_rules_live_g45.json"
-        Context     = [ordered]@{
-            car_model      = "G45"
-            trim_line      = "Basis"
-            delivery_phase = "svn_live_preflight"
-            review_target  = "g45_anchor_family_preflight"
-            evidence_source = "local_svn_mirror"
-        }
-    }
-}
-
-foreach ($car in $Cars) {
-    if (-not $profiles.ContainsKey($car)) {
-        throw "Unsupported car profile '$car'. Supported profiles: $([string]::Join(', ', $profiles.Keys))"
-    }
-}
-
 if (Test-Path $OutputRoot) {
     Remove-Item -LiteralPath $OutputRoot -Recurse -Force
 }
@@ -88,18 +38,6 @@ function Add-StageResult {
             LogPath  = $LogPath
             Notes    = $Notes
         })
-}
-
-function Add-SkippedStage {
-    param(
-        [string]$Name,
-        [string]$Notes
-    )
-
-    $safeName = ($Name -replace "[^A-Za-z0-9_-]", "_")
-    $logPath = Join-Path $OutputRoot "$safeName.log"
-    Set-Content -Path $logPath -Encoding UTF8 -Value $Notes
-    Add-StageResult -Name $Name -Status "skipped" -ExitCode 0 -LogPath $logPath -Notes $Notes
 }
 
 function Invoke-Stage {
@@ -258,7 +196,6 @@ function Write-Summary {
     $lines.Add("")
     $lines.Add("Created at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
     $lines.Add("Repo root: $repoRoot")
-    $lines.Add("SG mirror: $sgRepoRoot")
     $lines.Add("Cars: $([string]::Join(', ', $Cars))")
     $lines.Add("")
 
@@ -357,58 +294,16 @@ if (-not $unitTestResult.Passed) {
 }
 
 foreach ($car in $Cars) {
-    $profile = $profiles[$car]
     $slug = $car.ToLowerInvariant()
     $carOutputRoot = Join-Path $OutputRoot $slug
     New-Item -ItemType Directory -Path $carOutputRoot -Force | Out-Null
 
-    if (-not (Test-Path $profile.ProjectRoot)) {
-        Add-SkippedStage -Name "$slug-materialize" -Notes "Project root not found at $($profile.ProjectRoot)"
-        Add-SkippedStage -Name "$slug-run" -Notes "Project root not found at $($profile.ProjectRoot)"
-        $scriptFailed = $true
-        continue
-    }
-
-    if (-not (Test-Path $profile.ConfigPath)) {
-        Add-SkippedStage -Name "$slug-materialize" -Notes "Config not found at $($profile.ConfigPath)"
-        Add-SkippedStage -Name "$slug-run" -Notes "Config not found at $($profile.ConfigPath)"
-        $scriptFailed = $true
-        continue
-    }
-
-    $bundleRoot = Join-Path $carOutputRoot "bundle"
-    $jsonOut = Join-Path $carOutputRoot "$slug-report.json"
-    $htmlOut = Join-Path $carOutputRoot "$slug-report.html"
-    $markdownOut = Join-Path $carOutputRoot "$slug-report.md"
-
-    $materializeCommand = @(
-        "python", "-m", "sg_preflight", "materialize",
-        "--output-bundle", $bundleRoot,
-        "--repo-root", $sgRepoRoot,
-        "--project-root", $profile.ProjectRoot,
-        "--env", "SG-Repo=$sgRepoRoot",
-        "--env", "SG-CarModels-Repo=$sgRepoRoot"
-    )
-    foreach ($entry in $profile.Context.GetEnumerator()) {
-        $materializeCommand += @("--context", "$($entry.Key)=$($entry.Value)")
-    }
-
-    $materializeResult = Invoke-Stage -Name "$slug-materialize" -Command $materializeCommand
-    if (-not $materializeResult.Passed) {
-        $scriptFailed = $true
-        continue
-    }
-
-    $runResult = Invoke-Stage -Name "$slug-run" -Command @(
-        "python", "-m", "sg_preflight", "run",
-        "--bundle", $bundleRoot,
-        "--config", $profile.ConfigPath,
-        "--json-out", $jsonOut,
-        "--html-out", $htmlOut,
-        "--md-out", $markdownOut,
+    $runResult = Invoke-Stage -Name "$slug-run-profile" -Command @(
+        "python", "-m", "sg_preflight", "run-profile", $car,
+        "--output-root", $carOutputRoot,
         "--fail-on", "never"
     )
-    Add-ReportSpec -Name $profile.Name -Slug $slug -JsonPath $jsonOut -HtmlPath $htmlOut -MarkdownPath $markdownOut
+    Add-ReportSpec -Name $car -Slug $slug -JsonPath (Join-Path $carOutputRoot "$slug-report.json") -HtmlPath (Join-Path $carOutputRoot "$slug-report.html") -MarkdownPath (Join-Path $carOutputRoot "$slug-report.md")
     if (-not $runResult.Passed) {
         $scriptFailed = $true
     }

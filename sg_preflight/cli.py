@@ -1,25 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from sg_preflight.adapters.common import write_json as write_adapter_json
 from sg_preflight.adapters.discovery import default_search_roots, probe_workspace
 from sg_preflight.adapters.materialize import materialize_bundle
-from sg_preflight.bundle import load_bundle
-from sg_preflight.config_loader import load_config
-from sg_preflight.models import Report
-from sg_preflight.reporting import write_html_report, write_json_report, write_markdown_report
+from sg_preflight.profiles import get_run_profile, list_run_profiles
 from sg_preflight.retro import parse_retro_export, write_retro_json, write_retro_markdown
-from sg_preflight.validators.anchors import validate_anchors
-from sg_preflight.validators.carpaints import validate_carpaints
-from sg_preflight.validators.constants import validate_constants
-from sg_preflight.validators.project_sanity import validate_project_sanity
-
-
-VALID_PACKS = ("anchors", "constants", "carpaints", "project_sanity")
+from sg_preflight.services import (
+    VALID_PACKS,
+    RunRequest,
+    execute_bundle_run,
+    execute_profile_run,
+    parse_name_value_pairs,
+    parse_packs,
+)
 
 
 def _console_safe(text: str) -> str:
@@ -27,73 +25,33 @@ def _console_safe(text: str) -> str:
     return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
 
 
-def _parse_packs(raw: str) -> list[str]:
-    raw = raw.strip().lower()
-    if raw == "all":
-        return list(VALID_PACKS)
-    items = [part.strip() for part in raw.split(",") if part.strip()]
-    invalid = [pack for pack in items if pack not in VALID_PACKS]
-    if invalid:
-        raise ValueError(f"Unsupported packs: {', '.join(invalid)}")
-    return items
-
-
-def _console_report(report: Report) -> None:
+def _console_report(report: object) -> None:
     summary = report.summary()
     print(_console_safe(f"Bundle: {report.bundle}"))
     print(
         _console_safe(
-        f"Summary -> errors: {summary['errors']} | warnings: {summary['warnings']} | "
-        f"info: {summary['info']} | total: {summary['total']}"
+            f"Summary -> errors: {summary['errors']} | warnings: {summary['warnings']} | "
+            f"info: {summary['info']} | total: {summary['total']}"
         )
     )
     print("-" * 80)
     for pack in report.packs:
         print(
             _console_safe(
-            f"[{pack.pack}] errors={pack.error_count} warnings={pack.warning_count} "
-            f"info={pack.info_count} total={len(pack.findings)}"
+                f"[{pack.pack}] errors={pack.error_count} warnings={pack.warning_count} "
+                f"info={pack.info_count} total={len(pack.findings)}"
             )
         )
         for finding in pack.findings:
             loc = f" @ {finding.location}" if finding.location else ""
             print(
                 _console_safe(
-                f"  - {finding.severity.upper():7s} {finding.code}{loc}: {finding.message}"
+                    f"  - {finding.severity.upper():7s} {finding.code}{loc}: {finding.message}"
                 )
             )
 
 
-def _parse_env_overrides(values: list[str]) -> dict[str, str]:
-    env: dict[str, str] = {}
-    for item in values:
-        if "=" not in item:
-            raise ValueError(f"Invalid --env value {item!r}; expected NAME=VALUE")
-        key, value = item.split("=", 1)
-        key = key.strip()
-        if not key:
-            raise ValueError(f"Invalid --env value {item!r}; key cannot be empty")
-        env[key] = value
-    return env
-
-
-def _build_report_context(bundle: Any) -> dict[str, Any]:
-    manifest = getattr(bundle, "project_manifest", None)
-    context: dict[str, Any] = {}
-    if isinstance(manifest, dict):
-        raw_context = manifest.get("report_context", {})
-        if isinstance(raw_context, dict):
-            context.update(raw_context)
-        project_root = manifest.get("project_root")
-        if project_root:
-            context.setdefault("project_root", str(project_root))
-        repo_root = manifest.get("repo_root")
-        if repo_root:
-            context.setdefault("repo_root", str(repo_root))
-    return context
-
-
-def _console_probe(report: dict[str, Any]) -> None:
+def _console_probe(report: dict[str, object]) -> None:
     print("Search roots:")
     for root in report.get("search_roots", []):
         print(f"  - {root}")
@@ -139,11 +97,57 @@ def _console_materialize(output: Path, written_files: list[Path], notes: list[st
             print(f"  - {note}")
 
 
+def _console_profiles(as_json: bool) -> None:
+    profiles = list_run_profiles()
+    if as_json:
+        print(json.dumps([profile.to_dict() for profile in profiles], indent=2))
+        return
+
+    print("Live run profiles:")
+    for profile in profiles:
+        print(f"- {profile.profile_id}: {profile.label}")
+        print(f"  project_root: {profile.project_root}")
+        print(f"  config_path: {profile.config_path}")
+        if profile.default_context:
+            print(
+                "  default_context: "
+                + ", ".join(f"{key}={value}" for key, value in profile.default_context.items())
+            )
+
+
+def _console_run_record(record: object, *, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps(record.to_dict(), indent=2, ensure_ascii=False))
+        return
+
+    print(f"Run ID: {record.run_id}")
+    print(f"Profile: {record.profile_id} ({record.profile_label})")
+    print(f"Status: {record.status}")
+    if record.summary:
+        summary = record.summary
+        print(
+            "Summary -> "
+            f"errors: {summary['errors']} | warnings: {summary['warnings']} | "
+            f"info: {summary['info']} | total: {summary['total']}"
+        )
+    if record.exit_code is not None:
+        print(f"Exit code: {record.exit_code}")
+    print(f"Output root: {record.paths['output_root']}")
+    print(f"Bundle: {record.paths['bundle']}")
+    print(f"JSON report: {record.paths['json_report']}")
+    print(f"HTML report: {record.paths['html_report']}")
+    print(f"Markdown report: {record.paths['markdown_report']}")
+    if record.notes:
+        print("Notes:")
+        for note in record.notes:
+            print(f"  - {note}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sg-preflight")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="Run one or more validation packs")
+    run = sub.add_parser("run", help="Run one or more validation packs against a bundle")
     run.add_argument("--bundle", required=True, help="Path to a validation bundle directory")
     run.add_argument("--config", required=True, help="Path to JSON config file")
     run.add_argument(
@@ -160,6 +164,35 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["error", "warning", "never"],
         help="Exit non-zero if findings reach this severity threshold",
     )
+
+    profile_list = sub.add_parser("list-profiles", help="List canonical live run profiles")
+    profile_list.add_argument("--json", action="store_true", help="Print profile registry as JSON")
+
+    run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
+    run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
+    run_profile.add_argument(
+        "--packs",
+        default="all",
+        help="Comma-separated packs or 'all' (anchors,constants,carpaints,project_sanity)",
+    )
+    run_profile.add_argument(
+        "--fail-on",
+        default="error",
+        choices=["error", "warning", "never"],
+        help="Exit non-zero if findings reach this severity threshold",
+    )
+    run_profile.add_argument("--output-root", help="Directory to write bundle, reports, and run.json")
+    run_profile.add_argument(
+        "--context",
+        action="append",
+        default=[],
+        help="Override workflow/report context NAME=VALUE (repeatable)",
+    )
+    run_profile.add_argument("--json", action="store_true", help="Print run record as JSON")
+
+    ui = sub.add_parser("ui", help="Start the local operator UI")
+    ui.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    ui.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
 
     demo_good = sub.add_parser("demo-good", help="Run the good demo bundle")
     demo_good.add_argument("--fail-on", default="error", choices=["error", "warning", "never"])
@@ -226,34 +259,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run(bundle_dir: Path, config_path: Path, packs: list[str], fail_on: str,
-         json_out: Path | None = None, html_out: Path | None = None,
-         md_out: Path | None = None) -> int:
-    config = load_config(config_path)
-    bundle = load_bundle(bundle_dir)
-
-    report = Report(bundle=str(bundle_dir.resolve()), context=_build_report_context(bundle))
-    pack_map = {
-        "anchors": validate_anchors,
-        "constants": validate_constants,
-        "carpaints": validate_carpaints,
-        "project_sanity": validate_project_sanity,
-    }
-
-    for pack in packs:
-        report.packs.append(pack_map[pack](bundle, config))
-
-    if json_out:
-        write_json_report(report, json_out)
-    if html_out:
-        write_html_report(report, html_out, config)
-    if md_out:
-        write_markdown_report(report, md_out, config)
-
-    _console_report(report)
-    return 2 if report.has_threshold_or_worse(fail_on) else 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -263,41 +268,83 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         try:
-            packs = _parse_packs(args.packs)
+            packs = parse_packs(args.packs)
         except ValueError as exc:
             parser.error(str(exc))
             return 1
-        return _run(
+
+        result = execute_bundle_run(
             bundle_dir=Path(args.bundle),
             config_path=Path(args.config),
             packs=packs,
             fail_on=args.fail_on,
             json_out=Path(args.json_out) if args.json_out else None,
             html_out=Path(args.html_out) if args.html_out else None,
-            md_out=Path(args.md_out) if args.md_out else None,
+            markdown_out=Path(args.md_out) if args.md_out else None,
         )
+        _console_report(result.report)
+        return result.exit_code
+
+    if args.command == "list-profiles":
+        _console_profiles(args.json)
+        return 0
+
+    if args.command == "run-profile":
+        try:
+            packs = parse_packs(args.packs)
+            context = parse_name_value_pairs(args.context)
+            profile = get_run_profile(args.profile_id)
+        except (ValueError, KeyError) as exc:
+            parser.error(str(exc))
+            return 1
+
+        try:
+            record = execute_profile_run(
+                profile,
+                RunRequest(
+                    profile_id=profile.profile_id,
+                    packs=packs,
+                    fail_on=args.fail_on,
+                    context_overrides=context,
+                    output_root=Path(args.output_root) if args.output_root else None,
+                ),
+            )
+        except Exception as exc:
+            print(_console_safe(f"run-profile failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_run_record(record, as_json=args.json)
+        return record.exit_code or 0
+
+    if args.command == "ui":
+        from sg_preflight.ui import run_ui
+
+        return run_ui(host=args.host, port=args.port)
 
     if args.command == "demo-good":
-        return _run(
+        result = execute_bundle_run(
             bundle_dir=root / "demo" / "good",
             config_path=default_config,
             packs=list(VALID_PACKS),
             fail_on=args.fail_on,
             json_out=root / "out" / "demo-good.json",
             html_out=root / "out" / "demo-good.html",
-            md_out=root / "out" / "demo-good.md",
+            markdown_out=root / "out" / "demo-good.md",
         )
+        _console_report(result.report)
+        return result.exit_code
 
     if args.command == "demo-broken":
-        return _run(
+        result = execute_bundle_run(
             bundle_dir=root / "demo" / "broken",
             config_path=default_config,
             packs=list(VALID_PACKS),
             fail_on=args.fail_on,
             json_out=root / "out" / "demo-broken.json",
             html_out=root / "out" / "demo-broken.html",
-            md_out=root / "out" / "demo-broken.md",
+            markdown_out=root / "out" / "demo-broken.md",
         )
+        _console_report(result.report)
+        return result.exit_code
 
     if args.command == "probe":
         search_roots = [Path(raw) for raw in args.search_roots] if args.search_roots else default_search_roots()
@@ -309,8 +356,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "materialize":
         try:
-            env = _parse_env_overrides(args.env)
-            report_context = _parse_env_overrides(args.context)
+            env = parse_name_value_pairs(args.env)
+            report_context = parse_name_value_pairs(args.context)
         except ValueError as exc:
             parser.error(str(exc))
             return 1

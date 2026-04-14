@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Evidence {{ record.profile_id }} · SG Preflight Operator UI{% endblock %}
+{% block content %}
+<section class="hero-panel">
+  <div>
+    <p class="eyebrow">Evidence</p>
+    <h2>{{ record.profile_id }} · {{ record.profile_label }}</h2>
+    <p>Persistent artifacts and source links for run <code>{{ record.run_id }}</code>.</p>
+  </div>
+  <div class="hero-actions">
+    <a class="button subtle" href="/ui/runs/{{ record.run_id }}">Back to Result</a>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h3>Artifacts</h3>
+    <p>Bundle, reports, metadata, and source-of-truth files.</p>
+  </div>
+  <div class="stack">
+    {% for link in links %}
+    <div class="status-item">
+      <div>
+        <strong>{{ link.label }}</strong>
+        <div class="muted">{{ link.value }}</div>
+      </div>
+      {% if link.href %}
+      <a href="{{ link.href }}">Open</a>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

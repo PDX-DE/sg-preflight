@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Home · SG Preflight Operator UI{% endblock %}
+{% block content %}
+<section class="hero-panel">
+  <div>
+    <p class="eyebrow">Run + Inspect</p>
+    <h2>Canonical live profiles, cached mirror health, and recent evidence in one place.</h2>
+  </div>
+  <div class="hero-actions">
+    <a class="button subtle" href="/ui/audits/mirror/deep">Run Deep Mirror Audit</a>
+  </div>
+</section>
+
+<section class="content-grid">
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Live Profiles</h3>
+      <p>Current canonical registry for the live SG slices.</p>
+    </div>
+    <div class="stack">
+      {% for item in profiles %}
+      <article class="profile-card">
+        <div class="profile-head">
+          <div>
+            <h4>{{ item.profile.profile_id }}</h4>
+            <p>{{ item.profile.label }}</p>
+          </div>
+          <a class="button" href="/ui/profiles/{{ item.profile.profile_id }}">Open Run View</a>
+        </div>
+        <div class="detail-grid">
+          <div>
+            <span class="detail-label">Project Root</span>
+            <code>{{ item.profile.project_root }}</code>
+          </div>
+          <div>
+            <span class="detail-label">Config</span>
+            <code>{{ item.profile.config_path }}</code>
+          </div>
+        </div>
+        <div class="status-row">
+          <span class="badge {% if item.project_exists and item.config_exists %}ok{% else %}warn{% endif %}">
+            {% if item.project_exists and item.config_exists %}Profile Ready{% else %}Needs Attention{% endif %}
+          </span>
+          <span class="muted">{{ item.preview.source_paths | length }} detected sources</span>
+        </div>
+        {% if item.missing_sources %}
+        <p class="muted">Missing sources: {{ item.missing_sources | join(", ") }}</p>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Prerequisites</h3>
+      <p>Quick readiness check for the current local machine and mirror.</p>
+    </div>
+    <div class="stack tight">
+      {% for item in prerequisites %}
+      <div class="status-item">
+        <div>
+          <strong>{{ item.label }}</strong>
+          <div class="muted">{{ item.path }}</div>
+        </div>
+        <span class="badge {% if item.status == 'available' %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="content-grid">
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Mirror Health</h3>
+      <p>Fast cached audit for configured live slices plus the most recent deep audit cache.</p>
+    </div>
+    <div class="stack">
+      <div class="status-row">
+        <span class="badge {% if fast_audit.status == 'match' %}ok{% else %}warn{% endif %}">Fast audit: {{ fast_audit.status }}</span>
+        <span class="muted">{{ fast_audit.created_at_utc }}</span>
+      </div>
+      {% for entry in fast_audit.entries %}
+      <div class="audit-item">
+        <div>
+          <strong>{{ entry.label }}</strong>
+          <div class="muted">{{ entry.relative_path }}</div>
+        </div>
+        <div class="audit-meta">
+          <span class="badge {% if entry.status == 'match' %}ok{% else %}warn{% endif %}">{{ entry.status }}</span>
+          <span class="muted">{{ entry.difference_count }} differences</span>
+        </div>
+      </div>
+      {% endfor %}
+      {% if deep_audit %}
+      <div class="separator"></div>
+      <div class="status-row">
+        <span class="badge {% if deep_audit.status == 'match' %}ok{% else %}warn{% endif %}">Deep audit: {{ deep_audit.status }}</span>
+        <span class="muted">{{ deep_audit.created_at_utc }}</span>
+      </div>
+      {% for entry in deep_audit.entries %}
+      <div class="audit-item">
+        <div>
+          <strong>{{ entry.label }}</strong>
+          <div class="muted">{{ entry.relative_path }}</div>
+        </div>
+        <div class="audit-meta">
+          <span class="badge {% if entry.status == 'match' %}ok{% else %}warn{% endif %}">{{ entry.status }}</span>
+          <span class="muted">{{ entry.difference_count }} differences</span>
+        </div>
+      </div>
+      {% if entry.sample_differences %}
+      <div class="code-block">
+        {% for item in entry.sample_differences %}
+        <div>{{ item }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endfor %}
+      {% endif %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Recent Runs</h3>
+      <p>Persistent run records from the operator UI.</p>
+    </div>
+    <div class="stack">
+      {% if recent_runs %}
+        {% for run in recent_runs %}
+        <div class="run-card">
+          <div>
+            <strong>{{ run.profile_id }}</strong>
+            <div class="muted">{{ run.created_at_utc }}</div>
+          </div>
+          <div class="run-card-actions">
+            <span class="badge {% if run.status == 'completed' %}ok{% elif run.status == 'running' %}info{% else %}warn{% endif %}">{{ run.status }}</span>
+            <a href="/ui/runs/{{ run.run_id }}">Result</a>
+            <a href="/ui/runs/{{ run.run_id }}/evidence">Evidence</a>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="muted">No operator UI runs have been recorded yet.</p>
+      {% endif %}
+    </div>
+  </article>
+</section>
+{% endblock %}

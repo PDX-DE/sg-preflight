@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Result {{ record.profile_id }} · SG Preflight Operator UI{% endblock %}
+{% block body_attrs %}data-run-status="{{ record.status }}" data-run-id="{{ record.run_id }}"{% endblock %}
+{% block content %}
+<section class="hero-panel">
+  <div>
+    <p class="eyebrow">Result</p>
+    <h2>{{ record.profile_id }} · {{ record.profile_label }}</h2>
+    <p>Run ID: <code>{{ record.run_id }}</code></p>
+  </div>
+  <div class="hero-actions">
+    <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% else %}warn{% endif %}" id="run-status-pill">{{ record.status }}</span>
+    <a class="button subtle" href="/ui/runs/{{ record.run_id }}/evidence">Evidence</a>
+  </div>
+</section>
+
+{% if record.status != 'completed' %}
+<section class="panel">
+  <div class="panel-head">
+    <h3>Run State</h3>
+    <p id="run-state-message">
+      {% if record.status == 'running' %}
+      Run is still executing. This page will refresh automatically.
+      {% elif record.status == 'failed' %}
+      Run failed: {{ record.error_message }}
+      {% else %}
+      Run is queued.
+      {% endif %}
+    </p>
+  </div>
+</section>
+{% endif %}
+
+{% if presentation %}
+<section class="summary-strip">
+  <article class="summary-card error">
+    <span>Errors</span>
+    <strong>{{ presentation.summary.errors }}</strong>
+  </article>
+  <article class="summary-card warning">
+    <span>Warnings</span>
+    <strong>{{ presentation.summary.warnings }}</strong>
+  </article>
+  <article class="summary-card info">
+    <span>Info</span>
+    <strong>{{ presentation.summary.info }}</strong>
+  </article>
+  <article class="summary-card total">
+    <span>Total</span>
+    <strong>{{ presentation.summary.total }}</strong>
+  </article>
+</section>
+
+<section class="content-grid">
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Workflow Context</h3>
+      <p>Resolved handoff context persisted with the run.</p>
+    </div>
+    <div class="detail-grid">
+      {% for item in presentation.context_items %}
+      <div>
+        <span class="detail-label">{{ item.label }}</span>
+        <div>{{ item.value }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Grouped Findings</h3>
+      <p>Presentation-friendly grouped output with owner and action hints.</p>
+    </div>
+    <div class="stack tight">
+      {% for item in presentation.grouped_findings %}
+      <div class="finding-group" data-severity="{{ item.severity }}">
+        <div class="status-row">
+          <strong>{{ item.pack }} / {{ item.code }}</strong>
+          <span class="badge {% if item.severity == 'error' %}warn{% elif item.severity == 'warning' %}info{% else %}ok{% endif %}">{{ item.severity }}</span>
+        </div>
+        <p>{{ item.message }}</p>
+        <p class="muted">{{ item.count }} occurrence(s)</p>
+        {% if item.owner %}
+        <p><strong>Owner hint:</strong> {{ item.owner }}</p>
+        {% endif %}
+        {% if item.action %}
+        <p><strong>Suggested action:</strong> {{ item.action }}</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h3>Per-Finding Drilldown</h3>
+    <p>Evidence-first view for triage, handoff, and debugging.</p>
+  </div>
+  <div class="toolbar">
+    <button class="button subtle severity-filter" data-severity-filter="all">All</button>
+    <button class="button subtle severity-filter" data-severity-filter="error">Errors</button>
+    <button class="button subtle severity-filter" data-severity-filter="warning">Warnings</button>
+    <button class="button subtle severity-filter" data-severity-filter="info">Info</button>
+  </div>
+  <div class="stack">
+    {% for finding in findings %}
+    <details class="finding-detail" data-severity="{{ finding.severity }}" id="{{ finding.finding_id }}">
+      <summary>
+        <span class="summary-code">{{ finding.pack }} / {{ finding.code }}</span>
+        <span class="muted">{{ finding.location or "no location" }}</span>
+      </summary>
+      <div class="detail-grid">
+        <div>
+          <span class="detail-label">Severity</span>
+          <div>{{ finding.severity }}</div>
+        </div>
+        <div>
+          <span class="detail-label">Owner</span>
+          <div>{{ finding.owner or "No owner hint" }}</div>
+        </div>
+        <div>
+          <span class="detail-label">Action</span>
+          <div>{{ finding.action or "No action hint" }}</div>
+        </div>
+        <div>
+          <span class="detail-label">Message</span>
+          <div>{{ finding.message }}</div>
+        </div>
+      </div>
+      {% if finding.evidence %}
+      <div class="evidence-grid">
+        {% for item in finding.evidence %}
+        <div class="evidence-item">
+          <span class="detail-label">{{ item.label }}</span>
+          {% if item.href %}
+          <a href="{{ item.href }}">{{ item.value }}</a>
+          {% else %}
+          <div>{{ item.value or "n/a" }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if finding.details_json %}
+      <pre class="code-block">{{ finding.details_json }}</pre>
+      {% endif %}
+    </details>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

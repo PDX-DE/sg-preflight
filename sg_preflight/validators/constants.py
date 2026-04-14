@@ -151,6 +151,7 @@ def validate_constants(bundle: Bundle, config: dict[str, Any]) -> PackResult:
                         f"Expected {expected_value!r} but exported {exported_value!r}"
                     ),
                     location=path,
+                    details={"expected": expected_value, "exported": exported_value},
                 )
             )
 

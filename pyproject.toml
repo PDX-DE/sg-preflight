@@ -8,6 +8,12 @@ version = "0.1.0"
 description = "Deterministic 3D Car QA preflight checks"
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "jinja2>=3.1,<4",
+  "uvicorn>=0.35,<1",
+  "httpx>=0.28,<1",
+]
 license = {text = "Proprietary - Paradox Cat GmbH internal use only"}
 authors = [
   {name = "David Erik Garcia Arenas"}
@@ -26,3 +32,6 @@ package-dir = {"" = "."}
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["sg_preflight*"]
+
+[tool.setuptools.package-data]
+sg_preflight = ["templates/*.html", "static/*.css", "static/*.js"]

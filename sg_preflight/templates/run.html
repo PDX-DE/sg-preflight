@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Run {{ profile.profile_id }} · SG Preflight Operator UI{% endblock %}
+{% block content %}
+<section class="hero-panel">
+  <div>
+    <p class="eyebrow">Run Profile</p>
+    <h2>{{ profile.profile_id }} · {{ profile.label }}</h2>
+    <p>{{ profile.description }}</p>
+  </div>
+  <div class="hero-actions">
+    <a class="button subtle" href="/ui">Back to Home</a>
+  </div>
+</section>
+
+<section class="content-grid">
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Resolved Inputs</h3>
+      <p>Detected source-of-truth files from the actual SG mirror.</p>
+    </div>
+    <div class="stack">
+      <div class="detail-grid">
+        <div>
+          <span class="detail-label">Project Root</span>
+          <code>{{ profile.project_root }}</code>
+        </div>
+        <div>
+          <span class="detail-label">Config</span>
+          <code>{{ profile.config_path }}</code>
+        </div>
+      </div>
+      {% for key, value in preview.source_paths.items() %}
+      <div class="status-item">
+        <div>
+          <strong>{{ key }}</strong>
+          <div class="muted">{{ value }}</div>
+        </div>
+        <a href="/ui/files?path={{ value | urlencode }}">Open</a>
+      </div>
+      {% endfor %}
+      {% if preview.notes %}
+      <div class="code-block">
+        {% for note in preview.notes %}
+        <div>{{ note }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Launch Run</h3>
+      <p>Operator-friendly profile execution over the shared deterministic engine.</p>
+    </div>
+    <form id="run-form" class="stack" data-profile-id="{{ profile.profile_id }}">
+      <div>
+        <span class="detail-label">Packs</span>
+        <div class="checkbox-grid">
+          {% for pack in packs %}
+          <label class="checkbox-card">
+            <input type="checkbox" name="packs" value="{{ pack }}" checked />
+            <span>{{ pack }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="detail-grid">
+        {% for key, value in profile.default_context.items() %}
+        <label class="field">
+          <span>{{ key }}</span>
+          <input type="text" name="context-{{ key }}" value="{{ value }}" />
+        </label>
+        {% endfor %}
+      </div>
+
+      <label class="field">
+        <span>Fail threshold</span>
+        <select name="fail_on">
+          <option value="never" selected>never</option>
+          <option value="error">error</option>
+          <option value="warning">warning</option>
+        </select>
+      </label>
+
+      <div class="action-row">
+        <button class="button" type="submit">Launch Run</button>
+        <span class="muted" id="launch-status">Idle</span>
+      </div>
+    </form>
+  </article>
+</section>
+{% endblock %}

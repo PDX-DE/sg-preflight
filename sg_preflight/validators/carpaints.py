@@ -77,6 +77,12 @@ def validate_carpaints(bundle: Bundle, config: dict[str, Any]) -> PackResult:
                         severity="error",
                         message=f"Duplicate value for unique key '{key}': {value!r}",
                         location=location,
+                        details={
+                            "unique_key": key,
+                            "duplicate_value": value,
+                            "first_index": unique_indexes[key][value],
+                            "current_index": idx,
+                        },
                     )
                 )
             else:

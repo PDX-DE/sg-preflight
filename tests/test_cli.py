@@ -11,6 +11,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestCLI(unittest.TestCase):
+    def test_list_profiles_includes_live_registry(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "list-profiles", "--json"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = json.loads(result.stdout)
+        profile_ids = {item["profile_id"] for item in payload}
+        self.assertTrue({"G70", "G65", "G45"}.issubset(profile_ids))
+
     def test_good_demo_passes(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "demo-good"],

@@ -134,7 +134,7 @@ def _validate_rule_group(
                 severity="error",
                 message=f"Could not find root node '{root_name}' for anchor rule group '{group_name}'",
                 location=root_name,
-                details={"rule_group": group_name},
+                details={"rule_group": group_name, "root_name": root_name},
             )
         )
         return
@@ -157,7 +157,7 @@ def _validate_rule_group(
                     severity="error",
                     message=f"Anchor must start with {prefix}",
                     location=name or "<unnamed>",
-                    details={"rule_group": group_name},
+                    details={"rule_group": group_name, "root_name": root_name},
                 )
             )
             continue
@@ -181,7 +181,7 @@ def _validate_rule_group(
                     severity="error",
                     message=str(exc),
                     location=name or "<unnamed>",
-                    details={"rule_group": group_name},
+                    details={"rule_group": group_name, "root_name": root_name},
                 )
             )
             continue
@@ -195,7 +195,7 @@ def _validate_rule_group(
                     severity="warning",
                     message=f"Anchor part '{part}' is not listed in allowed_parts",
                     location=name,
-                    details={"rule_group": group_name},
+                    details={"rule_group": group_name, "root_name": root_name},
                 )
             )
 
@@ -216,6 +216,7 @@ def _validate_rule_group(
                         location=name,
                         details={
                             "rule_group": group_name,
+                            "root_name": root_name,
                             "name_position": expected,
                             "metadata_position": actual_position,
                         },
@@ -231,7 +232,7 @@ def _validate_rule_group(
                     severity="error",
                     message=f"Duplicate anchor name appears {count} times",
                     location=name,
-                    details={"rule_group": group_name},
+                    details={"rule_group": group_name, "root_name": root_name},
                 )
             )
 
@@ -246,7 +247,7 @@ def _validate_rule_group(
                     severity="error",
                     message="Expected anchor is missing",
                     location=name,
-                    details={"rule_group": group_name},
+                    details={"rule_group": group_name, "root_name": root_name},
                 )
             )
 
