@@ -38,6 +38,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Reports now carry workflow context like car model, trim, delivery phase, review target, and evidence source
 - Real SG smoke scripts now consume the shared `run-profile` path instead of duplicating profile definitions in PowerShell
 - Findings now carry richer evidence details for operator drilldown, including duplicate carpaint metadata and anchor-rule context
+- `project_sanity` now persists exact source-file and line evidence for path-reference findings and unused Lua drilldown
 - Smoke-test summary output now includes an executive snapshot and grouped takeaways
 - Smoke-test flow now generates markdown handoff artifacts in addition to JSON and HTML reports
 - README now documents the current local source-drop workflow and intended branch/release hygiene
@@ -51,6 +52,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - SG discovery and project-sanity helpers now recognize live helper script names and hyphenated SG environment conventions
 - Legacy SG `CarPaint.json` normalization now uses live `StyleID` semantics plus actual clearcoat/undercoat fields when available
 - `project_sanity` now reads `racoVersion` directly from zipped `.rca` payloads and classifies SG-relative scene links separately from true absolute-path risks
+- `project_sanity` text indexing now falls back to plain-text `.rca` files when a scene is not zipped, which removes false `unused_lua` warnings in SG-shaped fixtures
 - Real live `G70` smoke output is now much cleaner: cross-car contamination and unused Lua survive as actionable warnings, while SG-internal relative links no longer flood the report
 - Repository metadata now marks the package as proprietary/internal-use in `pyproject.toml`
 - Live reporting and smoke automation now support side-by-side comparison across `G70`, `G65`, and `G45`

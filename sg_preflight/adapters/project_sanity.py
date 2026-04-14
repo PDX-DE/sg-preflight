@@ -126,7 +126,7 @@ def _load_text_index(roots: list[Path]) -> list[tuple[Path, str]]:
                 if path.suffix.lower() == ".rca":
                     text = _read_rca_json_text(path)
                     if text is None:
-                        continue
+                        text = path.read_text(encoding="utf-8", errors="ignore")
                 else:
                     text = path.read_text(encoding="utf-8", errors="ignore")
             except OSError:
@@ -139,30 +139,94 @@ def _discover_known_assets(repo_root: Path) -> list[Path]:
     return find_matches(repo_root, KNOWN_ASSET_PATTERNS, limit=40)
 
 
-def _collect_path_references(project_root: Path, repo_root: Path) -> list[str]:
+def _build_reference_entry(
+    *,
+    value: str,
+    source_path: Path,
+    line_number: int,
+    line_text: str,
+) -> dict[str, Any]:
+    return {
+        "value": value,
+        "source_path": str(source_path.resolve()),
+        "line_number": line_number,
+        "line_text": line_text.strip(),
+    }
+
+
+def _collect_path_references(project_root: Path, repo_root: Path) -> list[dict[str, Any]]:
     del repo_root
-    references: set[str] = set()
-    for _path, text in _load_text_index([project_root]):
-        references.update(_extract_absolute_paths(text))
-        references.update(_extract_relative_repo_paths(text))
-    return sorted(references)
+    references: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for source_path, text in _load_text_index([project_root]):
+        for line_number, raw_line in enumerate(text.splitlines() or [text], start=1):
+            values = list(dict.fromkeys(_extract_absolute_paths(raw_line) + _extract_relative_repo_paths(raw_line)))
+            for value in values:
+                key = (value.lower(), str(source_path.resolve()).lower(), line_number)
+                if key in seen:
+                    continue
+                seen.add(key)
+                references.append(
+                    _build_reference_entry(
+                        value=value,
+                        source_path=source_path,
+                        line_number=line_number,
+                        line_text=raw_line,
+                    )
+                )
+    references.sort(
+        key=lambda item: (
+            str(item.get("value", "")).lower(),
+            str(item.get("source_path", "")).lower(),
+            int(item.get("line_number", 0) or 0),
+        )
+    )
+    return references
 
 
 def _collect_lua_files(project_root: Path) -> list[dict[str, Any]]:
     text_index = _load_text_index([project_root])
-    lowered_texts = [(path, text.lower()) for path, text in text_index]
+    lowered_texts = [(path, list(text.splitlines() or [text])) for path, text in text_index]
     lua_files = []
 
     for path in walk_files(project_root, suffixes={".lua"}):
         relative = to_display_path(path, project_root).replace("\\", "/")
         relative_l = relative.lower()
         name_l = path.name.lower()
-        referenced = any(
-            other_path.resolve() != path.resolve()
-            and (relative_l in text or name_l in text)
-            for other_path, text in lowered_texts
+        referenced_by: list[dict[str, Any]] = []
+        seen: set[tuple[str, int]] = set()
+        for other_path, lines in lowered_texts:
+            if other_path.resolve() == path.resolve():
+                continue
+            for line_number, raw_line in enumerate(lines, start=1):
+                line_lower = raw_line.lower()
+                if relative_l not in line_lower and name_l not in line_lower:
+                    continue
+                key = (str(other_path.resolve()).lower(), line_number)
+                if key in seen:
+                    continue
+                seen.add(key)
+                referenced_by.append(
+                    {
+                        "source_path": str(other_path.resolve()),
+                        "line_number": line_number,
+                        "line_text": raw_line.strip(),
+                    }
+                )
+        referenced_by.sort(
+            key=lambda item: (
+                str(item.get("source_path", "")).lower(),
+                int(item.get("line_number", 0) or 0),
+            )
         )
-        lua_files.append({"path": relative, "referenced": referenced})
+        lua_files.append(
+            {
+                "path": relative,
+                "source_path": str(path.resolve()),
+                "referenced": bool(referenced_by),
+                "referenced_by": referenced_by[:20],
+            }
+        )
 
     lua_files.sort(key=lambda item: item["path"])
     return lua_files

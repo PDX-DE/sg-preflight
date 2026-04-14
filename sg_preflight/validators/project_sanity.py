@@ -45,6 +45,46 @@ def _contains_foreign_segment(value: str, current: str, candidates: list[str]) -
     return None
 
 
+def _coerce_path_reference(entry: Any) -> dict[str, Any] | None:
+    if isinstance(entry, str):
+        return {
+            "value": entry,
+            "source_path": "",
+            "line_number": None,
+            "line_text": "",
+        }
+    if not isinstance(entry, dict):
+        return None
+
+    value = entry.get("value")
+    if not isinstance(value, str) or not value:
+        return None
+
+    line_number = entry.get("line_number")
+    if not isinstance(line_number, int):
+        line_number = None
+
+    return {
+        "value": value,
+        "source_path": str(entry.get("source_path", "")),
+        "line_number": line_number,
+        "line_text": str(entry.get("line_text", "")),
+    }
+
+
+def _reference_details(reference: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "source_path": reference.get("source_path", ""),
+        "line_number": reference.get("line_number"),
+        "line_text": reference.get("line_text", ""),
+    }
+    for key, value in extra.items():
+        if value is None or value == "":
+            continue
+        details[key] = value
+    return details
+
+
 def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResult:
     result = PackResult(pack="project_sanity")
     manifest = bundle.project_manifest
@@ -140,9 +180,11 @@ def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResul
         if isinstance(value, str) and value:
             allowed_abs_prefixes.append(value)
 
-    for raw_path in path_references:
-        if not isinstance(raw_path, str):
+    for raw_reference in path_references:
+        reference = _coerce_path_reference(raw_reference)
+        if reference is None:
             continue
+        raw_path = reference["value"]
 
         if "onedrive" in normalize_pathish(raw_path):
             result.add(
@@ -152,6 +194,7 @@ def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResul
                     severity="error",
                     message="Reference points into OneDrive",
                     location=raw_path,
+                    details=_reference_details(reference),
                 )
             )
 
@@ -168,6 +211,7 @@ def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResul
                             f"the current brand {current_brand or '<unknown>'}"
                         ),
                         location=raw_path,
+                        details=_reference_details(reference, matched_brand=foreign_brand),
                     )
                 )
 
@@ -183,6 +227,7 @@ def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResul
                             f"the current car {current_model or '<unknown>'}"
                         ),
                         location=raw_path,
+                        details=_reference_details(reference, matched_model=foreign_model),
                     )
                 )
             continue
@@ -201,6 +246,7 @@ def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResul
                         severity="warning",
                         message="Absolute path is outside allowed project roots",
                         location=raw_path,
+                        details=_reference_details(reference),
                     )
                 )
 
@@ -213,6 +259,12 @@ def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResul
                     severity="warning",
                     message="Lua file is present but not referenced",
                     location=str(lua_file.get("path", "<unknown-lua>")),
+                    details={
+                        "source_path": str(lua_file.get("source_path", "")),
+                        "referenced_by": list(lua_file.get("referenced_by", []))
+                        if isinstance(lua_file.get("referenced_by"), list)
+                        else [],
+                    },
                 )
             )
 

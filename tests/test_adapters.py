@@ -170,10 +170,24 @@ class TestAdapters(unittest.TestCase):
             manifest = build_project_manifest(repo_root=repo_root, project_root=project_root)
 
             self.assertEqual(manifest["raco_version"], "2.3.1")
-            self.assertIn(
-                "/../../G65/_Common/interfaces/Link_Common_Variants.lua",
-                manifest["path_references"],
+            references = [
+                entry
+                for entry in manifest["path_references"]
+                if isinstance(entry, dict)
+                and entry.get("value") == "/../../G65/_Common/interfaces/Link_Common_Variants.lua"
+            ]
+            self.assertTrue(references)
+            lua_reference = next(
+                entry
+                for entry in references
+                if entry.get("source_path") == str((project_root / "logic" / "main.lua").resolve())
             )
+            self.assertEqual(
+                lua_reference["source_path"],
+                str((project_root / "logic" / "main.lua").resolve()),
+            )
+            self.assertEqual(lua_reference["line_number"], 1)
+            self.assertIn("Link_Common_Variants.lua", lua_reference["line_text"])
             bundle = Bundle(
                 root=project_root,
                 scene_hierarchy=None,
@@ -188,6 +202,50 @@ class TestAdapters(unittest.TestCase):
             codes = {finding.code for finding in result.findings}
             self.assertIn("project_sanity.cross_car_reference", codes)
             self.assertNotIn("project_sanity.suspicious_absolute_path", codes)
+            finding = next(
+                item for item in result.findings if item.code == "project_sanity.cross_car_reference"
+            )
+            self.assertEqual(
+                finding.details["source_path"],
+                str((project_root / "logic" / "main.lua").resolve()),
+            )
+            self.assertEqual(finding.details["line_number"], 1)
+            self.assertIn("Link_Common_Variants.lua", finding.details["line_text"])
+
+    def test_project_sanity_unused_lua_includes_file_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir) / "repositories" / "trunk"
+            project_root = repo_root / "Cars_IDCevo" / "BMW" / "G70"
+
+            (project_root / "logic").mkdir(parents=True)
+
+            _write_text(
+                project_root / "main.rca",
+                "logic = logic/main.lua\n",
+            )
+            _write_text(project_root / "logic" / "main.lua", "-- referenced by main.rca\n")
+            _write_text(project_root / "logic" / "unused_debug.lua", "-- intentionally unused\n")
+
+            manifest = build_project_manifest(repo_root=repo_root, project_root=project_root)
+            bundle = Bundle(
+                root=project_root,
+                scene_hierarchy=None,
+                constants_expected=None,
+                constants_exported=None,
+                carpaints=None,
+                project_manifest=manifest,
+                bundle_metadata=None,
+            )
+
+            result = validate_project_sanity(bundle, {"project_sanity": {}})
+
+            finding = next(item for item in result.findings if item.code == "project_sanity.unused_lua")
+            self.assertEqual(finding.location, "logic/unused_debug.lua")
+            self.assertEqual(
+                finding.details["source_path"],
+                str((project_root / "logic" / "unused_debug.lua").resolve()),
+            )
+            self.assertEqual(finding.details["referenced_by"], [])
 
     def test_normalize_carpaints_source_from_legacy_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -202,7 +202,16 @@ def _finding_evidence(finding: Finding, record: Any) -> list[dict[str, str]]:
         return [item for item in evidence if item["value"] or item["href"]]
 
     if finding.pack == "project_sanity":
-        evidence.append(_value_evidence("Reference", finding.location or ""))
+        if finding.code == "project_sanity.unused_lua":
+            evidence.append(_value_evidence("Lua file", finding.location or ""))
+            evidence.append(_path_evidence("Lua source", finding.details.get("source_path")))
+        else:
+            evidence.append(_value_evidence("Reference", finding.location or ""))
+            evidence.append(_path_evidence("Source file", finding.details.get("source_path")))
+            evidence.append(_value_evidence("Line number", finding.details.get("line_number")))
+            evidence.append(_value_evidence("Line text", finding.details.get("line_text")))
+            evidence.append(_value_evidence("Matched brand", finding.details.get("matched_brand")))
+            evidence.append(_value_evidence("Matched car model", finding.details.get("matched_model")))
         evidence.append(_path_evidence("Project manifest", record.paths.get("project_manifest")))
         evidence.append(_path_evidence("Project root", record.project_root))
         return [item for item in evidence if item["value"] or item["href"]]

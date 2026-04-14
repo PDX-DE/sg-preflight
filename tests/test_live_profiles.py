@@ -409,13 +409,13 @@ return constants
             self.assertEqual(run_result.returncode, 0, msg=run_result.stdout + "\n" + run_result.stderr)
             report = json.loads((temp_root / "report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["summary"]["errors"], 0)
-            self.assertEqual(report["summary"]["warnings"], 2)
+            self.assertEqual(report["summary"]["warnings"], 0)
             codes = {
                 finding["code"]
                 for pack in report["packs"]
                 for finding in pack["findings"]
             }
-            self.assertEqual(codes, {"project_sanity.unused_lua"})
+            self.assertEqual(codes, set())
 
 
 if __name__ == "__main__":

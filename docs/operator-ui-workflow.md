@@ -57,6 +57,8 @@ Shows:
 - owner and action hints
 - severity filtering
 - per-finding evidence drilldown
+- exact source file and line evidence for `project_sanity` reference findings
+- direct Lua-file evidence for `project_sanity.unused_lua`
 
 ### Evidence
 

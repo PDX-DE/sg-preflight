@@ -31,6 +31,17 @@ class TestOperatorUI(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
+            (profile.repo_root / "Cars_IDCevo" / "BMW" / "G70").mkdir(parents=True, exist_ok=True)
+            main_rca = profile.project_root / "main.rca"
+            main_rca.write_text(
+                main_rca.read_text(encoding="utf-8")
+                + "shared=/../../G70/_Common/interfaces/Link_Common_Variants.lua\n",
+                encoding="utf-8",
+            )
+            (profile.project_root / "logic" / "unused_debug.lua").write_text(
+                "-- intentionally unused\n",
+                encoding="utf-8",
+            )
             client = TestClient(create_app(root=root, profiles=[profile]))
 
             create_response = client.post(
@@ -52,6 +63,8 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Grouped Findings", result_page.text)
         self.assertIn("TA / pipeline / integration owner", result_page.text)
         self.assertIn("Confirm whether the Lua file is intentionally unused", result_page.text)
+        self.assertIn("Source file", result_page.text)
+        self.assertIn("Lua source", result_page.text)
         self.assertEqual(evidence_page.status_code, 200)
         self.assertIn("JSON report", evidence_page.text)
         self.assertIn("Project manifest", evidence_page.text)
