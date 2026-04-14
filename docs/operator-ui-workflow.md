@@ -101,6 +101,7 @@ Current behavior:
 
 - fast audit compares configured live targets between `repositories\trunk` and `C:\repositories\trunk`
 - deep audit compares the full mirrored `trunk` on demand
+- cached audit notes are shown on the Home page to explain sampled drift
 - current known deep drift is limited to `Playground\RaCoSceneMerging_PoC`
 
 ## Current Scope

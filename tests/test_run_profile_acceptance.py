@@ -56,28 +56,39 @@ class TestRunProfileAcceptance(unittest.TestCase):
                 }
                 self.assertTrue(codes.issubset(found_codes), msg=f"{profile_id}: {sorted(found_codes)}")
 
-    def test_ui_flow_can_launch_and_render_a_real_live_profile(self) -> None:
+    def test_ui_flow_can_launch_and_render_real_live_profiles(self) -> None:
+        expected_codes = {
+            "G70": "project_sanity.cross_car_reference",
+            "G65": "constants.out_of_tolerance",
+            "G45": "project_sanity.raco_version_not_recommended",
+        }
+
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
-            profile = get_run_profile("G45", ROOT)
-            client = TestClient(create_app(root=temp_root, profiles=[profile]))
+            for profile_id, expected_code in expected_codes.items():
+                profile = get_run_profile(profile_id, ROOT)
+                client = TestClient(create_app(root=temp_root / profile_id.lower(), profiles=[profile]))
 
-            response = client.post(
-                "/ui/api/runs",
-                json={
-                    "profile_id": "G45",
-                    "packs": ["anchors", "constants", "carpaints", "project_sanity"],
-                    "fail_on": "never",
-                    "context": profile.default_context,
-                },
-            )
-            self.assertEqual(response.status_code, 202)
-            payload = response.json()
-            result_page = client.get(payload["result_url"])
+                response = client.post(
+                    "/ui/api/runs",
+                    json={
+                        "profile_id": profile_id,
+                        "packs": ["anchors", "constants", "carpaints", "project_sanity"],
+                        "fail_on": "never",
+                        "context": profile.default_context,
+                    },
+                )
+                self.assertEqual(response.status_code, 202)
+                payload = response.json()
+                result_page = client.get(payload["result_url"])
+                evidence_page = client.get(payload["result_url"] + "/evidence")
 
-        self.assertEqual(result_page.status_code, 200)
-        self.assertIn("Grouped Findings", result_page.text)
-        self.assertIn("project_sanity.raco_version_not_recommended", result_page.text)
+                self.assertEqual(result_page.status_code, 200)
+                self.assertIn("Grouped Findings", result_page.text)
+                self.assertIn(expected_code, result_page.text)
+                self.assertEqual(evidence_page.status_code, 200)
+                self.assertIn("Project manifest", evidence_page.text)
+                self.assertIn("JSON report", evidence_page.text)
 
 
 if __name__ == "__main__":

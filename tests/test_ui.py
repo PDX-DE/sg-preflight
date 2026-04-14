@@ -6,6 +6,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
+from sg_preflight.profiles import RunProfile
 from sg_preflight.ui import create_app
 from tests.operator_helpers import create_temp_g65_profile
 
@@ -68,6 +69,46 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(evidence_page.status_code, 200)
         self.assertIn("JSON report", evidence_page.text)
         self.assertIn("Project manifest", evidence_page.text)
+
+    def test_deep_audit_route_persists_and_renders_playground_note(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mirror_root = root / "repositories" / "trunk"
+            reference_root = root / "reference" / "trunk"
+
+            (mirror_root / "Cars_IDCevo" / "BMW" / "G65").mkdir(parents=True, exist_ok=True)
+            (reference_root / "Cars_IDCevo" / "BMW" / "G65").mkdir(parents=True, exist_ok=True)
+            (mirror_root / "Cars" / "BMW").mkdir(parents=True, exist_ok=True)
+            (reference_root / "Cars" / "BMW").mkdir(parents=True, exist_ok=True)
+            (reference_root / "Playground" / "RaCoSceneMerging_PoC").mkdir(parents=True, exist_ok=True)
+
+            (mirror_root / "Cars_IDCevo" / "BMW" / "G65" / "main.rca").write_text("same\n", encoding="utf-8")
+            (reference_root / "Cars_IDCevo" / "BMW" / "G65" / "main.rca").write_text("same\n", encoding="utf-8")
+            (mirror_root / "Cars" / "BMW" / "CarPaint.json").write_text("{ }\n", encoding="utf-8")
+            (reference_root / "Cars" / "BMW" / "CarPaint.json").write_text("{ }\n", encoding="utf-8")
+            (
+                reference_root / "Playground" / "RaCoSceneMerging_PoC" / "only-on-reference.txt"
+            ).write_text("drift\n", encoding="utf-8")
+
+            profile = RunProfile(
+                profile_id="G65",
+                label="BMW G65 test slice",
+                repo_root=mirror_root,
+                project_root=mirror_root / "Cars_IDCevo" / "BMW" / "G65",
+                config_path=root / "config" / "sg_rules_live_g65.json",
+                mirror_audit_targets=("Cars_IDCevo/BMW/G65", "Cars/BMW/CarPaint.json"),
+                reference_repo_root=reference_root,
+            )
+
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            response = client.get("/ui/audits/mirror/deep", follow_redirects=False)
+            self.assertEqual(response.status_code, 302)
+            home = client.get("/ui")
+
+        self.assertEqual(home.status_code, 200)
+        self.assertIn("Deep audit: drift", home.text)
+        self.assertIn("Playground/RaCoSceneMerging_PoC", home.text)
 
 
 if __name__ == "__main__":

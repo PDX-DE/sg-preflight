@@ -39,6 +39,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Real SG smoke scripts now consume the shared `run-profile` path instead of duplicating profile definitions in PowerShell
 - Findings now carry richer evidence details for operator drilldown, including duplicate carpaint metadata and anchor-rule context
 - `project_sanity` now persists exact source-file and line evidence for path-reference findings and unused Lua drilldown
+- Mirror-audit notes are now visible on the operator Home page so sampled deep-audit drift is easier to interpret
 - Smoke-test summary output now includes an executive snapshot and grouped takeaways
 - Smoke-test flow now generates markdown handoff artifacts in addition to JSON and HTML reports
 - README now documents the current local source-drop workflow and intended branch/release hygiene

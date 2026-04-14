@@ -93,6 +93,13 @@
         </div>
       </div>
       {% endfor %}
+      {% if fast_audit.notes %}
+      <div class="code-block">
+        {% for item in fast_audit.notes %}
+        <div>{{ item }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
       {% if deep_audit %}
       <div class="separator"></div>
       <div class="status-row">
@@ -118,6 +125,13 @@
       </div>
       {% endif %}
       {% endfor %}
+      {% if deep_audit.notes %}
+      <div class="code-block">
+        {% for item in deep_audit.notes %}
+        <div>{{ item }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
       {% endif %}
     </div>
   </article>
