@@ -19,6 +19,36 @@ class MaterializeResult:
     notes: list[str] = field(default_factory=list)
 
 
+@dataclass
+class MaterializeInputs:
+    repo_root: Path | None = None
+    project_root: Path | None = None
+    scene_source: Path | None = None
+    constants_expected_source: Path | None = None
+    constants_exported_source: Path | None = None
+    carpaints_source: Path | None = None
+    carpaints_helper: Path | None = None
+    notes: list[str] = field(default_factory=list)
+
+    def source_map(self) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        if self.scene_source is not None:
+            mapping["scene_hierarchy"] = str(self.scene_source.resolve())
+        if self.constants_expected_source is not None:
+            mapping["constants_expected"] = str(self.constants_expected_source.resolve())
+        if self.constants_exported_source is not None:
+            mapping["constants_exported"] = str(self.constants_exported_source.resolve())
+        if self.carpaints_source is not None:
+            mapping["carpaints"] = str(self.carpaints_source.resolve())
+        if self.carpaints_helper is not None:
+            mapping["carpaints_helper"] = str(self.carpaints_helper.resolve())
+        if self.repo_root is not None:
+            mapping["project_manifest_root"] = str(self.repo_root.resolve())
+        if self.project_root is not None:
+            mapping["project_manifest_project"] = str(self.project_root.resolve())
+        return mapping
+
+
 def _infer_project_metadata(project_root: Path) -> dict[str, str]:
     parts = list(project_root.resolve().parts)
     for marker in ("Cars", "Cars_IDCevo"):
@@ -95,6 +125,66 @@ def _auto_discover_carpaints_source(repo_root: Path, project_root: Path | None) 
     return None
 
 
+def resolve_materialize_inputs(
+    *,
+    repo_root: Path | None = None,
+    project_root: Path | None = None,
+    scene_source: Path | None = None,
+    constants_expected_source: Path | None = None,
+    constants_exported_source: Path | None = None,
+    carpaints_source: Path | None = None,
+    carpaints_helper: Path | None = None,
+) -> MaterializeInputs:
+    resolved = MaterializeInputs(
+        repo_root=repo_root.resolve() if repo_root is not None else None,
+        project_root=project_root.resolve() if project_root is not None else None,
+        scene_source=scene_source.resolve() if scene_source is not None else None,
+        constants_expected_source=(
+            constants_expected_source.resolve() if constants_expected_source is not None else None
+        ),
+        constants_exported_source=(
+            constants_exported_source.resolve() if constants_exported_source is not None else None
+        ),
+        carpaints_source=carpaints_source.resolve() if carpaints_source is not None else None,
+        carpaints_helper=carpaints_helper.resolve() if carpaints_helper is not None else None,
+    )
+
+    if resolved.scene_source is None and resolved.project_root is not None:
+        resolved.scene_source = _auto_discover_scene_source(resolved.project_root)
+        if resolved.scene_source is not None:
+            resolved.notes.append(
+                f"Auto-discovered scene source from project_root: {resolved.scene_source.resolve()}"
+            )
+
+    if resolved.constants_expected_source is None and resolved.project_root is not None:
+        resolved.constants_expected_source = _auto_discover_constants_expected(resolved.project_root)
+        if resolved.constants_expected_source is not None:
+            resolved.notes.append(
+                "Auto-discovered expected constants source from project_root: "
+                f"{resolved.constants_expected_source.resolve()}"
+            )
+
+    if resolved.constants_exported_source is None and resolved.project_root is not None:
+        resolved.constants_exported_source = _auto_discover_constants_exported(resolved.project_root)
+        if resolved.constants_exported_source is not None:
+            resolved.notes.append(
+                "Auto-discovered exported constants source from project_root: "
+                f"{resolved.constants_exported_source.resolve()}"
+            )
+
+    if resolved.carpaints_source is None and resolved.repo_root is not None:
+        resolved.carpaints_source = _auto_discover_carpaints_source(
+            resolved.repo_root,
+            resolved.project_root,
+        )
+        if resolved.carpaints_source is not None:
+            resolved.notes.append(
+                f"Auto-discovered carpaint source from repo_root: {resolved.carpaints_source.resolve()}"
+            )
+
+    return resolved
+
+
 def materialize_bundle(
     *,
     output_bundle: Path,
@@ -114,94 +204,63 @@ def materialize_bundle(
 ) -> MaterializeResult:
     result = MaterializeResult(output_bundle=output_bundle.resolve())
     output_bundle.mkdir(parents=True, exist_ok=True)
-
-    if project_root is not None:
-        project_root = project_root.resolve()
-    if repo_root is not None:
-        repo_root = repo_root.resolve()
-
-    if scene_source is None and project_root is not None:
-        scene_source = _auto_discover_scene_source(project_root)
-        if scene_source is not None:
-            result.notes.append(
-                f"Auto-discovered scene source from project_root: {scene_source.resolve()}"
-            )
-
-    if constants_expected_source is None and project_root is not None:
-        constants_expected_source = _auto_discover_constants_expected(project_root)
-        if constants_expected_source is not None:
-            result.notes.append(
-                "Auto-discovered expected constants source from project_root: "
-                f"{constants_expected_source.resolve()}"
-            )
-
-    if constants_exported_source is None and project_root is not None:
-        constants_exported_source = _auto_discover_constants_exported(project_root)
-        if constants_exported_source is not None:
-            result.notes.append(
-                "Auto-discovered exported constants source from project_root: "
-                f"{constants_exported_source.resolve()}"
-            )
-
-    if carpaints_source is None and repo_root is not None:
-        carpaints_source = _auto_discover_carpaints_source(repo_root, project_root)
-        if carpaints_source is not None:
-            result.notes.append(
-                f"Auto-discovered carpaint source from repo_root: {carpaints_source.resolve()}"
-            )
+    inputs = resolve_materialize_inputs(
+        repo_root=repo_root,
+        project_root=project_root,
+        scene_source=scene_source,
+        constants_expected_source=constants_expected_source,
+        constants_exported_source=constants_exported_source,
+        carpaints_source=carpaints_source,
+        carpaints_helper=carpaints_helper,
+    )
+    result.notes.extend(inputs.notes)
 
     metadata = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "sources": {},
+        "sources": inputs.source_map(),
         "notes": result.notes,
     }
 
-    if scene_source is not None:
+    if inputs.scene_source is not None:
         target = output_bundle / "scene_hierarchy.json"
-        write_json(target, normalize_scene_hierarchy_source(scene_source))
+        write_json(target, normalize_scene_hierarchy_source(inputs.scene_source))
         result.written_files.append(target.resolve())
-        metadata["sources"]["scene_hierarchy"] = str(scene_source.resolve())
     else:
         result.notes.append("scene_hierarchy.json was not materialized; anchors stays unavailable")
 
-    if constants_expected_source is not None:
+    if inputs.constants_expected_source is not None:
         target = output_bundle / "constants_expected.json"
-        write_json(target, normalize_constants_source(constants_expected_source))
+        write_json(target, normalize_constants_source(inputs.constants_expected_source))
         result.written_files.append(target.resolve())
-        metadata["sources"]["constants_expected"] = str(constants_expected_source.resolve())
     else:
         result.notes.append(
             "constants_expected.json was not materialized; constants pack will fail if run"
         )
 
-    if constants_exported_source is not None:
+    if inputs.constants_exported_source is not None:
         target = output_bundle / "constants_exported.json"
-        write_json(target, normalize_constants_source(constants_exported_source))
+        write_json(target, normalize_constants_source(inputs.constants_exported_source))
         result.written_files.append(target.resolve())
-        metadata["sources"]["constants_exported"] = str(constants_exported_source.resolve())
     else:
         result.notes.append(
             "constants_exported.json was not materialized; constants pack will fail if run"
         )
 
-    if carpaints_source is not None:
+    if inputs.carpaints_source is not None:
         target = output_bundle / "carpaints.json"
         payload, note = normalize_carpaints_source(
-            carpaints_source,
-            helper_path=carpaints_helper,
+            inputs.carpaints_source,
+            helper_path=inputs.carpaints_helper,
         )
         write_json(target, payload)
         result.written_files.append(target.resolve())
-        metadata["sources"]["carpaints"] = str(carpaints_source.resolve())
-        if carpaints_helper is not None:
-            metadata["sources"]["carpaints_helper"] = str(carpaints_helper.resolve())
         if note:
             result.notes.append(note)
     else:
         result.notes.append("carpaints.json was not materialized; carpaints pack stays unavailable")
 
-    manifest_root = repo_root or project_root
-    manifest_project = project_root or repo_root
+    manifest_root = inputs.repo_root or inputs.project_root
+    manifest_project = inputs.project_root or inputs.repo_root
     if manifest_root is not None and manifest_project is not None:
         target = output_bundle / "project_manifest.json"
         manifest = build_project_manifest(
@@ -216,8 +275,6 @@ def materialize_bundle(
         )
         write_json(target, manifest)
         result.written_files.append(target.resolve())
-        metadata["sources"]["project_manifest_root"] = str(manifest_root.resolve())
-        metadata["sources"]["project_manifest_project"] = str(manifest_project.resolve())
         if report_context:
             metadata["sources"]["report_context"] = "cli/materialize overrides"
     else:

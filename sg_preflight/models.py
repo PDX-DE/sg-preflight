@@ -16,6 +16,19 @@ class Finding:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "Finding":
+        return cls(
+            pack=str(payload.get("pack", "")),
+            code=str(payload.get("code", "")),
+            severity=str(payload.get("severity", "")),
+            message=str(payload.get("message", "")),
+            location=payload.get("location"),
+            details=dict(payload.get("details", {}))
+            if isinstance(payload.get("details"), dict)
+            else {},
+        )
+
 
 @dataclass
 class PackResult:
@@ -49,6 +62,18 @@ class PackResult:
             "findings": [f.to_dict() for f in self.findings],
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "PackResult":
+        findings = payload.get("findings", [])
+        return cls(
+            pack=str(payload.get("pack", "")),
+            findings=[
+                Finding.from_dict(item)
+                for item in findings
+                if isinstance(item, dict)
+            ],
+        )
+
 
 @dataclass
 class Report:
@@ -63,6 +88,20 @@ class Report:
             "summary": self.summary(),
             "packs": [p.to_dict() for p in self.packs],
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "Report":
+        return cls(
+            bundle=str(payload.get("bundle", "")),
+            context=dict(payload.get("context", {}))
+            if isinstance(payload.get("context"), dict)
+            else {},
+            packs=[
+                PackResult.from_dict(item)
+                for item in payload.get("packs", [])
+                if isinstance(item, dict)
+            ],
+        )
 
     def summary(self) -> dict[str, int]:
         errors = sum(p.error_count for p in self.packs)

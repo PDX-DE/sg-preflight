@@ -118,6 +118,28 @@ def _action_items(report: Report, rules: dict[str, Any]) -> list[dict[str, objec
     return items
 
 
+def build_report_presentation(
+    report: Report,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    rules = _reporting_rules(config)
+    grouped_findings = []
+    for item in _group_findings(report):
+        hint = _finding_hint(str(item["pack"]), str(item["code"]), rules)
+        grouped_findings.append({**item, **hint})
+
+    return {
+        "summary": report.summary(),
+        "context_items": _context_items(report, rules),
+        "grouped_findings": grouped_findings,
+        "action_items": _action_items(report, rules),
+    }
+
+
+def finding_hint(pack: str, code: str, config: dict[str, Any] | None = None) -> dict[str, str]:
+    return _finding_hint(pack, code, _reporting_rules(config))
+
+
 def write_json_report(report: Report, output_path: Path) -> None:
     ensure_parent(output_path)
     with output_path.open("w", encoding="utf-8") as handle:
@@ -131,10 +153,11 @@ def write_markdown_report(
 ) -> None:
     ensure_parent(output_path)
     rules = _reporting_rules(config)
-    summary = report.summary()
-    context_items = _context_items(report, rules)
-    grouped_findings = _group_findings(report)
-    action_items = _action_items(report, rules)[:8]
+    presentation = build_report_presentation(report, config)
+    summary = presentation["summary"]
+    context_items = presentation["context_items"]
+    grouped_findings = presentation["grouped_findings"]
+    action_items = presentation["action_items"][:8]
 
     if summary["errors"] > 0:
         readout = "Needs action before this can be treated as healthy."
@@ -218,10 +241,11 @@ def write_html_report(
 ) -> None:
     ensure_parent(output_path)
     rules = _reporting_rules(config)
-    summary = report.summary()
-    grouped_findings = _group_findings(report)
-    context_items = _context_items(report, rules)
-    action_items = _action_items(report, rules)[:8]
+    presentation = build_report_presentation(report, config)
+    summary = presentation["summary"]
+    grouped_findings = presentation["grouped_findings"]
+    context_items = presentation["context_items"]
+    action_items = presentation["action_items"][:8]
     groups_by_pack: dict[str, list[dict[str, object]]] = defaultdict(list)
     for item in grouped_findings:
         groups_by_pack[str(item["pack"])].append(item)
@@ -336,10 +360,11 @@ def write_html_report(
         else:
             sample_locations = "<span class='muted'>No location</span>"
 
-        hint = _finding_hint(str(item["pack"]), str(item["code"]), rules)
         count = int(item["count"])
-        owner_html = escape(hint["owner"]) if hint["owner"] else "<span class='muted'>No owner hint</span>"
-        action_html = escape(hint["action"]) if hint["action"] else "<span class='muted'>No action hint</span>"
+        owner = str(item.get("owner", "")).strip()
+        action = str(item.get("action", "")).strip()
+        owner_html = escape(owner) if owner else "<span class='muted'>No owner hint</span>"
+        action_html = escape(action) if action else "<span class='muted'>No action hint</span>"
         group_rows.append(
             f"<tr class='severity-{escape(str(item['severity']))}'>"
             f"<td>{escape(str(item['pack']))}</td>"
