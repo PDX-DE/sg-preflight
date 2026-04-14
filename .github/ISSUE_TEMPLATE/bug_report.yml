@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a defect in SG Preflight or one of its adapters/validators.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken?
+      placeholder: A short description of the failure or unexpected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: QA / Pipeline Impact
+      description: Why does this matter for 3D Car QA, integration, or delivery?
+      placeholder: Explain the workflow impact, not only the technical symptom.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: Commands, files, and context needed to reproduce the issue.
+      placeholder: |
+        1. Run ...
+        2. Materialize ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Include report paths, screenshots, logs, or sample input references.
+      placeholder: out/smoke-test/latest/current-source.html
+  - type: textarea
+    id: access
+    attributes:
+      label: Access / Source Dependencies
+      description: Note any missing SG/BMW-side files, paths, or permissions.

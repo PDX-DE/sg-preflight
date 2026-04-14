@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a new validator, adapter, evidence improvement, or workflow integration.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / pain point
+      description: What recurring team pain should this solve?
+      placeholder: Describe the workflow problem first, not only the implementation idea.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed capability
+      description: What should SG Preflight do?
+    validations:
+      required: true
+  - type: textarea
+    id: source_inputs
+    attributes:
+      label: Expected source inputs
+      description: Which SG/BMW files, helper scripts, exports, or docs should power this?
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Expected evidence / output
+      description: What should the report, summary, or handoff artifact look like?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What would make this done and demonstrably useful?

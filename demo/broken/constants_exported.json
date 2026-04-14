@@ -1,0 +1,14 @@
+{
+  "trim_line": "Luxury",
+  "engine_type": "ICE",
+  "tire_diameter_mm": {
+    "front": 705.0,
+    "rear": "719.9"
+  },
+  "suspension_mm": {
+    "front": 153.0
+  },
+  "reflections": {
+    "intensity": 0.60
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "project_root": "C:\\repos\\Seriengrafik\\trunk\\Cars\\BMW\\G70",
+  "raco_version": "2.3.1",
+  "path_references": [
+    "C:\\repos\\Seriengrafik\\trunk\\Cars\\BMW\\G70\\main.rca",
+    "C:\\repos\\Seriengrafik\\trunk\\Cars\\BMW\\_Shared\\MatLib\\materials.rca"
+  ],
+  "lua_files": [
+    {"path": "logic\\welcome.lua", "referenced": true},
+    {"path": "logic\\lightfx.lua", "referenced": true}
+  ],
+  "gltf_imports": [
+    {
+      "name": "g70_body",
+      "previous_objects": ["Body", "Door_FL", "Door_FR"],
+      "current_objects": ["Body", "Door_FL", "Door_FR"]
+    }
+  ],
+  "env": {
+    "SG_REPO": "C:\\repos\\Seriengrafik",
+    "SP_REPO": "C:\\Users\\Demo\\OneDrive - Paradox Cat GmbH\\Dokumente - Seriengrafik",
+    "SG_CARMODELS_REPO": "C:\\repos\\digital-3d-car-models"
+  },
+  "report_context": {
+    "car_model": "G70",
+    "trim_line": "Sport",
+    "delivery_phase": "preview",
+    "review_target": "internal_rack",
+    "evidence_source": "demo-good bundle",
+    "owner": "3D Car QA"
+  }
+}

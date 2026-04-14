@@ -1,0 +1,26 @@
+{
+  "name": "ExportScene",
+  "children": [
+    {
+      "name": "Anchorpoints_BoundingBox",
+      "children": [
+        {
+          "name": "APN_BoundingBox_Hood_F_U_L",
+          "metadata": {"bbox_position": ["F", "U", "L"]}
+        },
+        {
+          "name": "APN_BoundingBox_Hood_F_U_L",
+          "metadata": {"bbox_position": ["F", "U", "R"]}
+        },
+        {
+          "name": "APN_BoudingBox_Trunk_B_U_R",
+          "metadata": {"bbox_position": ["B", "U", "R"]}
+        },
+        {
+          "name": "APN_BoundingBox_Wingtip_X_U_L",
+          "metadata": {"bbox_position": ["F", "U", "L"]}
+        }
+      ]
+    }
+  ]
+}

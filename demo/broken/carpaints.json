@@ -1,0 +1,29 @@
+{
+  "carpaints": [
+    {
+      "id": "cp_001",
+      "name": "Frozen Silver",
+      "finish": "matte",
+      "roughness": 0.12,
+      "metallic": 0.20,
+      "base_color": [0.74, 0.75, 1.70],
+      "clearcoat": 0.15
+    },
+    {
+      "id": "cp_001",
+      "name": "Ocean Blue",
+      "finish": "hyper-gloss",
+      "roughness": 1.4,
+      "metallic": 0.2,
+      "base_color": [0.11, 0.24],
+      "clearcoat": "0.65"
+    },
+    {
+      "name": "Missing Keys Example",
+      "finish": "solid",
+      "roughness": 0.3,
+      "metallic": 0.0,
+      "base_color": [0.2, 0.2, 0.2]
+    }
+  ]
+}

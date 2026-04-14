@@ -1,0 +1,182 @@
+{
+  "anchors": {
+    "root_name": "Anchorpoints_BoundingBox",
+    "allowed_parts": [
+      "Hood",
+      "Trunk",
+      "Mirror_FL",
+      "Mirror_FR",
+      "Door_FL",
+      "Door_FR",
+      "Door_RL",
+      "Door_RR",
+      "Wheel_FL",
+      "Wheel_FR",
+      "Wheel_RL",
+      "Wheel_RR"
+    ],
+    "expected_anchor_names": [
+      "APN_BoundingBox_Hood_F_U_L",
+      "APN_BoundingBox_Hood_F_U_R",
+      "APN_BoundingBox_Trunk_B_U_L",
+      "APN_BoundingBox_Trunk_B_U_R"
+    ]
+  },
+  "constants": {
+    "numeric_paths": [
+      {"path": "tire_diameter_mm.front", "tolerance": 1.0},
+      {"path": "tire_diameter_mm.rear", "tolerance": 1.0},
+      {"path": "suspension_mm.front", "tolerance": 0.5},
+      {"path": "suspension_mm.rear", "tolerance": 0.5},
+      {"path": "reflections.intensity", "tolerance": 0.05}
+    ],
+    "exact_paths": [
+      {"path": "trim_line"},
+      {"path": "engine_type"}
+    ]
+  },
+  "carpaints": {
+    "required_keys": [
+      "id",
+      "name",
+      "finish",
+      "roughness",
+      "metallic",
+      "base_color",
+      "clearcoat"
+    ],
+    "allowed_finish": [
+      "solid",
+      "metallic",
+      "matte"
+    ],
+    "unique_keys": [
+      "id",
+      "name"
+    ],
+    "ranges": {
+      "roughness": [0.0, 1.0],
+      "metallic": [0.0, 1.0],
+      "clearcoat": [0.0, 1.0]
+    },
+    "array_lengths": {
+      "base_color": 3
+    }
+  },
+  "project_sanity": {
+    "raco_version_policy": {
+      "mode": "warn_if_not_recommended",
+      "recommended": ["2.3.1"]
+    },
+    "required_context_fields": [
+      "car_model",
+      "trim_line",
+      "delivery_phase",
+      "review_target",
+      "evidence_source"
+    ],
+    "required_env_vars": [
+      "SG_REPO",
+      "SP_REPO",
+      "SG_CARMODELS_REPO"
+    ],
+    "allowed_absolute_prefixes": []
+  },
+  "reporting": {
+    "context_field_order": [
+      "car_model",
+      "trim_line",
+      "delivery_phase",
+      "review_target",
+      "evidence_source",
+      "owner",
+      "notes"
+    ],
+    "context_labels": {
+      "car_model": "Car Model",
+      "trim_line": "Trim Line",
+      "delivery_phase": "Delivery Phase",
+      "review_target": "Review Target",
+      "evidence_source": "Evidence Source",
+      "owner": "Owner",
+      "notes": "Notes"
+    },
+    "pack_owner_hints": {
+      "anchors": "3D / export-scene owner",
+      "constants": "3D + integration constants owner",
+      "carpaints": "materials / carpaint data owner",
+      "project_sanity": "TA / pipeline / integration owner"
+    },
+    "pack_action_hints": {
+      "anchors": "Fix naming, duplicates, or expected anchor coverage before the next rack or integration review.",
+      "constants": "Compare expected engineering data against exported values and correct the source or export mapping before handoff.",
+      "carpaints": "Clean the carpaint payload or workbook so IDs, names, ranges, and finish values are stable before review.",
+      "project_sanity": "Fix workspace, reference, or environment problems early so later rack and integration steps are not blocked."
+    },
+    "code_hints": {
+      "anchors.missing_expected": {
+        "action": "Add the missing expected anchors in the export scene or update the expected-anchor rules for this car."
+      },
+      "anchors.invalid_name": {
+        "action": "Rename the anchor to match the SG naming convention before export."
+      },
+      "anchors.position_mismatch": {
+        "action": "Align the encoded anchor name with its metadata so downstream checks and integrations stay deterministic."
+      },
+      "anchors.duplicate_name": {
+        "action": "Remove or rename duplicate anchors so the export scene has one unambiguous source per anchor."
+      },
+      "constants.out_of_tolerance": {
+        "action": "Check the engineering source, Pivot Master generation, and exported constants for drift or incorrect mapping."
+      },
+      "constants.exact_mismatch": {
+        "action": "Correct the identity field mismatch before delivery so trim or engine data stays traceable."
+      },
+      "constants.exported_key_missing": {
+        "action": "Restore the missing exported constant or fix the export pipeline so the key is emitted."
+      },
+      "carpaints.duplicate_unique_value": {
+        "action": "Resolve duplicate IDs or names so carpaint review and integration use a single stable identity."
+      },
+      "carpaints.invalid_finish": {
+        "action": "Normalize the finish type to the supported set before the paint data is handed off."
+      },
+      "carpaints.out_of_range": {
+        "action": "Clamp or correct the offending value so the carpaint payload stays inside the expected numeric range."
+      },
+      "carpaints.missing_key": {
+        "action": "Fill the missing required paint fields before the payload is reused by downstream tooling."
+      },
+      "project_sanity.onedrive_root": {
+        "action": "Move the project out of OneDrive before further rack, emulator, or integration work."
+      },
+      "project_sanity.onedrive_path": {
+        "action": "Replace OneDrive-backed references with local repo or workspace paths before handoff."
+      },
+      "project_sanity.suspicious_absolute_path": {
+        "action": "Replace ad-hoc absolute paths with repo-relative or approved workspace paths."
+      },
+      "project_sanity.missing_env_var": {
+        "action": "Set the required environment variables so project-specific scripts and integrations resolve the right roots."
+      },
+      "project_sanity.unused_lua": {
+        "action": "Confirm whether the Lua file is intentionally unused; delete it or wire it into the project if needed."
+      },
+      "project_sanity.raco_version_not_recommended": {
+        "action": "Switch to a recommended RaCo version or explicitly document why this project requires a different one."
+      },
+      "project_sanity.gltf_topology_drift": {
+        "action": "Check whether the glTF object-count change is intentional because hot reload and integration stability may be affected."
+      },
+      "project_sanity.gltf_object_set_changed": {
+        "action": "Review added and removed objects before integration so downstream consumers do not break unexpectedly."
+      },
+      "project_sanity.gltf_reorder": {
+        "action": "Keep object order stable if downstream tooling depends on import ordering."
+      },
+      "project_sanity.missing_report_context": {
+        "action": "Add report context such as car model, trim, delivery phase, and review target so the findings can be handed off cleanly."
+      }
+    }
+  }
+}

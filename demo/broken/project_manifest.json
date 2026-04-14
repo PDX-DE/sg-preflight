@@ -1,0 +1,30 @@
+{
+  "project_root": "C:\\Users\\Demo\\OneDrive - Paradox Cat GmbH\\Documents\\Seriengrafik\\trunk\\Cars\\BMW\\G70",
+  "raco_version": "2.1.0",
+  "path_references": [
+    "C:\\Users\\Demo\\OneDrive - Paradox Cat GmbH\\Documents\\Seriengrafik\\trunk\\Cars\\BMW\\G70\\main.rca",
+    "D:\\temp\\manual_copy\\external_materials.rca",
+    "/tmp/debug_scene.rca"
+  ],
+  "lua_files": [
+    {"path": "logic\\welcome.lua", "referenced": true},
+    {"path": "logic\\unused_debug.lua", "referenced": false}
+  ],
+  "gltf_imports": [
+    {
+      "name": "g70_body",
+      "previous_objects": ["Body", "Door_FL", "Door_FR"],
+      "current_objects": ["Body", "Door_FR", "Door_FL", "SensorHL"]
+    }
+  ],
+  "env": {
+    "SG_REPO": "",
+    "SP_REPO": "C:\\Users\\Demo\\OneDrive - Paradox Cat GmbH\\Dokumente - Seriengrafik"
+  },
+  "report_context": {
+    "car_model": "G70",
+    "trim_line": "Luxury",
+    "delivery_phase": "final_delivery",
+    "review_target": "rack_review"
+  }
+}

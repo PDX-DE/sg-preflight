@@ -1,0 +1,22 @@
+{
+  "carpaints": [
+    {
+      "id": "cp_001",
+      "name": "Frozen Silver",
+      "finish": "matte",
+      "roughness": 0.75,
+      "metallic": 0.20,
+      "base_color": [0.74, 0.75, 0.77],
+      "clearcoat": 0.15
+    },
+    {
+      "id": "cp_002",
+      "name": "Ocean Blue",
+      "finish": "metallic",
+      "roughness": 0.28,
+      "metallic": 0.92,
+      "base_color": [0.11, 0.24, 0.57],
+      "clearcoat": 0.65
+    }
+  ]
+}
