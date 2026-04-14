@@ -27,6 +27,8 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Smoke-test flow now generates markdown handoff artifacts in addition to JSON and HTML reports
 - README now documents the current local source-drop workflow and intended branch/release hygiene
 - Generated outputs and local retro/source-drop folders are now ignored cleanly for a publishable repo state
+- HTML reporting now stays compatible with Python 3.11 in CI
+- GitHub Actions now use Node 24-ready `actions/checkout@v5` and `actions/setup-python@v6`
 
 ### Known Gaps
 

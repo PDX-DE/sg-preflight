@@ -338,6 +338,8 @@ def write_html_report(
 
         hint = _finding_hint(str(item["pack"]), str(item["code"]), rules)
         count = int(item["count"])
+        owner_html = escape(hint["owner"]) if hint["owner"] else "<span class='muted'>No owner hint</span>"
+        action_html = escape(hint["action"]) if hint["action"] else "<span class='muted'>No action hint</span>"
         group_rows.append(
             f"<tr class='severity-{escape(str(item['severity']))}'>"
             f"<td>{escape(str(item['pack']))}</td>"
@@ -346,8 +348,8 @@ def write_html_report(
             f"<td>{escape(_format_occurrence_label(count))}</td>"
             f"<td>{sample_locations}</td>"
             f"<td>{escape(str(item['message']))}</td>"
-            f"<td>{escape(hint['owner']) or '<span class=\"muted\">No owner hint</span>'}</td>"
-            f"<td>{escape(hint['action']) or '<span class=\"muted\">No action hint</span>'}</td>"
+            f"<td>{owner_html}</td>"
+            f"<td>{action_html}</td>"
             "</tr>"
         )
 
