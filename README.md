@@ -1,6 +1,6 @@
 # SG Preflight
 
-A Python-first internal framework for deterministic 3D Car QA preflight checks.
+A Python-first internal framework for deterministic 3D Car QA preflight checks, with a local operator UI over the same validation engine.
 
 This project turns several current manual SG checks into repeatable validation with machine-readable and human-readable reports.
 
@@ -21,7 +21,7 @@ See [NOTICE.md](NOTICE.md) for the current handling note.
 
 ## Repository Status
 
-- current maturity: working internal preflight framework with live `G70`, `G65`, and `G45` slices
+- current maturity: working internal preflight framework with live `G70`, `G65`, and `G45` slices plus a local operator UI
 - branch model: GitFlow-style `main`, `develop`, `feature/*`, `release/*`, `hotfix/*`
 - contribution/review flow: see [CONTRIBUTING.md](CONTRIBUTING.md)
 - security / sensitive-data handling: see [SECURITY.md](SECURITY.md)
@@ -97,6 +97,37 @@ Run tests:
 python -m unittest discover -s tests -v
 ```
 
+List the canonical live profiles:
+
+```bash
+python -m sg_preflight list-profiles --json
+```
+
+Run one canonical live profile end-to-end:
+
+```bash
+python -m sg_preflight run-profile G70 --fail-on never
+```
+
+Start the local operator UI:
+
+```bash
+python -m sg_preflight ui
+```
+
+The operator UI serves locally at `http://127.0.0.1:8765/ui` by default.
+It provides:
+
+- Home: live profiles, recent runs, prerequisite status, cached mirror health
+- Run: resolved SG inputs, context overrides, pack selection, launch flow
+- Result: grouped findings, owner/action hints, severity filters, per-finding drilldown
+- Evidence: direct links to reports, bundle metadata, manifest, and SG source files
+
+UI-triggered runs persist under `out\operator-ui\runs`.
+Mirror-audit cache lives under `out\operator-ui\cache`.
+
+Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-workflow.md).
+
 Run the full smoke-test flow:
 
 ```powershell
@@ -111,7 +142,7 @@ Run the real SG smoke flow against the copied SVN mirror:
 powershell -ExecutionPolicy Bypass -File scripts\run_real_sg_smoke.ps1
 ```
 
-This materializes and validates the first live `G70` bundle from `repositories\trunk` and writes reports to `out\real-sg-smoke\latest`.
+This now runs the canonical `G70` profile through `run-profile` and writes bundle, reports, and `run.json` to `out\real-sg-smoke\latest`.
 
 Run the additional live-car smokes:
 
@@ -126,7 +157,7 @@ Run the side-by-side live matrix:
 powershell -ExecutionPolicy Bypass -File scripts\run_real_live_matrix_smoke.ps1
 ```
 
-This writes a comparison summary plus per-car bundles and reports to `out\real-live-matrix\latest`.
+This writes a comparison summary plus per-car bundles, reports, and run records to `out\real-live-matrix\latest`.
 
 > [!NOTE]
 > The live matrix is currently the best single command for showing the tool to the 3D team because it compares the current real `G70`, `G65`, and `G45` slices side by side.
@@ -171,27 +202,18 @@ python -m sg_preflight materialize ^
 Live SG mirror workflow with the copied SVN inside this repo:
 
 ```powershell
-python -m sg_preflight materialize `
-  --output-bundle out\g70-live-bundle `
-  --repo-root repositories\trunk `
-  --project-root repositories\trunk\Cars_IDCevo\BMW\G70 `
-  --raco-version 2.3.1 `
-  --env SG-Repo=$PWD\repositories\trunk `
-  --env SG-CarModels-Repo=$PWD\repositories\trunk `
-  --context car_model=G70 `
-  --context trim_line=Basis `
-  --context delivery_phase=svn_live_preflight `
-  --context review_target=g70_end_to_end `
-  --context evidence_source=local_svn_mirror
-
-python -m sg_preflight run `
-  --bundle out\g70-live-bundle `
-  --config config\sg_rules_live.json `
-  --json-out out\g70-live.json `
-  --html-out out\g70-live.html `
-  --md-out out\g70-live.md `
+python -m sg_preflight run-profile G70 `
+  --output-root out\g70-live `
   --fail-on never
 ```
+
+This writes:
+
+- `out\g70-live\bundle\`
+- `out\g70-live\g70-report.json`
+- `out\g70-live\g70-report.html`
+- `out\g70-live\g70-report.md`
+- `out\g70-live\run.json`
 
 The `materialize` command now auto-discovers these live SG inputs from `project_root` when they exist:
 
@@ -259,6 +281,9 @@ This repo now includes that first adapter layer:
 - `probe` discovers SG-style repo roots and known helper assets
 - `materialize` normalizes SG-shaped inputs into the bundle contract
 - validators continue to operate only on the normalized bundle
+- `list-profiles` exposes the canonical live-profile registry
+- `run-profile` materializes and validates a canonical live slice in one step
+- `ui` serves the local operator workflow over the same shared services
 
 ## Project structure
 
@@ -317,6 +342,7 @@ This is already fully runnable, but it is still an early internal release:
 > [!WARNING]
 > The current live findings are useful production signal, not synthetic demo failures. A clean tooling run does not mean the car is clean; it means the deterministic checks completed successfully and the remaining findings are likely worth triage.
 - the repo now supports live SG mirror inputs for `G70`, `G65`, and `G45` anchor/constants/carpaint/project-sanity slices
+- the local operator UI is intentionally `run + inspect`, not a separate second validation engine
 - the current live matrix baseline is meaningful already:
   - `G70` surfaces a real duplicate BMW carpaint ID plus cross-car and unused-Lua warnings
   - `G65` surfaces real constant drift between `Pivot_Master` and `Module_constants`

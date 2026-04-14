@@ -10,6 +10,11 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 - Internal proprietary `LICENSE` for repository ownership and internal-use handling
 - End-to-end CLI flow for `probe`, `materialize`, and `run`
+- Canonical live-profile registry for `G70`, `G65`, and `G45`
+- Shared Python service layer for bundle execution, report generation, and persistent run records
+- Local FastAPI/Jinja operator UI with Home, Run, Result, and Evidence views
+- Cached fast mirror audit plus on-demand deep mirror audit for the mirrored SVN
+- CLI surfaces for `list-profiles`, `run-profile`, and `ui`
 - `retro-extract` CLI command for turning Whiteboard retro exports into structured pain/action artifacts
 - Validation packs for `anchors`, `constants`, `carpaints`, and `project_sanity`
 - JSON and HTML reporting with grouped findings and pack-level summaries
@@ -31,6 +36,8 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 - HTML reports now prioritize presentation-friendly grouped findings before raw detail tables
 - Reports now carry workflow context like car model, trim, delivery phase, review target, and evidence source
+- Real SG smoke scripts now consume the shared `run-profile` path instead of duplicating profile definitions in PowerShell
+- Findings now carry richer evidence details for operator drilldown, including duplicate carpaint metadata and anchor-rule context
 - Smoke-test summary output now includes an executive snapshot and grouped takeaways
 - Smoke-test flow now generates markdown handoff artifacts in addition to JSON and HTML reports
 - README now documents the current local source-drop workflow and intended branch/release hygiene
@@ -52,4 +59,5 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 ### Known Gaps
 
 - The first live real-source rollout now covers `G70`, `G65`, and `G45`, but additional BMW/MINI cars still need profile rollout
+- The operator UI is intentionally local-first; a thin desktop wrapper is still deferred until adoption requires one-click packaging
 - Direct RaCo-runtime execution of helper scripts such as `read_json_carpaints.py` is still not part of the current CLI-first flow

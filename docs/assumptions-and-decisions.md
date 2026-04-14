@@ -32,6 +32,14 @@
 
 ## 2026-04-14
 
+- Earlier audit assumptions about missing SG helper assets are no longer valid.
+  The mirrored SVN under `repositories/trunk` does contain:
+  - `.pdx\raco\scripts\testing\read_json_carpaints.py`
+  - `.pdx\python\carmodel_data.json`
+  - `.pdx\python\resource_mappings.json`
+  - `check_scenes.py`
+  - `.pdx\raco\json\anchorpoints\anchorpoint_data*.json`
+
 - The copied mirror under `repositories/trunk` is now the live SG source base for development.
   It is good enough to stop relying on OneDrive-only examples for the first real slice.
 
@@ -76,3 +84,19 @@
   - `G70` highlights cross-car references and one duplicate BMW carpaint ID
   - `G65` highlights real rim/tire-width drift between `Pivot_Master` and `Module_constants`
   - `G45` validates classic anchor families and still surfaces the shared duplicate BMW carpaint ID
+
+- The v1 GUI direction is now fixed:
+  - local web UI first
+  - FastAPI + Jinja templates + vanilla JS
+  - one shared Python service layer for CLI, smoke scripts, and UI
+  - thin desktop wrapper only later if team adoption requires it
+
+- Canonical live car definitions must live in Python, not PowerShell.
+  `list-profiles` and `run-profile` are now the supported profile entry points for operators and automation.
+
+- UI-triggered runs persist under `out/operator-ui/runs`.
+  Cached fast and deep mirror-audit artifacts persist under `out/operator-ui/cache`.
+
+- Mirror audit stays two-tier:
+  - fast cached checks for configured live slices by default
+  - manual deep full-trunk comparison only when an operator explicitly asks for it

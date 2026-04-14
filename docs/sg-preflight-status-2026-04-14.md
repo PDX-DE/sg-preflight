@@ -7,12 +7,13 @@
 The goal is not to build a flashy dashboard first.
 The goal is to catch deterministic issues earlier, reduce obvious rack-session findings, and turn repeated manual checks into reusable evidence.
 
-In practical terms, it is shaping into a CLI tool that:
+In practical terms, it is now a shared Python engine with two operator surfaces:
 
 - ingests SG-shaped source inputs
 - normalizes them into a stable bundle contract
 - runs deterministic validation packs
-- writes JSON and HTML reports that QA, TA, and pipeline people can read
+- writes JSON, HTML, and Markdown reports that QA, TA, and pipeline people can read
+- serves a local operator UI for `run + inspect`
 
 ## What It Does Today
 
@@ -34,8 +35,18 @@ Current CLI surfaces:
 - `python -m sg_preflight probe`
 - `python -m sg_preflight materialize`
 - `python -m sg_preflight run`
+- `python -m sg_preflight list-profiles`
+- `python -m sg_preflight run-profile`
+- `python -m sg_preflight ui`
 - `python -m sg_preflight demo-good`
 - `python -m sg_preflight demo-broken`
+
+Current operator UI surfaces:
+
+- Home
+- Run
+- Result
+- Evidence
 
 ## What It Already Proves
 
@@ -93,25 +104,19 @@ Important note:
 
 ## Current Blockers
 
-These do not stop all progress, but they do block the next jump to truly SG-native validation:
+These do not stop current progress, but they still block the next jump beyond the current live slices:
 
-- no real anchor hierarchy export containing `Anchorpoints_BoundingBox`
-- no real `*_Position_Mapping.json`
-- no real generated `*_Pivot_Master.json`
-- no real `.pdx/raco/TestCarPaint/read_json_carpaints.py`
-- no small current 3D Car project root from the actual SG/BMW side with representative `.rca`, Lua, and export outputs together
+- additional BMW/MINI live profile rollout beyond `G70`, `G65`, and `G45`
+- optional direct RaCo-runtime checks such as `check_scenes.py`
+- richer integration hooks beyond local preflight and evidence capture
 
 ## Exact Files Still Needed From SG/BMW
 
-When access improves, the highest-value fetches are:
+When access improves further, the highest-value next fetches are:
 
-1. one real anchor scene dump or hierarchy export containing `Anchorpoints_BoundingBox`
-2. one real `*_Position_Mapping.json`
-3. one real generated `*_Pivot_Master.json`
-4. one real exported constants JSON from the integrated/exported side
-5. the real `.pdx/raco/TestCarPaint/read_json_carpaints.py`
-6. one real carpaint payload consumed by that helper
-7. one small real SG/BMW project root with `.rca`, `.lua`, and export references
+1. additional live SG/BMW project roots beyond the current three-car baseline
+2. representative MINI-side live slices to widen coverage beyond BMW
+3. practical RaCo-runtime entry points that can be called non-interactively from the local workflow
 
 ## Current Strategic Position
 
@@ -134,4 +139,4 @@ After that:
 
 ## One-Sentence Description For Others
 
-`sg-preflight` is an internal CLI-first QA preflight layer for Seriengrafik 3D Car that turns scattered manual checks into repeatable validation and evidence before integration and rack review.
+`sg-preflight` is an internal QA preflight and evidence layer for Seriengrafik 3D Car that turns scattered manual checks into repeatable validation, persistent run records, and operator-friendly evidence before integration and rack review.
