@@ -29,6 +29,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Generated outputs and local retro/source-drop folders are now ignored cleanly for a publishable repo state
 - HTML reporting now stays compatible with Python 3.11 in CI
 - GitHub Actions now use Node 24-ready `actions/checkout@v5` and `actions/setup-python@v6`
+- CI now treats `demo-broken` as an expected-failure fixture and accepts exit code `2` explicitly
 
 ### Known Gaps
 

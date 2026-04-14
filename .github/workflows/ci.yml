@@ -1,5 +1,8 @@
 name: CI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches:
@@ -40,7 +43,12 @@ jobs:
       - name: Run demo-broken
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          if ($PSVersionTable.PSVersion.Major -ge 7) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
           python -m sg_preflight demo-broken --fail-on error
           if ($LASTEXITCODE -ne 2) {
             throw "demo-broken returned exit code $LASTEXITCODE instead of 2"
           }
+          exit 0
