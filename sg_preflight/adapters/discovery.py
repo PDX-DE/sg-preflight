@@ -15,26 +15,35 @@ DISCOVERY_PATTERNS = {
     "carmodel_data": ["carmodel_data.json"],
     "resource_mappings": ["resource_mappings.json", "resource_list.json"],
     "pivot_scripts": ["*pivots_json.py", "pivot_json.py"],
-    "constants_dirs": ["*/constants/scripts", "*pivot*master*"],
+    "constants_dirs": ["*/constants/scripts", "*pivot*master*", "*position_mapping*"],
     "helper_scripts": [
         "test_absolute_paths.py",
+        "test_absolute_path.py",
         "test_ucap_ign*.py",
+        "test_ucap_ignore.py",
         "test_unused_lu*.py",
+        "test_unused_lua_files.py",
         "test_unnused_lu*.py",
         "disable_msaa*.py",
         "debug_*.py",
+        "check_scenes.py",
         "*perspectivetraceplayer*",
         "*traceplayer*",
     ],
-    "anchor_inputs": ["*anchor*.json", "*hierarchy*.json", "*scene*.json"],
+    "anchor_inputs": ["*AnchorPoints/*.rca", "*anchor*.json", "*hierarchy*.json", "*scene*.json"],
 }
 
 
 def default_search_roots() -> list[Path]:
+    workspace_root = Path(__file__).resolve().parents[2]
     raw_candidates = [
         os.environ.get("SG_REPO"),
+        os.environ.get("SG-Repo"),
         os.environ.get("SP_REPO"),
         os.environ.get("SG_CARMODELS_REPO"),
+        os.environ.get("SG-CarModels-Repo"),
+        str(workspace_root / "repositories"),
+        str(workspace_root / "repositories" / "trunk"),
         r"C:\repos",
         r"C:\repositories",
         r"D:\repos",

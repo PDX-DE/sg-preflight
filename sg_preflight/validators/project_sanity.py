@@ -12,6 +12,39 @@ from sg_preflight.utils import (
 )
 
 
+def _tokenize_pathish(value: str) -> list[str]:
+    normalized = normalize_pathish(value).replace("\\", "/")
+    return [segment for segment in normalized.split("/") if segment and segment not in {".", ".."}]
+
+
+def _looks_like_repo_relative_reference(value: str) -> bool:
+    normalized = normalize_pathish(value).replace("\\", "/")
+    return normalized.startswith("../") or normalized.startswith("/../")
+
+
+def _looks_like_project_relative_reference(value: str, top_level_entries: set[str]) -> bool:
+    normalized = normalize_pathish(value).replace("\\", "/")
+    if not normalized.startswith("/"):
+        return False
+    segments = [segment for segment in normalized.split("/") if segment]
+    if not segments:
+        return False
+    first = segments[0].lower()
+    return first not in {".", ".."} and first in top_level_entries
+
+
+def _contains_foreign_segment(value: str, current: str, candidates: list[str]) -> str | None:
+    current_l = current.lower()
+    segments = {segment.lower(): segment for segment in _tokenize_pathish(value)}
+    for candidate in candidates:
+        if candidate.lower() == current_l:
+            continue
+        match = segments.get(candidate.lower())
+        if match:
+            return match
+    return None
+
+
 def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResult:
     result = PackResult(pack="project_sanity")
     manifest = bundle.project_manifest
@@ -35,6 +68,16 @@ def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResul
     gltf_imports = manifest.get("gltf_imports", [])
     env = manifest.get("env", {})
     report_context = manifest.get("report_context", {})
+    identity = manifest.get("project_identity", {})
+    current_brand = str(identity.get("brand", ""))
+    current_model = str(identity.get("car_model", ""))
+    known_brands = [str(value) for value in manifest.get("known_brands", []) if isinstance(value, str)]
+    known_models = [str(value) for value in manifest.get("known_models", []) if isinstance(value, str)]
+    project_top_level_entries = {
+        str(value).lower()
+        for value in manifest.get("project_top_level_entries", [])
+        if isinstance(value, str)
+    }
 
     if "onedrive" in normalize_pathish(project_root):
         result.add(
@@ -111,6 +154,41 @@ def validate_project_sanity(bundle: Bundle, config: dict[str, Any]) -> PackResul
                     location=raw_path,
                 )
             )
+
+        if _looks_like_repo_relative_reference(raw_path):
+            foreign_brand = _contains_foreign_segment(raw_path, current_brand, known_brands)
+            if foreign_brand is not None:
+                result.add(
+                    Finding(
+                        pack="project_sanity",
+                        code="project_sanity.cross_brand_reference",
+                        severity="warning",
+                        message=(
+                            f"Reference points to another brand ({foreign_brand}) instead of "
+                            f"the current brand {current_brand or '<unknown>'}"
+                        ),
+                        location=raw_path,
+                    )
+                )
+
+            foreign_model = _contains_foreign_segment(raw_path, current_model, known_models)
+            if foreign_model is not None:
+                result.add(
+                    Finding(
+                        pack="project_sanity",
+                        code="project_sanity.cross_car_reference",
+                        severity="warning",
+                        message=(
+                            f"Reference points to another car model ({foreign_model}) instead of "
+                            f"the current car {current_model or '<unknown>'}"
+                        ),
+                        location=raw_path,
+                    )
+                )
+            continue
+
+        if _looks_like_project_relative_reference(raw_path, project_top_level_entries):
+            continue
 
         is_absolute = looks_like_windows_absolute(raw_path) or looks_like_posix_absolute(raw_path)
         if is_absolute:

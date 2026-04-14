@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,11 @@ from sg_preflight.validators.project_sanity import validate_project_sanity
 VALID_PACKS = ("anchors", "constants", "carpaints", "project_sanity")
 
 
+def _console_safe(text: str) -> str:
+    encoding = sys.stdout.encoding or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
 def _parse_packs(raw: str) -> list[str]:
     raw = raw.strip().lower()
     if raw == "all":
@@ -34,21 +40,27 @@ def _parse_packs(raw: str) -> list[str]:
 
 def _console_report(report: Report) -> None:
     summary = report.summary()
-    print(f"Bundle: {report.bundle}")
+    print(_console_safe(f"Bundle: {report.bundle}"))
     print(
+        _console_safe(
         f"Summary -> errors: {summary['errors']} | warnings: {summary['warnings']} | "
         f"info: {summary['info']} | total: {summary['total']}"
+        )
     )
     print("-" * 80)
     for pack in report.packs:
         print(
+            _console_safe(
             f"[{pack.pack}] errors={pack.error_count} warnings={pack.warning_count} "
             f"info={pack.info_count} total={len(pack.findings)}"
+            )
         )
         for finding in pack.findings:
             loc = f" @ {finding.location}" if finding.location else ""
             print(
+                _console_safe(
                 f"  - {finding.severity.upper():7s} {finding.code}{loc}: {finding.message}"
+                )
             )
 
 

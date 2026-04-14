@@ -1,38 +1,52 @@
 {
   "anchors": {
     "root_name": "Anchorpoints_BoundingBox",
+    "prefix": "APN_BoundingBox_",
     "allowed_parts": [
       "Hood",
-      "Trunk",
-      "Mirror_FL",
-      "Mirror_FR",
-      "Door_FL",
-      "Door_FR",
-      "Door_RL",
-      "Door_RR",
-      "Wheel_FL",
-      "Wheel_FR",
-      "Wheel_RL",
-      "Wheel_RR"
+      "Roof",
+      "Trunk"
     ],
-    "expected_anchor_names": [
-      "APN_BoundingBox_Hood_F_U_L",
-      "APN_BoundingBox_Hood_F_U_R",
-      "APN_BoundingBox_Trunk_B_U_L",
-      "APN_BoundingBox_Trunk_B_U_R"
-    ]
+    "expected_parts": [
+      "Hood",
+      "Roof",
+      "Trunk"
+    ],
+    "position_tokens": {
+      "depth": ["B", "F"],
+      "vertical": ["D", "U"],
+      "lateral": ["L", "R"]
+    }
   },
   "constants": {
     "numeric_paths": [
-      {"path": "tire_diameter_mm.front", "tolerance": 1.0},
-      {"path": "tire_diameter_mm.rear", "tolerance": 1.0},
-      {"path": "suspension_mm.front", "tolerance": 0.5},
-      {"path": "suspension_mm.rear", "tolerance": 0.5},
-      {"path": "reflections.intensity", "tolerance": 0.05}
+      {"path": "wheelbase_m", "tolerance": 0.001},
+      {"path": "suspension_offset_m.x", "tolerance": 0.001},
+      {"path": "suspension_offset_m.y", "tolerance": 0.001},
+      {"path": "reflection.car_height_m", "tolerance": 0.001},
+      {"path": "reflection.car_length_m", "tolerance": 0.001},
+      {"path": "reflection.hood_height_m", "tolerance": 0.001},
+      {"path": "reflection.hood_length_m", "tolerance": 0.001},
+      {"path": "reflection.trunk_height_m", "tolerance": 0.001},
+      {"path": "reflection.trunk_length_m", "tolerance": 0.001},
+      {"path": "reflection.x_offset_m", "tolerance": 0.001},
+      {"path": "tire_diameter_cm.Basis.front", "tolerance": 0.001},
+      {"path": "tire_diameter_cm.Basis.rear", "tolerance": 0.001},
+      {"path": "tire_diameter_cm.MPP.front", "tolerance": 0.001},
+      {"path": "tire_diameter_cm.MPP.rear", "tolerance": 0.001},
+      {"path": "rim_diameter_in.Basis.front", "tolerance": 0.001},
+      {"path": "rim_diameter_in.Basis.rear", "tolerance": 0.001},
+      {"path": "rim_diameter_in.MPP.front", "tolerance": 0.001},
+      {"path": "rim_diameter_in.MPP.rear", "tolerance": 0.001},
+      {"path": "wheel_distance_m.Basis.front", "tolerance": 0.001},
+      {"path": "wheel_distance_m.Basis.rear", "tolerance": 0.001},
+      {"path": "wheel_distance_m.MPA.front", "tolerance": 0.001},
+      {"path": "wheel_distance_m.MPA.rear", "tolerance": 0.001}
     ],
     "exact_paths": [
-      {"path": "trim_line"},
-      {"path": "engine_type"}
+      {"path": "brand"},
+      {"path": "car_model"},
+      {"path": "generation"}
     ]
   },
   "carpaints": {
@@ -77,11 +91,13 @@
       "evidence_source"
     ],
     "required_env_vars": [
-      "SG_REPO",
-      "SP_REPO",
-      "SG_CARMODELS_REPO"
+      "SG-Repo",
+      "SG-CarModels-Repo"
     ],
-    "allowed_absolute_prefixes": []
+    "allowed_absolute_prefixes": [
+      "C:\\repos\\Seriengrafik\\trunk",
+      "C:\\repositories\\trunk"
+    ]
   },
   "reporting": {
     "context_field_order": [
@@ -110,31 +126,31 @@
     },
     "pack_action_hints": {
       "anchors": "Fix naming, duplicates, or expected anchor coverage before the next rack or integration review.",
-      "constants": "Compare expected engineering data against exported values and correct the source or export mapping before handoff.",
-      "carpaints": "Clean the carpaint payload or workbook so IDs, names, ranges, and finish values are stable before review.",
+      "constants": "Compare Pivot Master, Module_constants, and scene/export values before handoff so constants drift is visible early.",
+      "carpaints": "Clean the carpaint payload so IDs, names, ranges, and finish values are stable before review.",
       "project_sanity": "Fix workspace, reference, or environment problems early so later rack and integration steps are not blocked."
     },
     "code_hints": {
       "anchors.missing_expected": {
-        "action": "Add the missing expected anchors in the export scene or update the expected-anchor rules for this car."
+        "action": "Add the missing expected anchors in the RES_AnchorPoints scene or update the rules for this car."
       },
       "anchors.invalid_name": {
         "action": "Rename the anchor to match the SG naming convention before export."
       },
       "anchors.position_mismatch": {
-        "action": "Align the encoded anchor name with its metadata so downstream checks and integrations stay deterministic."
+        "action": "Align the encoded anchor name with the actual scene position so downstream compositor logic stays deterministic."
       },
       "anchors.duplicate_name": {
-        "action": "Remove or rename duplicate anchors so the export scene has one unambiguous source per anchor."
+        "action": "Remove or rename duplicate anchors so the anchor scene has one unambiguous source per anchor."
       },
       "constants.out_of_tolerance": {
-        "action": "Check the engineering source, Pivot Master generation, and exported constants for drift or incorrect mapping."
+        "action": "Check Pivot Master generation, Module_constants, and linked scene logic for drift or incorrect mapping."
       },
       "constants.exact_mismatch": {
-        "action": "Correct the identity field mismatch before delivery so trim or engine data stays traceable."
+        "action": "Correct the car identity mismatch so the constants bundle stays traceable."
       },
       "constants.exported_key_missing": {
-        "action": "Restore the missing exported constant or fix the export pipeline so the key is emitted."
+        "action": "Restore the missing Module_constants value or adjust the normalization rules so the exported key is emitted."
       },
       "carpaints.duplicate_unique_value": {
         "action": "Resolve duplicate IDs or names so carpaint review and integration use a single stable identity."
@@ -158,13 +174,13 @@
         "action": "Replace ad-hoc absolute paths with repo-relative or approved workspace paths."
       },
       "project_sanity.cross_brand_reference": {
-        "action": "Check whether this scene is intentionally linking across brands; otherwise relink it to the correct brand-local asset."
+        "action": "Review whether the reference should really point across brands; if not, relink it to the correct BMW/MINI-side asset."
       },
       "project_sanity.cross_car_reference": {
-        "action": "Check whether this scene is intentionally linking another car model; otherwise relink it to the current car or shared asset."
+        "action": "Review whether the reference should really point to another car model; if not, relink it to the current car or a shared asset."
       },
       "project_sanity.missing_env_var": {
-        "action": "Set the required environment variables so project-specific scripts and integrations resolve the right roots."
+        "action": "Set the required SG environment variables so existing Ramses Composer scripts resolve the right roots."
       },
       "project_sanity.unused_lua": {
         "action": "Confirm whether the Lua file is intentionally unused; delete it or wire it into the project if needed."

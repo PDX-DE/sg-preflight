@@ -29,3 +29,50 @@
 - One exported constants JSON example from the integrated side
 - The actual `read_json_carpaints.py` plus one compatible carpaints JSON input
 - One representative project root containing `.lua` references and any path-heavy `.rca` or manifest files
+
+## 2026-04-14
+
+- The copied mirror under `repositories/trunk` is now the live SG source base for development.
+  It is good enough to stop relying on OneDrive-only examples for the first real slice.
+
+- The first end-to-end live validation target is `Cars_IDCevo/BMW/G70`.
+  It currently gives us:
+  - real bounding-box anchors in `RES_G70_AnchorPoints.rca`
+  - real `G70_Pivot_Master.json`
+  - real `Module_constants_G70.lua`
+  - real BMW-wide `CarPaint.json`
+
+- SG carpaint `StyleID` meaning is now treated as source-of-truth from the shared interfaces:
+  - `0 = Uni/solid`
+  - `1 = Metallic`
+  - `2 = Frozen`
+
+- SG `.rca` files store several path flavors that must not be confused with OS-absolute filesystem paths:
+  - repo-relative references like `../../../G65/...`
+  - project-relative references like `/logic/...` or `/_Common/...`
+  These need dedicated classification in `project_sanity` instead of generic absolute-path warnings.
+
+- The current live `G70` smoke baseline is useful even before rack/runtime integration:
+  - one real duplicate carpaint ID in BMW `CarPaint.json`
+  - real cross-car references to `G65`
+  - a small set of genuinely unreferenced Lua files
+
+- Remaining high-value gaps are now narrower:
+  - extend the live rules beyond the first `G70` slice
+  - support non-bounding-box anchor packs such as sensor / tire-pressure / scale anchors
+  - optionally wrap RaCo runtime checks like `check_scenes.py` when a usable `RaCoHeadless.exe` is available
+
+- The next serious live rollout after `G70` is now:
+  - `G65` as the second IDCevo end-to-end car
+  - `G45` as the first classic BMW anchor-family expansion target
+
+- Multi-family anchors stay inside the existing `anchors` pack.
+  The validator now supports multiple config-driven anchor rule groups instead of splitting sensor / tire-pressure / scale checks into separate packs.
+
+- `G45` constants validation currently focuses on the non-noisy shared paths between `Pivot_Master` and `Module_constants`.
+  This avoids flooding the report with trim-name normalization ambiguity while still keeping the live report useful.
+
+- The current live three-car matrix is a meaningful baseline:
+  - `G70` highlights cross-car references and one duplicate BMW carpaint ID
+  - `G65` highlights real rim/tire-width drift between `Pivot_Master` and `Module_constants`
+  - `G45` validates classic anchor families and still surfaces the shared duplicate BMW carpaint ID

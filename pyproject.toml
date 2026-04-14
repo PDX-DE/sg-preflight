@@ -8,8 +8,13 @@ version = "0.1.0"
 description = "Deterministic 3D Car QA preflight checks"
 readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "Proprietary - Paradox Cat GmbH internal use only"}
 authors = [
   {name = "David Erik Garcia Arenas"}
+]
+classifiers = [
+  "License :: Other/Proprietary License",
+  "Programming Language :: Python :: 3",
 ]
 
 [project.scripts]

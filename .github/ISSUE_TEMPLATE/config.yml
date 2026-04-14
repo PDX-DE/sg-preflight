@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Repository Workflow And Branching
+    url: https://github.com/PDX-DE/sg-preflight/blob/main/CONTRIBUTING.md
+    about: Read the expected GitFlow-style branching, verification, and review conventions before opening work.
+  - name: Internal Handling Notice
+    url: https://github.com/PDX-DE/sg-preflight/blob/main/NOTICE.md
+    about: Check the internal-use and data-handling notice before attaching reports, mirrored assets, or screenshots.

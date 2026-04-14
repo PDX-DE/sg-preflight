@@ -9,8 +9,12 @@ from pathlib import Path
 import unittest
 from xml.sax.saxutils import escape
 
-from sg_preflight.adapters.project_sanity import _extract_absolute_paths
+from sg_preflight.bundle import Bundle
+from sg_preflight.adapters.anchors import normalize_scene_hierarchy_source
+from sg_preflight.adapters.project_sanity import _extract_absolute_paths, build_project_manifest
 from sg_preflight.adapters.carpaints import normalize_carpaints_source
+from sg_preflight.adapters.constants import normalize_constants_source
+from sg_preflight.validators.project_sanity import validate_project_sanity
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,11 +111,19 @@ def _write_minimal_xlsx(path: Path, sheets: list[tuple[str, list[dict[str, objec
             archive.writestr(f"xl/worksheets/sheet{index}.xml", sheet_xml(rows))
 
 
+def _write_minimal_rca(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    json_name = path.name + ".json"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(json_name, json.dumps(payload, indent=2))
+
+
 class TestAdapters(unittest.TestCase):
     def test_extract_absolute_paths_ignores_urls_and_keeps_real_paths(self) -> None:
         text = (
             "Read https://github.com/GENIVI/ramses-composer-docs and "
             "[manual](../best_practices/manual.md). "
+            "Keep /../../G65/_Common/interfaces/Link_Common_Variants.lua as a repo-relative SG reference. "
             "Use C:\\repos\\Seriengrafik\\trunk\\.pdx\\raco\\TestCarPaint\\read_json_carpaints.py "
             "and /Lua_Interface/ADASAssistMode.lua."
         )
@@ -126,6 +138,57 @@ class TestAdapters(unittest.TestCase):
             ],
         )
 
+    def test_project_manifest_detects_rca_version_and_cross_car_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir) / "repositories" / "trunk"
+            project_root = repo_root / "Cars_IDCevo" / "BMW" / "G70"
+            sibling_root = repo_root / "Cars_IDCevo" / "BMW" / "G65"
+
+            (project_root / "logic").mkdir(parents=True)
+            sibling_root.mkdir(parents=True)
+
+            _write_minimal_rca(
+                project_root / "main.rca",
+                {
+                    "racoVersion": [2, 3, 1],
+                    "instances": [
+                        {
+                            "properties": {
+                                "objectID": "scene-id",
+                                "objectName": "MainScene",
+                                "uri": "/../../G65/_Common/interfaces/Link_Common_Variants.lua",
+                            }
+                        }
+                    ],
+                },
+            )
+            _write_text(
+                project_root / "logic" / "main.lua",
+                'scene = "/../../G65/_Common/interfaces/Link_Common_Variants.lua"\n',
+            )
+
+            manifest = build_project_manifest(repo_root=repo_root, project_root=project_root)
+
+            self.assertEqual(manifest["raco_version"], "2.3.1")
+            self.assertIn(
+                "/../../G65/_Common/interfaces/Link_Common_Variants.lua",
+                manifest["path_references"],
+            )
+            bundle = Bundle(
+                root=project_root,
+                scene_hierarchy=None,
+                constants_expected=None,
+                constants_exported=None,
+                carpaints=None,
+                project_manifest=manifest,
+                bundle_metadata=None,
+            )
+
+            result = validate_project_sanity(bundle, {"project_sanity": {}})
+            codes = {finding.code for finding in result.findings}
+            self.assertIn("project_sanity.cross_car_reference", codes)
+            self.assertNotIn("project_sanity.suspicious_absolute_path", codes)
+
     def test_normalize_carpaints_source_from_legacy_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "carpaints.json"
@@ -134,11 +197,16 @@ class TestAdapters(unittest.TestCase):
                 {
                     "blazing_blue": {
                         "Code": "WC6K",
-                        "StyleID": 0,
+                        "StyleID": 2,
+                        "ClearCoatIntensity": 1.0,
+                        "ClearCoatRoughness": 0.67,
+                        "UnderCoatIntensity": 0.25,
+                        "UnderCoatRoughness": 0.67,
                         "BaseColor": [15.0, 55.0, 120.0],
                         "HalftoneColor": [40.0, 80.0, 120.0],
                         "ShadowTint": [40.0, 15.0, 45.0],
                         "HighlightTint": [75.0, 165.0, 255.0],
+                        "OriginBrand": "BMW",
                     }
                 },
             )
@@ -150,7 +218,11 @@ class TestAdapters(unittest.TestCase):
             entry = payload["carpaints"][0]
             self.assertEqual(entry["id"], "WC6K")
             self.assertEqual(entry["name"], "blazing_blue")
-            self.assertEqual(entry["finish"], "solid")
+            self.assertEqual(entry["finish"], "frozen")
+            self.assertEqual(entry["clearcoat"], 1.0)
+            self.assertEqual(entry["roughness"], 0.67)
+            self.assertEqual(entry["metallic"], 0.25)
+            self.assertEqual(entry["origin_brand"], "BMW")
             self.assertEqual(entry["base_color"], [0.058824, 0.215686, 0.470588])
 
     def test_normalize_carpaints_source_from_xlsx_workbook(self) -> None:
@@ -220,7 +292,7 @@ class TestAdapters(unittest.TestCase):
                                 "L": 0.0,
                                 "M": 0.0,
                                 "N": 0.0,
-                                "O": 1,
+                                "O": 0,
                             }
                         ],
                     )
@@ -235,6 +307,394 @@ class TestAdapters(unittest.TestCase):
             self.assertEqual(entry["name"], "arctic_white")
             self.assertEqual(entry["finish"], "solid")
             self.assertEqual(entry["base_color"], [1.0, 0.0, 1.0])
+
+    def test_normalize_scene_hierarchy_source_from_rca(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rca_path = Path(temp_dir) / "RES_G70_AnchorPoints.rca"
+            _write_minimal_rca(
+                rca_path,
+                {
+                    "instances": [
+                        {
+                            "typeName": "Node",
+                            "properties": {
+                                "objectID": "root-id",
+                                "objectName": "root",
+                                "children": ["anchors-id"],
+                                "translation": {
+                                    "x": {"value": 0.0},
+                                    "y": {"value": 0.0},
+                                    "z": {"value": 0.0},
+                                },
+                            },
+                        },
+                        {
+                            "typeName": "Node",
+                            "properties": {
+                                "objectID": "anchors-id",
+                                "objectName": "Anchorpoints_BoundingBox",
+                                "children": ["hood-id"],
+                                "translation": {
+                                    "x": {"value": 0.0},
+                                    "y": {"value": 0.0},
+                                    "z": {"value": 0.0},
+                                },
+                            },
+                        },
+                        {
+                            "typeName": "Node",
+                            "properties": {
+                                "objectID": "hood-id",
+                                "objectName": "APN_BoundingBox_Hood_F_U_L",
+                                "translation": {
+                                    "x": {"value": -1.0},
+                                    "y": {"value": 1.0},
+                                    "z": {"value": 1.0},
+                                },
+                            },
+                        },
+                    ]
+                },
+            )
+
+            payload = normalize_scene_hierarchy_source(rca_path)
+
+            self.assertEqual(payload["name"], "root")
+            anchors_root = payload["children"][0]
+            self.assertEqual(anchors_root["name"], "Anchorpoints_BoundingBox")
+            self.assertEqual(anchors_root["children"][0]["name"], "APN_BoundingBox_Hood_F_U_L")
+            self.assertEqual(
+                anchors_root["children"][0]["metadata"]["translation"],
+                [-1.0, 1.0, 1.0],
+            )
+
+    def test_normalize_constants_source_from_pivot_master_and_module_constants(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = (
+                Path(temp_dir) / "trunk" / "Cars_IDCevo" / "BMW" / "G70"
+            )
+            pivot_path = project_root / "_Workfiles" / "json" / "G70_Pivot_Master.json"
+            module_path = project_root / "_Common" / "constants" / "scripts" / "Module_constants_G70.lua"
+
+            _write_json(
+                pivot_path,
+                {
+                    "TRANSFORMS": {"Static": {"pos": [0, 0, 0], "rot": [0, 0, 0]}},
+                    "SUSPENSION": {
+                        "Wheelbase": 3.21,
+                        "Origin_Offset": [-0.06, 0.0, -0.019],
+                        "Tire_Diameter": {"TRIM_Basis": 74.5, "TRIM_MPP": 73.5},
+                        "Rim_Diameter": {"TRIM_Basis": 21, "TRIM_MPP": 22},
+                        "Tire_Width": {"TRIM_Basis": [26.5, 26.5], "TRIM_MPP": [26.5, 26.5]},
+                        "Wheel_Outer_Distance": {
+                            "TRIM_Basis": [68.9, 68.9],
+                            "TRIM_MPP": [69.5, 69.5],
+                        },
+                    },
+                    "REFLECTION": {
+                        "Car_Height": 1.59,
+                        "Car_Length": 5.42,
+                        "Hood_Height": 1.07,
+                        "Hood_Length": 1.58,
+                        "Trunk_Height": 1.38,
+                        "Trunk_Length": 1.26,
+                        "X_Offset": -1.0,
+                    },
+                },
+            )
+            _write_text(
+                module_path,
+                """
+local constants = {}
+constants.WHEELBASE = 3.21
+constants.SUSPENSION_OFFSET = {-0.06, -0.019, 0.0}
+local wheels = {
+    Tire_Diameter = 74.5,
+    Tire_Diameter_Rim = 21.0,
+    Tire_Width = 26.5
+}
+constants.WHEELS_SIZE_BASIS = wheels
+wheels = {
+    Tire_Diameter = 73.5,
+    Tire_Diameter_Rim = 22.0,
+    Tire_Width = 26.5
+}
+constants.WHEELS_SIZE_MPP = wheels
+local wheelDistance = {
+    Basis = {0.689, 0.689},
+    MPP = {0.695, 0.695}
+}
+constants.WHEEL_DISTANCE = wheelDistance
+constants.CAR_HEIGHT = 1.59
+constants.CAR_LENGTH = 5.42
+constants.HOOD_HEIGHT = 1.07
+constants.HOOD_LENGTH = 1.58
+constants.TRUNK_HEIGHT = 1.38
+constants.TRUNK_LENGTH = 1.26
+constants.X_OFFSET = 1.0
+return constants
+""".strip(),
+            )
+
+            expected = normalize_constants_source(pivot_path)
+            exported = normalize_constants_source(module_path)
+
+            self.assertEqual(expected["schema"], "sg_pivot_master")
+            self.assertEqual(exported["schema"], "sg_module_constants")
+            self.assertEqual(expected["car_model"], "G70")
+            self.assertEqual(exported["brand"], "BMW")
+            self.assertEqual(expected["wheelbase_m"], 3.21)
+            self.assertEqual(expected["suspension_offset_m"]["y"], -0.019)
+            self.assertEqual(expected["reflection"]["x_offset_m"], 1.0)
+            self.assertEqual(exported["tire_diameter_cm"]["Basis"]["front"], 74.5)
+            self.assertEqual(exported["wheel_distance_m"]["MPP"]["rear"], 0.695)
+
+    def test_materialize_bundle_autodiscovers_live_sg_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            repo_root = temp_root / "repositories" / "trunk"
+            project_root = repo_root / "Cars_IDCevo" / "BMW" / "G70"
+            carpaint_path = repo_root / "Cars" / "BMW" / "CarPaint.json"
+
+            (project_root / "logic").mkdir(parents=True)
+            (project_root / "resources" / "RES_G70_AnchorPoints").mkdir(parents=True)
+
+            anchor_names = []
+            for part in ("Hood", "Roof", "Trunk"):
+                for depth in ("B", "F"):
+                    for vertical in ("D", "U"):
+                        for lateral in ("L", "R"):
+                            anchor_names.append(f"APN_BoundingBox_{part}_{depth}_{vertical}_{lateral}")
+
+            instances = [
+                {
+                    "typeName": "Node",
+                    "properties": {
+                        "objectID": "root-id",
+                        "objectName": "root",
+                        "children": ["anchors-id"],
+                        "translation": {
+                            "x": {"value": 0.0},
+                            "y": {"value": 0.0},
+                            "z": {"value": 0.0},
+                        },
+                    },
+                },
+                {
+                    "typeName": "Node",
+                    "properties": {
+                        "objectID": "anchors-id",
+                        "objectName": "Anchorpoints_BoundingBox",
+                        "children": [],
+                        "translation": {
+                            "x": {"value": 0.0},
+                            "y": {"value": 0.0},
+                            "z": {"value": 0.0},
+                        },
+                    },
+                },
+            ]
+            for index, name in enumerate(anchor_names, start=1):
+                child_id = f"anchor-{index}"
+                instances[1]["properties"]["children"].append(child_id)
+                instances.append(
+                    {
+                        "typeName": "Node",
+                        "properties": {
+                            "objectID": child_id,
+                            "objectName": name,
+                            "translation": {
+                                "x": {"value": float(index)},
+                                "y": {"value": float(index)},
+                                "z": {"value": float(index)},
+                            },
+                        },
+                    }
+                )
+
+            _write_minimal_rca(
+                project_root / "resources" / "RES_G70_AnchorPoints" / "RES_G70_AnchorPoints.rca",
+                {"instances": instances},
+            )
+            _write_json(
+                project_root / "_Workfiles" / "json" / "G70_Pivot_Master.json",
+                {
+                    "TRANSFORMS": {"Static": {"pos": [0, 0, 0], "rot": [0, 0, 0]}},
+                    "SUSPENSION": {
+                        "Wheelbase": 3.21,
+                        "Origin_Offset": [-0.06, 0.0, -0.019],
+                        "Tire_Diameter": {
+                            "TRIM_Basis": 74.5,
+                            "TRIM_MSP": 74.5,
+                            "TRIM_MPP": 73.5,
+                            "TRIM_MPA": 73.5,
+                        },
+                        "Rim_Diameter": {
+                            "TRIM_Basis": 21,
+                            "TRIM_MSP": 21,
+                            "TRIM_MPP": 22,
+                            "TRIM_MPA": 22,
+                        },
+                        "Tire_Width": {
+                            "TRIM_Basis": [26.5, 26.5],
+                            "TRIM_MSP": [26.5, 26.5],
+                            "TRIM_MPP": [26.5, 26.5],
+                            "TRIM_MPA": [26.5, 26.5],
+                        },
+                        "Wheel_Outer_Distance": {
+                            "TRIM_Basis": [68.9, 68.9],
+                            "TRIM_MSP": [69.5, 69.5],
+                            "TRIM_MPP": [69.5, 69.5],
+                            "TRIM_MPA": [69.5, 69.5],
+                        },
+                    },
+                    "REFLECTION": {
+                        "Car_Height": 1.59,
+                        "Car_Length": 5.42,
+                        "Hood_Height": 1.07,
+                        "Hood_Length": 1.58,
+                        "Trunk_Height": 1.38,
+                        "Trunk_Length": 1.26,
+                        "X_Offset": -1.0,
+                    },
+                },
+            )
+            _write_text(
+                project_root / "_Common" / "constants" / "scripts" / "Module_constants_G70.lua",
+                """
+local constants = {}
+constants.WHEELBASE = 3.21
+constants.SUSPENSION_OFFSET = {-0.06, -0.019, 0.0}
+local wheels = {
+    Tire_Diameter = 74.5,
+    Tire_Diameter_Rim = 21.0,
+    Tire_Width = 26.5
+}
+constants.WHEELS_SIZE_BASIS = wheels
+wheels = {
+    Tire_Diameter = 74.5,
+    Tire_Diameter_Rim = 21.0,
+    Tire_Width = 26.5
+}
+constants.WHEELS_SIZE_MSP = wheels
+wheels = {
+    Tire_Diameter = 73.5,
+    Tire_Diameter_Rim = 22.0,
+    Tire_Width = 26.5
+}
+constants.WHEELS_SIZE_MPP = wheels
+wheels = {
+    Tire_Diameter = 73.5,
+    Tire_Diameter_Rim = 22.0,
+    Tire_Width = 26.5
+}
+constants.WHEELS_SIZE_MPA = wheels
+local wheelDistance = {
+    Basis = {0.689, 0.689},
+    MSP = {0.695, 0.695},
+    MPP = {0.695, 0.695},
+    MPA = {0.695, 0.695}
+}
+constants.WHEEL_DISTANCE = wheelDistance
+constants.CAR_HEIGHT = 1.59
+constants.CAR_LENGTH = 5.42
+constants.HOOD_HEIGHT = 1.07
+constants.HOOD_LENGTH = 1.58
+constants.TRUNK_HEIGHT = 1.38
+constants.TRUNK_LENGTH = 1.26
+constants.X_OFFSET = 1.0
+return constants
+""".strip(),
+            )
+            _write_json(
+                carpaint_path,
+                {
+                    "ADRIATIC_BLUE_2": {
+                        "StyleID": 2,
+                        "Code": "0KRP",
+                        "BaseColor": [0.4, 0.4, 0.4],
+                        "HalftoneColor": [0.4, 0.4, 0.4],
+                        "HighlightTint": [1.0, 1.0, 1.0],
+                        "ShadowTint": [0.6, 0.8, 1.0],
+                        "ClearCoatIntensity": 1.0,
+                        "ClearCoatRoughness": 0.67,
+                        "UnderCoatIntensity": 0.25,
+                        "UnderCoatRoughness": 0.67,
+                        "OriginBrand": "BMW",
+                    }
+                },
+            )
+            _write_text(
+                project_root / "main.rca",
+                "logic=logic/car_logic.lua\n"
+                "constants=_Common/constants/scripts/Module_constants_G70.lua\n",
+            )
+            _write_text(project_root / "logic" / "car_logic.lua", "-- referenced\n")
+
+            bundle_root = temp_root / "bundle"
+            materialize = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "sg_preflight",
+                    "materialize",
+                    "--output-bundle",
+                    str(bundle_root),
+                    "--repo-root",
+                    str(repo_root),
+                    "--project-root",
+                    str(project_root),
+                    "--raco-version",
+                    "2.3.1",
+                    "--env",
+                    f"SG-Repo={repo_root}",
+                    "--env",
+                    f"SG-CarModels-Repo={repo_root}",
+                    "--context",
+                    "car_model=G70",
+                    "--context",
+                    "trim_line=Basis",
+                    "--context",
+                    "delivery_phase=svn_live_preflight",
+                    "--context",
+                    "review_target=g70_end_to_end",
+                    "--context",
+                    "evidence_source=integration-test live sg",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(materialize.returncode, 0, msg=materialize.stdout + "\n" + materialize.stderr)
+            self.assertTrue((bundle_root / "scene_hierarchy.json").exists())
+            self.assertTrue((bundle_root / "constants_expected.json").exists())
+            self.assertTrue((bundle_root / "constants_exported.json").exists())
+            self.assertTrue((bundle_root / "carpaints.json").exists())
+
+            run_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "sg_preflight",
+                    "run",
+                    "--bundle",
+                    str(bundle_root),
+                    "--config",
+                    str(ROOT / "config" / "sg_rules_live.json"),
+                    "--json-out",
+                    str(temp_root / "report.json"),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(run_result.returncode, 0, msg=run_result.stdout + "\n" + run_result.stderr)
+            report = json.loads((temp_root / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["summary"]["errors"], 0)
 
     def test_probe_discovers_sg_style_repo_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

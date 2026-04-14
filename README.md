@@ -4,16 +4,39 @@ A Python-first internal framework for deterministic 3D Car QA preflight checks.
 
 This project turns several current manual SG checks into repeatable validation with machine-readable and human-readable reports.
 
+See [LICENSE](LICENSE) for the internal proprietary license terms.
+
+## Internal Notice
+
+> [!IMPORTANT]
+> This repository is internal capability tooling for Paradox Cat GmbH Seriengrafik / 3D Car work. Treat mirrored SVN content, generated evidence, and workflow notes as internal material unless an internal release process explicitly says otherwise.
+
+This repository is being prepared as internal capability tooling for Paradox Cat GmbH Seriengrafik / 3D Car work.
+
+- treat mirrored SVN content, generated reports, and workflow notes as internal material
+- keep `repositories/`, `out/`, and similar local evidence paths untracked unless an internal release process explicitly requires otherwise
+- prefer sanitized examples when sharing progress outside the direct project context
+
+See [NOTICE.md](NOTICE.md) for the current handling note.
+
+## Repository Status
+
+- current maturity: working internal preflight framework with live `G70`, `G65`, and `G45` slices
+- branch model: GitFlow-style `main`, `develop`, `feature/*`, `release/*`, `hotfix/*`
+- contribution/review flow: see [CONTRIBUTING.md](CONTRIBUTING.md)
+- security / sensitive-data handling: see [SECURITY.md](SECURITY.md)
+
 ## What it does
 
 It validates four packs end-to-end:
 
 1. **anchors**
-   - checks the `Anchorpoints_BoundingBox` subtree
+   - checks `Anchorpoints_BoundingBox` and classic SG anchor families such as sensor / tire-pressure / scale packs
    - validates anchor naming
    - detects duplicates
    - checks required anchors
    - compares encoded anchor position against metadata when available
+   - supports multiple config-driven anchor rule groups under one pack
 
 2. **constants**
    - compares expected engineering values vs exported values
@@ -82,6 +105,32 @@ powershell -ExecutionPolicy Bypass -File scripts\run_smoke_test.ps1
 
 This writes logs, JSON reports, HTML reports, markdown handoff reports, and a presentation-friendly summary to `out\smoke-test\latest`.
 
+Run the real SG smoke flow against the copied SVN mirror:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_real_sg_smoke.ps1
+```
+
+This materializes and validates the first live `G70` bundle from `repositories\trunk` and writes reports to `out\real-sg-smoke\latest`.
+
+Run the additional live-car smokes:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_real_g65_smoke.ps1
+powershell -ExecutionPolicy Bypass -File scripts\run_real_g45_smoke.ps1
+```
+
+Run the side-by-side live matrix:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_real_live_matrix_smoke.ps1
+```
+
+This writes a comparison summary plus per-car bundles and reports to `out\real-live-matrix\latest`.
+
+> [!NOTE]
+> The live matrix is currently the best single command for showing the tool to the 3D team because it compares the current real `G70`, `G65`, and `G45` slices side by side.
+
 Extract a structured pain/action summary from a Whiteboard retro export:
 
 ```bash
@@ -119,6 +168,38 @@ python -m sg_preflight materialize ^
   --context evidence_source=local_export_and_constants
 ```
 
+Live SG mirror workflow with the copied SVN inside this repo:
+
+```powershell
+python -m sg_preflight materialize `
+  --output-bundle out\g70-live-bundle `
+  --repo-root repositories\trunk `
+  --project-root repositories\trunk\Cars_IDCevo\BMW\G70 `
+  --raco-version 2.3.1 `
+  --env SG-Repo=$PWD\repositories\trunk `
+  --env SG-CarModels-Repo=$PWD\repositories\trunk `
+  --context car_model=G70 `
+  --context trim_line=Basis `
+  --context delivery_phase=svn_live_preflight `
+  --context review_target=g70_end_to_end `
+  --context evidence_source=local_svn_mirror
+
+python -m sg_preflight run `
+  --bundle out\g70-live-bundle `
+  --config config\sg_rules_live.json `
+  --json-out out\g70-live.json `
+  --html-out out\g70-live.html `
+  --md-out out\g70-live.md `
+  --fail-on never
+```
+
+The `materialize` command now auto-discovers these live SG inputs from `project_root` when they exist:
+
+- `resources/*AnchorPoints/*.rca` for anchors
+- `_Workfiles/_WorkFiles/json/*_Pivot_Master.json` for expected constants
+- `_Common/constants/scripts/Module_constants_*.lua` for exported constants
+- `Cars/<brand>/CarPaint.json` under `repo_root` for carpaint data
+
 Current source-drop workflow with the files already in this workspace:
 
 ```powershell
@@ -141,10 +222,18 @@ python -m sg_preflight run `
 Notes:
 
 - `--carpaints-source` now accepts workbook-style `.xlsx` files in addition to JSON.
+- SG `CarPaint.json` catalogs, `Pivot_Master.json`, `Module_constants_*.lua`, and zipped `.rca` anchor scenes are now supported directly.
 - workbook and legacy SG-style carpaint sources are normalized into the current validation schema with explicit inference notes
+- live SG `StyleID` semantics are normalized as `solid`, `metallic`, and `frozen` based on the shared carpaint interfaces
+- live SG environment conventions `SG-Repo` and `SG-CarModels-Repo` are recognized alongside the older underscore-style variants
 - `project_sanity` can already operate on the `MiniKombi` and `Introduction` corpora even before true 3D Car project roots arrive
+- `project_sanity` now distinguishes SG-relative scene links and cross-car contamination from true filesystem absolute-path risks
 - `--context` adds workflow/handoff metadata like car model, trim, delivery phase, and review target to the generated manifest
 - `--md-out` writes a ticket/chat-friendly QA handoff report with grouped findings plus owner/action hints
+- live configs now cover:
+  - `config/sg_rules_live.json` for `G70`
+  - `config/sg_rules_live_g65.json` for `G65`
+  - `config/sg_rules_live_g45.json` for classic `G45` anchor families
 
 ## Bundle contract
 
@@ -198,21 +287,41 @@ Default failure threshold is `error`.
 
 This repo is still pre-publication, but it already follows a simple release hygiene shape:
 
+> [!TIP]
+> Use `develop` for ongoing integration work and keep feature branches short-lived. Reserve `main` for stable snapshots that are ready to represent the project internally.
+
 - `main` is the stable release branch
 - `develop` is the integration branch
 - short-lived branches should use `feature/<topic>`, `release/<version>`, or `hotfix/<topic>`
 - user-visible changes should update `CHANGELOG.md`
+- keep repository ownership and handling aligned with `LICENSE`, `NOTICE.md`, and `SECURITY.md`
 - run `python -m unittest discover -s tests -v` and `powershell -ExecutionPolicy Bypass -File scripts\run_smoke_test.ps1` before opening a merge request or PR
+- run `powershell -ExecutionPolicy Bypass -File scripts\run_real_live_matrix_smoke.ps1` before presenting or reviewing the live SG slices
 - GitHub repo hygiene includes PR templates, issue forms, and a basic CI workflow for the package and demo flows
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the intended branch and review flow.
 
+## GitHub Hygiene
+
+The repo already includes:
+
+- issue forms for bug reports and feature requests
+- a pull request template
+- CI for unit tests and demo flows
+- internal-use and security guidance for repository-facing docs
+
 ## Current limitations
 
 This is already fully runnable, but it is still an early internal release:
-- direct SG/BMW source files are not in this workspace yet
-- adapters are real and runnable, but some live formats still need representative files
+
+> [!WARNING]
+> The current live findings are useful production signal, not synthetic demo failures. A clean tooling run does not mean the car is clean; it means the deterministic checks completed successfully and the remaining findings are likely worth triage.
+- the repo now supports live SG mirror inputs for `G70`, `G65`, and `G45` anchor/constants/carpaint/project-sanity slices
+- the current live matrix baseline is meaningful already:
+  - `G70` surfaces a real duplicate BMW carpaint ID plus cross-car and unused-Lua warnings
+  - `G65` surfaces real constant drift between `Pivot_Master` and `Module_constants`
+  - `G45` proves the multi-family anchor support while still surfacing the shared duplicate BMW carpaint ID
 - visual checks are not automated here
 - rack / screenshot / trace integration is not yet wired in
 
-The next real step is to swap the demo bundle for real SG-shaped files while keeping the validation core unchanged.
+The next real step is to widen coverage from these first BMW live slices to additional BMW/MINI variants while keeping the validation core unchanged.

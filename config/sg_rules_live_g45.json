@@ -1,0 +1,246 @@
+{
+  "anchors": {
+    "rule_groups": [
+      {
+        "name": "scale",
+        "root_name": "RES_G45_ScaleAnchors",
+        "prefix": "APN_Scale_",
+        "node_name_prefix": "APN_",
+        "expected_anchor_names": [
+          "APN_Scale_Bottom",
+          "APN_Scale_Top"
+        ]
+      },
+      {
+        "name": "tire_pressure",
+        "root_name": "RES_G45_TirePressAnchors",
+        "prefix": "APN_TirePress_",
+        "node_name_prefix": "APN_",
+        "expected_anchor_names": [
+          "APN_TirePress_BL",
+          "APN_TirePress_BR",
+          "APN_TirePress_FL",
+          "APN_TirePress_FR"
+        ]
+      },
+      {
+        "name": "sensor",
+        "root_name": "RES_G45_SensorAnchors",
+        "prefix": "APN_Sensor_",
+        "node_name_prefix": "APN_",
+        "expected_anchor_names": [
+          "APN_Sensor_MPAD",
+          "APN_Sensor_front_camera",
+          "APN_Sensor_front_radar",
+          "APN_Sensor_icam_front",
+          "APN_Sensor_icam_top_ll_l",
+          "APN_Sensor_icam_top_ll_r",
+          "APN_Sensor_icam_top_rl_l",
+          "APN_Sensor_icam_top_rl_r",
+          "APN_Sensor_nivi",
+          "APN_Sensor_pdc_back_il",
+          "APN_Sensor_pdc_back_ir",
+          "APN_Sensor_pdc_back_ol",
+          "APN_Sensor_pdc_back_or",
+          "APN_Sensor_pdc_back_sl",
+          "APN_Sensor_pdc_back_sr",
+          "APN_Sensor_pdc_front_il",
+          "APN_Sensor_pdc_front_ir",
+          "APN_Sensor_pdc_front_ol",
+          "APN_Sensor_pdc_front_or",
+          "APN_Sensor_pdc_front_sl",
+          "APN_Sensor_pdc_front_sr",
+          "APN_Sensor_rear_camera",
+          "APN_Sensor_side_back_l",
+          "APN_Sensor_side_back_r",
+          "APN_Sensor_side_front_l",
+          "APN_Sensor_side_front_r"
+        ]
+      }
+    ]
+  },
+  "constants": {
+    "numeric_paths": [
+      {"path": "wheelbase_m", "tolerance": 0.001},
+      {"path": "suspension_offset_m.x", "tolerance": 0.001},
+      {"path": "suspension_offset_m.y", "tolerance": 0.001},
+      {"path": "reflection.car_height_m", "tolerance": 0.001},
+      {"path": "reflection.car_length_m", "tolerance": 0.001},
+      {"path": "reflection.hood_height_m", "tolerance": 0.001},
+      {"path": "reflection.hood_length_m", "tolerance": 0.001},
+      {"path": "reflection.trunk_height_m", "tolerance": 0.001},
+      {"path": "reflection.trunk_length_m", "tolerance": 0.001},
+      {"path": "reflection.x_offset_m", "tolerance": 0.001},
+      {"path": "tire_diameter_cm.Basis.front", "tolerance": 0.001},
+      {"path": "rim_diameter_in.Basis.front", "tolerance": 0.001},
+      {"path": "tire_diameter_cm.MPP.front", "tolerance": 0.001},
+      {"path": "rim_diameter_in.MPP.front", "tolerance": 0.001},
+      {"path": "tire_diameter_cm.MPA.front", "tolerance": 0.001},
+      {"path": "rim_diameter_in.MPA.front", "tolerance": 0.001},
+      {"path": "wheel_distance_m.Basis.front", "tolerance": 0.001},
+      {"path": "wheel_distance_m.Basis.rear", "tolerance": 0.001},
+      {"path": "wheel_distance_m.MPP.front", "tolerance": 0.001},
+      {"path": "wheel_distance_m.MPP.rear", "tolerance": 0.001},
+      {"path": "wheel_distance_m.MPA.front", "tolerance": 0.001},
+      {"path": "wheel_distance_m.MPA.rear", "tolerance": 0.001}
+    ],
+    "exact_paths": [
+      {"path": "brand"},
+      {"path": "car_model"},
+      {"path": "generation"}
+    ]
+  },
+  "carpaints": {
+    "required_keys": [
+      "id",
+      "name",
+      "finish",
+      "roughness",
+      "metallic",
+      "base_color",
+      "clearcoat"
+    ],
+    "allowed_finish": [
+      "solid",
+      "metallic",
+      "matte",
+      "frozen"
+    ],
+    "unique_keys": [
+      "id",
+      "name"
+    ],
+    "ranges": {
+      "roughness": [0.0, 1.0],
+      "metallic": [0.0, 1.0],
+      "clearcoat": [0.0, 1.0]
+    },
+    "array_lengths": {
+      "base_color": 3
+    }
+  },
+  "project_sanity": {
+    "raco_version_policy": {
+      "mode": "warn_if_not_recommended",
+      "recommended": ["2.3.1"]
+    },
+    "required_context_fields": [
+      "car_model",
+      "trim_line",
+      "delivery_phase",
+      "review_target",
+      "evidence_source"
+    ],
+    "required_env_vars": [
+      "SG-Repo",
+      "SG-CarModels-Repo"
+    ],
+    "allowed_absolute_prefixes": [
+      "C:\\repos\\Seriengrafik\\trunk",
+      "C:\\repositories\\trunk"
+    ]
+  },
+  "reporting": {
+    "context_field_order": [
+      "car_model",
+      "trim_line",
+      "delivery_phase",
+      "review_target",
+      "evidence_source",
+      "owner",
+      "notes"
+    ],
+    "context_labels": {
+      "car_model": "Car Model",
+      "trim_line": "Trim Line",
+      "delivery_phase": "Delivery Phase",
+      "review_target": "Review Target",
+      "evidence_source": "Evidence Source",
+      "owner": "Owner",
+      "notes": "Notes"
+    },
+    "pack_owner_hints": {
+      "anchors": "3D / export-scene owner",
+      "constants": "3D + integration constants owner",
+      "carpaints": "materials / carpaint data owner",
+      "project_sanity": "TA / pipeline / integration owner"
+    },
+    "pack_action_hints": {
+      "anchors": "Fix naming, duplicates, or expected anchor coverage before the next rack or integration review.",
+      "constants": "Compare Pivot Master, Module_constants, and scene/export values before handoff so constants drift is visible early.",
+      "carpaints": "Clean the carpaint payload so IDs, names, ranges, and finish values are stable before review.",
+      "project_sanity": "Fix workspace, reference, or environment problems early so later rack and integration steps are not blocked."
+    },
+    "code_hints": {
+      "anchors.missing_expected": {
+        "action": "Add the missing expected anchors in the RES_AnchorPoints scene or update the rules for this car."
+      },
+      "anchors.invalid_name": {
+        "action": "Rename the anchor to match the SG naming convention before export."
+      },
+      "anchors.position_mismatch": {
+        "action": "Align the encoded anchor name with the actual scene position so downstream compositor logic stays deterministic."
+      },
+      "anchors.duplicate_name": {
+        "action": "Remove or rename duplicate anchors so the anchor scene has one unambiguous source per anchor."
+      },
+      "constants.out_of_tolerance": {
+        "action": "Check Pivot Master generation, Module_constants, and linked scene logic for drift or incorrect mapping."
+      },
+      "constants.exact_mismatch": {
+        "action": "Correct the car identity mismatch so the constants bundle stays traceable."
+      },
+      "constants.exported_key_missing": {
+        "action": "Restore the missing Module_constants value or adjust the normalization rules so the exported key is emitted."
+      },
+      "carpaints.duplicate_unique_value": {
+        "action": "Resolve duplicate IDs or names so carpaint review and integration use a single stable identity."
+      },
+      "carpaints.invalid_finish": {
+        "action": "Normalize the finish type to the supported set before the paint data is handed off."
+      },
+      "carpaints.out_of_range": {
+        "action": "Clamp or correct the offending value so the carpaint payload stays inside the expected numeric range."
+      },
+      "carpaints.missing_key": {
+        "action": "Fill the missing required paint fields before the payload is reused by downstream tooling."
+      },
+      "project_sanity.onedrive_root": {
+        "action": "Move the project out of OneDrive before further rack, emulator, or integration work."
+      },
+      "project_sanity.onedrive_path": {
+        "action": "Replace OneDrive-backed references with local repo or workspace paths before handoff."
+      },
+      "project_sanity.suspicious_absolute_path": {
+        "action": "Replace ad-hoc absolute paths with repo-relative or approved workspace paths."
+      },
+      "project_sanity.cross_brand_reference": {
+        "action": "Review whether the reference should really point across brands; if not, relink it to the correct BMW/MINI-side asset."
+      },
+      "project_sanity.cross_car_reference": {
+        "action": "Review whether the reference should really point to another car model; if not, relink it to the current car or a shared asset."
+      },
+      "project_sanity.missing_env_var": {
+        "action": "Set the required SG environment variables so existing Ramses Composer scripts resolve the right roots."
+      },
+      "project_sanity.unused_lua": {
+        "action": "Confirm whether the Lua file is intentionally unused; delete it or wire it into the project if needed."
+      },
+      "project_sanity.raco_version_not_recommended": {
+        "action": "Switch to a recommended RaCo version or explicitly document why this project requires a different one."
+      },
+      "project_sanity.gltf_topology_drift": {
+        "action": "Check whether the glTF object-count change is intentional because hot reload and integration stability may be affected."
+      },
+      "project_sanity.gltf_object_set_changed": {
+        "action": "Review added and removed objects before integration so downstream consumers do not break unexpectedly."
+      },
+      "project_sanity.gltf_reorder": {
+        "action": "Keep object order stable if downstream tooling depends on import ordering."
+      },
+      "project_sanity.missing_report_context": {
+        "action": "Add report context such as car model, trim, delivery phase, and review target so the findings can be handed off cleanly."
+      }
+    }
+  }
+}

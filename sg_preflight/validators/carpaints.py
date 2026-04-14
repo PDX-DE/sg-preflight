@@ -166,13 +166,13 @@ def validate_carpaints(bundle: Bundle, config: dict[str, Any]) -> PackResult:
                 )
             )
 
-        if finish == "metallic" and is_number(metallic) and float(metallic) < 0.5:
+        if finish == "metallic" and is_number(metallic) and float(metallic) < 0.05:
             result.add(
                 Finding(
                     pack="carpaints",
                     code="carpaints.semantic_warning",
                     severity="warning",
-                    message="Metallic finish with low metallic value looks suspicious",
+                    message="Metallic finish with near-zero metallic value looks suspicious",
                     location=location,
                 )
             )

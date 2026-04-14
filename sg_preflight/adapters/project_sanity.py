@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import re
+import zipfile
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -16,6 +18,9 @@ from sg_preflight.adapters.common import (
 
 WINDOWS_PATH_PATTERN = re.compile(r"[A-Za-z]:[\\/][^\s\"'\r\n]+")
 POSIX_PATH_PATTERN = re.compile(r"(?<![A-Za-z0-9])(/[A-Za-z0-9._-][A-Za-z0-9._/@%+,:=~-]*)")
+RELATIVE_REPO_PATH_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(/?(?:\.\.[\\/])+[A-Za-z0-9._-][A-Za-z0-9._/@%+,:=~\\-]*)"
+)
 URL_PATTERN = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s)>\"]+")
 MARKDOWN_INLINE_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 RACO_VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+)\b")
@@ -29,12 +34,19 @@ KNOWN_ASSET_PATTERNS = [
     "resource_list.json",
     "*pivots_json.py",
     "pivot_json.py",
+    "*pivot_master.json",
+    "*position_mapping.json",
+    "module_constants_*.lua",
     "test_absolute_paths.py",
+    "test_absolute_path.py",
     "test_ucap_ign*.py",
+    "test_ucap_ignore.py",
     "test_unused_lu*.py",
+    "test_unused_lua_files.py",
     "test_unnused_lu*.py",
     "disable_msaa*.py",
     "debug_*.py",
+    "check_scenes.py",
     "*perspectivetraceplayer*",
     "*traceplayer*",
 ]
@@ -57,10 +69,42 @@ def _extract_absolute_paths(text: str) -> list[str]:
         value = _clean_path_token(match.group(1))
         if value.startswith("//"):
             continue
+        first_segment = value.split("/", 2)[1] if value.startswith("/") and "/" in value[1:] else ""
+        if value in {"/.", "/.."} or first_segment in {".", ".."}:
+            continue
         if value.count("/") == 1 and "." not in value.rsplit("/", 1)[-1]:
             continue
         paths.add(value)
     return sorted(path for path in paths if path)
+
+
+def _extract_relative_repo_paths(text: str) -> list[str]:
+    sanitized = _strip_urls_and_markdown_links(text)
+    paths = {_clean_path_token(match.group(1)) for match in RELATIVE_REPO_PATH_PATTERN.finditer(sanitized)}
+    return sorted(path for path in paths if path)
+
+
+def _read_rca_json_text(path: Path) -> str | None:
+    try:
+        if not zipfile.is_zipfile(path):
+            return None
+        with zipfile.ZipFile(path) as archive:
+            json_members = [name for name in archive.namelist() if name.lower().endswith(".json")]
+            if not json_members:
+                return None
+            return archive.read(json_members[0]).decode("utf-8", errors="ignore")
+    except (OSError, zipfile.BadZipFile):
+        return None
+
+
+def _load_rca_json(path: Path) -> Any | None:
+    payload = _read_rca_json_text(path)
+    if payload is None:
+        return None
+    try:
+        return json.loads(payload)
+    except ValueError:
+        return None
 
 
 def _load_text_index(roots: list[Path]) -> list[tuple[Path, str]]:
@@ -79,7 +123,12 @@ def _load_text_index(roots: list[Path]) -> list[tuple[Path, str]]:
                 continue
             seen.add(key)
             try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
+                if path.suffix.lower() == ".rca":
+                    text = _read_rca_json_text(path)
+                    if text is None:
+                        continue
+                else:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 continue
             index.append((path, text))
@@ -95,6 +144,7 @@ def _collect_path_references(project_root: Path, repo_root: Path) -> list[str]:
     references: set[str] = set()
     for _path, text in _load_text_index([project_root]):
         references.update(_extract_absolute_paths(text))
+        references.update(_extract_relative_repo_paths(text))
     return sorted(references)
 
 
@@ -147,7 +197,84 @@ def _detect_raco_version(project_root: Path, repo_root: Path, explicit: str | No
         except OSError:
             continue
 
+    rca_candidates = find_matches(project_root, ["*.rca"], limit=5)
+    for path in rca_candidates:
+        data = _load_rca_json(path)
+        if isinstance(data, dict):
+            version = data.get("racoVersion")
+            if isinstance(version, list) and all(isinstance(item, int) for item in version):
+                return ".".join(str(item) for item in version)
+            if isinstance(version, str) and version:
+                return version
+
     return ""
+
+
+def _infer_project_identity(project_root: Path) -> dict[str, str]:
+    parts = list(project_root.resolve().parts)
+    for marker in ("Cars", "Cars_IDCevo"):
+        if marker in parts:
+            index = parts.index(marker)
+            if index + 2 < len(parts):
+                return {
+                    "generation": marker,
+                    "brand": parts[index + 1],
+                    "car_model": parts[index + 2],
+                }
+    return {}
+
+
+def _discover_repo_catalog(repo_root: Path, identity: Mapping[str, str]) -> tuple[list[str], list[str]]:
+    generation = identity.get("generation")
+    brand = identity.get("brand")
+    if not generation or not brand:
+        return [], []
+
+    generation_root = repo_root / generation
+    known_brands: list[str] = []
+    if generation_root.exists():
+        try:
+            known_brands = sorted(
+                path.name
+                for path in generation_root.iterdir()
+                if path.is_dir() and not path.name.startswith("_")
+            )
+        except OSError:
+            known_brands = []
+
+    brand_root = generation_root / brand
+    known_models: list[str] = []
+    if brand_root.exists():
+        try:
+            known_models = sorted(
+                path.name
+                for path in brand_root.iterdir()
+                if path.is_dir() and not path.name.startswith("_")
+            )
+        except OSError:
+            known_models = []
+
+    return known_brands, known_models
+
+
+def _discover_project_top_level_entries(project_root: Path) -> list[str]:
+    if not project_root.exists():
+        return []
+    try:
+        entries: set[str] = set()
+        for path in project_root.iterdir():
+            entries.add(path.name)
+            if not path.is_dir():
+                continue
+            try:
+                for child in path.iterdir():
+                    if child.is_dir():
+                        entries.add(child.name)
+            except OSError:
+                continue
+        return sorted(entries)
+    except OSError:
+        return []
 
 
 def _load_gltf_snapshot(path: Path) -> list[str]:
@@ -176,8 +303,25 @@ def _load_gltf_snapshot(path: Path) -> list[str]:
 
 
 def _build_env_payload(overrides: Mapping[str, str] | None) -> dict[str, str]:
-    required = ["SG_REPO", "SP_REPO", "SG_CARMODELS_REPO"]
+    required = [
+        "SG_REPO",
+        "SP_REPO",
+        "SG_CARMODELS_REPO",
+        "SG-Repo",
+        "SG-CarModels-Repo",
+    ]
     payload = {key: os.environ.get(key, "") for key in required}
+
+    if payload["SG_REPO"] and not payload["SG-Repo"]:
+        payload["SG-Repo"] = payload["SG_REPO"]
+    if payload["SG-Repo"] and not payload["SG_REPO"]:
+        payload["SG_REPO"] = payload["SG-Repo"]
+
+    if payload["SG_CARMODELS_REPO"] and not payload["SG-CarModels-Repo"]:
+        payload["SG-CarModels-Repo"] = payload["SG_CARMODELS_REPO"]
+    if payload["SG-CarModels-Repo"] and not payload["SG_CARMODELS_REPO"]:
+        payload["SG_CARMODELS_REPO"] = payload["SG-CarModels-Repo"]
+
     if overrides:
         payload.update({key: value for key, value in overrides.items() if value is not None})
     return payload
@@ -208,6 +352,9 @@ def build_project_manifest(
     repo_root = repo_root.resolve()
     project_root = project_root.resolve()
     gltf_imports: list[dict[str, Any]] = []
+    project_identity = _infer_project_identity(project_root)
+    known_brands, known_models = _discover_repo_catalog(repo_root, project_identity)
+    project_top_level_entries = _discover_project_top_level_entries(project_root)
 
     if gltf_previous_path and gltf_current_path:
         gltf_imports.append(
@@ -229,5 +376,9 @@ def build_project_manifest(
         "env": _build_env_payload(env),
         "report_context": _build_report_context_payload(report_context),
         "workflow_contract": dict(workflow_contract) if workflow_contract else {},
+        "project_identity": project_identity,
+        "known_brands": known_brands,
+        "known_models": known_models,
+        "project_top_level_entries": project_top_level_entries,
         "discovered_assets": [str(path.resolve()) for path in known_assets],
     }

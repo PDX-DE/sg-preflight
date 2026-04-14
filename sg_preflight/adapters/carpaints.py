@@ -14,6 +14,11 @@ from sg_preflight.adapters.common import find_matches, load_json
 SPREADSHEET_NS = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 WORKBOOK_REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
 LEGACY_COLOR_KEYS = ("BaseColor", "HalftoneColor", "ShadowTint", "HighlightTint")
+STYLE_ID_TO_FINISH = {
+    0: "solid",
+    1: "metallic",
+    2: "frozen",
+}
 
 
 def _extract_json_blob(text: str) -> Any:
@@ -84,7 +89,16 @@ def _normalize_color_triplet(value: Any) -> list[float] | None:
 
 
 def _infer_finish_fields(name: str, style_id: int | float | str | None) -> tuple[str, float, float, float]:
-    del style_id
+    if isinstance(style_id, int) and style_id in STYLE_ID_TO_FINISH:
+        finish = STYLE_ID_TO_FINISH[style_id]
+        defaults = {
+            "solid": (0.45, 0.4, 0.8),
+            "metallic": (0.01, 0.3, 1.0),
+            "frozen": (0.67, 0.25, 1.0),
+        }
+        roughness, metallic, clearcoat = defaults[finish]
+        return finish, roughness, metallic, clearcoat
+
     lowered = name.lower()
     if any(token in lowered for token in ("matte", "matt", "frozen")):
         return ("matte", 0.75, 0.2, 0.15)
@@ -162,26 +176,78 @@ def _normalize_carpaint_entry(
         _infer_finish_fields(normalized["name"], style_id)
     )
 
+    clearcoat_intensity = _to_float(
+        result.get("clearcoat")
+        or result.get("ClearCoatIntensity")
+        or result.get("clearcoat_intensity")
+    )
+    clearcoat_roughness = _to_float(
+        result.get("clearcoat_roughness")
+        or result.get("ClearCoatRoughness")
+    )
+    undercoat_intensity = _to_float(
+        result.get("undercoat_intensity")
+        or result.get("UnderCoatIntensity")
+    )
+    undercoat_roughness = _to_float(
+        result.get("undercoat_roughness")
+        or result.get("UnderCoatRoughness")
+    )
+
     finish = result.get("finish")
     normalized["finish"] = str(finish).strip() if finish not in (None, "") else inferred_finish
 
     roughness = _to_float(result.get("roughness"))
     normalized["roughness"] = round(
-        roughness if roughness is not None else inferred_roughness,
+        roughness
+        if roughness is not None
+        else (
+            clearcoat_roughness
+            if clearcoat_roughness is not None
+            else (
+                undercoat_roughness
+                if undercoat_roughness is not None
+                else inferred_roughness
+            )
+        ),
         6,
     )
 
     metallic = _to_float(result.get("metallic"))
     normalized["metallic"] = round(
-        metallic if metallic is not None else inferred_metallic,
+        metallic
+        if metallic is not None
+        else (
+            undercoat_intensity
+            if undercoat_intensity is not None
+            else inferred_metallic
+        ),
         6,
     )
 
-    clearcoat = _to_float(result.get("clearcoat"))
     normalized["clearcoat"] = round(
-        clearcoat if clearcoat is not None else inferred_clearcoat,
+        clearcoat_intensity if clearcoat_intensity is not None else inferred_clearcoat,
         6,
     )
+
+    if clearcoat_roughness is not None:
+        normalized["clearcoat_roughness"] = round(clearcoat_roughness, 6)
+    if undercoat_intensity is not None:
+        normalized["undercoat_intensity"] = round(undercoat_intensity, 6)
+    if undercoat_roughness is not None:
+        normalized["undercoat_roughness"] = round(undercoat_roughness, 6)
+
+    origin_brand = result.get("origin_brand") or result.get("OriginBrand")
+    if origin_brand not in (None, ""):
+        normalized["origin_brand"] = str(origin_brand).strip()
+
+    for source_key, target_key in (
+        ("DateModified", "date_modified"),
+        ("DateDesignReview", "date_design_review"),
+    ):
+        value = result.get(source_key) or result.get(target_key)
+        if value not in (None, ""):
+            normalized[target_key] = str(value).strip()
 
     return normalized
 
@@ -407,8 +473,9 @@ def normalize_carpaints_source(
     raw_payload = load_json(source_path)
     if _looks_like_legacy_payload(raw_payload):
         legacy_note = (
-            "Legacy SG-style carpaint JSON was normalized; finish, roughness, metallic, and "
-            "clearcoat were inferred heuristically from available name/style data."
+            "Legacy SG-style carpaint JSON was normalized; finish uses SG StyleID semantics "
+            "when present and roughness/metallic/clearcoat prefer the live intensity fields "
+            "before falling back to heuristics."
         )
         note = f"{note} {legacy_note}".strip() if note else legacy_note
 
