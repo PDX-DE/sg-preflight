@@ -1,149 +1,135 @@
 {% extends "base.html" %}
 {% block title %}Home - SG Preflight Operator UI{% endblock %}
 {% block content %}
-<section class="hero-panel hero-panel--home">
+<section class="hero-panel hero-panel--home hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">Earlier Signal - Clearer Ownership - Better Handoff</p>
-    <h2>Pick a live car, run deterministic checks, and get evidence that is usable before rack or review.</h2>
+    <p class="eyebrow">Simple QA Start</p>
+    <h2>Pick the car you touched, run one check, open the first red item.</h2>
     <p class="hero-text">
-      This UI exists to reduce avoidable findings, expose source-of-truth drift early, and give QA / TA / 3D / integration a shared starting point instead of another black box.
+      This tool is for one job: catch obvious problems before rack or review and point you to the right SG file.
     </p>
     <div class="hero-bullets">
-      <span>Addresses retro pain around early testing, ownership confusion, and weak finding context.</span>
-      <span>Uses the same Python engine as the CLI and smoke scripts.</span>
-      <span>Shows the current live signal for the real SG slices already in this repo.</span>
+      <span>1. Pick a car.</span>
+      <span>2. Run the full check.</span>
+      <span>3. Open the first problem.</span>
     </div>
   </div>
   <div class="hero-actions hero-actions--stack">
-    <a class="button" href="#profiles">Start With A Car</a>
+    <a class="button" href="#cars">Choose A Car</a>
+    <button class="button action-launch" type="button" data-action-id="daily_live_matrix">Check All Live Cars</button>
     {% if matrix_summary.href %}
-    <a class="button subtle" href="{{ matrix_summary.href }}">Open Latest Matrix Summary</a>
+    <a class="button subtle" href="{{ matrix_summary.href }}">Open Latest Summary</a>
     {% endif %}
-    <a class="button subtle" href="/ui/audits/mirror/deep">Refresh Deep Mirror Audit</a>
   </div>
 </section>
 
-<section class="panel">
+<section class="panel panel--priority">
   <div class="panel-head">
-    <h3>Common QA Tasks</h3>
-    <p>Use these when you already know the kind of problem you want to check and do not want to think about profile names first.</p>
+    <h3>Start Here</h3>
+    <p>Use the first job that matches what you need right now.</p>
   </div>
-  <div class="workflow-grid">
-    {% for item in task_cards %}
-    <article class="workflow-card workflow-card--task">
-      <div class="status-row">
-        <strong>{{ item.title }}</strong>
-        <span class="badge {% if item.is_ready %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
-      </div>
-      <p class="workflow-summary">{{ item.summary }}</p>
+  <div class="quick-start-grid">
+    <article class="quick-start-card">
+      <p class="eyebrow">Most Common</p>
+      <h4>Check one car</h4>
+      <p>If you changed one car, start there. This is the normal path.</p>
       <ul class="clean-list">
-        {% for highlight in item.highlights %}
-        <li>{{ highlight }}</li>
-        {% endfor %}
+        <li>Runs the full check for that car</li>
+        <li>Shows the first thing to fix</li>
+        <li>Lets you open the source file</li>
       </ul>
-      {% if item.live_signal %}
-      <div class="summary-inline">
-        <span><strong>{{ item.live_signal.summary.errors }}</strong> errors</span>
-        <span><strong>{{ item.live_signal.summary.warnings }}</strong> warnings</span>
-      </div>
-      {% endif %}
       <div class="action-row action-row--wrap">
-        <a class="button" href="{{ item.href }}">{{ item.button_label }}</a>
+        <a class="button" href="#cars">Choose A Car</a>
       </div>
     </article>
-    {% endfor %}
-  </div>
-</section>
 
-<section class="panel">
-  <div class="panel-head">
-    <h3>One-Click SG QA Actions</h3>
-    <p>These wrap the current SG-side QA steps so teammates can run them without opening terminals or memorizing scripts.</p>
-  </div>
-  <div class="workflow-grid">
     {% for item in workspace_actions %}
-    <article class="workflow-card workflow-card--task">
-      <div class="status-row">
-        <strong>{{ item.label }}</strong>
-        <span class="badge {% if item.ready %}ok{% else %}warn{% endif %}">{{ item.status_label }}</span>
-      </div>
-      <p class="workflow-summary">{{ item.description }}</p>
-      {% if item.blocker_message %}
-      <div class="note-block note-block--warn">{{ item.blocker_message }}</div>
+      {% if item.action_id == "daily_live_matrix" %}
+      <article class="quick-start-card">
+        <p class="eyebrow">Daily Sweep</p>
+        <h4>Check all live cars</h4>
+        <p>{{ item.description }}</p>
+        <ul class="clean-list">
+          <li>Runs `G70`, `G65`, and `G45` in one go</li>
+          <li>Writes one shared summary</li>
+          <li>Best when you want a broad daily readout</li>
+        </ul>
+        <div class="action-row action-row--wrap">
+          <button class="button action-launch" type="button" data-action-id="{{ item.action_id }}">Run Daily Check</button>
+        </div>
+      </article>
       {% endif %}
+    {% endfor %}
+
+    <article class="quick-start-card">
+      <p class="eyebrow">Repo Sanity</p>
+      <h4>Run SG repo checkers</h4>
+      <p>Use this when you want the SG checker scripts, not the per-car preflight.</p>
+      <ul class="clean-list">
+        <li>IDCevo mirrored tree</li>
+        <li>Classic mirrored tree</li>
+        <li>No terminal command needed</li>
+      </ul>
       <div class="action-row action-row--wrap">
-        <button class="button {% if not item.ready %}subtle{% endif %} action-launch" type="button" data-action-id="{{ item.action_id }}">
-          {% if item.ready %}Run Action{% else %}Show Blocker{% endif %}
-        </button>
+        {% for item in workspace_actions %}
+          {% if item.action_id == "repo_checker_idcevo" or item.action_id == "repo_checker_classic" %}
+          <button class="button subtle action-launch" type="button" data-action-id="{{ item.action_id }}">{{ item.label }}</button>
+          {% endif %}
+        {% endfor %}
       </div>
     </article>
-    {% endfor %}
   </div>
 </section>
 
-<section class="panel panel--priority" id="profiles">
+<section class="panel" id="cars">
   <div class="panel-head">
-    <h3>Start With A Car</h3>
-    <p>Choose the slice that best matches the problem you are trying to catch before manual review.</p>
+    <h3>Choose The Car You Are Working On</h3>
+    <p>If you are not sure what to do, use the big green button on the car you touched.</p>
   </div>
-  <div class="profile-grid">
+  <div class="car-choice-grid">
     {% for item in profiles %}
-    <article class="profile-card profile-card--priority">
-      <div class="profile-card-top">
+    <article class="car-choice-card">
+      <div class="status-row">
         <div>
-          <p class="eyebrow">Live Profile</p>
+          <p class="eyebrow">Live Car</p>
           <h4>{{ item.profile.profile_id }}</h4>
           <p class="profile-label">{{ item.profile.label }}</p>
         </div>
-        <span class="badge {% if item.is_ready %}ok{% else %}warn{% endif %}">
-          {{ item.readiness_label }}
-        </span>
+        <span class="badge {% if item.is_ready %}ok{% else %}warn{% endif %}">{{ item.readiness_label }}</span>
       </div>
 
-      <p class="profile-goal">{{ item.profile.operator_goal }}</p>
-
-      <div class="detail-list">
-        <div>
-          <span class="detail-label">Best Use</span>
-          <div>{{ item.profile.workflow_value }}</div>
-        </div>
-        <div>
-          <span class="detail-label">Good First Checks</span>
-          <ul class="clean-list">
-            {% for point in item.profile.focus_points %}
-            <li>{{ point }}</li>
-            {% endfor %}
-          </ul>
-        </div>
-      </div>
+      <p class="car-choice-summary">{{ item.profile.friendly_summary or item.profile.operator_goal }}</p>
 
       {% if item.live_signal %}
       <div class="signal-block">
         <div class="status-row">
-          <strong>Current Live Signal</strong>
-          <span class="muted">{{ item.live_signal.headline }}</span>
+          <strong>Current known signal</strong>
         </div>
         <div class="summary-inline">
           <span><strong>{{ item.live_signal.summary.errors }}</strong> errors</span>
           <span><strong>{{ item.live_signal.summary.warnings }}</strong> warnings</span>
-          <span><strong>{{ item.live_signal.summary.total }}</strong> total findings</span>
+          <span><strong>{{ item.live_signal.summary.total }}</strong> total</span>
         </div>
         <ul class="clean-list">
           {% for highlight in item.live_signal.highlights %}
-          <li>
-            <strong>{{ highlight.code }}</strong> x{{ highlight.count }}:
-            {{ highlight.message }}
-          </li>
+          <li><strong>{{ highlight.code }}</strong>: {{ highlight.message }}</li>
           {% endfor %}
         </ul>
       </div>
       {% endif %}
 
+      <div class="simple-checklist">
+        <strong>This full check will:</strong>
+        <ul class="clean-list">
+          {% for point in item.profile.focus_points[:2] %}
+          <li>{{ point }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+
       <div class="action-row action-row--wrap">
-        <a class="button" href="/ui/profiles/{{ item.profile.profile_id }}">Run {{ item.profile.profile_id }}</a>
-        {% if item.live_signal and item.live_signal.html_path %}
-        <a class="button subtle" href="/ui/files?path={{ item.live_signal.html_path | urlencode }}">Open Latest HTML Evidence</a>
-        {% endif %}
+        <button class="button action-launch" type="button" data-action-id="qa_stack__{{ item.profile.profile_id|lower }}">Run Full Check For {{ item.profile.profile_id }}</button>
+        <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}">More Options</a>
       </div>
     </article>
     {% endfor %}
@@ -153,172 +139,28 @@
 <section class="content-grid content-grid--home">
   <article class="panel">
     <div class="panel-head">
-      <h3>Operator Readiness</h3>
-      <p>Only the essentials stay visible here. Detailed environment checks are still available when you need them.</p>
-    </div>
-    <div class="stack tight">
-      {% for item in primary_prerequisites %}
-      <div class="status-item">
-        <div class="min-w-0">
-          <strong>{{ item.label }}</strong>
-          <div class="muted path-text">{{ item.path }}</div>
-        </div>
-        <span class="badge {% if item.status == 'available' %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
-      </div>
-      {% endfor %}
-    </div>
-
-    <details class="foldout">
-      <summary>Show Full Environment Detail</summary>
-      <div class="stack tight">
-        {% for item in secondary_prerequisites %}
-        <div class="status-item">
-          <div class="min-w-0">
-            <strong>{{ item.label }}</strong>
-            <div class="muted path-text">{{ item.path }}</div>
-          </div>
-          <span class="badge {% if item.status == 'available' %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
-        </div>
-        {% endfor %}
-      </div>
-    </details>
-  </article>
-
-  <article class="panel">
-    <div class="panel-head">
-      <h3>Current QA Workflow Fit</h3>
-      <p>SG Preflight should improve the existing SG QA flow, not pretend to replace every manual or BMW-side stage.</p>
-      {% if workflow_alignment.href %}
-      <p><a href="{{ workflow_alignment.href }}">Open the internal QA workflow alignment note.</a></p>
-      {% endif %}
-    </div>
-    <div class="workflow-grid">
-      {% for step in workflow_steps %}
-      <article class="workflow-card">
-        <div class="status-row">
-          <strong>{{ step.label }}</strong>
-          <span class="badge {% if step.state == 'covered' %}ok{% elif step.state == 'partial' %}info{% else %}warn{% endif %}">
-            {{ step.state }}
-          </span>
-        </div>
-        <p class="workflow-summary">{{ step.summary }}</p>
-        <div class="detail-list">
-          <div>
-            <span class="detail-label">SG Preflight Role</span>
-            <div>{{ step.sg_preflight_role }}</div>
-          </div>
-          {% if step.blockers %}
-          <div>
-            <span class="detail-label">Current Blockers</span>
-            <ul class="clean-list">
-              {% for blocker in step.blockers %}
-              <li>{{ blocker }}</li>
-              {% endfor %}
-            </ul>
-          </div>
-          {% endif %}
-        </div>
-      </article>
-      {% endfor %}
-    </div>
-  </article>
-</section>
-
-<section class="content-grid content-grid--home">
-  <article class="panel">
-    <div class="panel-head">
-      <h3>Mirror Health</h3>
-      <p>Cached health summary first. Expand only when you need file-level mirror detail.</p>
-    </div>
-
-    <div class="audit-summary-grid">
-      <div class="summary-card compact">
-        <span>Fast Audit</span>
-        <strong>{{ fast_audit.status }}</strong>
-        <div class="muted">{{ fast_audit.entry_count }} targets checked - {{ fast_audit.drift_count }} drifted</div>
-      </div>
-      <div class="summary-card compact">
-        <span>Deep Audit</span>
-        <strong>{{ deep_audit.status }}</strong>
-        <div class="muted">
-          {% if deep_audit.entry_count %}
-          {{ deep_audit.entry_count }} entry - {{ deep_audit.drift_count }} drifted
-          {% else %}
-          no cached deep audit yet
-          {% endif %}
-        </div>
-      </div>
-    </div>
-
-    {% if fast_audit.notes %}
-    <div class="note-block">
-      {% for item in fast_audit.notes %}
-      <div>{{ item }}</div>
-      {% endfor %}
-    </div>
-    {% endif %}
-
-    {% if deep_audit.notes %}
-    <div class="note-block note-block--warn">
-      {% for item in deep_audit.notes %}
-      <div>{{ item }}</div>
-      {% endfor %}
-    </div>
-    {% endif %}
-
-    <details class="foldout">
-      <summary>Show Audit Detail</summary>
-      <div class="stack tight">
-        {% for entry in fast_audit.entries %}
-        <div class="audit-item">
-          <div class="min-w-0">
-            <strong>{{ entry.label }}</strong>
-            <div class="muted">{{ entry.relative_path }}</div>
-          </div>
-          <div class="audit-meta">
-            <span class="badge {% if entry.status == 'match' %}ok{% else %}warn{% endif %}">{{ entry.status }}</span>
-            <span class="muted">{{ entry.difference_count }} differences</span>
-          </div>
-        </div>
-        {% endfor %}
-
-        {% if deep_audit.entries %}
-        <div class="separator"></div>
-        {% for entry in deep_audit.entries %}
-        <div class="audit-item">
-          <div class="min-w-0">
-            <strong>{{ entry.label }}</strong>
-            <div class="muted">{{ entry.relative_path }}</div>
-          </div>
-          <div class="audit-meta">
-            <span class="badge {% if entry.status == 'match' %}ok{% else %}warn{% endif %}">{{ entry.status }}</span>
-            <span class="muted">{{ entry.difference_count }} differences</span>
-          </div>
-        </div>
-        {% endfor %}
-        {% endif %}
-
-        {% if deep_audit.sample_differences %}
-        <div class="code-block">
-          {% for item in deep_audit.sample_differences %}
-          <div>{{ item }}</div>
-          {% endfor %}
-        </div>
-        {% endif %}
-      </div>
-    </details>
-  </article>
-</section>
-
-<section class="content-grid content-grid--home">
-  <article class="panel">
-    <div class="panel-head">
-      <h3>Recent Runs</h3>
-      <p>Operator-run history. Use this when someone asks what was checked and what evidence was generated.</p>
+      <h3>Latest Checks</h3>
+      <p>Open one of these if someone asks what already ran.</p>
     </div>
     <div class="stack">
-      {% if recent_runs %}
-        {% for run in recent_runs %}
+      {% if recent_actions %}
+        {% for item in recent_actions[:6] %}
+        <div class="run-card">
+          <div class="min-w-0">
+            <strong>{{ item.label }}</strong>
+            <div class="muted">{{ item.created_at_utc }}</div>
+            {% if item.summary and item.summary.lines %}
+            <div class="muted">{{ item.summary.lines[0] }}</div>
+            {% endif %}
+          </div>
+          <div class="run-card-actions">
+            <span class="badge {% if item.status == 'completed' %}ok{% elif item.status == 'running' %}info{% else %}warn{% endif %}">{{ item.status }}</span>
+            <a href="/ui/actions/{{ item.run_id }}">Open</a>
+          </div>
+        </div>
+        {% endfor %}
+      {% elif recent_runs %}
+        {% for run in recent_runs[:6] %}
         <div class="run-card">
           <div class="min-w-0">
             <strong>{{ run.profile_id }}</strong>
@@ -329,15 +171,14 @@
           </div>
           <div class="run-card-actions">
             <span class="badge {% if run.status == 'completed' %}ok{% elif run.status == 'running' %}info{% else %}warn{% endif %}">{{ run.status }}</span>
-            <a href="/ui/runs/{{ run.run_id }}">Result</a>
-            <a href="/ui/runs/{{ run.run_id }}/evidence">Evidence</a>
+            <a href="/ui/runs/{{ run.run_id }}">Open</a>
           </div>
         </div>
         {% endfor %}
       {% else %}
         <div class="empty-state">
-          <strong>No operator UI runs recorded yet.</strong>
-          <p>Use one of the live profile cards above, or open the latest matrix summary if you only need the current baseline.</p>
+          <strong>No checks have been run yet.</strong>
+          <p>Use one of the buttons above to start.</p>
         </div>
       {% endif %}
     </div>
@@ -345,62 +186,87 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Recent QA Actions</h3>
-      <p>Use this when someone asks whether a checker pass, daily matrix, or scene check already ran.</p>
+      <h3>If You Need More Detail</h3>
+      <p>Most people can ignore this. Open it only when setup or mirror questions come up.</p>
     </div>
-    <div class="stack">
-      {% if recent_actions %}
-        {% for item in recent_actions %}
-        <div class="run-card">
+
+    <details class="foldout">
+      <summary>Show machine setup</summary>
+      <div class="stack tight">
+        {% for item in primary_prerequisites %}
+        <div class="status-item">
           <div class="min-w-0">
             <strong>{{ item.label }}</strong>
-            <div class="muted">{{ item.created_at_utc }}</div>
-            {% if item.summary and item.summary.lines %}
-            <div class="muted">{{ item.summary.lines[0] }}</div>
-            {% endif %}
+            <div class="muted path-text">{{ item.path }}</div>
           </div>
-          <div class="run-card-actions">
-            <span class="badge {% if item.status == 'completed' %}ok{% elif item.status == 'running' %}info{% elif item.status == 'blocked' %}warn{% else %}warn{% endif %}">{{ item.status }}</span>
-            <a href="/ui/actions/{{ item.run_id }}">Result</a>
-          </div>
+          <span class="badge {% if item.status == 'available' %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
         </div>
         {% endfor %}
-      {% else %}
-        <div class="empty-state">
-          <strong>No QA actions recorded yet.</strong>
-          <p>Start with the one-click SG QA actions above if you want to run the wider SG checks instead of a single preflight.</p>
-        </div>
-      {% endif %}
-    </div>
-  </article>
-</section>
+      </div>
+    </details>
 
-<section class="content-grid content-grid--home">
-  <article class="panel">
-    <div class="panel-head">
-      <h3>Why This Should Save Time</h3>
-      <p>These are the retro-driven promises the UI needs to satisfy in practice.</p>
-    </div>
-    <div class="stack tight">
-      <div class="status-item">
-        <div>
-          <strong>Catch avoidable findings earlier</strong>
-          <div class="muted">Use the live profiles before rack or preview delivery instead of discovering obvious issues at the end.</div>
+    <details class="foldout">
+      <summary>Show workflow fit and blockers</summary>
+      <div class="workflow-grid">
+        {% for step in workflow_steps %}
+        <article class="workflow-card">
+          <div class="status-row">
+            <strong>{{ step.label }}</strong>
+            <span class="badge {% if step.state == 'covered' %}ok{% elif step.state == 'partial' %}info{% else %}warn{% endif %}">{{ step.state }}</span>
+          </div>
+          <p class="workflow-summary">{{ step.summary }}</p>
+          {% if step.blockers %}
+          <ul class="clean-list">
+            {% for blocker in step.blockers %}
+            <li>{{ blocker }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </details>
+
+    <details class="foldout">
+      <summary>Show mirror health</summary>
+      <div class="audit-summary-grid">
+        <div class="summary-card compact">
+          <span>Fast Audit</span>
+          <strong>{{ fast_audit.status }}</strong>
+          <div class="muted">{{ fast_audit.entry_count }} targets checked - {{ fast_audit.drift_count }} drifted</div>
+        </div>
+        <div class="summary-card compact">
+          <span>Deep Audit</span>
+          <strong>{{ deep_audit.status }}</strong>
+          <div class="muted">
+            {% if deep_audit.entry_count %}
+            {{ deep_audit.entry_count }} entry - {{ deep_audit.drift_count }} drifted
+            {% else %}
+            no cached deep audit yet
+            {% endif %}
+          </div>
         </div>
       </div>
-      <div class="status-item">
-        <div>
-          <strong>Reduce source-of-truth confusion</strong>
-          <div class="muted">Every run links back to the SG source files that produced the finding, instead of forcing manual rediscovery.</div>
-        </div>
+      <div class="action-row action-row--wrap">
+        <a class="button subtle" href="/ui/audits/mirror/deep">Refresh Deep Mirror Audit</a>
+        {% if workflow_alignment.href %}
+        <a class="button subtle" href="{{ workflow_alignment.href }}">Open Workflow Note</a>
+        {% endif %}
       </div>
-      <div class="status-item">
-        <div>
-          <strong>Make ownership and handoff clearer</strong>
-          <div class="muted">Grouped findings, owner hints, action hints, and markdown evidence are meant to make the next step obvious.</div>
-        </div>
+      {% if deep_audit.notes %}
+      <div class="note-block note-block--warn">
+        {% for item in deep_audit.notes %}
+        <div>{{ item }}</div>
+        {% endfor %}
       </div>
-    </div>
+      {% elif fast_audit.notes %}
+      <div class="note-block">
+        {% for item in fast_audit.notes %}
+        <div>{{ item }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </details>
   </article>
 </section>
 {% endblock %}

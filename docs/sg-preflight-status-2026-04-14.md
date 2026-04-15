@@ -13,7 +13,7 @@ In practical terms, it is now a shared Python engine with two operator surfaces:
 - normalizes them into a stable bundle contract
 - runs deterministic validation packs
 - writes JSON, HTML, and Markdown reports that QA, TA, and pipeline people can read
-- serves a local operator UI for `run + inspect`
+- serves a local operator UI for simple daily checks and file-backed proof
 
 ## What It Does Today
 
@@ -46,7 +46,7 @@ Current operator UI surfaces:
 - Home
 - Run
 - Result
-- Evidence
+- Files And Proof
 
 ## What It Already Proves
 

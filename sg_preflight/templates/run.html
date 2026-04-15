@@ -1,74 +1,84 @@
 {% extends "base.html" %}
 {% block title %}Run {{ profile.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block content %}
-<section class="hero-panel">
+<section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">Run Profile</p>
+    <p class="eyebrow">Car Check</p>
     <h2>{{ profile.profile_id }} - {{ profile.label }}</h2>
-    <p class="hero-text">{{ profile.operator_goal or profile.description }}</p>
+    <p class="hero-text">{{ profile.friendly_summary or profile.operator_goal or profile.description }}</p>
   </div>
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if card.is_ready %}ok{% else %}warn{% endif %}">{{ card.readiness_label }}</span>
-    <a class="button subtle" href="/ui">Back to Home</a>
+    <a class="button subtle" href="/ui">Back To Home</a>
   </div>
 </section>
 
 <section class="content-grid content-grid--run">
   <article class="panel panel--priority">
     <div class="panel-head">
-      <h3>Why Run This Profile</h3>
-      <p>{{ profile.workflow_value }}</p>
+      <h3>Do This</h3>
+      <p>If you are unsure, use the big button below. It runs the widest useful check for this car on this machine.</p>
     </div>
 
-    <div class="detail-list">
+    <div class="primary-callout">
       <div>
-        <span class="detail-label">Good First Checks</span>
-        <ul class="clean-list">
-          {% for point in profile.focus_points %}
-          <li>{{ point }}</li>
-          {% endfor %}
-        </ul>
+        <strong>Best default for {{ profile.profile_id }}</strong>
+        <p>This full check runs preflight first, then the extra SG-side steps that are available here.</p>
       </div>
+      <div class="action-row action-row--wrap">
+        <button class="button action-launch" type="button" data-action-id="qa_stack__{{ profile.profile_id|lower }}">Run Full Check For This Car</button>
+      </div>
+    </div>
 
-      {% if card.live_signal %}
-      <div>
-        <span class="detail-label">Current Live Signal</span>
-        <div class="summary-inline">
-          <span><strong>{{ card.live_signal.summary.errors }}</strong> errors</span>
-          <span><strong>{{ card.live_signal.summary.warnings }}</strong> warnings</span>
-          <span><strong>{{ card.live_signal.summary.total }}</strong> total</span>
-        </div>
-        <ul class="clean-list">
-          {% for highlight in card.live_signal.highlights %}
-          <li><strong>{{ highlight.code }}</strong> x{{ highlight.count }}: {{ highlight.message }}</li>
-          {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
+    <div class="simple-checklist">
+      <strong>What this full check will try to do:</strong>
+      <ul class="clean-list">
+        <li>Run the normal preflight for anchors, constants, carpaints, and project sanity</li>
+        {% for item in profile_actions %}
+          {% if item.action_id == "repo_checker_profile__" ~ (profile.profile_id|lower) %}
+          <li>Run the SG repo checker for this car</li>
+          {% endif %}
+          {% if item.action_id == "scene_check__" ~ (profile.profile_id|lower) %}
+          <li>
+            {% if item.ready %}
+            Run the SG scene check for this car
+            {% else %}
+            Scene check is not available here yet: {{ item.blocker_message }}
+            {% endif %}
+          </li>
+          {% endif %}
+          {% if item.action_id == "bmw_screenshot_smoke__" ~ (profile.profile_id|lower) %}
+          <li>
+            {% if item.ready %}
+            Run BMW screenshot smoke for this car
+            {% else %}
+            BMW screenshot smoke is not available here yet: {{ item.blocker_message }}
+            {% endif %}
+          </li>
+          {% endif %}
+        {% endfor %}
+      </ul>
     </div>
   </article>
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Standard Check</h3>
-      <p>Most teammates only need the default run. Use the advanced options only when you already know you need something different.</p>
+      <h3>Quick Check Only</h3>
+      <p>Use this only when you want the deterministic preflight and nothing else.</p>
     </div>
 
     <form id="run-form" class="stack" data-profile-id="{{ profile.profile_id }}">
       <div class="note-block">
-        <div><strong>Simple flow:</strong></div>
-        <div>1. Run the standard check.</div>
-        <div>2. Read the top result box.</div>
-        <div>3. Copy the quick update if you need to hand it off.</div>
+        <div><strong>Quick path:</strong> run the normal preflight, read the top box, copy the quick update if needed.</div>
       </div>
 
       <div class="action-row action-row--wrap">
-        <button class="button" type="submit">Run Standard Check</button>
+        <button class="button subtle" type="submit">Run Quick Check Only</button>
         <span class="muted" id="launch-status">Ready</span>
       </div>
 
       <details class="foldout">
-        <summary>Show Advanced Run Options</summary>
+        <summary>Show advanced options</summary>
         <div class="stack">
           <div>
             <span class="detail-label">Packs</span>
@@ -107,71 +117,99 @@
 
 <section class="panel">
   <div class="panel-head">
-    <h3>More SG QA Actions For This Car</h3>
-    <p>Use these when the normal preflight is not enough and you want the current SG-side checker or scene-check step for this car.</p>
+    <h3>Why this car is here</h3>
+    <p>{{ profile.workflow_value }}</p>
   </div>
-  <div class="workflow-grid">
-    {% for item in profile_actions %}
-    <article class="workflow-card">
+
+  <div class="detail-grid">
+    <div class="simple-checklist">
+      <strong>Good first things to catch</strong>
+      <ul class="clean-list">
+        {% for point in profile.focus_points %}
+        <li>{{ point }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    {% if card.live_signal %}
+    <div class="signal-block">
       <div class="status-row">
-        <strong>{{ item.label }}</strong>
-        <span class="badge {% if item.ready %}ok{% else %}warn{% endif %}">{{ item.status_label }}</span>
+        <strong>Current known signal</strong>
       </div>
-      <p class="workflow-summary">{{ item.description }}</p>
-      {% if item.blocker_message %}
-      <div class="note-block note-block--warn">{{ item.blocker_message }}</div>
-      {% endif %}
-      <details class="foldout">
-        <summary>Show Command Detail</summary>
-        <div class="code-block">{{ item.command_preview }}</div>
-      </details>
-      <div class="action-row action-row--wrap">
-        <button class="button {% if not item.ready %}subtle{% endif %} action-launch" type="button" data-action-id="{{ item.action_id }}">
-          {% if item.ready %}Run Action{% else %}Show Blocker{% endif %}
-        </button>
+      <div class="summary-inline">
+        <span><strong>{{ card.live_signal.summary.errors }}</strong> errors</span>
+        <span><strong>{{ card.live_signal.summary.warnings }}</strong> warnings</span>
+        <span><strong>{{ card.live_signal.summary.total }}</strong> total</span>
       </div>
-    </article>
-    {% endfor %}
+      <ul class="clean-list">
+        {% for highlight in card.live_signal.highlights %}
+        <li><strong>{{ highlight.code }}</strong>: {{ highlight.message }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
   </div>
 </section>
 
 <section class="panel">
-  <div class="panel-head">
-    <h3>Resolved Source Inputs</h3>
-    <p>These files are the actual SG source-of-truth inputs that will be materialized into the normalized bundle for this run.</p>
-  </div>
-  <div class="stack tight">
-    <div class="detail-grid">
-      <div>
-        <span class="detail-label">Project Root</span>
-        <div class="path-text">{{ profile.project_root }}</div>
+  <details class="foldout" open>
+    <summary>Show exact files used for this car</summary>
+    <div class="stack tight">
+      <div class="detail-grid">
+        <div>
+          <span class="detail-label">Project Root</span>
+          <div class="path-text">{{ profile.project_root }}</div>
+        </div>
+        <div>
+          <span class="detail-label">Config</span>
+          <div class="path-text">{{ profile.config_path }}</div>
+        </div>
       </div>
-      <div>
-        <span class="detail-label">Config</span>
-        <div class="path-text">{{ profile.config_path }}</div>
-      </div>
-    </div>
 
-    {% for key, value in preview.source_paths.items() %}
-    <div class="status-item">
-      <div class="min-w-0">
-        <strong>{{ key }}</strong>
-        <div class="muted path-text">{{ value }}</div>
+      {% for key, value in preview.source_paths.items() %}
+      <div class="status-item">
+        <div class="min-w-0">
+          <strong>{{ key }}</strong>
+          <div class="muted path-text">{{ value }}</div>
+        </div>
+        <a href="/ui/files?path={{ value | urlencode }}">Open</a>
       </div>
-      <a href="/ui/files?path={{ value | urlencode }}">Open</a>
+      {% endfor %}
     </div>
-    {% endfor %}
+  </details>
 
-    {% if preview.notes %}
-    <details class="foldout">
-      <summary>Show Materialization Notes</summary>
-      <div class="note-block">
-        {% for note in preview.notes %}
-        <div>{{ note }}</div>
-        {% endfor %}
-      </div>
-    </details>
-    {% endif %}
-  </div>
+  {% if preview.notes %}
+  <details class="foldout">
+    <summary>Show materialization notes</summary>
+    <div class="note-block">
+      {% for note in preview.notes %}
+      <div>{{ note }}</div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+
+  <details class="foldout">
+    <summary>Show the other actions for this car</summary>
+    <div class="workflow-grid">
+      {% for item in profile_actions %}
+      <article class="workflow-card">
+        <div class="status-row">
+          <strong>{{ item.label }}</strong>
+          <span class="badge {% if item.ready %}ok{% else %}warn{% endif %}">{{ item.status_label }}</span>
+        </div>
+        <p class="workflow-summary">{{ item.description }}</p>
+        {% if item.blocker_message %}
+        <div class="note-block note-block--warn">{{ item.blocker_message }}</div>
+        {% endif %}
+        <div class="action-row action-row--wrap">
+          <button class="button {% if not item.ready %}subtle{% endif %} action-launch" type="button" data-action-id="{{ item.action_id }}">
+            {% if item.ready %}Run{% else %}Show blocker{% endif %}
+          </button>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </details>
 </section>
 {% endblock %}

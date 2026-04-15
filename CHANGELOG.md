@@ -12,7 +12,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - End-to-end CLI flow for `probe`, `materialize`, and `run`
 - Canonical live-profile registry for `G70`, `G65`, and `G45`
 - Shared Python service layer for bundle execution, report generation, and persistent run records
-- Local FastAPI/Jinja operator UI with Home, Run, Result, and Evidence views
+- Local FastAPI/Jinja operator UI with Home, Run, Result, and Files And Proof views
 - PowerShell operator-UI launcher/check script for teammate sessions
 - Cached fast mirror audit plus on-demand deep mirror audit for the mirrored SVN
 - CLI surfaces for `list-profiles`, `run-profile`, and `ui`
@@ -39,7 +39,8 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 - Operator UI Home now starts with common QA-task entry points so teammates can choose by intent instead of profile code first
 - Operator UI and CLI now expose one-click SG QA actions for the wider workflow, including daily live matrix, repo checker, recommended per-car QA stack, scene check, and explicit BMW smoke blockers
-- Run pages now push one default "standard check" path and keep advanced options secondary
+- Run pages now push one default full-check path and keep the quick-check path secondary
+- Operator UI language and layout now reduce framework detail by default so teammates can start from daily jobs, not tooling concepts
 - Run pages now expose a recommended QA stack action per car so teammates can launch the available SG-side automation from one button
 - Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text
 - Operator UI Home now shows where the tool fits in the real SG QA workflow, including explicit covered / partial / blocked stages

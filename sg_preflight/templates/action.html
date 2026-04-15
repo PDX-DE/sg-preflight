@@ -2,11 +2,11 @@
 {% block title %}Action {{ record.label }} - SG Preflight Operator UI{% endblock %}
 {% block body_attrs %}data-action-status="{{ record.status }}" data-action-run-id="{{ record.run_id }}"{% endblock %}
 {% block content %}
-<section class="hero-panel">
+<section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">QA Action</p>
+    <p class="eyebrow">Automation Result</p>
     <h2>{{ record.label }}</h2>
-    <p class="hero-text">Action run ID <code>{{ record.run_id }}</code></p>
+    <p class="hero-text">This page shows what the automation ran and what it produced.</p>
   </div>
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% elif record.status == 'blocked' %}warn{% else %}warn{% endif %}" id="action-status-pill">{{ record.status }}</span>
@@ -20,11 +20,11 @@
     <h3>Action State</h3>
     <p id="action-state-message">
       {% if record.status == 'running' %}
-      Action is still executing. This page refreshes automatically until the result is ready.
+      The automation is still running. This page refreshes automatically.
       {% elif record.status == 'failed' %}
-      Action failed: {{ record.error_message }}
+      The automation failed: {{ record.error_message }}
       {% else %}
-      Action is queued.
+      The automation is queued.
       {% endif %}
     </p>
   </div>
@@ -34,7 +34,7 @@
 <section class="content-grid content-grid--result">
   <article class="panel panel--priority">
     <div class="panel-head">
-      <h3>What This Action Did</h3>
+      <h3>What happened</h3>
       <p>{{ record.command_preview or "Internal SG QA action" }}</p>
     </div>
     {% if record.summary and record.summary.lines %}
@@ -53,8 +53,8 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Artifacts</h3>
-      <p>Use these when you need the raw checker log, summary files, or generated workbook.</p>
+      <h3>Open these files</h3>
+      <p>Use these when you need the log, summary files, or generated workbook.</p>
     </div>
     <div class="stack">
       {% for link in links %}
@@ -75,7 +75,7 @@
 {% if log_text %}
 <section class="panel">
   <div class="panel-head">
-    <h3>Action Log</h3>
+    <h3>Raw log</h3>
     <p>Raw output from the wrapped SG-side script or action runner.</p>
   </div>
   <pre class="code-block">{{ log_text }}</pre>

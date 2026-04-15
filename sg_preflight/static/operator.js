@@ -105,7 +105,7 @@
       if (submitButton) {
         submitButton.disabled = true;
       }
-      launchStatus.textContent = "Starting the standard check...";
+      launchStatus.textContent = "Starting the quick check...";
 
       try {
         const response = await fetch("/ui/api/runs", {

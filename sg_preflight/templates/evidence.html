@@ -1,21 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Evidence {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
+{% block title %}Files And Proof {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block content %}
-<section class="hero-panel">
-  <div>
-    <p class="eyebrow">Evidence</p>
+<section class="hero-panel hero-panel--simple">
+  <div class="hero-copy">
+    <p class="eyebrow">Files And Proof</p>
     <h2>{{ record.profile_id }} - {{ record.profile_label }}</h2>
-    <p>Persistent artifacts and source links for run <code>{{ record.run_id }}</code>.</p>
+    <p class="hero-text">These are the reports and SG files behind run <code>{{ record.run_id }}</code>.</p>
   </div>
-  <div class="hero-actions">
+  <div class="hero-actions hero-actions--stack">
     <a class="button subtle" href="/ui/runs/{{ record.run_id }}">Back to Result</a>
   </div>
 </section>
 
 <section class="panel">
   <div class="panel-head">
-    <h3>Artifacts</h3>
-    <p>Bundle, reports, metadata, and source-of-truth files.</p>
+    <h3>Open These Files</h3>
+    <p>Reports, metadata, and source-of-truth files used by this run.</p>
   </div>
   <div class="stack">
     {% for link in links %}

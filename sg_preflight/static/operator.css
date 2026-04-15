@@ -102,7 +102,7 @@ pre,
 }
 
 .page-shell {
-  max-width: 1380px;
+  max-width: 1240px;
   margin: 0 auto;
   padding: 1.5rem;
 }
@@ -135,7 +135,7 @@ pre,
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) auto;
   gap: 1.5rem;
-  padding: 1.6rem 1.75rem;
+  padding: 1.4rem 1.5rem;
   margin-bottom: 1.25rem;
 }
 
@@ -151,9 +151,9 @@ pre,
 
 .hero-panel h2 {
   margin: 0.35rem 0 0.55rem;
-  max-width: 920px;
-  font-size: clamp(1.7rem, 2.6vw, 2.4rem);
-  line-height: 1.1;
+  max-width: 760px;
+  font-size: clamp(1.85rem, 2.8vw, 2.7rem);
+  line-height: 1.02;
 }
 
 .hero-text {
@@ -188,6 +188,10 @@ pre,
 .hero-actions--stack {
   flex-direction: column;
   justify-content: flex-start;
+}
+
+.hero-panel--simple .hero-bullets span {
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .content-grid {
@@ -329,6 +333,27 @@ pre,
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
+.quick-start-grid,
+.car-choice-grid,
+.quick-result-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.quick-start-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.car-choice-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.quick-result-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
 .workflow-card {
   display: flex;
   flex-direction: column;
@@ -342,6 +367,45 @@ pre,
 
 .workflow-card--task {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 242, 233, 0.92));
+}
+
+.quick-start-card,
+.car-choice-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+  min-width: 0;
+  padding: 1.2rem;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 242, 233, 0.96));
+  border: 1px solid rgba(105, 88, 56, 0.14);
+  box-shadow: var(--shadow);
+}
+
+.quick-start-card h4,
+.car-choice-card h4 {
+  margin: 0.15rem 0 0.2rem;
+  font-size: 1.35rem;
+}
+
+.car-choice-summary {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.primary-callout,
+.simple-checklist {
+  padding: 1rem 1.05rem;
+  border-radius: var(--radius-lg);
+  background: rgba(36, 79, 65, 0.08);
+  border: 1px solid rgba(36, 79, 65, 0.14);
+}
+
+.simple-checklist strong,
+.primary-callout strong {
+  display: block;
+  margin-bottom: 0.35rem;
 }
 
 .workflow-summary {
@@ -693,6 +757,9 @@ select {
 
   .summary-strip,
   .profile-grid,
+  .quick-start-grid,
+  .car-choice-grid,
+  .quick-result-grid,
   .detail-grid,
   .evidence-grid,
   .checkbox-grid,

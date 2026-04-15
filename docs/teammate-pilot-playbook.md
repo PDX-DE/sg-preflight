@@ -42,11 +42,12 @@ The flow is:
    - HTML
    - Markdown
 6. The operator UI uses the same shared Python services and shows:
+   - simple daily jobs
    - live profiles
    - one-click QA actions
    - resolved inputs
    - grouped findings
-   - evidence drilldown
+   - files and proof
    - persistent run history
 
 The UI is not a second engine.
@@ -148,8 +149,8 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
    - `G45` for classic anchor-family coverage
 
 5. Launch either:
-   - `Run Standard Check` if you only want the deterministic preflight
-   - `Run Recommended QA Stack For <car>` if you want the wider SG-side automation path from one button
+   - `Run Full Check For This Car` for the normal path
+   - `Run Quick Check Only` if you only want the deterministic preflight
 
 6. On the Result page, ask the teammate:
    - Is the grouped summary understandable?
@@ -158,7 +159,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
    - Does the owner hint look credible?
    - Does the suggested action help or add noise?
 
-7. Open one finding drilldown and one Evidence page link.
+7. Open one finding drilldown and one Files And Proof page link.
 
 8. If you used a one-click QA action, open the action result page and ask:
    - Can you tell what this action ran without opening a terminal?
@@ -180,7 +181,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 
 The product target is that they should be able to hand the result off without rewriting it first.
 
-## Where Evidence Lands
+## Where Files And Proof Land
 
 UI-triggered runs are written under:
 
@@ -278,7 +279,7 @@ Use these in the session:
 
 1. If you saw this before rack, would it save you time?
 2. Can you tell what to open next without asking someone?
-3. Is the distinction between summary, result, and evidence clear?
+3. Is the distinction between summary, result, and Files And Proof clear?
 4. Which finding feels most trustworthy?
 5. Which finding still needs manual interpretation?
 6. What would stop you from using this without me present?

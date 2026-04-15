@@ -142,10 +142,10 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 The operator UI serves locally at `http://127.0.0.1:8765/ui` by default.
 It provides:
 
-- Home: common QA tasks, live profiles with operator goals, current live signal, compact readiness, cached mirror health
-- Run: profile purpose, a standard one-click check, a recommended QA stack action, and advanced options only when needed
-- Result: decision summary, "do this next" guidance, copy-ready handoff text, grouped findings, owner/action hints, severity filters, per-finding drilldown
-- Evidence: direct links to reports, bundle metadata, manifest, and SG source files
+- Home: three obvious daily jobs, a simple car picker, latest checks, and hidden setup detail only when needed
+- Run: one primary full-check button for the selected car, a secondary quick-check path, and advanced options only behind a foldout
+- Result: what happened, who should look at it, what to open next, copy-ready handoff text, grouped findings, and drilldown detail behind foldouts
+- Files And Proof: direct links to reports, bundle metadata, manifest, and SG source files
 - One-click actions for the wider SG QA flow:
   - daily live matrix
   - repo checker on workspace or per-car scope
@@ -375,7 +375,7 @@ This is already fully runnable, but it is still an early internal release:
 > [!WARNING]
 > The current live findings are useful production signal, not synthetic demo failures. A clean tooling run does not mean the car is clean; it means the deterministic checks completed successfully and the remaining findings are likely worth triage.
 - the repo now supports live SG mirror inputs for `G70`, `G65`, and `G45` anchor/constants/carpaint/project-sanity slices
-- the local operator UI is intentionally `run + inspect`, not a separate second validation engine
+- the local operator UI is intentionally a simple local work surface over the same engine, not a separate second validation engine
 - the framework is intended to improve the established SG QA flow, not replace BMW screenshot smoke, rack review, or Blender visual checks
 - the current live matrix baseline is meaningful already:
   - `G70` surfaces a real duplicate BMW carpaint ID plus cross-car and unused-Lua warnings

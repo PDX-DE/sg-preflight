@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The operator UI is the local `run + inspect` surface for `sg-preflight`.
+The operator UI is the local daily-use surface for `sg-preflight`.
 
 It does not replace the deterministic Python engine.
 It calls the same shared services used by:
@@ -48,23 +48,23 @@ http://127.0.0.1:8765/ui
 
 Shows:
 
-- common QA-task entry points for teammates who do not want to reason about profile codes first
-- canonical live profiles with explicit operator goals and focus areas
+- three obvious jobs first:
+  - check one car
+  - check all live cars
+  - run SG repo checkers
+- canonical live profiles with plain-language goals and focus areas
 - current live signal for the real `G70`, `G65`, and `G45` slices when the latest matrix output is present
-- compact readiness status for the local machine and mirrored SVN
-- explicit QA-workflow-fit cards showing what is covered, partial, or blocked on the current machine
-- cached mirror-health summary, with deeper detail behind foldouts
-- recent persisted operator runs
+- recent persisted checks and action runs
+- setup, workflow-fit, and mirror-health detail behind foldouts instead of on the main path
 
 ### Run
 
 For a selected profile, shows:
 
+- one primary full-check button for that car
 - why this profile is worth running
 - current live signal for that slice, if available
-- one-click standard-check action
-- one-click recommended QA stack action for the selected car
-- a plain three-step use path for teammates who just want the default flow
+- a quick-check-only form for the deterministic preflight path
 - advanced options behind a foldout
 - resolved SG source inputs
 - detected `Pivot_Master`, `Module_constants`, `CarPaint`, and anchor scene paths
@@ -73,18 +73,19 @@ For a selected profile, shows:
 
 Shows:
 
-- summary cards
-- a decision summary for the run outcome
-- a short "do this next" section
+- summary counts
+- a plain "what happened" block
+- a plain "who should look at it" block
+- a plain "open this now" block
+- a short "do this now" section
 - copy-ready quick-update and full-handoff actions
-- grouped findings
-- owner and action hints
+- grouped findings behind a foldout
 - severity filtering
-- per-finding evidence drilldown
+- per-finding drilldown behind a foldout
 - exact source file and line evidence for `project_sanity` reference findings
 - direct Lua-file evidence for `project_sanity.unused_lua`
 
-### Evidence
+### Files And Proof
 
 Shows direct links to:
 
@@ -158,6 +159,7 @@ Current expectation:
 
 - use the UI to catch deterministic issues and produce evidence before manual review
 - use the one-click QA actions when you want repo checker, scene check, or the recommended per-car QA stack without touching terminals
+- default to the full-check button when you just want the safest useful path for one car
 - do not claim that the UI replaces Blender visual checks
 - do not claim that the UI replaces rack sessions
 - do not claim that BMW screenshot smoke is fully usable on this machine until BMW access and target mapping exist

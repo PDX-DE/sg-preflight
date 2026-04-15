@@ -30,19 +30,17 @@ class TestOperatorUI(unittest.TestCase):
                     run_view = client.get("/ui/profiles/G65")
 
         self.assertEqual(home.status_code, 200)
-        self.assertIn("Start With A Car", home.text)
-        self.assertIn("Common QA Tasks", home.text)
-        self.assertIn("One-Click SG QA Actions", home.text)
+        self.assertIn("Start Here", home.text)
+        self.assertIn("Choose The Car You Are Working On", home.text)
+        self.assertIn("Check one car", home.text)
         self.assertIn("BMW G65 test slice", home.text)
-        self.assertIn("Current QA Workflow Fit", home.text)
-        self.assertIn("BMW screenshot / export / interface smoke", home.text)
-        self.assertIn("blocked", home.text)
+        self.assertIn("If You Need More Detail", home.text)
+        self.assertIn("Show workflow fit and blockers", home.text)
         self.assertEqual(run_view.status_code, 200)
-        self.assertIn("Resolved Source Inputs", run_view.text)
-        self.assertIn("Standard Check", run_view.text)
-        self.assertIn("Run Standard Check", run_view.text)
-        self.assertIn("More SG QA Actions For This Car", run_view.text)
-        self.assertIn("Run Recommended QA Stack For G65", run_view.text)
+        self.assertIn("Run Full Check For This Car", run_view.text)
+        self.assertIn("Quick Check Only", run_view.text)
+        self.assertIn("Show exact files used for this car", run_view.text)
+        self.assertIn("Show the other actions for this car", run_view.text)
         self.assertIn("Run BMW Screenshot Smoke For G65", run_view.text)
 
     def test_run_result_and_evidence_pages_render_grouped_findings_and_links(self) -> None:
@@ -78,16 +76,18 @@ class TestOperatorUI(unittest.TestCase):
             evidence_page = client.get(payload["result_url"] + "/evidence")
 
         self.assertEqual(result_page.status_code, 200)
-        self.assertIn("Do This Next", result_page.text)
+        self.assertIn("1. What happened", result_page.text)
+        self.assertIn("2. Who should look at it", result_page.text)
+        self.assertIn("3. Open this now", result_page.text)
         self.assertIn("Copy Quick Update", result_page.text)
         self.assertIn("Copy Finding", result_page.text)
-        self.assertIn("Grouped Findings", result_page.text)
+        self.assertIn("Show all grouped problems", result_page.text)
         self.assertIn("TA / pipeline / integration owner", result_page.text)
         self.assertIn("Confirm whether the Lua file is intentionally unused", result_page.text)
         self.assertIn("Source file", result_page.text)
         self.assertIn("Lua source", result_page.text)
         self.assertEqual(evidence_page.status_code, 200)
-        self.assertIn("JSON report", evidence_page.text)
+        self.assertIn("Files And Proof", evidence_page.text)
         self.assertIn("Project manifest", evidence_page.text)
 
     def test_blocked_action_can_be_started_and_rendered(self) -> None:
@@ -143,7 +143,7 @@ class TestOperatorUI(unittest.TestCase):
 
         self.assertEqual(home.status_code, 200)
         self.assertIn("Refresh Deep Mirror Audit", home.text)
-        self.assertIn("Show Audit Detail", home.text)
+        self.assertIn("Show mirror health", home.text)
         self.assertIn("Playground/RaCoSceneMerging_PoC", home.text)
 
 

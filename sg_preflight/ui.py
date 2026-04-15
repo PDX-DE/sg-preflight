@@ -307,19 +307,19 @@ def _decision_summary(report: Report) -> dict[str, str]:
     if summary["errors"] > 0:
         return {
             "tone": "error",
-            "title": "Not ready for handoff yet",
-            "body": "Resolve the error-level findings first, then use the grouped findings below to decide ownership and sequencing.",
+            "title": "Fix these before moving on",
+            "body": "There is at least one red problem. Start with the first one below before rack, review, or handoff.",
         }
     if summary["warnings"] > 0:
         return {
             "tone": "warning",
-            "title": "Triage before rack or review",
-            "body": "No error-level findings were raised, but warnings still need explicit ownership or acceptance.",
+            "title": "Read these before review",
+            "body": "Nothing is red, but there are still yellow findings that need an owner or a clear decision.",
         }
     return {
         "tone": "ok",
-        "title": "Deterministic checks are clean",
-        "body": "Use the evidence and context sections for handoff or documentation if this run is part of a delivery checkpoint.",
+        "title": "This check looks clean",
+        "body": "No deterministic problems were found at this level. Open files and proof only if someone asks for evidence.",
     }
 
 
@@ -329,24 +329,24 @@ def _next_steps(report: Report, presentation: dict[str, Any]) -> list[str]:
     steps: list[str] = []
 
     if summary["errors"] > 0:
-        steps.append("Fix the error-level items first. Do not spend time on warning-only cleanup until the blockers are understood.")
+        steps.append("Open the first red problem and understand that one before looking at anything else.")
     elif summary["warnings"] > 0:
-        steps.append("Review the warning-level items now. Nothing is error-blocking, but these still need a clear owner.")
+        steps.append("Open the first yellow problem and decide whether it needs a fix or only a note.")
     else:
-        steps.append("The standard check is clean. Only open the evidence page if someone asks for proof or traceability.")
+        steps.append("This check is clean. You only need to open files if someone asks for proof.")
 
     if grouped:
         top = grouped[0]
-        action = str(top.get("action", "")).strip() or str(top.get("message", "")).strip()
+        action = str(top.get("action", "")).strip() or "Open the linked file and decide the next owner."
         steps.append(f"Start with {top['pack']} / {top['code']}. {action}")
         owner = str(top.get("owner", "")).strip()
         if owner:
-            steps.append(f"If you hand this off, send the copied quick update to {owner}.")
+            steps.append(f"If you hand this off, send the quick update to {owner}.")
         else:
-            steps.append("If you hand this off, use the copied quick update below and attach the HTML or Markdown report.")
+            steps.append("If you hand this off, copy the quick update below and attach the HTML report if needed.")
     else:
-        steps.append("Use the quick update below if you need to confirm that the deterministic check completed cleanly.")
-        steps.append("Attach the HTML or Markdown report only when someone needs evidence, not by default.")
+        steps.append("Use the quick update below if you need to say that the check completed cleanly.")
+        steps.append("Do not attach extra files unless someone asks for them.")
 
     return steps[:3]
 
@@ -359,12 +359,11 @@ def _quick_update_text(
 ) -> str:
     summary = report.summary()
     lines = [
-        f"SG Preflight - {record.profile_id} ({record.profile_label})",
-        f"Run ID: {record.run_id}",
-        f"Readout: {decision_summary['title']}",
-        f"Summary: {summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info, {summary['total']} total",
+        f"SG Preflight check for {record.profile_id}",
+        f"Result: {decision_summary['title']}",
+        f"Counts: {summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info, {summary['total']} total",
         "",
-        "What matters now:",
+        "Start here:",
     ]
 
     if not grouped_findings:
@@ -384,9 +383,8 @@ def _quick_update_text(
     lines.extend(
         [
             "",
-            "Evidence:",
+            "Open if needed:",
             f"HTML report: {record.paths.get('html_report', '')}",
-            f"Markdown report: {record.paths.get('markdown_report', '')}",
             f"Project root: {record.project_root}",
         ]
     )
