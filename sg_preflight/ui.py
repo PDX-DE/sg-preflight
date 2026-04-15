@@ -345,6 +345,21 @@ def _guided_job_cards() -> list[dict[str, Any]]:
     return cards
 
 
+_SOURCE_FILE_LABELS = {
+    "scene_hierarchy": "Anchor RCA",
+    "constants_expected": "Pivot_Master",
+    "constants_exported": "Module_constants / exported constants",
+    "carpaints": "CarPaint catalog",
+}
+
+_SOURCE_FILE_ORDER = (
+    "scene_hierarchy",
+    "constants_expected",
+    "constants_exported",
+    "carpaints",
+)
+
+
 def _guided_profile_cards(root: Path, profiles: list[RunProfile], job: dict[str, Any]) -> list[dict[str, Any]]:
     cards: list[dict[str, Any]] = []
     best_profiles = {str(item).upper() for item in job.get("best_profiles", ())}
@@ -390,6 +405,16 @@ def _guided_profile_cards(root: Path, profiles: list[RunProfile], job: dict[str,
     return cards
 
 
+def _guided_profile_sections(root: Path, profiles: list[RunProfile], job: dict[str, Any]) -> dict[str, Any]:
+    cards = _guided_profile_cards(root, profiles, job)
+    primary = next((item for item in cards if item["is_best_match"]), cards[0] if cards else None)
+    others = [item for item in cards if primary is None or item["profile"].profile_id != primary["profile"].profile_id]
+    return {
+        "primary_profile": primary,
+        "other_profiles": others,
+    }
+
+
 def _action_cards(root: Path, profiles: list[RunProfile], *, scope: str, profile_id: str = "") -> list[dict[str, Any]]:
     cards = []
     for action in list_operator_actions(root, profiles=profiles):
@@ -407,8 +432,55 @@ def _action_cards(root: Path, profiles: list[RunProfile], *, scope: str, profile
                 "blocker_message": action.blocker_message,
                 "command_preview": action.command_preview,
             }
-        )
+    )
     return cards
+
+
+def _source_file_cards(preview: Any) -> list[dict[str, str]]:
+    source_paths = getattr(preview, "source_paths", {}) or {}
+    cards: list[dict[str, str]] = []
+
+    for key in _SOURCE_FILE_ORDER:
+        value = str(source_paths.get(key, "")).strip()
+        if not value:
+            continue
+        cards.append(_path_evidence(_SOURCE_FILE_LABELS.get(key, key.replace("_", " ").title()), value))
+
+    for key, value in source_paths.items():
+        if key in _SOURCE_FILE_ORDER or not str(value).strip():
+            continue
+        cards.append(_path_evidence(str(key).replace("_", " ").title(), str(value)))
+    return cards
+
+
+def _primary_launch(profile: RunProfile, selected_job: dict[str, Any] | None) -> dict[str, Any]:
+    if selected_job is not None and selected_job.get("launch_mode") == "run":
+        return {
+            "kind": "run",
+            "title": f"Best default if you changed {str(selected_job['short_label']).lower()}",
+            "description": "Run the smallest useful deterministic check for that kind of change, then open the first problem.",
+            "button_label": str(selected_job["button_template"]).format(profile_id="This Car"),
+            "packs": list(selected_job["packs"]),
+            "job_key": str(selected_job["key"]),
+            "job_label": str(selected_job["short_label"]),
+            "checklist": [
+                *(f"Run only the {pack} pack for this car" for pack in selected_job["packs"]),
+                "Skip the wider SG-side stack unless you open the secondary actions below.",
+            ],
+        }
+
+    return {
+        "kind": "action",
+        "title": f"Best default for {profile.profile_id}",
+        "description": "Run the full SG-side check path that is available on this machine for this car.",
+        "button_label": "Run Full Check For This Car",
+        "action_id": f"qa_stack__{profile.profile_id.lower()}",
+        "checklist": [
+            "Run the normal preflight for anchors, constants, carpaints, and project sanity.",
+            "Run the SG repo checker for this car when it is available here.",
+            "Run scene check or BMW smoke only when the local machine is ready for them.",
+        ],
+    }
 
 
 def _primary_prerequisites(root: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
@@ -494,6 +566,101 @@ def _decision_summary(report: Report) -> dict[str, str]:
     }
 
 
+def _dedupe_links(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in items:
+        key = (
+            str(item.get("label", "")),
+            str(item.get("value", "")),
+            str(item.get("href", "")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _first_problem(
+    record: Any,
+    decision_summary: dict[str, str] | None,
+    grouped_findings: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not grouped_findings:
+        title = decision_summary["title"] if decision_summary is not None else "This check looks clean"
+        return {
+            "is_clean": True,
+            "tone": "ok",
+            "title": "You are done unless someone asks for proof",
+            "summary": title,
+            "message": (
+                decision_summary["body"]
+                if decision_summary is not None
+                else "No deterministic problems were found."
+            ),
+            "owner": "No owner routing is needed.",
+            "action": "Share a clean-run handoff only if someone needs evidence.",
+            "occurrence_label": "0 occurrences",
+            "open_link": _path_evidence("HTML report", record.paths.get("html_report")),
+            "done_line": "You are done when you have either moved on or shared the clean-run handoff.",
+            "copy_text": "",
+            "location": "",
+            "pack": "",
+            "code": "",
+            "severity": "ok",
+        }
+
+    top = grouped_findings[0]
+    raw = next(
+        (
+            finding
+            for finding in findings
+            if finding["pack"] == top["pack"]
+            and finding["code"] == top["code"]
+            and finding["message"] == top["message"]
+            and finding["severity"] == top["severity"]
+        ),
+        findings[0] if findings else None,
+    )
+    evidence_link = next(
+        (item for item in (raw.get("evidence", []) if raw is not None else []) if item.get("href")),
+        None,
+    )
+    severity = str(top["severity"]).lower()
+    if severity == "error":
+        title = "Start with this red problem"
+    elif severity == "warning":
+        title = "Start with this yellow problem"
+    else:
+        title = "Start with this signal"
+
+    return {
+        "is_clean": False,
+        "tone": severity,
+        "title": title,
+        "summary": f"{top['pack']} / {top['code']}",
+        "message": str(top["message"]),
+        "owner": str(top.get("owner", "")).strip() or "No owner hint yet",
+        "action": str(top.get("action", "")).strip() or "Open the linked file and decide the next owner.",
+        "occurrence_label": f"{top['count']} occurrence(s)",
+        "open_link": evidence_link
+        or {
+            "label": "Files And Proof",
+            "value": record.paths.get("html_report", ""),
+            "href": f"/ui/runs/{record.run_id}/evidence",
+            "kind": "path",
+        },
+        "done_line": "You are done when this problem has an owner, a source file, and a copied handoff.",
+        "copy_text": raw.get("copy_text", "") if raw is not None else "",
+        "location": raw.get("location", "") if raw is not None else "",
+        "pack": str(top["pack"]),
+        "code": str(top["code"]),
+        "severity": severity,
+    }
+
+
 def _next_steps(report: Report, presentation: dict[str, Any]) -> list[str]:
     summary = report.summary()
     grouped = list(presentation.get("grouped_findings", []))
@@ -562,6 +729,64 @@ def _quick_update_text(
         ]
     )
     return "\n".join(line for line in lines if line is not None).strip()
+
+
+def _problem_handoff_text(record: Any, first_problem: dict[str, Any]) -> str:
+    if first_problem.get("is_clean"):
+        lines = [
+            f"SG Preflight clean run for {record.profile_id}",
+            "Result: no deterministic problems were found in this run.",
+            f"HTML report: {record.paths.get('html_report', '')}",
+            f"Files and proof: /ui/runs/{record.run_id}/evidence",
+        ]
+        return "\n".join(lines).strip()
+
+    lines = [
+        f"SG Preflight first problem for {record.profile_id}",
+        f"Problem: {str(first_problem.get('severity', '')).upper()} - {first_problem.get('pack', '')} / {first_problem.get('code', '')}",
+        f"Message: {first_problem.get('message', '')}",
+        f"Owner: {first_problem.get('owner', '')}",
+        f"Action: {first_problem.get('action', '')}",
+    ]
+    location = str(first_problem.get("location", "")).strip()
+    if location:
+        lines.append(f"Location: {location}")
+    open_link = first_problem.get("open_link", {})
+    if open_link and open_link.get("value"):
+        lines.append(f"{open_link.get('label', 'Open')}: {open_link.get('value', '')}")
+    lines.append(f"HTML report: {record.paths.get('html_report', '')}")
+    return "\n".join(lines).strip()
+
+
+def _handoff_options(
+    record: Any,
+    quick_update_text: str,
+    full_handoff_text: str,
+    first_problem: dict[str, Any],
+) -> dict[str, Any]:
+    primary_label = (
+        "Copy Clean Run Handoff" if first_problem.get("is_clean") else "Copy Handoff For This Problem"
+    )
+    primary_text = _problem_handoff_text(record, first_problem)
+    return {
+        "primary": {
+            "target_id": "copy-primary-handoff",
+            "label": primary_label,
+            "text": primary_text,
+        },
+        "secondary": [
+            {
+                "target_id": "copy-quick-update",
+                "label": "Copy Quick Update",
+                "text": quick_update_text,
+            },
+            {
+                "target_id": "copy-full-handoff",
+                "label": "Copy Full Handoff",
+                "text": full_handoff_text or quick_update_text,
+            },
+        ],
+    }
 
 
 def _load_text_file(path_value: str) -> str:
@@ -737,6 +962,115 @@ def _finding_evidence(finding: Finding, record: Any) -> list[dict[str, str]]:
     return evidence
 
 
+def _evidence_sections(record: Any, first_problem: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    report_links = _dedupe_links(
+        [
+            _path_evidence("HTML report", record.paths.get("html_report")),
+            _path_evidence("Markdown report", record.paths.get("markdown_report")),
+            _path_evidence("JSON report", record.paths.get("json_report")),
+        ]
+    )
+    source_links = [
+        _path_evidence("Anchor RCA", record.source_paths.get("scene_hierarchy")),
+        _path_evidence("Pivot_Master", record.source_paths.get("constants_expected")),
+        _path_evidence("Module_constants / exported constants", record.source_paths.get("constants_exported")),
+        _path_evidence("CarPaint catalog", record.source_paths.get("carpaints")),
+    ]
+    if first_problem is not None:
+        open_link = first_problem.get("open_link", {})
+        if open_link.get("href") and open_link.get("value"):
+            source_links.insert(0, dict(open_link))
+    source_links = _dedupe_links([link for link in source_links if link.get("href") or link.get("value")])
+    metadata_links = _dedupe_links(
+        [
+            _path_evidence("Project manifest", record.paths.get("project_manifest")),
+            _path_evidence("Bundle metadata", record.paths.get("bundle_metadata")),
+            _path_evidence("Run record", record.paths.get("run_record")),
+            _path_evidence("Bundle root", record.paths.get("bundle")),
+            _path_evidence("Project root", record.project_root),
+        ]
+    )
+    return [
+        {
+            "key": "reports",
+            "title": "Reports",
+            "description": "Use these when you need the run summary in HTML, Markdown, or JSON.",
+            "links": report_links,
+        },
+        {
+            "key": "source_truth",
+            "title": "Source-of-truth files",
+            "description": "Open these when you need the SG file behind the current finding.",
+            "links": source_links,
+        },
+        {
+            "key": "run_metadata",
+            "title": "Run metadata",
+            "description": "Generated metadata and bookkeeping for this run.",
+            "links": metadata_links,
+        },
+    ]
+
+
+def _action_links(record: Any) -> list[dict[str, str]]:
+    links = [
+        _path_evidence("Action log", record.paths.get("log")),
+        _path_evidence("Summary Markdown", record.paths.get("summary_md")),
+        _path_evidence("Summary JSON", record.paths.get("summary_json")),
+    ]
+    for artifact in getattr(record, "artifacts", []):
+        path = str(artifact.get("path", "")).strip()
+        label = str(artifact.get("label", "Artifact")).strip() or "Artifact"
+        if path:
+            links.append(_path_evidence(label, path))
+    return [link for link in links if link["href"] or link["value"]]
+
+
+def _action_result_view(record: Any) -> dict[str, Any]:
+    links = _action_links(record)
+    open_now = [link for link in links if link.get("href")][:3]
+    summary_lines = list(record.summary.get("lines", [])) if isinstance(record.summary, dict) else []
+
+    if record.status == "completed":
+        return {
+            "title": "This automation finished",
+            "body": summary_lines[0] if summary_lines else "The SG-side action completed.",
+            "what_ran": record.command_preview or "Internal SG QA action",
+            "next_steps": summary_lines[1:4] or ["Open the summary markdown if you need to hand this off."],
+            "open_now": open_now,
+        }
+    if record.status == "blocked":
+        blocker = record.blocker_message or "This action is blocked on the current machine."
+        return {
+            "title": "This automation is blocked here",
+            "body": blocker,
+            "what_ran": record.command_preview or "Internal SG QA action",
+            "next_steps": [
+                "Read the blocker below before trying to run this again.",
+                "Use the normal preflight path if you still need SG-side evidence today.",
+            ],
+            "open_now": open_now,
+        }
+    if record.status == "failed":
+        return {
+            "title": "This automation failed before completion",
+            "body": record.error_message or "Open the action log first and inspect the failure.",
+            "what_ran": record.command_preview or "Internal SG QA action",
+            "next_steps": [
+                "Open the action log first.",
+                "Fix the local failure or blocker before re-running.",
+            ],
+            "open_now": open_now,
+        }
+    return {
+        "title": "This automation is still running",
+        "body": "Wait for the page to refresh, then open the summary or log.",
+        "what_ran": record.command_preview or "Internal SG QA action",
+        "next_steps": ["Stay on this page until the status changes."],
+        "open_now": open_now,
+    }
+
+
 def _evidence_links(record: Any) -> list[dict[str, str]]:
     links = [
         _path_evidence("JSON report", record.paths.get("json_report")),
@@ -751,20 +1085,6 @@ def _evidence_links(record: Any) -> list[dict[str, str]]:
         _path_evidence("Module_constants / exported constants", record.source_paths.get("constants_exported")),
         _path_evidence("CarPaint catalog", record.source_paths.get("carpaints")),
     ]
-    return [link for link in links if link["href"] or link["value"]]
-
-
-def _action_links(record: Any) -> list[dict[str, str]]:
-    links = [
-        _path_evidence("Action log", record.paths.get("log")),
-        _path_evidence("Summary JSON", record.paths.get("summary_json")),
-        _path_evidence("Summary Markdown", record.paths.get("summary_md")),
-    ]
-    for artifact in getattr(record, "artifacts", []):
-        path = str(artifact.get("path", "")).strip()
-        label = str(artifact.get("label", "Artifact")).strip() or "Artifact"
-        if path:
-            links.append(_path_evidence(label, path))
     return [link for link in links if link["href"] or link["value"]]
 
 
@@ -852,12 +1172,14 @@ def create_app(
         if job is None:
             raise HTTPException(status_code=404, detail=f"Unknown guided job {job_key!r}")
         ordered_profiles = list(app.state.profiles.values())
+        sections = _guided_profile_sections(app.state.workspace_root, ordered_profiles, job)
         return app.state.templates.TemplateResponse(
             request,
             "guided_job.html",
             {
                 "job": job,
-                "job_profiles": _guided_profile_cards(app.state.workspace_root, ordered_profiles, job),
+                "primary_profile": sections["primary_profile"],
+                "other_profiles": sections["other_profiles"],
             },
         )
 
@@ -866,6 +1188,18 @@ def create_app(
         profile = _get_profile(app, profile_id)
         preview = _cached_preview(app, profile)
         selected_job = _get_guided_job(job)
+        primary_launch = _primary_launch(profile, selected_job)
+        profile_actions = _action_cards(
+            app.state.workspace_root,
+            list(app.state.profiles.values()),
+            scope="profile",
+            profile_id=profile.profile_id,
+        )
+        secondary_actions = [
+            item
+            for item in profile_actions
+            if item["action_id"] != primary_launch.get("action_id", "")
+        ]
         selected_packs = (
             list(selected_job["packs"])
             if selected_job is not None and selected_job["launch_mode"] == "run"
@@ -879,13 +1213,10 @@ def create_app(
                 "preview": preview,
                 "card": _profile_card(app.state.workspace_root, profile),
                 "selected_job": selected_job,
+                "primary_launch": primary_launch,
+                "source_file_cards": _source_file_cards(preview),
                 "selected_packs": selected_packs,
-                "profile_actions": _action_cards(
-                    app.state.workspace_root,
-                    list(app.state.profiles.values()),
-                    scope="profile",
-                    profile_id=profile.profile_id,
-                ),
+                "profile_actions": secondary_actions,
                 "packs": ["anchors", "constants", "carpaints", "project_sanity"],
             },
         )
@@ -956,6 +1287,21 @@ def create_app(
             else ""
         )
         full_handoff_text = _load_text_file(record.paths.get("markdown_report", ""))
+        first_problem = (
+            _first_problem(record, decision_summary, grouped_findings, findings)
+            if report is not None and decision_summary is not None
+            else None
+        )
+        evidence_sections = (
+            _evidence_sections(record, first_problem)
+            if first_problem is not None
+            else []
+        )
+        handoff_options = (
+            _handoff_options(record, quick_update_text, full_handoff_text, first_problem)
+            if first_problem is not None
+            else {}
+        )
         job_label = str(record.context.get("operator_job_label", "")).strip()
         return app.state.templates.TemplateResponse(
             request,
@@ -967,9 +1313,10 @@ def create_app(
                 "findings": findings,
                 "decision_summary": decision_summary,
                 "top_groups": grouped_findings[:3] if presentation is not None else [],
+                "first_problem": first_problem,
                 "next_steps": _next_steps(report, presentation) if report is not None and presentation is not None else [],
-                "quick_update_text": quick_update_text,
-                "full_handoff_text": full_handoff_text,
+                "handoff_options": handoff_options,
+                "evidence_sections": evidence_sections,
                 "job_label": job_label,
                 "notes": run_notes(record),
             },
@@ -978,24 +1325,38 @@ def create_app(
     @app.get("/ui/runs/{run_id}/evidence")
     async def evidence_view(request: Request, run_id: str) -> Any:
         record = load_run_record(run_id, app.state.workspace_root)
+        report = load_run_report(record)
+        config = load_run_config(record) if report is not None else {}
+        presentation = build_report_presentation(report, config) if report is not None else None
+        findings = _finding_rows(report, record, config) if report is not None else []
+        decision_summary = _decision_summary(report) if report is not None else None
+        grouped_findings = presentation["grouped_findings"] if presentation is not None else []
+        first_problem = (
+            _first_problem(record, decision_summary, grouped_findings, findings)
+            if report is not None and decision_summary is not None
+            else None
+        )
         return app.state.templates.TemplateResponse(
             request,
             "evidence.html",
             {
                 "record": record,
-                "links": _evidence_links(record),
+                "first_problem": first_problem,
+                "evidence_sections": _evidence_sections(record, first_problem),
             },
         )
 
     @app.get("/ui/actions/{run_id}")
     async def action_view(request: Request, run_id: str) -> Any:
         record = load_action_record(run_id, app.state.workspace_root)
+        links = _action_links(record)
         return app.state.templates.TemplateResponse(
             request,
             "action.html",
             {
                 "record": record,
-                "links": _action_links(record),
+                "links": links,
+                "action_result": _action_result_view(record),
                 "log_text": _load_text_file(record.paths.get("log", "")),
             },
         )

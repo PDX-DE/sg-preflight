@@ -142,11 +142,11 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 The operator UI serves locally at `http://127.0.0.1:8765/ui` by default.
 It provides:
 
-- Home: a "what changed?" launcher, three obvious daily jobs, a simple car picker, latest checks, and hidden setup detail only when needed
-- Guided checks: pick constants, anchors, carpaints, or file/reference sanity first, then choose the car and run the smallest useful check
-- Run: one primary action for the selected car, either a guided pack-specific check or the full-check path, plus a secondary quick-check form behind the scenes
-- Result: what happened, who should look at it, what to open next, copy-ready handoff text, grouped findings, and drilldown detail behind foldouts
-- Files And Proof: direct links to reports, bundle metadata, manifest, and SG source files
+- Home: `What Changed?` is the primary start path; broader starts such as daily matrix, repo checker, and direct car picking are intentionally secondary
+- Guided checks: show one recommended car first, then keep the other cars in a separate secondary section
+- Run: one primary button only, plus a visible `Files this check will use` block; quick-check and alternate actions stay behind foldouts
+- Result: a primary `First Thing To Do` panel, direct source-file link for the first problem, and a primary handoff copy action
+- Files And Proof: grouped `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned when a finding exists
 - One-click actions for the wider SG QA flow:
   - daily live matrix
   - repo checker on workspace or per-car scope

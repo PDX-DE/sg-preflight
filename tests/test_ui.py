@@ -9,8 +9,13 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 from sg_preflight.profiles import RunProfile
+from sg_preflight.qa_actions import (
+    build_action_record,
+    get_operator_action,
+    save_action_record as save_action_task_record,
+)
 from sg_preflight.ui import create_app
-from tests.operator_helpers import create_temp_g65_profile
+from tests.operator_helpers import create_temp_g65_profile, write_text
 
 
 class TestOperatorUI(unittest.TestCase):
@@ -18,13 +23,47 @@ class TestOperatorUI(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
+            sibling_profiles = [
+                RunProfile(
+                    profile_id="G70",
+                    label="BMW G70 test slice",
+                    repo_root=profile.repo_root,
+                    project_root=profile.project_root,
+                    config_path=profile.config_path,
+                    default_context=profile.default_context,
+                    description=profile.description,
+                    operator_goal=profile.operator_goal,
+                    workflow_value=profile.workflow_value,
+                    friendly_task="Find obvious delivery issues",
+                    friendly_summary="Synthetic G70 fixture for guided operator tests.",
+                    focus_points=profile.focus_points,
+                    mirror_audit_targets=profile.mirror_audit_targets,
+                    reference_repo_root=profile.reference_repo_root,
+                ),
+                RunProfile(
+                    profile_id="G45",
+                    label="BMW G45 test slice",
+                    repo_root=profile.repo_root,
+                    project_root=profile.project_root,
+                    config_path=profile.config_path,
+                    default_context=profile.default_context,
+                    description=profile.description,
+                    operator_goal=profile.operator_goal,
+                    workflow_value=profile.workflow_value,
+                    friendly_task="Check anchor setup",
+                    friendly_summary="Synthetic G45 fixture for guided operator tests.",
+                    focus_points=profile.focus_points,
+                    mirror_audit_targets=profile.mirror_audit_targets,
+                    reference_repo_root=profile.reference_repo_root,
+                ),
+            ]
             with mock.patch.dict(
                 os.environ,
                 {"SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models")},
                 clear=False,
             ):
                 with mock.patch("sg_preflight.services.shutil.which", return_value=None):
-                    client = TestClient(create_app(root=root, profiles=[profile]))
+                    client = TestClient(create_app(root=root, profiles=[profile, *sibling_profiles]))
 
                     home = client.get("/ui")
                     guided = client.get("/ui/start/constants")
@@ -34,26 +73,27 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(home.status_code, 200)
         self.assertIn("What Changed?", home.text)
         self.assertIn("I changed constants", home.text)
-        self.assertIn("Or Use The Big Defaults", home.text)
-        self.assertIn("Choose The Car You Are Working On", home.text)
-        self.assertIn("Check one car", home.text)
+        self.assertIn("Other Ways To Start", home.text)
+        self.assertIn("Pick A Car Directly", home.text)
+        self.assertIn("Check all live cars", home.text)
         self.assertIn("BMW G65 test slice", home.text)
         self.assertIn("If You Need More Detail", home.text)
         self.assertIn("Show workflow fit and blockers", home.text)
         self.assertEqual(guided.status_code, 200)
-        self.assertIn("Guided Check", guided.text)
+        self.assertIn("Recommended Start", guided.text)
         self.assertIn("Run Constants Check For G65", guided.text)
-        self.assertIn("Best match", guided.text)
+        self.assertIn("Other Cars", guided.text)
+        self.assertIn("Recommended", guided.text)
         self.assertEqual(run_view.status_code, 200)
         self.assertIn("Run Full Check For This Car", run_view.text)
-        self.assertIn("Quick Check Only", run_view.text)
-        self.assertIn("Show exact files used for this car", run_view.text)
-        self.assertIn("Show the other actions for this car", run_view.text)
+        self.assertIn("Files This Check Will Use", run_view.text)
+        self.assertIn("Show quick-check-only options", run_view.text)
+        self.assertIn("Show full car check and other actions", run_view.text)
         self.assertIn("Run BMW Screenshot Smoke For G65", run_view.text)
         self.assertEqual(guided_run_view.status_code, 200)
         self.assertIn("Constants check", guided_run_view.text)
         self.assertIn("Run Constants Check For This Car", guided_run_view.text)
-        self.assertIn("Run Full Check Instead", guided_run_view.text)
+        self.assertNotIn("Run Full Check Instead", guided_run_view.text)
 
     def test_run_result_and_evidence_pages_render_grouped_findings_and_links(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -88,9 +128,8 @@ class TestOperatorUI(unittest.TestCase):
             evidence_page = client.get(payload["result_url"] + "/evidence")
 
         self.assertEqual(result_page.status_code, 200)
-        self.assertIn("1. What happened", result_page.text)
-        self.assertIn("2. Who should look at it", result_page.text)
-        self.assertIn("3. Open this now", result_page.text)
+        self.assertIn("First Thing To Do", result_page.text)
+        self.assertIn("Copy Handoff For This Problem", result_page.text)
         self.assertIn("Copy Quick Update", result_page.text)
         self.assertIn("Copy Finding", result_page.text)
         self.assertIn("Show all grouped problems", result_page.text)
@@ -99,8 +138,10 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Source file", result_page.text)
         self.assertIn("Lua source", result_page.text)
         self.assertEqual(evidence_page.status_code, 200)
-        self.assertIn("Files And Proof", evidence_page.text)
-        self.assertIn("Project manifest", evidence_page.text)
+        self.assertIn("Pinned First File", evidence_page.text)
+        self.assertIn("Reports", evidence_page.text)
+        self.assertIn("Source-of-truth files", evidence_page.text)
+        self.assertIn("Run metadata", evidence_page.text)
 
     def test_guided_run_carries_plain_language_job_label_into_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -126,7 +167,8 @@ class TestOperatorUI(unittest.TestCase):
 
         self.assertEqual(result_page.status_code, 200)
         self.assertIn("Constants check on G65", result_page.text)
-        self.assertIn("Copy Quick Update", result_page.text)
+        self.assertIn("Copy Clean Run Handoff", result_page.text)
+        self.assertIn("You are done when...", result_page.text)
 
     def test_blocked_action_can_be_started_and_rendered(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -140,8 +182,49 @@ class TestOperatorUI(unittest.TestCase):
             result_page = client.get(payload["result_url"])
 
         self.assertEqual(result_page.status_code, 200)
+        self.assertIn("This automation is blocked here", result_page.text)
         self.assertIn("Scene check needs both the mirrored", result_page.text)
-        self.assertNotIn("Action Log", result_page.text)
+        self.assertIn("Do This Next", result_page.text)
+        self.assertNotIn("Raw Log", result_page.text)
+
+    def test_completed_and_failed_action_pages_render_plain_language_states(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            completed_action = get_operator_action("daily_live_matrix", root, profiles=[profile])
+            completed_record = build_action_record(completed_action, root)
+            completed_record.status = "completed"
+            completed_record.summary = {
+                "title": "Daily SG Check",
+                "lines": [
+                    "G65: 0 errors, 1 warnings, 0 info",
+                    "Open the summary markdown if you need to hand this off.",
+                ],
+            }
+            write_text(Path(completed_record.paths["log"]), "completed\n")
+            save_action_task_record(completed_record)
+
+            failed_action = get_operator_action("daily_live_matrix", root, profiles=[profile])
+            failed_record = build_action_record(failed_action, root)
+            failed_record.status = "failed"
+            failed_record.error_message = "synthetic failure"
+            write_text(Path(failed_record.paths["log"]), "failed\n")
+            save_action_task_record(failed_record)
+
+            completed_page = client.get(f"/ui/actions/{completed_record.run_id}")
+            failed_page = client.get(f"/ui/actions/{failed_record.run_id}")
+
+        self.assertEqual(completed_page.status_code, 200)
+        self.assertIn("This automation finished", completed_page.text)
+        self.assertIn("Open This Now", completed_page.text)
+        self.assertIn("Show all generated files", completed_page.text)
+        self.assertIn("Raw Log", completed_page.text)
+        self.assertEqual(failed_page.status_code, 200)
+        self.assertIn("This automation failed before completion", failed_page.text)
+        self.assertIn("synthetic failure", failed_page.text)
+        self.assertIn("Open the action log first.", failed_page.text)
 
     def test_deep_audit_route_persists_and_renders_playground_note(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

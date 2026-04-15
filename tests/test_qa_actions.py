@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -28,8 +29,16 @@ class TestQaActions(unittest.TestCase):
             profile = create_temp_g65_profile(root)
             _create_checker_files(root)
 
-            with mock.patch("sg_preflight.services.shutil.which", return_value=None):
-                actions = list_operator_actions(root, profiles=[profile])
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "SG_RACO_HEADLESS": str(root / "missing" / "RaCoHeadless.exe"),
+                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
+                },
+                clear=False,
+            ):
+                with mock.patch("sg_preflight.services.shutil.which", return_value=None):
+                    actions = list_operator_actions(root, profiles=[profile])
 
         action_map = {action.action_id: action for action in actions}
         self.assertTrue(action_map["daily_live_matrix"].ready)
@@ -77,9 +86,17 @@ starting  luacheck on  12  files
             _create_checker_files(root)
             (root / "config").mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / "config" / "sg_rules_live_g65.json", root / "config" / "sg_rules_live_g65.json")
-            action = get_operator_action("qa_stack__g65", root, profiles=[profile])
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "SG_RACO_HEADLESS": str(root / "missing" / "RaCoHeadless.exe"),
+                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
+                },
+                clear=False,
+            ):
+                action = get_operator_action("qa_stack__g65", root, profiles=[profile])
 
-            sample_output = """
+                sample_output = """
 ############################################
 starting  luacheck on  12  files
 ############################################
@@ -87,16 +104,16 @@ starting  luacheck on  12  files
 ############################################
 """.strip()
 
-            with mock.patch(
-                "sg_preflight.qa_actions.subprocess.run",
-                return_value=subprocess.CompletedProcess(
-                    args=["python"],
-                    returncode=0,
-                    stdout=sample_output,
-                    stderr="",
-                ),
-            ):
-                record = execute_operator_action(action, root)
+                with mock.patch(
+                    "sg_preflight.qa_actions.subprocess.run",
+                    return_value=subprocess.CompletedProcess(
+                        args=["python"],
+                        returncode=0,
+                        stdout=sample_output,
+                        stderr="",
+                    ),
+                ):
+                    record = execute_operator_action(action, root)
 
             lines = record.summary.get("lines", []) if record.summary else []
             self.assertEqual(record.status, "completed")

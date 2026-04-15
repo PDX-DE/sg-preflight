@@ -38,12 +38,18 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 ### Changed
 
 - Operator UI Home now starts with common QA-task entry points so teammates can choose by intent instead of profile code first
+- Operator UI Home now keeps `What Changed?` as the only primary start path above the fold and demotes daily matrix, repo checker, and direct car-picking to secondary entry points
 - Operator UI and CLI now expose one-click SG QA actions for the wider workflow, including daily live matrix, repo checker, recommended per-car QA stack, scene check, and explicit BMW smoke blockers
+- Guided checks now show one recommended car first and move the remaining cars into a separate secondary section
 - Run pages now push one default full-check path and keep the quick-check path secondary
+- Run pages now use one explicit primary launch model, surface `Files this check will use` near the main action, and keep quick-check customization plus secondary actions behind foldouts
 - Operator UI language and layout now reduce framework detail by default so teammates can start from daily jobs, not tooling concepts
 - Operator UI now starts from "what changed?" guided launchers so teammates can choose constants, anchors, carpaints, or file/reference sanity before choosing a car
 - Run pages now expose a recommended QA stack action per car so teammates can launch the available SG-side automation from one button
 - Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text
+- Result pages now center one `First Thing To Do` panel, pin the best matching source file for the top finding, and make a problem-specific handoff copy action primary
+- Files And Proof now groups outputs into `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned first
+- Action result pages now mirror the same plain-language flow as run results for completed, blocked, and failed SG-side actions
 - Operator UI Home now shows where the tool fits in the real SG QA workflow, including explicit covered / partial / blocked stages
 - Operator readiness now surfaces the BMW screenshot-test repo as a first-class prerequisite instead of hiding BMW-side blockers
 - Operator UI Home/Run/Result flow now prioritizes operator decisions, current live signal, and clearer next actions instead of raw filesystem detail

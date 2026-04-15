@@ -12,23 +12,45 @@
   </div>
 </section>
 
-<section class="panel">
+{% if first_problem and not first_problem.is_clean %}
+<section class="panel panel--priority">
   <div class="panel-head">
-    <h3>Open These Files</h3>
-    <p>Reports, metadata, and source-of-truth files used by this run.</p>
+    <h3>Pinned First File</h3>
+    <p>This file is tied most directly to the first problem on the result page.</p>
   </div>
-  <div class="stack">
-    {% for link in links %}
-    <div class="status-item">
-      <div>
-        <strong>{{ link.label }}</strong>
-        <div class="muted">{{ link.value }}</div>
-      </div>
-      {% if link.href %}
-      <a href="{{ link.href }}">Open</a>
-      {% endif %}
+  <div class="status-item">
+    <div>
+      <strong>{{ first_problem.open_link.label }}</strong>
+      <div class="muted path-text">{{ first_problem.open_link.value }}</div>
     </div>
-    {% endfor %}
+    {% if first_problem.open_link.href %}
+    <a href="{{ first_problem.open_link.href }}">Open</a>
+    {% endif %}
   </div>
+</section>
+{% endif %}
+
+<section class="stack">
+  {% for section in evidence_sections %}
+  <article class="panel">
+    <div class="panel-head">
+      <h3>{{ section.title }}</h3>
+      <p>{{ section.description }}</p>
+    </div>
+    <div class="stack tight">
+      {% for link in section.links %}
+      <div class="status-item">
+        <div>
+          <strong>{{ link.label }}</strong>
+          <div class="muted path-text">{{ link.value }}</div>
+        </div>
+        {% if link.href %}
+        <a href="{{ link.href }}">Open</a>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+  {% endfor %}
 </section>
 {% endblock %}

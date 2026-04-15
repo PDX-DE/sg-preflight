@@ -38,7 +38,7 @@
 </section>
 {% endif %}
 
-{% if presentation %}
+{% if presentation and first_problem %}
 <section class="summary-strip">
   <article class="summary-card error">
     <span>Errors</span>
@@ -61,7 +61,107 @@
 <section class="quick-result-grid">
   <article class="panel panel--priority">
     <div class="panel-head">
-      <h3>1. What happened</h3>
+      <h3>First Thing To Do</h3>
+      <p>{{ first_problem.title }}</p>
+    </div>
+
+    {% if first_problem.is_clean %}
+    <p>{{ first_problem.message }}</p>
+    <div class="note-block">
+      <strong>You are done when...</strong>
+      <div>{{ first_problem.done_line }}</div>
+    </div>
+    {% else %}
+    <div class="status-row">
+      <strong class="summary-code">{{ first_problem.pack }} / {{ first_problem.code }}</strong>
+      <span class="badge {% if first_problem.severity == 'error' %}warn{% elif first_problem.severity == 'warning' %}info{% else %}ok{% endif %}">{{ first_problem.severity }}</span>
+    </div>
+    <p>{{ first_problem.message }}</p>
+    <div class="detail-grid">
+      <div>
+        <span class="detail-label">Owner</span>
+        <div>{{ first_problem.owner }}</div>
+      </div>
+      <div>
+        <span class="detail-label">Next move</span>
+        <div>{{ first_problem.action }}</div>
+      </div>
+      <div>
+        <span class="detail-label">Occurrences</span>
+        <div>{{ first_problem.occurrence_label }}</div>
+      </div>
+      {% if first_problem.location %}
+      <div>
+        <span class="detail-label">First location</span>
+        <div class="path-text">{{ first_problem.location }}</div>
+      </div>
+      {% endif %}
+    </div>
+    <div class="note-block">
+      <strong>You are done when...</strong>
+      <div>{{ first_problem.done_line }}</div>
+    </div>
+    {% endif %}
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Open This Now</h3>
+      <p>Shortest path from this result to the right file.</p>
+    </div>
+    <div class="stack tight">
+      <div class="status-item">
+        <div>
+          <strong>Files And Proof</strong>
+          <div class="muted">Grouped reports, SG source files, and run metadata</div>
+        </div>
+        <a href="/ui/runs/{{ record.run_id }}/evidence">Open</a>
+      </div>
+      <div class="status-item">
+        <div>
+          <strong>{{ first_problem.open_link.label }}</strong>
+          <div class="muted path-text">{{ first_problem.open_link.value }}</div>
+        </div>
+        {% if first_problem.open_link.href %}
+        <a href="{{ first_problem.open_link.href }}">Open</a>
+        {% endif %}
+      </div>
+      {% if evidence_sections and evidence_sections[0].links %}
+      <div class="status-item">
+        <div>
+          <strong>{{ evidence_sections[0].links[0].label }}</strong>
+          <div class="muted path-text">{{ evidence_sections[0].links[0].value }}</div>
+        </div>
+        {% if evidence_sections[0].links[0].href %}
+        <a href="{{ evidence_sections[0].links[0].href }}">Open</a>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Copy This Now</h3>
+      <p>Use the first button when you want the shortest useful handoff.</p>
+    </div>
+    <div class="action-row action-row--wrap">
+      <button class="button copy-button" type="button" data-copy-target="{{ handoff_options.primary.target_id }}">{{ handoff_options.primary.label }}</button>
+      {% for item in handoff_options.secondary %}
+      <button class="button subtle copy-button" type="button" data-copy-target="{{ item.target_id }}">{{ item.label }}</button>
+      {% endfor %}
+    </div>
+    <textarea id="{{ handoff_options.primary.target_id }}" hidden>{{ handoff_options.primary.text }}</textarea>
+    {% for item in handoff_options.secondary %}
+    <textarea id="{{ item.target_id }}" hidden>{{ item.text }}</textarea>
+    {% endfor %}
+  </article>
+</section>
+
+<section class="content-grid content-grid--result">
+  <article class="panel">
+    <div class="panel-head">
+      <h3>What Happened</h3>
       <p>{{ decision_summary.title }}</p>
     </div>
     <p>{{ decision_summary.body }}</p>
@@ -83,92 +183,14 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>2. Who should look at it</h3>
-      <p>Use this to decide who should take the next step.</p>
-    </div>
-    <ol class="step-list">
-      {% for item in top_groups %}
-      <li>
-        <strong>{{ item.pack }} / {{ item.code }}</strong><br />
-        Owner: {{ item.owner or "No owner hint yet" }}<br />
-        Next move: {{ item.action or "Open the file and decide the owner." }}
-      </li>
-      {% endfor %}
-      {% if not top_groups %}
-      <li>No owner routing is needed because this check is clean.</li>
-      {% endif %}
-    </ol>
-  </article>
-
-  <article class="panel">
-    <div class="panel-head">
-      <h3>3. Open this now</h3>
-      <p>These are the fastest places to click next.</p>
-    </div>
-    <div class="stack tight">
-      <div class="status-item">
-        <div>
-          <strong>Files and proof</strong>
-          <div class="muted">All reports and source files for this run</div>
-        </div>
-        <a href="/ui/runs/{{ record.run_id }}/evidence">Open</a>
-      </div>
-      <div class="status-item">
-        <div>
-          <strong>HTML report</strong>
-          <div class="muted path-text">{{ record.paths.html_report }}</div>
-        </div>
-        <a href="/ui/files?path={{ record.paths.html_report | urlencode }}">Open</a>
-      </div>
-      <div class="status-item">
-        <div>
-          <strong>Project manifest</strong>
-          <div class="muted path-text">{{ record.paths.project_manifest }}</div>
-        </div>
-        <a href="/ui/files?path={{ record.paths.project_manifest | urlencode }}">Open</a>
-      </div>
-      {% if findings and findings[0].evidence %}
-        {% for item in findings[0].evidence %}
-          {% if item.href %}
-          <div class="status-item">
-            <div>
-              <strong>{{ item.label }}</strong>
-              <div class="muted path-text">{{ item.value }}</div>
-            </div>
-            <a href="{{ item.href }}">Open</a>
-          </div>
-          {% endif %}
-        {% endfor %}
-      {% endif %}
-    </div>
-  </article>
-</section>
-
-<section class="content-grid content-grid--result">
-  <article class="panel">
-    <div class="panel-head">
-      <h3>Do this now</h3>
-      <p>Shortest path through this result.</p>
+      <h3>Do This Next</h3>
+      <p>Use these only after you handle the first problem above.</p>
     </div>
     <ol class="step-list">
       {% for item in next_steps %}
       <li>{{ item }}</li>
       {% endfor %}
     </ol>
-  </article>
-
-  <article class="panel">
-    <div class="panel-head">
-      <h3>Copy this into chat or a ticket</h3>
-      <p>Most of the time the quick update is enough.</p>
-    </div>
-    <div class="action-row action-row--wrap">
-      <button class="button subtle copy-button" type="button" data-copy-target="copy-quick-update">Copy Quick Update</button>
-      <button class="button subtle copy-button" type="button" data-copy-target="copy-full-handoff">Copy Full Handoff</button>
-      <a class="button" href="/ui/runs/{{ record.run_id }}/evidence">Open Files And Proof</a>
-    </div>
-    <textarea id="copy-quick-update" hidden>{{ quick_update_text }}</textarea>
-    <textarea id="copy-full-handoff" hidden>{{ full_handoff_text or quick_update_text }}</textarea>
   </article>
 </section>
 

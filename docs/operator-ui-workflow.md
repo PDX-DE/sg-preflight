@@ -48,16 +48,16 @@ http://127.0.0.1:8765/ui
 
 Shows:
 
-- a "what changed?" launcher for:
+- a primary "what changed?" launcher for:
   - constants
   - anchors
   - carpaints
   - files, Lua, or references
-- three obvious jobs first:
-  - check one car
+- broader starts only as secondary choices:
   - check all live cars
   - run SG repo checkers
-- canonical live profiles with plain-language goals and focus areas
+  - pick a car directly when you already know the slice
+- canonical live profiles kept lower on the page as a secondary direct-entry path
 - current live signal for the real `G70`, `G65`, and `G45` slices when the latest matrix output is present
 - recent persisted checks and action runs
 - setup, workflow-fit, and mirror-health detail behind foldouts instead of on the main path
@@ -66,34 +66,36 @@ Shows:
 
 For a selected kind of change, shows:
 
-- the plain-language job first
-- the best live car to start with when one slice is a stronger fit
-- one direct button per car to run the smallest useful check
+- one recommended live car first when one slice is a stronger fit
+- one direct button on that recommended card to run the smallest useful check
+- other cars in a separate secondary section
 - a link to the fuller per-car page when you need more control
 
 ### Run
 
 For a selected profile, shows:
 
-- one primary action for that car
+- one primary action only for that car
 - guided pack-specific defaults when you arrive from the "what changed?" launcher
 - why this profile is worth running
 - current live signal for that slice, if available
-- a quick-check-only form for the deterministic preflight path
-- advanced options behind a foldout
-- resolved SG source inputs
-- detected `Pivot_Master`, `Module_constants`, `CarPaint`, and anchor scene paths
+- a visible `Files this check will use` block near the primary action
+- the quick-check-only form behind a foldout
+- the other actions for the car behind a foldout
+- detected `Pivot_Master`, `Module_constants`, `CarPaint`, and anchor scene paths without making the operator hunt for them
 
 ### Result
 
 Shows:
 
 - summary counts
-- a plain "what happened" block
-- a plain "who should look at it" block
-- a plain "open this now" block
-- a short "do this now" section
-- copy-ready quick-update and full-handoff actions
+- a primary `First Thing To Do` block for the first actionable finding
+- owner and next-action text directly on that primary block
+- the best matching source-file link for that first problem
+- a primary handoff copy action for the first problem
+- secondary quick-update and full-handoff copy actions
+- a clear `You are done when...` line for both problem and clean-run states
+- a short secondary "what happened" and "do this next" layer
 - grouped findings behind a foldout
 - severity filtering
 - per-finding drilldown behind a foldout
@@ -102,16 +104,20 @@ Shows:
 
 ### Files And Proof
 
-Shows direct links to:
+Shows grouped direct links to:
 
-- JSON / HTML / Markdown reports
-- bundle metadata
-- project manifest
-- anchor `.rca`
-- `Pivot_Master.json`
-- `Module_constants_*.lua` or exported constants source
-- `CarPaint.json`
-- run record JSON
+- `Reports`
+  - JSON / HTML / Markdown reports
+- `Source-of-truth files`
+  - the first relevant SG file pinned first when a finding exists
+  - anchor `.rca`
+  - `Pivot_Master.json`
+  - `Module_constants_*.lua` or exported constants source
+  - `CarPaint.json`
+- `Run metadata`
+  - bundle metadata
+  - project manifest
+  - run record JSON
 
 ## Persistence
 

@@ -135,7 +135,8 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 
 2. Open Home and confirm:
    - the `What Changed?` launcher is visible
-   - live profiles are visible
+   - broader starts such as daily matrix, repo checker, and direct car picking are secondary
+   - live profiles are visible lower on the page as a secondary direct-entry path
    - prerequisites are mostly `available`
    - mirror-health information is visible
 
@@ -156,18 +157,18 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
    - `G45` for classic anchor-family coverage
 
 6. Launch either:
-   - a guided check button from the guided page if you know exactly what changed
-   - `Run Full Check For This Car` for the safest broad path
-   - `Run Quick Check Only` if you only want the deterministic preflight
+   - the one recommended guided button from the guided page if you know exactly what changed
+   - `Run Full Check For This Car` from the per-car page if you entered directly by car
+   - `Run Quick Check Only` only if you deliberately want the deterministic preflight without the wider SG-side action path
 
 7. On the Result page, ask the teammate:
-   - Is the grouped summary understandable?
-   - Is the "Do This Next" section enough to continue without you?
-   - Can you tell what is important first?
+   - Is the `First Thing To Do` block enough to continue without you?
+   - Is the pinned file link the right place to click next?
+   - Can you tell what is important first without opening the foldouts?
    - Does the owner hint look credible?
    - Does the suggested action help or add noise?
 
-8. Open one finding drilldown and one Files And Proof page link.
+8. Open the pinned source file first, then open the Files And Proof page and confirm the grouped sections make sense.
 
 9. If you used a one-click QA action, open the action result page and ask:
    - Can you tell what this action ran without opening a terminal?
@@ -183,6 +184,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 11. Save the run and feedback.
 
 12. Ask them to use the copy buttons:
+   - `Copy Handoff For This Problem` or `Copy Clean Run Handoff`
    - `Copy Quick Update`
    - `Copy Full Handoff`
    - `Copy Finding`
@@ -273,6 +275,7 @@ Ask teammates to point to one of these:
 
 - a label they do not understand
 - a finding that still does not reveal the correct owner
+- the wrong file being pinned as the first place to open
 - a missing source link
 - a confusing action hint
 - a place where the copy-ready handoff text still needs manual rewriting

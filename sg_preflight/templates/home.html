@@ -4,34 +4,27 @@
 <section class="hero-panel hero-panel--home hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">Simple QA Start</p>
-    <h2>Pick the car you touched, run one check, open the first red item.</h2>
+    <h2>Start from what changed. Run one check. Open one source file.</h2>
     <p class="hero-text">
-      This tool is for one job: catch obvious problems before rack or review and point you to the right SG file.
+      This tool is for one job: catch obvious SG-side problems before review, show who should act next, and make handoff text reusable.
     </p>
     <div class="hero-bullets">
-      <span>1. Pick a car.</span>
-      <span>2. Run the full check.</span>
-      <span>3. Open the first problem.</span>
+      <span>1. Pick the kind of change.</span>
+      <span>2. Run the recommended check.</span>
+      <span>3. Open the first problem and copy the handoff.</span>
     </div>
-  </div>
-  <div class="hero-actions hero-actions--stack">
-    <a class="button" href="#cars">Choose A Car</a>
-    <button class="button action-launch" type="button" data-action-id="daily_live_matrix">Check All Live Cars</button>
-    {% if matrix_summary.href %}
-    <a class="button subtle" href="{{ matrix_summary.href }}">Open Latest Summary</a>
-    {% endif %}
   </div>
 </section>
 
 <section class="panel panel--priority">
   <div class="panel-head">
     <h3>What Changed?</h3>
-    <p>Start here if you already know what you touched.</p>
+    <p>Start here first. This is the primary path for teammate use.</p>
   </div>
   <div class="quick-start-grid">
     {% for job in guided_jobs %}
     <article class="quick-start-card">
-      <p class="eyebrow">Guided</p>
+      <p class="eyebrow">Recommended Start</p>
       <h4>{{ job.label }}</h4>
       <p>{{ job.description }}</p>
       <ul class="clean-list">
@@ -49,46 +42,49 @@
 
 <section class="panel">
   <div class="panel-head">
-    <h3>Or Use The Big Defaults</h3>
-    <p>Use these when you want the safest broad path without thinking about packs.</p>
+    <h3>Other Ways To Start</h3>
+    <p>Use these only when you want a broader sweep or already know you need the non-guided path.</p>
   </div>
   <div class="quick-start-grid">
     <article class="quick-start-card">
-      <p class="eyebrow">Most Common</p>
-      <h4>Check one car</h4>
-      <p>If you changed one car, start there. This is the normal path.</p>
+      <p class="eyebrow">Secondary</p>
+      <h4>Pick a car directly</h4>
+      <p>Use this when you already know the slice and want the per-car page first.</p>
       <ul class="clean-list">
-        <li>Runs the full check for that car</li>
-        <li>Shows the first thing to fix</li>
-        <li>Lets you open the source file</li>
+        <li>Opens the per-car run page</li>
+        <li>Keeps the stronger guidance on that page</li>
+        <li>Best when someone already told you the profile</li>
       </ul>
       <div class="action-row action-row--wrap">
-        <a class="button" href="#cars">Choose A Car</a>
+        <a class="button subtle" href="#cars">Open car list</a>
       </div>
     </article>
 
     {% for item in workspace_actions %}
       {% if item.action_id == "daily_live_matrix" %}
       <article class="quick-start-card">
-        <p class="eyebrow">Daily Sweep</p>
+        <p class="eyebrow">Secondary</p>
         <h4>Check all live cars</h4>
         <p>{{ item.description }}</p>
         <ul class="clean-list">
           <li>Runs `G70`, `G65`, and `G45` in one go</li>
           <li>Writes one shared summary</li>
-          <li>Best when you want a broad daily readout</li>
+          <li>Best when you want a broader daily readout</li>
         </ul>
         <div class="action-row action-row--wrap">
-          <button class="button action-launch" type="button" data-action-id="{{ item.action_id }}">Run Daily Check</button>
+          <button class="button subtle action-launch" type="button" data-action-id="{{ item.action_id }}">Run Daily Check</button>
+          {% if matrix_summary.href %}
+          <a class="button subtle" href="{{ matrix_summary.href }}">Open Latest Summary</a>
+          {% endif %}
         </div>
       </article>
       {% endif %}
     {% endfor %}
 
     <article class="quick-start-card">
-      <p class="eyebrow">Repo Sanity</p>
+      <p class="eyebrow">Secondary</p>
       <h4>Run SG repo checkers</h4>
-      <p>Use this when you want the SG checker scripts, not the per-car preflight.</p>
+      <p>Use this when you need the SG checker scripts rather than the normal per-car preflight path.</p>
       <ul class="clean-list">
         <li>IDCevo mirrored tree</li>
         <li>Classic mirrored tree</li>
@@ -107,8 +103,8 @@
 
 <section class="panel" id="cars">
   <div class="panel-head">
-    <h3>Choose The Car You Are Working On</h3>
-    <p>If you are not sure what to do, use the big green button on the car you touched.</p>
+    <h3>Pick A Car Directly</h3>
+    <p>This is a secondary start path. Use it when the change type is already obvious or someone already named the slice.</p>
   </div>
   <div class="car-choice-grid">
     {% for item in profiles %}
@@ -135,7 +131,7 @@
           <span><strong>{{ item.live_signal.summary.total }}</strong> total</span>
         </div>
         <ul class="clean-list">
-          {% for highlight in item.live_signal.highlights %}
+          {% for highlight in item.live_signal.highlights[:2] %}
           <li><strong>{{ highlight.code }}</strong>: {{ highlight.message }}</li>
           {% endfor %}
         </ul>
@@ -143,7 +139,7 @@
       {% endif %}
 
       <div class="simple-checklist">
-        <strong>This full check will:</strong>
+        <strong>Good first things to catch</strong>
         <ul class="clean-list">
           {% for point in item.profile.focus_points[:2] %}
           <li>{{ point }}</li>
@@ -152,8 +148,7 @@
       </div>
 
       <div class="action-row action-row--wrap">
-        <button class="button action-launch" type="button" data-action-id="qa_stack__{{ item.profile.profile_id|lower }}">Run Full Check For {{ item.profile.profile_id }}</button>
-        <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}">More Options</a>
+        <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}">Open {{ item.profile.profile_id }}</a>
       </div>
     </article>
     {% endfor %}
@@ -202,7 +197,7 @@
       {% else %}
         <div class="empty-state">
           <strong>No checks have been run yet.</strong>
-          <p>Use one of the buttons above to start.</p>
+          <p>Use one of the start cards above to begin.</p>
         </div>
       {% endif %}
     </div>
@@ -211,7 +206,7 @@
   <article class="panel">
     <div class="panel-head">
       <h3>If You Need More Detail</h3>
-      <p>Most people can ignore this. Open it only when setup or mirror questions come up.</p>
+      <p>Most people can ignore this. Open it only when setup, mirror, or workflow-boundary questions come up.</p>
     </div>
 
     <details class="foldout">
