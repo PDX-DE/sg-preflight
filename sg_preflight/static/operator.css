@@ -513,6 +513,10 @@ pre,
   gap: 0.75rem;
 }
 
+.align-end {
+  align-items: flex-end;
+}
+
 .detail-label {
   display: block;
   margin-bottom: 0.35rem;

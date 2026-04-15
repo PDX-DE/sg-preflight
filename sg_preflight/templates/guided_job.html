@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ job.short_label }} - SG Preflight Operator UI{% endblock %}
+{% block content %}
+<section class="hero-panel hero-panel--simple">
+  <div class="hero-copy">
+    <p class="eyebrow">Guided Check</p>
+    <h2>{{ job.label }}</h2>
+    <p class="hero-text">{{ job.description }}</p>
+    <div class="hero-bullets">
+      <span>1. Pick the car.</span>
+      <span>2. Run this check.</span>
+      <span>3. Open the first problem.</span>
+    </div>
+  </div>
+  <div class="hero-actions hero-actions--stack">
+    <a class="button subtle" href="/ui">Back To Home</a>
+  </div>
+</section>
+
+<section class="panel panel--priority">
+  <div class="panel-head">
+    <h3>Choose The Car</h3>
+    <p>Start with the card marked best match if you are not sure.</p>
+  </div>
+  <div class="car-choice-grid">
+    {% for item in job_profiles %}
+    <article class="car-choice-card">
+      <div class="status-row">
+        <div>
+          <p class="eyebrow">Live Car</p>
+          <h4>{{ item.profile.profile_id }}</h4>
+          <p class="profile-label">{{ item.profile.label }}</p>
+        </div>
+        <div class="stack tight align-end">
+          {% if item.is_best_match %}
+          <span class="badge info">Best match</span>
+          {% endif %}
+          <span class="badge {% if item.is_ready %}ok{% else %}warn{% endif %}">{{ item.readiness_label }}</span>
+        </div>
+      </div>
+
+      <p class="car-choice-summary">{{ item.job_summary }}</p>
+
+      <div class="simple-checklist">
+        <strong>This check is for:</strong>
+        <ul class="clean-list">
+          {% for point in job.highlights %}
+          <li>{{ point }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+
+      {% if item.live_signal %}
+      <div class="signal-block">
+        <div class="status-row">
+          <strong>Current known signal</strong>
+        </div>
+        <div class="summary-inline">
+          <span><strong>{{ item.live_signal.summary.errors }}</strong> errors</span>
+          <span><strong>{{ item.live_signal.summary.warnings }}</strong> warnings</span>
+          <span><strong>{{ item.live_signal.summary.total }}</strong> total</span>
+        </div>
+        <ul class="clean-list">
+          {% for highlight in item.live_signal.highlights[:2] %}
+          <li><strong>{{ highlight.code }}</strong>: {{ highlight.message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      <div class="action-row action-row--wrap">
+        {% if item.launch.kind == "action" %}
+        <button class="button action-launch" type="button" data-action-id="{{ item.launch.action_id }}">{{ item.launch.button_label }}</button>
+        {% else %}
+        <button
+          class="button guided-run-launch"
+          type="button"
+          data-profile-id="{{ item.launch.profile_id }}"
+          data-packs="{{ item.launch.packs | join(',') }}"
+          data-job-key="{{ item.launch.job_key }}"
+          data-job-label="{{ item.launch.job_label }}"
+        >
+          {{ item.launch.button_label }}
+        </button>
+        {% endif %}
+        <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}?job={{ job.key }}">More Options</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -48,6 +48,11 @@ http://127.0.0.1:8765/ui
 
 Shows:
 
+- a "what changed?" launcher for:
+  - constants
+  - anchors
+  - carpaints
+  - files, Lua, or references
 - three obvious jobs first:
   - check one car
   - check all live cars
@@ -57,11 +62,21 @@ Shows:
 - recent persisted checks and action runs
 - setup, workflow-fit, and mirror-health detail behind foldouts instead of on the main path
 
+### Guided Check
+
+For a selected kind of change, shows:
+
+- the plain-language job first
+- the best live car to start with when one slice is a stronger fit
+- one direct button per car to run the smallest useful check
+- a link to the fuller per-car page when you need more control
+
 ### Run
 
 For a selected profile, shows:
 
-- one primary full-check button for that car
+- one primary action for that car
+- guided pack-specific defaults when you arrive from the "what changed?" launcher
 - why this profile is worth running
 - current live signal for that slice, if available
 - a quick-check-only form for the deterministic preflight path
@@ -158,6 +173,7 @@ Ad-hoc arbitrary-path runs are intentionally secondary to keeping the shared liv
 Current expectation:
 
 - use the UI to catch deterministic issues and produce evidence before manual review
+- use the "what changed?" launcher first when you already know what kind of file or workflow step you touched
 - use the one-click QA actions when you want repo checker, scene check, or the recommended per-car QA stack without touching terminals
 - default to the full-check button when you just want the safest useful path for one car
 - do not claim that the UI replaces Blender visual checks

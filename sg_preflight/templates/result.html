@@ -6,7 +6,13 @@
   <div class="hero-copy">
     <p class="eyebrow">Check Result</p>
     <h2>{{ record.profile_id }} checked</h2>
-    <p class="hero-text">{{ record.profile_label }}</p>
+    <p class="hero-text">
+      {% if job_label %}
+      {{ job_label }} on {{ record.profile_id }}
+      {% else %}
+      {{ record.profile_label }}
+      {% endif %}
+    </p>
   </div>
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% else %}warn{% endif %}" id="run-status-pill">{{ record.status }}</span>

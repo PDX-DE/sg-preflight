@@ -86,6 +86,59 @@
     });
   }
 
+  const guidedRunButtons = document.querySelectorAll(".guided-run-launch");
+  if (guidedRunButtons.length) {
+    guidedRunButtons.forEach((button) => {
+      button.addEventListener("click", async function () {
+        const profileId = button.getAttribute("data-profile-id");
+        const packsValue = button.getAttribute("data-packs") || "";
+        const jobKey = button.getAttribute("data-job-key") || "";
+        const jobLabel = button.getAttribute("data-job-label") || "";
+        if (!profileId) {
+          return;
+        }
+
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = "Starting...";
+
+        try {
+          const response = await fetch("/ui/api/runs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              profile_id: profileId,
+              packs: packsValue.split(",").map((item) => item.trim()).filter(Boolean),
+              fail_on: "never",
+              context: {
+                operator_job: jobKey,
+                operator_job_label: jobLabel
+              }
+            })
+          });
+
+          if (!response.ok) {
+            button.textContent = "Start failed";
+            window.setTimeout(function () {
+              button.disabled = false;
+              button.textContent = originalText;
+            }, 1800);
+            return;
+          }
+
+          const payload = await response.json();
+          window.location.href = payload.result_url;
+        } catch (_error) {
+          button.textContent = "Start failed";
+          window.setTimeout(function () {
+            button.disabled = false;
+            button.textContent = originalText;
+          }, 1800);
+        }
+      });
+    });
+  }
+
   const runForm = document.querySelector("#run-form");
   if (runForm) {
     runForm.addEventListener("submit", async function (event) {

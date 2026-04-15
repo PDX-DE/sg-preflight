@@ -219,6 +219,177 @@ def _task_cards(root: Path, profiles: list[RunProfile]) -> list[dict[str, Any]]:
     return cards
 
 
+def _guided_job_specs() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "key": "full",
+            "label": "I changed one car",
+            "short_label": "Full car check",
+            "description": "Safest default when you touched one car and want the widest useful check before review.",
+            "launch_mode": "action",
+            "packs": ["anchors", "constants", "carpaints", "project_sanity"],
+            "button_template": "Run Full Check For {profile_id}",
+            "highlights": (
+                "Runs the widest useful SG-side flow on this machine",
+                "Best first stop before review, rack, or handoff",
+            ),
+            "best_profiles": ("G70", "G65", "G45"),
+            "profile_help": {
+                "G70": "Best first stop when you touched general delivery files and want broad sanity checks.",
+                "G65": "Best first stop when you touched one car and also want constants evidence.",
+                "G45": "Best first stop when you touched a classic slice and want low-noise anchor sanity.",
+            },
+        },
+        {
+            "key": "constants",
+            "label": "I changed constants",
+            "short_label": "Constants check",
+            "description": "Use this when you touched Pivot_Master, Module_constants, or engineering values.",
+            "launch_mode": "run",
+            "packs": ["constants"],
+            "button_template": "Run Constants Check For {profile_id}",
+            "highlights": (
+                "Checks expected vs exported engineering values",
+                "Best when you want hard evidence for a value mismatch",
+            ),
+            "best_profiles": ("G65",),
+            "profile_help": {
+                "G65": "Best current live slice for constants drift and engineering-value evidence.",
+                "G70": "Useful if you changed G70 constants and want a fast value-only pass.",
+                "G45": "Useful if you changed classic constants and only want the constants pack.",
+            },
+        },
+        {
+            "key": "anchors",
+            "label": "I changed anchors",
+            "short_label": "Anchor check",
+            "description": "Use this when you changed anchor names, positions, or the anchor scene itself.",
+            "launch_mode": "run",
+            "packs": ["anchors"],
+            "button_template": "Run Anchor Check For {profile_id}",
+            "highlights": (
+                "Checks anchor naming and required-anchor rules",
+                "Best before opening Ramses Composer for manual anchor review",
+            ),
+            "best_profiles": ("G45",),
+            "profile_help": {
+                "G45": "Best current live slice for classic anchor-family sanity.",
+                "G70": "Useful if you changed the G70 anchor scene and want a quick structure pass.",
+                "G65": "Useful if you changed the G65 anchor scene and want a quick structure pass.",
+            },
+        },
+        {
+            "key": "carpaints",
+            "label": "I changed car paints",
+            "short_label": "Carpaint check",
+            "description": "Use this when you touched CarPaint IDs, names, finish values, or paint metadata.",
+            "launch_mode": "run",
+            "packs": ["carpaints"],
+            "button_template": "Run Carpaint Check For {profile_id}",
+            "highlights": (
+                "Checks duplicate IDs and normalized paint data",
+                "Best before any rack-side paint review",
+            ),
+            "best_profiles": ("G70", "G65", "G45"),
+            "profile_help": {
+                "G70": "Good first stop for shared BMW CarPaint issues on the live IDCevo side.",
+                "G65": "Good first stop if you want shared BMW CarPaint issues plus the G65 live slice.",
+                "G45": "Good first stop if you want the same shared BMW catalog checked from the classic side.",
+            },
+        },
+        {
+            "key": "delivery_sanity",
+            "label": "I changed files, Lua, or references",
+            "short_label": "File sanity check",
+            "description": "Use this when you changed scene links, Lua files, export paths, or delivery-facing project files.",
+            "launch_mode": "run",
+            "packs": ["project_sanity"],
+            "button_template": "Run File Sanity For {profile_id}",
+            "highlights": (
+                "Checks cross-car references, unused Lua, and path risks",
+                "Best before delivery review or repo handoff",
+            ),
+            "best_profiles": ("G70",),
+            "profile_help": {
+                "G70": "Best current live slice for cross-car references and unused-Lua signal.",
+                "G65": "Useful if you changed G65 project files and want a project-sanity-only pass.",
+                "G45": "Useful if you changed classic project files and want legacy sanity only.",
+            },
+        },
+    )
+
+
+def _guided_job_map() -> dict[str, dict[str, Any]]:
+    return {str(item["key"]).lower(): dict(item) for item in _guided_job_specs()}
+
+
+def _get_guided_job(job_key: str | None) -> dict[str, Any] | None:
+    if not job_key:
+        return None
+    return _guided_job_map().get(str(job_key).strip().lower())
+
+
+def _guided_job_cards() -> list[dict[str, Any]]:
+    cards = []
+    for item in _guided_job_specs():
+        cards.append(
+            {
+                "key": item["key"],
+                "label": item["label"],
+                "short_label": item["short_label"],
+                "description": item["description"],
+                "highlights": list(item["highlights"]),
+                "href": f"/ui/start/{item['key']}",
+            }
+        )
+    return cards
+
+
+def _guided_profile_cards(root: Path, profiles: list[RunProfile], job: dict[str, Any]) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    best_profiles = {str(item).upper() for item in job.get("best_profiles", ())}
+    profile_help = job.get("profile_help", {})
+
+    for profile in profiles:
+        profile_card = _profile_card(root, profile)
+        if job["launch_mode"] == "action":
+            launch = {
+                "kind": "action",
+                "action_id": f"qa_stack__{profile.profile_id.lower()}",
+                "button_label": str(job["button_template"]).format(profile_id=profile.profile_id),
+            }
+        else:
+            launch = {
+                "kind": "run",
+                "profile_id": profile.profile_id,
+                "packs": list(job["packs"]),
+                "job_key": job["key"],
+                "job_label": job["short_label"],
+                "button_label": str(job["button_template"]).format(profile_id=profile.profile_id),
+            }
+
+        cards.append(
+            {
+                "profile": profile,
+                "live_signal": profile_card["live_signal"],
+                "is_ready": profile_card["is_ready"],
+                "readiness_label": profile_card["readiness_label"],
+                "is_best_match": profile.profile_id.upper() in best_profiles,
+                "job_summary": str(profile_help.get(profile.profile_id, profile.friendly_summary or profile.workflow_value or profile.operator_goal)),
+                "launch": launch,
+            }
+        )
+
+    cards.sort(
+        key=lambda item: (
+            0 if item["is_best_match"] else 1,
+            0 if item["is_ready"] else 1,
+            item["profile"].profile_id,
+        )
+    )
+    return cards
+
+
 def _action_cards(root: Path, profiles: list[RunProfile], *, scope: str, profile_id: str = "") -> list[dict[str, Any]]:
     cards = []
     for action in list_operator_actions(root, profiles=profiles):
@@ -357,9 +528,11 @@ def _quick_update_text(
     decision_summary: dict[str, str],
     grouped_findings: list[dict[str, Any]],
 ) -> str:
+    job_label = str(record.context.get("operator_job_label", "")).strip()
+    title = f"SG Preflight {job_label} for {record.profile_id}" if job_label else f"SG Preflight check for {record.profile_id}"
     summary = report.summary()
     lines = [
-        f"SG Preflight check for {record.profile_id}",
+        title,
         f"Result: {decision_summary['title']}",
         f"Counts: {summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info, {summary['total']} total",
         "",
@@ -648,6 +821,7 @@ def create_app(
                     _profile_card(app.state.workspace_root, profile)
                     for profile in ordered_profiles
                 ],
+                "guided_jobs": _guided_job_cards(),
                 "task_cards": _task_cards(app.state.workspace_root, ordered_profiles),
                 "workspace_actions": _action_cards(
                     app.state.workspace_root,
@@ -672,10 +846,31 @@ def create_app(
             },
         )
 
+    @app.get("/ui/start/{job_key}")
+    async def guided_job_view(request: Request, job_key: str) -> Any:
+        job = _get_guided_job(job_key)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Unknown guided job {job_key!r}")
+        ordered_profiles = list(app.state.profiles.values())
+        return app.state.templates.TemplateResponse(
+            request,
+            "guided_job.html",
+            {
+                "job": job,
+                "job_profiles": _guided_profile_cards(app.state.workspace_root, ordered_profiles, job),
+            },
+        )
+
     @app.get("/ui/profiles/{profile_id}")
-    async def run_view(request: Request, profile_id: str) -> Any:
+    async def run_view(request: Request, profile_id: str, job: str | None = None) -> Any:
         profile = _get_profile(app, profile_id)
         preview = _cached_preview(app, profile)
+        selected_job = _get_guided_job(job)
+        selected_packs = (
+            list(selected_job["packs"])
+            if selected_job is not None and selected_job["launch_mode"] == "run"
+            else ["anchors", "constants", "carpaints", "project_sanity"]
+        )
         return app.state.templates.TemplateResponse(
             request,
             "run.html",
@@ -683,6 +878,8 @@ def create_app(
                 "profile": profile,
                 "preview": preview,
                 "card": _profile_card(app.state.workspace_root, profile),
+                "selected_job": selected_job,
+                "selected_packs": selected_packs,
                 "profile_actions": _action_cards(
                     app.state.workspace_root,
                     list(app.state.profiles.values()),
@@ -759,6 +956,7 @@ def create_app(
             else ""
         )
         full_handoff_text = _load_text_file(record.paths.get("markdown_report", ""))
+        job_label = str(record.context.get("operator_job_label", "")).strip()
         return app.state.templates.TemplateResponse(
             request,
             "result.html",
@@ -772,6 +970,7 @@ def create_app(
                 "next_steps": _next_steps(report, presentation) if report is not None and presentation is not None else [],
                 "quick_update_text": quick_update_text,
                 "full_handoff_text": full_handoff_text,
+                "job_label": job_label,
                 "notes": run_notes(record),
             },
         )

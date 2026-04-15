@@ -3,9 +3,15 @@
 {% block content %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">Car Check</p>
+    <p class="eyebrow">{% if selected_job %}{{ selected_job.short_label }}{% else %}Car Check{% endif %}</p>
     <h2>{{ profile.profile_id }} - {{ profile.label }}</h2>
-    <p class="hero-text">{{ profile.friendly_summary or profile.operator_goal or profile.description }}</p>
+    <p class="hero-text">
+      {% if selected_job %}
+      {{ selected_job.description }}
+      {% else %}
+      {{ profile.friendly_summary or profile.operator_goal or profile.description }}
+      {% endif %}
+    </p>
   </div>
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if card.is_ready %}ok{% else %}warn{% endif %}">{{ card.readiness_label }}</span>
@@ -17,22 +23,53 @@
   <article class="panel panel--priority">
     <div class="panel-head">
       <h3>Do This</h3>
-      <p>If you are unsure, use the big button below. It runs the widest useful check for this car on this machine.</p>
+      <p>
+        {% if selected_job and selected_job.launch_mode == "run" %}
+        Use the big button below if this is the kind of change you made.
+        {% else %}
+        If you are unsure, use the big button below. It runs the widest useful check for this car on this machine.
+        {% endif %}
+      </p>
     </div>
 
     <div class="primary-callout">
       <div>
+        {% if selected_job and selected_job.launch_mode == "run" %}
+        <strong>Best default if you changed {{ selected_job.short_label|lower }}</strong>
+        <p>This runs only the smallest useful deterministic check for that kind of change.</p>
+        {% else %}
         <strong>Best default for {{ profile.profile_id }}</strong>
         <p>This full check runs preflight first, then the extra SG-side steps that are available here.</p>
+        {% endif %}
       </div>
       <div class="action-row action-row--wrap">
+        {% if selected_job and selected_job.launch_mode == "run" %}
+        <button
+          class="button guided-run-launch"
+          type="button"
+          data-profile-id="{{ profile.profile_id }}"
+          data-packs="{{ selected_job.packs | join(',') }}"
+          data-job-key="{{ selected_job.key }}"
+          data-job-label="{{ selected_job.short_label }}"
+        >
+          {{ selected_job.button_template | replace('{profile_id}', 'This Car') }}
+        </button>
+        <button class="button subtle action-launch" type="button" data-action-id="qa_stack__{{ profile.profile_id|lower }}">Run Full Check Instead</button>
+        {% else %}
         <button class="button action-launch" type="button" data-action-id="qa_stack__{{ profile.profile_id|lower }}">Run Full Check For This Car</button>
+        {% endif %}
       </div>
     </div>
 
     <div class="simple-checklist">
       <strong>What this full check will try to do:</strong>
       <ul class="clean-list">
+        {% if selected_job and selected_job.launch_mode == "run" %}
+        {% for pack in selected_job.packs %}
+        <li>Run only the <strong>{{ pack }}</strong> pack for this car</li>
+        {% endfor %}
+        <li>Skip the other packs unless you choose the full check instead</li>
+        {% else %}
         <li>Run the normal preflight for anchors, constants, carpaints, and project sanity</li>
         {% for item in profile_actions %}
           {% if item.action_id == "repo_checker_profile__" ~ (profile.profile_id|lower) %}
@@ -57,6 +94,7 @@
           </li>
           {% endif %}
         {% endfor %}
+        {% endif %}
       </ul>
     </div>
   </article>
@@ -64,7 +102,13 @@
   <article class="panel">
     <div class="panel-head">
       <h3>Quick Check Only</h3>
-      <p>Use this only when you want the deterministic preflight and nothing else.</p>
+      <p>
+        {% if selected_job and selected_job.launch_mode == "run" %}
+        Use this only if you want to change the pack list for this {{ selected_job.short_label|lower }}.
+        {% else %}
+        Use this only when you want the deterministic preflight and nothing else.
+        {% endif %}
+      </p>
     </div>
 
     <form id="run-form" class="stack" data-profile-id="{{ profile.profile_id }}">
@@ -85,7 +129,7 @@
             <div class="checkbox-grid">
               {% for pack in packs %}
               <label class="checkbox-card">
-                <input type="checkbox" name="packs" value="{{ pack }}" checked />
+                <input type="checkbox" name="packs" value="{{ pack }}" {% if pack in selected_packs %}checked{% endif %} />
                 <span>{{ pack }}</span>
               </label>
               {% endfor %}

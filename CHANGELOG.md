@@ -41,6 +41,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Operator UI and CLI now expose one-click SG QA actions for the wider workflow, including daily live matrix, repo checker, recommended per-car QA stack, scene check, and explicit BMW smoke blockers
 - Run pages now push one default full-check path and keep the quick-check path secondary
 - Operator UI language and layout now reduce framework detail by default so teammates can start from daily jobs, not tooling concepts
+- Operator UI now starts from "what changed?" guided launchers so teammates can choose constants, anchors, carpaints, or file/reference sanity before choosing a car
 - Run pages now expose a recommended QA stack action per car so teammates can launch the available SG-side automation from one button
 - Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text
 - Operator UI Home now shows where the tool fits in the real SG QA workflow, including explicit covered / partial / blocked stages

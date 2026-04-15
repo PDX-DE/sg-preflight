@@ -25,8 +25,32 @@
 
 <section class="panel panel--priority">
   <div class="panel-head">
-    <h3>Start Here</h3>
-    <p>Use the first job that matches what you need right now.</p>
+    <h3>What Changed?</h3>
+    <p>Start here if you already know what you touched.</p>
+  </div>
+  <div class="quick-start-grid">
+    {% for job in guided_jobs %}
+    <article class="quick-start-card">
+      <p class="eyebrow">Guided</p>
+      <h4>{{ job.label }}</h4>
+      <p>{{ job.description }}</p>
+      <ul class="clean-list">
+        {% for point in job.highlights %}
+        <li>{{ point }}</li>
+        {% endfor %}
+      </ul>
+      <div class="action-row action-row--wrap">
+        <a class="button" href="{{ job.href }}">Start {{ job.short_label }}</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h3>Or Use The Big Defaults</h3>
+    <p>Use these when you want the safest broad path without thinking about packs.</p>
   </div>
   <div class="quick-start-grid">
     <article class="quick-start-card">

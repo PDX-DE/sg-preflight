@@ -134,47 +134,55 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 ```
 
 2. Open Home and confirm:
+   - the `What Changed?` launcher is visible
    - live profiles are visible
    - prerequisites are mostly `available`
    - mirror-health information is visible
 
-3. On Home, run one workspace action first if you want to show broader automation:
+3. Use one guided path first:
+   - `I changed constants`
+   - `I changed anchors`
+   - `I changed car paints`
+   - `I changed files, Lua, or references`
+
+4. On Home, run one workspace action after that only if you want to show broader automation:
    - `Run Daily SG Check`
    - `Run IDCevo Repo Checkers`
 
-4. Open one profile Run page and confirm the resolved inputs make sense.
+5. Open one profile Run page and confirm the resolved inputs make sense.
    Start with:
    - `G70` for cross-car and unused-Lua signal
    - `G65` for real constants drift
    - `G45` for classic anchor-family coverage
 
-5. Launch either:
-   - `Run Full Check For This Car` for the normal path
+6. Launch either:
+   - a guided check button from the guided page if you know exactly what changed
+   - `Run Full Check For This Car` for the safest broad path
    - `Run Quick Check Only` if you only want the deterministic preflight
 
-6. On the Result page, ask the teammate:
+7. On the Result page, ask the teammate:
    - Is the grouped summary understandable?
    - Is the "Do This Next" section enough to continue without you?
    - Can you tell what is important first?
    - Does the owner hint look credible?
    - Does the suggested action help or add noise?
 
-7. Open one finding drilldown and one Files And Proof page link.
+8. Open one finding drilldown and one Files And Proof page link.
 
-8. If you used a one-click QA action, open the action result page and ask:
+9. If you used a one-click QA action, open the action result page and ask:
    - Can you tell what this action ran without opening a terminal?
    - Is the blocker messaging honest enough when a step is not available on this machine?
    - Would you trust the action log and summary as a starting point?
 
-9. Ask the teammate to answer:
+10. Ask the teammate to answer:
    - What file is the source of truth?
    - Who should own this?
    - Would this help before rack or review?
    - What still feels like a black box?
 
-10. Save the run and feedback.
+11. Save the run and feedback.
 
-11. Ask them to use the copy buttons:
+12. Ask them to use the copy buttons:
    - `Copy Quick Update`
    - `Copy Full Handoff`
    - `Copy Finding`

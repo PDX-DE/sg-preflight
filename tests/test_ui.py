@@ -27,21 +27,33 @@ class TestOperatorUI(unittest.TestCase):
                     client = TestClient(create_app(root=root, profiles=[profile]))
 
                     home = client.get("/ui")
+                    guided = client.get("/ui/start/constants")
                     run_view = client.get("/ui/profiles/G65")
+                    guided_run_view = client.get("/ui/profiles/G65?job=constants")
 
         self.assertEqual(home.status_code, 200)
-        self.assertIn("Start Here", home.text)
+        self.assertIn("What Changed?", home.text)
+        self.assertIn("I changed constants", home.text)
+        self.assertIn("Or Use The Big Defaults", home.text)
         self.assertIn("Choose The Car You Are Working On", home.text)
         self.assertIn("Check one car", home.text)
         self.assertIn("BMW G65 test slice", home.text)
         self.assertIn("If You Need More Detail", home.text)
         self.assertIn("Show workflow fit and blockers", home.text)
+        self.assertEqual(guided.status_code, 200)
+        self.assertIn("Guided Check", guided.text)
+        self.assertIn("Run Constants Check For G65", guided.text)
+        self.assertIn("Best match", guided.text)
         self.assertEqual(run_view.status_code, 200)
         self.assertIn("Run Full Check For This Car", run_view.text)
         self.assertIn("Quick Check Only", run_view.text)
         self.assertIn("Show exact files used for this car", run_view.text)
         self.assertIn("Show the other actions for this car", run_view.text)
         self.assertIn("Run BMW Screenshot Smoke For G65", run_view.text)
+        self.assertEqual(guided_run_view.status_code, 200)
+        self.assertIn("Constants check", guided_run_view.text)
+        self.assertIn("Run Constants Check For This Car", guided_run_view.text)
+        self.assertIn("Run Full Check Instead", guided_run_view.text)
 
     def test_run_result_and_evidence_pages_render_grouped_findings_and_links(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -89,6 +101,32 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(evidence_page.status_code, 200)
         self.assertIn("Files And Proof", evidence_page.text)
         self.assertIn("Project manifest", evidence_page.text)
+
+    def test_guided_run_carries_plain_language_job_label_into_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            create_response = client.post(
+                "/ui/api/runs",
+                json={
+                    "profile_id": "G65",
+                    "packs": ["constants"],
+                    "fail_on": "never",
+                    "context": {
+                        "operator_job": "constants",
+                        "operator_job_label": "Constants check",
+                    },
+                },
+            )
+            self.assertEqual(create_response.status_code, 202)
+            payload = create_response.json()
+            result_page = client.get(payload["result_url"])
+
+        self.assertEqual(result_page.status_code, 200)
+        self.assertIn("Constants check on G65", result_page.text)
+        self.assertIn("Copy Quick Update", result_page.text)
 
     def test_blocked_action_can_be_started_and_rendered(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
