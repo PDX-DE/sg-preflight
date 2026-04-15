@@ -71,31 +71,34 @@ This supports the existing repo-level sanity work and reduces black-box debuggin
 
 ### 5. Repo checker and `check_scenes.py`
 
-Current status: partial
+Current status: covered for repo checker, partial for scene check on machines without `RaCoHeadless.exe`
 
 What this means:
 
 - the mirrored repo already contains `check_scenes.py`
-- the UI now exposes this stage as part of the real workflow
-- `sg-preflight` does not yet execute `check_scenes.py` or other RaCo runtime checks directly
+- the UI now exposes repo checker, scene check, and recommended QA-stack actions directly
+- repo checker is already runnable as a one-click action
+- scene check is also wrapped, but only runs when a local `RaCoHeadless.exe` is configured
 
 Current blocker:
 
-- direct execution depends on a local `RaCoHeadless.exe` and a stable wrapper contract
+- scene execution still depends on a local `RaCoHeadless.exe`
 
 ### 6. BMW screenshot / export / interface smoke
 
-Current status: blocked or adjacent, depending on machine access
+Current status: blocked or partial, depending on machine access
 
 What this means:
 
 - this remains a real part of the SG QA workflow
 - it is still maintained on the BMW / Team Wombat side
-- `sg-preflight` does not execute those scripts today
+- `sg-preflight` now exposes this stage as an explicit per-car action instead of leaving it as an undocumented external dependency
+- the action remains blocked here until BMW repo access and per-car mapping exist
 
 Current blocker:
 
 - without BMW Git access and a local `digital-3d-car-models` clone, this stage cannot be validated end-to-end from this machine
+- the current live profiles still need explicit BMW smoke target mapping before the action can run even after access exists
 
 Even after access is available, the intended role of `sg-preflight` is still upstream:
 catch deterministic issues before the heavier BMW smoke runs start.
@@ -159,6 +162,6 @@ Some of these may become integration points later, but they should not be presen
 The highest-value next workflow integrations are:
 
 1. wrap `check_scenes.py` behind a stable optional adapter once `RaCoHeadless.exe` handling is reliable
-2. expose clearer handoff blocks for findings so teammates can copy evidence into tickets without rephrasing it
+2. add BMW smoke target mapping for the canonical live profiles once BMW-side access is available
 3. keep widening live-profile coverage beyond `G70`, `G65`, and `G45`
-4. add BMW screenshot-smoke readiness and documentation without pretending local BMW access already exists
+4. keep improving handoff blocks so teammates can copy evidence into tickets without rephrasing it

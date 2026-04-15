@@ -9,6 +9,7 @@ from sg_preflight.adapters.common import write_json as write_adapter_json
 from sg_preflight.adapters.discovery import default_search_roots, probe_workspace
 from sg_preflight.adapters.materialize import materialize_bundle
 from sg_preflight.profiles import get_run_profile, list_run_profiles
+from sg_preflight.qa_actions import execute_operator_action, get_operator_action, list_operator_actions
 from sg_preflight.retro import parse_retro_export, write_retro_json, write_retro_markdown
 from sg_preflight.services import (
     VALID_PACKS,
@@ -115,6 +116,23 @@ def _console_profiles(as_json: bool) -> None:
             )
 
 
+def _console_actions(as_json: bool) -> None:
+    actions = list_operator_actions()
+    if as_json:
+        print(json.dumps([action.to_dict() for action in actions], indent=2))
+        return
+
+    print("Operator QA actions:")
+    for action in actions:
+        state = "ready" if action.ready else "blocked"
+        print(f"- {action.action_id}: {action.label} [{state}]")
+        print(f"  {action.description}")
+        if action.command_preview:
+            print(f"  command: {action.command_preview}")
+        if action.blocker_message:
+            print(f"  blocker: {action.blocker_message}")
+
+
 def _console_run_record(record: object, *, as_json: bool = False) -> None:
     if as_json:
         print(json.dumps(record.to_dict(), indent=2, ensure_ascii=False))
@@ -143,6 +161,33 @@ def _console_run_record(record: object, *, as_json: bool = False) -> None:
             print(f"  - {note}")
 
 
+def _console_action_record(record: object, *, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps(record.to_dict(), indent=2, ensure_ascii=False))
+        return
+
+    print(f"Action run ID: {record.run_id}")
+    print(f"Action: {record.action_id} ({record.label})")
+    print(f"Status: {record.status}")
+    if record.profile_id:
+        print(f"Profile: {record.profile_id}")
+    if record.blocker_message:
+        print(f"Blocker: {record.blocker_message}")
+    if record.error_message:
+        print(f"Error: {record.error_message}")
+    print(f"Output root: {record.paths['output_root']}")
+    print(f"Log: {record.paths['log']}")
+    print(f"Summary JSON: {record.paths['summary_json']}")
+    print(f"Summary Markdown: {record.paths['summary_md']}")
+    if record.summary:
+        for line in record.summary.get("lines", []):
+            print(f"  - {line}")
+    if record.artifacts:
+        print("Artifacts:")
+        for artifact in record.artifacts:
+            print(f"  - {artifact.get('label', 'artifact')}: {artifact.get('path', '')}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sg-preflight")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -168,6 +213,9 @@ def build_parser() -> argparse.ArgumentParser:
     profile_list = sub.add_parser("list-profiles", help="List canonical live run profiles")
     profile_list.add_argument("--json", action="store_true", help="Print profile registry as JSON")
 
+    action_list = sub.add_parser("list-actions", help="List one-click SG QA actions")
+    action_list.add_argument("--json", action="store_true", help="Print action registry as JSON")
+
     run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
     run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
     run_profile.add_argument(
@@ -189,6 +237,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override workflow/report context NAME=VALUE (repeatable)",
     )
     run_profile.add_argument("--json", action="store_true", help="Print run record as JSON")
+
+    run_action = sub.add_parser("run-action", help="Execute one-click SG QA action")
+    run_action.add_argument("action_id", help="Operator action id such as daily_live_matrix or repo_checker_idcevo")
+    run_action.add_argument("--json", action="store_true", help="Print action record as JSON")
 
     ui = sub.add_parser("ui", help="Start the local operator UI")
     ui.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
@@ -289,6 +341,10 @@ def main(argv: list[str] | None = None) -> int:
         _console_profiles(args.json)
         return 0
 
+    if args.command == "list-actions":
+        _console_actions(args.json)
+        return 0
+
     if args.command == "run-profile":
         try:
             packs = parse_packs(args.packs)
@@ -314,6 +370,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         _console_run_record(record, as_json=args.json)
         return record.exit_code or 0
+
+    if args.command == "run-action":
+        try:
+            action = get_operator_action(args.action_id)
+        except KeyError as exc:
+            parser.error(str(exc))
+            return 1
+
+        try:
+            record = execute_operator_action(action)
+        except Exception as exc:
+            print(_console_safe(f"run-action failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_action_record(record, as_json=args.json)
+        return 0 if record.status in {"completed", "blocked"} else 1
 
     if args.command == "ui":
         from sg_preflight.ui import run_ui

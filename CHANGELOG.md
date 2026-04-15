@@ -16,6 +16,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - PowerShell operator-UI launcher/check script for teammate sessions
 - Cached fast mirror audit plus on-demand deep mirror audit for the mirrored SVN
 - CLI surfaces for `list-profiles`, `run-profile`, and `ui`
+- CLI surfaces for `list-actions` and `run-action`
 - `retro-extract` CLI command for turning Whiteboard retro exports into structured pain/action artifacts
 - Validation packs for `anchors`, `constants`, `carpaints`, and `project_sanity`
 - JSON and HTML reporting with grouped findings and pack-level summaries
@@ -37,7 +38,9 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 ### Changed
 
 - Operator UI Home now starts with common QA-task entry points so teammates can choose by intent instead of profile code first
+- Operator UI and CLI now expose one-click SG QA actions for the wider workflow, including daily live matrix, repo checker, recommended per-car QA stack, scene check, and explicit BMW smoke blockers
 - Run pages now push one default "standard check" path and keep advanced options secondary
+- Run pages now expose a recommended QA stack action per car so teammates can launch the available SG-side automation from one button
 - Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text
 - Operator UI Home now shows where the tool fits in the real SG QA workflow, including explicit covered / partial / blocked stages
 - Operator readiness now surfaces the BMW screenshot-test repo as a first-class prerequisite instead of hiding BMW-side blockers
@@ -50,6 +53,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Findings now carry richer evidence details for operator drilldown, including duplicate carpaint metadata and anchor-rule context
 - `project_sanity` now persists exact source-file and line evidence for path-reference findings and unused Lua drilldown
 - Mirror-audit notes are now visible on the operator Home page so sampled deep-audit drift is easier to interpret
+- One-click action records now persist under `out/operator-ui/actions` with logs, summaries, and generated artifacts
 - Smoke-test summary output now includes an executive snapshot and grouped takeaways
 - Smoke-test flow now generates markdown handoff artifacts in addition to JSON and HTML reports
 - README now documents the current local source-drop workflow and intended branch/release hygiene
@@ -76,3 +80,4 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - The operator UI is intentionally local-first; a thin desktop wrapper is still deferred until adoption requires one-click packaging
 - Direct RaCo-runtime execution of helper scripts such as `read_json_carpaints.py` is still not part of the current CLI-first flow
 - Full BMW screenshot-smoke coverage still depends on BMW-side access and a local `digital-3d-car-models` clone
+- BMW smoke target mapping for the canonical live profiles is still missing, so the new action remains intentionally blocked even after BMW repo access is restored

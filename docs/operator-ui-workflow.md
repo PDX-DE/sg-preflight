@@ -18,6 +18,7 @@ It is the deterministic front end of that workflow:
 - before rack
 - before BMW screenshot smoke
 - before delivery handoff
+- while making the current SG-side repo and scene checks runnable from the same local surface
 
 See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflow fit, manual stages, and BMW-side blockers.
 
@@ -62,6 +63,7 @@ For a selected profile, shows:
 - why this profile is worth running
 - current live signal for that slice, if available
 - one-click standard-check action
+- one-click recommended QA stack action for the selected car
 - a plain three-step use path for teammates who just want the default flow
 - advanced options behind a foldout
 - resolved SG source inputs
@@ -111,6 +113,20 @@ Each run directory contains:
 - `<profile>-report.html`
 - `<profile>-report.md`
 
+One-click QA actions write a parallel record under:
+
+```text
+out/operator-ui/actions/<action-run-id>/
+```
+
+Each action directory contains:
+
+- `action.json`
+- `action.log`
+- `summary.json`
+- `summary.md`
+- any generated artifacts such as nested preflight reports or scene-check workbooks
+
 Mirror-audit cache lives under:
 
 ```text
@@ -141,8 +157,9 @@ Ad-hoc arbitrary-path runs are intentionally secondary to keeping the shared liv
 Current expectation:
 
 - use the UI to catch deterministic issues and produce evidence before manual review
+- use the one-click QA actions when you want repo checker, scene check, or the recommended per-car QA stack without touching terminals
 - do not claim that the UI replaces Blender visual checks
 - do not claim that the UI replaces rack sessions
-- do not claim that BMW screenshot smoke is already integrated
+- do not claim that BMW screenshot smoke is fully usable on this machine until BMW access and target mapping exist
 
 If BMW-side access is not present locally, the UI should show that honestly as a blocker instead of hiding it.

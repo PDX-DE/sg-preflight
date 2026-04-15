@@ -15,6 +15,8 @@ class RunProfile:
     repo_root: Path
     project_root: Path
     config_path: Path
+    bmw_smoke_target: str = ""
+    bmw_smoke_runner: str = "car_manager.py"
     default_context: dict[str, str] = field(default_factory=dict)
     description: str = ""
     operator_goal: str = ""
@@ -32,6 +34,8 @@ class RunProfile:
             "repo_root": str(self.repo_root),
             "project_root": str(self.project_root),
             "config_path": str(self.config_path),
+            "bmw_smoke_target": self.bmw_smoke_target,
+            "bmw_smoke_runner": self.bmw_smoke_runner,
             "default_context": dict(self.default_context),
             "description": self.description,
             "operator_goal": self.operator_goal,
@@ -152,6 +156,8 @@ def list_run_profiles(
                 repo_root=repo_root,
                 project_root=repo_root / Path(spec["project_relative"]),
                 config_path=root / Path(spec["config_relative"]),
+                bmw_smoke_target=str(spec.get("bmw_smoke_target", "")),
+                bmw_smoke_runner=str(spec.get("bmw_smoke_runner", "car_manager.py")),
                 default_context=dict(spec["default_context"]),
                 description=str(spec.get("description", "")),
                 operator_goal=str(spec.get("operator_goal", "")),

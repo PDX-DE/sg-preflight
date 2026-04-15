@@ -32,6 +32,7 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(home.status_code, 200)
         self.assertIn("Start With A Car", home.text)
         self.assertIn("Common QA Tasks", home.text)
+        self.assertIn("One-Click SG QA Actions", home.text)
         self.assertIn("BMW G65 test slice", home.text)
         self.assertIn("Current QA Workflow Fit", home.text)
         self.assertIn("BMW screenshot / export / interface smoke", home.text)
@@ -40,6 +41,9 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Resolved Source Inputs", run_view.text)
         self.assertIn("Standard Check", run_view.text)
         self.assertIn("Run Standard Check", run_view.text)
+        self.assertIn("More SG QA Actions For This Car", run_view.text)
+        self.assertIn("Run Recommended QA Stack For G65", run_view.text)
+        self.assertIn("Run BMW Screenshot Smoke For G65", run_view.text)
 
     def test_run_result_and_evidence_pages_render_grouped_findings_and_links(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -85,6 +89,21 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(evidence_page.status_code, 200)
         self.assertIn("JSON report", evidence_page.text)
         self.assertIn("Project manifest", evidence_page.text)
+
+    def test_blocked_action_can_be_started_and_rendered(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            response = client.post("/ui/api/actions", json={"action_id": "scene_check__g65"})
+            self.assertEqual(response.status_code, 202)
+            payload = response.json()
+            result_page = client.get(payload["result_url"])
+
+        self.assertEqual(result_page.status_code, 200)
+        self.assertIn("Scene check needs both the mirrored", result_page.text)
+        self.assertNotIn("Action Log", result_page.text)
 
     def test_deep_audit_route_persists_and_renders_playground_note(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

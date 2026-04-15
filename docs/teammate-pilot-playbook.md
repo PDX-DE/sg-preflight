@@ -43,6 +43,7 @@ The flow is:
    - Markdown
 6. The operator UI uses the same shared Python services and shows:
    - live profiles
+   - one-click QA actions
    - resolved inputs
    - grouped findings
    - evidence drilldown
@@ -136,32 +137,43 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
    - prerequisites are mostly `available`
    - mirror-health information is visible
 
-3. Open one profile Run page and confirm the resolved inputs make sense.
+3. On Home, run one workspace action first if you want to show broader automation:
+   - `Run Daily SG Check`
+   - `Run IDCevo Repo Checkers`
+
+4. Open one profile Run page and confirm the resolved inputs make sense.
    Start with:
    - `G70` for cross-car and unused-Lua signal
    - `G65` for real constants drift
    - `G45` for classic anchor-family coverage
 
-4. Launch the run from the UI.
+5. Launch either:
+   - `Run Standard Check` if you only want the deterministic preflight
+   - `Run Recommended QA Stack For <car>` if you want the wider SG-side automation path from one button
 
-5. On the Result page, ask the teammate:
+6. On the Result page, ask the teammate:
    - Is the grouped summary understandable?
    - Is the "Do This Next" section enough to continue without you?
    - Can you tell what is important first?
    - Does the owner hint look credible?
    - Does the suggested action help or add noise?
 
-6. Open one finding drilldown and one Evidence page link.
+7. Open one finding drilldown and one Evidence page link.
 
-7. Ask the teammate to answer:
+8. If you used a one-click QA action, open the action result page and ask:
+   - Can you tell what this action ran without opening a terminal?
+   - Is the blocker messaging honest enough when a step is not available on this machine?
+   - Would you trust the action log and summary as a starting point?
+
+9. Ask the teammate to answer:
    - What file is the source of truth?
    - Who should own this?
    - Would this help before rack or review?
    - What still feels like a black box?
 
-8. Save the run and feedback.
+10. Save the run and feedback.
 
-9. Ask them to use the copy buttons:
+11. Ask them to use the copy buttons:
    - `Copy Quick Update`
    - `Copy Full Handoff`
    - `Copy Finding`
@@ -183,6 +195,20 @@ Each run contains:
 - `<profile>-report.json`
 - `<profile>-report.html`
 - `<profile>-report.md`
+
+One-click QA actions are written under:
+
+```text
+out/operator-ui/actions/<action-run-id>/
+```
+
+Each action contains:
+
+- `action.json`
+- `action.log`
+- `summary.json`
+- `summary.md`
+- generated action artifacts such as nested preflight reports
 
 Matrix smoke output lands under:
 

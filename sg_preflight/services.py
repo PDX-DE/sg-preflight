@@ -594,6 +594,7 @@ def qa_workflow_status(
     bmw_models_ready = readiness.get("bmw_models_repo", {}).get("status") == "available"
     bmw_scripts_ready = readiness.get("bmw_screenshot_scripts", {}).get("status") == "available"
     adb_ready = readiness.get("adb", {}).get("status") == "available"
+    bmw_targets_ready = any(profile.bmw_smoke_target.strip() for profile in live_profiles)
 
     return [
         {
@@ -615,14 +616,16 @@ def qa_workflow_status(
         {
             "key": "repo_scene_checks",
             "label": "Repo checker and scene-checker path",
-            "state": "partial" if scene_checker_ready else "blocked",
+            "state": "covered" if scene_checker_ready and raco_headless_ready else "partial" if scene_checker_ready else "blocked",
             "summary": (
-                "SG-side helper scripts are visible, but direct RaCo scene execution is still separate from the current preflight run path."
+                "SG-side repo checker and scene-check actions can run from the same operator surface on this machine."
+                if scene_checker_ready and raco_headless_ready
+                else "SG-side helper scripts are visible, but direct RaCo scene execution is still blocked on the local runtime setup."
                 if scene_checker_ready
                 else "Scene-checker helper discovery is not ready on this machine."
             ),
             "sg_preflight_role": (
-                "Today the framework covers adjacent deterministic sanity and helper discovery; wrapping `check_scenes.py` is a future extension."
+                "The framework now wraps SG repo-checker and scene-check steps as one-click actions alongside the standard preflight flow."
             ),
             "blockers": [
                 blocker
@@ -640,12 +643,14 @@ def qa_workflow_status(
             "label": "BMW screenshot / export / interface smoke",
             "state": "partial" if bmw_models_ready and bmw_scripts_ready else "blocked",
             "summary": (
-                "The BMW-side repo appears to be present locally, but these Wombat-maintained scripts still run outside the current SG Preflight engine."
-                if bmw_models_ready and bmw_scripts_ready
+                "The BMW-side smoke stage is exposed as a one-click action, but it still depends on BMW repo access and per-car target mapping."
+                if bmw_models_ready and bmw_scripts_ready and not bmw_targets_ready
+                else "The BMW-side smoke stage can be launched from the same operator surface when local prerequisites and car mapping exist."
+                if bmw_models_ready and bmw_scripts_ready and bmw_targets_ready
                 else "This machine does not currently have the BMW-side screenshot-test prerequisites in place."
             ),
             "sg_preflight_role": (
-                "SG Preflight should reduce avoidable failures before this stage and make the later screenshot smoke more targeted."
+                "SG Preflight should reduce avoidable failures before this stage, and it now surfaces the BMW smoke stage as an explicit action instead of a hidden external dependency."
             ),
             "blockers": [
                 blocker
@@ -656,6 +661,9 @@ def qa_workflow_status(
                     None
                     if bmw_scripts_ready
                     else "The BMW screenshot-script README under `ci/scripts` is not available locally.",
+                    None
+                    if bmw_targets_ready
+                    else "BMW smoke target mapping for the current live profiles is not configured yet.",
                 )
                 if blocker
             ],

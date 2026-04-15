@@ -24,6 +24,22 @@ class TestCLI(unittest.TestCase):
         profile_ids = {item["profile_id"] for item in payload}
         self.assertTrue({"G70", "G65", "G45"}.issubset(profile_ids))
 
+    def test_list_actions_includes_operator_registry(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "list-actions", "--json"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = json.loads(result.stdout)
+        action_ids = {item["action_id"] for item in payload}
+        self.assertIn("daily_live_matrix", action_ids)
+        self.assertIn("repo_checker_idcevo", action_ids)
+        self.assertIn("qa_stack__g65", action_ids)
+        self.assertIn("bmw_screenshot_smoke__g65", action_ids)
+
     def test_good_demo_passes(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "demo-good"],

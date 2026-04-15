@@ -107,6 +107,36 @@
 
 <section class="panel">
   <div class="panel-head">
+    <h3>More SG QA Actions For This Car</h3>
+    <p>Use these when the normal preflight is not enough and you want the current SG-side checker or scene-check step for this car.</p>
+  </div>
+  <div class="workflow-grid">
+    {% for item in profile_actions %}
+    <article class="workflow-card">
+      <div class="status-row">
+        <strong>{{ item.label }}</strong>
+        <span class="badge {% if item.ready %}ok{% else %}warn{% endif %}">{{ item.status_label }}</span>
+      </div>
+      <p class="workflow-summary">{{ item.description }}</p>
+      {% if item.blocker_message %}
+      <div class="note-block note-block--warn">{{ item.blocker_message }}</div>
+      {% endif %}
+      <details class="foldout">
+        <summary>Show Command Detail</summary>
+        <div class="code-block">{{ item.command_preview }}</div>
+      </details>
+      <div class="action-row action-row--wrap">
+        <button class="button {% if not item.ready %}subtle{% endif %} action-launch" type="button" data-action-id="{{ item.action_id }}">
+          {% if item.ready %}Run Action{% else %}Show Blocker{% endif %}
+        </button>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
     <h3>Resolved Source Inputs</h3>
     <p>These files are the actual SG source-of-truth inputs that will be materialized into the normalized bundle for this run.</p>
   </div>

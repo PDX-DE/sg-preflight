@@ -44,6 +44,48 @@
     });
   }
 
+  const actionButtons = document.querySelectorAll(".action-launch");
+  if (actionButtons.length) {
+    actionButtons.forEach((button) => {
+      button.addEventListener("click", async function () {
+        const actionId = button.getAttribute("data-action-id");
+        if (!actionId) {
+          return;
+        }
+
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = "Starting...";
+
+        try {
+          const response = await fetch("/ui/api/actions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action_id: actionId })
+          });
+
+          if (!response.ok) {
+            button.textContent = "Start failed";
+            window.setTimeout(function () {
+              button.disabled = false;
+              button.textContent = originalText;
+            }, 1800);
+            return;
+          }
+
+          const payload = await response.json();
+          window.location.href = payload.result_url;
+        } catch (_error) {
+          button.textContent = "Start failed";
+          window.setTimeout(function () {
+            button.disabled = false;
+            button.textContent = originalText;
+          }, 1800);
+        }
+      });
+    });
+  }
+
   const runForm = document.querySelector("#run-form");
   if (runForm) {
     runForm.addEventListener("submit", async function (event) {
@@ -130,5 +172,27 @@
       window.setTimeout(poll, 1500);
     };
     window.setTimeout(poll, 1500);
+  }
+
+  const actionStatus = document.body.getAttribute("data-action-status");
+  const actionRunId = document.body.getAttribute("data-action-run-id");
+  if (actionRunId && actionStatus && actionStatus !== "completed" && actionStatus !== "failed" && actionStatus !== "blocked") {
+    const pollAction = async function () {
+      const response = await fetch("/ui/api/actions/" + actionRunId);
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      const pill = document.querySelector("#action-status-pill");
+      if (pill) {
+        pill.textContent = payload.status;
+      }
+      if (payload.status === "completed" || payload.status === "failed" || payload.status === "blocked") {
+        window.location.reload();
+        return;
+      }
+      window.setTimeout(pollAction, 1500);
+    };
+    window.setTimeout(pollAction, 1500);
   }
 })();

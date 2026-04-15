@@ -115,6 +115,24 @@ Start the local operator UI:
 python -m sg_preflight ui
 ```
 
+List the one-click SG QA actions:
+
+```bash
+python -m sg_preflight list-actions --json
+```
+
+Run the full daily live preflight matrix as one action:
+
+```bash
+python -m sg_preflight run-action daily_live_matrix
+```
+
+Run the recommended automated QA stack for one live car:
+
+```bash
+python -m sg_preflight run-action qa_stack__g65
+```
+
 Or use the PowerShell launcher/check script:
 
 ```powershell
@@ -125,12 +143,19 @@ The operator UI serves locally at `http://127.0.0.1:8765/ui` by default.
 It provides:
 
 - Home: common QA tasks, live profiles with operator goals, current live signal, compact readiness, cached mirror health
-- Run: profile purpose, a standard one-click check, and advanced options only when needed
+- Run: profile purpose, a standard one-click check, a recommended QA stack action, and advanced options only when needed
 - Result: decision summary, "do this next" guidance, copy-ready handoff text, grouped findings, owner/action hints, severity filters, per-finding drilldown
 - Evidence: direct links to reports, bundle metadata, manifest, and SG source files
+- One-click actions for the wider SG QA flow:
+  - daily live matrix
+  - repo checker on workspace or per-car scope
+  - per-car recommended QA stack
+  - scene check when `RaCoHeadless.exe` is configured
+  - BMW screenshot smoke as an explicit blocked stage until BMW-side access and target mapping exist
 
 UI-triggered runs persist under `out\operator-ui\runs`.
 Mirror-audit cache lives under `out\operator-ui\cache`.
+One-click action records persist under `out\operator-ui\actions`.
 
 Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-workflow.md).
 Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate-pilot-playbook.md).

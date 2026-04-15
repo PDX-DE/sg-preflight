@@ -19,6 +19,15 @@ from sg_preflight.mirror_audit import (
 )
 from sg_preflight.models import Finding, Report
 from sg_preflight.profiles import RunProfile, list_run_profiles
+from sg_preflight.qa_actions import (
+    build_action_record,
+    execute_operator_action,
+    get_operator_action,
+    list_operator_actions,
+    list_recent_action_records,
+    load_action_record,
+    save_action_record as save_action_task_record,
+)
 from sg_preflight.reporting import build_report_presentation, finding_hint
 from sg_preflight.services import (
     RunRequest,
@@ -205,6 +214,27 @@ def _task_cards(root: Path, profiles: list[RunProfile]) -> list[dict[str, Any]]:
                 "is_ready": profile_card["is_ready"],
                 "highlights": list(profile.focus_points[:2]),
                 "live_signal": profile_card["live_signal"],
+            }
+        )
+    return cards
+
+
+def _action_cards(root: Path, profiles: list[RunProfile], *, scope: str, profile_id: str = "") -> list[dict[str, Any]]:
+    cards = []
+    for action in list_operator_actions(root, profiles=profiles):
+        if action.scope != scope:
+            continue
+        if profile_id and action.profile_id.lower() != profile_id.lower():
+            continue
+        cards.append(
+            {
+                "action_id": action.action_id,
+                "label": action.label,
+                "description": action.description,
+                "ready": action.ready,
+                "status_label": "Ready" if action.ready else "Blocked",
+                "blocker_message": action.blocker_message,
+                "command_preview": action.command_preview,
             }
         )
     return cards
@@ -430,6 +460,15 @@ def _run_profile_background(profile: RunProfile, request: RunRequest, root: Path
         return
 
 
+def _run_action_background(action_id: str, run_id: str, root: Path) -> None:
+    try:
+        action = get_operator_action(action_id, root)
+        record = load_action_record(run_id, root)
+        execute_operator_action(action, root, record=record)
+    except Exception:
+        return
+
+
 def _finding_rows(report: Report, record: Any, config: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for pack in report.packs:
@@ -544,6 +583,20 @@ def _evidence_links(record: Any) -> list[dict[str, str]]:
     return [link for link in links if link["href"] or link["value"]]
 
 
+def _action_links(record: Any) -> list[dict[str, str]]:
+    links = [
+        _path_evidence("Action log", record.paths.get("log")),
+        _path_evidence("Summary JSON", record.paths.get("summary_json")),
+        _path_evidence("Summary Markdown", record.paths.get("summary_md")),
+    ]
+    for artifact in getattr(record, "artifacts", []):
+        path = str(artifact.get("path", "")).strip()
+        label = str(artifact.get("label", "Artifact")).strip() or "Artifact"
+        if path:
+            links.append(_path_evidence(label, path))
+    return [link for link in links if link["href"] or link["value"]]
+
+
 def _allowed_roots(app: FastAPI) -> list[Path]:
     roots = {app.state.workspace_root.resolve(), Path(r"C:\repositories").resolve()}
     for profile in app.state.profiles.values():
@@ -598,7 +651,13 @@ def create_app(
                     for profile in ordered_profiles
                 ],
                 "task_cards": _task_cards(app.state.workspace_root, ordered_profiles),
+                "workspace_actions": _action_cards(
+                    app.state.workspace_root,
+                    ordered_profiles,
+                    scope="workspace",
+                ),
                 "recent_runs": list_recent_run_records(app.state.workspace_root),
+                "recent_actions": list_recent_action_records(app.state.workspace_root),
                 "primary_prerequisites": primary_prereqs,
                 "secondary_prerequisites": secondary_prereqs,
                 "fast_audit": _audit_view_model(fast_audit),
@@ -626,6 +685,12 @@ def create_app(
                 "profile": profile,
                 "preview": preview,
                 "card": _profile_card(app.state.workspace_root, profile),
+                "profile_actions": _action_cards(
+                    app.state.workspace_root,
+                    list(app.state.profiles.values()),
+                    scope="profile",
+                    profile_id=profile.profile_id,
+                ),
                 "packs": ["anchors", "constants", "carpaints", "project_sanity"],
             },
         )
@@ -652,6 +717,31 @@ def create_app(
                 "run_id": record.run_id,
                 "result_url": f"/ui/runs/{record.run_id}",
                 "status_url": f"/ui/api/runs/{record.run_id}",
+            },
+            status_code=202,
+        )
+
+    @app.post("/ui/api/actions")
+    async def create_action(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+        action_id = str(payload.get("action_id", "")).strip()
+        if not action_id:
+            raise HTTPException(status_code=400, detail="action_id is required")
+        action = get_operator_action(action_id, app.state.workspace_root, profiles=list(app.state.profiles.values()))
+        if action.ready:
+            record = build_action_record(action, app.state.workspace_root)
+            save_action_task_record(record)
+        else:
+            record = execute_operator_action(action, app.state.workspace_root)
+        if action.ready:
+            background_tasks.add_task(_run_action_background, action.action_id, record.run_id, app.state.workspace_root)
+        return JSONResponse(
+            {
+                "run_id": record.run_id,
+                "result_url": f"/ui/actions/{record.run_id}",
+                "status_url": f"/ui/api/actions/{record.run_id}",
             },
             status_code=202,
         )
@@ -700,6 +790,19 @@ def create_app(
             },
         )
 
+    @app.get("/ui/actions/{run_id}")
+    async def action_view(request: Request, run_id: str) -> Any:
+        record = load_action_record(run_id, app.state.workspace_root)
+        return app.state.templates.TemplateResponse(
+            request,
+            "action.html",
+            {
+                "record": record,
+                "links": _action_links(record),
+                "log_text": _load_text_file(record.paths.get("log", "")),
+            },
+        )
+
     @app.get("/ui/api/runs")
     async def recent_runs_api() -> JSONResponse:
         return JSONResponse([record.to_dict() for record in list_recent_run_records(app.state.workspace_root)])
@@ -707,6 +810,11 @@ def create_app(
     @app.get("/ui/api/runs/{run_id}")
     async def run_status_api(run_id: str) -> JSONResponse:
         record = load_run_record(run_id, app.state.workspace_root)
+        return JSONResponse(record.to_dict())
+
+    @app.get("/ui/api/actions/{run_id}")
+    async def action_status_api(run_id: str) -> JSONResponse:
+        record = load_action_record(run_id, app.state.workspace_root)
         return JSONResponse(record.to_dict())
 
     @app.get("/ui/audits/mirror/deep")

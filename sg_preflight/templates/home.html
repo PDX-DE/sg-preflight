@@ -55,6 +55,32 @@
   </div>
 </section>
 
+<section class="panel">
+  <div class="panel-head">
+    <h3>One-Click SG QA Actions</h3>
+    <p>These wrap the current SG-side QA steps so teammates can run them without opening terminals or memorizing scripts.</p>
+  </div>
+  <div class="workflow-grid">
+    {% for item in workspace_actions %}
+    <article class="workflow-card workflow-card--task">
+      <div class="status-row">
+        <strong>{{ item.label }}</strong>
+        <span class="badge {% if item.ready %}ok{% else %}warn{% endif %}">{{ item.status_label }}</span>
+      </div>
+      <p class="workflow-summary">{{ item.description }}</p>
+      {% if item.blocker_message %}
+      <div class="note-block note-block--warn">{{ item.blocker_message }}</div>
+      {% endif %}
+      <div class="action-row action-row--wrap">
+        <button class="button {% if not item.ready %}subtle{% endif %} action-launch" type="button" data-action-id="{{ item.action_id }}">
+          {% if item.ready %}Run Action{% else %}Show Blocker{% endif %}
+        </button>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
 <section class="panel panel--priority" id="profiles">
   <div class="panel-head">
     <h3>Start With A Car</h3>
@@ -317,6 +343,39 @@
     </div>
   </article>
 
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Recent QA Actions</h3>
+      <p>Use this when someone asks whether a checker pass, daily matrix, or scene check already ran.</p>
+    </div>
+    <div class="stack">
+      {% if recent_actions %}
+        {% for item in recent_actions %}
+        <div class="run-card">
+          <div class="min-w-0">
+            <strong>{{ item.label }}</strong>
+            <div class="muted">{{ item.created_at_utc }}</div>
+            {% if item.summary and item.summary.lines %}
+            <div class="muted">{{ item.summary.lines[0] }}</div>
+            {% endif %}
+          </div>
+          <div class="run-card-actions">
+            <span class="badge {% if item.status == 'completed' %}ok{% elif item.status == 'running' %}info{% elif item.status == 'blocked' %}warn{% else %}warn{% endif %}">{{ item.status }}</span>
+            <a href="/ui/actions/{{ item.run_id }}">Result</a>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty-state">
+          <strong>No QA actions recorded yet.</strong>
+          <p>Start with the one-click SG QA actions above if you want to run the wider SG checks instead of a single preflight.</p>
+        </div>
+      {% endif %}
+    </div>
+  </article>
+</section>
+
+<section class="content-grid content-grid--home">
   <article class="panel">
     <div class="panel-head">
       <h3>Why This Should Save Time</h3>
