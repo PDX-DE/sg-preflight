@@ -51,6 +51,10 @@ The flow is:
 The UI is not a second engine.
 It is a local front-end over the same run/materialize/report path.
 
+It is also not the whole SG QA workflow.
+It is the deterministic front end of that workflow.
+BMW screenshot smoke, rack validation, and final visual approval remain adjacent or manual stages.
+
 ## What You Need
 
 For the host machine:
@@ -90,6 +94,7 @@ For a self-service session on their machine:
   - `httpx`
 
 They do not need Blender, Ramses Composer, or rack hardware to inspect current findings and evidence.
+They also do not need BMW Git access if the goal is only to review the current preflight and evidence flow on your machine.
 
 ## Recommended Pilot Modes
 
@@ -206,6 +211,16 @@ Current results:
 Reference summary:
 
 - [out/real-live-matrix/latest/SUMMARY.md](/c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/out/real-live-matrix/latest/SUMMARY.md)
+
+## Workflow Boundary To Explain In The Session
+
+Say this plainly during the session:
+
+- `sg-preflight` is meant to reduce what reaches rack, screenshot smoke, and delivery review
+- it does not replace Blender visual review
+- it does not replace rack approval
+- it does not replace BMW-maintained screenshot smoke
+- if BMW access is missing locally, that is a real blocker, not a tool omission to hide
 
 ## What Good Feedback Looks Like
 

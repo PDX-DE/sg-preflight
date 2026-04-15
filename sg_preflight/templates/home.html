@@ -3,7 +3,7 @@
 {% block content %}
 <section class="hero-panel hero-panel--home">
   <div class="hero-copy">
-    <p class="eyebrow">Earlier Signal • Clearer Ownership • Better Handoff</p>
+    <p class="eyebrow">Earlier Signal - Clearer Ownership - Better Handoff</p>
     <h2>Pick a live car, run deterministic checks, and get evidence that is usable before rack or review.</h2>
     <p class="hero-text">
       This UI exists to reduce avoidable findings, expose source-of-truth drift early, and give QA / TA / 3D / integration a shared starting point instead of another black box.
@@ -126,6 +126,47 @@
     </details>
   </article>
 
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Current QA Workflow Fit</h3>
+      <p>SG Preflight should improve the existing SG QA flow, not pretend to replace every manual or BMW-side stage.</p>
+      {% if workflow_alignment.href %}
+      <p><a href="{{ workflow_alignment.href }}">Open the internal QA workflow alignment note.</a></p>
+      {% endif %}
+    </div>
+    <div class="workflow-grid">
+      {% for step in workflow_steps %}
+      <article class="workflow-card">
+        <div class="status-row">
+          <strong>{{ step.label }}</strong>
+          <span class="badge {% if step.state == 'covered' %}ok{% elif step.state == 'partial' %}info{% else %}warn{% endif %}">
+            {{ step.state }}
+          </span>
+        </div>
+        <p class="workflow-summary">{{ step.summary }}</p>
+        <div class="detail-list">
+          <div>
+            <span class="detail-label">SG Preflight Role</span>
+            <div>{{ step.sg_preflight_role }}</div>
+          </div>
+          {% if step.blockers %}
+          <div>
+            <span class="detail-label">Current Blockers</span>
+            <ul class="clean-list">
+              {% for blocker in step.blockers %}
+              <li>{{ blocker }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="content-grid content-grid--home">
   <article class="panel">
     <div class="panel-head">
       <h3>Mirror Health</h3>

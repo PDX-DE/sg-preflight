@@ -32,6 +32,7 @@ from sg_preflight.services import (
     parse_packs,
     prerequisite_status,
     preview_profile_sources,
+    qa_workflow_status,
     run_notes,
     save_run_record,
     workspace_root,
@@ -167,6 +168,14 @@ def _summary_file_link(root: Path) -> dict[str, str]:
     }
 
 
+def _doc_file_link(root: Path, relative_path: str) -> dict[str, str]:
+    path = root / relative_path
+    return {
+        "path": str(path),
+        "href": f"/ui/files?path={path}" if path.exists() else "",
+    }
+
+
 def _profile_card(root: Path, profile: RunProfile) -> dict[str, Any]:
     live_signal = _latest_matrix_signal(root, profile)
     is_ready = profile.project_root.exists() and profile.config_path.exists()
@@ -186,6 +195,7 @@ def _primary_prerequisites(root: Path) -> tuple[list[dict[str, str]], list[dict[
         "workspace_root",
         "mirror_root",
         "reference_root",
+        "bmw_models_repo",
         "python_package_fastapi",
         "python_package_jinja2",
         "python_package_uvicorn",
@@ -468,6 +478,14 @@ def create_app(
                 "fast_audit": _audit_view_model(fast_audit),
                 "deep_audit": _audit_view_model(deep_audit),
                 "matrix_summary": _summary_file_link(app.state.workspace_root),
+                "workflow_alignment": _doc_file_link(
+                    app.state.workspace_root,
+                    "docs/qa-workflow-alignment.md",
+                ),
+                "workflow_steps": qa_workflow_status(
+                    app.state.workspace_root,
+                    profiles=list(app.state.profiles.values()),
+                ),
             },
         )
 

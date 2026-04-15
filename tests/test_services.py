@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 import unittest
+from unittest import mock
 
-from sg_preflight.services import RunRequest, execute_profile_run, load_run_record, preview_profile_sources
+from sg_preflight.services import (
+    RunRequest,
+    execute_profile_run,
+    load_run_record,
+    preview_profile_sources,
+    qa_workflow_status,
+)
 from tests.operator_helpers import create_temp_g65_profile
 
 
@@ -45,6 +53,25 @@ class TestServices(unittest.TestCase):
             self.assertTrue((output_root / "g65-report.md").exists())
             self.assertEqual(record.summary["errors"], 0)
             self.assertGreaterEqual(record.summary["warnings"], 1)
+
+    def test_qa_workflow_status_marks_bmw_dependent_stages_as_blocked_without_access(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            missing_bmw_repo = root / "missing" / "digital-3d-car-models"
+
+            with mock.patch.dict(os.environ, {"SG_CARMODELS_REPO": str(missing_bmw_repo)}, clear=False):
+                with mock.patch("sg_preflight.services.shutil.which", return_value=None):
+                    steps = qa_workflow_status(root, profiles=[profile])
+
+        step_map = {step["key"]: step for step in steps}
+        self.assertEqual(step_map["deterministic_preflight"]["state"], "covered")
+        self.assertEqual(step_map["bmw_screenshot_smoke"]["state"], "blocked")
+        self.assertEqual(step_map["rack_review"]["state"], "blocked")
+        self.assertIn(
+            "BMW Git access or a local `digital-3d-car-models` clone",
+            " ".join(step_map["bmw_screenshot_smoke"]["blockers"]),
+        )
 
 
 if __name__ == "__main__":

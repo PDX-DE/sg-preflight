@@ -134,6 +134,7 @@ Mirror-audit cache lives under `out\operator-ui\cache`.
 
 Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-workflow.md).
 Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate-pilot-playbook.md).
+QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-alignment.md).
 
 Run the full smoke-test flow:
 
@@ -350,11 +351,13 @@ This is already fully runnable, but it is still an early internal release:
 > The current live findings are useful production signal, not synthetic demo failures. A clean tooling run does not mean the car is clean; it means the deterministic checks completed successfully and the remaining findings are likely worth triage.
 - the repo now supports live SG mirror inputs for `G70`, `G65`, and `G45` anchor/constants/carpaint/project-sanity slices
 - the local operator UI is intentionally `run + inspect`, not a separate second validation engine
+- the framework is intended to improve the established SG QA flow, not replace BMW screenshot smoke, rack review, or Blender visual checks
 - the current live matrix baseline is meaningful already:
   - `G70` surfaces a real duplicate BMW carpaint ID plus cross-car and unused-Lua warnings
   - `G65` surfaces real constant drift between `Pivot_Master` and `Module_constants`
   - `G45` proves the multi-family anchor support while still surfacing the shared duplicate BMW carpaint ID
 - visual checks are not automated here
 - rack / screenshot / trace integration is not yet wired in
+- missing BMW-side access or a local `digital-3d-car-models` clone is still an explicit blocker for full screenshot-smoke coverage on this machine
 
 The next real step is to widen coverage from these first BMW live slices to additional BMW/MINI variants while keeping the validation core unchanged.

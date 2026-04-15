@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shutil
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -17,7 +19,7 @@ from sg_preflight.adapters.materialize import (
 from sg_preflight.bundle import load_bundle
 from sg_preflight.config_loader import load_config, load_json
 from sg_preflight.models import Report
-from sg_preflight.profiles import RunProfile
+from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.reporting import write_html_report, write_json_report, write_markdown_report
 from sg_preflight.utils import ensure_parent
 from sg_preflight.validators.anchors import validate_anchors
@@ -458,18 +460,63 @@ def run_notes(record: RunRecord) -> list[str]:
     return list(record.notes)
 
 
+def _env_or_default_path(env_keys: tuple[str, ...], default_paths: tuple[Path, ...]) -> tuple[Path, bool]:
+    for key in env_keys:
+        raw = os.environ.get(key, "").strip()
+        if raw:
+            return Path(raw), True
+    for path in default_paths:
+        if path.exists():
+            return path, False
+    return default_paths[0], False
+
+
+def _raco_headless_path(root: Path) -> Path:
+    path, from_env = _env_or_default_path(
+        ("SG_RACO_HEADLESS", "RACO_HEADLESS_EXE"),
+        (
+            root / "external" / "ramses" / "RaCoHeadless.exe",
+            root.parent / "RamsesComposerWindows" / "bin" / "RelWithDebInfo" / "RaCoHeadless.exe",
+            Path(r"C:\RamsesComposerWindows\bin\RelWithDebInfo\RaCoHeadless.exe"),
+        ),
+    )
+    if from_env:
+        return path
+
+    command_path = shutil.which("RaCoHeadless.exe")
+    if command_path:
+        return Path(command_path)
+    return path
+
+
+def _bmw_models_repo_path(root: Path) -> Path:
+    path, _ = _env_or_default_path(
+        ("SG_CARMODELS_REPO",),
+        (
+            root / "external" / "digital-3d-car-models",
+            root.parent / "digital-3d-car-models",
+            Path(r"C:\repos\digital-3d-car-models"),
+        ),
+    )
+    return path
+
+
 def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
     root = workspace_root(repo_root)
     mirror_root = root / "repositories" / "trunk"
+    bmw_models_repo = _bmw_models_repo_path(root)
+    raco_headless = _raco_headless_path(root)
     checks = [
         ("workspace_root", root),
         ("mirror_root", mirror_root),
         ("reference_root", Path(r"C:\repositories\trunk")),
+        ("bmw_models_repo", bmw_models_repo),
         (
             "carpaint_helper",
             mirror_root / ".pdx" / "raco" / "scripts" / "testing" / "read_json_carpaints.py",
         ),
         ("scene_checker", mirror_root / "check_scenes.py"),
+        ("raco_headless", raco_headless),
         ("carmodel_data", mirror_root / ".pdx" / "python" / "carmodel_data.json"),
         ("resource_mappings", mirror_root / ".pdx" / "python" / "resource_mappings.json"),
     ]
@@ -485,6 +532,16 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
             }
         )
 
+    screenshot_readme = bmw_models_repo / "ci" / "scripts" / "README.md"
+    payload.append(
+        {
+            "key": "bmw_screenshot_scripts",
+            "label": "BMW Screenshot Scripts",
+            "path": str(screenshot_readme),
+            "status": "available" if screenshot_readme.exists() else "missing",
+        }
+    )
+
     anchorpoint_dir = mirror_root / ".pdx" / "raco" / "json" / "anchorpoints"
     anchorpoint_files = sorted(anchorpoint_dir.glob("anchorpoint_data*.json")) if anchorpoint_dir.exists() else []
     payload.append(
@@ -493,6 +550,16 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
             "label": "Anchorpoint Catalogs",
             "path": str(anchorpoint_dir),
             "status": "available" if anchorpoint_files else "missing",
+            }
+        )
+
+    adb_path = shutil.which("adb")
+    payload.append(
+        {
+            "key": "adb",
+            "label": "ADB",
+            "path": adb_path or "adb",
+            "status": "available" if adb_path else "missing",
         }
     )
 
@@ -507,3 +574,123 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
         )
 
     return payload
+
+
+def qa_workflow_status(
+    repo_root: Path | None = None,
+    profiles: list[RunProfile] | None = None,
+) -> list[dict[str, Any]]:
+    root = workspace_root(repo_root)
+    readiness = {item["key"]: item for item in prerequisite_status(root)}
+    live_profiles = profiles if profiles is not None else list_run_profiles(root)
+    ready_profiles = [
+        profile
+        for profile in live_profiles
+        if profile.project_root.exists() and profile.config_path.exists()
+    ]
+
+    scene_checker_ready = readiness.get("scene_checker", {}).get("status") == "available"
+    raco_headless_ready = readiness.get("raco_headless", {}).get("status") == "available"
+    bmw_models_ready = readiness.get("bmw_models_repo", {}).get("status") == "available"
+    bmw_scripts_ready = readiness.get("bmw_screenshot_scripts", {}).get("status") == "available"
+    adb_ready = readiness.get("adb", {}).get("status") == "available"
+
+    return [
+        {
+            "key": "deterministic_preflight",
+            "label": "Deterministic preflight before review",
+            "state": "covered" if ready_profiles else "blocked",
+            "summary": (
+                f"{len(ready_profiles)} canonical live profile(s) are ready for anchors, constants, carpaints, and project-sanity checks."
+                if ready_profiles
+                else "No canonical live profile is currently ready on this machine."
+            ),
+            "sg_preflight_role": (
+                "This is the current core scope: catch deterministic issues early on the mirrored SG slices and persist reusable evidence."
+            ),
+            "blockers": []
+            if ready_profiles
+            else ["The mirrored SG live slices or their configs are missing on this machine."],
+        },
+        {
+            "key": "repo_scene_checks",
+            "label": "Repo checker and scene-checker path",
+            "state": "partial" if scene_checker_ready else "blocked",
+            "summary": (
+                "SG-side helper scripts are visible, but direct RaCo scene execution is still separate from the current preflight run path."
+                if scene_checker_ready
+                else "Scene-checker helper discovery is not ready on this machine."
+            ),
+            "sg_preflight_role": (
+                "Today the framework covers adjacent deterministic sanity and helper discovery; wrapping `check_scenes.py` is a future extension."
+            ),
+            "blockers": [
+                blocker
+                for blocker in (
+                    None if scene_checker_ready else "The mirrored `check_scenes.py` helper is missing.",
+                    None
+                    if raco_headless_ready
+                    else "A local `RaCoHeadless.exe` is not configured, so direct scene execution remains blocked.",
+                )
+                if blocker
+            ],
+        },
+        {
+            "key": "bmw_screenshot_smoke",
+            "label": "BMW screenshot / export / interface smoke",
+            "state": "partial" if bmw_models_ready and bmw_scripts_ready else "blocked",
+            "summary": (
+                "The BMW-side repo appears to be present locally, but these Wombat-maintained scripts still run outside the current SG Preflight engine."
+                if bmw_models_ready and bmw_scripts_ready
+                else "This machine does not currently have the BMW-side screenshot-test prerequisites in place."
+            ),
+            "sg_preflight_role": (
+                "SG Preflight should reduce avoidable failures before this stage and make the later screenshot smoke more targeted."
+            ),
+            "blockers": [
+                blocker
+                for blocker in (
+                    None
+                    if bmw_models_ready
+                    else "Blocked on BMW Git access or a local `digital-3d-car-models` clone.",
+                    None
+                    if bmw_scripts_ready
+                    else "The BMW screenshot-script README under `ci/scripts` is not available locally.",
+                )
+                if blocker
+            ],
+        },
+        {
+            "key": "rack_review",
+            "label": "Rack, carpaint, and manual visual review",
+            "state": "partial" if adb_ready and bmw_models_ready else "blocked",
+            "summary": (
+                "Rack and final visual approval remain manual, hardware-driven stages even when the local machine is prepared."
+                if adb_ready and bmw_models_ready
+                else "Rack-side validation is not currently runnable from this machine setup."
+            ),
+            "sg_preflight_role": (
+                "The framework is meant to reduce what reaches rack sessions, not pretend to replace rack, Blender visual review, or designer approval."
+            ),
+            "blockers": [
+                blocker
+                for blocker in (
+                    None if adb_ready else "ADB is not available locally for rack connectivity checks.",
+                    None
+                    if bmw_models_ready
+                    else "BMW-side access is missing, so the full rack-adjacent workflow cannot be validated end-to-end yet.",
+                )
+                if blocker
+            ],
+        },
+        {
+            "key": "handoff_evidence",
+            "label": "Triage and delivery handoff evidence",
+            "state": "covered",
+            "summary": "Run records plus JSON, HTML, and Markdown outputs are already available for reuse in triage, reviews, and follow-up.",
+            "sg_preflight_role": (
+                "This is already part of the working product: persistent evidence that helps QA, TA, integration, and delivery discussions start from the same artifact."
+            ),
+            "blockers": [],
+        },
+    ]

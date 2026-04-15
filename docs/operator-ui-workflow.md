@@ -12,6 +12,15 @@ It calls the same shared services used by:
 - `scripts\run_real_sg_smoke.ps1`
 - `scripts\run_real_live_matrix_smoke.ps1`
 
+It also does not replace the full SG QA workflow.
+It is the deterministic front end of that workflow:
+
+- before rack
+- before BMW screenshot smoke
+- before delivery handoff
+
+See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflow fit, manual stages, and BMW-side blockers.
+
 ## Start
 
 From the repository root:
@@ -41,6 +50,7 @@ Shows:
 - canonical live profiles with explicit operator goals and focus areas
 - current live signal for the real `G70`, `G65`, and `G45` slices when the latest matrix output is present
 - compact readiness status for the local machine and mirrored SVN
+- explicit QA-workflow-fit cards showing what is covered, partial, or blocked on the current machine
 - cached mirror-health summary, with deeper detail behind foldouts
 - recent persisted operator runs
 
@@ -121,3 +131,14 @@ The operator UI currently targets canonical live slices first:
 - `G45`
 
 Ad-hoc arbitrary-path runs are intentionally secondary to keeping the shared live profile workflow stable.
+
+## Workflow Boundary
+
+Current expectation:
+
+- use the UI to catch deterministic issues and produce evidence before manual review
+- do not claim that the UI replaces Blender visual checks
+- do not claim that the UI replaces rack sessions
+- do not claim that BMW screenshot smoke is already integrated
+
+If BMW-side access is not present locally, the UI should show that honestly as a blocker instead of hiding it.

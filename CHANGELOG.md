@@ -29,12 +29,15 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - GitHub issue forms, pull request template, and CI workflow
 - Internal repository notices via `NOTICE.md`, `SECURITY.md`, and GitHub issue-template config
 - Next-chat handoff prompt in `docs/next-chat-handoff-prompt-2026-04-14.md`
+- Explicit QA-workflow alignment note for mapping SG Preflight against the current SG / Quality-Hero process
 - Live SG config in `config/sg_rules_live.json` for a first real `G70` end-to-end slice
 - Live SG configs for `G65` and classic `G45`
 - Anchor validation support for multiple config-driven rule groups such as scale, tire-pressure, and sensor anchors
 
 ### Changed
 
+- Operator UI Home now shows where the tool fits in the real SG QA workflow, including explicit covered / partial / blocked stages
+- Operator readiness now surfaces the BMW screenshot-test repo as a first-class prerequisite instead of hiding BMW-side blockers
 - Operator UI Home/Run/Result flow now prioritizes operator decisions, current live signal, and clearer next actions instead of raw filesystem detail
 - Operator UI first-load work is lighter because Home no longer scans every live profile for full source discovery up front
 - Operator UI now uses retro-driven profile goals and focus areas so teammates can see why each live slice is worth running
@@ -69,3 +72,4 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - The first live real-source rollout now covers `G70`, `G65`, and `G45`, but additional BMW/MINI cars still need profile rollout
 - The operator UI is intentionally local-first; a thin desktop wrapper is still deferred until adoption requires one-click packaging
 - Direct RaCo-runtime execution of helper scripts such as `read_json_carpaints.py` is still not part of the current CLI-first flow
+- Full BMW screenshot-smoke coverage still depends on BMW-side access and a local `digital-3d-car-models` clone

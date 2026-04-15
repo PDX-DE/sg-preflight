@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -16,14 +18,23 @@ class TestOperatorUI(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
-            client = TestClient(create_app(root=root, profiles=[profile]))
+            with mock.patch.dict(
+                os.environ,
+                {"SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models")},
+                clear=False,
+            ):
+                with mock.patch("sg_preflight.services.shutil.which", return_value=None):
+                    client = TestClient(create_app(root=root, profiles=[profile]))
 
-            home = client.get("/ui")
-            run_view = client.get("/ui/profiles/G65")
+                    home = client.get("/ui")
+                    run_view = client.get("/ui/profiles/G65")
 
         self.assertEqual(home.status_code, 200)
         self.assertIn("Start With A Car", home.text)
         self.assertIn("BMW G65 test slice", home.text)
+        self.assertIn("Current QA Workflow Fit", home.text)
+        self.assertIn("BMW screenshot / export / interface smoke", home.text)
+        self.assertIn("blocked", home.text)
         self.assertEqual(run_view.status_code, 200)
         self.assertIn("Resolved Source Inputs", run_view.text)
         self.assertIn("Run Canonical Preflight", run_view.text)

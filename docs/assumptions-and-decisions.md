@@ -100,3 +100,14 @@
 - Mirror audit stays two-tier:
   - fast cached checks for configured live slices by default
   - manual deep full-trunk comparison only when an operator explicitly asks for it
+
+## 2026-04-15
+
+- `sg-preflight` is now explicitly positioned as the deterministic front end of the existing SG 3D Car QA workflow.
+  It should improve that workflow, not pretend to replace Blender visual review, BMW screenshot smoke, rack validation, or designer approval.
+
+- BMW-side access remains a real blocker for full workflow coverage on this machine.
+  Until a local `digital-3d-car-models` clone and BMW-side access are available, screenshot smoke and parts of the rack-adjacent flow must stay marked as blocked or external.
+
+- `check_scenes.py` and related repo-side helpers are part of the intended workflow alignment, but not yet part of the current execution path.
+  The next wrapper target on the SG side is direct optional scene checking once `RaCoHeadless.exe` handling is reliable enough.
