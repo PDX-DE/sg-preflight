@@ -1,153 +1,232 @@
 {% extends "base.html" %}
-{% block title %}Home · SG Preflight Operator UI{% endblock %}
+{% block title %}Home - SG Preflight Operator UI{% endblock %}
 {% block content %}
-<section class="hero-panel">
-  <div>
-    <p class="eyebrow">Run + Inspect</p>
-    <h2>Canonical live profiles, cached mirror health, and recent evidence in one place.</h2>
+<section class="hero-panel hero-panel--home">
+  <div class="hero-copy">
+    <p class="eyebrow">Earlier Signal • Clearer Ownership • Better Handoff</p>
+    <h2>Pick a live car, run deterministic checks, and get evidence that is usable before rack or review.</h2>
+    <p class="hero-text">
+      This UI exists to reduce avoidable findings, expose source-of-truth drift early, and give QA / TA / 3D / integration a shared starting point instead of another black box.
+    </p>
+    <div class="hero-bullets">
+      <span>Addresses retro pain around early testing, ownership confusion, and weak finding context.</span>
+      <span>Uses the same Python engine as the CLI and smoke scripts.</span>
+      <span>Shows the current live signal for the real SG slices already in this repo.</span>
+    </div>
   </div>
-  <div class="hero-actions">
-    <a class="button subtle" href="/ui/audits/mirror/deep">Run Deep Mirror Audit</a>
+  <div class="hero-actions hero-actions--stack">
+    <a class="button" href="#profiles">Start With A Car</a>
+    {% if matrix_summary.href %}
+    <a class="button subtle" href="{{ matrix_summary.href }}">Open Latest Matrix Summary</a>
+    {% endif %}
+    <a class="button subtle" href="/ui/audits/mirror/deep">Refresh Deep Mirror Audit</a>
   </div>
 </section>
 
-<section class="content-grid">
-  <article class="panel">
-    <div class="panel-head">
-      <h3>Live Profiles</h3>
-      <p>Current canonical registry for the live SG slices.</p>
-    </div>
-    <div class="stack">
-      {% for item in profiles %}
-      <article class="profile-card">
-        <div class="profile-head">
-          <div>
-            <h4>{{ item.profile.profile_id }}</h4>
-            <p>{{ item.profile.label }}</p>
-          </div>
-          <a class="button" href="/ui/profiles/{{ item.profile.profile_id }}">Open Run View</a>
+<section class="panel panel--priority" id="profiles">
+  <div class="panel-head">
+    <h3>Start With A Car</h3>
+    <p>Choose the slice that best matches the problem you are trying to catch before manual review.</p>
+  </div>
+  <div class="profile-grid">
+    {% for item in profiles %}
+    <article class="profile-card profile-card--priority">
+      <div class="profile-card-top">
+        <div>
+          <p class="eyebrow">Live Profile</p>
+          <h4>{{ item.profile.profile_id }}</h4>
+          <p class="profile-label">{{ item.profile.label }}</p>
         </div>
-        <div class="detail-grid">
-          <div>
-            <span class="detail-label">Project Root</span>
-            <code>{{ item.profile.project_root }}</code>
-          </div>
-          <div>
-            <span class="detail-label">Config</span>
-            <code>{{ item.profile.config_path }}</code>
-          </div>
-        </div>
-        <div class="status-row">
-          <span class="badge {% if item.project_exists and item.config_exists %}ok{% else %}warn{% endif %}">
-            {% if item.project_exists and item.config_exists %}Profile Ready{% else %}Needs Attention{% endif %}
-          </span>
-          <span class="muted">{{ item.preview.source_paths | length }} detected sources</span>
-        </div>
-        {% if item.missing_sources %}
-        <p class="muted">Missing sources: {{ item.missing_sources | join(", ") }}</p>
-        {% endif %}
-      </article>
-      {% endfor %}
-    </div>
-  </article>
+        <span class="badge {% if item.is_ready %}ok{% else %}warn{% endif %}">
+          {{ item.readiness_label }}
+        </span>
+      </div>
 
+      <p class="profile-goal">{{ item.profile.operator_goal }}</p>
+
+      <div class="detail-list">
+        <div>
+          <span class="detail-label">Best Use</span>
+          <div>{{ item.profile.workflow_value }}</div>
+        </div>
+        <div>
+          <span class="detail-label">Good First Checks</span>
+          <ul class="clean-list">
+            {% for point in item.profile.focus_points %}
+            <li>{{ point }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+
+      {% if item.live_signal %}
+      <div class="signal-block">
+        <div class="status-row">
+          <strong>Current Live Signal</strong>
+          <span class="muted">{{ item.live_signal.headline }}</span>
+        </div>
+        <div class="summary-inline">
+          <span><strong>{{ item.live_signal.summary.errors }}</strong> errors</span>
+          <span><strong>{{ item.live_signal.summary.warnings }}</strong> warnings</span>
+          <span><strong>{{ item.live_signal.summary.total }}</strong> total findings</span>
+        </div>
+        <ul class="clean-list">
+          {% for highlight in item.live_signal.highlights %}
+          <li>
+            <strong>{{ highlight.code }}</strong> x{{ highlight.count }}:
+            {{ highlight.message }}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      <div class="action-row action-row--wrap">
+        <a class="button" href="/ui/profiles/{{ item.profile.profile_id }}">Run {{ item.profile.profile_id }}</a>
+        {% if item.live_signal and item.live_signal.html_path %}
+        <a class="button subtle" href="/ui/files?path={{ item.live_signal.html_path | urlencode }}">Open Latest HTML Evidence</a>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="content-grid content-grid--home">
   <article class="panel">
     <div class="panel-head">
-      <h3>Prerequisites</h3>
-      <p>Quick readiness check for the current local machine and mirror.</p>
+      <h3>Operator Readiness</h3>
+      <p>Only the essentials stay visible here. Detailed environment checks are still available when you need them.</p>
     </div>
     <div class="stack tight">
-      {% for item in prerequisites %}
+      {% for item in primary_prerequisites %}
       <div class="status-item">
-        <div>
+        <div class="min-w-0">
           <strong>{{ item.label }}</strong>
-          <div class="muted">{{ item.path }}</div>
+          <div class="muted path-text">{{ item.path }}</div>
         </div>
         <span class="badge {% if item.status == 'available' %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
       </div>
       {% endfor %}
     </div>
-  </article>
-</section>
 
-<section class="content-grid">
+    <details class="foldout">
+      <summary>Show Full Environment Detail</summary>
+      <div class="stack tight">
+        {% for item in secondary_prerequisites %}
+        <div class="status-item">
+          <div class="min-w-0">
+            <strong>{{ item.label }}</strong>
+            <div class="muted path-text">{{ item.path }}</div>
+          </div>
+          <span class="badge {% if item.status == 'available' %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+  </article>
+
   <article class="panel">
     <div class="panel-head">
       <h3>Mirror Health</h3>
-      <p>Fast cached audit for configured live slices plus the most recent deep audit cache.</p>
+      <p>Cached health summary first. Expand only when you need file-level mirror detail.</p>
     </div>
-    <div class="stack">
-      <div class="status-row">
-        <span class="badge {% if fast_audit.status == 'match' %}ok{% else %}warn{% endif %}">Fast audit: {{ fast_audit.status }}</span>
-        <span class="muted">{{ fast_audit.created_at_utc }}</span>
-      </div>
-      {% for entry in fast_audit.entries %}
-      <div class="audit-item">
-        <div>
-          <strong>{{ entry.label }}</strong>
-          <div class="muted">{{ entry.relative_path }}</div>
-        </div>
-        <div class="audit-meta">
-          <span class="badge {% if entry.status == 'match' %}ok{% else %}warn{% endif %}">{{ entry.status }}</span>
-          <span class="muted">{{ entry.difference_count }} differences</span>
-        </div>
-      </div>
-      {% endfor %}
-      {% if fast_audit.notes %}
-      <div class="code-block">
-        {% for item in fast_audit.notes %}
-        <div>{{ item }}</div>
-        {% endfor %}
-      </div>
-      {% endif %}
-      {% if deep_audit %}
-      <div class="separator"></div>
-      <div class="status-row">
-        <span class="badge {% if deep_audit.status == 'match' %}ok{% else %}warn{% endif %}">Deep audit: {{ deep_audit.status }}</span>
-        <span class="muted">{{ deep_audit.created_at_utc }}</span>
-      </div>
-      {% for entry in deep_audit.entries %}
-      <div class="audit-item">
-        <div>
-          <strong>{{ entry.label }}</strong>
-          <div class="muted">{{ entry.relative_path }}</div>
-        </div>
-        <div class="audit-meta">
-          <span class="badge {% if entry.status == 'match' %}ok{% else %}warn{% endif %}">{{ entry.status }}</span>
-          <span class="muted">{{ entry.difference_count }} differences</span>
-        </div>
-      </div>
-      {% if entry.sample_differences %}
-      <div class="code-block">
-        {% for item in entry.sample_differences %}
-        <div>{{ item }}</div>
-        {% endfor %}
-      </div>
-      {% endif %}
-      {% endfor %}
-      {% if deep_audit.notes %}
-      <div class="code-block">
-        {% for item in deep_audit.notes %}
-        <div>{{ item }}</div>
-        {% endfor %}
-      </div>
-      {% endif %}
-      {% endif %}
-    </div>
-  </article>
 
+    <div class="audit-summary-grid">
+      <div class="summary-card compact">
+        <span>Fast Audit</span>
+        <strong>{{ fast_audit.status }}</strong>
+        <div class="muted">{{ fast_audit.entry_count }} targets checked - {{ fast_audit.drift_count }} drifted</div>
+      </div>
+      <div class="summary-card compact">
+        <span>Deep Audit</span>
+        <strong>{{ deep_audit.status }}</strong>
+        <div class="muted">
+          {% if deep_audit.entry_count %}
+          {{ deep_audit.entry_count }} entry - {{ deep_audit.drift_count }} drifted
+          {% else %}
+          no cached deep audit yet
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% if fast_audit.notes %}
+    <div class="note-block">
+      {% for item in fast_audit.notes %}
+      <div>{{ item }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if deep_audit.notes %}
+    <div class="note-block note-block--warn">
+      {% for item in deep_audit.notes %}
+      <div>{{ item }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <details class="foldout">
+      <summary>Show Audit Detail</summary>
+      <div class="stack tight">
+        {% for entry in fast_audit.entries %}
+        <div class="audit-item">
+          <div class="min-w-0">
+            <strong>{{ entry.label }}</strong>
+            <div class="muted">{{ entry.relative_path }}</div>
+          </div>
+          <div class="audit-meta">
+            <span class="badge {% if entry.status == 'match' %}ok{% else %}warn{% endif %}">{{ entry.status }}</span>
+            <span class="muted">{{ entry.difference_count }} differences</span>
+          </div>
+        </div>
+        {% endfor %}
+
+        {% if deep_audit.entries %}
+        <div class="separator"></div>
+        {% for entry in deep_audit.entries %}
+        <div class="audit-item">
+          <div class="min-w-0">
+            <strong>{{ entry.label }}</strong>
+            <div class="muted">{{ entry.relative_path }}</div>
+          </div>
+          <div class="audit-meta">
+            <span class="badge {% if entry.status == 'match' %}ok{% else %}warn{% endif %}">{{ entry.status }}</span>
+            <span class="muted">{{ entry.difference_count }} differences</span>
+          </div>
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        {% if deep_audit.sample_differences %}
+        <div class="code-block">
+          {% for item in deep_audit.sample_differences %}
+          <div>{{ item }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </details>
+  </article>
+</section>
+
+<section class="content-grid content-grid--home">
   <article class="panel">
     <div class="panel-head">
       <h3>Recent Runs</h3>
-      <p>Persistent run records from the operator UI.</p>
+      <p>Operator-run history. Use this when someone asks what was checked and what evidence was generated.</p>
     </div>
     <div class="stack">
       {% if recent_runs %}
         {% for run in recent_runs %}
         <div class="run-card">
-          <div>
+          <div class="min-w-0">
             <strong>{{ run.profile_id }}</strong>
             <div class="muted">{{ run.created_at_utc }}</div>
+            {% if run.summary %}
+            <div class="muted">{{ run.summary.errors }} errors - {{ run.summary.warnings }} warnings</div>
+            {% endif %}
           </div>
           <div class="run-card-actions">
             <span class="badge {% if run.status == 'completed' %}ok{% elif run.status == 'running' %}info{% else %}warn{% endif %}">{{ run.status }}</span>
@@ -157,8 +236,38 @@
         </div>
         {% endfor %}
       {% else %}
-        <p class="muted">No operator UI runs have been recorded yet.</p>
+        <div class="empty-state">
+          <strong>No operator UI runs recorded yet.</strong>
+          <p>Use one of the live profile cards above, or open the latest matrix summary if you only need the current baseline.</p>
+        </div>
       {% endif %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Why This Should Save Time</h3>
+      <p>These are the retro-driven promises the UI needs to satisfy in practice.</p>
+    </div>
+    <div class="stack tight">
+      <div class="status-item">
+        <div>
+          <strong>Catch avoidable findings earlier</strong>
+          <div class="muted">Use the live profiles before rack or preview delivery instead of discovering obvious issues at the end.</div>
+        </div>
+      </div>
+      <div class="status-item">
+        <div>
+          <strong>Reduce source-of-truth confusion</strong>
+          <div class="muted">Every run links back to the SG source files that produced the finding, instead of forcing manual rediscovery.</div>
+        </div>
+      </div>
+      <div class="status-item">
+        <div>
+          <strong>Make ownership and handoff clearer</strong>
+          <div class="muted">Grouped findings, owner hints, action hints, and markdown evidence are meant to make the next step obvious.</div>
+        </div>
+      </div>
     </div>
   </article>
 </section>

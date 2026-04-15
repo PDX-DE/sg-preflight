@@ -22,11 +22,11 @@ class TestOperatorUI(unittest.TestCase):
             run_view = client.get("/ui/profiles/G65")
 
         self.assertEqual(home.status_code, 200)
-        self.assertIn("Live Profiles", home.text)
+        self.assertIn("Start With A Car", home.text)
         self.assertIn("BMW G65 test slice", home.text)
         self.assertEqual(run_view.status_code, 200)
-        self.assertIn("Resolved Inputs", run_view.text)
-        self.assertIn("Launch Run", run_view.text)
+        self.assertIn("Resolved Source Inputs", run_view.text)
+        self.assertIn("Run Canonical Preflight", run_view.text)
 
     def test_run_result_and_evidence_pages_render_grouped_findings_and_links(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -107,7 +107,8 @@ class TestOperatorUI(unittest.TestCase):
             home = client.get("/ui")
 
         self.assertEqual(home.status_code, 200)
-        self.assertIn("Deep audit: drift", home.text)
+        self.assertIn("Refresh Deep Mirror Audit", home.text)
+        self.assertIn("Show Audit Detail", home.text)
         self.assertIn("Playground/RaCoSceneMerging_PoC", home.text)
 
 

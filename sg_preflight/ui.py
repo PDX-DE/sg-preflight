@@ -32,6 +32,7 @@ from sg_preflight.services import (
     parse_packs,
     prerequisite_status,
     preview_profile_sources,
+    run_notes,
     save_run_record,
     workspace_root,
 )
@@ -75,25 +76,189 @@ def _load_cached_deep_audit(app: FastAPI) -> MirrorAuditReport | None:
     return load_cached_audit(deep_cache)
 
 
-def _profile_card(profile: RunProfile) -> dict[str, Any]:
-    preview = preview_profile_sources(profile)
-    expected_sources = {
-        "scene_hierarchy": "Anchor scene (.rca)",
-        "constants_expected": "Pivot_Master.json",
-        "constants_exported": "Module_constants / exported constants",
-        "carpaints": "CarPaint.json",
+def _severity_rank(value: str) -> int:
+    severity = value.lower()
+    if severity == "error":
+        return 0
+    if severity == "warning":
+        return 1
+    if severity == "info":
+        return 2
+    return 99
+
+
+def _report_headline(summary: dict[str, int]) -> str:
+    if summary.get("errors", 0) > 0:
+        return "Needs action before review or rack."
+    if summary.get("warnings", 0) > 0:
+        return "Useful signal is present, but triage is still needed."
+    return "No deterministic findings at the selected threshold."
+
+
+def _summarize_report(report: Report) -> dict[str, Any]:
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for pack in report.packs:
+        for finding in pack.findings:
+            key = (finding.severity.lower(), finding.code, finding.message)
+            item = grouped.setdefault(
+                key,
+                {
+                    "severity": finding.severity.lower(),
+                    "code": finding.code,
+                    "message": finding.message,
+                    "count": 0,
+                    "examples": [],
+                },
+            )
+            item["count"] += 1
+            if finding.location and len(item["examples"]) < 2 and finding.location not in item["examples"]:
+                item["examples"].append(finding.location)
+
+    highlights = sorted(
+        grouped.values(),
+        key=lambda item: (
+            _severity_rank(str(item["severity"])),
+            -int(item["count"]),
+            str(item["code"]),
+        ),
+    )[:3]
+    summary = report.summary()
+    return {
+        "summary": summary,
+        "headline": _report_headline(summary),
+        "highlights": highlights,
     }
-    missing_sources = [
-        label
-        for key, label in expected_sources.items()
-        if key not in preview.source_paths
-    ]
+
+
+def _latest_matrix_artifact(root: Path, profile: RunProfile, suffix: str) -> Path:
+    slug = profile.profile_id.lower()
+    return root / "out" / "real-live-matrix" / "latest" / slug / f"{slug}-report.{suffix}"
+
+
+def _latest_matrix_signal(root: Path, profile: RunProfile) -> dict[str, Any] | None:
+    report_path = _latest_matrix_artifact(root, profile, "json")
+    if not report_path.exists():
+        return None
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    report = Report.from_dict(payload)
+    summary = _summarize_report(report)
+    html_path = _latest_matrix_artifact(root, profile, "html")
+    markdown_path = _latest_matrix_artifact(root, profile, "md")
+    return {
+        "created_at": report_path.stat().st_mtime,
+        "json_path": str(report_path),
+        "html_path": str(html_path) if html_path.exists() else "",
+        "markdown_path": str(markdown_path) if markdown_path.exists() else "",
+        **summary,
+    }
+
+
+def _summary_file_link(root: Path) -> dict[str, str]:
+    summary_path = root / "out" / "real-live-matrix" / "latest" / "SUMMARY.md"
+    return {
+        "path": str(summary_path),
+        "href": f"/ui/files?path={summary_path}" if summary_path.exists() else "",
+    }
+
+
+def _profile_card(root: Path, profile: RunProfile) -> dict[str, Any]:
+    live_signal = _latest_matrix_signal(root, profile)
+    is_ready = profile.project_root.exists() and profile.config_path.exists()
     return {
         "profile": profile,
-        "preview": preview,
         "project_exists": profile.project_root.exists(),
         "config_exists": profile.config_path.exists(),
-        "missing_sources": missing_sources,
+        "is_ready": is_ready,
+        "readiness_label": "Ready for operator run" if is_ready else "Needs local setup attention",
+        "live_signal": live_signal,
+    }
+
+
+def _primary_prerequisites(root: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    all_items = prerequisite_status(root)
+    primary_keys = {
+        "workspace_root",
+        "mirror_root",
+        "reference_root",
+        "python_package_fastapi",
+        "python_package_jinja2",
+        "python_package_uvicorn",
+    }
+    primary = [item for item in all_items if item["key"] in primary_keys]
+    secondary = [item for item in all_items if item["key"] not in primary_keys]
+    return primary, secondary
+
+
+def _audit_view_model(report: MirrorAuditReport | None) -> dict[str, Any]:
+    if report is None:
+        return {
+            "status": "unknown",
+            "created_at_utc": "",
+            "entry_count": 0,
+            "drift_count": 0,
+            "entries": [],
+            "notes": [],
+            "sample_differences": [],
+        }
+
+    entries = sorted(
+        report.entries,
+        key=lambda item: (0 if item.status != "match" else 1, item.label.lower()),
+    )
+    sample_differences: list[str] = []
+    for entry in entries:
+        for difference in entry.sample_differences:
+            if difference not in sample_differences:
+                sample_differences.append(difference)
+            if len(sample_differences) >= 8:
+                break
+        if len(sample_differences) >= 8:
+            break
+
+    return {
+        "status": report.status,
+        "created_at_utc": report.created_at_utc,
+        "entry_count": len(report.entries),
+        "drift_count": sum(1 for entry in report.entries if entry.status != "match"),
+        "entries": entries[:6],
+        "notes": list(report.notes),
+        "sample_differences": sample_differences,
+    }
+
+
+def _cached_preview(app: FastAPI, profile: RunProfile) -> Any:
+    key = profile.profile_id.lower()
+    cached = app.state.preview_cache.get(key)
+    if cached is None:
+        cached = preview_profile_sources(profile)
+        app.state.preview_cache[key] = cached
+    return cached
+
+
+def _decision_summary(report: Report) -> dict[str, str]:
+    summary = report.summary()
+    if summary["errors"] > 0:
+        return {
+            "tone": "error",
+            "title": "Not ready for handoff yet",
+            "body": "Resolve the error-level findings first, then use the grouped findings below to decide ownership and sequencing.",
+        }
+    if summary["warnings"] > 0:
+        return {
+            "tone": "warning",
+            "title": "Triage before rack or review",
+            "body": "No error-level findings were raised, but warnings still need explicit ownership or acceptance.",
+        }
+    return {
+        "tone": "ok",
+        "title": "Deterministic checks are clean",
+        "body": "Use the evidence and context sections for handoff or documentation if this run is part of a delivery checkpoint.",
     }
 
 
@@ -276,6 +441,7 @@ def create_app(
     app.state.workspace_root = workspace_root(root)
     app.state.profiles = _profile_map(profiles or list_run_profiles(app.state.workspace_root))
     app.state.templates = _templates()
+    app.state.preview_cache = {}
 
     app.mount("/ui/static", StaticFiles(directory=str(_static_root())), name="ui_static")
 
@@ -287,27 +453,35 @@ def create_app(
     async def home(request: Request) -> Any:
         fast_audit = _load_or_create_fast_audit(app)
         deep_audit = _load_cached_deep_audit(app)
+        primary_prereqs, secondary_prereqs = _primary_prerequisites(app.state.workspace_root)
         return app.state.templates.TemplateResponse(
             request,
             "home.html",
             {
-                "profiles": [_profile_card(profile) for profile in app.state.profiles.values()],
+                "profiles": [
+                    _profile_card(app.state.workspace_root, profile)
+                    for profile in app.state.profiles.values()
+                ],
                 "recent_runs": list_recent_run_records(app.state.workspace_root),
-                "prerequisites": prerequisite_status(app.state.workspace_root),
-                "fast_audit": fast_audit,
-                "deep_audit": deep_audit,
+                "primary_prerequisites": primary_prereqs,
+                "secondary_prerequisites": secondary_prereqs,
+                "fast_audit": _audit_view_model(fast_audit),
+                "deep_audit": _audit_view_model(deep_audit),
+                "matrix_summary": _summary_file_link(app.state.workspace_root),
             },
         )
 
     @app.get("/ui/profiles/{profile_id}")
     async def run_view(request: Request, profile_id: str) -> Any:
         profile = _get_profile(app, profile_id)
+        preview = _cached_preview(app, profile)
         return app.state.templates.TemplateResponse(
             request,
             "run.html",
             {
                 "profile": profile,
-                "preview": preview_profile_sources(profile),
+                "preview": preview,
+                "card": _profile_card(app.state.workspace_root, profile),
                 "packs": ["anchors", "constants", "carpaints", "project_sanity"],
             },
         )
@@ -353,6 +527,9 @@ def create_app(
                 "report": report,
                 "presentation": presentation,
                 "findings": findings,
+                "decision_summary": _decision_summary(report) if report is not None else None,
+                "top_groups": presentation["grouped_findings"][:3] if presentation is not None else [],
+                "notes": run_notes(record),
             },
         )
 

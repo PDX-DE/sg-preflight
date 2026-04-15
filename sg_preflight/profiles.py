@@ -17,6 +17,9 @@ class RunProfile:
     config_path: Path
     default_context: dict[str, str] = field(default_factory=dict)
     description: str = ""
+    operator_goal: str = ""
+    workflow_value: str = ""
+    focus_points: tuple[str, ...] = ()
     mirror_audit_targets: tuple[str, ...] = ()
     reference_repo_root: Path = DEFAULT_REFERENCE_REPO_ROOT
 
@@ -29,6 +32,9 @@ class RunProfile:
             "config_path": str(self.config_path),
             "default_context": dict(self.default_context),
             "description": self.description,
+            "operator_goal": self.operator_goal,
+            "workflow_value": self.workflow_value,
+            "focus_points": list(self.focus_points),
             "mirror_audit_targets": list(self.mirror_audit_targets),
             "reference_repo_root": str(self.reference_repo_root),
         }
@@ -53,6 +59,13 @@ def _profile_specs() -> tuple[dict[str, Any], ...]:
                 "evidence_source": "local_svn_mirror",
             },
             "description": "Current IDCevo BMW G70 live preflight slice.",
+            "operator_goal": "Catch cross-car contamination, unused Lua, and shared catalog issues before rack or review.",
+            "workflow_value": "Best when QA or integration needs a quick answer about obvious preventable findings.",
+            "focus_points": (
+                "Cross-car references into another BMW live slice",
+                "Unused Lua files that survived into the project root",
+                "Shared BMW CarPaint catalog duplication",
+            ),
             "mirror_audit_targets": (
                 "Cars_IDCevo/BMW/G70",
                 "Cars/BMW/CarPaint.json",
@@ -71,6 +84,13 @@ def _profile_specs() -> tuple[dict[str, Any], ...]:
                 "evidence_source": "local_svn_mirror",
             },
             "description": "Current IDCevo BMW G65 live preflight slice.",
+            "operator_goal": "Surface engineering drift between Pivot_Master and exported Module_constants early.",
+            "workflow_value": "Best when TA, QA, or integration needs hard evidence for value mismatches before delivery pressure starts.",
+            "focus_points": (
+                "Rim diameter mismatches by trim",
+                "Tire width drift in exported constants",
+                "Low-noise baseline for constants-focused triage",
+            ),
             "mirror_audit_targets": (
                 "Cars_IDCevo/BMW/G65",
                 "Cars/BMW/CarPaint.json",
@@ -89,6 +109,13 @@ def _profile_specs() -> tuple[dict[str, Any], ...]:
                 "evidence_source": "local_svn_mirror",
             },
             "description": "Classic BMW G45 anchor-family validation slice.",
+            "operator_goal": "Validate classic anchor families and legacy project sanity without depending on the IDCevo slice layout.",
+            "workflow_value": "Best when you need a clean demonstration of anchor-family coverage and legacy-version signal.",
+            "focus_points": (
+                "Classic scale, tire-pressure, and sensor anchor families",
+                "Legacy RaCo version policy checks",
+                "Shared BMW CarPaint catalog duplication",
+            ),
             "mirror_audit_targets": (
                 "Cars/BMW/G45",
                 "Cars/BMW/CarPaint.json",
@@ -117,6 +144,9 @@ def list_run_profiles(
                 config_path=root / Path(spec["config_relative"]),
                 default_context=dict(spec["default_context"]),
                 description=str(spec.get("description", "")),
+                operator_goal=str(spec.get("operator_goal", "")),
+                workflow_value=str(spec.get("workflow_value", "")),
+                focus_points=tuple(str(item) for item in spec.get("focus_points", ())),
                 mirror_audit_targets=tuple(str(item) for item in spec.get("mirror_audit_targets", ())),
                 reference_repo_root=reference_root,
             )

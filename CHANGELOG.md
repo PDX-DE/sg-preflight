@@ -35,6 +35,9 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Changed
 
+- Operator UI Home/Run/Result flow now prioritizes operator decisions, current live signal, and clearer next actions instead of raw filesystem detail
+- Operator UI first-load work is lighter because Home no longer scans every live profile for full source discovery up front
+- Operator UI now uses retro-driven profile goals and focus areas so teammates can see why each live slice is worth running
 - HTML reports now prioritize presentation-friendly grouped findings before raw detail tables
 - Reports now carry workflow context like car model, trim, delivery phase, review target, and evidence source
 - Real SG smoke scripts now consume the shared `run-profile` path instead of duplicating profile definitions in PowerShell

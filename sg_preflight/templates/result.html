@@ -1,16 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Result {{ record.profile_id }} · SG Preflight Operator UI{% endblock %}
+{% block title %}Result {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block body_attrs %}data-run-status="{{ record.status }}" data-run-id="{{ record.run_id }}"{% endblock %}
 {% block content %}
 <section class="hero-panel">
-  <div>
+  <div class="hero-copy">
     <p class="eyebrow">Result</p>
-    <h2>{{ record.profile_id }} · {{ record.profile_label }}</h2>
-    <p>Run ID: <code>{{ record.run_id }}</code></p>
+    <h2>{{ record.profile_id }} - {{ record.profile_label }}</h2>
+    <p class="hero-text">Run ID <code>{{ record.run_id }}</code></p>
   </div>
-  <div class="hero-actions">
+  <div class="hero-actions hero-actions--stack">
     <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% else %}warn{% endif %}" id="run-status-pill">{{ record.status }}</span>
-    <a class="button subtle" href="/ui/runs/{{ record.run_id }}/evidence">Evidence</a>
+    <a class="button" href="/ui/runs/{{ record.run_id }}/evidence">Open Evidence</a>
+    <a class="button subtle" href="/ui/profiles/{{ record.profile_id }}">Run Again</a>
   </div>
 </section>
 
@@ -20,7 +21,7 @@
     <h3>Run State</h3>
     <p id="run-state-message">
       {% if record.status == 'running' %}
-      Run is still executing. This page will refresh automatically.
+      Run is still executing. This page refreshes automatically until the report is ready.
       {% elif record.status == 'failed' %}
       Run failed: {{ record.error_message }}
       {% else %}
@@ -51,30 +52,15 @@
   </article>
 </section>
 
-<section class="content-grid">
-  <article class="panel">
+<section class="content-grid content-grid--result">
+  <article class="panel panel--priority">
     <div class="panel-head">
-      <h3>Workflow Context</h3>
-      <p>Resolved handoff context persisted with the run.</p>
-    </div>
-    <div class="detail-grid">
-      {% for item in presentation.context_items %}
-      <div>
-        <span class="detail-label">{{ item.label }}</span>
-        <div>{{ item.value }}</div>
-      </div>
-      {% endfor %}
-    </div>
-  </article>
-
-  <article class="panel">
-    <div class="panel-head">
-      <h3>Grouped Findings</h3>
-      <p>Presentation-friendly grouped output with owner and action hints.</p>
+      <h3>{{ decision_summary.title }}</h3>
+      <p>{{ decision_summary.body }}</p>
     </div>
     <div class="stack tight">
-      {% for item in presentation.grouped_findings %}
-      <div class="finding-group" data-severity="{{ item.severity }}">
+      {% for item in top_groups %}
+      <div class="finding-group finding-group--summary" data-severity="{{ item.severity }}">
         <div class="status-row">
           <strong>{{ item.pack }} / {{ item.code }}</strong>
           <span class="badge {% if item.severity == 'error' %}warn{% elif item.severity == 'warning' %}info{% else %}ok{% endif %}">{{ item.severity }}</span>
@@ -91,12 +77,63 @@
       {% endfor %}
     </div>
   </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Workflow Context</h3>
+      <p>Persisted handoff context for this run.</p>
+    </div>
+    <div class="detail-grid">
+      {% for item in presentation.context_items %}
+      <div>
+        <span class="detail-label">{{ item.label }}</span>
+        <div>{{ item.value }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if notes %}
+    <details class="foldout">
+      <summary>Show Materialization Notes</summary>
+      <div class="note-block">
+        {% for note in notes %}
+        <div>{{ note }}</div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </article>
 </section>
 
 <section class="panel">
   <div class="panel-head">
-    <h3>Per-Finding Drilldown</h3>
-    <p>Evidence-first view for triage, handoff, and debugging.</p>
+    <h3>Grouped Findings</h3>
+    <p>Use this section to understand repeated issues before opening the per-finding drilldown.</p>
+  </div>
+  <div class="stack tight">
+    {% for item in presentation.grouped_findings %}
+    <div class="finding-group" data-severity="{{ item.severity }}">
+      <div class="status-row">
+        <strong>{{ item.pack }} / {{ item.code }}</strong>
+        <span class="badge {% if item.severity == 'error' %}warn{% elif item.severity == 'warning' %}info{% else %}ok{% endif %}">{{ item.severity }}</span>
+      </div>
+      <p>{{ item.message }}</p>
+      <p class="muted">{{ item.count }} occurrence(s)</p>
+      {% if item.owner %}
+      <p><strong>Owner hint:</strong> {{ item.owner }}</p>
+      {% endif %}
+      {% if item.action %}
+      <p><strong>Suggested action:</strong> {{ item.action }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h3>Per-Finding Evidence</h3>
+    <p>Open these when you need the exact value delta, source file, or handoff detail.</p>
   </div>
   <div class="toolbar">
     <button class="button subtle severity-filter" data-severity-filter="all">All</button>
@@ -109,7 +146,7 @@
     <details class="finding-detail" data-severity="{{ finding.severity }}" id="{{ finding.finding_id }}">
       <summary>
         <span class="summary-code">{{ finding.pack }} / {{ finding.code }}</span>
-        <span class="muted">{{ finding.location or "no location" }}</span>
+        <span class="muted path-text">{{ finding.location or "no location" }}</span>
       </summary>
       <div class="detail-grid">
         <div>
@@ -135,9 +172,9 @@
         <div class="evidence-item">
           <span class="detail-label">{{ item.label }}</span>
           {% if item.href %}
-          <a href="{{ item.href }}">{{ item.value }}</a>
+          <a class="path-text" href="{{ item.href }}">{{ item.value }}</a>
           {% else %}
-          <div>{{ item.value or "n/a" }}</div>
+          <div class="path-text">{{ item.value or "n/a" }}</div>
           {% endif %}
         </div>
         {% endfor %}

@@ -38,27 +38,29 @@ http://127.0.0.1:8765/ui
 
 Shows:
 
-- canonical live profiles
-- prerequisite status for the local machine and mirrored SVN
-- cached fast mirror-audit result
-- most recent deep mirror-audit cache, if present
+- canonical live profiles with explicit operator goals and focus areas
+- current live signal for the real `G70`, `G65`, and `G45` slices when the latest matrix output is present
+- compact readiness status for the local machine and mirrored SVN
+- cached mirror-health summary, with deeper detail behind foldouts
 - recent persisted operator runs
 
 ### Run
 
 For a selected profile, shows:
 
+- why this profile is worth running
+- current live signal for that slice, if available
+- one-click canonical run action
+- advanced options behind a foldout
 - resolved SG source inputs
 - detected `Pivot_Master`, `Module_constants`, `CarPaint`, and anchor scene paths
-- default workflow context fields
-- pack selection
-- launch action for a profile run
 
 ### Result
 
 Shows:
 
 - summary cards
+- a decision summary for the run outcome
 - grouped findings
 - owner and action hints
 - severity filtering

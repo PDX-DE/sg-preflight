@@ -6,6 +6,7 @@
 
       const profileId = runForm.getAttribute("data-profile-id");
       const launchStatus = document.querySelector("#launch-status");
+      const submitButton = runForm.querySelector('button[type="submit"]');
       const selectedPacks = Array.from(runForm.querySelectorAll('input[name="packs"]:checked'))
         .map((item) => item.value);
       const context = {};
@@ -14,26 +15,40 @@
         context[key] = input.value;
       });
 
-      launchStatus.textContent = "Launching...";
-
-      const response = await fetch("/ui/api/runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          profile_id: profileId,
-          packs: selectedPacks,
-          fail_on: runForm.querySelector('select[name="fail_on"]').value,
-          context: context
-        })
-      });
-
-      if (!response.ok) {
-        launchStatus.textContent = "Launch failed";
-        return;
+      if (submitButton) {
+        submitButton.disabled = true;
       }
+      launchStatus.textContent = "Preparing run record...";
 
-      const payload = await response.json();
-      window.location.href = payload.result_url;
+      try {
+        const response = await fetch("/ui/api/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile_id: profileId,
+            packs: selectedPacks,
+            fail_on: runForm.querySelector('select[name="fail_on"]').value,
+            context: context
+          })
+        });
+
+        if (!response.ok) {
+          launchStatus.textContent = "Launch failed. Check profile setup and try again.";
+          if (submitButton) {
+            submitButton.disabled = false;
+          }
+          return;
+        }
+
+        launchStatus.textContent = "Opening result page...";
+        const payload = await response.json();
+        window.location.href = payload.result_url;
+      } catch (_error) {
+        launchStatus.textContent = "Launch failed. Check the local server state and try again.";
+        if (submitButton) {
+          submitButton.disabled = false;
+        }
+      }
     });
   }
 

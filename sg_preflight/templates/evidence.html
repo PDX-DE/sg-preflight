@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Evidence {{ record.profile_id }} · SG Preflight Operator UI{% endblock %}
+{% block title %}Evidence {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block content %}
 <section class="hero-panel">
   <div>
     <p class="eyebrow">Evidence</p>
-    <h2>{{ record.profile_id }} · {{ record.profile_label }}</h2>
+    <h2>{{ record.profile_id }} - {{ record.profile_label }}</h2>
     <p>Persistent artifacts and source links for run <code>{{ record.run_id }}</code>.</p>
   </div>
   <div class="hero-actions">

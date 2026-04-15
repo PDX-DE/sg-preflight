@@ -1,48 +1,48 @@
 {% extends "base.html" %}
-{% block title %}Run {{ profile.profile_id }} · SG Preflight Operator UI{% endblock %}
+{% block title %}Run {{ profile.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block content %}
 <section class="hero-panel">
-  <div>
+  <div class="hero-copy">
     <p class="eyebrow">Run Profile</p>
-    <h2>{{ profile.profile_id }} · {{ profile.label }}</h2>
-    <p>{{ profile.description }}</p>
+    <h2>{{ profile.profile_id }} - {{ profile.label }}</h2>
+    <p class="hero-text">{{ profile.operator_goal or profile.description }}</p>
   </div>
-  <div class="hero-actions">
+  <div class="hero-actions hero-actions--stack">
+    <span class="badge {% if card.is_ready %}ok{% else %}warn{% endif %}">{{ card.readiness_label }}</span>
     <a class="button subtle" href="/ui">Back to Home</a>
   </div>
 </section>
 
-<section class="content-grid">
-  <article class="panel">
+<section class="content-grid content-grid--run">
+  <article class="panel panel--priority">
     <div class="panel-head">
-      <h3>Resolved Inputs</h3>
-      <p>Detected source-of-truth files from the actual SG mirror.</p>
+      <h3>Why Run This Profile</h3>
+      <p>{{ profile.workflow_value }}</p>
     </div>
-    <div class="stack">
-      <div class="detail-grid">
-        <div>
-          <span class="detail-label">Project Root</span>
-          <code>{{ profile.project_root }}</code>
-        </div>
-        <div>
-          <span class="detail-label">Config</span>
-          <code>{{ profile.config_path }}</code>
-        </div>
+
+    <div class="detail-list">
+      <div>
+        <span class="detail-label">Good First Checks</span>
+        <ul class="clean-list">
+          {% for point in profile.focus_points %}
+          <li>{{ point }}</li>
+          {% endfor %}
+        </ul>
       </div>
-      {% for key, value in preview.source_paths.items() %}
-      <div class="status-item">
-        <div>
-          <strong>{{ key }}</strong>
-          <div class="muted">{{ value }}</div>
+
+      {% if card.live_signal %}
+      <div>
+        <span class="detail-label">Current Live Signal</span>
+        <div class="summary-inline">
+          <span><strong>{{ card.live_signal.summary.errors }}</strong> errors</span>
+          <span><strong>{{ card.live_signal.summary.warnings }}</strong> warnings</span>
+          <span><strong>{{ card.live_signal.summary.total }}</strong> total</span>
         </div>
-        <a href="/ui/files?path={{ value | urlencode }}">Open</a>
-      </div>
-      {% endfor %}
-      {% if preview.notes %}
-      <div class="code-block">
-        {% for note in preview.notes %}
-        <div>{{ note }}</div>
-        {% endfor %}
+        <ul class="clean-list">
+          {% for highlight in card.live_signal.highlights %}
+          <li><strong>{{ highlight.code }}</strong> x{{ highlight.count }}: {{ highlight.message }}</li>
+          {% endfor %}
+        </ul>
       </div>
       {% endif %}
     </div>
@@ -50,45 +50,91 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Launch Run</h3>
-      <p>Operator-friendly profile execution over the shared deterministic engine.</p>
+      <h3>Run Canonical Preflight</h3>
+      <p>The default run uses all packs and the profile context already defined in the shared registry.</p>
     </div>
+
     <form id="run-form" class="stack" data-profile-id="{{ profile.profile_id }}">
-      <div>
-        <span class="detail-label">Packs</span>
-        <div class="checkbox-grid">
-          {% for pack in packs %}
-          <label class="checkbox-card">
-            <input type="checkbox" name="packs" value="{{ pack }}" checked />
-            <span>{{ pack }}</span>
+      <div class="action-row action-row--wrap">
+        <button class="button" type="submit">Run {{ profile.profile_id }} Now</button>
+        <span class="muted" id="launch-status">Ready</span>
+      </div>
+
+      <details class="foldout">
+        <summary>Advanced Run Options</summary>
+        <div class="stack">
+          <div>
+            <span class="detail-label">Packs</span>
+            <div class="checkbox-grid">
+              {% for pack in packs %}
+              <label class="checkbox-card">
+                <input type="checkbox" name="packs" value="{{ pack }}" checked />
+                <span>{{ pack }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="detail-grid">
+            {% for key, value in profile.default_context.items() %}
+            <label class="field">
+              <span>{{ key }}</span>
+              <input type="text" name="context-{{ key }}" value="{{ value }}" />
+            </label>
+            {% endfor %}
+          </div>
+
+          <label class="field">
+            <span>Fail threshold</span>
+            <select name="fail_on">
+              <option value="never" selected>never</option>
+              <option value="error">error</option>
+              <option value="warning">warning</option>
+            </select>
           </label>
-          {% endfor %}
         </div>
-      </div>
-
-      <div class="detail-grid">
-        {% for key, value in profile.default_context.items() %}
-        <label class="field">
-          <span>{{ key }}</span>
-          <input type="text" name="context-{{ key }}" value="{{ value }}" />
-        </label>
-        {% endfor %}
-      </div>
-
-      <label class="field">
-        <span>Fail threshold</span>
-        <select name="fail_on">
-          <option value="never" selected>never</option>
-          <option value="error">error</option>
-          <option value="warning">warning</option>
-        </select>
-      </label>
-
-      <div class="action-row">
-        <button class="button" type="submit">Launch Run</button>
-        <span class="muted" id="launch-status">Idle</span>
-      </div>
+      </details>
     </form>
   </article>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h3>Resolved Source Inputs</h3>
+    <p>These files are the actual SG source-of-truth inputs that will be materialized into the normalized bundle for this run.</p>
+  </div>
+  <div class="stack tight">
+    <div class="detail-grid">
+      <div>
+        <span class="detail-label">Project Root</span>
+        <div class="path-text">{{ profile.project_root }}</div>
+      </div>
+      <div>
+        <span class="detail-label">Config</span>
+        <div class="path-text">{{ profile.config_path }}</div>
+      </div>
+    </div>
+
+    {% for key, value in preview.source_paths.items() %}
+    <div class="status-item">
+      <div class="min-w-0">
+        <strong>{{ key }}</strong>
+        <div class="muted path-text">{{ value }}</div>
+      </div>
+      <a href="/ui/files?path={{ value | urlencode }}">Open</a>
+    </div>
+    {% endfor %}
+
+    {% if preview.notes %}
+    <details class="foldout">
+      <summary>Show Materialization Notes</summary>
+      <div class="note-block">
+        {% for note in preview.notes %}
+        <div>{{ note }}</div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
 </section>
 {% endblock %}

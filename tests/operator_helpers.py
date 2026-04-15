@@ -220,6 +220,13 @@ return constants
             "evidence_source": "integration-test live sg",
         },
         description="Synthetic G65 fixture for operator tests.",
+        operator_goal="Surface constants drift and low-noise project sanity evidence for the G65 slice.",
+        workflow_value="Use this fixture when testing the operator flow around constants mismatches and evidence drilldown.",
+        focus_points=(
+            "Constants drift between Pivot_Master and Module_constants",
+            "Project-sanity evidence drilldown",
+            "Operator-run persistence and evidence links",
+        ),
         mirror_audit_targets=("Cars_IDCevo/BMW/G65", "Cars/BMW/CarPaint.json"),
         reference_repo_root=repo_root,
     )
