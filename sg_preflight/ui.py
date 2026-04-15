@@ -189,6 +189,27 @@ def _profile_card(root: Path, profile: RunProfile) -> dict[str, Any]:
     }
 
 
+def _task_cards(root: Path, profiles: list[RunProfile]) -> list[dict[str, Any]]:
+    cards = []
+    for profile in profiles:
+        profile_card = _profile_card(root, profile)
+        cards.append(
+            {
+                "profile_id": profile.profile_id,
+                "label": profile.label,
+                "title": profile.friendly_task or profile.label,
+                "summary": profile.friendly_summary or profile.workflow_value or profile.operator_goal,
+                "href": f"/ui/profiles/{profile.profile_id}",
+                "button_label": f"Open {profile.profile_id}",
+                "status": profile_card["readiness_label"],
+                "is_ready": profile_card["is_ready"],
+                "highlights": list(profile.focus_points[:2]),
+                "live_signal": profile_card["live_signal"],
+            }
+        )
+    return cards
+
+
 def _primary_prerequisites(root: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     all_items = prerequisite_status(root)
     primary_keys = {
@@ -272,6 +293,108 @@ def _decision_summary(report: Report) -> dict[str, str]:
     }
 
 
+def _next_steps(report: Report, presentation: dict[str, Any]) -> list[str]:
+    summary = report.summary()
+    grouped = list(presentation.get("grouped_findings", []))
+    steps: list[str] = []
+
+    if summary["errors"] > 0:
+        steps.append("Fix the error-level items first. Do not spend time on warning-only cleanup until the blockers are understood.")
+    elif summary["warnings"] > 0:
+        steps.append("Review the warning-level items now. Nothing is error-blocking, but these still need a clear owner.")
+    else:
+        steps.append("The standard check is clean. Only open the evidence page if someone asks for proof or traceability.")
+
+    if grouped:
+        top = grouped[0]
+        action = str(top.get("action", "")).strip() or str(top.get("message", "")).strip()
+        steps.append(f"Start with {top['pack']} / {top['code']}. {action}")
+        owner = str(top.get("owner", "")).strip()
+        if owner:
+            steps.append(f"If you hand this off, send the copied quick update to {owner}.")
+        else:
+            steps.append("If you hand this off, use the copied quick update below and attach the HTML or Markdown report.")
+    else:
+        steps.append("Use the quick update below if you need to confirm that the deterministic check completed cleanly.")
+        steps.append("Attach the HTML or Markdown report only when someone needs evidence, not by default.")
+
+    return steps[:3]
+
+
+def _quick_update_text(
+    record: Any,
+    report: Report,
+    decision_summary: dict[str, str],
+    grouped_findings: list[dict[str, Any]],
+) -> str:
+    summary = report.summary()
+    lines = [
+        f"SG Preflight - {record.profile_id} ({record.profile_label})",
+        f"Run ID: {record.run_id}",
+        f"Readout: {decision_summary['title']}",
+        f"Summary: {summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info, {summary['total']} total",
+        "",
+        "What matters now:",
+    ]
+
+    if not grouped_findings:
+        lines.append("No grouped findings were raised.")
+    else:
+        for item in grouped_findings[:3]:
+            lines.append(
+                f"- [{str(item['severity']).upper()}] {item['pack']} / {item['code']} x{item['count']}: {item['message']}"
+            )
+            owner = str(item.get("owner", "")).strip()
+            action = str(item.get("action", "")).strip()
+            if owner:
+                lines.append(f"  Owner: {owner}")
+            if action:
+                lines.append(f"  Action: {action}")
+
+    lines.extend(
+        [
+            "",
+            "Evidence:",
+            f"HTML report: {record.paths.get('html_report', '')}",
+            f"Markdown report: {record.paths.get('markdown_report', '')}",
+            f"Project root: {record.project_root}",
+        ]
+    )
+    return "\n".join(line for line in lines if line is not None).strip()
+
+
+def _load_text_file(path_value: str) -> str:
+    if not path_value:
+        return ""
+    path = Path(path_value)
+    if not path.exists() or not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _finding_copy_text(finding: dict[str, Any]) -> str:
+    lines = [
+        f"{str(finding['severity']).upper()} - {finding['pack']} / {finding['code']}",
+        f"Message: {finding['message']}",
+    ]
+    if finding.get("location"):
+        lines.append(f"Location: {finding['location']}")
+    owner = str(finding.get("owner", "")).strip()
+    action = str(finding.get("action", "")).strip()
+    if owner:
+        lines.append(f"Owner: {owner}")
+    if action:
+        lines.append(f"Action: {action}")
+    for item in finding.get("evidence", [])[:4]:
+        value = str(item.get("value", "")).strip()
+        if value:
+            lines.append(f"{item['label']}: {value}")
+    return "\n".join(lines).strip()
+
+
 def _coerce_run_payload(payload: dict[str, Any]) -> tuple[str, RunRequest]:
     profile_id = str(payload.get("profile_id", "")).strip()
     if not profile_id:
@@ -328,6 +451,7 @@ def _finding_rows(report: Report, record: Any, config: dict[str, Any]) -> list[d
                     "evidence": _finding_evidence(finding, record),
                 }
             )
+            rows[-1]["copy_text"] = _finding_copy_text(rows[-1])
     return rows
 
 
@@ -464,14 +588,16 @@ def create_app(
         fast_audit = _load_or_create_fast_audit(app)
         deep_audit = _load_cached_deep_audit(app)
         primary_prereqs, secondary_prereqs = _primary_prerequisites(app.state.workspace_root)
+        ordered_profiles = list(app.state.profiles.values())
         return app.state.templates.TemplateResponse(
             request,
             "home.html",
             {
                 "profiles": [
                     _profile_card(app.state.workspace_root, profile)
-                    for profile in app.state.profiles.values()
+                    for profile in ordered_profiles
                 ],
+                "task_cards": _task_cards(app.state.workspace_root, ordered_profiles),
                 "recent_runs": list_recent_run_records(app.state.workspace_root),
                 "primary_prerequisites": primary_prereqs,
                 "secondary_prerequisites": secondary_prereqs,
@@ -537,6 +663,14 @@ def create_app(
         config = load_run_config(record) if report is not None else {}
         presentation = build_report_presentation(report, config) if report is not None else None
         findings = _finding_rows(report, record, config) if report is not None else []
+        decision_summary = _decision_summary(report) if report is not None else None
+        grouped_findings = presentation["grouped_findings"] if presentation is not None else []
+        quick_update_text = (
+            _quick_update_text(record, report, decision_summary, grouped_findings)
+            if report is not None and decision_summary is not None
+            else ""
+        )
+        full_handoff_text = _load_text_file(record.paths.get("markdown_report", ""))
         return app.state.templates.TemplateResponse(
             request,
             "result.html",
@@ -545,8 +679,11 @@ def create_app(
                 "report": report,
                 "presentation": presentation,
                 "findings": findings,
-                "decision_summary": _decision_summary(report) if report is not None else None,
-                "top_groups": presentation["grouped_findings"][:3] if presentation is not None else [],
+                "decision_summary": decision_summary,
+                "top_groups": grouped_findings[:3] if presentation is not None else [],
+                "next_steps": _next_steps(report, presentation) if report is not None and presentation is not None else [],
+                "quick_update_text": quick_update_text,
+                "full_handoff_text": full_handoff_text,
                 "notes": run_notes(record),
             },
         )

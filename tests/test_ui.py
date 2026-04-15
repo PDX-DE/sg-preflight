@@ -31,13 +31,15 @@ class TestOperatorUI(unittest.TestCase):
 
         self.assertEqual(home.status_code, 200)
         self.assertIn("Start With A Car", home.text)
+        self.assertIn("Common QA Tasks", home.text)
         self.assertIn("BMW G65 test slice", home.text)
         self.assertIn("Current QA Workflow Fit", home.text)
         self.assertIn("BMW screenshot / export / interface smoke", home.text)
         self.assertIn("blocked", home.text)
         self.assertEqual(run_view.status_code, 200)
         self.assertIn("Resolved Source Inputs", run_view.text)
-        self.assertIn("Run Canonical Preflight", run_view.text)
+        self.assertIn("Standard Check", run_view.text)
+        self.assertIn("Run Standard Check", run_view.text)
 
     def test_run_result_and_evidence_pages_render_grouped_findings_and_links(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -72,6 +74,9 @@ class TestOperatorUI(unittest.TestCase):
             evidence_page = client.get(payload["result_url"] + "/evidence")
 
         self.assertEqual(result_page.status_code, 200)
+        self.assertIn("Do This Next", result_page.text)
+        self.assertIn("Copy Quick Update", result_page.text)
+        self.assertIn("Copy Finding", result_page.text)
         self.assertIn("Grouped Findings", result_page.text)
         self.assertIn("TA / pipeline / integration owner", result_page.text)
         self.assertIn("Confirm whether the Lua file is intentionally unused", result_page.text)

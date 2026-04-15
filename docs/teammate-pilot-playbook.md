@@ -146,6 +146,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 
 5. On the Result page, ask the teammate:
    - Is the grouped summary understandable?
+   - Is the "Do This Next" section enough to continue without you?
    - Can you tell what is important first?
    - Does the owner hint look credible?
    - Does the suggested action help or add noise?
@@ -159,6 +160,13 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
    - What still feels like a black box?
 
 8. Save the run and feedback.
+
+9. Ask them to use the copy buttons:
+   - `Copy Quick Update`
+   - `Copy Full Handoff`
+   - `Copy Finding`
+
+The product target is that they should be able to hand the result off without rewriting it first.
 
 ## Where Evidence Lands
 
@@ -232,6 +240,7 @@ Ask teammates to point to one of these:
 - a finding that still does not reveal the correct owner
 - a missing source link
 - a confusing action hint
+- a place where the copy-ready handoff text still needs manual rewriting
 - a case where the grouped summary hides the real priority
 - a place where they would still fall back to asking another person
 

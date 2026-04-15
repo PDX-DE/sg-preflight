@@ -47,6 +47,7 @@ http://127.0.0.1:8765/ui
 
 Shows:
 
+- common QA-task entry points for teammates who do not want to reason about profile codes first
 - canonical live profiles with explicit operator goals and focus areas
 - current live signal for the real `G70`, `G65`, and `G45` slices when the latest matrix output is present
 - compact readiness status for the local machine and mirrored SVN
@@ -60,7 +61,8 @@ For a selected profile, shows:
 
 - why this profile is worth running
 - current live signal for that slice, if available
-- one-click canonical run action
+- one-click standard-check action
+- a plain three-step use path for teammates who just want the default flow
 - advanced options behind a foldout
 - resolved SG source inputs
 - detected `Pivot_Master`, `Module_constants`, `CarPaint`, and anchor scene paths
@@ -71,6 +73,8 @@ Shows:
 
 - summary cards
 - a decision summary for the run outcome
+- a short "do this next" section
+- copy-ready quick-update and full-handoff actions
 - grouped findings
 - owner and action hints
 - severity filtering

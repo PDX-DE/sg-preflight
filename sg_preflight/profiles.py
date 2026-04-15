@@ -19,6 +19,8 @@ class RunProfile:
     description: str = ""
     operator_goal: str = ""
     workflow_value: str = ""
+    friendly_task: str = ""
+    friendly_summary: str = ""
     focus_points: tuple[str, ...] = ()
     mirror_audit_targets: tuple[str, ...] = ()
     reference_repo_root: Path = DEFAULT_REFERENCE_REPO_ROOT
@@ -34,6 +36,8 @@ class RunProfile:
             "description": self.description,
             "operator_goal": self.operator_goal,
             "workflow_value": self.workflow_value,
+            "friendly_task": self.friendly_task,
+            "friendly_summary": self.friendly_summary,
             "focus_points": list(self.focus_points),
             "mirror_audit_targets": list(self.mirror_audit_targets),
             "reference_repo_root": str(self.reference_repo_root),
@@ -61,6 +65,8 @@ def _profile_specs() -> tuple[dict[str, Any], ...]:
             "description": "Current IDCevo BMW G70 live preflight slice.",
             "operator_goal": "Catch cross-car contamination, unused Lua, and shared catalog issues before rack or review.",
             "workflow_value": "Best when QA or integration needs a quick answer about obvious preventable findings.",
+            "friendly_task": "Find obvious delivery issues",
+            "friendly_summary": "Use this when you want the quickest pass for cross-car references, unused Lua, and shared catalog problems.",
             "focus_points": (
                 "Cross-car references into another BMW live slice",
                 "Unused Lua files that survived into the project root",
@@ -86,6 +92,8 @@ def _profile_specs() -> tuple[dict[str, Any], ...]:
             "description": "Current IDCevo BMW G65 live preflight slice.",
             "operator_goal": "Surface engineering drift between Pivot_Master and exported Module_constants early.",
             "workflow_value": "Best when TA, QA, or integration needs hard evidence for value mismatches before delivery pressure starts.",
+            "friendly_task": "Check engineering constants",
+            "friendly_summary": "Use this when you need to confirm Pivot_Master and Module_constants still match before delivery pressure starts.",
             "focus_points": (
                 "Rim diameter mismatches by trim",
                 "Tire width drift in exported constants",
@@ -111,6 +119,8 @@ def _profile_specs() -> tuple[dict[str, Any], ...]:
             "description": "Classic BMW G45 anchor-family validation slice.",
             "operator_goal": "Validate classic anchor families and legacy project sanity without depending on the IDCevo slice layout.",
             "workflow_value": "Best when you need a clean demonstration of anchor-family coverage and legacy-version signal.",
+            "friendly_task": "Check anchor setup",
+            "friendly_summary": "Use this when you need a quick pass over anchor families and legacy project sanity.",
             "focus_points": (
                 "Classic scale, tire-pressure, and sensor anchor families",
                 "Legacy RaCo version policy checks",
@@ -146,6 +156,8 @@ def list_run_profiles(
                 description=str(spec.get("description", "")),
                 operator_goal=str(spec.get("operator_goal", "")),
                 workflow_value=str(spec.get("workflow_value", "")),
+                friendly_task=str(spec.get("friendly_task", "")),
+                friendly_summary=str(spec.get("friendly_summary", "")),
                 focus_points=tuple(str(item) for item in spec.get("focus_points", ())),
                 mirror_audit_targets=tuple(str(item) for item in spec.get("mirror_audit_targets", ())),
                 reference_repo_root=reference_root,

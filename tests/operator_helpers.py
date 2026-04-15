@@ -222,6 +222,8 @@ return constants
         description="Synthetic G65 fixture for operator tests.",
         operator_goal="Surface constants drift and low-noise project sanity evidence for the G65 slice.",
         workflow_value="Use this fixture when testing the operator flow around constants mismatches and evidence drilldown.",
+        friendly_task="Check engineering constants",
+        friendly_summary="Use this fixture when you want the simplest constants-focused operator flow.",
         focus_points=(
             "Constants drift between Pivot_Master and Module_constants",
             "Project-sanity evidence drilldown",

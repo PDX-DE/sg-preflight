@@ -219,6 +219,10 @@ pre,
   margin-bottom: 1rem;
 }
 
+.panel-head--split {
+  margin-top: 1.4rem;
+}
+
 .panel-head h3 {
   margin: 0 0 0.25rem;
   font-size: 1.2rem;
@@ -336,6 +340,10 @@ pre,
   border: 1px solid rgba(105, 88, 56, 0.14);
 }
 
+.workflow-card--task {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 242, 233, 0.92));
+}
+
 .workflow-summary {
   margin: 0;
   color: var(--text);
@@ -420,6 +428,15 @@ pre,
 
 .clean-list li + li {
   margin-top: 0.35rem;
+}
+
+.step-list {
+  margin: 0 0 1rem;
+  padding-left: 1.2rem;
+}
+
+.step-list li + li {
+  margin-top: 0.55rem;
 }
 
 .stack {
@@ -626,6 +643,10 @@ select {
   justify-content: space-between;
   gap: 1rem;
   font-weight: 700;
+}
+
+.finding-detail-actions {
+  margin: 0.9rem 0 0.95rem;
 }
 
 .empty-state {

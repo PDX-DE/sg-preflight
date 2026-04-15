@@ -50,18 +50,25 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Run Canonical Preflight</h3>
-      <p>The default run uses all packs and the profile context already defined in the shared registry.</p>
+      <h3>Standard Check</h3>
+      <p>Most teammates only need the default run. Use the advanced options only when you already know you need something different.</p>
     </div>
 
     <form id="run-form" class="stack" data-profile-id="{{ profile.profile_id }}">
+      <div class="note-block">
+        <div><strong>Simple flow:</strong></div>
+        <div>1. Run the standard check.</div>
+        <div>2. Read the top result box.</div>
+        <div>3. Copy the quick update if you need to hand it off.</div>
+      </div>
+
       <div class="action-row action-row--wrap">
-        <button class="button" type="submit">Run {{ profile.profile_id }} Now</button>
+        <button class="button" type="submit">Run Standard Check</button>
         <span class="muted" id="launch-status">Ready</span>
       </div>
 
       <details class="foldout">
-        <summary>Advanced Run Options</summary>
+        <summary>Show Advanced Run Options</summary>
         <div class="stack">
           <div>
             <span class="detail-label">Packs</span>

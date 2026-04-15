@@ -23,6 +23,38 @@
   </div>
 </section>
 
+<section class="panel">
+  <div class="panel-head">
+    <h3>Common QA Tasks</h3>
+    <p>Use these when you already know the kind of problem you want to check and do not want to think about profile names first.</p>
+  </div>
+  <div class="workflow-grid">
+    {% for item in task_cards %}
+    <article class="workflow-card workflow-card--task">
+      <div class="status-row">
+        <strong>{{ item.title }}</strong>
+        <span class="badge {% if item.is_ready %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
+      </div>
+      <p class="workflow-summary">{{ item.summary }}</p>
+      <ul class="clean-list">
+        {% for highlight in item.highlights %}
+        <li>{{ highlight }}</li>
+        {% endfor %}
+      </ul>
+      {% if item.live_signal %}
+      <div class="summary-inline">
+        <span><strong>{{ item.live_signal.summary.errors }}</strong> errors</span>
+        <span><strong>{{ item.live_signal.summary.warnings }}</strong> warnings</span>
+      </div>
+      {% endif %}
+      <div class="action-row action-row--wrap">
+        <a class="button" href="{{ item.href }}">{{ item.button_label }}</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
 <section class="panel panel--priority" id="profiles">
   <div class="panel-head">
     <h3>Start With A Car</h3>

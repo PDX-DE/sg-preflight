@@ -124,9 +124,9 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 The operator UI serves locally at `http://127.0.0.1:8765/ui` by default.
 It provides:
 
-- Home: live profiles with operator goals, current live signal, compact readiness, cached mirror health
-- Run: profile purpose, current live signal, one-click launch flow, resolved SG inputs
-- Result: decision summary, grouped findings, owner/action hints, severity filters, per-finding drilldown
+- Home: common QA tasks, live profiles with operator goals, current live signal, compact readiness, cached mirror health
+- Run: profile purpose, a standard one-click check, and advanced options only when needed
+- Result: decision summary, "do this next" guidance, copy-ready handoff text, grouped findings, owner/action hints, severity filters, per-finding drilldown
 - Evidence: direct links to reports, bundle metadata, manifest, and SG source files
 
 UI-triggered runs persist under `out\operator-ui\runs`.

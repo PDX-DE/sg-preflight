@@ -1,4 +1,49 @@
 (function () {
+  const copyButtons = document.querySelectorAll(".copy-button");
+  if (copyButtons.length) {
+    const writeToClipboard = async function (text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+
+      const helper = document.createElement("textarea");
+      helper.value = text;
+      helper.setAttribute("readonly", "true");
+      helper.style.position = "absolute";
+      helper.style.left = "-9999px";
+      document.body.appendChild(helper);
+      helper.select();
+      document.execCommand("copy");
+      document.body.removeChild(helper);
+    };
+
+    copyButtons.forEach((button) => {
+      button.addEventListener("click", async function () {
+        const targetId = button.getAttribute("data-copy-target");
+        const source = targetId ? document.getElementById(targetId) : null;
+        const text = source ? (source.value || source.textContent || "") : "";
+        if (!text.trim()) {
+          return;
+        }
+
+        const originalText = button.textContent;
+        try {
+          await writeToClipboard(text);
+          button.textContent = "Copied";
+          window.setTimeout(function () {
+            button.textContent = originalText;
+          }, 1400);
+        } catch (_error) {
+          button.textContent = "Copy failed";
+          window.setTimeout(function () {
+            button.textContent = originalText;
+          }, 1800);
+        }
+      });
+    });
+  }
+
   const runForm = document.querySelector("#run-form");
   if (runForm) {
     runForm.addEventListener("submit", async function (event) {
@@ -18,7 +63,7 @@
       if (submitButton) {
         submitButton.disabled = true;
       }
-      launchStatus.textContent = "Preparing run record...";
+      launchStatus.textContent = "Starting the standard check...";
 
       try {
         const response = await fetch("/ui/api/runs", {
@@ -33,18 +78,18 @@
         });
 
         if (!response.ok) {
-          launchStatus.textContent = "Launch failed. Check profile setup and try again.";
+          launchStatus.textContent = "Could not start the check. Open the setup detail below and try again.";
           if (submitButton) {
             submitButton.disabled = false;
           }
           return;
         }
 
-        launchStatus.textContent = "Opening result page...";
+        launchStatus.textContent = "Opening the result page...";
         const payload = await response.json();
         window.location.href = payload.result_url;
       } catch (_error) {
-        launchStatus.textContent = "Launch failed. Check the local server state and try again.";
+        launchStatus.textContent = "Could not start the check. Make sure the local UI server is still running.";
         if (submitButton) {
           submitButton.disabled = false;
         }

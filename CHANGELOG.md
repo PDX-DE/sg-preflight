@@ -36,6 +36,9 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Changed
 
+- Operator UI Home now starts with common QA-task entry points so teammates can choose by intent instead of profile code first
+- Run pages now push one default "standard check" path and keep advanced options secondary
+- Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text
 - Operator UI Home now shows where the tool fits in the real SG QA workflow, including explicit covered / partial / blocked stages
 - Operator readiness now surfaces the BMW screenshot-test repo as a first-class prerequisite instead of hiding BMW-side blockers
 - Operator UI Home/Run/Result flow now prioritizes operator decisions, current live signal, and clearer next actions instead of raw filesystem detail

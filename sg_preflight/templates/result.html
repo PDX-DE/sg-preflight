@@ -80,6 +80,34 @@
 
   <article class="panel">
     <div class="panel-head">
+      <h3>Do This Next</h3>
+      <p>This is the shortest path through the result. Most teammates should be able to act from here without opening everything below.</p>
+    </div>
+    <ol class="step-list">
+      {% for item in next_steps %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ol>
+
+    <div class="panel-head panel-head--split">
+      <div>
+        <h3>Share This Run</h3>
+        <p>Use the quick update for chat or a fast handoff. Use the full handoff only when someone wants the complete markdown note.</p>
+      </div>
+    </div>
+    <div class="action-row action-row--wrap">
+      <button class="button subtle copy-button" type="button" data-copy-target="copy-quick-update">Copy Quick Update</button>
+      <button class="button subtle copy-button" type="button" data-copy-target="copy-full-handoff">Copy Full Handoff</button>
+      <a class="button" href="/ui/runs/{{ record.run_id }}/evidence">Open Evidence</a>
+    </div>
+    <textarea id="copy-quick-update" hidden>{{ quick_update_text }}</textarea>
+    <textarea id="copy-full-handoff" hidden>{{ full_handoff_text or quick_update_text }}</textarea>
+  </article>
+</section>
+
+<section class="content-grid content-grid--result">
+  <article class="panel">
+    <div class="panel-head">
       <h3>Workflow Context</h3>
       <p>Persisted handoff context for this run.</p>
     </div>
@@ -148,6 +176,10 @@
         <span class="summary-code">{{ finding.pack }} / {{ finding.code }}</span>
         <span class="muted path-text">{{ finding.location or "no location" }}</span>
       </summary>
+      <div class="action-row action-row--wrap finding-detail-actions">
+        <button class="button subtle copy-button" type="button" data-copy-target="copy-{{ finding.finding_id }}">Copy Finding</button>
+      </div>
+      <textarea id="copy-{{ finding.finding_id }}" hidden>{{ finding.copy_text }}</textarea>
       <div class="detail-grid">
         <div>
           <span class="detail-label">Severity</span>
