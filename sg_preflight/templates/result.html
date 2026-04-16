@@ -29,6 +29,8 @@
 {% set grouped = top_groups if top_groups is defined else [] %}
 {% set stage = selected_stage if selected_stage is defined else none %}
 {% set stage_items = stage_checklist if stage_checklist is defined else [] %}
+{% set progress = record.progress if record.progress is defined and record.progress else none %}
+{% set diff = run_diff if run_diff is defined else none %}
 {% set next_items = next_steps if next_steps is defined and next_steps else [
   "Restart the local operator UI and reload this page.",
   "Open Files And Proof after the page reloads cleanly.",
@@ -62,7 +64,11 @@
     <h3>Run state</h3>
     <p id="run-state-message">
       {% if record.status == 'running' %}
+      {% if progress %}
+      {{ progress.label }}. {{ progress.detail }}
+      {% else %}
       The check is still running. This page refreshes automatically.
+      {% endif %}
       {% elif record.status == 'failed' %}
       The check failed: {{ record.error_message }}
       {% else %}
@@ -234,6 +240,18 @@
     </ol>
   </article>
 
+  <article class="panel">
+    <div class="panel-head">
+      <h3>If You Feel Lost</h3>
+      <p>Use this stripped-down path instead of reading the whole page.</p>
+    </div>
+    <ol class="step-list">
+      <li>Open <strong>Files And Proof</strong>.</li>
+      <li>Open the pinned first file or report.</li>
+      <li>Use the first copy button on this page for the shortest usable handoff.</li>
+    </ol>
+  </article>
+
   {% if stage and stage_items %}
   <article class="panel">
     <div class="panel-head">
@@ -253,6 +271,61 @@
     </div>
   </article>
   {% endif %}
+
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Changed Since Last Check</h3>
+      <p>Use this when someone asks what actually moved since the previous run.</p>
+    </div>
+    {% if diff %}
+    <div class="status-item">
+      <div class="min-w-0">
+        <strong>Compared against {{ diff.previous_run_id }}</strong>
+        <div class="muted">{{ diff.previous_created_at_utc }}</div>
+      </div>
+      <a href="{{ diff.previous_url }}">Open</a>
+    </div>
+    <div class="summary-inline">
+      <span><strong>{{ "%+d"|format(diff.summary_deltas.errors) }}</strong> errors</span>
+      <span><strong>{{ "%+d"|format(diff.summary_deltas.warnings) }}</strong> warnings</span>
+      <span><strong>{{ "%+d"|format(diff.summary_deltas.info) }}</strong> info</span>
+      <span><strong>{{ "%+d"|format(diff.summary_deltas.total) }}</strong> total</span>
+    </div>
+    {% if diff.new_items %}
+    <div class="diff-block diff-block--new">
+      <strong>New findings</strong>
+      <ul class="clean-list">
+        {% for item in diff.new_items %}
+        <li><strong>{{ item.pack }} / {{ item.code }}</strong> - {{ item.message }}{% if item.location %} ({{ item.location }}){% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% if diff.resolved_items %}
+    <div class="diff-block diff-block--resolved">
+      <strong>Resolved findings</strong>
+      <ul class="clean-list">
+        {% for item in diff.resolved_items %}
+        <li><strong>{{ item.pack }} / {{ item.code }}</strong> - {{ item.message }}{% if item.location %} ({{ item.location }}){% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% if not diff.new_items and not diff.resolved_items %}
+    <div class="note-block">
+      No finding-level changes were detected against the previous completed run for this profile.
+    </div>
+    {% endif %}
+    <div class="action-row action-row--wrap">
+      <button class="button subtle copy-button" type="button" data-copy-target="copy-run-diff">Copy Diff Update</button>
+    </div>
+    <textarea id="copy-run-diff" hidden>{{ diff.copy_text }}</textarea>
+    {% else %}
+    <div class="note-block">
+      No earlier completed run is available for this profile here yet, so there is nothing to compare against.
+    </div>
+    {% endif %}
+  </article>
 </section>
 
 <section class="panel">

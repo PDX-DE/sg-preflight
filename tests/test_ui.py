@@ -10,9 +10,17 @@ from fastapi.testclient import TestClient
 
 from sg_preflight.profiles import RunProfile
 from sg_preflight.qa_actions import (
+    ACTION_PROGRESS_PLANS,
     build_action_record,
     get_operator_action,
     save_action_record as save_action_task_record,
+)
+from sg_preflight.services import (
+    RUN_PROGRESS_PLAN,
+    RunRequest,
+    build_progress_payload,
+    build_run_record,
+    save_run_record,
 )
 from sg_preflight.ui import create_app
 from tests.operator_helpers import create_temp_g65_profile, write_text
@@ -201,6 +209,73 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(evidence_page.status_code, 200)
         self.assertIn("Attach the result in the real ticket", evidence_page.text)
 
+    def test_result_page_shows_diff_against_previous_completed_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            first_response = client.post(
+                "/ui/api/runs",
+                json={
+                    "profile_id": "G65",
+                    "packs": ["anchors", "constants", "carpaints", "project_sanity"],
+                    "fail_on": "never",
+                    "context": profile.default_context,
+                },
+            )
+            self.assertEqual(first_response.status_code, 202)
+
+            (profile.project_root / "logic" / "unused_debug.lua").write_text(
+                "-- intentionally unused\n",
+                encoding="utf-8",
+            )
+
+            second_response = client.post(
+                "/ui/api/runs",
+                json={
+                    "profile_id": "G65",
+                    "packs": ["anchors", "constants", "carpaints", "project_sanity"],
+                    "fail_on": "never",
+                    "context": profile.default_context,
+                },
+            )
+            self.assertEqual(second_response.status_code, 202)
+            second_page = client.get(second_response.json()["result_url"])
+
+        self.assertEqual(second_page.status_code, 200)
+        self.assertIn("Changed Since Last Check", second_page.text)
+        self.assertIn("New findings", second_page.text)
+        self.assertIn("Copy Diff Update", second_page.text)
+
+    def test_running_result_page_renders_live_progress_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            record = build_run_record(
+                profile,
+                RunRequest(profile_id="G65"),
+                root,
+            )
+            record.status = "running"
+            record.started_at_utc = "2026-04-16T08:00:00+00:00"
+            record.progress = build_progress_payload(
+                RUN_PROGRESS_PLAN,
+                step_key="manifest_paths",
+                percent=62,
+                label="Scanning path references",
+                detail="Reading SG files for absolute, relative, and cross-car references.",
+            )
+            save_run_record(record)
+
+            page = client.get(f"/ui/runs/{record.run_id}")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Scanning path references", page.text)
+        self.assertIn("NOW LOADING...", page.text)
+
     def test_blocked_action_can_be_started_and_rendered(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -256,6 +331,31 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("This automation failed before completion", failed_page.text)
         self.assertIn("synthetic failure", failed_page.text)
         self.assertIn("Open the action log first.", failed_page.text)
+
+    def test_running_action_page_renders_live_progress_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            action = get_operator_action("daily_live_matrix", root, profiles=[profile])
+            record = build_action_record(action, root)
+            record.status = "running"
+            record.started_at_utc = "2026-04-16T08:00:00+00:00"
+            record.progress = build_progress_payload(
+                ACTION_PROGRESS_PLANS[action.kind],
+                step_key="profiles",
+                percent=40,
+                label="Running G65",
+                detail="Live matrix 1/1: materializing and validating G65.",
+            )
+            save_action_task_record(record)
+
+            page = client.get(f"/ui/actions/{record.run_id}")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Running G65", page.text)
+        self.assertIn("NOW LOADING...", page.text)
 
     def test_deep_audit_route_persists_and_renders_playground_note(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -105,6 +105,8 @@ Shows:
 - secondary quick-update and full-handoff copy actions, renamed per workflow stage where useful
 - a clear `You are done when...` line for both problem and clean-run states
 - a short secondary "what happened" and "do this next" layer
+- a `Changed Since Last Check` panel that compares the current run against the previous completed run for the same profile and exposes a copy-ready diff update
+- a more explicit `If You Feel Lost` block so a teammate can stay on one guided path instead of reading the whole result page
 - a `Stage Readiness` panel that shows what this run already covers, what is still manual, and what remains blocked on the current machine
 - grouped findings behind a foldout
 - severity filtering
@@ -129,6 +131,17 @@ Shows grouped direct links to:
   - project manifest
   - run record JSON
 - the same `Stage Readiness` summary so a teammate can see what evidence is still missing before the next workflow step
+
+### Live Loading
+
+Long-running runs and actions now switch to a large local `NOW LOADING...` overlay on the status page.
+
+That overlay shows:
+
+- estimated progress based on real persisted execution phases
+- a coarse ETA once the run has enough progress to extrapolate
+- the current phase label and a short detail sentence
+- a clickable under-the-hood step list so operators can see whether the tool is materializing sources, scanning project-sanity data, running validators, or finalizing output
 
 ## Persistence
 
@@ -194,6 +207,7 @@ Current expectation:
 - use the workflow-stage launcher when the phase matters more than the file type, especially before commit, pre-delivery, after integration, or when you only need Jira / QA Hero evidence
 - use the one-click QA actions when you want repo checker, scene check, or the recommended per-car QA stack without touching terminals
 - default to the full-check button when you just want the safest useful path for one car
+- if the surface still feels noisy, ignore the secondary foldouts until after you have one result page
 - do not claim that the UI replaces Blender visual checks
 - do not claim that the UI replaces rack sessions
 - do not claim that BMW screenshot smoke is fully usable on this machine until BMW access and target mapping exist

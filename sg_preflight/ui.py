@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import sys
 from pathlib import Path
@@ -1456,6 +1457,108 @@ def _finding_rows(report: Report, record: Any, config: dict[str, Any]) -> list[d
     return rows
 
 
+def _finding_signature(finding: Finding) -> tuple[str, str, str, str, str]:
+    return (
+        finding.pack,
+        finding.severity.lower(),
+        finding.code,
+        finding.location or "",
+        finding.message,
+    )
+
+
+def _diff_item_view(signature: tuple[str, str, str, str, str], count: int) -> dict[str, Any]:
+    pack, severity, code, location, message = signature
+    return {
+        "pack": pack,
+        "severity": severity,
+        "code": code,
+        "location": location,
+        "message": message,
+        "count": count,
+    }
+
+
+def _previous_profile_run(record: Any, root: Path) -> tuple[Any, Report] | None:
+    for candidate in list_recent_run_records(root, limit=200):
+        if candidate.run_id == record.run_id:
+            continue
+        if candidate.profile_id != record.profile_id:
+            continue
+        if candidate.status != "completed":
+            continue
+        candidate_report = load_run_report(candidate)
+        if candidate_report is None:
+            continue
+        return candidate, candidate_report
+    return None
+
+
+def _report_diff(record: Any, report: Report, root: Path) -> dict[str, Any] | None:
+    previous = _previous_profile_run(record, root)
+    if previous is None:
+        return None
+
+    previous_record, previous_report = previous
+    current_counter = Counter(_finding_signature(finding) for pack in report.packs for finding in pack.findings)
+    previous_counter = Counter(
+        _finding_signature(finding)
+        for pack in previous_report.packs
+        for finding in pack.findings
+    )
+
+    added = []
+    resolved = []
+    for signature, count in (current_counter - previous_counter).items():
+        added.append(_diff_item_view(signature, count))
+    for signature, count in (previous_counter - current_counter).items():
+        resolved.append(_diff_item_view(signature, count))
+
+    added.sort(key=lambda item: (_severity_rank(item["severity"]), item["pack"], item["code"], item["location"]))
+    resolved.sort(key=lambda item: (_severity_rank(item["severity"]), item["pack"], item["code"], item["location"]))
+
+    current_summary = report.summary()
+    previous_summary = previous_report.summary()
+    deltas = {
+        key: current_summary.get(key, 0) - previous_summary.get(key, 0)
+        for key in ("errors", "warnings", "info", "total")
+    }
+
+    lines = [
+        f"Compared against {previous_record.run_id} ({previous_record.created_at_utc}).",
+        (
+            "Summary delta: "
+            f"errors {deltas['errors']:+d}, warnings {deltas['warnings']:+d}, "
+            f"info {deltas['info']:+d}, total {deltas['total']:+d}."
+        ),
+    ]
+    if added:
+        lines.append(
+            "New findings: " + "; ".join(
+                f"{item['pack']} / {item['code']} ({item['count']}x)" for item in added[:4]
+            )
+        )
+    if resolved:
+        lines.append(
+            "Resolved findings: " + "; ".join(
+                f"{item['pack']} / {item['code']} ({item['count']}x)" for item in resolved[:4]
+            )
+        )
+    if not added and not resolved:
+        lines.append("No finding-level changes against the previous completed run.")
+
+    return {
+        "previous_run_id": previous_record.run_id,
+        "previous_created_at_utc": previous_record.created_at_utc,
+        "previous_url": f"/ui/runs/{previous_record.run_id}",
+        "summary_deltas": deltas,
+        "new_items": added[:6],
+        "resolved_items": resolved[:6],
+        "copy_text": "\n".join(lines).strip(),
+        "has_changes": bool(added or resolved or any(value != 0 for value in deltas.values())),
+    }
+
+
 def _path_evidence(label: str, path: str | None) -> dict[str, str]:
     href = ""
     if path:
@@ -1896,6 +1999,7 @@ def create_app(
         )
         job_label = str(record.context.get("operator_job_label", "")).strip()
         selected_stage = _record_workflow_stage(record)
+        run_diff = _report_diff(record, report, app.state.workspace_root) if report is not None else None
         return app.state.templates.TemplateResponse(
             request,
             "result.html",
@@ -1913,6 +2017,7 @@ def create_app(
                 "job_label": job_label,
                 "selected_stage": selected_stage,
                 "stage_checklist": _record_stage_checklist(record, app.state.workspace_root),
+                "run_diff": run_diff,
                 "run_again_url": _run_again_url(record),
                 "notes": run_notes(record),
             },

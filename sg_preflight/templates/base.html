@@ -21,6 +21,37 @@
     {% block content %}{% endblock %}
   </main>
 
+  <div class="loading-overlay" id="loading-overlay" hidden>
+    <div class="loading-screen">
+      <p class="eyebrow">Live Operator Status</p>
+      <h2>NOW LOADING...</h2>
+      <div class="loading-spinner" aria-hidden="true"></div>
+      <div class="loading-progress">
+        <div class="loading-progress-bar">
+          <span id="loading-progress-fill"></span>
+        </div>
+        <div class="loading-progress-meta">
+          <strong id="loading-progress-percent">0%</strong>
+          <span id="loading-progress-eta">ETA still stabilizing</span>
+        </div>
+      </div>
+      <div class="loading-copy" aria-live="polite">
+        <strong id="loading-progress-label">Preparing local run</strong>
+        <p id="loading-progress-detail">Waiting for the local run record to report the next step.</p>
+      </div>
+      <button class="button subtle loading-toggle" id="loading-toggle" type="button" aria-expanded="false">
+        Show what is happening under the hood
+      </button>
+      <div class="loading-expanded" id="loading-expanded" hidden>
+        <div class="loading-expanded-summary">
+          <span class="detail-label">Current status</span>
+          <div id="loading-progress-status">queued</div>
+        </div>
+        <div class="loading-step-list" id="loading-step-list"></div>
+      </div>
+    </div>
+  </div>
+
   <script src="/ui/static/operator.js"></script>
 </body>
 </html>

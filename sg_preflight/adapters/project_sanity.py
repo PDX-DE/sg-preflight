@@ -5,7 +5,7 @@ import os
 import re
 import zipfile
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from sg_preflight.adapters.common import (
     TEXT_SUFFIXES,
@@ -14,6 +14,7 @@ from sg_preflight.adapters.common import (
     to_display_path,
     walk_files,
 )
+from sg_preflight.utils import normalize_pathish
 
 
 WINDOWS_PATH_PATTERN = re.compile(r"[A-Za-z]:[\\/][^\s\"'\r\n]+")
@@ -24,6 +25,7 @@ RELATIVE_REPO_PATH_PATTERN = re.compile(
 URL_PATTERN = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s)>\"]+")
 MARKDOWN_INLINE_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 RACO_VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+)\b")
+LUA_REFERENCE_PATTERN = re.compile(r"([A-Za-z0-9_./\\-]+\.lua)\b", re.IGNORECASE)
 KNOWN_ASSET_PATTERNS = [
     "read_json_carpaints.py",
     "carpaint_jsonifier.py",
@@ -160,6 +162,8 @@ def _collect_path_references(project_root: Path, repo_root: Path) -> list[dict[s
     seen: set[tuple[str, str, int]] = set()
     for source_path, text in _load_text_index([project_root]):
         for line_number, raw_line in enumerate(text.splitlines() or [text], start=1):
+            if "/" not in raw_line and "\\" not in raw_line:
+                continue
             values = list(dict.fromkeys(_extract_absolute_paths(raw_line) + _extract_relative_repo_paths(raw_line)))
             for value in values:
                 key = (value.lower(), str(source_path.resolve()).lower(), line_number)
@@ -184,51 +188,98 @@ def _collect_path_references(project_root: Path, repo_root: Path) -> list[dict[s
     return references
 
 
-def _collect_lua_files(project_root: Path) -> list[dict[str, Any]]:
-    text_index = _load_text_index([project_root])
-    lowered_texts = [(path, list(text.splitlines() or [text])) for path, text in text_index]
-    lua_files = []
-
-    for path in walk_files(project_root, suffixes={".lua"}):
-        relative = to_display_path(path, project_root).replace("\\", "/")
-        relative_l = relative.lower()
-        name_l = path.name.lower()
-        referenced_by: list[dict[str, Any]] = []
-        seen: set[tuple[str, int]] = set()
-        for other_path, lines in lowered_texts:
-            if other_path.resolve() == path.resolve():
-                continue
-            for line_number, raw_line in enumerate(lines, start=1):
-                line_lower = raw_line.lower()
-                if relative_l not in line_lower and name_l not in line_lower:
-                    continue
-                key = (str(other_path.resolve()).lower(), line_number)
-                if key in seen:
-                    continue
-                seen.add(key)
-                referenced_by.append(
-                    {
-                        "source_path": str(other_path.resolve()),
-                        "line_number": line_number,
-                        "line_text": raw_line.strip(),
-                    }
-                )
-        referenced_by.sort(
-            key=lambda item: (
-                str(item.get("source_path", "")).lower(),
-                int(item.get("line_number", 0) or 0),
-            )
-        )
-        lua_files.append(
+def _append_lua_reference(
+    targets: list[dict[str, Any]],
+    *,
+    source_path: Path,
+    line_number: int,
+    line_text: str,
+) -> None:
+    for target in targets:
+        referenced_by = target["referenced_by"]
+        key = (str(source_path.resolve()).lower(), line_number)
+        if key in target["_seen"]:
+            continue
+        target["_seen"].add(key)
+        referenced_by.append(
             {
-                "path": relative,
-                "source_path": str(path.resolve()),
-                "referenced": bool(referenced_by),
-                "referenced_by": referenced_by[:20],
+                "source_path": str(source_path.resolve()),
+                "line_number": line_number,
+                "line_text": line_text.strip(),
             }
         )
 
+
+def _collect_lua_files(project_root: Path) -> list[dict[str, Any]]:
+    lua_files: list[dict[str, Any]] = []
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    by_relative_path: dict[str, list[dict[str, Any]]] = {}
+    for path in walk_files(project_root, suffixes={".lua"}):
+        relative = to_display_path(path, project_root).replace("\\", "/")
+        record = {
+            "path": relative,
+            "source_path": str(path.resolve()),
+            "referenced_by": [],
+            "_seen": set(),
+        }
+        lua_files.append(record)
+        by_name.setdefault(path.name.lower(), []).append(record)
+        by_relative_path.setdefault(relative.lower(), []).append(record)
+
+    for source_path, text in _load_text_index([project_root]):
+        source_key = str(source_path.resolve()).lower()
+        for line_number, raw_line in enumerate(text.splitlines() or [text], start=1):
+            line_lower = raw_line.lower()
+            if ".lua" not in line_lower:
+                continue
+
+            targets: list[dict[str, Any]] = []
+            seen_targets: set[int] = set()
+            for match in LUA_REFERENCE_PATTERN.finditer(raw_line):
+                candidate = normalize_pathish(match.group(1)).replace("\\", "/").strip()
+                if not candidate:
+                    continue
+                basename = candidate.rsplit("/", 1)[-1].lower()
+                for entry in by_name.get(basename, []):
+                    if entry["source_path"].lower() == source_key:
+                        continue
+                    entry_id = id(entry)
+                    if entry_id in seen_targets:
+                        continue
+                    seen_targets.add(entry_id)
+                    targets.append(entry)
+
+                lowered_candidate = candidate.lower().lstrip("./")
+                for key, entries in by_relative_path.items():
+                    if lowered_candidate == key or lowered_candidate.endswith("/" + key):
+                        for entry in entries:
+                            if entry["source_path"].lower() == source_key:
+                                continue
+                            entry_id = id(entry)
+                            if entry_id in seen_targets:
+                                continue
+                            seen_targets.add(entry_id)
+                            targets.append(entry)
+
+            if targets:
+                _append_lua_reference(
+                    targets,
+                    source_path=source_path,
+                    line_number=line_number,
+                    line_text=raw_line,
+                )
+
     lua_files.sort(key=lambda item: item["path"])
+    for item in lua_files:
+        item["referenced_by"].sort(
+            key=lambda entry: (
+                str(entry.get("source_path", "")).lower(),
+                int(entry.get("line_number", 0) or 0),
+            )
+        )
+        item["referenced"] = bool(item["referenced_by"])
+        item["referenced_by"] = item["referenced_by"][:20]
+        item.pop("_seen", None)
     return lua_files
 
 
@@ -240,12 +291,10 @@ def _detect_raco_version(project_root: Path, repo_root: Path, explicit: str | No
     if env_value:
         return env_value
 
-    candidate_files = find_matches(
-        repo_root,
-        ["raco_version.txt", ".raco-version", "*raco*version*.txt", "*raco*version*.json"],
-        limit=5,
-    )
+    candidate_files = [repo_root / "raco_version.txt", repo_root / ".raco-version"]
     for path in candidate_files:
+        if not path.exists():
+            continue
         try:
             if path.suffix.lower() == ".json":
                 data = load_json(path)
@@ -412,6 +461,7 @@ def build_project_manifest(
     gltf_name: str | None = None,
     gltf_previous_path: Path | None = None,
     gltf_current_path: Path | None = None,
+    progress_callback: Callable[[str, int, str, str], None] | None = None,
 ) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     project_root = project_root.resolve()
@@ -430,12 +480,43 @@ def build_project_manifest(
         )
 
     known_assets = _discover_known_assets(repo_root)
+    if progress_callback is not None:
+        progress_callback(
+            "manifest_raco",
+            50,
+            "Detecting RaCo version",
+            f"Checking SG project and repo markers for {project_root.name}.",
+        )
+    detected_raco_version = _detect_raco_version(project_root, repo_root, raco_version)
+    if progress_callback is not None:
+        progress_callback(
+            "manifest_paths",
+            62,
+            "Scanning path references",
+            "Reading SG files for absolute, relative, and cross-car references.",
+        )
+    path_references = _collect_path_references(project_root, repo_root)
+    if progress_callback is not None:
+        progress_callback(
+            "manifest_lua",
+            76,
+            "Inspecting Lua references",
+            "Checking which project Lua files are still referenced by the current slice.",
+        )
+    lua_files = _collect_lua_files(project_root)
+    if progress_callback is not None:
+        progress_callback(
+            "manifest_lua",
+            84,
+            "Finalizing project manifest",
+            "Writing project-sanity metadata and discovered SG asset context.",
+        )
     return {
         "project_root": str(project_root),
         "repo_root": str(repo_root),
-        "raco_version": _detect_raco_version(project_root, repo_root, raco_version),
-        "path_references": _collect_path_references(project_root, repo_root),
-        "lua_files": _collect_lua_files(project_root),
+        "raco_version": detected_raco_version,
+        "path_references": path_references,
+        "lua_files": lua_files,
         "gltf_imports": gltf_imports,
         "env": _build_env_payload(env),
         "report_context": _build_report_context_payload(report_context),

@@ -37,6 +37,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Changed
 
+- Full `python -m unittest discover -s tests -v` coverage now completes on this machine again because live `project_sanity` manifest generation no longer spends minutes in duplicate path/Lua scans
 - Operator UI Home now starts with common QA-task entry points so teammates can choose by intent instead of profile code first
 - Operator UI Home now keeps `What Changed?` as the only primary start path above the fold and demotes daily matrix, repo checker, and direct car-picking to secondary entry points
 - Operator UI now also supports workflow-stage starts for before commit, before review, pre-delivery, post-integration, and Jira / QA Hero evidence work, while carrying that stage context into run results and Files And Proof
@@ -48,8 +49,11 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Operator UI now starts from "what changed?" guided launchers so teammates can choose constants, anchors, carpaints, or file/reference sanity before choosing a car
 - Run pages now expose a recommended QA stack action per car so teammates can launch the available SG-side automation from one button
 - Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text
+- Result pages now compare the current run against the previous completed run for the same profile so operators can see new findings, resolved findings, count deltas, and copy a diff-ready status update
 - Result and evidence pages now show a stage-readiness summary so operators can see what proof is ready and what remains manual or blocked for the selected workflow step
 - Result pages now center one `First Thing To Do` panel, pin the best matching source file for the top finding, and make a problem-specific handoff copy action primary
+- Home, Run, and Result pages now add more explicit "if you are unsure, do this" guidance so teammate pilots can stay on the recommended path instead of browsing the whole surface
+- Run and action result pages now expose a live `NOW LOADING...` overlay with estimated progress, coarse ETA, and under-the-hood step visibility while long checks are still running
 - Files And Proof now groups outputs into `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned first
 - Action result pages now mirror the same plain-language flow as run results for completed, blocked, and failed SG-side actions
 - Operator UI now restarts cleanly during local work via `python -m sg_preflight ui --reload`, and stale local server/template mismatches now fall back to warnings instead of crashing result pages

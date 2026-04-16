@@ -16,12 +16,48 @@ import openpyxl
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.services import (
     RunRequest,
+    build_progress_payload,
     execute_profile_run,
     prerequisite_status,
     utc_now,
     workspace_root,
     write_json_file,
 )
+
+
+ACTION_PROGRESS_PLANS: dict[str, tuple[tuple[str, str], ...]] = {
+    "daily_live_matrix": (
+        ("queued", "Queued"),
+        ("profiles", "Run live profiles"),
+        ("finalize", "Finalize shared summary"),
+    ),
+    "profile_stack": (
+        ("queued", "Queued"),
+        ("preflight", "Run standard preflight"),
+        ("repo_checker", "Run repo checker"),
+        ("scene_check", "Run scene check"),
+        ("bmw_smoke", "Check BMW smoke readiness"),
+        ("finalize", "Finalize action record"),
+    ),
+    "repo_checker": (
+        ("queued", "Queued"),
+        ("execute", "Run checker"),
+        ("parse", "Parse checker output"),
+        ("finalize", "Finalize action record"),
+    ),
+    "bmw_screenshot_smoke": (
+        ("queued", "Queued"),
+        ("export", "Run BMW export"),
+        ("screenshots", "Run BMW screenshots"),
+        ("finalize", "Finalize action record"),
+    ),
+    "scene_check": (
+        ("queued", "Queued"),
+        ("discover", "Discover scenes"),
+        ("execute", "Run scene checks"),
+        ("finalize", "Finalize action record"),
+    ),
+}
 
 
 def operator_ui_actions_root(explicit_root: Path | None = None) -> Path:
@@ -77,6 +113,7 @@ class ActionRecord:
     artifacts: list[dict[str, str]] = field(default_factory=list)
     summary: dict[str, Any] | None = None
     notes: list[str] = field(default_factory=list)
+    progress: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +137,7 @@ class ActionRecord:
             "artifacts": [dict(item) for item in self.artifacts],
             "summary": self.summary,
             "notes": list(self.notes),
+            "progress": dict(self.progress) if isinstance(self.progress, dict) else None,
         }
 
     @classmethod
@@ -127,6 +165,9 @@ class ActionRecord:
             artifacts=[dict(item) for item in artifacts if isinstance(item, dict)],
             summary=payload.get("summary") if isinstance(payload.get("summary"), dict) else None,
             notes=[str(item) for item in payload.get("notes", []) if item],
+            progress=dict(payload.get("progress", {}))
+            if isinstance(payload.get("progress"), dict)
+            else None,
         )
 
 
@@ -354,6 +395,25 @@ def save_action_record(record: ActionRecord) -> None:
     write_json_file(Path(record.paths["run_record"]), record.to_dict())
 
 
+def _set_action_progress(
+    record: ActionRecord,
+    *,
+    step_key: str,
+    percent: int,
+    label: str,
+    detail: str = "",
+) -> None:
+    plan = ACTION_PROGRESS_PLANS.get(record.kind, (("queued", "Queued"), ("finalize", "Finalize action record")))
+    record.progress = build_progress_payload(
+        plan,
+        step_key=step_key,
+        percent=percent,
+        label=label,
+        detail=detail,
+    )
+    save_action_record(record)
+
+
 def load_action_record(path_or_run_id: str | Path, workspace: Path | None = None) -> ActionRecord:
     candidate = Path(path_or_run_id)
     if candidate.exists():
@@ -493,8 +553,25 @@ def _execute_daily_live_matrix(record: ActionRecord, root: Path) -> tuple[dict[s
     artifacts: list[dict[str, str]] = []
     notes: list[str] = []
     output_root = Path(record.paths["output_root"])
+    total_profiles = max(len(profiles), 1)
 
-    for profile in profiles:
+    _set_action_progress(
+        record,
+        step_key="profiles",
+        percent=10,
+        label="Running live profile matrix",
+        detail=f"Preparing {len(profiles)} live profile run(s).",
+    )
+
+    for index, profile in enumerate(profiles, start=1):
+        matrix_percent = 10 + int((index - 1) / total_profiles * 75)
+        _set_action_progress(
+            record,
+            step_key="profiles",
+            percent=matrix_percent,
+            label=f"Running {profile.profile_id}",
+            detail=f"Live matrix {index}/{len(profiles)}: materializing and validating {profile.profile_id}.",
+        )
         child_output = output_root / profile.profile_id.lower()
         child = execute_profile_run(
             profile,
@@ -520,6 +597,13 @@ def _execute_daily_live_matrix(record: ActionRecord, root: Path) -> tuple[dict[s
         )
         _log(record, f"{profile.profile_id}: completed with {child_summary}")
 
+    _set_action_progress(
+        record,
+        step_key="finalize",
+        percent=92,
+        label="Finalizing daily matrix",
+        detail="Writing the shared SG live-matrix summary and artifacts.",
+    )
     summary = {
         "title": "Daily SG Check",
         "lines": lines,
@@ -538,6 +622,13 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
     artifacts: list[dict[str, str]] = []
     notes: list[str] = []
 
+    _set_action_progress(
+        record,
+        step_key="preflight",
+        percent=12,
+        label="Running standard preflight",
+        detail=f"Starting the recommended deterministic check for {profile.profile_id}.",
+    )
     preflight_output = Path(record.paths["output_root"]) / "standard-preflight"
     preflight = execute_profile_run(
         profile,
@@ -571,6 +662,13 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         root,
         profiles=[profile],
     )
+    _set_action_progress(
+        record,
+        step_key="repo_checker",
+        percent=46,
+        label="Checking SG repo hygiene",
+        detail=f"Running mirrored repo checker coverage for {profile.profile_id}.",
+    )
     if repo_action.ready:
         repo_record = _nested_action_record(record, repo_action, "repo-checker")
         repo_summary, repo_artifacts, _ = _execute_repo_checker(repo_record, root)
@@ -588,6 +686,13 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         root,
         profiles=[profile],
     )
+    _set_action_progress(
+        record,
+        step_key="scene_check",
+        percent=68,
+        label="Checking RaCo scenes",
+        detail=f"Running scene-check coverage for {profile.profile_id} where local RaCo is available.",
+    )
     if scene_action.ready:
         scene_record = _nested_action_record(record, scene_action, "scene-check")
         scene_summary, scene_artifacts, _ = _execute_scene_check(scene_record, root)
@@ -604,6 +709,13 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         f"bmw_screenshot_smoke__{profile.profile_id.lower()}",
         root,
         profiles=[profile],
+    )
+    _set_action_progress(
+        record,
+        step_key="bmw_smoke",
+        percent=86,
+        label="Checking BMW smoke stage",
+        detail=f"Evaluating BMW-side screenshot smoke coverage for {profile.profile_id}.",
     )
     if bmw_action.ready:
         bmw_record = _nested_action_record(record, bmw_action, "bmw-screenshot-smoke")
@@ -629,6 +741,13 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
     )
     env = os.environ.copy()
     env["SG-Repo"] = str(mirror_root)
+    _set_action_progress(
+        record,
+        step_key="execute",
+        percent=24,
+        label="Running SG repo checker",
+        detail=f"Launching checker stack on {target}.",
+    )
     result = subprocess.run(
         [sys.executable, str(checker_script), str(target)],
         cwd=root,
@@ -639,6 +758,13 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
     )
     output = ((result.stdout or "") + ("\n" + result.stderr if result.stderr else "")).strip()
     _write_text(Path(record.paths["log"]), output + ("\n" if output else ""))
+    _set_action_progress(
+        record,
+        step_key="parse",
+        percent=78,
+        label="Parsing SG repo checker output",
+        detail="Summarizing checker phases and reported error batches.",
+    )
     summary = _parse_repo_checker_output(output)
     summary["return_code"] = result.returncode
     if result.returncode != 0:
@@ -659,12 +785,26 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
     target = profile.bmw_smoke_target.strip()
     scripts_root = bmw_repo / "ci" / "scripts"
 
+    _set_action_progress(
+        record,
+        step_key="export",
+        percent=28,
+        label="Running BMW export",
+        detail=f"Launching BMW export for target {target}.",
+    )
     export_process = subprocess.run(
         [sys.executable, str(script_path), "export", target],
         cwd=scripts_root,
         capture_output=True,
         text=True,
         check=False,
+    )
+    _set_action_progress(
+        record,
+        step_key="screenshots",
+        percent=68,
+        label="Running BMW screenshots",
+        detail=f"Capturing screenshot diff output for target {target}.",
     )
     screenshots_process = subprocess.run(
         [sys.executable, str(script_path), "screenshots", "--diff", target],
@@ -705,12 +845,29 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
     raco_exe = _path_from_status(status_map, "raco_headless")
     project_root = Path(record.project_root)
     scenes = sorted(project_root.rglob("*.rca"))
+    total_scenes = max(len(scenes), 1)
     workbook = openpyxl.Workbook()
     workbook.remove(workbook.active)
     scene_errors = 0
     log_lines: list[str] = []
 
-    for scene in scenes:
+    _set_action_progress(
+        record,
+        step_key="discover",
+        percent=12,
+        label="Discovering scenes",
+        detail=f"Found {len(scenes)} `.rca` scene(s) under {project_root}.",
+    )
+
+    for index, scene in enumerate(scenes, start=1):
+        scene_percent = 18 + int((index - 1) / total_scenes * 68)
+        _set_action_progress(
+            record,
+            step_key="execute",
+            percent=scene_percent,
+            label=f"Checking scene {index}/{len(scenes)}",
+            detail=str(scene),
+        )
         log_lines.append(f"Checking scene: {scene}")
         result = subprocess.run(
             [str(raco_exe), "-p", str(scene), "-l", "3"],
@@ -766,7 +923,13 @@ def execute_operator_action(
 ) -> ActionRecord:
     root = workspace_root(workspace)
     record = record or build_action_record(action, root)
-    save_action_record(record)
+    _set_action_progress(
+        record,
+        step_key="queued",
+        percent=0,
+        label="Queued locally",
+        detail=f"Preparing {action.label}.",
+    )
 
     if not action.ready:
         record.status = "blocked"
@@ -775,13 +938,29 @@ def execute_operator_action(
             "title": action.label,
             "lines": [action.blocker_message or "This action is blocked on the current machine."],
         }
+        record.progress = {
+            **build_progress_payload(
+                ACTION_PROGRESS_PLANS.get(action.kind, (("queued", "Queued"),)),
+                step_key="queued",
+                percent=100,
+                label="Blocked on this machine",
+                detail=action.blocker_message or "This action is blocked on the current machine.",
+            ),
+            "state": "blocked",
+        }
         _save_action_summary(record)
         save_action_record(record)
         return record
 
     record.status = "running"
     record.started_at_utc = utc_now()
-    save_action_record(record)
+    _set_action_progress(
+        record,
+        step_key="queued",
+        percent=4,
+        label="Starting automation",
+        detail=f"Launching {action.label}.",
+    )
 
     try:
         if action.kind == "daily_live_matrix":
@@ -802,6 +981,13 @@ def execute_operator_action(
         record.notes = notes
         record.status = "completed"
         record.completed_at_utc = utc_now()
+        record.progress = build_progress_payload(
+            ACTION_PROGRESS_PLANS.get(action.kind, (("queued", "Queued"),)),
+            step_key="finalize",
+            percent=100,
+            label="Action completed",
+            detail="The generated files and summary are ready to open.",
+        )
         _save_action_summary(record)
         save_action_record(record)
         return record
@@ -809,5 +995,12 @@ def execute_operator_action(
         record.status = "failed"
         record.error_message = str(exc)
         record.completed_at_utc = utc_now()
+        record.progress = dict(record.progress or {})
+        record.progress.update(
+            {
+                "label": "Action failed",
+                "detail": str(exc),
+            }
+        )
         save_action_record(record)
         raise

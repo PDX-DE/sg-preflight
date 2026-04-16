@@ -10,6 +10,7 @@
   "open_now": links if links is defined else [],
 } %}
 {% set action_links = links if links is defined else [] %}
+{% set progress = record.progress if record.progress is defined and record.progress else none %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">Automation Result</p>
@@ -28,7 +29,11 @@
     <h3>Action State</h3>
     <p id="action-state-message">
       {% if record.status == 'running' %}
+      {% if progress %}
+      {{ progress.label }}. {{ progress.detail }}
+      {% else %}
       The automation is still running. This page refreshes automatically.
+      {% endif %}
       {% elif record.status == 'failed' %}
       The automation failed: {{ record.error_message }}
       {% else %}

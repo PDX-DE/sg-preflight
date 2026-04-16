@@ -1,5 +1,15 @@
 # SG Preflight Status - 2026-04-14
 
+## Update - 2026-04-16
+
+Current local status on `feature/live-sg-matrix-and-anchor-groups`:
+
+- the canonical live acceptance path still covers `G70`, `G65`, and `G45`
+- the full `python -m unittest discover -s tests -v` run now completes again on this machine instead of timing out in the acceptance path
+- operator results now compare the current run against the previous completed run for the same profile
+- long-running runs and actions now expose a live `NOW LOADING...` overlay with estimated progress, under-the-hood phase visibility, and a coarse ETA
+- Home, Run, and Result now push more explicit "if you are unsure, do this" guidance so teammate pilots have a simpler path through the UI
+
 ## What This Project Is
 
 `sg-preflight` is an internal Python-first preflight and evidence framework for Seriengrafik / 3D Car QA.

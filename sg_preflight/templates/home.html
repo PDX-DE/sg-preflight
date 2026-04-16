@@ -52,6 +52,10 @@
     <h3>What Stage Are You In?</h3>
     <p>Use this when the workflow step matters more than the file type, for example before commit, pre-delivery, or when you only need Jira / QA Hero evidence.</p>
   </div>
+  <div class="note-block">
+    <strong>If this still feels like too much choice:</strong>
+    <div>Ignore the foldout and the direct car list below. Start from <code>What Changed?</code> unless someone explicitly asked you for a stage-specific or whole-matrix check.</div>
+  </div>
   {% if stages %}
   <div class="quick-start-grid">
     {% for stage in stages %}

@@ -29,6 +29,18 @@ from sg_preflight.validators.project_sanity import validate_project_sanity
 
 
 VALID_PACKS = ("anchors", "constants", "carpaints", "project_sanity")
+RUN_PROGRESS_PLAN = (
+    ("queued", "Queued"),
+    ("scene_hierarchy", "Read anchor scene"),
+    ("constants_expected", "Read expected constants"),
+    ("constants_exported", "Read exported constants"),
+    ("carpaints", "Read carpaint catalog"),
+    ("manifest_raco", "Detect RaCo version"),
+    ("manifest_paths", "Scan path references"),
+    ("manifest_lua", "Inspect Lua references"),
+    ("report", "Validate packs and write reports"),
+    ("finalize", "Finalize run record"),
+)
 
 
 def workspace_root(explicit_root: Path | None = None) -> Path:
@@ -164,6 +176,7 @@ class RunRecord:
     summary: dict[str, int] | None = None
     exit_code: int | None = None
     error_message: str = ""
+    progress: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -188,6 +201,7 @@ class RunRecord:
             "summary": dict(self.summary) if isinstance(self.summary, dict) else None,
             "exit_code": self.exit_code,
             "error_message": self.error_message,
+            "progress": dict(self.progress) if isinstance(self.progress, dict) else None,
         }
 
     @classmethod
@@ -221,6 +235,9 @@ class RunRecord:
             else None,
             exit_code=payload.get("exit_code"),
             error_message=str(payload.get("error_message", "")),
+            progress=dict(payload.get("progress", {}))
+            if isinstance(payload.get("progress"), dict)
+            else None,
         )
 
 
@@ -337,6 +354,63 @@ def save_run_record(record: RunRecord) -> None:
     write_json_file(Path(record.paths["run_record"]), record.to_dict())
 
 
+def build_progress_payload(
+    plan: tuple[tuple[str, str], ...],
+    *,
+    step_key: str,
+    percent: int,
+    label: str,
+    detail: str = "",
+) -> dict[str, Any]:
+    percent = max(0, min(int(percent), 100))
+    active_seen = False
+    step_found = False
+    steps: list[dict[str, str]] = []
+    for key, step_label in plan:
+        if percent >= 100:
+            state = "done"
+        elif key == step_key:
+            state = "active"
+            active_seen = True
+            step_found = True
+        elif active_seen:
+            state = "pending"
+        else:
+            state = "done"
+        steps.append({"key": key, "label": step_label, "state": state})
+
+    if not step_found and steps and percent < 100:
+        steps[0]["state"] = "active"
+        for item in steps[1:]:
+            item["state"] = "pending"
+
+    return {
+        "percent": percent,
+        "step_key": step_key,
+        "label": label,
+        "detail": detail,
+        "steps": steps,
+    }
+
+
+def _set_run_progress(
+    record: RunRecord,
+    *,
+    step_key: str,
+    percent: int,
+    label: str,
+    detail: str = "",
+) -> None:
+    record.progress = build_progress_payload(
+        RUN_PROGRESS_PLAN,
+        step_key=step_key,
+        percent=percent,
+        label=label,
+        detail=detail,
+    )
+    save_run_record(record)
+
+
 def load_run_record(path_or_run_id: str | Path, repo_root: Path | None = None) -> RunRecord:
     candidate = Path(path_or_run_id)
     if candidate.exists():
@@ -403,6 +477,13 @@ def _record_source_paths(preview: MaterializePreview, record: RunRecord) -> dict
 
 def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Path | None = None) -> RunRecord:
     record = build_run_record(profile, request, repo_root)
+    _set_run_progress(
+        record,
+        step_key="queued",
+        percent=0,
+        label="Queued locally",
+        detail="Preparing the SG-side run record and source preview.",
+    )
     preview = preview_profile_sources(profile)
     record.source_paths = dict(preview.source_paths)
     record.notes = list(preview.notes)
@@ -410,9 +491,24 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
 
     record.status = "running"
     record.started_at_utc = utc_now()
-    save_run_record(record)
+    _set_run_progress(
+        record,
+        step_key="scene_hierarchy",
+        percent=6,
+        label="Preparing SG sources",
+        detail=f"Materializing {profile.profile_id} from the mirrored live slice.",
+    )
 
     try:
+        def progress_callback(step_key: str, percent: int, label: str, detail: str = "") -> None:
+            _set_run_progress(
+                record,
+                step_key=step_key,
+                percent=percent,
+                label=label,
+                detail=detail,
+            )
+
         materialized = materialize_bundle(
             output_bundle=Path(record.paths["bundle"]),
             repo_root=profile.repo_root,
@@ -422,11 +518,19 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
                 "SG-CarModels-Repo": str(profile.repo_root),
             },
             report_context=record.context,
+            progress_callback=progress_callback,
         )
         record.notes = list(materialized.notes)
         record.source_paths = _record_source_paths(preview, record)
         save_run_record(record)
 
+        _set_run_progress(
+            record,
+            step_key="report",
+            percent=90,
+            label="Validating packs and writing reports",
+            detail="Running deterministic validators and generating HTML, Markdown, and JSON output.",
+        )
         result = execute_bundle_run(
             bundle_dir=Path(record.paths["bundle"]),
             config_path=profile.config_path,
@@ -441,13 +545,26 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
         record.status = "completed"
         record.completed_at_utc = utc_now()
         record.source_paths = _record_source_paths(preview, record)
-        save_run_record(record)
+        _set_run_progress(
+            record,
+            step_key="finalize",
+            percent=100,
+            label="Run completed",
+            detail="The reports and SG source-of-truth links are ready to open.",
+        )
         return record
     except Exception as exc:
         record.status = "failed"
         record.exit_code = 1
         record.completed_at_utc = utc_now()
         record.error_message = str(exc)
+        record.progress = dict(record.progress or {})
+        record.progress.update(
+            {
+                "label": "Run failed",
+                "detail": str(exc),
+            }
+        )
         save_run_record(record)
         raise
 

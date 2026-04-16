@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from sg_preflight.adapters.common import find_matches
 from sg_preflight.adapters.anchors import normalize_scene_hierarchy_source
@@ -201,6 +202,7 @@ def materialize_bundle(
     gltf_name: str | None = None,
     gltf_previous: Path | None = None,
     gltf_current: Path | None = None,
+    progress_callback: Callable[[str, int, str, str], None] | None = None,
 ) -> MaterializeResult:
     result = MaterializeResult(output_bundle=output_bundle.resolve())
     output_bundle.mkdir(parents=True, exist_ok=True)
@@ -222,6 +224,13 @@ def materialize_bundle(
     }
 
     if inputs.scene_source is not None:
+        if progress_callback is not None:
+            progress_callback(
+                "scene_hierarchy",
+                12,
+                "Reading anchor scene",
+                f"Normalizing {inputs.scene_source.name}.",
+            )
         target = output_bundle / "scene_hierarchy.json"
         write_json(target, normalize_scene_hierarchy_source(inputs.scene_source))
         result.written_files.append(target.resolve())
@@ -229,6 +238,13 @@ def materialize_bundle(
         result.notes.append("scene_hierarchy.json was not materialized; anchors stays unavailable")
 
     if inputs.constants_expected_source is not None:
+        if progress_callback is not None:
+            progress_callback(
+                "constants_expected",
+                22,
+                "Reading expected constants",
+                f"Normalizing {inputs.constants_expected_source.name}.",
+            )
         target = output_bundle / "constants_expected.json"
         write_json(target, normalize_constants_source(inputs.constants_expected_source))
         result.written_files.append(target.resolve())
@@ -238,6 +254,13 @@ def materialize_bundle(
         )
 
     if inputs.constants_exported_source is not None:
+        if progress_callback is not None:
+            progress_callback(
+                "constants_exported",
+                32,
+                "Reading exported constants",
+                f"Normalizing {inputs.constants_exported_source.name}.",
+            )
         target = output_bundle / "constants_exported.json"
         write_json(target, normalize_constants_source(inputs.constants_exported_source))
         result.written_files.append(target.resolve())
@@ -247,6 +270,13 @@ def materialize_bundle(
         )
 
     if inputs.carpaints_source is not None:
+        if progress_callback is not None:
+            progress_callback(
+                "carpaints",
+                42,
+                "Reading carpaint catalog",
+                f"Normalizing {inputs.carpaints_source.name}.",
+            )
         target = output_bundle / "carpaints.json"
         payload, note = normalize_carpaints_source(
             inputs.carpaints_source,
@@ -272,6 +302,7 @@ def materialize_bundle(
             gltf_name=gltf_name,
             gltf_previous_path=gltf_previous,
             gltf_current_path=gltf_current,
+            progress_callback=progress_callback,
         )
         write_json(target, manifest)
         result.written_files.append(target.resolve())
