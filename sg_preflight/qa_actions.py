@@ -395,6 +395,27 @@ def save_action_record(record: ActionRecord) -> None:
     write_json_file(Path(record.paths["run_record"]), record.to_dict())
 
 
+def _progress_event(label: str, detail: str = "") -> dict[str, str]:
+    return {
+        "timestamp_utc": utc_now(),
+        "label": label,
+        "detail": detail,
+    }
+
+
+def _merged_progress_events(
+    existing: dict[str, Any] | None,
+    *,
+    label: str,
+    detail: str = "",
+) -> list[dict[str, str]]:
+    raw_events = existing.get("events", []) if isinstance(existing, dict) else []
+    events = [dict(item) for item in raw_events if isinstance(item, dict)]
+    if not events or events[-1].get("label") != label or events[-1].get("detail") != detail:
+        events.append(_progress_event(label, detail))
+    return events[-60:]
+
+
 def _set_action_progress(
     record: ActionRecord,
     *,
@@ -404,12 +425,14 @@ def _set_action_progress(
     detail: str = "",
 ) -> None:
     plan = ACTION_PROGRESS_PLANS.get(record.kind, (("queued", "Queued"), ("finalize", "Finalize action record")))
+    events = _merged_progress_events(record.progress, label=label, detail=detail)
     record.progress = build_progress_payload(
         plan,
         step_key=step_key,
         percent=percent,
         label=label,
         detail=detail,
+        events=events,
     )
     save_action_record(record)
 
@@ -945,6 +968,11 @@ def execute_operator_action(
                 percent=100,
                 label="Blocked on this machine",
                 detail=action.blocker_message or "This action is blocked on the current machine.",
+                events=_merged_progress_events(
+                    record.progress,
+                    label="Blocked on this machine",
+                    detail=action.blocker_message or "This action is blocked on the current machine.",
+                ),
             ),
             "state": "blocked",
         }
@@ -987,6 +1015,11 @@ def execute_operator_action(
             percent=100,
             label="Action completed",
             detail="The generated files and summary are ready to open.",
+            events=_merged_progress_events(
+                record.progress,
+                label="Action completed",
+                detail="The generated files and summary are ready to open.",
+            ),
         )
         _save_action_summary(record)
         save_action_record(record)
@@ -996,10 +1029,12 @@ def execute_operator_action(
         record.error_message = str(exc)
         record.completed_at_utc = utc_now()
         record.progress = dict(record.progress or {})
+        events = _merged_progress_events(record.progress, label="Action failed", detail=str(exc))
         record.progress.update(
             {
                 "label": "Action failed",
                 "detail": str(exc),
+                "events": events,
             }
         )
         save_action_record(record)

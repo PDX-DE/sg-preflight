@@ -1368,6 +1368,14 @@ def _load_text_file(path_value: str) -> str:
         return ""
 
 
+def _tail_text_file(path_value: str, limit: int = 20) -> list[str]:
+    text = _load_text_file(path_value)
+    if not text:
+        return []
+    lines = [line for line in text.splitlines() if line.strip()]
+    return lines[-limit:]
+
+
 def _finding_copy_text(finding: dict[str, Any]) -> str:
     lines = [
         f"{str(finding['severity']).upper()} - {finding['pack']} / {finding['code']}",
@@ -2071,12 +2079,16 @@ def create_app(
     @app.get("/ui/api/runs/{run_id}")
     async def run_status_api(run_id: str) -> JSONResponse:
         record = load_run_record(run_id, app.state.workspace_root)
-        return JSONResponse(record.to_dict())
+        payload = record.to_dict()
+        payload["live_log_tail"] = []
+        return JSONResponse(payload)
 
     @app.get("/ui/api/actions/{run_id}")
     async def action_status_api(run_id: str) -> JSONResponse:
         record = load_action_record(run_id, app.state.workspace_root)
-        return JSONResponse(record.to_dict())
+        payload = record.to_dict()
+        payload["live_log_tail"] = _tail_text_file(record.paths.get("log", ""), limit=24)
+        return JSONResponse(payload)
 
     @app.get("/ui/audits/mirror/deep")
     async def run_deep_audit() -> RedirectResponse:

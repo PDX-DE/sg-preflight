@@ -142,6 +142,8 @@ That overlay shows:
 - a coarse ETA once the run has enough progress to extrapolate
 - the current phase label and a short detail sentence
 - a clickable under-the-hood step list so operators can see whether the tool is materializing sources, scanning project-sanity data, running validators, or finalizing output
+- persisted framework-event history so operators can see every recorded phase transition in order
+- live action-log tail for long-running wrapped automations such as repo checker or scene check
 
 ## Persistence
 

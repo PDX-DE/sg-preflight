@@ -809,6 +809,10 @@ select {
   backdrop-filter: blur(14px);
 }
 
+.loading-overlay[hidden] {
+  display: none !important;
+}
+
 .with-loading-overlay {
   overflow: hidden;
 }
@@ -915,6 +919,48 @@ select {
   border: 1px solid rgba(105, 88, 56, 0.1);
 }
 
+.loading-event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.loading-event {
+  display: grid;
+  grid-template-columns: minmax(130px, 180px) minmax(0, 1fr);
+  gap: 0.9rem;
+  align-items: start;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius-md);
+  background: rgba(244, 239, 231, 0.86);
+  border: 1px solid rgba(105, 88, 56, 0.1);
+}
+
+.loading-event--empty {
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--radius-md);
+  background: rgba(244, 239, 231, 0.65);
+  color: var(--muted);
+}
+
+.loading-event-time {
+  font-size: 0.78rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.loading-log-tail {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0.95rem 1rem;
+  border-radius: var(--radius-md);
+  background: #20241f;
+  color: #f6f0e4;
+  border: 1px solid rgba(105, 88, 56, 0.12);
+  font-size: 0.88rem;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -967,9 +1013,14 @@ select {
   }
 
   .loading-progress-meta,
-  .loading-step {
+  .loading-step,
+  .loading-event {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .loading-event {
+    grid-template-columns: 1fr;
   }
 
   .start-item .button {

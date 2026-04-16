@@ -9,6 +9,8 @@
   const overlayToggle = document.getElementById("loading-toggle");
   const overlayExpanded = document.getElementById("loading-expanded");
   const overlaySteps = document.getElementById("loading-step-list");
+  const overlayEvents = document.getElementById("loading-event-list");
+  const overlayLogTail = document.getElementById("loading-log-tail");
 
   const setOverlayVisibility = function (visible) {
     if (!overlay) {
@@ -65,6 +67,44 @@
     });
   };
 
+  const renderOverlayEvents = function (events) {
+    if (!overlayEvents) {
+      return;
+    }
+    overlayEvents.innerHTML = "";
+    const items = (events || []).slice().reverse();
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "loading-event loading-event--empty";
+      empty.textContent = "No framework events recorded yet.";
+      overlayEvents.appendChild(empty);
+      return;
+    }
+    items.forEach((event) => {
+      const row = document.createElement("div");
+      row.className = "loading-event";
+
+      const stamp = document.createElement("span");
+      stamp.className = "loading-event-time";
+      stamp.textContent = event.timestamp_utc || "";
+
+      const copy = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = event.label || "Event";
+      copy.appendChild(title);
+      if (event.detail) {
+        const detail = document.createElement("div");
+        detail.className = "muted";
+        detail.textContent = event.detail;
+        copy.appendChild(detail);
+      }
+
+      row.appendChild(stamp);
+      row.appendChild(copy);
+      overlayEvents.appendChild(row);
+    });
+  };
+
   const renderOverlay = function (payload) {
     if (!overlay) {
       return;
@@ -94,6 +134,11 @@
       overlayStatus.textContent = status;
     }
     renderOverlaySteps(progress.steps || []);
+    renderOverlayEvents(progress.events || []);
+    if (overlayLogTail) {
+      const logLines = payload && Array.isArray(payload.live_log_tail) ? payload.live_log_tail : [];
+      overlayLogTail.textContent = logLines.length ? logLines.join("\n") : "No live log output yet.";
+    }
   };
 
   if (overlayToggle && overlayExpanded) {
@@ -180,7 +225,14 @@
         percent: 3,
         label: startingCopy.label,
         detail: startingCopy.detail,
-        steps: []
+        steps: [],
+        events: [
+          {
+            timestamp_utc: new Date().toISOString(),
+            label: startingCopy.label,
+            detail: startingCopy.detail
+          }
+        ]
       }
     });
 
@@ -298,7 +350,14 @@
           percent: 3,
           label: "Starting quick check",
           detail: "Creating the local run record and opening the live result page.",
-          steps: []
+          steps: [],
+          events: [
+            {
+              timestamp_utc: new Date().toISOString(),
+              label: "Starting quick check",
+              detail: "Creating the local run record and opening the live result page."
+            }
+          ]
         }
       });
 
@@ -388,7 +447,8 @@
         percent: 0,
         label: runStatus === "running" ? "Loading live run status" : "Waiting in queue",
         detail: "Pulling the latest SG run progress from the local status record.",
-        steps: []
+        steps: [],
+        events: []
       }
     });
     window.setTimeout(function () {
@@ -408,7 +468,8 @@
         percent: 0,
         label: actionStatus === "running" ? "Loading live action status" : "Waiting in queue",
         detail: "Pulling the latest automation progress from the local status record.",
-        steps: []
+        steps: [],
+        events: []
       }
     });
     window.setTimeout(function () {

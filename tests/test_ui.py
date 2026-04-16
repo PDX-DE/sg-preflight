@@ -25,6 +25,8 @@ from sg_preflight.services import (
 from sg_preflight.ui import create_app
 from tests.operator_helpers import create_temp_g65_profile, write_text
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 class TestOperatorUI(unittest.TestCase):
     def test_home_and_run_pages_render_profile_information(self) -> None:
@@ -276,6 +278,76 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Scanning path references", page.text)
         self.assertIn("NOW LOADING...", page.text)
 
+    def test_status_apis_surface_progress_events_and_action_log_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            run_record = build_run_record(
+                profile,
+                RunRequest(profile_id="G65"),
+                root,
+            )
+            run_record.status = "running"
+            run_record.started_at_utc = "2026-04-16T08:00:00+00:00"
+            run_record.progress = build_progress_payload(
+                RUN_PROGRESS_PLAN,
+                step_key="validate_constants",
+                percent=79,
+                label="Validating constants",
+                detail="Running the `constants` validator against the materialized SG bundle.",
+                events=[
+                    {
+                        "timestamp_utc": "2026-04-16T08:00:01+00:00",
+                        "label": "Reading expected constants",
+                        "detail": "Normalizing G65_Pivot_Master.json.",
+                    },
+                    {
+                        "timestamp_utc": "2026-04-16T08:00:02+00:00",
+                        "label": "Validating constants",
+                        "detail": "Running the `constants` validator against the materialized SG bundle.",
+                    },
+                ],
+            )
+            save_run_record(run_record)
+
+            action = get_operator_action("daily_live_matrix", root, profiles=[profile])
+            action_record = build_action_record(action, root)
+            action_record.status = "running"
+            action_record.started_at_utc = "2026-04-16T08:00:00+00:00"
+            action_record.progress = build_progress_payload(
+                ACTION_PROGRESS_PLANS[action.kind],
+                step_key="profiles",
+                percent=40,
+                label="Running G65",
+                detail="Live matrix 1/1: materializing and validating G65.",
+                events=[
+                    {
+                        "timestamp_utc": "2026-04-16T08:00:01+00:00",
+                        "label": "Running live profile matrix",
+                        "detail": "Preparing 1 live profile run(s).",
+                    }
+                ],
+            )
+            write_text(Path(action_record.paths["log"]), "line 1\nline 2\nline 3\n")
+            save_action_task_record(action_record)
+
+            run_status = client.get(f"/ui/api/runs/{run_record.run_id}")
+            action_status = client.get(f"/ui/api/actions/{action_record.run_id}")
+
+        self.assertEqual(run_status.status_code, 200)
+        run_payload = run_status.json()
+        self.assertIn("progress", run_payload)
+        self.assertEqual(run_payload["progress"]["label"], "Validating constants")
+        self.assertEqual(len(run_payload["progress"]["events"]), 2)
+        self.assertEqual(run_payload["live_log_tail"], [])
+
+        self.assertEqual(action_status.status_code, 200)
+        action_payload = action_status.json()
+        self.assertEqual(action_payload["progress"]["label"], "Running G65")
+        self.assertEqual(action_payload["live_log_tail"], ["line 1", "line 2", "line 3"])
+
     def test_blocked_action_can_be_started_and_rendered(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -356,6 +428,10 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Running G65", page.text)
         self.assertIn("NOW LOADING...", page.text)
+
+    def test_operator_css_keeps_loading_overlay_hidden_by_default(self) -> None:
+        css = (ROOT / "sg_preflight" / "static" / "operator.css").read_text(encoding="utf-8")
+        self.assertIn(".loading-overlay[hidden]", css)
 
     def test_deep_audit_route_persists_and_renders_playground_note(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -31,6 +31,7 @@ from sg_preflight.validators.project_sanity import validate_project_sanity
 VALID_PACKS = ("anchors", "constants", "carpaints", "project_sanity")
 RUN_PROGRESS_PLAN = (
     ("queued", "Queued"),
+    ("preview", "Resolve source inputs"),
     ("scene_hierarchy", "Read anchor scene"),
     ("constants_expected", "Read expected constants"),
     ("constants_exported", "Read exported constants"),
@@ -38,7 +39,11 @@ RUN_PROGRESS_PLAN = (
     ("manifest_raco", "Detect RaCo version"),
     ("manifest_paths", "Scan path references"),
     ("manifest_lua", "Inspect Lua references"),
-    ("report", "Validate packs and write reports"),
+    ("validate_anchors", "Validate anchors"),
+    ("validate_constants", "Validate constants"),
+    ("validate_carpaints", "Validate carpaints"),
+    ("validate_project_sanity", "Validate project sanity"),
+    ("write_reports", "Write reports"),
     ("finalize", "Finalize run record"),
 )
 
@@ -258,6 +263,7 @@ def execute_bundle_run(
     json_out: Path | None = None,
     html_out: Path | None = None,
     markdown_out: Path | None = None,
+    progress_callback: Any | None = None,
 ) -> BundleRunResult:
     config = load_config(config_path)
     bundle = load_bundle(bundle_dir)
@@ -269,10 +275,31 @@ def execute_bundle_run(
         "carpaints": validate_carpaints,
         "project_sanity": validate_project_sanity,
     }
+    pack_progress = {
+        "anchors": ("validate_anchors", 74, "Validating anchors"),
+        "constants": ("validate_constants", 79, "Validating constants"),
+        "carpaints": ("validate_carpaints", 84, "Validating carpaint catalog"),
+        "project_sanity": ("validate_project_sanity", 89, "Validating project sanity"),
+    }
 
     for pack in packs:
+        if progress_callback is not None:
+            step_key, percent, label = pack_progress.get(pack, ("write_reports", 90, f"Validating {pack}"))
+            progress_callback(
+                step_key,
+                percent,
+                label,
+                f"Running the `{pack}` validator against the materialized SG bundle.",
+            )
         report.packs.append(pack_map[pack](bundle, config))
 
+    if progress_callback is not None:
+        progress_callback(
+            "write_reports",
+            94,
+            "Writing reports",
+            "Persisting JSON, HTML, and Markdown outputs for the current run.",
+        )
     if json_out:
         write_json_report(report, json_out)
     if html_out:
@@ -361,6 +388,7 @@ def build_progress_payload(
     percent: int,
     label: str,
     detail: str = "",
+    events: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     percent = max(0, min(int(percent), 100))
     active_seen = False
@@ -390,7 +418,29 @@ def build_progress_payload(
         "label": label,
         "detail": detail,
         "steps": steps,
+        "events": [dict(item) for item in events] if events else [],
     }
+
+
+def _progress_event(label: str, detail: str = "") -> dict[str, str]:
+    return {
+        "timestamp_utc": utc_now(),
+        "label": label,
+        "detail": detail,
+    }
+
+
+def _merged_progress_events(
+    existing: dict[str, Any] | None,
+    *,
+    label: str,
+    detail: str = "",
+) -> list[dict[str, str]]:
+    raw_events = existing.get("events", []) if isinstance(existing, dict) else []
+    events = [dict(item) for item in raw_events if isinstance(item, dict)]
+    if not events or events[-1].get("label") != label or events[-1].get("detail") != detail:
+        events.append(_progress_event(label, detail))
+    return events[-40:]
 
 
 def _set_run_progress(
@@ -401,12 +451,14 @@ def _set_run_progress(
     label: str,
     detail: str = "",
 ) -> None:
+    events = _merged_progress_events(record.progress, label=label, detail=detail)
     record.progress = build_progress_payload(
         RUN_PROGRESS_PLAN,
         step_key=step_key,
         percent=percent,
         label=label,
         detail=detail,
+        events=events,
     )
     save_run_record(record)
 
@@ -484,6 +536,13 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
         label="Queued locally",
         detail="Preparing the SG-side run record and source preview.",
     )
+    _set_run_progress(
+        record,
+        step_key="preview",
+        percent=2,
+        label="Resolving source inputs",
+        detail=f"Looking up live SG source files for {profile.profile_id}.",
+    )
     preview = preview_profile_sources(profile)
     record.source_paths = dict(preview.source_paths)
     record.notes = list(preview.notes)
@@ -526,7 +585,7 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
 
         _set_run_progress(
             record,
-            step_key="report",
+            step_key="write_reports",
             percent=90,
             label="Validating packs and writing reports",
             detail="Running deterministic validators and generating HTML, Markdown, and JSON output.",
@@ -539,6 +598,7 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
             json_out=Path(record.paths["json_report"]),
             html_out=Path(record.paths["html_report"]),
             markdown_out=Path(record.paths["markdown_report"]),
+            progress_callback=progress_callback,
         )
         record.summary = result.report.summary()
         record.exit_code = result.exit_code
@@ -559,10 +619,12 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
         record.completed_at_utc = utc_now()
         record.error_message = str(exc)
         record.progress = dict(record.progress or {})
+        events = _merged_progress_events(record.progress, label="Run failed", detail=str(exc))
         record.progress.update(
             {
                 "label": "Run failed",
                 "detail": str(exc),
+                "events": events,
             }
         )
         save_run_record(record)
