@@ -27,7 +27,7 @@ See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflo
 From the repository root:
 
 ```bash
-python -m sg_preflight ui
+python -m sg_preflight ui --reload
 ```
 
 PowerShell launcher:

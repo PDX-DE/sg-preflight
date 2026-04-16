@@ -332,6 +332,11 @@ def _get_guided_job(job_key: str | None) -> dict[str, Any] | None:
 def _guided_job_cards() -> list[dict[str, Any]]:
     cards = []
     for item in _guided_job_specs():
+        best_profiles = [str(value).upper() for value in item.get("best_profiles", ()) if value]
+        if len(best_profiles) == 1:
+            start_hint = f"Best current start: {best_profiles[0]}"
+        else:
+            start_hint = "Use the car you touched"
         cards.append(
             {
                 "key": item["key"],
@@ -339,6 +344,8 @@ def _guided_job_cards() -> list[dict[str, Any]]:
                 "short_label": item["short_label"],
                 "description": item["description"],
                 "highlights": list(item["highlights"]),
+                "start_hint": start_hint,
+                "best_profiles": best_profiles,
                 "href": f"/ui/start/{item['key']}",
             }
         )
@@ -1397,7 +1404,7 @@ def create_app(
     return app
 
 
-def run_ui(host: str = "127.0.0.1", port: int = 8765) -> int:
+def run_ui(host: str = "127.0.0.1", port: int = 8765, reload: bool = False) -> int:
     try:
         import uvicorn
     except ImportError:
@@ -1409,5 +1416,15 @@ def run_ui(host: str = "127.0.0.1", port: int = 8765) -> int:
 
     url = f"http://{host}:{port}/ui"
     print(f"SG Preflight Operator UI listening at {url}")
-    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+    if reload:
+        uvicorn.run(
+            "sg_preflight.ui:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            log_level="warning",
+            reload=True,
+        )
+    else:
+        uvicorn.run(create_app(), host=host, port=port, log_level="warning")
     return 0

@@ -1,14 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ job.short_label }} - SG Preflight Operator UI{% endblock %}
 {% block content %}
+{% set recommended = primary_profile if primary_profile is defined else none %}
+{% set alternatives = other_profiles if other_profiles is defined else [] %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">Guided Check</p>
     <h2>{{ job.label }}</h2>
-    <p class="hero-text">{{ job.description }}</p>
+    <p class="hero-text">Use the recommended car first. Open another car only if that is the slice you actually changed.</p>
     <div class="hero-bullets">
       <span>1. Use the recommended car first.</span>
-      <span>2. Run this check.</span>
+      <span>2. Run one check.</span>
       <span>3. Open the first problem.</span>
     </div>
   </div>
@@ -17,26 +19,26 @@
   </div>
 </section>
 
-{% if primary_profile %}
+{% if recommended %}
 <section class="panel panel--priority">
   <div class="panel-head">
-    <h3>Recommended Start</h3>
-    <p>This is the strongest current match for this kind of change.</p>
+    <h3>Use This Car First</h3>
+    <p>{{ job.description }}</p>
   </div>
   <article class="car-choice-card car-choice-card--primary">
     <div class="status-row">
       <div>
         <p class="eyebrow">Best Match</p>
-        <h4>{{ primary_profile.profile.profile_id }}</h4>
-        <p class="profile-label">{{ primary_profile.profile.label }}</p>
+        <h4>{{ recommended.profile.profile_id }}</h4>
+        <p class="profile-label">{{ recommended.profile.label }}</p>
       </div>
       <div class="stack tight align-end">
         <span class="badge info">Recommended</span>
-        <span class="badge {% if primary_profile.is_ready %}ok{% else %}warn{% endif %}">{{ primary_profile.readiness_label }}</span>
+        <span class="badge {% if recommended.is_ready %}ok{% else %}warn{% endif %}">{{ recommended.readiness_label }}</span>
       </div>
     </div>
 
-    <p class="car-choice-summary">{{ primary_profile.job_summary }}</p>
+    <p class="car-choice-summary">{{ recommended.job_summary }}</p>
 
     <div class="simple-checklist">
       <strong>This check is for:</strong>
@@ -47,18 +49,18 @@
       </ul>
     </div>
 
-    {% if primary_profile.live_signal %}
+    {% if recommended.live_signal %}
     <div class="signal-block">
       <div class="status-row">
         <strong>Current known signal</strong>
       </div>
       <div class="summary-inline">
-        <span><strong>{{ primary_profile.live_signal.summary.errors }}</strong> errors</span>
-        <span><strong>{{ primary_profile.live_signal.summary.warnings }}</strong> warnings</span>
-        <span><strong>{{ primary_profile.live_signal.summary.total }}</strong> total</span>
+        <span><strong>{{ recommended.live_signal.summary.errors }}</strong> errors</span>
+        <span><strong>{{ recommended.live_signal.summary.warnings }}</strong> warnings</span>
+        <span><strong>{{ recommended.live_signal.summary.total }}</strong> total</span>
       </div>
       <ul class="clean-list">
-        {% for highlight in primary_profile.live_signal.highlights[:2] %}
+        {% for highlight in recommended.live_signal.highlights[:2] %}
         <li><strong>{{ highlight.code }}</strong>: {{ highlight.message }}</li>
         {% endfor %}
       </ul>
@@ -66,34 +68,34 @@
     {% endif %}
 
     <div class="action-row action-row--wrap">
-      {% if primary_profile.launch.kind == "action" %}
-      <button class="button action-launch" type="button" data-action-id="{{ primary_profile.launch.action_id }}">{{ primary_profile.launch.button_label }}</button>
+      {% if recommended.launch.kind == "action" %}
+      <button class="button action-launch" type="button" data-action-id="{{ recommended.launch.action_id }}">{{ recommended.launch.button_label }}</button>
       {% else %}
       <button
         class="button guided-run-launch"
         type="button"
-        data-profile-id="{{ primary_profile.launch.profile_id }}"
-        data-packs="{{ primary_profile.launch.packs | join(',') }}"
-        data-job-key="{{ primary_profile.launch.job_key }}"
-        data-job-label="{{ primary_profile.launch.job_label }}"
+        data-profile-id="{{ recommended.launch.profile_id }}"
+        data-packs="{{ recommended.launch.packs | join(',') }}"
+        data-job-key="{{ recommended.launch.job_key }}"
+        data-job-label="{{ recommended.launch.job_label }}"
       >
-        {{ primary_profile.launch.button_label }}
+        {{ recommended.launch.button_label }}
       </button>
       {% endif %}
-      <a class="button subtle" href="/ui/profiles/{{ primary_profile.profile.profile_id }}?job={{ job.key }}">More Options</a>
+      <a class="button subtle" href="/ui/profiles/{{ recommended.profile.profile_id }}?job={{ job.key }}">More Options</a>
     </div>
   </article>
 </section>
 {% endif %}
 
-{% if other_profiles %}
+{% if alternatives %}
 <section class="panel">
   <div class="panel-head">
     <h3>Other Cars</h3>
-    <p>Use these only when the recommended car is not the slice you changed.</p>
+    <p>Open these only when the recommended car is not the slice you changed.</p>
   </div>
   <div class="car-choice-grid">
-    {% for item in other_profiles %}
+    {% for item in alternatives %}
     <article class="car-choice-card">
       <div class="status-row">
         <div>
@@ -135,6 +137,12 @@
       </div>
     </article>
     {% endfor %}
+  </div>
+</section>
+{% elif not recommended %}
+<section class="panel">
+  <div class="note-block note-block--warn">
+    This page is missing the latest guided-check context. Restart the local operator UI and reload this page.
   </div>
 </section>
 {% endif %}

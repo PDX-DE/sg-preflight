@@ -1,17 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Home - SG Preflight Operator UI{% endblock %}
 {% block content %}
+{% set jobs = guided_jobs if guided_jobs is defined else [] %}
+{% set home_profiles = profiles if profiles is defined else [] %}
+{% set workspace = workspace_actions if workspace_actions is defined else [] %}
+{% set actions = recent_actions if recent_actions is defined else [] %}
+{% set runs = recent_runs if recent_runs is defined else [] %}
 <section class="hero-panel hero-panel--home hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">Simple QA Start</p>
-    <h2>Start from what changed. Run one check. Open one source file.</h2>
+    <h2>Use the first box below. Ignore the rest unless you know you need it.</h2>
     <p class="hero-text">
-      This tool is for one job: catch obvious SG-side problems before review, show who should act next, and make handoff text reusable.
+      This tool is for one job: start from the kind of change you made, run one recommended check, then open one source file and copy one handoff.
     </p>
     <div class="hero-bullets">
-      <span>1. Pick the kind of change.</span>
+      <span>1. Pick what changed.</span>
       <span>2. Run the recommended check.</span>
-      <span>3. Open the first problem and copy the handoff.</span>
+      <span>3. Open the first problem.</span>
     </div>
   </div>
 </section>
@@ -19,151 +24,109 @@
 <section class="panel panel--priority">
   <div class="panel-head">
     <h3>What Changed?</h3>
-    <p>Start here first. This is the primary path for teammate use.</p>
+    <p>Start here first. Do not start from car codes unless someone already told you exactly which slice to open.</p>
   </div>
-  <div class="quick-start-grid">
-    {% for job in guided_jobs %}
-    <article class="quick-start-card">
-      <p class="eyebrow">Recommended Start</p>
-      <h4>{{ job.label }}</h4>
-      <p>{{ job.description }}</p>
-      <ul class="clean-list">
-        {% for point in job.highlights %}
-        <li>{{ point }}</li>
-        {% endfor %}
-      </ul>
-      <div class="action-row action-row--wrap">
-        <a class="button" href="{{ job.href }}">Start {{ job.short_label }}</a>
+  {% if jobs %}
+  <div class="start-list">
+    {% for job in jobs %}
+    <article class="status-item start-item">
+      <div class="start-copy">
+        <strong>{{ job.label }}</strong>
+        <p class="workflow-summary">{{ job.description }}</p>
+        <span class="start-hint">{{ job.start_hint }}</span>
       </div>
+      <a class="button" href="{{ job.href }}">Start {{ job.short_label }}</a>
     </article>
     {% endfor %}
   </div>
+  {% else %}
+  <div class="note-block note-block--warn">
+    The primary start options did not load. Restart the local operator UI and reload this page.
+  </div>
+  {% endif %}
 </section>
 
 <section class="panel">
-  <div class="panel-head">
-    <h3>Other Ways To Start</h3>
-    <p>Use these only when you want a broader sweep or already know you need the non-guided path.</p>
-  </div>
-  <div class="quick-start-grid">
-    <article class="quick-start-card">
-      <p class="eyebrow">Secondary</p>
-      <h4>Pick a car directly</h4>
-      <p>Use this when you already know the slice and want the per-car page first.</p>
-      <ul class="clean-list">
-        <li>Opens the per-car run page</li>
-        <li>Keeps the stronger guidance on that page</li>
-        <li>Best when someone already told you the profile</li>
-      </ul>
-      <div class="action-row action-row--wrap">
-        <a class="button subtle" href="#cars">Open car list</a>
-      </div>
-    </article>
+  <details class="foldout">
+    <summary>Show broader tools, direct car list, and recent checks</summary>
 
-    {% for item in workspace_actions %}
-      {% if item.action_id == "daily_live_matrix" %}
+    <div class="panel-head panel-head--split">
+      <h3>Broader Tools</h3>
+      <p>Use these only when you want a broad sweep or already know you do not want the guided path.</p>
+    </div>
+    <div class="quick-start-grid">
+      {% for item in workspace %}
+        {% if item.action_id == "daily_live_matrix" %}
+        <article class="quick-start-card">
+          <p class="eyebrow">Secondary</p>
+          <h4>Check all live cars</h4>
+          <p>{{ item.description }}</p>
+          <div class="action-row action-row--wrap">
+            <button class="button subtle action-launch" type="button" data-action-id="{{ item.action_id }}">Run Daily Check</button>
+            {% if matrix_summary is defined and matrix_summary.href %}
+            <a class="button subtle" href="{{ matrix_summary.href }}">Open Latest Summary</a>
+            {% endif %}
+          </div>
+        </article>
+        {% endif %}
+      {% endfor %}
+
       <article class="quick-start-card">
         <p class="eyebrow">Secondary</p>
-        <h4>Check all live cars</h4>
-        <p>{{ item.description }}</p>
-        <ul class="clean-list">
-          <li>Runs `G70`, `G65`, and `G45` in one go</li>
-          <li>Writes one shared summary</li>
-          <li>Best when you want a broader daily readout</li>
-        </ul>
+        <h4>Run SG repo checkers</h4>
+        <p>Use this when you need the SG checker scripts rather than the normal per-car preflight path.</p>
         <div class="action-row action-row--wrap">
-          <button class="button subtle action-launch" type="button" data-action-id="{{ item.action_id }}">Run Daily Check</button>
-          {% if matrix_summary.href %}
-          <a class="button subtle" href="{{ matrix_summary.href }}">Open Latest Summary</a>
-          {% endif %}
+          {% for item in workspace %}
+            {% if item.action_id == "repo_checker_idcevo" or item.action_id == "repo_checker_classic" %}
+            <button class="button subtle action-launch" type="button" data-action-id="{{ item.action_id }}">{{ item.label }}</button>
+            {% endif %}
+          {% endfor %}
         </div>
       </article>
-      {% endif %}
-    {% endfor %}
+    </div>
 
-    <article class="quick-start-card">
-      <p class="eyebrow">Secondary</p>
-      <h4>Run SG repo checkers</h4>
-      <p>Use this when you need the SG checker scripts rather than the normal per-car preflight path.</p>
-      <ul class="clean-list">
-        <li>IDCevo mirrored tree</li>
-        <li>Classic mirrored tree</li>
-        <li>No terminal command needed</li>
-      </ul>
-      <div class="action-row action-row--wrap">
-        {% for item in workspace_actions %}
-          {% if item.action_id == "repo_checker_idcevo" or item.action_id == "repo_checker_classic" %}
-          <button class="button subtle action-launch" type="button" data-action-id="{{ item.action_id }}">{{ item.label }}</button>
-          {% endif %}
-        {% endfor %}
-      </div>
-    </article>
-  </div>
-</section>
-
-<section class="panel" id="cars">
-  <div class="panel-head">
-    <h3>Pick A Car Directly</h3>
-    <p>This is a secondary start path. Use it when the change type is already obvious or someone already named the slice.</p>
-  </div>
-  <div class="car-choice-grid">
-    {% for item in profiles %}
-    <article class="car-choice-card">
-      <div class="status-row">
-        <div>
-          <p class="eyebrow">Live Car</p>
-          <h4>{{ item.profile.profile_id }}</h4>
-          <p class="profile-label">{{ item.profile.label }}</p>
-        </div>
-        <span class="badge {% if item.is_ready %}ok{% else %}warn{% endif %}">{{ item.readiness_label }}</span>
-      </div>
-
-      <p class="car-choice-summary">{{ item.profile.friendly_summary or item.profile.operator_goal }}</p>
-
-      {% if item.live_signal %}
-      <div class="signal-block">
+    <div class="panel-head panel-head--split">
+      <h3>Pick A Car Directly</h3>
+      <p>Use this only when someone already told you which slice to open.</p>
+    </div>
+    <div class="car-choice-grid">
+      {% for item in home_profiles %}
+      <article class="car-choice-card">
         <div class="status-row">
-          <strong>Current known signal</strong>
+          <div>
+            <p class="eyebrow">Live Car</p>
+            <h4>{{ item.profile.profile_id }}</h4>
+            <p class="profile-label">{{ item.profile.label }}</p>
+          </div>
+          <span class="badge {% if item.is_ready %}ok{% else %}warn{% endif %}">{{ item.readiness_label }}</span>
         </div>
-        <div class="summary-inline">
-          <span><strong>{{ item.live_signal.summary.errors }}</strong> errors</span>
-          <span><strong>{{ item.live_signal.summary.warnings }}</strong> warnings</span>
-          <span><strong>{{ item.live_signal.summary.total }}</strong> total</span>
+
+        <p class="car-choice-summary">{{ item.profile.friendly_summary or item.profile.operator_goal }}</p>
+
+        {% if item.live_signal %}
+        <div class="signal-block">
+          <div class="summary-inline">
+            <span><strong>{{ item.live_signal.summary.errors }}</strong> errors</span>
+            <span><strong>{{ item.live_signal.summary.warnings }}</strong> warnings</span>
+            <span><strong>{{ item.live_signal.summary.total }}</strong> total</span>
+          </div>
         </div>
-        <ul class="clean-list">
-          {% for highlight in item.live_signal.highlights[:2] %}
-          <li><strong>{{ highlight.code }}</strong>: {{ highlight.message }}</li>
-          {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
+        {% endif %}
 
-      <div class="simple-checklist">
-        <strong>Good first things to catch</strong>
-        <ul class="clean-list">
-          {% for point in item.profile.focus_points[:2] %}
-          <li>{{ point }}</li>
-          {% endfor %}
-        </ul>
-      </div>
+        <div class="action-row action-row--wrap">
+          <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}">Open {{ item.profile.profile_id }}</a>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
 
-      <div class="action-row action-row--wrap">
-        <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}">Open {{ item.profile.profile_id }}</a>
-      </div>
-    </article>
-    {% endfor %}
-  </div>
-</section>
-
-<section class="content-grid content-grid--home">
-  <article class="panel">
-    <div class="panel-head">
-      <h3>Latest Checks</h3>
-      <p>Open one of these if someone asks what already ran.</p>
+    <div class="panel-head panel-head--split">
+      <h3>Recent Checks</h3>
+      <p>Open one of these only if someone asks what already ran.</p>
     </div>
     <div class="stack">
-      {% if recent_actions %}
-        {% for item in recent_actions[:6] %}
+      {% if actions %}
+        {% for item in actions[:6] %}
         <div class="run-card">
           <div class="min-w-0">
             <strong>{{ item.label }}</strong>
@@ -178,8 +141,8 @@
           </div>
         </div>
         {% endfor %}
-      {% elif recent_runs %}
-        {% for run in recent_runs[:6] %}
+      {% elif runs %}
+        {% for run in runs[:6] %}
         <div class="run-card">
           <div class="min-w-0">
             <strong>{{ run.profile_id }}</strong>
@@ -195,14 +158,16 @@
         </div>
         {% endfor %}
       {% else %}
-        <div class="empty-state">
-          <strong>No checks have been run yet.</strong>
-          <p>Use one of the start cards above to begin.</p>
-        </div>
+      <div class="empty-state">
+        <strong>No checks have been run yet.</strong>
+        <p>Use the `What Changed?` options above to begin.</p>
+      </div>
       {% endif %}
     </div>
-  </article>
+  </details>
+</section>
 
+<section class="content-grid content-grid--home">
   <article class="panel">
     <div class="panel-head">
       <h3>If You Need More Detail</h3>
@@ -268,7 +233,7 @@
       </div>
       <div class="action-row action-row--wrap">
         <a class="button subtle" href="/ui/audits/mirror/deep">Refresh Deep Mirror Audit</a>
-        {% if workflow_alignment.href %}
+        {% if workflow_alignment is defined and workflow_alignment.href %}
         <a class="button subtle" href="{{ workflow_alignment.href }}">Open Workflow Note</a>
         {% endif %}
       </div>

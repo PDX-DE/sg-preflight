@@ -50,5 +50,5 @@ if ($OpenBrowser) {
 
 Write-Host ""
 Write-Host "Starting operator UI. Press Ctrl+C to stop." -ForegroundColor Green
-& python -m sg_preflight ui --host $BindHost --port $Port
+& python -m sg_preflight ui --host $BindHost --port $Port --reload
 exit $LASTEXITCODE

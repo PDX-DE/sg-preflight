@@ -37,7 +37,7 @@ Current CLI surfaces:
 - `python -m sg_preflight run`
 - `python -m sg_preflight list-profiles`
 - `python -m sg_preflight run-profile`
-- `python -m sg_preflight ui`
+- `python -m sg_preflight ui --reload`
 - `python -m sg_preflight demo-good`
 - `python -m sg_preflight demo-broken`
 

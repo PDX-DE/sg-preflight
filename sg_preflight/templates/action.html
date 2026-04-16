@@ -2,6 +2,14 @@
 {% block title %}Action {{ record.label }} - SG Preflight Operator UI{% endblock %}
 {% block body_attrs %}data-action-status="{{ record.status }}" data-action-run-id="{{ record.run_id }}"{% endblock %}
 {% block content %}
+{% set action_summary = action_result if action_result is defined and action_result else {
+  "title": "This action summary did not load cleanly",
+  "body": "Restart the local operator UI and reload this page.",
+  "what_ran": record.label,
+  "next_steps": ["Restart the local operator UI and reload this page."],
+  "open_now": links if links is defined else [],
+} %}
+{% set action_links = links if links is defined else [] %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">Automation Result</p>
@@ -35,13 +43,18 @@
   <article class="panel panel--priority">
     <div class="panel-head">
       <h3>What Happened</h3>
-      <p>{{ action_result.title }}</p>
+      <p>{{ action_summary.title }}</p>
     </div>
-    <p>{{ action_result.body }}</p>
+    <p>{{ action_summary.body }}</p>
+    {% if action_result is not defined %}
+    <div class="note-block note-block--warn">
+      This page is using fallback UI context because the running local server does not match the latest templates. Restart the local operator UI and reload this page.
+    </div>
+    {% endif %}
     <div class="detail-grid">
       <div>
         <span class="detail-label">What this ran</span>
-        <div class="path-text">{{ action_result.what_ran }}</div>
+        <div class="path-text">{{ action_summary.what_ran }}</div>
       </div>
       <div>
         <span class="detail-label">Status</span>
@@ -62,7 +75,7 @@
       <p>Use these next steps before going deeper into the raw log.</p>
     </div>
     <ol class="step-list">
-      {% for item in action_result.next_steps %}
+      {% for item in action_summary.next_steps %}
       <li>{{ item }}</li>
       {% endfor %}
     </ol>
@@ -74,8 +87,8 @@
       <p>These are the fastest useful outputs from this action run.</p>
     </div>
     <div class="stack tight">
-      {% if action_result.open_now %}
-        {% for link in action_result.open_now %}
+      {% if action_summary.open_now %}
+        {% for link in action_summary.open_now %}
         <div class="status-item">
           <div>
             <strong>{{ link.label }}</strong>
@@ -100,7 +113,7 @@
   <details class="foldout" open>
     <summary>Show all generated files</summary>
     <div class="stack tight">
-      {% for link in links %}
+      {% for link in action_links %}
       <div class="status-item">
         <div>
           <strong>{{ link.label }}</strong>

@@ -50,6 +50,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Result pages now center one `First Thing To Do` panel, pin the best matching source file for the top finding, and make a problem-specific handoff copy action primary
 - Files And Proof now groups outputs into `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned first
 - Action result pages now mirror the same plain-language flow as run results for completed, blocked, and failed SG-side actions
+- Operator UI now restarts cleanly during local work via `python -m sg_preflight ui --reload`, and stale local server/template mismatches now fall back to warnings instead of crashing result pages
 - Operator UI Home now shows where the tool fits in the real SG QA workflow, including explicit covered / partial / blocked stages
 - Operator readiness now surfaces the BMW screenshot-test repo as a first-class prerequisite instead of hiding BMW-side blockers
 - Operator UI Home/Run/Result flow now prioritizes operator decisions, current live signal, and clearer next actions instead of raw filesystem detail

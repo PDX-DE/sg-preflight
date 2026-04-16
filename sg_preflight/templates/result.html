@@ -2,6 +2,35 @@
 {% block title %}Result {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block body_attrs %}data-run-status="{{ record.status }}" data-run-id="{{ record.run_id }}"{% endblock %}
 {% block content %}
+{% set problem = first_problem if first_problem is defined and first_problem else {
+  "title": "This result needs a page refresh",
+  "is_clean": true,
+  "message": "The result summary is missing some UI context. Restart the local operator UI and reload this page.",
+  "done_line": "The page reloads cleanly and shows the first problem again.",
+  "open_link": {
+    "label": "Files And Proof",
+    "value": "/ui/runs/" ~ record.run_id ~ "/evidence",
+    "href": "/ui/runs/" ~ record.run_id ~ "/evidence",
+  },
+} %}
+{% set sections = evidence_sections if evidence_sections is defined else [] %}
+{% set handoff = handoff_options if handoff_options is defined and handoff_options else {
+  "primary": {
+    "label": "Copy Result Summary",
+    "target_id": "copy-result-fallback",
+    "text": "Result page fallback: restart the local operator UI and reload this page before copying handoff text.",
+  },
+  "secondary": [],
+} %}
+{% set summary = decision_summary if decision_summary is defined and decision_summary else {
+  "title": "This result summary did not load cleanly",
+  "body": "Restart the local operator UI and reload this page.",
+} %}
+{% set grouped = top_groups if top_groups is defined else [] %}
+{% set next_items = next_steps if next_steps is defined and next_steps else [
+  "Restart the local operator UI and reload this page.",
+  "Open Files And Proof after the page reloads cleanly.",
+] %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">Check Result</p>
@@ -38,7 +67,7 @@
 </section>
 {% endif %}
 
-{% if presentation and first_problem %}
+{% if presentation and problem %}
 <section class="summary-strip">
   <article class="summary-card error">
     <span>Errors</span>
@@ -62,44 +91,50 @@
   <article class="panel panel--priority">
     <div class="panel-head">
       <h3>First Thing To Do</h3>
-      <p>{{ first_problem.title }}</p>
+      <p>{{ problem.title }}</p>
     </div>
 
-    {% if first_problem.is_clean %}
-    <p>{{ first_problem.message }}</p>
+    {% if first_problem is not defined or handoff_options is not defined %}
+    <div class="note-block note-block--warn">
+      This page is using fallback UI context because the running local server does not match the latest templates. Restart the local operator UI and reload this page.
+    </div>
+    {% endif %}
+
+    {% if problem.is_clean %}
+    <p>{{ problem.message }}</p>
     <div class="note-block">
       <strong>You are done when...</strong>
-      <div>{{ first_problem.done_line }}</div>
+      <div>{{ problem.done_line }}</div>
     </div>
     {% else %}
     <div class="status-row">
-      <strong class="summary-code">{{ first_problem.pack }} / {{ first_problem.code }}</strong>
-      <span class="badge {% if first_problem.severity == 'error' %}warn{% elif first_problem.severity == 'warning' %}info{% else %}ok{% endif %}">{{ first_problem.severity }}</span>
+      <strong class="summary-code">{{ problem.pack }} / {{ problem.code }}</strong>
+      <span class="badge {% if problem.severity == 'error' %}warn{% elif problem.severity == 'warning' %}info{% else %}ok{% endif %}">{{ problem.severity }}</span>
     </div>
-    <p>{{ first_problem.message }}</p>
+    <p>{{ problem.message }}</p>
     <div class="detail-grid">
       <div>
         <span class="detail-label">Owner</span>
-        <div>{{ first_problem.owner }}</div>
+        <div>{{ problem.owner }}</div>
       </div>
       <div>
         <span class="detail-label">Next move</span>
-        <div>{{ first_problem.action }}</div>
+        <div>{{ problem.action }}</div>
       </div>
       <div>
         <span class="detail-label">Occurrences</span>
-        <div>{{ first_problem.occurrence_label }}</div>
+        <div>{{ problem.occurrence_label }}</div>
       </div>
-      {% if first_problem.location %}
+      {% if problem.location %}
       <div>
         <span class="detail-label">First location</span>
-        <div class="path-text">{{ first_problem.location }}</div>
+        <div class="path-text">{{ problem.location }}</div>
       </div>
       {% endif %}
     </div>
     <div class="note-block">
       <strong>You are done when...</strong>
-      <div>{{ first_problem.done_line }}</div>
+      <div>{{ problem.done_line }}</div>
     </div>
     {% endif %}
   </article>
@@ -119,21 +154,21 @@
       </div>
       <div class="status-item">
         <div>
-          <strong>{{ first_problem.open_link.label }}</strong>
-          <div class="muted path-text">{{ first_problem.open_link.value }}</div>
+          <strong>{{ problem.open_link.label }}</strong>
+          <div class="muted path-text">{{ problem.open_link.value }}</div>
         </div>
-        {% if first_problem.open_link.href %}
-        <a href="{{ first_problem.open_link.href }}">Open</a>
+        {% if problem.open_link.href %}
+        <a href="{{ problem.open_link.href }}">Open</a>
         {% endif %}
       </div>
-      {% if evidence_sections and evidence_sections[0].links %}
+      {% if sections and sections[0].links %}
       <div class="status-item">
         <div>
-          <strong>{{ evidence_sections[0].links[0].label }}</strong>
-          <div class="muted path-text">{{ evidence_sections[0].links[0].value }}</div>
+          <strong>{{ sections[0].links[0].label }}</strong>
+          <div class="muted path-text">{{ sections[0].links[0].value }}</div>
         </div>
-        {% if evidence_sections[0].links[0].href %}
-        <a href="{{ evidence_sections[0].links[0].href }}">Open</a>
+        {% if sections[0].links[0].href %}
+        <a href="{{ sections[0].links[0].href }}">Open</a>
         {% endif %}
       </div>
       {% endif %}
@@ -146,13 +181,13 @@
       <p>Use the first button when you want the shortest useful handoff.</p>
     </div>
     <div class="action-row action-row--wrap">
-      <button class="button copy-button" type="button" data-copy-target="{{ handoff_options.primary.target_id }}">{{ handoff_options.primary.label }}</button>
-      {% for item in handoff_options.secondary %}
+      <button class="button copy-button" type="button" data-copy-target="{{ handoff.primary.target_id }}">{{ handoff.primary.label }}</button>
+      {% for item in handoff.secondary %}
       <button class="button subtle copy-button" type="button" data-copy-target="{{ item.target_id }}">{{ item.label }}</button>
       {% endfor %}
     </div>
-    <textarea id="{{ handoff_options.primary.target_id }}" hidden>{{ handoff_options.primary.text }}</textarea>
-    {% for item in handoff_options.secondary %}
+    <textarea id="{{ handoff.primary.target_id }}" hidden>{{ handoff.primary.text }}</textarea>
+    {% for item in handoff.secondary %}
     <textarea id="{{ item.target_id }}" hidden>{{ item.text }}</textarea>
     {% endfor %}
   </article>
@@ -162,12 +197,12 @@
   <article class="panel">
     <div class="panel-head">
       <h3>What Happened</h3>
-      <p>{{ decision_summary.title }}</p>
+      <p>{{ summary.title }}</p>
     </div>
-    <p>{{ decision_summary.body }}</p>
-    {% if top_groups %}
+    <p>{{ summary.body }}</p>
+    {% if grouped %}
     <div class="stack tight">
-      {% for item in top_groups %}
+      {% for item in grouped %}
       <div class="finding-group finding-group--summary" data-severity="{{ item.severity }}">
         <div class="status-row">
           <strong>{{ item.pack }} / {{ item.code }}</strong>
@@ -187,7 +222,7 @@
       <p>Use these only after you handle the first problem above.</p>
     </div>
     <ol class="step-list">
-      {% for item in next_steps %}
+      {% for item in next_items %}
       <li>{{ item }}</li>
       {% endfor %}
     </ol>

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Files And Proof {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block content %}
+{% set problem = first_problem if first_problem is defined else none %}
+{% set sections = evidence_sections if evidence_sections is defined and evidence_sections else [] %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">Files And Proof</p>
@@ -12,7 +14,15 @@
   </div>
 </section>
 
-{% if first_problem and not first_problem.is_clean %}
+{% if first_problem is not defined or evidence_sections is not defined %}
+<section class="panel">
+  <div class="note-block note-block--warn">
+    This page is using fallback UI context because the running local server does not match the latest templates. Restart the local operator UI and reload this page.
+  </div>
+</section>
+{% endif %}
+
+{% if problem and not problem.is_clean %}
 <section class="panel panel--priority">
   <div class="panel-head">
     <h3>Pinned First File</h3>
@@ -20,18 +30,19 @@
   </div>
   <div class="status-item">
     <div>
-      <strong>{{ first_problem.open_link.label }}</strong>
-      <div class="muted path-text">{{ first_problem.open_link.value }}</div>
+      <strong>{{ problem.open_link.label }}</strong>
+      <div class="muted path-text">{{ problem.open_link.value }}</div>
     </div>
-    {% if first_problem.open_link.href %}
-    <a href="{{ first_problem.open_link.href }}">Open</a>
+    {% if problem.open_link.href %}
+    <a href="{{ problem.open_link.href }}">Open</a>
     {% endif %}
   </div>
 </section>
 {% endif %}
 
 <section class="stack">
-  {% for section in evidence_sections %}
+  {% if sections %}
+  {% for section in sections %}
   <article class="panel">
     <div class="panel-head">
       <h3>{{ section.title }}</h3>
@@ -52,5 +63,13 @@
     </div>
   </article>
   {% endfor %}
+  {% else %}
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Files And Proof did not load cleanly</h3>
+      <p>Restart the local operator UI and reload this page.</p>
+    </div>
+  </article>
+  {% endif %}
 </section>
 {% endblock %}

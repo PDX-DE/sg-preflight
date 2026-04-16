@@ -112,7 +112,7 @@ python -m sg_preflight run-profile G70 --fail-on never
 Start the local operator UI:
 
 ```bash
-python -m sg_preflight ui
+python -m sg_preflight ui --reload
 ```
 
 List the one-click SG QA actions:

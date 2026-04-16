@@ -245,6 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui = sub.add_parser("ui", help="Start the local operator UI")
     ui.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     ui.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
+    ui.add_argument("--reload", action="store_true", help="Reload automatically when local UI files change")
 
     demo_good = sub.add_parser("demo-good", help="Run the good demo bundle")
     demo_good.add_argument("--fail-on", default="error", choices=["error", "warning", "never"])
@@ -389,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "ui":
         from sg_preflight.ui import run_ui
 
-        return run_ui(host=args.host, port=args.port)
+        return run_ui(host=args.host, port=args.port, reload=args.reload)
 
     if args.command == "demo-good":
         result = execute_bundle_run(

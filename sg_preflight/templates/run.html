@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Run {{ profile.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block content %}
+{% set launch = primary_launch if primary_launch is defined and primary_launch else {
+  "kind": "action",
+  "title": "Best default for " ~ profile.profile_id,
+  "description": "Use the main button below. If this page still looks wrong after an update, restart the local operator UI and reload.",
+  "button_label": "Run Full Check For This Car",
+  "action_id": "qa_stack__" ~ (profile.profile_id|lower),
+  "checklist": ["Run the widest useful SG-side check that is available on this machine."]
+} %}
+{% set launch_file_cards = source_file_cards if source_file_cards is defined else [] %}
+{% set secondary_actions = profile_actions if profile_actions is defined else [] %}
+{% set available_packs = packs if packs is defined else ["anchors", "constants", "carpaints", "project_sanity"] %}
+{% set custom_packs = selected_packs if selected_packs is defined else available_packs %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">{% if selected_job %}{{ selected_job.short_label }}{% else %}Car Check{% endif %}</p>
@@ -22,49 +34,55 @@
 <section class="content-grid content-grid--run">
   <article class="panel panel--priority">
     <div class="panel-head">
-      <h3>Do This</h3>
-      <p>{{ primary_launch.description }}</p>
+      <h3>Run This Now</h3>
+      <p>Use this button first. Open the foldouts only if you need a smaller or different path.</p>
     </div>
 
     <div class="primary-callout">
       <div>
-        <strong>{{ primary_launch.title }}</strong>
-        <p>{{ primary_launch.description }}</p>
+        <strong>{{ launch.title }}</strong>
+        <p>{{ launch.description }}</p>
       </div>
       <div class="action-row action-row--wrap">
-        {% if primary_launch.kind == "run" %}
+        {% if launch.kind == "run" %}
         <button
           class="button guided-run-launch"
           type="button"
           data-profile-id="{{ profile.profile_id }}"
-          data-packs="{{ primary_launch.packs | join(',') }}"
-          data-job-key="{{ primary_launch.job_key }}"
-          data-job-label="{{ primary_launch.job_label }}"
+          data-packs="{{ launch.packs | default([]) | join(',') }}"
+          data-job-key="{{ launch.job_key | default('') }}"
+          data-job-label="{{ launch.job_label | default('') }}"
         >
-          {{ primary_launch.button_label }}
+          {{ launch.button_label }}
         </button>
         {% else %}
-        <button class="button action-launch" type="button" data-action-id="{{ primary_launch.action_id }}">{{ primary_launch.button_label }}</button>
+        <button class="button action-launch" type="button" data-action-id="{{ launch.action_id }}">{{ launch.button_label }}</button>
         {% endif %}
       </div>
     </div>
 
+    {% if primary_launch is not defined %}
+    <div class="note-block note-block--warn">
+      This page is using a fallback action because the running UI process does not match the latest template context. Restart the local operator UI and reload this page.
+    </div>
+    {% endif %}
+
     <div class="simple-checklist">
       <strong>This check will try to do:</strong>
       <ul class="clean-list">
-        {% for point in primary_launch.checklist %}
+        {% for point in launch.checklist %}
         <li>{{ point }}</li>
         {% endfor %}
       </ul>
     </div>
 
-    {% if source_file_cards %}
+    {% if launch_file_cards %}
     <div class="panel-head panel-head--split">
       <h3>Files This Check Will Use</h3>
       <p>These are the SG source files behind this run.</p>
     </div>
     <div class="stack tight">
-      {% for item in source_file_cards %}
+      {% for item in launch_file_cards %}
       <div class="status-item">
         <div class="min-w-0">
           <strong>{{ item.label }}</strong>
@@ -79,7 +97,7 @@
     {% endif %}
 
     <details class="foldout">
-      <summary>Show quick-check-only options</summary>
+      <summary>Need a smaller quick check?</summary>
       <form id="run-form" class="stack" data-profile-id="{{ profile.profile_id }}">
         <div class="note-block">
           <div><strong>Use this only when:</strong> you need custom packs, a different fail threshold, or only the deterministic preflight.</div>
@@ -94,9 +112,9 @@
           <div>
             <span class="detail-label">Packs</span>
             <div class="checkbox-grid">
-              {% for pack in packs %}
+              {% for pack in available_packs %}
               <label class="checkbox-card">
-                <input type="checkbox" name="packs" value="{{ pack }}" {% if pack in selected_packs %}checked{% endif %} />
+                <input type="checkbox" name="packs" value="{{ pack }}" {% if pack in custom_packs %}checked{% endif %} />
                 <span>{{ pack }}</span>
               </label>
               {% endfor %}
@@ -124,11 +142,11 @@
       </form>
     </details>
 
-    {% if profile_actions %}
+    {% if secondary_actions %}
     <details class="foldout">
-      <summary>Show full car check and other actions</summary>
+      <summary>Need a different action?</summary>
       <div class="workflow-grid">
-        {% for item in profile_actions %}
+        {% for item in secondary_actions %}
         <article class="workflow-card">
           <div class="status-row">
             <strong>{{ item.label }}</strong>
