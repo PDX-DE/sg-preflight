@@ -1231,6 +1231,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Deterministic preflight result",
                 "state": "ready" if report_ready else "pending",
+                "kind": "tool",
                 "summary": "This run is the SG-side proof that the changed car was checked before commit."
                 if report_ready
                 else "Finish the run first so the deterministic preflight result exists.",
@@ -1238,6 +1239,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Copy-ready test note",
                 "state": "ready" if markdown_ready else "pending",
+                "kind": "tool",
                 "summary": "Use the copy buttons or markdown report for the ticket or handoff note."
                 if markdown_ready
                 else "The markdown handoff is not ready yet.",
@@ -1245,6 +1247,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Update SVN and review in RaCo / Blender",
                 "state": "manual",
+                "kind": "manual",
                 "summary": "Still manual here. Confirm the remaining before-commit checks before the commit is treated as safe.",
             },
         ]
@@ -1254,6 +1257,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Deterministic reviewer context",
                 "state": "ready" if report_ready else "pending",
+                "kind": "tool",
                 "summary": "This run already shrinks avoidable review loops with a file-backed result."
                 if report_ready
                 else "Finish the run first so the reviewer has concrete signal.",
@@ -1261,6 +1265,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Copy-ready reviewer note",
                 "state": "ready" if markdown_ready else "pending",
+                "kind": "tool",
                 "summary": "The result page already contains a short reviewer-ready note."
                 if markdown_ready
                 else "The note output is not ready yet.",
@@ -1268,6 +1273,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Internal peer review",
                 "state": "manual",
+                "kind": "manual",
                 "summary": "Still manual. The goal is to arrive with fewer obvious issues and better evidence.",
             },
         ]
@@ -1277,6 +1283,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Deterministic SG-side preflight",
                 "state": "ready" if report_ready else "pending",
+                "kind": "tool",
                 "summary": "This run already covers the reusable SG-side deterministic proof."
                 if report_ready
                 else "Finish the run first so the SG-side deterministic proof exists.",
@@ -1284,6 +1291,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Evidence bundle and copied summary",
                 "state": "ready" if markdown_ready else "pending",
+                "kind": "tool",
                 "summary": "Reports, source-file links, and copied handoff text are ready for delivery prep."
                 if markdown_ready
                 else "Finish the report outputs before treating the evidence as ready.",
@@ -1291,16 +1299,19 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Performance tests and delivery documentation",
                 "state": "manual",
+                "kind": "manual",
                 "summary": "Still manual and required by the delivery chain in the deck.",
             },
             {
                 "label": str(bmw.get("label", "BMW screenshot smoke")),
                 "state": str(bmw.get("state", "blocked")),
+                "kind": "external",
                 "summary": str(bmw.get("summary", "BMW-side smoke status is not available.")),
             },
             {
                 "label": str(rack.get("label", "Rack review")),
                 "state": str(rack.get("state", "blocked")),
+                "kind": "external",
                 "summary": str(rack.get("summary", "Rack-side validation status is not available.")),
             },
         ]
@@ -1310,6 +1321,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Post-integration deterministic sweep",
                 "state": "ready" if report_ready else "pending",
+                "kind": "tool",
                 "summary": "This run gives you a clean SG-side readout after integration."
                 if report_ready
                 else "Finish the run first so the post-integration sweep exists.",
@@ -1317,6 +1329,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": "Triage-ready evidence",
                 "state": "ready" if markdown_ready else "pending",
+                "kind": "tool",
                 "summary": "Use the copied note plus the report links to route follow-up work."
                 if markdown_ready
                 else "The handoff output is not ready yet.",
@@ -1324,11 +1337,13 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             {
                 "label": str(bmw.get("label", "BMW screenshot smoke")),
                 "state": str(bmw.get("state", "blocked")),
+                "kind": "external",
                 "summary": str(bmw.get("summary", "BMW-side smoke status is not available.")),
             },
             {
                 "label": str(rack.get("label", "Rack review")),
                 "state": str(rack.get("state", "blocked")),
+                "kind": "external",
                 "summary": str(rack.get("summary", "Rack-side validation status is not available.")),
             },
         ]
@@ -1337,6 +1352,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
         {
             "label": "Current run summary",
             "state": "ready" if report_ready else "pending",
+            "kind": "tool",
             "summary": "This run is the concrete result you can quote in Jira or QA Hero."
             if report_ready
             else "Finish the run first so the result can be quoted.",
@@ -1344,6 +1360,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
         {
             "label": "Copy-ready positive or negative note",
             "state": "ready" if markdown_ready else "pending",
+            "kind": "tool",
             "summary": "Use the copy buttons or markdown report for the note body."
             if markdown_ready
             else "The note output is not ready yet.",
@@ -1351,9 +1368,292 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
         {
             "label": "Attach the result in the real ticket",
             "state": "manual",
+            "kind": "manual",
             "summary": "Still a human step: positive and negative testing both need to be documented in the correct ticket.",
         },
     ]
+
+
+def _is_ready_state(state: str) -> bool:
+    return str(state).strip().lower() in {"ready", "covered", "completed"}
+
+
+def _grouped_finding_lines(grouped_findings: list[dict[str, Any]], limit: int = 3) -> list[str]:
+    lines: list[str] = []
+    for item in grouped_findings[:limit]:
+        lines.append(
+            f"- [{str(item['severity']).upper()}] {item['pack']} / {item['code']} x{item['count']}: {item['message']}"
+        )
+        owner = str(item.get("owner", "")).strip()
+        action = str(item.get("action", "")).strip()
+        if owner:
+            lines.append(f"  Owner: {owner}")
+        if action:
+            lines.append(f"  Action: {action}")
+    if not lines:
+        lines.append("- No grouped findings were raised in this run.")
+    return lines
+
+
+def _evidence_completeness(stage_items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not stage_items:
+        return None
+
+    def _bucket(items: list[dict[str, Any]]) -> dict[str, int]:
+        return {
+            "total": len(items),
+            "ready": sum(1 for item in items if _is_ready_state(str(item.get("state", "")))),
+            "pending": sum(1 for item in items if str(item.get("state", "")) == "pending"),
+            "manual": sum(1 for item in items if str(item.get("state", "")) == "manual"),
+            "blocked": sum(1 for item in items if str(item.get("state", "")) == "blocked"),
+            "partial": sum(1 for item in items if str(item.get("state", "")) == "partial"),
+        }
+
+    local_items = [item for item in stage_items if str(item.get("kind", "")) == "tool"]
+    local_counts = _bucket(local_items)
+    overall_counts = _bucket(stage_items)
+    local_score = round((local_counts["ready"] / local_counts["total"]) * 100) if local_counts["total"] else 0
+    overall_score = round((overall_counts["ready"] / overall_counts["total"]) * 100) if overall_counts["total"] else 0
+    return {
+        "local_score_percent": local_score,
+        "overall_score_percent": overall_score,
+        "local_counts": local_counts,
+        "overall_counts": overall_counts,
+        "ready_items": [item for item in stage_items if _is_ready_state(str(item.get("state", "")))],
+        "pending_items": [item for item in stage_items if str(item.get("state", "")) == "pending"],
+        "manual_items": [item for item in stage_items if str(item.get("state", "")) == "manual"],
+        "blocked_items": [
+            item
+            for item in stage_items
+            if str(item.get("state", "")) in {"blocked", "partial"}
+        ],
+        "summary": (
+            f"{local_counts['ready']} of {local_counts['total']} local SG evidence item(s) are ready, "
+            f"while {overall_counts['ready']} of {overall_counts['total']} full stage item(s) are complete on this machine."
+        ),
+    }
+
+
+def _documentation_exports(
+    record: Any,
+    report: Report,
+    decision_summary: dict[str, str],
+    grouped_findings: list[dict[str, Any]],
+    first_problem: dict[str, Any],
+    stage_items: list[dict[str, Any]],
+    quick_update_text: str,
+    full_handoff_text: str,
+) -> list[dict[str, str]]:
+    stage = _record_workflow_stage(record)
+    stage_label = stage["short_label"] if stage is not None else "Current stage"
+    counts = report.summary()
+    evidence = _evidence_completeness(stage_items)
+    grouped_lines = _grouped_finding_lines(grouped_findings)
+    files_and_proof_url = f"/ui/runs/{record.run_id}/evidence"
+    primary_problem = (
+        f"{str(first_problem.get('severity', '')).upper()} - {first_problem.get('pack', '')} / {first_problem.get('code', '')}: {first_problem.get('message', '')}"
+        if not first_problem.get("is_clean")
+        else "No deterministic finding is currently blocking the run."
+    )
+
+    implementation_lines = [
+        f"Jira Implementation Update - {record.profile_id}",
+        f"Workflow stage: {stage_label}",
+        f"Scope: {', '.join(record.packs)}",
+        f"Result: {decision_summary['title']}",
+        f"Counts: {counts['errors']} errors, {counts['warnings']} warnings, {counts['info']} info, {counts['total']} total",
+        "",
+        "Top findings:",
+        *grouped_lines,
+        "",
+        "Evidence:",
+        f"- HTML report: {record.paths.get('html_report', '')}",
+        f"- Files and proof: {files_and_proof_url}",
+        f"- Markdown report: {record.paths.get('markdown_report', '')}",
+    ]
+
+    positive_lines = [
+        f"Jira Positive Test Note - {record.profile_id}",
+        f"Workflow stage: {stage_label}",
+        (
+            "Status: clean deterministic SG-side run."
+            if first_problem.get("is_clean")
+            else "Status: this is not a clean positive result; use the negative note below for the current finding set."
+        ),
+        f"Counts: {counts['errors']} errors, {counts['warnings']} warnings, {counts['info']} info, {counts['total']} total",
+        "",
+        "Evidence attached:",
+        f"- HTML report: {record.paths.get('html_report', '')}",
+        f"- Files and proof: {files_and_proof_url}",
+    ]
+
+    negative_lines = [
+        f"Jira Negative Test Note - {record.profile_id}",
+        f"Workflow stage: {stage_label}",
+        f"Primary issue: {primary_problem}",
+        f"Counts: {counts['errors']} errors, {counts['warnings']} warnings, {counts['info']} info, {counts['total']} total",
+        "",
+        "Top findings:",
+        *grouped_lines,
+        "",
+        "Evidence attached:",
+        f"- HTML report: {record.paths.get('html_report', '')}",
+        f"- Files and proof: {files_and_proof_url}",
+    ]
+
+    qa_hero_lines = [
+        f"QA Hero Note - {record.profile_id}",
+        f"Workflow stage: {stage_label}",
+        f"Result: {decision_summary['title']}",
+        f"Primary issue: {primary_problem}",
+        "",
+        "Evidence:",
+        f"- HTML report: {record.paths.get('html_report', '')}",
+        f"- Markdown report: {record.paths.get('markdown_report', '')}",
+        f"- Files and proof: {files_and_proof_url}",
+    ]
+
+    pre_delivery_lines = [
+        f"Pre-Delivery Summary - {record.profile_id}",
+        f"Workflow stage: {stage_label}",
+        f"Result: {decision_summary['title']}",
+        f"Counts: {counts['errors']} errors, {counts['warnings']} warnings, {counts['info']} info, {counts['total']} total",
+        "",
+        evidence["summary"] if evidence is not None else "No stage completeness summary is available for this run.",
+        "",
+        "Ready now:",
+        *[
+            f"- {item['label']}: {item['summary']}"
+            for item in (evidence.get("ready_items", []) if evidence is not None else [])
+        ],
+        "",
+        "Still manual or blocked:",
+        *[
+            f"- {item['label']} [{item['state']}]: {item['summary']}"
+            for item in (
+                (evidence.get("manual_items", []) if evidence is not None else [])
+                + (evidence.get("blocked_items", []) if evidence is not None else [])
+                + (evidence.get("pending_items", []) if evidence is not None else [])
+            )
+        ],
+    ]
+
+    delivery_doc_lines = [
+        f"Delivery-Doc Snippet - {record.profile_id}",
+        f"- SG deterministic stage: {stage_label}",
+        f"- Result: {decision_summary['title']}",
+        f"- Counts: {counts['errors']} errors / {counts['warnings']} warnings / {counts['info']} info",
+        f"- Primary issue: {primary_problem}",
+        f"- Evidence: {record.paths.get('html_report', '')}",
+        f"- Files and proof: {files_and_proof_url}",
+    ]
+
+    exports = [
+        ("Copy Jira Implementation Update", "\n".join(implementation_lines).strip()),
+        ("Copy Jira Positive Test Note", "\n".join(positive_lines).strip()),
+        ("Copy Jira Negative Test Note", "\n".join(negative_lines).strip()),
+        ("Copy QA Hero Note", "\n".join(qa_hero_lines).strip()),
+        ("Copy Pre-Delivery Summary", "\n".join(pre_delivery_lines).strip()),
+        ("Copy Delivery-Doc Snippet", "\n".join(delivery_doc_lines).strip()),
+        ("Copy Quick Update", quick_update_text),
+        ("Copy Full Handoff", full_handoff_text or quick_update_text),
+    ]
+    items: list[dict[str, str]] = []
+    for index, (label, text) in enumerate(exports, start=1):
+        if not str(text).strip():
+            continue
+        items.append(
+            {
+                "label": label,
+                "target_id": f"copy-stage-export-{index}",
+                "text": text,
+            }
+        )
+    return items
+
+
+def _manual_review_companion(
+    record: Any,
+    first_problem: dict[str, Any],
+    stage_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    stage = _record_workflow_stage(record)
+    stage_label = stage["short_label"] if stage is not None else "Current stage"
+    first_problem_line = (
+        f"{first_problem.get('pack', '')} / {first_problem.get('code', '')}: {first_problem.get('message', '')}"
+        if not first_problem.get("is_clean")
+        else "No deterministic blocker is currently highlighted by the run."
+    )
+    checklist = [
+        "Compare the changed area in Blender versus RaCo before treating the work as visually safe.",
+        "Check more than one angle where relevant: front, rear, left, right, and top-level behavior.",
+        "Keep screenshot evidence early instead of waiting for the last delivery minute.",
+        "Call out rack, BMW smoke, or other blocked external steps explicitly in the note.",
+    ]
+    screenshot_slots = [
+        "Front 3/4",
+        "Rear 3/4",
+        "Side or wheel-area detail",
+        "Interior or close-up if relevant",
+        "Problem-focused proof shot",
+    ]
+    manual_note_lines = [
+        f"Manual Review Record - {record.profile_id}",
+        f"Workflow stage: {stage_label}",
+        f"Deterministic baseline: {record.paths.get('html_report', '')}",
+        f"Files and proof: /ui/runs/{record.run_id}/evidence",
+        f"Primary deterministic issue: {first_problem_line}",
+        "",
+        "Manual checks:",
+        "- Blender vs RaCo compared: [ ] yes [ ] no",
+        "- Multi-angle review completed: [ ] yes [ ] no",
+        "- Screenshot evidence attached: [ ] yes [ ] no",
+        "- Rack / BMW smoke blocker documented: [ ] yes [ ] no",
+        "",
+        "Notes:",
+        "- ",
+    ]
+    screenshot_note_lines = [
+        f"Screenshot Evidence Slots - {record.profile_id}",
+        f"Workflow stage: {stage_label}",
+        f"Run baseline: {record.paths.get('html_report', '')}",
+        "",
+        *[f"- {slot}: " for slot in screenshot_slots],
+    ]
+    checklist_lines = [
+        f"Blender vs RaCo Checklist - {record.profile_id}",
+        f"Workflow stage: {stage_label}",
+        "",
+        *[f"- {item}" for item in checklist],
+    ]
+    return {
+        "title": "Manual Review Companion",
+        "summary": "Use this to keep still-manual work explicit instead of pretending the deterministic run replaced it.",
+        "checklist": checklist,
+        "scenario_items": [
+            item
+            for item in stage_items
+            if str(item.get("kind", "")) in {"manual", "external"}
+        ],
+        "screenshot_slots": screenshot_slots,
+        "copy_items": [
+            {
+                "label": "Copy Manual Review Record",
+                "target_id": "copy-manual-review-record",
+                "text": "\n".join(manual_note_lines).strip(),
+            },
+            {
+                "label": "Copy Screenshot Evidence Slots",
+                "target_id": "copy-screenshot-evidence-slots",
+                "text": "\n".join(screenshot_note_lines).strip(),
+            },
+            {
+                "label": "Copy Blender vs RaCo Checklist",
+                "target_id": "copy-blender-raco-checklist",
+                "text": "\n".join(checklist_lines).strip(),
+            },
+        ],
+    }
 
 
 def _load_text_file(path_value: str) -> str:
@@ -1748,6 +2048,13 @@ def _action_result_view(record: Any) -> dict[str, Any]:
     }
 
 
+def _run_command_preview(record: Any) -> str:
+    packs = ", ".join(str(item) for item in getattr(record, "packs", []) if str(item).strip())
+    if not packs:
+        packs = "default packs"
+    return f"internal: materialize {record.profile_id} and validate {packs}"
+
+
 def _evidence_links(record: Any) -> list[dict[str, str]]:
     links = [
         _path_evidence("JSON report", record.paths.get("json_report")),
@@ -2007,6 +2314,7 @@ def create_app(
         )
         job_label = str(record.context.get("operator_job_label", "")).strip()
         selected_stage = _record_workflow_stage(record)
+        stage_items = _record_stage_checklist(record, app.state.workspace_root)
         run_diff = _report_diff(record, report, app.state.workspace_root) if report is not None else None
         return app.state.templates.TemplateResponse(
             request,
@@ -2024,7 +2332,31 @@ def create_app(
                 "evidence_sections": evidence_sections,
                 "job_label": job_label,
                 "selected_stage": selected_stage,
-                "stage_checklist": _record_stage_checklist(record, app.state.workspace_root),
+                "stage_checklist": stage_items,
+                "evidence_completeness": (
+                    _evidence_completeness(stage_items)
+                    if report is not None and first_problem is not None
+                    else None
+                ),
+                "documentation_exports": (
+                    _documentation_exports(
+                        record,
+                        report,
+                        decision_summary,
+                        grouped_findings,
+                        first_problem,
+                        stage_items,
+                        quick_update_text,
+                        full_handoff_text,
+                    )
+                    if report is not None and decision_summary is not None and first_problem is not None
+                    else []
+                ),
+                "manual_review_companion": (
+                    _manual_review_companion(record, first_problem, stage_items)
+                    if report is not None and first_problem is not None
+                    else None
+                ),
                 "run_diff": run_diff,
                 "run_again_url": _run_again_url(record),
                 "notes": run_notes(record),
@@ -2045,6 +2377,13 @@ def create_app(
             if report is not None and decision_summary is not None
             else None
         )
+        stage_items = _record_stage_checklist(record, app.state.workspace_root)
+        quick_update_text = (
+            _quick_update_text(record, report, decision_summary, grouped_findings)
+            if report is not None and decision_summary is not None
+            else ""
+        )
+        full_handoff_text = _load_text_file(record.paths.get("markdown_report", ""))
         return app.state.templates.TemplateResponse(
             request,
             "evidence.html",
@@ -2052,7 +2391,31 @@ def create_app(
                 "record": record,
                 "first_problem": first_problem,
                 "selected_stage": _record_workflow_stage(record),
-                "stage_checklist": _record_stage_checklist(record, app.state.workspace_root),
+                "stage_checklist": stage_items,
+                "evidence_completeness": (
+                    _evidence_completeness(stage_items)
+                    if report is not None and first_problem is not None
+                    else None
+                ),
+                "documentation_exports": (
+                    _documentation_exports(
+                        record,
+                        report,
+                        decision_summary,
+                        grouped_findings,
+                        first_problem,
+                        stage_items,
+                        quick_update_text,
+                        full_handoff_text,
+                    )
+                    if report is not None and decision_summary is not None and first_problem is not None
+                    else []
+                ),
+                "manual_review_companion": (
+                    _manual_review_companion(record, first_problem, stage_items)
+                    if report is not None and first_problem is not None
+                    else None
+                ),
                 "evidence_sections": _evidence_sections(record, first_problem),
             },
         )
@@ -2080,6 +2443,7 @@ def create_app(
     async def run_status_api(run_id: str) -> JSONResponse:
         record = load_run_record(run_id, app.state.workspace_root)
         payload = record.to_dict()
+        payload["command_preview"] = _run_command_preview(record)
         payload["live_log_tail"] = []
         return JSONResponse(payload)
 

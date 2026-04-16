@@ -21,7 +21,7 @@ See [NOTICE.md](NOTICE.md) for the current handling note.
 
 ## Repository Status
 
-- current maturity: working internal preflight framework with live `G70`, `G65`, and `G45` slices plus a local operator UI
+- current maturity: working internal preflight framework with a broadened real BMW live-slice registry plus a local operator UI
 - branch model: GitFlow-style `main`, `develop`, `feature/*`, `release/*`, `hotfix/*`
 - contribution/review flow: see [CONTRIBUTING.md](CONTRIBUTING.md)
 - security / sensitive-data handling: see [SECURITY.md](SECURITY.md)
@@ -99,7 +99,7 @@ python -m unittest discover -s tests -v
 
 This full test command now completes again in the current live-profile environment; the earlier timeout came from duplicate `project_sanity` manifest scans on the acceptance path and has been removed.
 
-List the canonical live profiles:
+List the currently registered live profiles:
 
 ```bash
 python -m sg_preflight list-profiles --json
@@ -149,8 +149,9 @@ It provides:
 - Guided checks: show one recommended car first, then keep the other cars in a separate secondary section; the selected workflow stage stays attached when you start from the stage launcher
 - Run: one primary button only, plus a visible `Files this check will use` block; quick-check and alternate actions stay behind foldouts, and workflow-stage context now persists into quick checks too
 - Result: a primary `First Thing To Do` panel, direct source-file link for the first problem, a stage-aware handoff copy action, a `Stage Readiness` panel, and a `Changed Since Last Check` comparison against the previous completed run for the same profile
-- Live progress: long-running runs and actions now show a `NOW LOADING...` overlay with estimated progress, coarse ETA, full step visibility, persisted framework events, and live action-log tail instead of only a static waiting message
+- Live progress: long-running runs and actions now show a `NOW LOADING...` overlay with estimated progress, coarse ETA, full step visibility, persisted framework events, live action-log tail, and clickable per-step drilldown with nested child-status detail where available
 - Guidance: Home, Run, and Result pages now include explicit "if you are unsure, do this" blocks so teammate pilots can stay on the main path without exploring every foldout
+- Result and Files And Proof: evidence-completeness scoring, explicit proof/manual/blocked grouping, richer stage-specific exports for Jira / QA Hero / pre-delivery use, and a manual-review companion with screenshot-slot and Blender-vs-RaCo copy blocks
 - Files And Proof: grouped `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned when a finding exists plus the same stage-readiness summary for evidence completeness
 - One-click actions for the wider SG QA flow:
   - daily live matrix
@@ -199,7 +200,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_real_live_matrix_smoke.ps1
 This writes a comparison summary plus per-car bundles, reports, and run records to `out\real-live-matrix\latest`.
 
 > [!NOTE]
-> The live matrix is currently the best single command for showing the tool to the 3D team because it compares the current real `G70`, `G65`, and `G45` slices side by side.
+> The live matrix is still the best single command for showing the tool to the 3D team because it compares the strongest current demo slices side by side, even though the registry now supports a wider real BMW slice set.
 
 Extract a structured pain/action summary from a Whiteboard retro export:
 
@@ -292,9 +293,9 @@ Notes:
 - `--context` adds workflow/handoff metadata like car model, trim, delivery phase, and review target to the generated manifest
 - `--md-out` writes a ticket/chat-friendly QA handoff report with grouped findings plus owner/action hints
 - live configs now cover:
-  - `config/sg_rules_live.json` for `G70`
-  - `config/sg_rules_live_g65.json` for `G65`
-  - `config/sg_rules_live_g45.json` for classic `G45` anchor families
+  - `config/sg_rules_live.json` for the widened IDCevo BMW family such as `G70`, `G50`, `G78`, and `NA0` / `NA5-NA8`
+  - `config/sg_rules_live_g65.json` for the constants-heavy `G65` slice
+  - `config/sg_rules_live_g45.json` for the classic BMW family such as `G45`, `G68`, `U10`, and `F70`
 
 ## Bundle contract
 
@@ -380,7 +381,7 @@ This is already fully runnable, but it is still an early internal release:
 
 > [!WARNING]
 > The current live findings are useful production signal, not synthetic demo failures. A clean tooling run does not mean the car is clean; it means the deterministic checks completed successfully and the remaining findings are likely worth triage.
-- the repo now supports live SG mirror inputs for `G70`, `G65`, and `G45` anchor/constants/carpaint/project-sanity slices
+- the repo now supports a broader real BMW live-slice registry on the mirrored SG checkout, with the current strongest demo slices still centered on `G70`, `G65`, and `G45`
 - the local operator UI is intentionally a simple local work surface over the same engine, not a separate second validation engine
 - the framework is intended to improve the established SG QA flow, not replace BMW screenshot smoke, rack review, or Blender visual checks
 - the current live matrix baseline is meaningful already:
@@ -391,4 +392,4 @@ This is already fully runnable, but it is still an early internal release:
 - rack / screenshot / trace integration is not yet wired in
 - missing BMW-side access or a local `digital-3d-car-models` clone is still an explicit blocker for full screenshot-smoke coverage on this machine
 
-The next real step is to widen coverage from these first BMW live slices to additional BMW/MINI variants while keeping the validation core unchanged.
+The next real step is to widen coverage from the current BMW rollout into MINI variants while keeping the validation core unchanged.

@@ -412,34 +412,79 @@ def build_progress_payload(
         for item in steps[1:]:
             item["state"] = "pending"
 
+    event_items = [dict(item) for item in events] if events else []
+    step_details: list[dict[str, Any]] = []
+    for step in steps:
+        matching_events = [
+            dict(item)
+            for item in event_items
+            if str(item.get("step_key", "")).strip() == step["key"]
+        ]
+        latest_event = matching_events[-1] if matching_events else {}
+        step_details.append(
+            {
+                "key": step["key"],
+                "label": step["label"],
+                "state": step["state"],
+                "detail": detail if step["key"] == step_key else str(latest_event.get("detail", "")).strip(),
+                "last_label": str(latest_event.get("label", "")).strip(),
+                "last_timestamp_utc": str(latest_event.get("timestamp_utc", "")).strip(),
+                "events": matching_events[-8:],
+                "meta": dict(latest_event.get("meta", {}))
+                if isinstance(latest_event.get("meta"), dict)
+                else {},
+            }
+        )
+
     return {
         "percent": percent,
         "step_key": step_key,
         "label": label,
         "detail": detail,
         "steps": steps,
-        "events": [dict(item) for item in events] if events else [],
+        "events": event_items,
+        "step_details": step_details,
     }
 
 
-def _progress_event(label: str, detail: str = "") -> dict[str, str]:
-    return {
+def _progress_event(
+    step_key: str,
+    label: str,
+    detail: str = "",
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "timestamp_utc": utc_now(),
+        "step_key": step_key,
         "label": label,
         "detail": detail,
     }
+    if meta:
+        payload["meta"] = dict(meta)
+    return payload
 
 
 def _merged_progress_events(
     existing: dict[str, Any] | None,
     *,
+    step_key: str,
     label: str,
     detail: str = "",
-) -> list[dict[str, str]]:
+    meta: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     raw_events = existing.get("events", []) if isinstance(existing, dict) else []
     events = [dict(item) for item in raw_events if isinstance(item, dict)]
-    if not events or events[-1].get("label") != label or events[-1].get("detail") != detail:
-        events.append(_progress_event(label, detail))
+    if (
+        not events
+        or events[-1].get("step_key") != step_key
+        or events[-1].get("label") != label
+        or events[-1].get("detail") != detail
+        or (
+            isinstance(meta, dict)
+            and dict(events[-1].get("meta", {})) != dict(meta)
+        )
+    ):
+        events.append(_progress_event(step_key, label, detail, meta))
     return events[-40:]
 
 
@@ -450,8 +495,15 @@ def _set_run_progress(
     percent: int,
     label: str,
     detail: str = "",
+    meta: dict[str, Any] | None = None,
 ) -> None:
-    events = _merged_progress_events(record.progress, label=label, detail=detail)
+    events = _merged_progress_events(
+        record.progress,
+        step_key=step_key,
+        label=label,
+        detail=detail,
+        meta=meta,
+    )
     record.progress = build_progress_payload(
         RUN_PROGRESS_PLAN,
         step_key=step_key,
@@ -618,14 +670,21 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
         record.exit_code = 1
         record.completed_at_utc = utc_now()
         record.error_message = str(exc)
-        record.progress = dict(record.progress or {})
-        events = _merged_progress_events(record.progress, label="Run failed", detail=str(exc))
-        record.progress.update(
-            {
-                "label": "Run failed",
-                "detail": str(exc),
-                "events": events,
-            }
+        existing_progress = dict(record.progress or {})
+        failure_step = str(existing_progress.get("step_key", "finalize")).strip() or "finalize"
+        events = _merged_progress_events(
+            existing_progress,
+            step_key=failure_step,
+            label="Run failed",
+            detail=str(exc),
+        )
+        record.progress = build_progress_payload(
+            RUN_PROGRESS_PLAN,
+            step_key=failure_step,
+            percent=int(existing_progress.get("percent", 100) or 100),
+            label="Run failed",
+            detail=str(exc),
+            events=events,
         )
         save_run_record(record)
         raise

@@ -52,8 +52,68 @@ def _workspace_root(explicit_root: Path | None = None) -> Path:
     return (explicit_root or Path(__file__).resolve().parents[1]).resolve()
 
 
+def _generic_idcevo_profile_spec(profile_id: str) -> dict[str, Any]:
+    return {
+        "profile_id": profile_id,
+        "label": f"BMW {profile_id} live slice",
+        "project_relative": Path(f"Cars_IDCevo/BMW/{profile_id}"),
+        "config_relative": Path("config/sg_rules_live.json"),
+        "default_context": {
+            "car_model": profile_id,
+            "trim_line": "Basis",
+            "delivery_phase": "svn_live_preflight",
+            "review_target": f"{profile_id.lower()}_end_to_end",
+            "evidence_source": "local_svn_mirror",
+        },
+        "description": f"Current IDCevo BMW {profile_id} live preflight slice.",
+        "operator_goal": "Catch deterministic SG-side issues early on an additional live BMW slice before review or delivery pressure rises.",
+        "workflow_value": "Useful when the team needs the same local preflight surface on a car beyond the original demo trio.",
+        "friendly_task": "Run full SG preflight",
+        "friendly_summary": "Use this when you need the same SG-side deterministic pass on another IDCevo BMW slice.",
+        "focus_points": (
+            "Anchor scene sanity on the live IDCevo slice",
+            "Pivot_Master versus Module_constants drift",
+            "Cross-car references, unused Lua, and shared carpaint signal",
+        ),
+        "mirror_audit_targets": (
+            f"Cars_IDCevo/BMW/{profile_id}",
+            "Cars/BMW/CarPaint.json",
+        ),
+    }
+
+
+def _generic_classic_profile_spec(profile_id: str) -> dict[str, Any]:
+    return {
+        "profile_id": profile_id,
+        "label": f"BMW {profile_id} classic slice",
+        "project_relative": Path(f"Cars/BMW/{profile_id}"),
+        "config_relative": Path("config/sg_rules_live_g45.json"),
+        "default_context": {
+            "car_model": profile_id,
+            "trim_line": "Basis",
+            "delivery_phase": "svn_live_preflight",
+            "review_target": f"{profile_id.lower()}_classic_preflight",
+            "evidence_source": "local_svn_mirror",
+        },
+        "description": f"Classic BMW {profile_id} validation slice.",
+        "operator_goal": "Reuse the current classic-family checks on another real mirrored BMW slice without waiting for a new tool branch.",
+        "workflow_value": "Useful when classic BMW work needs the same SG-side anchors, constants, and project-sanity path as G45.",
+        "friendly_task": "Run classic slice check",
+        "friendly_summary": "Use this when you need the existing classic-family preflight on another mirrored BMW slice.",
+        "focus_points": (
+            "Classic anchor-family coverage",
+            "Pivot_Master versus Module_constants drift",
+            "Legacy RaCo and project-sanity signal",
+        ),
+        "mirror_audit_targets": (
+            f"Cars/BMW/{profile_id}",
+            "Cars/BMW/CarPaint.json",
+        ),
+    }
+
+
 def _profile_specs() -> tuple[dict[str, Any], ...]:
-    return (
+    canonical = (
         {
             "profile_id": "G70",
             "label": "BMW G70 live slice",
@@ -136,6 +196,16 @@ def _profile_specs() -> tuple[dict[str, Any], ...]:
             ),
         },
     )
+
+    idcevo_additional = tuple(
+        _generic_idcevo_profile_spec(profile_id)
+        for profile_id in ("G50", "G78", "NA0", "NA5", "NA6", "NA7", "NA8")
+    )
+    classic_additional = tuple(
+        _generic_classic_profile_spec(profile_id)
+        for profile_id in ("F70", "F74", "F78", "G48", "G68", "U06", "U10", "U11", "U12")
+    )
+    return canonical + idcevo_additional + classic_additional
 
 
 def list_run_profiles(

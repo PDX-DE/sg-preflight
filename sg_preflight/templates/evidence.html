@@ -5,6 +5,9 @@
 {% set sections = evidence_sections if evidence_sections is defined and evidence_sections else [] %}
 {% set stage = selected_stage if selected_stage is defined else none %}
 {% set stage_items = stage_checklist if stage_checklist is defined else [] %}
+{% set completeness = evidence_completeness if evidence_completeness is defined else none %}
+{% set doc_exports = documentation_exports if documentation_exports is defined else [] %}
+{% set manual_companion = manual_review_companion if manual_review_companion is defined else none %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Files And Proof{% endif %}</p>
@@ -62,6 +65,47 @@
 </section>
 {% endif %}
 
+{% if completeness %}
+<section class="panel">
+  <div class="panel-head">
+    <h3>Evidence Completeness</h3>
+    <p>Use this to see what proof exists already, what is still manual, and what remains blocked externally.</p>
+  </div>
+  <div class="summary-inline">
+    <span><strong>{{ completeness.local_score_percent }}%</strong> local SG evidence</span>
+    <span><strong>{{ completeness.overall_score_percent }}%</strong> full stage chain</span>
+    <span><strong>{{ completeness.local_counts.ready }}</strong> local ready</span>
+    <span><strong>{{ completeness.overall_counts.manual }}</strong> manual</span>
+    <span><strong>{{ completeness.overall_counts.blocked + completeness.overall_counts.partial }}</strong> blocked or partial</span>
+  </div>
+  <p>{{ completeness.summary }}</p>
+  {% if completeness.ready_items %}
+  <div class="note-block">
+    <strong>Proof already present</strong>
+    {% for item in completeness.ready_items %}
+    <div>{{ item.label }}: {{ item.summary }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if completeness.manual_items %}
+  <div class="note-block">
+    <strong>Still manual</strong>
+    {% for item in completeness.manual_items %}
+    <div>{{ item.label }}: {{ item.summary }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if completeness.blocked_items %}
+  <div class="note-block note-block--warn">
+    <strong>Blocked or external</strong>
+    {% for item in completeness.blocked_items %}
+    <div>{{ item.label }} [{{ item.state }}]: {{ item.summary }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
 <section class="stack">
   {% if sections %}
   {% for section in sections %}
@@ -94,4 +138,57 @@
   </article>
   {% endif %}
 </section>
+
+{% if doc_exports %}
+<section class="panel">
+  <div class="panel-head">
+    <h3>Stage-Specific Exports</h3>
+    <p>These copy blocks are ready to paste into Jira, QA Hero, pre-delivery notes, or delivery documentation.</p>
+  </div>
+  <div class="action-row action-row--wrap">
+    {% for item in doc_exports %}
+    <button class="button subtle copy-button" type="button" data-copy-target="{{ item.target_id }}">{{ item.label }}</button>
+    {% endfor %}
+  </div>
+  {% for item in doc_exports %}
+  <textarea id="{{ item.target_id }}" hidden>{{ item.text }}</textarea>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if manual_companion %}
+<section class="panel">
+  <div class="panel-head">
+    <h3>{{ manual_companion.title }}</h3>
+    <p>{{ manual_companion.summary }}</p>
+  </div>
+  <ol class="step-list">
+    {% for item in manual_companion.checklist %}
+    <li>{{ item }}</li>
+    {% endfor %}
+  </ol>
+  {% if manual_companion.scenario_items %}
+  <div class="note-block note-block--guide">
+    <strong>Still manual or external</strong>
+    {% for item in manual_companion.scenario_items %}
+    <div>{{ item.label }} [{{ item.state }}]: {{ item.summary }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="note-block">
+    <strong>Suggested screenshot slots</strong>
+    {% for item in manual_companion.screenshot_slots %}
+    <div>{{ item }}</div>
+    {% endfor %}
+  </div>
+  <div class="action-row action-row--wrap">
+    {% for item in manual_companion.copy_items %}
+    <button class="button subtle copy-button" type="button" data-copy-target="{{ item.target_id }}">{{ item.label }}</button>
+    {% endfor %}
+  </div>
+  {% for item in manual_companion.copy_items %}
+  <textarea id="{{ item.target_id }}" hidden>{{ item.text }}</textarea>
+  {% endfor %}
+</section>
+{% endif %}
 {% endblock %}

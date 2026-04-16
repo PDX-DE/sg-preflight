@@ -10,7 +10,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 - Internal proprietary `LICENSE` for repository ownership and internal-use handling
 - End-to-end CLI flow for `probe`, `materialize`, and `run`
-- Canonical live-profile registry for `G70`, `G65`, and `G45`
+- Canonical live-profile registry for `G70`, `G65`, and `G45`, now widened with additional real BMW slices such as `G50`, `G78`, `NA0`, `NA5-NA8`, `F70`, `F74`, `F78`, `G48`, `G68`, `U06`, `U10`, `U11`, and `U12`
 - Shared Python service layer for bundle execution, report generation, and persistent run records
 - Local FastAPI/Jinja operator UI with Home, Run, Result, and Files And Proof views
 - PowerShell operator-UI launcher/check script for teammate sessions
@@ -39,6 +39,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 - Full `python -m unittest discover -s tests -v` coverage now completes on this machine again because live `project_sanity` manifest generation no longer spends minutes in duplicate path/Lua scans
 - Operator loading overlay now stays hidden on ordinary pages until a real run or action actually starts, fixing the stuck `NOW LOADING...` state on `/ui`
+- Operator loading overlay now lets the operator click individual steps to inspect exact per-step detail, step-specific events, nested child progress, target paths, and current commands instead of only showing one flat status strip
 - Operator UI Home now starts with common QA-task entry points so teammates can choose by intent instead of profile code first
 - Operator UI Home now keeps `What Changed?` as the only primary start path above the fold and demotes daily matrix, repo checker, and direct car-picking to secondary entry points
 - Operator UI now also supports workflow-stage starts for before commit, before review, pre-delivery, post-integration, and Jira / QA Hero evidence work, while carrying that stage context into run results and Files And Proof
@@ -52,6 +53,9 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text
 - Result pages now compare the current run against the previous completed run for the same profile so operators can see new findings, resolved findings, count deltas, and copy a diff-ready status update
 - Result and evidence pages now show a stage-readiness summary so operators can see what proof is ready and what remains manual or blocked for the selected workflow step
+- Result and Files And Proof now add evidence-completeness scoring, explicit local-vs-full-stage readiness counts, and clearer proof/manual/blocked grouping per workflow stage
+- Result and Files And Proof now expose richer copy-ready exports for Jira implementation updates, Jira positive and negative test notes, QA Hero notes, pre-delivery summaries, and delivery-document snippets
+- Result and Files And Proof now include a manual-review companion with Blender-vs-RaCo checklist text, screenshot evidence slots, and copy-ready manual verification records
 - Result pages now center one `First Thing To Do` panel, pin the best matching source file for the top finding, and make a problem-specific handoff copy action primary
 - Home, Run, and Result pages now add more explicit "if you are unsure, do this" guidance so teammate pilots can stay on the recommended path instead of browsing the whole surface
 - Run and action result pages now expose a live `NOW LOADING...` overlay with estimated progress, coarse ETA, full step visibility, persisted framework-event history, and live action-log tail while long checks are still running
@@ -92,7 +96,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Known Gaps
 
-- The first live real-source rollout now covers `G70`, `G65`, and `G45`, but additional BMW/MINI cars still need profile rollout
+- MINI coverage is still missing even though BMW profile coverage is now much broader
 - The operator UI is intentionally local-first; a thin desktop wrapper is still deferred until adoption requires one-click packaging
 - Direct RaCo-runtime execution of helper scripts such as `read_json_carpaints.py` is still not part of the current CLI-first flow
 - Full BMW screenshot-smoke coverage still depends on BMW-side access and a local `digital-3d-car-models` clone

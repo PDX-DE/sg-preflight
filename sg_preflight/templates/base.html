@@ -47,9 +47,22 @@
           <span class="detail-label">Current status</span>
           <div id="loading-progress-status">queued</div>
         </div>
-        <div class="loading-step-list" id="loading-step-list"></div>
+        <div class="loading-detail-grid">
+          <div>
+            <div class="loading-expanded-summary">
+              <span class="detail-label">Run steps</span>
+            </div>
+            <div class="loading-step-list" id="loading-step-list"></div>
+          </div>
+          <div class="loading-expanded-summary loading-step-detail-panel">
+            <span class="detail-label">Selected step detail</span>
+            <div class="loading-step-detail" id="loading-step-detail">
+              Click one step to inspect its exact events, target path, nested child status, and current command.
+            </div>
+          </div>
+        </div>
         <div class="loading-expanded-summary">
-          <span class="detail-label">Framework events</span>
+          <span class="detail-label">All framework events</span>
           <div class="loading-event-list" id="loading-event-list"></div>
         </div>
         <div class="loading-expanded-summary">

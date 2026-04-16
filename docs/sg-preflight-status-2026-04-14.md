@@ -4,10 +4,11 @@
 
 Current local status on `feature/live-sg-matrix-and-anchor-groups`:
 
-- the canonical live acceptance path still covers `G70`, `G65`, and `G45`
+- the canonical live acceptance path still centers on `G70`, `G65`, and `G45`, but the live registry is now widened across additional real BMW slices such as `G50`, `G78`, `NA5`, `F70`, `G68`, and `U10`
 - the full `python -m unittest discover -s tests -v` run now completes again on this machine instead of timing out in the acceptance path
 - operator results now compare the current run against the previous completed run for the same profile
-- long-running runs and actions now expose a live `NOW LOADING...` overlay with estimated progress, under-the-hood phase visibility, and a coarse ETA
+- long-running runs and actions now expose a live `NOW LOADING...` overlay with estimated progress, under-the-hood phase visibility, a coarse ETA, and clickable per-step drilldown with nested child progress where available
+- result and evidence views now expose evidence-completeness scoring, richer Jira / QA Hero / pre-delivery exports, and a manual-review companion instead of only generic handoff text
 - Home, Run, and Result now push more explicit "if you are unsure, do this" guidance so teammate pilots have a simpler path through the UI
 
 ## What This Project Is
@@ -114,9 +115,9 @@ Important note:
 
 ## Current Blockers
 
-These do not stop current progress, but they still block the next jump beyond the current live slices:
+These do not stop current progress, but they still block the next jump beyond the current widened BMW rollout:
 
-- additional BMW/MINI live profile rollout beyond `G70`, `G65`, and `G45`
+- MINI live profile rollout
 - optional direct RaCo-runtime checks such as `check_scenes.py`
 - richer integration hooks beyond local preflight and evidence capture
 

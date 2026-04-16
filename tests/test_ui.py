@@ -166,8 +166,14 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Source file", result_page.text)
         self.assertIn("Lua source", result_page.text)
         self.assertIn("Stage Readiness", result_page.text)
+        self.assertIn("Evidence Completeness", result_page.text)
+        self.assertIn("Stage-Specific Exports", result_page.text)
+        self.assertIn("Manual Review Companion", result_page.text)
         self.assertIn("Copy Pre-Delivery Summary", result_page.text)
         self.assertIn("Copy Delivery Handoff", result_page.text)
+        self.assertIn("Copy Jira Implementation Update", result_page.text)
+        self.assertIn("Copy Delivery-Doc Snippet", result_page.text)
+        self.assertIn("Copy Manual Review Record", result_page.text)
         self.assertIn("Performance tests and delivery documentation", result_page.text)
         self.assertEqual(evidence_page.status_code, 200)
         self.assertIn("Pinned First File", evidence_page.text)
@@ -175,6 +181,10 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Source-of-truth files", evidence_page.text)
         self.assertIn("Run metadata", evidence_page.text)
         self.assertIn("Stage Readiness", evidence_page.text)
+        self.assertIn("Evidence Completeness", evidence_page.text)
+        self.assertIn("Stage-Specific Exports", evidence_page.text)
+        self.assertIn("Manual Review Companion", evidence_page.text)
+        self.assertIn("Copy Screenshot Evidence Slots", evidence_page.text)
 
     def test_guided_run_carries_plain_language_job_label_into_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -206,6 +216,8 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Copy Positive Test Note", result_page.text)
         self.assertIn("Copy Jira Update", result_page.text)
         self.assertIn("Copy QA Hero Note", result_page.text)
+        self.assertIn("Copy Jira Implementation Update", result_page.text)
+        self.assertIn("Copy Jira Negative Test Note", result_page.text)
         self.assertIn("Stage Readiness", result_page.text)
         self.assertIn("You are done when...", result_page.text)
         self.assertEqual(evidence_page.status_code, 200)
@@ -300,11 +312,13 @@ class TestOperatorUI(unittest.TestCase):
                 events=[
                     {
                         "timestamp_utc": "2026-04-16T08:00:01+00:00",
+                        "step_key": "constants_expected",
                         "label": "Reading expected constants",
                         "detail": "Normalizing G65_Pivot_Master.json.",
                     },
                     {
                         "timestamp_utc": "2026-04-16T08:00:02+00:00",
+                        "step_key": "validate_constants",
                         "label": "Validating constants",
                         "detail": "Running the `constants` validator against the materialized SG bundle.",
                     },
@@ -325,6 +339,7 @@ class TestOperatorUI(unittest.TestCase):
                 events=[
                     {
                         "timestamp_utc": "2026-04-16T08:00:01+00:00",
+                        "step_key": "profiles",
                         "label": "Running live profile matrix",
                         "detail": "Preparing 1 live profile run(s).",
                     }
@@ -341,11 +356,14 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("progress", run_payload)
         self.assertEqual(run_payload["progress"]["label"], "Validating constants")
         self.assertEqual(len(run_payload["progress"]["events"]), 2)
+        self.assertEqual(run_payload["progress"]["events"][0]["step_key"], "constants_expected")
+        self.assertEqual(run_payload["progress"]["step_details"][0]["key"], "queued")
         self.assertEqual(run_payload["live_log_tail"], [])
 
         self.assertEqual(action_status.status_code, 200)
         action_payload = action_status.json()
         self.assertEqual(action_payload["progress"]["label"], "Running G65")
+        self.assertEqual(action_payload["progress"]["events"][0]["step_key"], "profiles")
         self.assertEqual(action_payload["live_log_tail"], ["line 1", "line 2", "line 3"])
 
     def test_blocked_action_can_be_started_and_rendered(self) -> None:

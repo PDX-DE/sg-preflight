@@ -9,8 +9,11 @@
   const overlayToggle = document.getElementById("loading-toggle");
   const overlayExpanded = document.getElementById("loading-expanded");
   const overlaySteps = document.getElementById("loading-step-list");
+  const overlayStepDetail = document.getElementById("loading-step-detail");
   const overlayEvents = document.getElementById("loading-event-list");
   const overlayLogTail = document.getElementById("loading-log-tail");
+  let selectedStepKey = "";
+  let nestedStepRequestId = 0;
 
   const setOverlayVisibility = function (visible) {
     if (!overlay) {
@@ -41,19 +44,103 @@
     return "ETA about " + Math.round(remainingSeconds / 60) + "m";
   };
 
-  const renderOverlaySteps = function (steps) {
+  const appendKeyValueGrid = function (container, values) {
+    const entries = Object.entries(values || {}).filter((entry) => {
+      return entry[1] !== null && entry[1] !== undefined && String(entry[1]).trim() !== "";
+    });
+    if (!entries.length) {
+      return;
+    }
+
+    const grid = document.createElement("div");
+    grid.className = "loading-step-meta-grid";
+    entries.forEach((entry) => {
+      const item = document.createElement("div");
+      item.className = "loading-step-meta-item";
+
+      const label = document.createElement("span");
+      label.className = "detail-label";
+      label.textContent = entry[0].replace(/_/g, " ");
+
+      const value = document.createElement("div");
+      value.className = "path-text";
+      value.textContent = String(entry[1]);
+
+      item.appendChild(label);
+      item.appendChild(value);
+      grid.appendChild(item);
+    });
+    container.appendChild(grid);
+  };
+
+  const renderInlineEvents = function (container, events, emptyCopy) {
+    const items = Array.isArray(events) ? events.slice().reverse() : [];
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "loading-inline-empty";
+      empty.textContent = emptyCopy;
+      container.appendChild(empty);
+      return;
+    }
+
+    items.forEach((event) => {
+      const row = document.createElement("div");
+      row.className = "loading-inline-event";
+
+      const head = document.createElement("strong");
+      head.textContent = event.label || "Event";
+      row.appendChild(head);
+
+      if (event.timestamp_utc) {
+        const stamp = document.createElement("div");
+        stamp.className = "muted";
+        stamp.textContent = event.timestamp_utc;
+        row.appendChild(stamp);
+      }
+      if (event.detail) {
+        const detail = document.createElement("div");
+        detail.className = "path-text";
+        detail.textContent = event.detail;
+        row.appendChild(detail);
+      }
+      container.appendChild(row);
+    });
+  };
+
+  const renderOverlaySteps = function (stepDetails, currentStepKey, payload) {
     if (!overlaySteps) {
       return;
     }
     overlaySteps.innerHTML = "";
-    (steps || []).forEach((step) => {
-      const row = document.createElement("div");
-      row.className = "loading-step";
+    const items = Array.isArray(stepDetails) ? stepDetails : [];
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "loading-inline-empty";
+      empty.textContent = "No step breakdown is available yet.";
+      overlaySteps.appendChild(empty);
+      return;
+    }
+
+    const availableKeys = items.map((item) => item.key);
+    if (!selectedStepKey || availableKeys.indexOf(selectedStepKey) === -1) {
+      selectedStepKey = currentStepKey || availableKeys[0];
+    }
+
+    items.forEach((step) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "loading-step" + (step.key === selectedStepKey ? " loading-step--selected" : "");
 
       const copy = document.createElement("div");
       const title = document.createElement("strong");
       title.textContent = step.label || step.key || "Step";
       copy.appendChild(title);
+      if (step.detail) {
+        const detail = document.createElement("div");
+        detail.className = "muted";
+        detail.textContent = step.detail;
+        copy.appendChild(detail);
+      }
 
       const badge = document.createElement("span");
       badge.className = "badge " + (
@@ -63,6 +150,11 @@
 
       row.appendChild(copy);
       row.appendChild(badge);
+      row.addEventListener("click", function () {
+        selectedStepKey = step.key || "";
+        renderOverlaySteps(items, currentStepKey, payload);
+        renderOverlayStepDetail(items, payload);
+      });
       overlaySteps.appendChild(row);
     });
   };
@@ -105,6 +197,144 @@
     });
   };
 
+  const renderOverlayStepDetail = function (stepDetails, payload) {
+    if (!overlayStepDetail) {
+      return;
+    }
+    overlayStepDetail.innerHTML = "";
+    const items = Array.isArray(stepDetails) ? stepDetails : [];
+    const selected = items.find((item) => item.key === selectedStepKey) || items[0];
+    if (!selected) {
+      overlayStepDetail.textContent = "No step detail is available yet.";
+      return;
+    }
+
+    const header = document.createElement("div");
+    header.className = "loading-step-detail-header";
+
+    const title = document.createElement("strong");
+    title.textContent = selected.label || selected.key || "Step";
+    header.appendChild(title);
+
+    const badge = document.createElement("span");
+    badge.className = "badge " + (
+      selected.state === "done" ? "ok" : selected.state === "active" ? "info" : "subtle"
+    );
+    badge.textContent = selected.state || "pending";
+    header.appendChild(badge);
+    overlayStepDetail.appendChild(header);
+
+    const detail = document.createElement("p");
+    detail.className = "loading-step-detail-copy";
+    detail.textContent = selected.detail || "No exact detail has been recorded for this step yet.";
+    overlayStepDetail.appendChild(detail);
+
+    if (selected.last_timestamp_utc || selected.last_label) {
+      const latest = document.createElement("div");
+      latest.className = "loading-step-latest";
+      latest.textContent = selected.last_timestamp_utc
+        ? selected.last_timestamp_utc + (selected.last_label ? " - " + selected.last_label : "")
+        : selected.last_label;
+      overlayStepDetail.appendChild(latest);
+    }
+
+    appendKeyValueGrid(
+      overlayStepDetail,
+      Object.assign(
+        {},
+        payload && payload.command_preview && !selected.meta.command ? { command: payload.command_preview } : {},
+        selected.meta || {}
+      )
+    );
+
+    const stepEventsHeading = document.createElement("span");
+    stepEventsHeading.className = "detail-label";
+    stepEventsHeading.textContent = "Step events";
+    overlayStepDetail.appendChild(stepEventsHeading);
+
+    const stepEvents = document.createElement("div");
+    stepEvents.className = "loading-inline-event-list";
+    renderInlineEvents(stepEvents, selected.events || [], "No step-specific events have been recorded yet.");
+    overlayStepDetail.appendChild(stepEvents);
+
+    if (selected.meta && selected.meta.child_status_url) {
+      const nestedHeading = document.createElement("span");
+      nestedHeading.className = "detail-label";
+      nestedHeading.textContent = "Nested child status";
+      overlayStepDetail.appendChild(nestedHeading);
+
+      const nestedBox = document.createElement("div");
+      nestedBox.className = "loading-nested-box";
+      nestedBox.textContent = "Loading nested child progress...";
+      overlayStepDetail.appendChild(nestedBox);
+
+      const currentRequestId = ++nestedStepRequestId;
+      fetch(selected.meta.child_status_url)
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Nested status fetch failed");
+          }
+          return response.json();
+        })
+        .then(function (nestedPayload) {
+          if (currentRequestId !== nestedStepRequestId) {
+            return;
+          }
+          nestedBox.innerHTML = "";
+
+          const nestedStatus = document.createElement("div");
+          nestedStatus.className = "loading-nested-status";
+          nestedStatus.textContent = (nestedPayload.status || "unknown") + (
+            nestedPayload.progress && nestedPayload.progress.label
+              ? " - " + nestedPayload.progress.label
+              : ""
+          );
+          nestedBox.appendChild(nestedStatus);
+
+          if (nestedPayload.progress && nestedPayload.progress.detail) {
+            const nestedDetail = document.createElement("div");
+            nestedDetail.className = "path-text";
+            nestedDetail.textContent = nestedPayload.progress.detail;
+            nestedBox.appendChild(nestedDetail);
+          }
+
+          if (selected.meta.child_result_url) {
+            const link = document.createElement("a");
+            link.href = selected.meta.child_result_url;
+            link.textContent = "Open nested child page";
+            nestedBox.appendChild(link);
+          }
+
+          appendKeyValueGrid(
+            nestedBox,
+            nestedPayload.command_preview ? { command: nestedPayload.command_preview } : {}
+          );
+
+          const nestedEvents = document.createElement("div");
+          nestedEvents.className = "loading-inline-event-list";
+          renderInlineEvents(
+            nestedEvents,
+            nestedPayload.progress ? nestedPayload.progress.events : [],
+            "No nested child events have been recorded yet."
+          );
+          nestedBox.appendChild(nestedEvents);
+
+          if (Array.isArray(nestedPayload.live_log_tail) && nestedPayload.live_log_tail.length) {
+            const nestedLog = document.createElement("pre");
+            nestedLog.className = "loading-nested-log";
+            nestedLog.textContent = nestedPayload.live_log_tail.join("\n");
+            nestedBox.appendChild(nestedLog);
+          }
+        })
+        .catch(function () {
+          if (currentRequestId !== nestedStepRequestId) {
+            return;
+          }
+          nestedBox.textContent = "Nested child progress is not available yet.";
+        });
+    }
+  };
+
   const renderOverlay = function (payload) {
     if (!overlay) {
       return;
@@ -133,7 +363,13 @@
     if (overlayStatus) {
       overlayStatus.textContent = status;
     }
-    renderOverlaySteps(progress.steps || []);
+    const stepDetails = Array.isArray(progress.step_details)
+      ? progress.step_details
+      : (progress.steps || []).map(function (step) {
+          return Object.assign({}, step, { detail: "", events: [], meta: {} });
+        });
+    renderOverlaySteps(stepDetails, progress.step_key || "", payload);
+    renderOverlayStepDetail(stepDetails, payload);
     renderOverlayEvents(progress.events || []);
     if (overlayLogTail) {
       const logLines = payload && Array.isArray(payload.live_log_tail) ? payload.live_log_tail : [];

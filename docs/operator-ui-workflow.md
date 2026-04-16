@@ -108,6 +108,9 @@ Shows:
 - a `Changed Since Last Check` panel that compares the current run against the previous completed run for the same profile and exposes a copy-ready diff update
 - a more explicit `If You Feel Lost` block so a teammate can stay on one guided path instead of reading the whole result page
 - a `Stage Readiness` panel that shows what this run already covers, what is still manual, and what remains blocked on the current machine
+- an `Evidence Completeness` panel that separates local SG proof from full-stage readiness and makes proof/manual/blocked gaps explicit
+- a `Stage-Specific Exports` panel with copy-ready Jira implementation updates, Jira positive and negative test notes, QA Hero notes, pre-delivery summaries, and delivery-doc snippets
+- a `Manual Review Companion` panel with Blender-vs-RaCo checklist text, screenshot evidence slots, and a copy-ready manual verification record
 - grouped findings behind a foldout
 - severity filtering
 - per-finding drilldown behind a foldout
@@ -131,6 +134,9 @@ Shows grouped direct links to:
   - project manifest
   - run record JSON
 - the same `Stage Readiness` summary so a teammate can see what evidence is still missing before the next workflow step
+- the same `Evidence Completeness` panel so the proof/manual/blocked split stays visible on the evidence page
+- the same stage-specific copy exports for ticket, QA Hero, pre-delivery, and delivery-doc work
+- the same manual-review companion so still-manual checks stay attached to the run evidence instead of living in chat memory
 
 ### Live Loading
 
@@ -142,6 +148,7 @@ That overlay shows:
 - a coarse ETA once the run has enough progress to extrapolate
 - the current phase label and a short detail sentence
 - a clickable under-the-hood step list so operators can see whether the tool is materializing sources, scanning project-sanity data, running validators, or finalizing output
+- a selectable per-step detail panel so clicking a step shows exact step events, current target path or command metadata, and nested child-status detail for wrapped automations
 - persisted framework-event history so operators can see every recorded phase transition in order
 - live action-log tail for long-running wrapped automations such as repo checker or scene check
 
@@ -192,11 +199,30 @@ Current behavior:
 
 ## Current Scope
 
-The operator UI currently targets canonical live slices first:
+The operator UI still targets canonical demo slices first, but the live registry now also includes broader real BMW coverage:
 
 - `G70`
 - `G65`
 - `G45`
+
+Additional widened support now includes slices such as:
+
+- `G50`
+- `G78`
+- `NA0`
+- `NA5`
+- `NA6`
+- `NA7`
+- `NA8`
+- `F70`
+- `F74`
+- `F78`
+- `G48`
+- `G68`
+- `U06`
+- `U10`
+- `U11`
+- `U12`
 
 Ad-hoc arbitrary-path runs are intentionally secondary to keeping the shared live profile workflow stable.
 

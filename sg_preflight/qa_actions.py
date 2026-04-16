@@ -18,6 +18,7 @@ from sg_preflight.services import (
     RunRequest,
     build_progress_payload,
     execute_profile_run,
+    operator_ui_runs_root,
     prerequisite_status,
     utc_now,
     workspace_root,
@@ -395,24 +396,44 @@ def save_action_record(record: ActionRecord) -> None:
     write_json_file(Path(record.paths["run_record"]), record.to_dict())
 
 
-def _progress_event(label: str, detail: str = "") -> dict[str, str]:
-    return {
+def _progress_event(
+    step_key: str,
+    label: str,
+    detail: str = "",
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "timestamp_utc": utc_now(),
+        "step_key": step_key,
         "label": label,
         "detail": detail,
     }
+    if meta:
+        payload["meta"] = dict(meta)
+    return payload
 
 
 def _merged_progress_events(
     existing: dict[str, Any] | None,
     *,
+    step_key: str,
     label: str,
     detail: str = "",
-) -> list[dict[str, str]]:
+    meta: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     raw_events = existing.get("events", []) if isinstance(existing, dict) else []
     events = [dict(item) for item in raw_events if isinstance(item, dict)]
-    if not events or events[-1].get("label") != label or events[-1].get("detail") != detail:
-        events.append(_progress_event(label, detail))
+    if (
+        not events
+        or events[-1].get("step_key") != step_key
+        or events[-1].get("label") != label
+        or events[-1].get("detail") != detail
+        or (
+            isinstance(meta, dict)
+            and dict(events[-1].get("meta", {})) != dict(meta)
+        )
+    ):
+        events.append(_progress_event(step_key, label, detail, meta))
     return events[-60:]
 
 
@@ -423,9 +444,16 @@ def _set_action_progress(
     percent: int,
     label: str,
     detail: str = "",
+    meta: dict[str, Any] | None = None,
 ) -> None:
     plan = ACTION_PROGRESS_PLANS.get(record.kind, (("queued", "Queued"), ("finalize", "Finalize action record")))
-    events = _merged_progress_events(record.progress, label=label, detail=detail)
+    events = _merged_progress_events(
+        record.progress,
+        step_key=step_key,
+        label=label,
+        detail=detail,
+        meta=meta,
+    )
     record.progress = build_progress_payload(
         plan,
         step_key=step_key,
@@ -478,9 +506,10 @@ def _artifact(label: str, path: Path) -> dict[str, str]:
 
 
 def _nested_action_record(parent: ActionRecord, action: OperatorAction, slug: str) -> ActionRecord:
-    output_root = Path(parent.paths["output_root"]) / slug
+    run_id = f"{parent.run_id}-{slug}"
+    output_root = operator_ui_actions_root(Path(parent.workspace_root)) / run_id
     return ActionRecord(
-        run_id=f"{parent.run_id}-{slug}",
+        run_id=run_id,
         action_id=action.action_id,
         label=action.label,
         kind=action.kind,
@@ -588,21 +617,30 @@ def _execute_daily_live_matrix(record: ActionRecord, root: Path) -> tuple[dict[s
 
     for index, profile in enumerate(profiles, start=1):
         matrix_percent = 10 + int((index - 1) / total_profiles * 75)
+        child_run_id = f"{record.run_id}-{profile.profile_id.lower()}"
+        child_output = operator_ui_runs_root(root) / child_run_id
         _set_action_progress(
             record,
             step_key="profiles",
             percent=matrix_percent,
             label=f"Running {profile.profile_id}",
             detail=f"Live matrix {index}/{len(profiles)}: materializing and validating {profile.profile_id}.",
+            meta={
+                "profile_id": profile.profile_id,
+                "index": index,
+                "total": len(profiles),
+                "child_run_id": child_run_id,
+                "child_status_url": f"/ui/api/runs/{child_run_id}",
+                "child_result_url": f"/ui/runs/{child_run_id}",
+            },
         )
-        child_output = output_root / profile.profile_id.lower()
         child = execute_profile_run(
             profile,
             RunRequest(
                 profile_id=profile.profile_id,
                 fail_on="never",
                 output_root=child_output,
-                run_id=profile.profile_id.lower(),
+                run_id=child_run_id,
             ),
             root,
         )
@@ -651,15 +689,22 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         percent=12,
         label="Running standard preflight",
         detail=f"Starting the recommended deterministic check for {profile.profile_id}.",
+        meta={
+            "profile_id": profile.profile_id,
+            "child_run_id": f"{record.run_id}-preflight",
+            "child_status_url": f"/ui/api/runs/{record.run_id}-preflight",
+            "child_result_url": f"/ui/runs/{record.run_id}-preflight",
+        },
     )
-    preflight_output = Path(record.paths["output_root"]) / "standard-preflight"
+    preflight_run_id = f"{record.run_id}-preflight"
+    preflight_output = operator_ui_runs_root(root) / preflight_run_id
     preflight = execute_profile_run(
         profile,
         RunRequest(
             profile_id=profile.profile_id,
             fail_on="never",
             output_root=preflight_output,
-            run_id=f"{profile.profile_id.lower()}-stack",
+            run_id=preflight_run_id,
         ),
         root,
     )
@@ -691,9 +736,23 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         percent=46,
         label="Checking SG repo hygiene",
         detail=f"Running mirrored repo checker coverage for {profile.profile_id}.",
+        meta={},
     )
     if repo_action.ready:
         repo_record = _nested_action_record(record, repo_action, "repo-checker")
+        _set_action_progress(
+            record,
+            step_key="repo_checker",
+            percent=46,
+            label="Checking SG repo hygiene",
+            detail=f"Running mirrored repo checker coverage for {profile.profile_id}.",
+            meta={
+                "child_run_id": repo_record.run_id,
+                "child_status_url": f"/ui/api/actions/{repo_record.run_id}",
+                "child_result_url": f"/ui/actions/{repo_record.run_id}",
+                "command": repo_record.command_preview,
+            },
+        )
         repo_summary, repo_artifacts, _ = _execute_repo_checker(repo_record, root)
         lines.append(
             "Repo checker: "
@@ -715,9 +774,23 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         percent=68,
         label="Checking RaCo scenes",
         detail=f"Running scene-check coverage for {profile.profile_id} where local RaCo is available.",
+        meta={},
     )
     if scene_action.ready:
         scene_record = _nested_action_record(record, scene_action, "scene-check")
+        _set_action_progress(
+            record,
+            step_key="scene_check",
+            percent=68,
+            label="Checking RaCo scenes",
+            detail=f"Running scene-check coverage for {profile.profile_id} where local RaCo is available.",
+            meta={
+                "child_run_id": scene_record.run_id,
+                "child_status_url": f"/ui/api/actions/{scene_record.run_id}",
+                "child_result_url": f"/ui/actions/{scene_record.run_id}",
+                "command": scene_record.command_preview,
+            },
+        )
         scene_summary, scene_artifacts, _ = _execute_scene_check(scene_record, root)
         lines.append(
             "Scene check: "
@@ -739,9 +812,23 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         percent=86,
         label="Checking BMW smoke stage",
         detail=f"Evaluating BMW-side screenshot smoke coverage for {profile.profile_id}.",
+        meta={},
     )
     if bmw_action.ready:
         bmw_record = _nested_action_record(record, bmw_action, "bmw-screenshot-smoke")
+        _set_action_progress(
+            record,
+            step_key="bmw_smoke",
+            percent=86,
+            label="Checking BMW smoke stage",
+            detail=f"Evaluating BMW-side screenshot smoke coverage for {profile.profile_id}.",
+            meta={
+                "child_run_id": bmw_record.run_id,
+                "child_status_url": f"/ui/api/actions/{bmw_record.run_id}",
+                "child_result_url": f"/ui/actions/{bmw_record.run_id}",
+                "command": bmw_record.command_preview,
+            },
+        )
         bmw_summary, bmw_artifacts, _ = _execute_bmw_screenshot_smoke(bmw_record, root)
         lines.extend(f"BMW screenshot smoke: {line}" for line in bmw_summary.get("lines", []))
         artifacts.extend(bmw_artifacts)
@@ -770,6 +857,10 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
         percent=24,
         label="Running SG repo checker",
         detail=f"Launching checker stack on {target}.",
+        meta={
+            "target": str(target),
+            "command": f"{sys.executable} {checker_script} {target}",
+        },
     )
     result = subprocess.run(
         [sys.executable, str(checker_script), str(target)],
@@ -787,6 +878,7 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
         percent=78,
         label="Parsing SG repo checker output",
         detail="Summarizing checker phases and reported error batches.",
+        meta={"target": str(target)},
     )
     summary = _parse_repo_checker_output(output)
     summary["return_code"] = result.returncode
@@ -814,6 +906,10 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
         percent=28,
         label="Running BMW export",
         detail=f"Launching BMW export for target {target}.",
+        meta={
+            "target": target,
+            "command": f"{sys.executable} {script_path} export {target}",
+        },
     )
     export_process = subprocess.run(
         [sys.executable, str(script_path), "export", target],
@@ -828,6 +924,10 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
         percent=68,
         label="Running BMW screenshots",
         detail=f"Capturing screenshot diff output for target {target}.",
+        meta={
+            "target": target,
+            "command": f"{sys.executable} {script_path} screenshots --diff {target}",
+        },
     )
     screenshots_process = subprocess.run(
         [sys.executable, str(script_path), "screenshots", "--diff", target],
@@ -880,6 +980,10 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
         percent=12,
         label="Discovering scenes",
         detail=f"Found {len(scenes)} `.rca` scene(s) under {project_root}.",
+        meta={
+            "project_root": str(project_root),
+            "scene_count": len(scenes),
+        },
     )
 
     for index, scene in enumerate(scenes, start=1):
@@ -890,6 +994,12 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
             percent=scene_percent,
             label=f"Checking scene {index}/{len(scenes)}",
             detail=str(scene),
+            meta={
+                "scene": str(scene),
+                "index": index,
+                "total": len(scenes),
+                "command": f"{raco_exe} -p {scene} -l 3",
+            },
         )
         log_lines.append(f"Checking scene: {scene}")
         result = subprocess.run(
@@ -970,6 +1080,7 @@ def execute_operator_action(
                 detail=action.blocker_message or "This action is blocked on the current machine.",
                 events=_merged_progress_events(
                     record.progress,
+                    step_key="queued",
                     label="Blocked on this machine",
                     detail=action.blocker_message or "This action is blocked on the current machine.",
                 ),
@@ -1017,6 +1128,7 @@ def execute_operator_action(
             detail="The generated files and summary are ready to open.",
             events=_merged_progress_events(
                 record.progress,
+                step_key="finalize",
                 label="Action completed",
                 detail="The generated files and summary are ready to open.",
             ),
@@ -1028,14 +1140,21 @@ def execute_operator_action(
         record.status = "failed"
         record.error_message = str(exc)
         record.completed_at_utc = utc_now()
-        record.progress = dict(record.progress or {})
-        events = _merged_progress_events(record.progress, label="Action failed", detail=str(exc))
-        record.progress.update(
-            {
-                "label": "Action failed",
-                "detail": str(exc),
-                "events": events,
-            }
+        existing_progress = dict(record.progress or {})
+        failure_step = str(existing_progress.get("step_key", "finalize")).strip() or "finalize"
+        events = _merged_progress_events(
+            existing_progress,
+            step_key=failure_step,
+            label="Action failed",
+            detail=str(exc),
+        )
+        record.progress = build_progress_payload(
+            ACTION_PROGRESS_PLANS.get(action.kind, (("queued", "Queued"),)),
+            step_key=failure_step,
+            percent=int(existing_progress.get("percent", 100) or 100),
+            label="Action failed",
+            detail=str(exc),
+            events=events,
         )
         save_action_record(record)
         raise
