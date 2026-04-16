@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ stage.short_label }} - SG Preflight Operator UI{% endblock %}
+{% block content %}
+{% set cards = job_cards if job_cards is defined else [] %}
+{% set scope = scope_items if scope_items is defined else [] %}
+<section class="hero-panel hero-panel--simple">
+  <div class="hero-copy">
+    <p class="eyebrow">Workflow Stage</p>
+    <h2>{{ stage.label }}</h2>
+    <p class="hero-text">{{ stage.description }}</p>
+    <div class="hero-bullets">
+      {% for item in stage.hero_steps %}
+      <span>{{ item }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="hero-actions hero-actions--stack">
+    <a class="button subtle" href="/ui">Back To Home</a>
+  </div>
+</section>
+
+<section class="panel panel--priority">
+  <div class="panel-head">
+    <h3>What This Stage Needs</h3>
+    <p>These points come directly out of the deck’s delivery, testing, and documentation discipline.</p>
+  </div>
+  <div class="simple-checklist">
+    <strong>Use this stage when:</strong>
+    <ul class="clean-list">
+      {% for item in stage.checklist %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h3>Start From The Kind Of Change</h3>
+    <p>Pick the change type that matches what you touched, then keep the selected workflow stage attached to the run.</p>
+  </div>
+  <div class="quick-start-grid">
+    {% for item in cards %}
+    <article class="quick-start-card">
+      <p class="eyebrow">Stage-Aware Start</p>
+      <h4>{{ item.short_label }}</h4>
+      <p>{{ item.description }}</p>
+      <span class="start-hint">{{ item.start_hint }}</span>
+      <div class="action-row action-row--wrap">
+        <a class="button" href="{{ item.href }}">Start {{ item.short_label }}</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h3>What This Stage Covers Here</h3>
+    <p>This is the honest machine-local readout: what `sg-preflight` covers now, what still needs humans, and what is blocked elsewhere.</p>
+  </div>
+  <div class="workflow-grid">
+    {% for item in scope %}
+    <article class="workflow-card">
+      <div class="status-row">
+        <strong>{{ item.label }}</strong>
+        <span class="badge {% if item.state == 'covered' or item.state == 'ready' %}ok{% elif item.state == 'manual' or item.state == 'partial' or item.state == 'pending' %}info{% else %}warn{% endif %}">{{ item.state }}</span>
+      </div>
+      <p class="workflow-summary">{{ item.summary }}</p>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

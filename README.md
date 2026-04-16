@@ -143,10 +143,11 @@ The operator UI serves locally at `http://127.0.0.1:8765/ui` by default.
 It provides:
 
 - Home: `What Changed?` is the primary start path; broader starts such as daily matrix, repo checker, and direct car picking are intentionally secondary
-- Guided checks: show one recommended car first, then keep the other cars in a separate secondary section
-- Run: one primary button only, plus a visible `Files this check will use` block; quick-check and alternate actions stay behind foldouts
-- Result: a primary `First Thing To Do` panel, direct source-file link for the first problem, and a primary handoff copy action
-- Files And Proof: grouped `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned when a finding exists
+- Home: a second workflow-stage launcher now supports starts like `Before commit`, `Pre-delivery`, `Post-integration`, and `Jira / QA Hero evidence`
+- Guided checks: show one recommended car first, then keep the other cars in a separate secondary section; the selected workflow stage stays attached when you start from the stage launcher
+- Run: one primary button only, plus a visible `Files this check will use` block; quick-check and alternate actions stay behind foldouts, and workflow-stage context now persists into quick checks too
+- Result: a primary `First Thing To Do` panel, direct source-file link for the first problem, a stage-aware handoff copy action, and a `Stage Readiness` panel showing what is still manual or blocked
+- Files And Proof: grouped `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned when a finding exists plus the same stage-readiness summary for evidence completeness
 - One-click actions for the wider SG QA flow:
   - daily live matrix
   - repo checker on workspace or per-car scope

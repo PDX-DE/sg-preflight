@@ -3,11 +3,18 @@
 {% block content %}
 {% set recommended = primary_profile if primary_profile is defined else none %}
 {% set alternatives = other_profiles if other_profiles is defined else [] %}
+{% set stage = selected_stage if selected_stage is defined else none %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">Guided Check</p>
+    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Guided Check{% endif %}</p>
     <h2>{{ job.label }}</h2>
-    <p class="hero-text">Use the recommended car first. Open another car only if that is the slice you actually changed.</p>
+    <p class="hero-text">
+      {% if stage %}
+      {{ stage.description }}
+      {% else %}
+      Use the recommended car first. Open another car only if that is the slice you actually changed.
+      {% endif %}
+    </p>
     <div class="hero-bullets">
       <span>1. Use the recommended car first.</span>
       <span>2. Run one check.</span>
@@ -78,11 +85,13 @@
         data-packs="{{ recommended.launch.packs | join(',') }}"
         data-job-key="{{ recommended.launch.job_key }}"
         data-job-label="{{ recommended.launch.job_label }}"
+        data-stage-key="{{ recommended.launch.stage_key | default('') }}"
+        data-stage-label="{{ recommended.launch.stage_label | default('') }}"
       >
         {{ recommended.launch.button_label }}
       </button>
       {% endif %}
-      <a class="button subtle" href="/ui/profiles/{{ recommended.profile.profile_id }}?job={{ job.key }}">More Options</a>
+      <a class="button subtle" href="/ui/profiles/{{ recommended.profile.profile_id }}?job={{ job.key }}{% if stage %}&stage={{ stage.key }}{% endif %}">More Options</a>
     </div>
   </article>
 </section>
@@ -129,11 +138,13 @@
           data-packs="{{ item.launch.packs | join(',') }}"
           data-job-key="{{ item.launch.job_key }}"
           data-job-label="{{ item.launch.job_label }}"
+          data-stage-key="{{ item.launch.stage_key | default('') }}"
+          data-stage-label="{{ item.launch.stage_label | default('') }}"
         >
           {{ item.launch.button_label }}
         </button>
         {% endif %}
-        <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}?job={{ job.key }}">More Options</a>
+        <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}?job={{ job.key }}{% if stage %}&stage={{ stage.key }}{% endif %}">More Options</a>
       </div>
     </article>
     {% endfor %}

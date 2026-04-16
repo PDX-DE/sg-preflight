@@ -420,6 +420,13 @@ pre,
   border-color: rgba(36, 79, 65, 0.2);
 }
 
+.workflow-stage-card {
+  background:
+    linear-gradient(180deg, rgba(221, 231, 239, 0.82), rgba(255, 255, 255, 0.96)),
+    var(--surface-strong);
+  border-color: rgba(79, 110, 136, 0.16);
+}
+
 .quick-start-card h4,
 .car-choice-card h4 {
   margin: 0.15rem 0 0.2rem;

@@ -66,13 +66,18 @@ class TestOperatorUI(unittest.TestCase):
                     client = TestClient(create_app(root=root, profiles=[profile, *sibling_profiles]))
 
                     home = client.get("/ui")
+                    stage_view = client.get("/ui/stages/pre_delivery")
                     guided = client.get("/ui/start/constants")
+                    stage_guided = client.get("/ui/start/constants?stage=before_commit")
                     run_view = client.get("/ui/profiles/G65")
                     guided_run_view = client.get("/ui/profiles/G65?job=constants")
+                    staged_run_view = client.get("/ui/profiles/G65?job=constants&stage=before_commit")
 
         self.assertEqual(home.status_code, 200)
         self.assertIn("What Changed?", home.text)
         self.assertIn("I changed constants", home.text)
+        self.assertIn("What Stage Are You In?", home.text)
+        self.assertIn("Before commit", home.text)
         self.assertIn("Use the first box below. Ignore the rest unless you know you need it.", home.text)
         self.assertIn("Best current start: G65", home.text)
         self.assertIn("Show broader tools, direct car list, and recent checks", home.text)
@@ -81,11 +86,17 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("BMW G65 test slice", home.text)
         self.assertIn("If You Need More Detail", home.text)
         self.assertIn("Show workflow fit and blockers", home.text)
+        self.assertEqual(stage_view.status_code, 200)
+        self.assertIn("What This Stage Needs", stage_view.text)
+        self.assertIn("Performance tests and delivery documentation", stage_view.text)
+        self.assertIn("Start From The Kind Of Change", stage_view.text)
         self.assertEqual(guided.status_code, 200)
         self.assertIn("Use This Car First", guided.text)
         self.assertIn("Run Constants Check For G65", guided.text)
         self.assertIn("Other Cars", guided.text)
         self.assertIn("Recommended", guided.text)
+        self.assertEqual(stage_guided.status_code, 200)
+        self.assertIn("Use this after implementation and before any commit", stage_guided.text)
         self.assertEqual(run_view.status_code, 200)
         self.assertIn("Run Full Check For This Car", run_view.text)
         self.assertIn("Files This Check Will Use", run_view.text)
@@ -96,6 +107,8 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Constants check", guided_run_view.text)
         self.assertIn("Run Constants Check For This Car", guided_run_view.text)
         self.assertNotIn("Run Full Check Instead", guided_run_view.text)
+        self.assertEqual(staged_run_view.status_code, 200)
+        self.assertIn("Use this after implementation and before any commit", staged_run_view.text)
 
     def test_run_result_and_evidence_pages_render_grouped_findings_and_links(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -120,7 +133,11 @@ class TestOperatorUI(unittest.TestCase):
                     "profile_id": "G65",
                     "packs": ["anchors", "constants", "carpaints", "project_sanity"],
                     "fail_on": "never",
-                    "context": profile.default_context,
+                    "context": {
+                        **profile.default_context,
+                        "workflow_stage": "pre_delivery",
+                        "workflow_stage_label": "Pre-delivery",
+                    },
                 },
             )
             self.assertEqual(create_response.status_code, 202)
@@ -132,18 +149,22 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(result_page.status_code, 200)
         self.assertIn("First Thing To Do", result_page.text)
         self.assertIn("Copy Handoff For This Problem", result_page.text)
-        self.assertIn("Copy Quick Update", result_page.text)
         self.assertIn("Copy Finding", result_page.text)
         self.assertIn("Show all grouped problems", result_page.text)
         self.assertIn("TA / pipeline / integration owner", result_page.text)
         self.assertIn("Confirm whether the Lua file is intentionally unused", result_page.text)
         self.assertIn("Source file", result_page.text)
         self.assertIn("Lua source", result_page.text)
+        self.assertIn("Stage Readiness", result_page.text)
+        self.assertIn("Copy Pre-Delivery Summary", result_page.text)
+        self.assertIn("Copy Delivery Handoff", result_page.text)
+        self.assertIn("Performance tests and delivery documentation", result_page.text)
         self.assertEqual(evidence_page.status_code, 200)
         self.assertIn("Pinned First File", evidence_page.text)
         self.assertIn("Reports", evidence_page.text)
         self.assertIn("Source-of-truth files", evidence_page.text)
         self.assertIn("Run metadata", evidence_page.text)
+        self.assertIn("Stage Readiness", evidence_page.text)
 
     def test_guided_run_carries_plain_language_job_label_into_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -160,17 +181,25 @@ class TestOperatorUI(unittest.TestCase):
                     "context": {
                         "operator_job": "constants",
                         "operator_job_label": "Constants check",
+                        "workflow_stage": "evidence_update",
+                        "workflow_stage_label": "Evidence update",
                     },
                 },
             )
             self.assertEqual(create_response.status_code, 202)
             payload = create_response.json()
             result_page = client.get(payload["result_url"])
+            evidence_page = client.get(payload["result_url"] + "/evidence")
 
         self.assertEqual(result_page.status_code, 200)
-        self.assertIn("Constants check on G65", result_page.text)
-        self.assertIn("Copy Clean Run Handoff", result_page.text)
+        self.assertIn("Evidence update - Constants check on G65", result_page.text)
+        self.assertIn("Copy Positive Test Note", result_page.text)
+        self.assertIn("Copy Jira Update", result_page.text)
+        self.assertIn("Copy QA Hero Note", result_page.text)
+        self.assertIn("Stage Readiness", result_page.text)
         self.assertIn("You are done when...", result_page.text)
+        self.assertEqual(evidence_page.status_code, 200)
+        self.assertIn("Attach the result in the real ticket", evidence_page.text)
 
     def test_blocked_action_can_be_started_and_rendered(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

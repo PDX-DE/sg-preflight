@@ -6,6 +6,7 @@
 {% set workspace = workspace_actions if workspace_actions is defined else [] %}
 {% set actions = recent_actions if recent_actions is defined else [] %}
 {% set runs = recent_runs if recent_runs is defined else [] %}
+{% set stages = workflow_stage_cards if workflow_stage_cards is defined else [] %}
 <section class="hero-panel hero-panel--home hero-panel--simple">
   <div class="hero-copy">
     <p class="eyebrow">Simple QA Start</p>
@@ -42,6 +43,31 @@
   {% else %}
   <div class="note-block note-block--warn">
     The primary start options did not load. Restart the local operator UI and reload this page.
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h3>What Stage Are You In?</h3>
+    <p>Use this when the workflow step matters more than the file type, for example before commit, pre-delivery, or when you only need Jira / QA Hero evidence.</p>
+  </div>
+  {% if stages %}
+  <div class="quick-start-grid">
+    {% for stage in stages %}
+    <article class="quick-start-card workflow-stage-card">
+      <p class="eyebrow">Workflow Stage</p>
+      <h4>{{ stage.short_label }}</h4>
+      <p>{{ stage.description }}</p>
+      <div class="action-row action-row--wrap">
+        <a class="button subtle" href="{{ stage.href }}">Open {{ stage.short_label }}</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="note-block note-block--warn">
+    The workflow-stage launcher did not load. Restart the local operator UI and reload this page.
   </div>
   {% endif %}
 </section>

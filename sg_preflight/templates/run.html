@@ -13,12 +13,15 @@
 {% set secondary_actions = profile_actions if profile_actions is defined else [] %}
 {% set available_packs = packs if packs is defined else ["anchors", "constants", "carpaints", "project_sanity"] %}
 {% set custom_packs = selected_packs if selected_packs is defined else available_packs %}
+{% set stage = selected_stage if selected_stage is defined else none %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">{% if selected_job %}{{ selected_job.short_label }}{% else %}Car Check{% endif %}</p>
+    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% elif selected_job %}{{ selected_job.short_label }}{% else %}Car Check{% endif %}</p>
     <h2>{{ profile.profile_id }} - {{ profile.label }}</h2>
     <p class="hero-text">
-      {% if selected_job %}
+      {% if stage %}
+      {{ stage.description }}
+      {% elif selected_job %}
       {{ selected_job.description }}
       {% else %}
       {{ profile.friendly_summary or profile.operator_goal or profile.description }}
@@ -52,6 +55,8 @@
           data-packs="{{ launch.packs | default([]) | join(',') }}"
           data-job-key="{{ launch.job_key | default('') }}"
           data-job-label="{{ launch.job_label | default('') }}"
+          data-stage-key="{{ launch.stage_key | default('') }}"
+          data-stage-label="{{ launch.stage_label | default('') }}"
         >
           {{ launch.button_label }}
         </button>
@@ -99,6 +104,14 @@
     <details class="foldout">
       <summary>Need a smaller quick check?</summary>
       <form id="run-form" class="stack" data-profile-id="{{ profile.profile_id }}">
+        {% if selected_job %}
+        <input type="hidden" name="context-operator_job" value="{{ selected_job.key }}" />
+        <input type="hidden" name="context-operator_job_label" value="{{ selected_job.short_label }}" />
+        {% endif %}
+        {% if stage %}
+        <input type="hidden" name="context-workflow_stage" value="{{ stage.key }}" />
+        <input type="hidden" name="context-workflow_stage_label" value="{{ stage.short_label }}" />
+        {% endif %}
         <div class="note-block">
           <div><strong>Use this only when:</strong> you need custom packs, a different fail threshold, or only the deterministic preflight.</div>
         </div>

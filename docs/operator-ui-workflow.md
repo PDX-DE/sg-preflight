@@ -53,6 +53,12 @@ Shows:
   - anchors
   - carpaints
   - files, Lua, or references
+- a workflow-stage launcher for:
+  - before commit
+  - before internal review
+  - pre-delivery
+  - post-integration
+  - Jira / QA Hero evidence updates
 - broader starts only as secondary choices:
   - check all live cars
   - run SG repo checkers
@@ -70,6 +76,7 @@ For a selected kind of change, shows:
 - one direct button on that recommended card to run the smallest useful check
 - other cars in a separate secondary section
 - a link to the fuller per-car page when you need more control
+- when launched from a workflow stage, keeps that stage attached to the next page and the eventual run record
 
 ### Run
 
@@ -77,12 +84,14 @@ For a selected profile, shows:
 
 - one primary action only for that car
 - guided pack-specific defaults when you arrive from the "what changed?" launcher
+- stage-aware defaults when you arrive from the workflow-stage launcher
 - why this profile is worth running
 - current live signal for that slice, if available
 - a visible `Files this check will use` block near the primary action
 - the quick-check-only form behind a foldout
 - the other actions for the car behind a foldout
 - detected `Pivot_Master`, `Module_constants`, `CarPaint`, and anchor scene paths without making the operator hunt for them
+- hidden context fields so stage-aware quick checks keep the same job/stage metadata as the primary button
 
 ### Result
 
@@ -93,9 +102,10 @@ Shows:
 - owner and next-action text directly on that primary block
 - the best matching source-file link for that first problem
 - a primary handoff copy action for the first problem
-- secondary quick-update and full-handoff copy actions
+- secondary quick-update and full-handoff copy actions, renamed per workflow stage where useful
 - a clear `You are done when...` line for both problem and clean-run states
 - a short secondary "what happened" and "do this next" layer
+- a `Stage Readiness` panel that shows what this run already covers, what is still manual, and what remains blocked on the current machine
 - grouped findings behind a foldout
 - severity filtering
 - per-finding drilldown behind a foldout
@@ -118,6 +128,7 @@ Shows grouped direct links to:
   - bundle metadata
   - project manifest
   - run record JSON
+- the same `Stage Readiness` summary so a teammate can see what evidence is still missing before the next workflow step
 
 ## Persistence
 
@@ -180,6 +191,7 @@ Current expectation:
 
 - use the UI to catch deterministic issues and produce evidence before manual review
 - use the "what changed?" launcher first when you already know what kind of file or workflow step you touched
+- use the workflow-stage launcher when the phase matters more than the file type, especially before commit, pre-delivery, after integration, or when you only need Jira / QA Hero evidence
 - use the one-click QA actions when you want repo checker, scene check, or the recommended per-car QA stack without touching terminals
 - default to the full-check button when you just want the safest useful path for one car
 - do not claim that the UI replaces Blender visual checks

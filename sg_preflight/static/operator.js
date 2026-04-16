@@ -94,6 +94,8 @@
         const packsValue = button.getAttribute("data-packs") || "";
         const jobKey = button.getAttribute("data-job-key") || "";
         const jobLabel = button.getAttribute("data-job-label") || "";
+        const stageKey = button.getAttribute("data-stage-key") || "";
+        const stageLabel = button.getAttribute("data-stage-label") || "";
         if (!profileId) {
           return;
         }
@@ -112,7 +114,9 @@
               fail_on: "never",
               context: {
                 operator_job: jobKey,
-                operator_job_label: jobLabel
+                operator_job_label: jobLabel,
+                workflow_stage: stageKey,
+                workflow_stage_label: stageLabel
               }
             })
           });

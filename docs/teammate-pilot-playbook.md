@@ -43,6 +43,7 @@ The flow is:
    - Markdown
 6. The operator UI uses the same shared Python services and shows:
    - simple daily jobs
+   - workflow-stage starts
    - live profiles
    - one-click QA actions
    - resolved inputs
@@ -135,6 +136,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 
 2. Open Home and confirm:
    - the `What Changed?` launcher is visible
+   - the workflow-stage launcher is visible for `Before commit`, `Pre-delivery`, `Post-integration`, and `Jira / QA Hero`
    - broader starts such as daily matrix, repo checker, and direct car picking are secondary
    - live profiles are visible lower on the page as a secondary direct-entry path
    - prerequisites are mostly `available`
@@ -160,6 +162,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
    - the one recommended guided button from the guided page if you know exactly what changed
    - `Run Full Check For This Car` from the per-car page if you entered directly by car
    - `Run Quick Check Only` only if you deliberately want the deterministic preflight without the wider SG-side action path
+   - if workflow phase matters more than file type, start from the workflow-stage launcher first and keep that stage attached to the run
 
 7. On the Result page, ask the teammate:
    - Is the `First Thing To Do` block enough to continue without you?
@@ -185,8 +188,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 
 12. Ask them to use the copy buttons:
    - `Copy Handoff For This Problem` or `Copy Clean Run Handoff`
-   - `Copy Quick Update`
-   - `Copy Full Handoff`
+   - the stage-specific secondary buttons such as `Copy Pre-Delivery Summary`, `Copy Delivery Handoff`, `Copy Jira Update`, or `Copy QA Hero Note`
    - `Copy Finding`
 
 The product target is that they should be able to hand the result off without rewriting it first.

@@ -27,16 +27,22 @@
   "body": "Restart the local operator UI and reload this page.",
 } %}
 {% set grouped = top_groups if top_groups is defined else [] %}
+{% set stage = selected_stage if selected_stage is defined else none %}
+{% set stage_items = stage_checklist if stage_checklist is defined else [] %}
 {% set next_items = next_steps if next_steps is defined and next_steps else [
   "Restart the local operator UI and reload this page.",
   "Open Files And Proof after the page reloads cleanly.",
 ] %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">Check Result</p>
+    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Check Result{% endif %}</p>
     <h2>{{ record.profile_id }} checked</h2>
     <p class="hero-text">
-      {% if job_label %}
+      {% if stage and job_label %}
+      {{ stage.short_label }} - {{ job_label }} on {{ record.profile_id }}
+      {% elif stage %}
+      {{ stage.label }} on {{ record.profile_id }}
+      {% elif job_label %}
       {{ job_label }} on {{ record.profile_id }}
       {% else %}
       {{ record.profile_label }}
@@ -46,7 +52,7 @@
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% else %}warn{% endif %}" id="run-status-pill">{{ record.status }}</span>
     <a class="button" href="/ui/runs/{{ record.run_id }}/evidence">Open Files And Proof</a>
-    <a class="button subtle" href="/ui/profiles/{{ record.profile_id }}">Run Again</a>
+    <a class="button subtle" href="{{ run_again_url if run_again_url is defined else '/ui/profiles/' ~ record.profile_id }}">Run Again</a>
   </div>
 </section>
 
@@ -227,6 +233,26 @@
       {% endfor %}
     </ol>
   </article>
+
+  {% if stage and stage_items %}
+  <article class="panel">
+    <div class="panel-head">
+      <h3>Stage Readiness</h3>
+      <p>What is already covered for {{ stage.short_label|lower }}, and what still needs manual or external follow-up.</p>
+    </div>
+    <div class="stack tight">
+      {% for item in stage_items %}
+      <div class="status-item">
+        <div class="min-w-0">
+          <strong>{{ item.label }}</strong>
+          <div class="muted">{{ item.summary }}</div>
+        </div>
+        <span class="badge {% if item.state == 'covered' or item.state == 'ready' %}ok{% elif item.state == 'manual' or item.state == 'partial' or item.state == 'pending' %}info{% else %}warn{% endif %}">{{ item.state }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+  {% endif %}
 </section>
 
 <section class="panel">

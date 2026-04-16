@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -323,6 +324,123 @@ def _guided_job_map() -> dict[str, dict[str, Any]]:
     return {str(item["key"]).lower(): dict(item) for item in _guided_job_specs()}
 
 
+def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "key": "before_commit",
+            "label": "I am before commit",
+            "short_label": "Before commit",
+            "description": (
+                "Use this after implementation and before any commit when you need a fast SG-side check plus a clear reminder of the remaining manual checks."
+            ),
+            "hero_steps": (
+                "Run the useful SG-side check now.",
+                "Open the first source file behind the finding.",
+                "Only then treat the work as safe to commit.",
+            ),
+            "checklist": (
+                "Double-check your own work before committing.",
+                "Document positive or negative testing, not only failures.",
+                "Keep manual RaCo / Blender review visible instead of pretending it is automated.",
+            ),
+            "quick_copy_label": "Copy Commit Update",
+            "full_copy_label": "Copy Before-Commit Handoff",
+        },
+        {
+            "key": "before_review",
+            "label": "I am before internal review",
+            "short_label": "Before review",
+            "description": (
+                "Use this when implementation is done and you want reviewer-ready evidence before asking for peer review."
+            ),
+            "hero_steps": (
+                "Run the useful SG-side check first.",
+                "Open the first red or yellow item.",
+                "Hand the reviewer one short, file-backed summary.",
+            ),
+            "checklist": (
+                "Use deterministic checks to reduce avoidable review loops.",
+                "Make the likely owner and next action obvious.",
+                "Carry a short reviewer-ready note instead of vague chat context.",
+            ),
+            "quick_copy_label": "Copy Reviewer Update",
+            "full_copy_label": "Copy Review Handoff",
+        },
+        {
+            "key": "pre_delivery",
+            "label": "I am preparing delivery",
+            "short_label": "Pre-delivery",
+            "description": (
+                "Use this before delivery pressure rises so the deterministic evidence is ready and the remaining manual or blocked stages are explicit."
+            ),
+            "hero_steps": (
+                "Run the widest useful deterministic check.",
+                "Open Files And Proof and make sure the evidence exists.",
+                "Treat performance tests, delivery docs, and BMW-side steps as explicit follow-up work.",
+            ),
+            "checklist": (
+                "Ticket completion is not delivery completion.",
+                "Performance test and delivery documentation expectations stay visible here.",
+                "Blocked BMW-side or rack steps should be shown honestly, not hidden.",
+            ),
+            "quick_copy_label": "Copy Pre-Delivery Summary",
+            "full_copy_label": "Copy Delivery Handoff",
+        },
+        {
+            "key": "post_integration",
+            "label": "I am checking after integration",
+            "short_label": "Post-integration",
+            "description": (
+                "Use this after integration when you need to see what still drifts, what is newly visible, and what evidence is ready for follow-up."
+            ),
+            "hero_steps": (
+                "Run the deterministic sweep again.",
+                "Open the first new problem or drift signal.",
+                "Route the follow-up with evidence instead of guesswork.",
+            ),
+            "checklist": (
+                "Treat this as triage support after integration, not a replacement for BMW-side smoke or rack confirmation.",
+                "Use the result to separate local deterministic issues from external blockers.",
+                "Keep the handoff text short and source-backed.",
+            ),
+            "quick_copy_label": "Copy Integration Update",
+            "full_copy_label": "Copy Integration Handoff",
+        },
+        {
+            "key": "evidence_update",
+            "label": "I need evidence for Jira / QA Hero",
+            "short_label": "Evidence update",
+            "description": (
+                "Use this when the main goal is a clean positive or negative test note with reusable file-backed proof."
+            ),
+            "hero_steps": (
+                "Run the smallest useful check for the topic.",
+                "Open Files And Proof.",
+                "Copy the right note into Jira or QA Hero without rewriting from scratch.",
+            ),
+            "checklist": (
+                "Positive testing must be documented, not only failures.",
+                "Negative findings are part of production effort and need evidence.",
+                "Script output, files, screenshots, and protocols should stay attached to the same story.",
+            ),
+            "problem_primary_label": "Copy Negative Test Note",
+            "clean_primary_label": "Copy Positive Test Note",
+            "quick_copy_label": "Copy Jira Update",
+            "full_copy_label": "Copy QA Hero Note",
+        },
+    )
+
+
+def _workflow_stage_map() -> dict[str, dict[str, Any]]:
+    return {str(item["key"]).lower(): dict(item) for item in _workflow_stage_specs()}
+
+
+def _get_workflow_stage(stage_key: str | None) -> dict[str, Any] | None:
+    if not stage_key:
+        return None
+    return _workflow_stage_map().get(str(stage_key).strip().lower())
+
+
 def _get_guided_job(job_key: str | None) -> dict[str, Any] | None:
     if not job_key:
         return None
@@ -352,6 +470,186 @@ def _guided_job_cards() -> list[dict[str, Any]]:
     return cards
 
 
+def _workflow_stage_cards() -> list[dict[str, Any]]:
+    return [
+        {
+            "key": item["key"],
+            "label": item["label"],
+            "short_label": item["short_label"],
+            "description": item["description"],
+            "href": f"/ui/stages/{item['key']}",
+        }
+        for item in _workflow_stage_specs()
+    ]
+
+
+def _job_description_for_stage(job: dict[str, Any], stage: dict[str, Any]) -> str:
+    if stage["key"] == "before_commit":
+        return (
+            f"{job['description']} Use this before committing so the deterministic signal is checked and the next manual review step stays obvious."
+        )
+    if stage["key"] == "before_review":
+        return (
+            f"{job['description']} Use this before asking for peer review so the reviewer gets a smaller, better-explained problem set."
+        )
+    if stage["key"] == "pre_delivery":
+        return (
+            f"{job['description']} Use this before delivery work so the SG-side proof is ready and remaining manual or blocked stages are explicit."
+        )
+    if stage["key"] == "post_integration":
+        return (
+            f"{job['description']} Use this after integration when you need to see what still drifts on the SG side."
+        )
+    return (
+        f"{job['description']} Use this when the main output you need is a positive or negative test note with file-backed proof."
+    )
+
+
+def _stage_job_cards(stage: dict[str, Any]) -> list[dict[str, Any]]:
+    cards = []
+    for job in _guided_job_specs():
+        best_profiles = [str(value).upper() for value in job.get("best_profiles", ()) if value]
+        start_hint = f"Best current start: {best_profiles[0]}" if len(best_profiles) == 1 else "Use the car you touched"
+        cards.append(
+            {
+                "key": job["key"],
+                "label": job["label"],
+                "short_label": job["short_label"],
+                "description": _job_description_for_stage(job, stage),
+                "start_hint": start_hint,
+                "href": f"/ui/start/{job['key']}?{urlencode({'stage': stage['key']})}",
+            }
+        )
+    return cards
+
+
+def _workflow_step_map(root: Path, profiles: list[RunProfile]) -> dict[str, dict[str, Any]]:
+    return {
+        item["key"]: item
+        for item in qa_workflow_status(
+            root,
+            profiles=profiles,
+        )
+    }
+
+
+def _stage_scope_items(root: Path, stage: dict[str, Any], profiles: list[RunProfile]) -> list[dict[str, str]]:
+    workflow = _workflow_step_map(root, profiles)
+    deterministic = workflow.get("deterministic_preflight", {})
+    handoff = workflow.get("handoff_evidence", {})
+    bmw = workflow.get("bmw_screenshot_smoke", {})
+    rack = workflow.get("rack_review", {})
+
+    if stage["key"] == "before_commit":
+        return [
+            {
+                "label": "Deterministic preflight before commit",
+                "state": str(deterministic.get("state", "blocked")),
+                "summary": "This is the fast SG-side check that should run before the commit leaves your machine.",
+            },
+            {
+                "label": "Copy-ready evidence for the ticket",
+                "state": str(handoff.get("state", "covered")),
+                "summary": "Positive and negative test notes can already be built from the generated reports and source links.",
+            },
+            {
+                "label": "SVN update and RaCo / Blender review",
+                "state": "manual",
+                "summary": "Still manual here. The tool should support this step, not pretend to replace it.",
+            },
+        ]
+
+    if stage["key"] == "before_review":
+        return [
+            {
+                "label": "Reviewer-ready deterministic signal",
+                "state": str(deterministic.get("state", "blocked")),
+                "summary": "Use the run result to shrink avoidable review loops before asking someone else to look.",
+            },
+            {
+                "label": "Copy-ready review note",
+                "state": str(handoff.get("state", "covered")),
+                "summary": "The result and evidence views already support short, file-backed handoff text.",
+            },
+            {
+                "label": "Internal peer review",
+                "state": "manual",
+                "summary": "Still manual. The goal here is to arrive with fewer unknowns and better evidence.",
+            },
+        ]
+
+    if stage["key"] == "pre_delivery":
+        return [
+            {
+                "label": "Deterministic SG-side preflight",
+                "state": str(deterministic.get("state", "blocked")),
+                "summary": "This is the earliest reusable proof layer before the heavier delivery and integration steps.",
+            },
+            {
+                "label": "Delivery-ready SG evidence",
+                "state": str(handoff.get("state", "covered")),
+                "summary": "Reports, source-file links, and copied notes are already available for reuse in delivery prep.",
+            },
+            {
+                "label": "Performance tests and delivery documentation",
+                "state": "manual",
+                "summary": "Required by the deck, but still manual and external to this local SG-side surface.",
+            },
+            {
+                "label": str(bmw.get("label", "BMW screenshot smoke")),
+                "state": str(bmw.get("state", "blocked")),
+                "summary": str(bmw.get("summary", "BMW-side smoke status is not available.")),
+            },
+            {
+                "label": str(rack.get("label", "Rack review")),
+                "state": str(rack.get("state", "blocked")),
+                "summary": str(rack.get("summary", "Rack-side validation status is not available.")),
+            },
+        ]
+
+    if stage["key"] == "post_integration":
+        return [
+            {
+                "label": "Post-integration deterministic sweep",
+                "state": str(deterministic.get("state", "blocked")),
+                "summary": "Run this again after integration to separate clear SG-side drift from later-stage unknowns.",
+            },
+            {
+                "label": "Triage-ready evidence",
+                "state": str(handoff.get("state", "covered")),
+                "summary": "Use the generated artifacts to make follow-up ownership and next action explicit.",
+            },
+            {
+                "label": str(bmw.get("label", "BMW screenshot smoke")),
+                "state": str(bmw.get("state", "blocked")),
+                "summary": str(bmw.get("summary", "BMW-side smoke status is not available.")),
+            },
+            {
+                "label": str(rack.get("label", "Rack review")),
+                "state": str(rack.get("state", "blocked")),
+                "summary": str(rack.get("summary", "Rack-side validation status is not available.")),
+            },
+        ]
+
+    return [
+        {
+            "label": "Copy-ready SG evidence",
+            "state": str(handoff.get("state", "covered")),
+            "summary": "The local result pages already produce short notes, full handoff text, and direct file links.",
+        },
+        {
+            "label": "Deterministic verification",
+            "state": str(deterministic.get("state", "blocked")),
+            "summary": "Use the smallest useful run so the ticket note is backed by an actual check, not memory.",
+        },
+        {
+            "label": "Positive and negative ticket documentation",
+            "state": "manual",
+            "summary": "Still a human step: the result must be attached and documented in Jira or QA Hero.",
+        },
+    ]
+
+
 _SOURCE_FILE_LABELS = {
     "scene_hierarchy": "Anchor RCA",
     "constants_expected": "Pivot_Master",
@@ -367,14 +665,20 @@ _SOURCE_FILE_ORDER = (
 )
 
 
-def _guided_profile_cards(root: Path, profiles: list[RunProfile], job: dict[str, Any]) -> list[dict[str, Any]]:
+def _guided_profile_cards(
+    root: Path,
+    profiles: list[RunProfile],
+    job: dict[str, Any],
+    stage: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     cards: list[dict[str, Any]] = []
     best_profiles = {str(item).upper() for item in job.get("best_profiles", ())}
     profile_help = job.get("profile_help", {})
 
     for profile in profiles:
         profile_card = _profile_card(root, profile)
-        if job["launch_mode"] == "action":
+        launch_mode = "run" if stage is not None else job["launch_mode"]
+        if launch_mode == "action":
             launch = {
                 "kind": "action",
                 "action_id": f"qa_stack__{profile.profile_id.lower()}",
@@ -387,6 +691,8 @@ def _guided_profile_cards(root: Path, profiles: list[RunProfile], job: dict[str,
                 "packs": list(job["packs"]),
                 "job_key": job["key"],
                 "job_label": job["short_label"],
+                "stage_key": stage["key"] if stage is not None else "",
+                "stage_label": stage["short_label"] if stage is not None else "",
                 "button_label": str(job["button_template"]).format(profile_id=profile.profile_id),
             }
 
@@ -412,8 +718,13 @@ def _guided_profile_cards(root: Path, profiles: list[RunProfile], job: dict[str,
     return cards
 
 
-def _guided_profile_sections(root: Path, profiles: list[RunProfile], job: dict[str, Any]) -> dict[str, Any]:
-    cards = _guided_profile_cards(root, profiles, job)
+def _guided_profile_sections(
+    root: Path,
+    profiles: list[RunProfile],
+    job: dict[str, Any],
+    stage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cards = _guided_profile_cards(root, profiles, job, stage)
     primary = next((item for item in cards if item["is_best_match"]), cards[0] if cards else None)
     others = [item for item in cards if primary is None or item["profile"].profile_id != primary["profile"].profile_id]
     return {
@@ -460,20 +771,87 @@ def _source_file_cards(preview: Any) -> list[dict[str, str]]:
     return cards
 
 
-def _primary_launch(profile: RunProfile, selected_job: dict[str, Any] | None) -> dict[str, Any]:
-    if selected_job is not None and selected_job.get("launch_mode") == "run":
+def _launch_checklist(selected_job: dict[str, Any] | None, selected_stage: dict[str, Any] | None) -> list[str]:
+    items: list[str] = []
+    if selected_job is not None:
+        if len(selected_job.get("packs", [])) >= 4:
+            items.append("Run anchors, constants, carpaints, and project sanity for this car.")
+        else:
+            joined = ", ".join(str(pack) for pack in selected_job.get("packs", []))
+            items.append(f"Run only the useful pack(s) for this stage: {joined}.")
+    if selected_stage is None:
+        return items
+
+    stage_items = {
+        "before_commit": [
+            "Open the first problem before you treat the work as safe to commit.",
+            "Keep SVN update plus manual RaCo / Blender review visible before committing.",
+        ],
+        "before_review": [
+            "Use the result to shrink avoidable review loops before asking for peer review.",
+            "Carry a short reviewer-ready note instead of vague chat context.",
+        ],
+        "pre_delivery": [
+            "Open Files And Proof and make sure the SG-side evidence is ready.",
+            "Treat performance tests, delivery documentation, and BMW-side checks as explicit follow-up work.",
+        ],
+        "post_integration": [
+            "Use the result to separate local deterministic drift from later-stage external blockers.",
+            "Route the follow-up with evidence instead of guesswork.",
+        ],
+        "evidence_update": [
+            "Open Files And Proof right after the run and copy the right note into Jira or QA Hero.",
+            "Positive testing needs documentation too, not only failures.",
+        ],
+    }
+    items.extend(stage_items.get(selected_stage["key"], []))
+    return items[:3]
+
+
+def _primary_launch(
+    profile: RunProfile,
+    selected_job: dict[str, Any] | None,
+    selected_stage: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if selected_job is not None and (selected_stage is not None or selected_job.get("launch_mode") == "run"):
+        title = (
+            f"Best default for {str(selected_job['short_label']).lower()} at {str(selected_stage['short_label']).lower()}"
+            if selected_stage is not None
+            else f"Best default if you changed {str(selected_job['short_label']).lower()}"
+        )
+        description = (
+            "Run the smallest useful deterministic check for this stage, then open the first problem and reuse the copy-ready proof."
+            if selected_stage is not None
+            else "Run the smallest useful deterministic check for that kind of change, then open the first problem."
+        )
         return {
             "kind": "run",
-            "title": f"Best default if you changed {str(selected_job['short_label']).lower()}",
-            "description": "Run the smallest useful deterministic check for that kind of change, then open the first problem.",
+            "title": title,
+            "description": description,
             "button_label": str(selected_job["button_template"]).format(profile_id="This Car"),
             "packs": list(selected_job["packs"]),
             "job_key": str(selected_job["key"]),
             "job_label": str(selected_job["short_label"]),
-            "checklist": [
-                *(f"Run only the {pack} pack for this car" for pack in selected_job["packs"]),
-                "Skip the wider SG-side stack unless you open the secondary actions below.",
-            ],
+            "stage_key": selected_stage["key"] if selected_stage is not None else "",
+            "stage_label": selected_stage["short_label"] if selected_stage is not None else "",
+            "checklist": _launch_checklist(selected_job, selected_stage),
+        }
+
+    if selected_stage is not None:
+        return {
+            "kind": "run",
+            "title": f"Best default for {selected_stage['short_label'].lower()} on {profile.profile_id}",
+            "description": "Run the full deterministic preflight for this car, then use the stage checklist to see what still needs manual or blocked follow-up.",
+            "button_label": "Run Full Check For This Car",
+            "packs": ["anchors", "constants", "carpaints", "project_sanity"],
+            "job_key": "",
+            "job_label": "",
+            "stage_key": selected_stage["key"],
+            "stage_label": selected_stage["short_label"],
+            "checklist": _launch_checklist(
+                {"packs": ["anchors", "constants", "carpaints", "project_sanity"]},
+                selected_stage,
+            ),
         }
 
     return {
@@ -703,15 +1081,30 @@ def _quick_update_text(
     grouped_findings: list[dict[str, Any]],
 ) -> str:
     job_label = str(record.context.get("operator_job_label", "")).strip()
-    title = f"SG Preflight {job_label} for {record.profile_id}" if job_label else f"SG Preflight check for {record.profile_id}"
+    stage_label = str(record.context.get("workflow_stage_label", "")).strip()
+    if stage_label and job_label:
+        title = f"SG Preflight {stage_label} - {job_label} for {record.profile_id}"
+    elif stage_label:
+        title = f"SG Preflight {stage_label} for {record.profile_id}"
+    elif job_label:
+        title = f"SG Preflight {job_label} for {record.profile_id}"
+    else:
+        title = f"SG Preflight check for {record.profile_id}"
     summary = report.summary()
     lines = [
         title,
         f"Result: {decision_summary['title']}",
         f"Counts: {summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info, {summary['total']} total",
         "",
-        "Start here:",
     ]
+    if stage_label:
+        lines.extend(
+            [
+                f"Workflow stage: {stage_label}",
+                "",
+            ]
+        )
+    lines.append("Start here:")
 
     if not grouped_findings:
         lines.append("No grouped findings were raised.")
@@ -739,6 +1132,7 @@ def _quick_update_text(
 
 
 def _problem_handoff_text(record: Any, first_problem: dict[str, Any]) -> str:
+    stage_label = str(record.context.get("workflow_stage_label", "")).strip()
     if first_problem.get("is_clean"):
         lines = [
             f"SG Preflight clean run for {record.profile_id}",
@@ -746,6 +1140,8 @@ def _problem_handoff_text(record: Any, first_problem: dict[str, Any]) -> str:
             f"HTML report: {record.paths.get('html_report', '')}",
             f"Files and proof: /ui/runs/{record.run_id}/evidence",
         ]
+        if stage_label:
+            lines.insert(1, f"Workflow stage: {stage_label}")
         return "\n".join(lines).strip()
 
     lines = [
@@ -755,6 +1151,8 @@ def _problem_handoff_text(record: Any, first_problem: dict[str, Any]) -> str:
         f"Owner: {first_problem.get('owner', '')}",
         f"Action: {first_problem.get('action', '')}",
     ]
+    if stage_label:
+        lines.insert(1, f"Workflow stage: {stage_label}")
     location = str(first_problem.get("location", "")).strip()
     if location:
         lines.append(f"Location: {location}")
@@ -771,9 +1169,13 @@ def _handoff_options(
     full_handoff_text: str,
     first_problem: dict[str, Any],
 ) -> dict[str, Any]:
-    primary_label = (
-        "Copy Clean Run Handoff" if first_problem.get("is_clean") else "Copy Handoff For This Problem"
-    )
+    stage = _get_workflow_stage(str(record.context.get("workflow_stage", "")).strip())
+    if first_problem.get("is_clean"):
+        primary_label = stage.get("clean_primary_label") if stage is not None else None
+        primary_label = primary_label or "Copy Clean Run Handoff"
+    else:
+        primary_label = stage.get("problem_primary_label") if stage is not None else None
+        primary_label = primary_label or "Copy Handoff For This Problem"
     primary_text = _problem_handoff_text(record, first_problem)
     return {
         "primary": {
@@ -784,16 +1186,173 @@ def _handoff_options(
         "secondary": [
             {
                 "target_id": "copy-quick-update",
-                "label": "Copy Quick Update",
+                "label": stage.get("quick_copy_label", "Copy Quick Update") if stage is not None else "Copy Quick Update",
                 "text": quick_update_text,
             },
             {
                 "target_id": "copy-full-handoff",
-                "label": "Copy Full Handoff",
+                "label": stage.get("full_copy_label", "Copy Full Handoff") if stage is not None else "Copy Full Handoff",
                 "text": full_handoff_text or quick_update_text,
             },
         ],
     }
+
+
+def _record_workflow_stage(record: Any) -> dict[str, Any] | None:
+    return _get_workflow_stage(str(record.context.get("workflow_stage", "")).strip())
+
+
+def _run_again_url(record: Any) -> str:
+    query: list[tuple[str, str]] = []
+    job = str(record.context.get("operator_job", "")).strip()
+    stage = str(record.context.get("workflow_stage", "")).strip()
+    if job:
+        query.append(("job", job))
+    if stage:
+        query.append(("stage", stage))
+    suffix = f"?{urlencode(query)}" if query else ""
+    return f"/ui/profiles/{record.profile_id}{suffix}"
+
+
+def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
+    stage = _record_workflow_stage(record)
+    if stage is None:
+        return []
+
+    report_ready = record.status == "completed" and Path(record.paths.get("html_report", "")).exists()
+    markdown_ready = Path(record.paths.get("markdown_report", "")).exists()
+    workflow = _workflow_step_map(root, list_run_profiles(root))
+    bmw = workflow.get("bmw_screenshot_smoke", {})
+    rack = workflow.get("rack_review", {})
+
+    if stage["key"] == "before_commit":
+        return [
+            {
+                "label": "Deterministic preflight result",
+                "state": "ready" if report_ready else "pending",
+                "summary": "This run is the SG-side proof that the changed car was checked before commit."
+                if report_ready
+                else "Finish the run first so the deterministic preflight result exists.",
+            },
+            {
+                "label": "Copy-ready test note",
+                "state": "ready" if markdown_ready else "pending",
+                "summary": "Use the copy buttons or markdown report for the ticket or handoff note."
+                if markdown_ready
+                else "The markdown handoff is not ready yet.",
+            },
+            {
+                "label": "Update SVN and review in RaCo / Blender",
+                "state": "manual",
+                "summary": "Still manual here. Confirm the remaining before-commit checks before the commit is treated as safe.",
+            },
+        ]
+
+    if stage["key"] == "before_review":
+        return [
+            {
+                "label": "Deterministic reviewer context",
+                "state": "ready" if report_ready else "pending",
+                "summary": "This run already shrinks avoidable review loops with a file-backed result."
+                if report_ready
+                else "Finish the run first so the reviewer has concrete signal.",
+            },
+            {
+                "label": "Copy-ready reviewer note",
+                "state": "ready" if markdown_ready else "pending",
+                "summary": "The result page already contains a short reviewer-ready note."
+                if markdown_ready
+                else "The note output is not ready yet.",
+            },
+            {
+                "label": "Internal peer review",
+                "state": "manual",
+                "summary": "Still manual. The goal is to arrive with fewer obvious issues and better evidence.",
+            },
+        ]
+
+    if stage["key"] == "pre_delivery":
+        return [
+            {
+                "label": "Deterministic SG-side preflight",
+                "state": "ready" if report_ready else "pending",
+                "summary": "This run already covers the reusable SG-side deterministic proof."
+                if report_ready
+                else "Finish the run first so the SG-side deterministic proof exists.",
+            },
+            {
+                "label": "Evidence bundle and copied summary",
+                "state": "ready" if markdown_ready else "pending",
+                "summary": "Reports, source-file links, and copied handoff text are ready for delivery prep."
+                if markdown_ready
+                else "Finish the report outputs before treating the evidence as ready.",
+            },
+            {
+                "label": "Performance tests and delivery documentation",
+                "state": "manual",
+                "summary": "Still manual and required by the delivery chain in the deck.",
+            },
+            {
+                "label": str(bmw.get("label", "BMW screenshot smoke")),
+                "state": str(bmw.get("state", "blocked")),
+                "summary": str(bmw.get("summary", "BMW-side smoke status is not available.")),
+            },
+            {
+                "label": str(rack.get("label", "Rack review")),
+                "state": str(rack.get("state", "blocked")),
+                "summary": str(rack.get("summary", "Rack-side validation status is not available.")),
+            },
+        ]
+
+    if stage["key"] == "post_integration":
+        return [
+            {
+                "label": "Post-integration deterministic sweep",
+                "state": "ready" if report_ready else "pending",
+                "summary": "This run gives you a clean SG-side readout after integration."
+                if report_ready
+                else "Finish the run first so the post-integration sweep exists.",
+            },
+            {
+                "label": "Triage-ready evidence",
+                "state": "ready" if markdown_ready else "pending",
+                "summary": "Use the copied note plus the report links to route follow-up work."
+                if markdown_ready
+                else "The handoff output is not ready yet.",
+            },
+            {
+                "label": str(bmw.get("label", "BMW screenshot smoke")),
+                "state": str(bmw.get("state", "blocked")),
+                "summary": str(bmw.get("summary", "BMW-side smoke status is not available.")),
+            },
+            {
+                "label": str(rack.get("label", "Rack review")),
+                "state": str(rack.get("state", "blocked")),
+                "summary": str(rack.get("summary", "Rack-side validation status is not available.")),
+            },
+        ]
+
+    return [
+        {
+            "label": "Current run summary",
+            "state": "ready" if report_ready else "pending",
+            "summary": "This run is the concrete result you can quote in Jira or QA Hero."
+            if report_ready
+            else "Finish the run first so the result can be quoted.",
+        },
+        {
+            "label": "Copy-ready positive or negative note",
+            "state": "ready" if markdown_ready else "pending",
+            "summary": "Use the copy buttons or markdown report for the note body."
+            if markdown_ready
+            else "The note output is not ready yet.",
+        },
+        {
+            "label": "Attach the result in the real ticket",
+            "state": "manual",
+            "summary": "Still a human step: positive and negative testing both need to be documented in the correct ticket.",
+        },
+    ]
 
 
 def _load_text_file(path_value: str) -> str:
@@ -1149,6 +1708,7 @@ def create_app(
                     for profile in ordered_profiles
                 ],
                 "guided_jobs": _guided_job_cards(),
+                "workflow_stage_cards": _workflow_stage_cards(),
                 "task_cards": _task_cards(app.state.workspace_root, ordered_profiles),
                 "workspace_actions": _action_cards(
                     app.state.workspace_root,
@@ -1173,29 +1733,53 @@ def create_app(
             },
         )
 
+    @app.get("/ui/stages/{stage_key}")
+    async def workflow_stage_view(request: Request, stage_key: str) -> Any:
+        stage = _get_workflow_stage(stage_key)
+        if stage is None:
+            raise HTTPException(status_code=404, detail=f"Unknown workflow stage {stage_key!r}")
+        ordered_profiles = list(app.state.profiles.values())
+        return app.state.templates.TemplateResponse(
+            request,
+            "workflow_stage.html",
+            {
+                "stage": stage,
+                "job_cards": _stage_job_cards(stage),
+                "scope_items": _stage_scope_items(app.state.workspace_root, stage, ordered_profiles),
+            },
+        )
+
     @app.get("/ui/start/{job_key}")
-    async def guided_job_view(request: Request, job_key: str) -> Any:
+    async def guided_job_view(request: Request, job_key: str, stage: str | None = None) -> Any:
         job = _get_guided_job(job_key)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Unknown guided job {job_key!r}")
+        selected_stage = _get_workflow_stage(stage)
         ordered_profiles = list(app.state.profiles.values())
-        sections = _guided_profile_sections(app.state.workspace_root, ordered_profiles, job)
+        sections = _guided_profile_sections(app.state.workspace_root, ordered_profiles, job, selected_stage)
         return app.state.templates.TemplateResponse(
             request,
             "guided_job.html",
             {
                 "job": job,
+                "selected_stage": selected_stage,
                 "primary_profile": sections["primary_profile"],
                 "other_profiles": sections["other_profiles"],
             },
         )
 
     @app.get("/ui/profiles/{profile_id}")
-    async def run_view(request: Request, profile_id: str, job: str | None = None) -> Any:
+    async def run_view(
+        request: Request,
+        profile_id: str,
+        job: str | None = None,
+        stage: str | None = None,
+    ) -> Any:
         profile = _get_profile(app, profile_id)
         preview = _cached_preview(app, profile)
         selected_job = _get_guided_job(job)
-        primary_launch = _primary_launch(profile, selected_job)
+        selected_stage = _get_workflow_stage(stage)
+        primary_launch = _primary_launch(profile, selected_job, selected_stage)
         profile_actions = _action_cards(
             app.state.workspace_root,
             list(app.state.profiles.values()),
@@ -1209,7 +1793,7 @@ def create_app(
         ]
         selected_packs = (
             list(selected_job["packs"])
-            if selected_job is not None and selected_job["launch_mode"] == "run"
+            if selected_job is not None and (selected_stage is not None or selected_job["launch_mode"] == "run")
             else ["anchors", "constants", "carpaints", "project_sanity"]
         )
         return app.state.templates.TemplateResponse(
@@ -1220,6 +1804,7 @@ def create_app(
                 "preview": preview,
                 "card": _profile_card(app.state.workspace_root, profile),
                 "selected_job": selected_job,
+                "selected_stage": selected_stage,
                 "primary_launch": primary_launch,
                 "source_file_cards": _source_file_cards(preview),
                 "selected_packs": selected_packs,
@@ -1310,6 +1895,7 @@ def create_app(
             else {}
         )
         job_label = str(record.context.get("operator_job_label", "")).strip()
+        selected_stage = _record_workflow_stage(record)
         return app.state.templates.TemplateResponse(
             request,
             "result.html",
@@ -1325,6 +1911,9 @@ def create_app(
                 "handoff_options": handoff_options,
                 "evidence_sections": evidence_sections,
                 "job_label": job_label,
+                "selected_stage": selected_stage,
+                "stage_checklist": _record_stage_checklist(record, app.state.workspace_root),
+                "run_again_url": _run_again_url(record),
                 "notes": run_notes(record),
             },
         )
@@ -1349,6 +1938,8 @@ def create_app(
             {
                 "record": record,
                 "first_problem": first_problem,
+                "selected_stage": _record_workflow_stage(record),
+                "stage_checklist": _record_stage_checklist(record, app.state.workspace_root),
                 "evidence_sections": _evidence_sections(record, first_problem),
             },
         )

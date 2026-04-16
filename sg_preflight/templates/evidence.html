@@ -3,9 +3,11 @@
 {% block content %}
 {% set problem = first_problem if first_problem is defined else none %}
 {% set sections = evidence_sections if evidence_sections is defined and evidence_sections else [] %}
+{% set stage = selected_stage if selected_stage is defined else none %}
+{% set stage_items = stage_checklist if stage_checklist is defined else [] %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">Files And Proof</p>
+    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Files And Proof{% endif %}</p>
     <h2>{{ record.profile_id }} - {{ record.profile_label }}</h2>
     <p class="hero-text">These are the reports and SG files behind run <code>{{ record.run_id }}</code>.</p>
   </div>
@@ -36,6 +38,26 @@
     {% if problem.open_link.href %}
     <a href="{{ problem.open_link.href }}">Open</a>
     {% endif %}
+  </div>
+</section>
+{% endif %}
+
+{% if stage and stage_items %}
+<section class="panel">
+  <div class="panel-head">
+    <h3>Stage Readiness</h3>
+    <p>Use this to see what proof is ready for {{ stage.short_label|lower }} and what still needs manual or blocked follow-up.</p>
+  </div>
+  <div class="stack tight">
+    {% for item in stage_items %}
+    <div class="status-item">
+      <div class="min-w-0">
+        <strong>{{ item.label }}</strong>
+        <div class="muted">{{ item.summary }}</div>
+      </div>
+      <span class="badge {% if item.state == 'covered' or item.state == 'ready' %}ok{% elif item.state == 'manual' or item.state == 'partial' or item.state == 'pending' %}info{% else %}warn{% endif %}">{{ item.state }}</span>
+    </div>
+    {% endfor %}
   </div>
 </section>
 {% endif %}
