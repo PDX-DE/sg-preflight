@@ -1012,10 +1012,19 @@ select {
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   background:
     radial-gradient(circle at top, rgba(107, 198, 163, 0.2), transparent 30%),
     var(--overlay);
   backdrop-filter: blur(14px);
+}
+
+.loading-overlay--expanded {
+  align-items: flex-start;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
 }
 
 .loading-overlay[hidden] {
@@ -1027,12 +1036,20 @@ select {
 }
 
 .loading-screen {
-  width: min(720px, 100%);
+  width: min(760px, 100%);
+  max-height: calc(100vh - 3rem);
+  overflow: hidden;
   padding: 1.6rem;
   border-radius: 32px;
   background: linear-gradient(145deg, rgba(107, 198, 163, 0.06), rgba(142, 191, 255, 0.08)), var(--surface-emphasis);
   border: 1px solid var(--border-strong);
   box-shadow: 0 28px 72px rgba(0, 0, 0, 0.28);
+}
+
+.loading-overlay--expanded .loading-screen {
+  width: min(1320px, 100%);
+  max-height: none;
+  overflow: visible;
 }
 
 .loading-screen h2 {
@@ -1114,6 +1131,10 @@ select {
   grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.05fr);
   gap: 0.9rem;
   margin-bottom: 0.9rem;
+}
+
+.loading-overlay--expanded .loading-detail-grid {
+  grid-template-columns: minmax(320px, 0.78fr) minmax(0, 1.22fr);
 }
 
 .loading-step-list {

@@ -52,6 +52,23 @@
     }
     overlay.hidden = !visible;
     document.body.classList.toggle("with-loading-overlay", visible);
+    if (!visible) {
+      overlay.classList.remove("loading-overlay--expanded");
+      overlay.scrollTop = 0;
+    }
+  };
+
+  const syncOverlayExpandedState = function () {
+    if (!overlay || !overlayExpanded) {
+      return;
+    }
+    const expanded = !overlayExpanded.hidden;
+    overlay.classList.toggle("loading-overlay--expanded", expanded);
+    if (expanded) {
+      window.requestAnimationFrame(function () {
+        overlay.scrollTop = 0;
+      });
+    }
   };
 
   const formatEta = function (startedAt, percent) {
@@ -413,6 +430,7 @@
       const expanded = overlayToggle.getAttribute("aria-expanded") === "true";
       overlayToggle.setAttribute("aria-expanded", expanded ? "false" : "true");
       overlayExpanded.hidden = expanded;
+      syncOverlayExpandedState();
       overlayToggle.textContent = expanded
         ? "Show exact live detail"
         : "Hide exact live detail";
@@ -449,6 +467,7 @@
     }
     renderOverlay(payload || { status: "queued", progress: { percent: 0, steps: [] } });
     setOverlayVisibility(true);
+    syncOverlayExpandedState();
   };
 
   const hideLoadingOverlay = function () {
