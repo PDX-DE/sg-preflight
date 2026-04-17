@@ -16,7 +16,7 @@
   <div class="hero-copy">
     <p class="eyebrow">Automation result</p>
     <h2>{{ record.label }}</h2>
-    <p class="hero-text">This is the fastest useful summary of what the automation ran, what it produced, and what to open next.</p>
+    <p class="hero-text">This is the fastest useful summary of what the automation ran, what it produced, and what to open next. Read the summary first, then only drop into raw logs if the short answer is not enough.</p>
   </div>
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% elif record.status == 'blocked' %}warn{% else %}warn{% endif %}" id="action-status-pill">{{ record.status }}</span>

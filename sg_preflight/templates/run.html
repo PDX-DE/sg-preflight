@@ -27,6 +27,7 @@
       {% else %}
       {{ profile.friendly_summary or profile.operator_goal or profile.description }}
       {% endif %}
+      Use the main action first unless you already know you need a smaller manual check.
     </p>
   </div>
   <div class="hero-actions hero-actions--stack">
@@ -112,6 +113,7 @@
       <strong>If you are unsure, do only this:</strong>
       <ol class="step-list">
         <li>Press the big button above first.</li>
+        <li>Wait for the result page instead of opening more panels while the run is active.</li>
         <li>Ignore the smaller quick check unless you need custom packs or a different fail threshold.</li>
         <li>Ignore alternate actions unless someone specifically asked for repo checker, scene check, or BMW smoke.</li>
       </ol>

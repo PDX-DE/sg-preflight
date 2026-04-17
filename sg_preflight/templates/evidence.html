@@ -13,7 +13,7 @@
   <div class="hero-copy">
     <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Files and proof{% endif %}</p>
     <h2>{{ record.profile_id }} - {{ record.profile_label }}</h2>
-    <p class="hero-text">These are the reports and SG files behind run <code>{{ record.run_id }}</code>.</p>
+    <p class="hero-text">These are the reports and SG files behind run <code>{{ record.run_id }}</code>. Open the pinned source file first, then use the reports and copy blocks only when you need proof or handoff text.</p>
   </div>
   <div class="hero-actions hero-actions--stack">
     <a class="button subtle" href="/ui/runs/{{ record.run_id }}">Back to result</a>

@@ -14,13 +14,21 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/ui/static/operator.css?v=20260417h" />
+  <link rel="stylesheet" href="/ui/static/operator.css?v=20260417i" />
 </head>
 <body data-guide-mode="on" {% block body_attrs %}{% endblock %}>
   <header class="shell-header">
     <div class="shell-brand">
-      <p class="eyebrow">Paradox Cat GmbH Seriengrafik / 3D Car</p>
-      <h1><a href="/ui">SG Preflight Operator UI</a></h1>
+      <div class="shell-brand-mark" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="shell-brand-copy">
+        <p class="eyebrow">Paradox Cat GmbH Seriengrafik / 3D Car</p>
+        <h1><a href="/ui">SG Preflight Operator UI</a></h1>
+        <p class="shell-tagline">Local SG QA, source-of-truth lookup, and reusable evidence.</p>
+      </div>
     </div>
     <nav class="shell-nav">
       <a href="/ui">Home</a>
@@ -41,9 +49,19 @@
     </nav>
   </header>
 
+  <section class="shell-route" data-guide aria-label="Operator path">
+    <div class="shell-route-label">Operator path</div>
+    <ol class="shell-route-list">
+      <li>Start from what changed</li>
+      <li>Run the recommended check</li>
+      <li>Open files and proof</li>
+      <li>Copy the note you need</li>
+    </ol>
+  </section>
+
   <div class="loading-overlay" id="loading-overlay" hidden>
     <div class="loading-screen">
-      <p class="eyebrow">Tool is running now</p>
+      <p class="eyebrow">Run is in progress</p>
       <div class="loading-native" aria-hidden="true">
         <div class="loading-native-screen">
           <div class="loading-native-vignette"></div>
@@ -104,6 +122,6 @@
     {% block content %}{% endblock %}
   </main>
 
-  <script src="/ui/static/operator.js?v=20260417h"></script>
+  <script src="/ui/static/operator.js?v=20260417i"></script>
 </body>
 </html>

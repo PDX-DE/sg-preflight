@@ -37,6 +37,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Changed
 
+- Operator UI now uses a darker sharper mission-control visual system inspired by the locally available Project06/P-06 menu code: left-anchored shell, compact title bars, clearer four-step route strip, slimmer section density, bevelled controls, and a refit loading screen that matches the same interface language instead of reading like a generic internal dashboard
 - Full `python -m unittest discover -s tests -v` coverage now completes on this machine again because live `project_sanity` manifest generation no longer spends minutes in duplicate path/Lua scans
 - Operator loading overlay now stays hidden on ordinary pages until a real run or action actually starts, fixing the stuck `NOW LOADING...` state on `/ui`
 - Operator loading overlay now lets the operator click individual steps to inspect exact per-step detail, step-specific events, nested child progress, target paths, and current commands instead of only showing one flat status strip
