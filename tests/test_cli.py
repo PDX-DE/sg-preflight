@@ -36,11 +36,28 @@ class TestCLI(unittest.TestCase):
         payload = json.loads(result.stdout)
         action_ids = {item["action_id"] for item in payload}
         self.assertIn("daily_live_matrix", action_ids)
+        self.assertIn("repo_checker_all", action_ids)
         self.assertIn("repo_checker_idcevo", action_ids)
         self.assertIn("qa_stack__g65", action_ids)
         self.assertIn("unused_resources__g65", action_ids)
         self.assertIn("delivery_checklist__g65", action_ids)
         self.assertIn("bmw_screenshot_smoke__g65", action_ids)
+
+    def test_list_checkers_reports_checker_catalog(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "list-checkers", "--json"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = json.loads(result.stdout)
+        checker_keys = {item["key"] for item in payload}
+        self.assertIn("execute_checks", checker_keys)
+        self.assertIn("checkall_bat", checker_keys)
+        self.assertIn("delivery_checklist", checker_keys)
+        self.assertIn("bmw_smoke", checker_keys)
 
     def test_good_demo_passes(self) -> None:
         result = subprocess.run(

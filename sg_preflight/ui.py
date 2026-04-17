@@ -46,6 +46,7 @@ from sg_preflight.services import (
     qa_workflow_status,
     run_notes,
     save_run_record,
+    sg_checker_catalog,
     workspace_root,
 )
 
@@ -762,6 +763,7 @@ def _action_cards(root: Path, profiles: list[RunProfile], *, scope: str, profile
         cards.append(
             {
                 "action_id": action.action_id,
+                "kind": action.kind,
                 "label": action.label,
                 "description": action.description,
                 "ready": action.ready,
@@ -2168,7 +2170,15 @@ def create_app(
                     app.state.workspace_root,
                     "docs/qa-workflow-alignment.md",
                 ),
+                "checker_coverage_doc": _doc_file_link(
+                    app.state.workspace_root,
+                    "docs/sg-checker-coverage-matrix.md",
+                ),
                 "workflow_steps": qa_workflow_status(
+                    app.state.workspace_root,
+                    profiles=list(app.state.profiles.values()),
+                ),
+                "checker_catalog": sg_checker_catalog(
                     app.state.workspace_root,
                     profiles=list(app.state.profiles.values()),
                 ),

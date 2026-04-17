@@ -168,7 +168,7 @@
         <p>Use this when you need the SG checker scripts rather than the normal per-car preflight path.</p>
         <div class="action-row action-row--wrap">
           {% for item in workspace %}
-            {% if item.action_id == "repo_checker_idcevo" or item.action_id == "repo_checker_classic" %}
+            {% if item.kind == "repo_checker" %}
             <button class="button subtle action-launch" type="button" data-action-id="{{ item.action_id }}">{{ item.label }}</button>
             {% endif %}
           {% endfor %}
@@ -284,6 +284,38 @@
           </div>
           <span class="badge {% if item.status == 'available' %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
         </div>
+        {% endfor %}
+      </div>
+    </details>
+
+    <details class="foldout">
+      <summary>Show SG checker coverage</summary>
+      {% if checker_coverage_doc is defined and checker_coverage_doc.href %}
+      <div class="action-row action-row--wrap">
+        <a class="button subtle" href="{{ checker_coverage_doc.href }}">Open checker coverage doc</a>
+      </div>
+      {% endif %}
+      <div class="workflow-grid">
+        {% for item in checker_catalog %}
+        <article class="workflow-card">
+          <div class="status-row">
+            <strong>{{ item.label }}</strong>
+            <span class="badge {% if item.state == 'ready' %}ok{% elif item.state == 'partial' %}info{% else %}warn{% endif %}">{{ item.state }}</span>
+          </div>
+          <p class="workflow-summary">{{ item.summary }}</p>
+          <div class="summary-inline">
+            <span><strong>{{ item.coverage }}</strong> coverage</span>
+            <span>{{ item.kind }}</span>
+          </div>
+          <div class="muted">{{ item.operator_surface }}</div>
+          {% if item.blockers %}
+          <ul class="clean-list">
+            {% for blocker in item.blockers %}
+            <li>{{ blocker }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </article>
         {% endfor %}
       </div>
     </details>

@@ -26,7 +26,8 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - `d50f870` `fix(ui): make live loading detail scrollable`
 - `e3ff320` `fix(ui): widen and compress demo pages`
 - `c4dcb3e` `feat(ui): add dark mode and clearer operator guidance`
-- working tree: repo-checker now wraps `check_all_styles.py` plus `executeChecks.py`, the operator action system now also wraps `printNotUsedResources.py` per car, and pre-delivery flow now exposes the mirrored `deliveryChecklist` bridge with BMW-side blockers
+- `2021122` `feat(operator): align qa actions with sg checker flow`
+- working tree: SG checker coverage now has a shared discovery/catalog layer, `checkall.bat` scope is covered through `repo_checker_all`, and the main docs now split current operator-surface narrative from future desktop-shell research
 
 #### 2026-04-16
 
@@ -66,6 +67,9 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Changed
 
+- The repo now has a shared SG checker catalog in code, exposed through `python -m sg_preflight list-checkers --json`, the Home `Show SG checker coverage` foldout, and the new `docs/sg-checker-coverage-matrix.md` source-of-truth note
+- The workspace action list now includes `repo_checker_all`, which covers the full mirrored repo scope behind `checkall.bat` through direct Python invocation instead of calling the batch wrapper
+- Main docs now keep the product identity focused on SG QA / evidence / handoff work, while future desktop-shell architecture and Unleashed-inspired visual-direction notes live under `docs/research/`
 - Pre-delivery workflow status, run-page action lists, and the recommended per-car QA stack now surface a delivery-checklist readiness bridge based on the mirrored `.pdx\checkers\deliveryChecklist` assets, so SG-side delivery expectations sit visibly between deterministic proof and BMW-side smoke
 - Delivery-checklist actions now write their own readiness summary and log, including mirrored checklist assets plus BMW repo/helper discovery, instead of pretending the external BMW-owned checklist flow is runnable end-to-end on this machine
 - Per-car QA actions now also wrap `.pdx\checkers\printNotUsedResources.py`, and the recommended QA stack now includes a local unused-resource scan before the later manual or BMW-blocked stages

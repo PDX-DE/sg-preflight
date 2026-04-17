@@ -126,6 +126,16 @@ def _delivery_checklist_command_preview(profile: RunProfile) -> str:
     )
 
 
+def _repo_checker_target(record: ActionRecord, mirror_root: Path) -> Path:
+    if record.project_root:
+        return Path(record.project_root)
+    if record.action_id == "repo_checker_all":
+        return mirror_root
+    if record.action_id == "repo_checker_idcevo":
+        return mirror_root / "Cars_IDCevo"
+    return mirror_root / "Cars"
+
+
 @dataclass(frozen=True)
 class OperatorAction:
     action_id: str
@@ -279,6 +289,24 @@ def list_operator_actions(
     scene_ready = scene_checker.exists() and raco_headless.exists()
 
     actions = [
+        OperatorAction(
+            action_id="repo_checker_all",
+            label="Run full repo checkers",
+            description="Run the SG checker stack over the full mirrored SG repo root, matching `checkall.bat` scope without calling the batch wrapper directly.",
+            kind="repo_checker",
+            scope="workspace",
+            ready=checker_ready and mirror_root.exists(),
+            blocker_message=(
+                ""
+                if checker_ready and mirror_root.exists()
+                else "The mirrored SG checker stack (`check_all_styles.py` + `executeChecks.py`) or repo root is missing."
+            ),
+            command_preview=_repo_checker_command_preview(
+                style_script,
+                checker_script,
+                mirror_root,
+            ),
+        ),
         OperatorAction(
             action_id="daily_live_matrix",
             label="Run daily SG check",
@@ -1137,9 +1165,7 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
 def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     mirror_root = root / "repositories" / "trunk"
     style_script, checker_script = _repo_checker_paths(mirror_root)
-    target = Path(record.project_root) if record.project_root else (
-        mirror_root / ("Cars_IDCevo" if record.action_id == "repo_checker_idcevo" else "Cars")
-    )
+    target = _repo_checker_target(record, mirror_root)
     env = os.environ.copy()
     env["SG-Repo"] = str(mirror_root)
     _set_action_progress(
@@ -1207,6 +1233,7 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
         "lines": [
             f"Style checker: {style_summary.get('issue_count', 0)} style-guide issue(s) across {style_summary.get('checked_files', 0)} checked file(s).",
             f"executeChecks: {checker_summary.get('reported_error_batches', 0)} error batch(es) across {checker_summary.get('phase_count', 0)} phase(s).",
+            f"Scope: {target}",
         ],
         "style_issue_count": style_summary.get("issue_count", 0),
         "style_checked_files": style_summary.get("checked_files", 0),
@@ -1229,7 +1256,11 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
     summary["lines"].append(
         f"Exit codes: style={style_result.returncode}, executeChecks={result.returncode}."
     )
-    artifacts = [_artifact("Checker log", Path(record.paths["log"]))]
+    artifacts = [
+        _artifact("Checker log", Path(record.paths["log"])),
+        _artifact("Style checker script", style_script),
+        _artifact("executeChecks script", checker_script),
+    ]
     return summary, artifacts, []
 
 
@@ -1273,7 +1304,10 @@ def _execute_unused_resources(record: ActionRecord, root: Path) -> tuple[dict[st
     summary["return_code"] = result.returncode
     if result.returncode != 0:
         summary.setdefault("lines", []).append(f"Process returned exit code {result.returncode}.")
-    artifacts = [_artifact("Unused resource scan log", Path(record.paths["log"]))]
+    artifacts = [
+        _artifact("Unused resource scan log", Path(record.paths["log"])),
+        _artifact("Unused resource script", script_path),
+    ]
     return summary, artifacts, []
 
 
@@ -1555,7 +1589,10 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
             cell.alignment = openpyxl.styles.Alignment(wrap_text=True)
 
     _write_text(Path(record.paths["log"]), "\n".join(log_lines).strip() + ("\n" if log_lines else ""))
-    artifacts = [_artifact("Scene checker log", Path(record.paths["log"]))]
+    artifacts = [
+        _artifact("Scene checker log", Path(record.paths["log"])),
+        _artifact("Scene checker script", scene_checker),
+    ]
     if workbook.sheetnames:
         workbook_path = Path(record.paths["xlsx_report"])
         workbook_path.parent.mkdir(parents=True, exist_ok=True)

@@ -18,6 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def _create_checker_files(root: Path) -> None:
     mirror_root = root / "repositories" / "trunk"
     write_text(mirror_root / ".pdx" / "checkers" / "executeChecks.py", "print('checker stub')\n")
+    write_text(mirror_root / ".pdx" / "checkers" / "checkall.bat", "@echo off\n")
+    write_text(mirror_root / ".pdx" / "checkers" / "checkcars.bat", "@echo off\n")
+    write_text(mirror_root / ".pdx" / "checkers" / "checkcars_IDCevo.bat", "@echo off\n")
     write_text(
         mirror_root / ".pdx" / "checkers" / "code_style_checker" / "check_all_styles.py",
         "print('style stub')\n",
@@ -50,6 +53,7 @@ class TestQaActions(unittest.TestCase):
 
         action_map = {action.action_id: action for action in actions}
         self.assertTrue(action_map["daily_live_matrix"].ready)
+        self.assertTrue(action_map["repo_checker_all"].ready)
         self.assertTrue(action_map["qa_stack__g65"].ready)
         self.assertTrue(action_map["repo_checker_profile__g65"].ready)
         self.assertTrue(action_map["unused_resources__g65"].ready)

@@ -21,6 +21,10 @@ It is the deterministic front end of that workflow:
 - while making the current SG-side repo, delivery-checklist, and scene checks visible from the same local surface
 
 See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflow fit, manual stages, and BMW-side blockers.
+See [sg-checker-coverage-matrix.md](sg-checker-coverage-matrix.md) for the real SG checker inventory and current integration coverage.
+
+The browser UI is the current operator surface.
+If a richer local shell is needed later, it should be a desktop wrapper over the same Python core rather than a replacement engine.
 
 ## Start
 
@@ -247,7 +251,9 @@ Current expectation:
 - use the "what changed?" launcher first when you already know what kind of file or workflow step you touched
 - use the workflow-stage launcher when the phase matters more than the file type, especially before commit, pre-delivery, after integration, or when you only need Jira / QA Hero evidence
 - use the one-click QA actions when you want repo checker, delivery-checklist readiness, scene check, or the recommended per-car QA stack without touching terminals
+- use `Show SG checker coverage` on Home when someone asks what real SG checker/tooling layer is available on this machine
 - the repo-checker action now wraps the real SG checker stack more truthfully by running `check_all_styles.py` before `executeChecks.py`, so style/license plus Lua/shader/formatting coverage live under one operator action
+- the workspace action list now also exposes a full mirrored repo-checker path for `checkall.bat` scope as `repo_checker_all`
 - the per-car action list now also exposes `printNotUsedResources.py` as an unused-resource scan, so leftover SG resource files can be checked from the same operator surface
 - the per-car action list now also exposes the mirrored `deliveryChecklist` files as a readiness bridge, so SG-side delivery expectations and BMW-side blockers stay visible before smoke or handoff
 - default to the full-check button when you just want the safest useful path for one car

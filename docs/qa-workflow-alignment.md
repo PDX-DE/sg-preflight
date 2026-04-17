@@ -68,6 +68,7 @@ What this means:
 - evidence includes exact source file and line information where available
 
 This supports the existing repo-level sanity work and reduces black-box debugging.
+The detailed checker-by-checker mapping now lives in [sg-checker-coverage-matrix.md](sg-checker-coverage-matrix.md).
 
 ### 5. SG checker stack and `check_scenes.py`
 
@@ -77,6 +78,7 @@ What this means:
 
 - the mirrored repo already contains `check_scenes.py`
 - the UI now exposes repo checker, delivery-checklist readiness, scene check, and recommended QA-stack actions directly
+- the workspace action list now also covers `checkall.bat` scope through a full-repo checker action without calling the batch wrapper directly
 - repo checker now runs the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
 - the per-car action list now also wraps `printNotUsedResources.py` for local unused-resource scans against the mirrored car project
 - the per-car action list now also wraps the mirrored `.pdx/checkers/deliveryChecklist` assets as a local readiness bridge before BMW-owned delivery steps

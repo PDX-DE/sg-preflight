@@ -1,8 +1,8 @@
 # SG Preflight
 
-A Python-first internal framework for deterministic 3D Car QA preflight checks, with a local operator UI over the same validation engine.
+A local SG-side QA / preflight / evidence tool for Seriengrafik / 3D Car, built around one shared Python validation engine.
 
-This project turns several current manual SG checks into repeatable validation with machine-readable and human-readable reports.
+This project helps operators run deterministic checks, inspect real source-of-truth files, generate reusable evidence, and prepare Jira / QA Hero / handoff notes before review, delivery, or integration.
 
 See [LICENSE](LICENSE) for the internal proprietary license terms.
 
@@ -67,6 +67,13 @@ This tool is intentionally aimed at pain that is both:
 - repeatedly mentioned in current 3D / SG onboarding and QA docs
 - realistic to catch deterministically before manual visual review, rack time, or integration
 
+## Current Surfaces
+
+- Python core engine
+- CLI over the same engine
+- local web UI over the same engine
+- future desktop GUI wrapper later, built on the same engine rather than replacing it
+
 ## Quick start
 
 From the project root:
@@ -123,6 +130,12 @@ List the one-click SG QA actions:
 python -m sg_preflight list-actions --json
 ```
 
+List the current SG checker coverage layer:
+
+```bash
+python -m sg_preflight list-checkers --json
+```
+
 Run the full daily live preflight matrix as one action:
 
 ```bash
@@ -155,6 +168,7 @@ It provides:
 - Files And Proof: grouped `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned when a finding exists plus the same stage-readiness summary for evidence completeness
 - One-click actions for the wider SG QA flow:
   - daily live matrix
+  - full mirrored repo checker coverage for `checkall.bat` scope, exposed as `repo_checker_all` without calling the batch wrapper directly
   - repo checker on workspace or per-car scope, now wrapping the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
   - per-car unused-resource scan through `.pdx\checkers\printNotUsedResources.py`
   - per-car delivery-checklist readiness bridge through `.pdx\checkers\deliveryChecklist`, so the mirrored SG checklist assets and BMW-side blockers are visible from the same operator surface
@@ -169,6 +183,8 @@ One-click action records persist under `out\operator-ui\actions`.
 Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-workflow.md).
 Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate-pilot-playbook.md).
 QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-alignment.md).
+SG checker coverage lives in [docs/sg-checker-coverage-matrix.md](docs/sg-checker-coverage-matrix.md).
+Future desktop-shell research lives under [docs/research](docs/research).
 
 Run the full smoke-test flow:
 

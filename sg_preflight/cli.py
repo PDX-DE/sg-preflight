@@ -18,6 +18,7 @@ from sg_preflight.services import (
     execute_profile_run,
     parse_name_value_pairs,
     parse_packs,
+    sg_checker_catalog,
 )
 
 
@@ -133,6 +134,25 @@ def _console_actions(as_json: bool) -> None:
             print(f"  blocker: {action.blocker_message}")
 
 
+def _console_checkers(as_json: bool) -> None:
+    checkers = sg_checker_catalog()
+    if as_json:
+        print(json.dumps(checkers, indent=2))
+        return
+
+    print("SG checker coverage:")
+    for item in checkers:
+        print(f"- {item['label']}: state={item['state']} coverage={item['coverage']}")
+        print(f"  {item['summary']}")
+        if item.get("operator_surface"):
+            print(f"  operator surface: {item['operator_surface']}")
+        blockers = item.get("blockers", [])
+        if blockers:
+            print("  blockers:")
+            for blocker in blockers:
+                print(f"    - {blocker}")
+
+
 def _console_run_record(record: object, *, as_json: bool = False) -> None:
     if as_json:
         print(json.dumps(record.to_dict(), indent=2, ensure_ascii=False))
@@ -215,6 +235,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     action_list = sub.add_parser("list-actions", help="List one-click SG QA actions")
     action_list.add_argument("--json", action="store_true", help="Print action registry as JSON")
+
+    checker_list = sub.add_parser("list-checkers", help="List SG checker coverage and readiness")
+    checker_list.add_argument("--json", action="store_true", help="Print checker coverage as JSON")
 
     run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
     run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
@@ -344,6 +367,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "list-actions":
         _console_actions(args.json)
+        return 0
+
+    if args.command == "list-checkers":
+        _console_checkers(args.json)
         return 0
 
     if args.command == "run-profile":
