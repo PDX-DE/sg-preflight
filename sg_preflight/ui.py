@@ -147,6 +147,18 @@ def _latest_matrix_artifact(root: Path, profile: RunProfile, suffix: str) -> Pat
     return root / "out" / "real-live-matrix" / "latest" / slug / f"{slug}-report.{suffix}"
 
 
+def _file_href(path: Path, raw: bool = False) -> str:
+    if not path.exists() or not path.is_file():
+        return ""
+    query = {
+        "path": str(path),
+        "ts": str(path.stat().st_mtime_ns),
+    }
+    if raw:
+        query["raw"] = "true"
+    return f"/ui/files?{urlencode(query)}"
+
+
 def _latest_matrix_signal(root: Path, profile: RunProfile) -> dict[str, Any] | None:
     report_path = _latest_matrix_artifact(root, profile, "json")
     if not report_path.exists():
@@ -175,7 +187,7 @@ def _summary_file_link(root: Path) -> dict[str, str]:
     summary_path = root / "out" / "real-live-matrix" / "latest" / "SUMMARY.md"
     return {
         "path": str(summary_path),
-        "href": f"/ui/files?path={summary_path}" if summary_path.exists() else "",
+        "href": _file_href(summary_path),
     }
 
 
@@ -183,7 +195,7 @@ def _doc_file_link(root: Path, relative_path: str) -> dict[str, str]:
     path = root / relative_path
     return {
         "path": str(path),
-        "href": f"/ui/files?path={path}" if path.exists() else "",
+        "href": _file_href(path),
     }
 
 
@@ -1871,8 +1883,7 @@ def _path_evidence(label: str, path: str | None) -> dict[str, str]:
     href = ""
     if path:
         candidate = Path(path)
-        if candidate.exists() and candidate.is_file():
-            href = f"/ui/files?path={path}"
+        href = _file_href(candidate)
     return {
         "label": label,
         "value": path or "",
@@ -2465,19 +2476,26 @@ def create_app(
         return RedirectResponse(url="/ui", status_code=302)
 
     @app.get("/ui/files")
-    async def file_proxy(path: str, raw: bool = False):
+    async def file_proxy(path: str, raw: bool = False, ts: str | None = None):
         target = Path(path)
         if not target.exists() or not target.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         if not _is_allowed_file(app, target):
             raise HTTPException(status_code=403, detail="Path is outside allowed roots")
+        cache_headers = {"Cache-Control": "no-store, max-age=0"}
         if not raw and target.suffix.lower() in {".html", ".htm"}:
             try:
                 content = target.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 content = target.read_text(encoding="utf-8", errors="replace")
-            return HTMLResponse(retheme_html_report(content))
-        return FileResponse(target)
+            rendered = retheme_html_report(content)
+            if rendered != content:
+                try:
+                    target.write_text(rendered, encoding="utf-8")
+                except OSError:
+                    pass
+            return HTMLResponse(rendered, headers=cache_headers)
+        return FileResponse(target, headers=cache_headers)
 
     return app
 

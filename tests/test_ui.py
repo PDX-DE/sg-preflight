@@ -16,7 +16,6 @@ from sg_preflight.qa_actions import (
     get_operator_action,
     save_action_record as save_action_task_record,
 )
-from sg_preflight.reporting import write_html_report
 from sg_preflight.services import (
     RUN_PROGRESS_PLAN,
     RunRequest,
@@ -466,34 +465,48 @@ class TestOperatorUI(unittest.TestCase):
             profile = create_temp_g65_profile(root)
             client = TestClient(create_app(root=root, profiles=[profile]))
 
-            report = Report(
-                bundle="demo://bundle",
-                context={"car_model": "G65", "delivery_phase": "preview"},
-                packs=[
-                    PackResult(
-                        pack="project_sanity",
-                        findings=[
-                            Finding(
-                                pack="project_sanity",
-                                code="project_sanity.unused_lua",
-                                severity="warning",
-                                message="Lua file is present but not referenced",
-                                location="Lua/test.lua",
-                            )
-                        ],
-                    )
-                ],
-            )
+            legacy_report_html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SG Preflight Report</title>
+<style>
+:root {
+  --bg: #f6f3eb;
+  --panel: #fffdf8;
+}
+</style>
+</head>
+<body>
+<section class="hero">
+  <h1>SG Preflight Report</h1>
+  <p class="small"><strong>Bundle:</strong> demo://bundle</p>
+  <p class="small">Presentation-friendly summary first, with workflow context and handoff guidance before the raw findings.</p>
+</section>
+<div class="summary">
+  <div class="card card-errors"><strong>Errors</strong><div class="card-value">1</div></div>
+</div>
+</body>
+</html>
+"""
             report_path = root / "out" / "operator-ui" / "runs" / "demo" / "report.html"
-            write_html_report(report, report_path)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(legacy_report_html, encoding="utf-8")
 
-            page = client.get(f"/ui/files?path={report_path}")
+            page = client.get(
+                f"/ui/files?path={report_path}&ts={report_path.stat().st_mtime_ns}"
+            )
+            upgraded = report_path.read_text(encoding="utf-8")
 
         self.assertEqual(page.status_code, 200)
         self.assertIn("Operator report", page.text)
         self.assertIn("report-route", page.text)
         self.assertIn("This report is the printable operator summary for one SG check", page.text)
         self.assertIn("--bg: #040811", page.text)
+        self.assertNotIn("--bg: #f6f3eb", page.text)
+        self.assertEqual(page.headers.get("cache-control"), "no-store, max-age=0")
+        self.assertIn("--bg: #040811", upgraded)
+        self.assertNotIn("--bg: #f6f3eb", upgraded)
 
     def test_operator_css_keeps_loading_overlay_hidden_by_default(self) -> None:
         css = (ROOT / "sg_preflight" / "static" / "operator.css").read_text(encoding="utf-8")
