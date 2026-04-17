@@ -85,6 +85,17 @@ enum class UiCue {
 constexpr float kPanelGrid = 9.0f;
 constexpr float kPanelHeaderHeight = 34.0f;
 constexpr float kRailFooterReserve = 62.0f;
+constexpr float kVirtualWidth = 1280.0f;
+constexpr float kVirtualHeight = 720.0f;
+constexpr double kContainerLineAnimationDuration = 8.0;
+constexpr double kContainerOuterTime = kContainerLineAnimationDuration + 8.0;
+constexpr double kContainerOuterDuration = 8.0;
+constexpr double kContainerInnerTime = kContainerOuterTime + kContainerOuterDuration + 8.0;
+constexpr double kContainerInnerDuration = 8.0;
+constexpr double kContainerBackgroundTime = kContainerInnerTime + kContainerInnerDuration + 8.0;
+constexpr double kContainerBackgroundDuration = 12.0;
+constexpr double kContainerCategoryTime = (kContainerInnerTime + kContainerBackgroundTime) / 2.0;
+constexpr double kContainerCategoryDuration = 12.0;
 
 float Saturate(float value) {
     return std::clamp(value, 0.0f, 1.0f);
@@ -109,6 +120,17 @@ ImVec2 LerpVec2(ImVec2 lhs, ImVec2 rhs, float alpha) {
     return ImVec2(LerpFloat(lhs.x, rhs.x, alpha), LerpFloat(lhs.y, rhs.y, alpha));
 }
 
+float HermiteFloat(float lhs, float rhs, float alpha) {
+    const float t = Saturate(alpha);
+    const float t2 = t * t;
+    const float t3 = t2 * t;
+    return lhs + (rhs - lhs) * ((3.0f * t2) - (2.0f * t3));
+}
+
+ImVec2 HermiteVec2(ImVec2 lhs, ImVec2 rhs, float alpha) {
+    return ImVec2(HermiteFloat(lhs.x, rhs.x, alpha), HermiteFloat(lhs.y, rhs.y, alpha));
+}
+
 float ExpApproach(float current, float target, float rate) {
     const float alpha = 1.0f - std::exp(-rate * ImGui::GetIO().DeltaTime);
     return LerpFloat(current, target, alpha);
@@ -130,10 +152,49 @@ float ShellMotion(double offset_frames, double duration_frames) {
     return SmoothStep(static_cast<float>((frame - offset_frames) / duration_frames));
 }
 
+double ComputeLinearMotionFrames(double offset_frames, double total_frames) {
+    if (g_shell_appear_time < 0.0) {
+        return 1.0;
+    }
+    return std::clamp(
+        (ImGui::GetTime() - g_shell_appear_time - offset_frames / 60.0) / total_frames * 60.0,
+        0.0,
+        1.0
+    );
+}
+
+double ComputeMotionFrames(double offset_frames, double total_frames) {
+    return std::sqrt(ComputeLinearMotionFrames(offset_frames, total_frames));
+}
+
 ImU32 ApplyAlpha(ImU32 color, float alpha_scale) {
     ImVec4 rgba = ImGui::ColorConvertU32ToFloat4(color);
     rgba.w *= Saturate(alpha_scale);
     return ImGui::ColorConvertFloat4ToU32(rgba);
+}
+
+float ShellScale() {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    return std::min(display.x / kVirtualWidth, display.y / kVirtualHeight);
+}
+
+ImVec2 ShellOffset() {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float scale = ShellScale();
+    return ImVec2(
+        (display.x - kVirtualWidth * scale) * 0.5f,
+        (display.y - kVirtualHeight * scale) * 0.5f
+    );
+}
+
+float ShellUi(float value) {
+    return value * ShellScale();
+}
+
+ImVec2 ShellPoint(float x, float y) {
+    const ImVec2 offset = ShellOffset();
+    const float scale = ShellScale();
+    return ImVec2(offset.x + x * scale, offset.y + y * scale);
 }
 
 bool PathExists(const std::filesystem::path& path) {
@@ -737,9 +798,16 @@ ImFont* TryLoadFont(ImGuiIO& io, const std::filesystem::path& path, float size) 
 }
 
 void LoadShellFonts(ImGuiIO& io) {
-    g_title_font = TryLoadFont(io, R"(C:\Windows\Fonts\bahnschrift.ttf)", 30.0f);
-    g_body_font = TryLoadFont(io, R"(C:\Windows\Fonts\consola.ttf)", 18.0f);
-    g_small_font = TryLoadFont(io, R"(C:\Windows\Fonts\consola.ttf)", 15.0f);
+    g_title_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeuib.ttf)", 31.0f);
+    g_body_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeuil.ttf)", 18.0f);
+    g_small_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeui.ttf)", 15.0f);
+
+    if (g_body_font == nullptr) {
+        g_body_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeui.ttf)", 18.0f);
+    }
+    if (g_title_font == nullptr) {
+        g_title_font = TryLoadFont(io, R"(C:\Windows\Fonts\bahnschrift.ttf)", 31.0f);
+    }
 
     if (g_body_font == nullptr) {
         g_body_font = io.Fonts->AddFontDefault();
@@ -804,7 +872,7 @@ void DrawBackdropChrome(const ShellState& state) {
     ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
     const ImVec2 display_size = ImGui::GetIO().DisplaySize;
     const float time = static_cast<float>(ImGui::GetTime());
-    const float shift = std::fmod(time * 18.0f, 10.0f);
+    const float shift = std::fmod(time * 18.0f, ShellUi(10.0f));
 
     draw_list->AddRectFilled(
         ImVec2(0.0f, 0.0f),
@@ -812,7 +880,7 @@ void DrawBackdropChrome(const ShellState& state) {
         IM_COL32(10, 17, 19, 255)
     );
 
-    for (float y = -shift; y < display_size.y; y += 10.0f) {
+    for (float y = -shift; y < display_size.y; y += ShellUi(10.0f)) {
         draw_list->AddLine(
             ImVec2(0.0f, y),
             ImVec2(display_size.x, y),
@@ -821,18 +889,17 @@ void DrawBackdropChrome(const ShellState& state) {
         );
     }
 
-    const float top_height = 92.0f;
-    const float bottom_height = 54.0f;
+    const float bar_height = ShellUi(105.0f);
     draw_list->AddRectFilledMultiColor(
         ImVec2(0.0f, 0.0f),
-        ImVec2(display_size.x, top_height),
+        ImVec2(display_size.x, bar_height),
         IM_COL32(3, 7, 8, 255),
         IM_COL32(3, 7, 8, 255),
         IM_COL32(3, 7, 8, 0),
         IM_COL32(3, 7, 8, 0)
     );
     draw_list->AddRectFilledMultiColor(
-        ImVec2(0.0f, display_size.y - bottom_height),
+        ImVec2(0.0f, display_size.y - bar_height),
         display_size,
         IM_COL32(3, 7, 8, 0),
         IM_COL32(3, 7, 8, 0),
@@ -840,145 +907,252 @@ void DrawBackdropChrome(const ShellState& state) {
         IM_COL32(3, 7, 8, 255)
     );
 
-    const float bar_motion = ShellMotion(0.0, 16.0);
+    const float bar_motion = static_cast<float>(ComputeMotionFrames(0.0, 16.0));
     draw_list->AddRectFilledMultiColor(
-        ImVec2(0.0f, 26.0f),
-        ImVec2(display_size.x, 88.0f),
-        ApplyAlpha(IM_COL32(14, 35, 28, 255), bar_motion),
-        ApplyAlpha(IM_COL32(14, 35, 28, 255), bar_motion),
-        ApplyAlpha(IM_COL32(14, 35, 28, 120), bar_motion),
-        ApplyAlpha(IM_COL32(14, 35, 28, 120), bar_motion)
+        ImVec2(0.0f, 0.0f),
+        ImVec2(display_size.x, bar_height),
+        ApplyAlpha(IM_COL32(203, 255, 0, 0), bar_motion),
+        ApplyAlpha(IM_COL32(203, 255, 0, 0), bar_motion),
+        ApplyAlpha(IM_COL32(203, 255, 0, 55), bar_motion),
+        ApplyAlpha(IM_COL32(203, 255, 0, 55), bar_motion)
     );
     draw_list->AddRectFilledMultiColor(
-        ImVec2(0.0f, display_size.y - 52.0f),
-        ImVec2(display_size.x, display_size.y - 18.0f),
-        ApplyAlpha(IM_COL32(14, 35, 28, 120), bar_motion),
-        ApplyAlpha(IM_COL32(14, 35, 28, 120), bar_motion),
-        ApplyAlpha(IM_COL32(14, 35, 28, 255), bar_motion),
-        ApplyAlpha(IM_COL32(14, 35, 28, 255), bar_motion)
-    );
-    draw_list->AddLine(
-        ImVec2(0.0f, 88.0f),
-        ImVec2(display_size.x, 88.0f),
-        ApplyAlpha(IM_COL32(115, 178, 104, 255), bar_motion),
-        2.0f
-    );
-    draw_list->AddLine(
-        ImVec2(0.0f, display_size.y - 52.0f),
-        ImVec2(display_size.x, display_size.y - 52.0f),
-        ApplyAlpha(IM_COL32(115, 178, 104, 255), bar_motion),
-        2.0f
+        ImVec2(0.0f, display_size.y - bar_height),
+        display_size,
+        ApplyAlpha(IM_COL32(203, 255, 0, 55), bar_motion),
+        ApplyAlpha(IM_COL32(203, 255, 0, 55), bar_motion),
+        ApplyAlpha(IM_COL32(203, 255, 0, 0), bar_motion),
+        ApplyAlpha(IM_COL32(203, 255, 0, 0), bar_motion)
     );
 
-    const ImVec2 title_pos(26.0f, 30.0f);
-    const float title_alpha = ShellMotion(4.0, 28.0);
-    const float subtitle_alpha = ShellMotion(10.0, 20.0);
-    const float square_motion = ShellMotion(14.0, 30.0);
-    const float square_phase = std::fmod(std::max(0.0f, time * 3.0f), 4.0f);
-    const float square_x = title_pos.x + 190.0f + (square_phase * 20.0f * square_motion);
-    const float square_scale = 1.0f + 0.18f * std::sin(time * 4.0f);
-    const ImVec2 square_min(square_x, title_pos.y + 6.0f);
-    const ImVec2 square_max(square_x + 18.0f * square_scale, title_pos.y + 24.0f);
+    const auto draw_bar_line = [&](bool top) {
+        const float y = top ? bar_height : (display_size.y - bar_height);
+        draw_list->AddRectFilledMultiColor(
+            ImVec2(0.0f, y - ShellUi(2.0f)),
+            ImVec2(display_size.x, y),
+            top ? IM_COL32(222, 255, 189, 7) : IM_COL32(173, 255, 156, 7),
+            top ? IM_COL32(222, 255, 189, 7) : IM_COL32(173, 255, 156, 7),
+            top ? IM_COL32(222, 255, 189, 65) : IM_COL32(173, 255, 156, 65),
+            top ? IM_COL32(222, 255, 189, 65) : IM_COL32(173, 255, 156, 65)
+        );
+        draw_list->AddRectFilledMultiColor(
+            ImVec2(0.0f, y + ShellUi(1.0f)),
+            ImVec2(display_size.x, y + ShellUi(3.0f)),
+            top ? IM_COL32(173, 255, 156, 65) : IM_COL32(222, 255, 189, 65),
+            top ? IM_COL32(173, 255, 156, 65) : IM_COL32(222, 255, 189, 65),
+            top ? IM_COL32(173, 255, 156, 7) : IM_COL32(222, 255, 189, 7),
+            top ? IM_COL32(173, 255, 156, 7) : IM_COL32(222, 255, 189, 7)
+        );
+        draw_list->AddRectFilled(
+            ImVec2(0.0f, y),
+            ImVec2(display_size.x, y + ShellUi(1.0f)),
+            IM_COL32(115, 178, 104, 255)
+        );
+    };
+    draw_bar_line(true);
+    draw_bar_line(false);
 
-    if (g_title_font != nullptr) {
+    static double last_title_boot_time = -1.0;
+    static bool is_rect_visible = true;
+    static bool is_rect_final_adjustment = false;
+    static float rect_x = 0.0f;
+    static double rect_move_motion_offset = 0.0;
+    static double rect_blink_motion_offset = 0.0;
+
+    if (last_title_boot_time != g_shell_appear_time) {
+        is_rect_visible = true;
+        is_rect_final_adjustment = false;
+        rect_x = 0.0f;
+        rect_move_motion_offset = 0.0;
+        rect_blink_motion_offset = 0.0;
+        last_title_boot_time = g_shell_appear_time;
+    }
+
+    const ImVec2 title_pos = ShellPoint(122.0f, 56.0f);
+    const float title_size = ShellUi(48.0f);
+    const float title_alpha = HermiteFloat(0.0f, 1.0f, static_cast<float>(ComputeMotionFrames(3.0, 28.0)));
+    const float flash_alpha = Saturate(1.0f - 2.0f * std::abs(static_cast<float>(ComputeLinearMotionFrames(28.0, 20.0)) - 0.5f));
+    const char* title = "SG Preflight";
+
+    const auto draw_title_text = [&](float alpha) {
+        if (g_title_font == nullptr) {
+            return;
+        }
         draw_list->AddText(
             g_title_font,
-            g_title_font->LegacySize,
-            ImVec2(title_pos.x + 2.0f, title_pos.y + 2.0f),
-            ApplyAlpha(IM_COL32(0, 0, 0, 200), title_alpha),
-            "SG PREFLIGHT"
+            title_size,
+            ImVec2(title_pos.x + ShellUi(4.0f), title_pos.y + ShellUi(4.0f)),
+            ApplyAlpha(IM_COL32(0, 0, 0, 255), alpha),
+            title
         );
         draw_list->AddText(
             g_title_font,
-            g_title_font->LegacySize,
+            title_size,
             title_pos,
-            ApplyAlpha(IM_COL32(255, 188, 0, 255), title_alpha),
-            "SG PREFLIGHT"
+            ApplyAlpha(IM_COL32(255, 190, 33, 255), alpha),
+            title
+        );
+    };
+    draw_title_text(title_alpha);
+
+    const double rect_move_motion = ComputeMotionFrames(rect_move_motion_offset, 5.0);
+    const double rect_end_motion = ComputeMotionFrames(0.0, 40.0);
+    const double rect_blink_motion = std::sin(ComputeMotionFrames(40.0 + rect_blink_motion_offset, 10.0) * 3.14159265358979323846);
+    float rect_alpha_motion = 1.0f;
+    const float rect_y = ShellUi(10.0f);
+    const float rect_size = ShellUi(32.0f);
+
+    if (rect_blink_motion > 0.0) {
+        if (!is_rect_final_adjustment) {
+            rect_x += rect_size + (rect_size * 0.25f);
+            is_rect_final_adjustment = true;
+        }
+        is_rect_visible = !is_rect_visible;
+        rect_blink_motion_offset += 10.0;
+    }
+    if (rect_end_motion >= 1.0) {
+        rect_alpha_motion = 1.0f - static_cast<float>(ComputeMotionFrames(50.0, 45.0));
+    } else if (rect_move_motion >= 1.0) {
+        rect_x += rect_size;
+        rect_move_motion_offset += 5.0;
+    }
+
+    if (is_rect_visible) {
+        float rect_scale = 1.0f;
+        if (rect_blink_motion == 0.0) {
+            constexpr std::array<float, 13> kRectScales = {1.2f, 1.1f, 1.1f, 1.0f, 1.15f, 0.4f, 1.2f, 1.1f, 1.05f, 1.0f, 1.5f, 1.2f, 1.0f};
+            const int scale_index = static_cast<int>(std::round(rect_x / std::max(1.0f, rect_size))) % static_cast<int>(kRectScales.size());
+            rect_scale = kRectScales[static_cast<size_t>(std::max(0, scale_index))];
+        }
+
+        const ImVec2 rect_min(title_pos.x + rect_x, title_pos.y + rect_y);
+        const ImVec2 rect_max(rect_min.x + rect_size * rect_scale, rect_min.y + rect_size);
+        const float outline_margin = ShellUi(2.5f);
+        draw_list->AddRectFilled(
+            ImVec2(rect_min.x - outline_margin, rect_min.y - outline_margin),
+            ImVec2(rect_max.x + outline_margin, rect_max.y + outline_margin),
+            ApplyAlpha(IM_COL32(0, 0, 0, 255), rect_alpha_motion),
+            ShellUi(5.0f)
+        );
+        draw_list->AddRectFilled(
+            rect_min,
+            rect_max,
+            ApplyAlpha(IM_COL32(255, 188, 0, 255), rect_alpha_motion),
+            ShellUi(5.0f)
+        );
+        draw_list->AddRect(
+            rect_min,
+            rect_max,
+            ApplyAlpha(IM_COL32(255, 247, 216, 200), rect_alpha_motion),
+            ShellUi(5.0f),
+            0,
+            1.2f
         );
     }
+
+    if (flash_alpha > 0.0f) {
+        draw_title_text(flash_alpha * 0.45f);
+    }
+
     if (g_small_font != nullptr) {
-        draw_list->AddText(
-            g_small_font,
-            g_small_font->LegacySize,
-            ImVec2(title_pos.x, title_pos.y + 34.0f),
-            ApplyAlpha(IM_COL32(112, 239, 175, 255), subtitle_alpha),
-            "NATIVE OPERATOR SHELL"
-        );
         const std::string workspace = "workspace: " + sg_preflight::native_shell::ToUtf8(state.backend.workspace_root);
         draw_list->AddText(
             g_small_font,
-            g_small_font->LegacySize,
-            ImVec2(title_pos.x + 270.0f, title_pos.y + 34.0f),
-            ApplyAlpha(IM_COL32(183, 205, 189, 210), subtitle_alpha),
+            ShellUi(14.0f),
+            ShellPoint(122.0f, 92.0f),
+            IM_COL32(120, 225, 170, 220),
+            "QA OPERATOR SHELL"
+        );
+        draw_list->AddText(
+            g_small_font,
+            ShellUi(13.0f),
+            ShellPoint(860.0f, 92.0f),
+            IM_COL32(180, 198, 189, 180),
             workspace.c_str()
         );
     }
-
-    draw_list->AddRectFilled(square_min, square_max, ApplyAlpha(IM_COL32(201, 167, 82, 215), square_motion), 3.0f);
-    draw_list->AddRect(square_min, square_max, ApplyAlpha(IM_COL32(255, 196, 104, 255), square_motion), 3.0f, 0, 1.5f);
 }
 
 bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool static_overlay = false) {
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 14.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     const bool open = ImGui::BeginChild(id, size, false, ImGuiWindowFlags_NoScrollWithMouse);
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    const ImVec2 min = ImGui::GetWindowPos();
-    const ImVec2 max = ImVec2(min.x + ImGui::GetWindowSize().x, min.y + ImGui::GetWindowSize().y);
-    const float alpha = ShellMotion(0.0, 22.0);
-    const float grid = kPanelGrid;
+    ImVec2 min = ImGui::GetWindowPos();
+    ImVec2 max = ImVec2(min.x + ImGui::GetWindowSize().x, min.y + ImGui::GetWindowSize().y);
+    const float grid = ShellUi(kPanelGrid);
+    const float label_height = ShellUi(32.0f);
+    const float content_pad = grid * 2.0f;
 
-    draw_list->AddRectFilled(min, max, ApplyAlpha(IM_COL32(7, 13, 15, 238), alpha));
+    const float container_height = static_cast<float>(ComputeMotionFrames(0.0, kContainerLineAnimationDuration));
+    const float outer_alpha = static_cast<float>(ComputeMotionFrames(kContainerOuterTime, kContainerOuterDuration));
+    const float inner_alpha = static_cast<float>(ComputeMotionFrames(kContainerInnerTime, kContainerInnerDuration));
+    const float background_alpha = static_cast<float>(ComputeMotionFrames(kContainerBackgroundTime, kContainerBackgroundDuration));
+
+    const float center_y = (min.y + max.y) * 0.5f;
+    min.y = LerpFloat(center_y, min.y, container_height);
+    max.y = LerpFloat(center_y, max.y, container_height);
+
+    const ImU32 line_color = IM_COL32(0, 89, 0, static_cast<int>(255.0f * container_height));
+    const ImU32 outer_color = IM_COL32(0, 49, 0, static_cast<int>(255.0f * outer_alpha));
+    const ImU32 inner_color = IM_COL32(0, 33, 0, static_cast<int>(255.0f * inner_alpha));
+    const ImU32 background_color = IM_COL32(0, 0, 0, static_cast<int>(223.0f * background_alpha));
+
+    draw_list->AddRectFilled(min, max, background_color);
+    draw_list->AddRectFilled(ImVec2(min.x, min.y + grid), ImVec2(min.x + grid, max.y - grid), outer_color);
+    draw_list->AddRectFilled(ImVec2(max.x - grid, min.y + grid), ImVec2(max.x, max.y - grid), outer_color);
+    draw_list->AddRectFilled(min, ImVec2(max.x, min.y + grid), outer_color);
+    draw_list->AddRectFilled(ImVec2(min.x, max.y - grid), max, outer_color);
+    draw_list->AddRectFilled(ImVec2(min.x + grid, min.y + grid), ImVec2(max.x - grid, max.y - grid), inner_color);
+
+    const float line_size = std::max(1.0f, ShellUi(2.0f));
+    draw_list->AddLine(ImVec2(min.x + grid, min.y + grid), ImVec2(min.x + grid, min.y + grid * 2.0f), line_color, line_size);
+    draw_list->AddLine(ImVec2(min.x + grid, min.y + grid), ImVec2(max.x - grid, min.y + grid), line_color, line_size);
+    draw_list->AddLine(ImVec2(max.x - grid, min.y + grid), ImVec2(max.x - grid, min.y + grid * 2.0f), line_color, line_size);
+    draw_list->AddLine(ImVec2(min.x + grid, max.y - grid), ImVec2(min.x + grid, max.y - grid * 2.0f), line_color, line_size);
+    draw_list->AddLine(ImVec2(min.x + grid, max.y - grid), ImVec2(max.x - grid, max.y - grid), line_color, line_size);
+    draw_list->AddLine(ImVec2(max.x - grid, max.y - grid), ImVec2(max.x - grid, max.y - grid * 2.0f), line_color, line_size);
+
+    draw_list->AddRectFilled(
+        ImVec2(min.x + grid, min.y + grid),
+        ImVec2(min.x + ShellUi(102.0f), min.y + grid + label_height),
+        IM_COL32(20, 26, 18, static_cast<int>(255.0f * inner_alpha))
+    );
+    draw_list->AddLine(
+        ImVec2(min.x + grid, min.y + grid + label_height + ShellUi(2.0f)),
+        ImVec2(max.x - grid, min.y + grid + label_height + ShellUi(2.0f)),
+        IM_COL32(18, 72, 62, static_cast<int>(120.0f * outer_alpha)),
+        1.0f
+    );
+
     if (static_overlay) {
-        const float noise = std::fmod(static_cast<float>(ImGui::GetTime()) * 52.0f, 28.0f);
-        for (float x = min.x - noise; x < max.x; x += 46.0f) {
+        const float noise = std::fmod(static_cast<float>(ImGui::GetTime()) * 52.0f, ShellUi(28.0f));
+        const ImVec2 clip_min(min.x + content_pad, min.y + label_height + grid + ShellUi(6.0f));
+        const ImVec2 clip_max(max.x - content_pad, max.y - content_pad);
+        draw_list->PushClipRect(clip_min, clip_max, true);
+        for (float x = clip_min.x - noise; x < clip_max.x + ShellUi(36.0f); x += ShellUi(46.0f)) {
             draw_list->AddLine(
-                ImVec2(x, min.y + kPanelHeaderHeight + 20.0f),
-                ImVec2(x + 24.0f, max.y - 16.0f),
-                ApplyAlpha(IM_COL32(22, 58, 48, 36), alpha),
+                ImVec2(x, clip_min.y),
+                ImVec2(x + ShellUi(24.0f), clip_max.y),
+                IM_COL32(22, 58, 48, static_cast<int>(36.0f * background_alpha)),
                 1.0f
             );
         }
+        draw_list->PopClipRect();
     }
-
-    draw_list->AddRect(min, max, ApplyAlpha(IM_COL32(16, 70, 60, 255), alpha));
-    draw_list->AddRect(
-        ImVec2(min.x + grid, min.y + grid),
-        ImVec2(max.x - grid, max.y - grid),
-        ApplyAlpha(IM_COL32(9, 42, 36, 255), alpha)
-    );
-    draw_list->AddLine(
-        ImVec2(min.x + grid, min.y + kPanelHeaderHeight),
-        ImVec2(max.x - grid, min.y + kPanelHeaderHeight),
-        ApplyAlpha(IM_COL32(99, 162, 113, 255), alpha),
-        1.0f
-    );
-    draw_list->AddRectFilled(
-        ImVec2(min.x + grid, min.y + grid),
-        ImVec2(min.x + 134.0f, min.y + kPanelHeaderHeight - 2.0f),
-        ApplyAlpha(IM_COL32(20, 26, 18, 255), alpha)
-    );
 
     if (g_small_font != nullptr) {
         draw_list->AddText(
             g_small_font,
-            g_small_font->LegacySize,
-            ImVec2(min.x + 12.0f, min.y + 8.0f),
-            ApplyAlpha(IM_COL32(255, 188, 0, 255), alpha),
+            ShellUi(14.0f),
+            ImVec2(min.x + ShellUi(10.0f), min.y + ShellUi(7.0f)),
+            IM_COL32(255, 188, 0, static_cast<int>(255.0f * inner_alpha)),
             title
         );
     }
 
-    const float line_y = min.y + kPanelHeaderHeight + 6.0f;
-    draw_list->AddLine(
-        ImVec2(min.x + 12.0f, line_y),
-        ImVec2(max.x - 14.0f, line_y),
-        ApplyAlpha(IM_COL32(18, 72, 62, 120), alpha),
-        1.0f
-    );
-
-    ImGui::SetCursorPos(ImVec2(16.0f, kPanelHeaderHeight + 12.0f));
+    ImGui::SetCursorPos(ImVec2(content_pad, label_height + content_pad));
     return open;
 }
 
@@ -986,6 +1160,23 @@ void EndDecoratedPanel() {
     ImGui::EndChild();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
+}
+
+ImVec2 ShellSize(float width, float height) {
+    return ImVec2(ShellUi(width), ShellUi(height));
+}
+
+bool BeginShellPanelAt(
+    const char* id,
+    const char* title,
+    float x,
+    float y,
+    float width,
+    float height,
+    bool static_overlay = false
+) {
+    ImGui::SetCursorScreenPos(ShellPoint(x, y));
+    return BeginDecoratedPanel(id, title, ShellSize(width, height), static_overlay);
 }
 
 bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool accent = false, bool enabled = true) {
@@ -1155,7 +1346,7 @@ void RenderProfilesPanel(ShellState& state) {
         const std::string row_id = "profile-" + profile.profile_id;
         const std::string title = profile.profile_id + "  " + profile.label;
         const std::string subtitle = "Recommended action: " + ShortActionLabel(profile.recommended_action_id);
-        if (DrawSelectableCard(row_id.c_str(), title, subtitle, profile.summary, selected, 82.0f)) {
+        if (DrawSelectableCard(row_id.c_str(), title, subtitle, profile.summary, selected, ShellUi(82.0f))) {
             state.selected_profile_index = static_cast<int>(index);
             state.selected_action_id = profile.recommended_action_id;
             RefreshProfilePanels(state);
@@ -1172,7 +1363,7 @@ void RenderRecentActionsPanel(ShellState& state) {
         const bool selected = state.current_run_id == item.run_id;
         const std::string row_id = "recent-" + item.run_id;
         const std::string subtitle = item.status + " | " + item.created_at_utc;
-        if (DrawSelectableCard(row_id.c_str(), item.title, subtitle, item.summary, selected, 76.0f)) {
+        if (DrawSelectableCard(row_id.c_str(), item.title, subtitle, item.summary, selected, ShellUi(76.0f))) {
             state.current_run_id = item.run_id;
             if (!item.profile_id.empty()) {
                 SelectProfileById(state, item.profile_id);
@@ -1193,7 +1384,7 @@ void RenderRecentResultsPanel(ShellState& state) {
         const std::string row_id = "recent-run-" + item.run_id;
         const std::string title = item.profile_id + "  " + item.title;
         const std::string subtitle = item.status + " | " + item.created_at_utc;
-        if (DrawSelectableCard(row_id.c_str(), title, subtitle, item.summary, selected, 76.0f)) {
+        if (DrawSelectableCard(row_id.c_str(), title, subtitle, item.summary, selected, ShellUi(76.0f))) {
             state.current_result_run_id = item.run_id;
             RefreshRunSnapshot(state);
         }
@@ -1234,90 +1425,136 @@ void RenderActionTabs(ShellState& state) {
         );
     }
 
-    const float available_width = ImGui::GetContentRegionAvail().x;
-    const float tab_width = std::max(92.0f, std::min(120.0f, (available_width - 8.0f * (static_cast<float>(tabs.size()) - 1.0f)) / std::max(1.0f, static_cast<float>(tabs.size()))));
-    const float tab_height = 34.0f;
+    const float motion = static_cast<float>(ComputeMotionFrames(kContainerCategoryTime, kContainerCategoryDuration));
+    if (motion <= 0.0f || tabs.empty()) {
+        return;
+    }
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 strip_origin = ImGui::GetCursorScreenPos();
+    const float grid = ShellUi(kPanelGrid);
+    const float font_size = ShellUi(18.0f);
+    const float tab_height = grid * 4.0f;
+    const float clip_width = ImGui::GetContentRegionAvail().x - grid * 2.0f;
+    ImFont* tab_font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
+    std::vector<ImVec2> text_sizes(tabs.size());
+
+    float text_width_sum = 0.0f;
+    for (size_t index = 0; index < tabs.size(); ++index) {
+        text_sizes[index] = tab_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, tabs[index].label.c_str());
+        text_width_sum += text_sizes[index].x;
+    }
+
+    float text_squash_ratio = 1.0f;
+    const float max_text_width_sum = clip_width - (grid * 4.0f * static_cast<float>(std::max<size_t>(0U, tabs.size() - 1U)));
+    if (text_width_sum > max_text_width_sum && text_width_sum > 0.0f) {
+        text_squash_ratio = max_text_width_sum / text_width_sum;
+        for (ImVec2& size : text_sizes) {
+            size.x *= text_squash_ratio;
+        }
+        text_width_sum = max_text_width_sum;
+    }
+
+    float text_padding = (clip_width - text_width_sum) / (static_cast<float>(tabs.size()) + 1.0f);
+    float x_offset = text_padding - (1.0f - motion) * grid * 4.0f;
     struct TabRect {
-        std::string action_id;
-        ImVec2 min;
-        ImVec2 max;
-        bool selected = false;
-        bool ready = false;
-        std::string label;
+        size_t index = 0U;
+        ImVec2 min{};
+        ImVec2 max{};
+        ImVec2 text_pos{};
     };
     std::vector<TabRect> rectangles;
     rectangles.reserve(tabs.size());
 
-    const ImVec2 strip_origin = ImGui::GetCursorScreenPos();
-    for (const TabItem& tab : tabs) {
-        const bool selected = state.selected_action_id == tab.action_id;
-        const std::string item_id = "tab-" + tab.action_id;
-        ImGui::InvisibleButton(item_id.c_str(), ImVec2(tab_width, tab_height));
-        const bool pressed = ImGui::IsItemClicked();
-        rectangles.push_back({tab.action_id, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), selected, tab.ready, tab.label});
-        if (pressed && state.selected_action_id != tab.action_id) {
+    ImVec2 target_highlight_min{};
+    ImVec2 target_highlight_max{};
+    bool highlight_found = false;
+    for (size_t index = 0; index < tabs.size(); ++index) {
+        const TabItem& tab = tabs[index];
+        const float tab_padding = std::min(text_padding * 0.5f, grid * 3.0f);
+        const ImVec2 min(strip_origin.x + x_offset - tab_padding, strip_origin.y);
+        const ImVec2 max(min.x + text_sizes[index].x + tab_padding * 2.0f, min.y + tab_height);
+        const ImVec2 text_pos(strip_origin.x + x_offset, strip_origin.y + ShellUi(6.0f));
+
+        ImGui::SetCursorScreenPos(min);
+        ImGui::InvisibleButton(("tab-" + tab.action_id).c_str(), ImVec2(max.x - min.x, max.y - min.y));
+        if (ImGui::IsItemClicked() && state.selected_action_id != tab.action_id) {
             state.selected_action_id = tab.action_id;
             RefreshResultPanels(state);
             PlayCue(UiCue::Cursor);
         }
-        if (&tab != &tabs.back()) {
-            ImGui::SameLine(0.0f, 8.0f);
+
+        if (state.selected_action_id == tab.action_id) {
+            target_highlight_min = min;
+            target_highlight_max = max;
+            highlight_found = true;
         }
+        rectangles.push_back({index, min, max, text_pos});
+        x_offset += text_sizes[index].x + text_padding;
     }
 
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    ImVec2 highlight_min{};
-    ImVec2 highlight_max{};
-    bool highlight_found = false;
-    for (const TabRect& rectangle : rectangles) {
-        if (rectangle.selected) {
-            highlight_min = rectangle.min;
-            highlight_max = rectangle.max;
-            highlight_found = true;
-            break;
-        }
-    }
     if (highlight_found) {
         if (!g_tab_highlight_ready) {
-            g_tab_highlight_min = highlight_min;
-            g_tab_highlight_max = highlight_max;
+            g_tab_highlight_min = target_highlight_min;
+            g_tab_highlight_max = target_highlight_max;
             g_tab_highlight_ready = true;
         } else {
-            g_tab_highlight_min = ExpApproach(g_tab_highlight_min, highlight_min, 18.0f);
-            g_tab_highlight_max = ExpApproach(g_tab_highlight_max, highlight_max, 18.0f);
+            const float width = target_highlight_max.x - target_highlight_min.x;
+            const float height = target_highlight_max.y - target_highlight_min.y;
+            float animated_width = g_tab_highlight_max.x - g_tab_highlight_min.x;
+            animated_width = LerpFloat(animated_width, width, 1.0f - std::exp(-64.0f * ImGui::GetIO().DeltaTime));
+            const ImVec2 target_center = LerpVec2(target_highlight_min, target_highlight_max, 0.5f);
+            const ImVec2 animated_center = LerpVec2(g_tab_highlight_min, g_tab_highlight_max, 0.5f);
+            const ImVec2 next_center = LerpVec2(animated_center, target_center, 1.0f - std::exp(-16.0f * ImGui::GetIO().DeltaTime));
+            g_tab_highlight_min = ImVec2(next_center.x - animated_width * 0.5f, next_center.y - height * 0.5f);
+            g_tab_highlight_max = ImVec2(next_center.x + animated_width * 0.5f, next_center.y + height * 0.5f);
         }
-        draw->AddRectFilled(g_tab_highlight_min, g_tab_highlight_max, IM_COL32(22, 83, 56, 238), 5.0f);
-        draw->AddRect(g_tab_highlight_min, g_tab_highlight_max, IM_COL32(140, 255, 168, 220), 5.0f, 0, 1.3f);
-        draw->AddLine(
-            ImVec2(g_tab_highlight_min.x + 8.0f, g_tab_highlight_max.y - 5.0f),
-            ImVec2(g_tab_highlight_max.x - 8.0f, g_tab_highlight_max.y - 5.0f),
-            IM_COL32(255, 188, 0, 255),
-            2.0f
+
+        draw->AddRectFilledMultiColor(
+            g_tab_highlight_min,
+            g_tab_highlight_max,
+            IM_COL32(0, 130, 0, static_cast<int>(223.0f * motion)),
+            IM_COL32(0, 130, 0, static_cast<int>(178.0f * motion)),
+            IM_COL32(0, 130, 0, static_cast<int>(223.0f * motion)),
+            IM_COL32(0, 130, 0, static_cast<int>(178.0f * motion))
         );
+        draw->AddRectFilledMultiColor(
+            g_tab_highlight_min,
+            g_tab_highlight_max,
+            IM_COL32(0, 0, 0, static_cast<int>(13.0f * motion)),
+            IM_COL32(0, 0, 0, 0),
+            IM_COL32(0, 0, 0, static_cast<int>(55.0f * motion)),
+            IM_COL32(0, 0, 0, 6)
+        );
+        draw->AddRectFilledMultiColor(
+            g_tab_highlight_min,
+            g_tab_highlight_max,
+            IM_COL32(0, 130, 0, static_cast<int>(13.0f * motion)),
+            IM_COL32(0, 130, 0, static_cast<int>(111.0f * motion)),
+            IM_COL32(0, 130, 0, 0),
+            IM_COL32(0, 130, 0, static_cast<int>(55.0f * motion))
+        );
+        draw->AddRect(g_tab_highlight_min, g_tab_highlight_max, IM_COL32(118, 255, 168, 150), ShellUi(3.0f), 0, 1.1f);
     }
 
     for (const TabRect& rectangle : rectangles) {
+        const TabItem& tab = tabs[rectangle.index];
+        const bool selected = state.selected_action_id == tab.action_id;
         const bool hovered = ImGui::IsMouseHoveringRect(rectangle.min, rectangle.max);
-        const ImU32 fill = rectangle.selected
-            ? IM_COL32(0, 0, 0, 0)
-            : hovered
-                ? IM_COL32(18, 31, 34, 228)
-                : IM_COL32(11, 21, 24, 228);
-        draw->AddRectFilled(rectangle.min, rectangle.max, fill, 5.0f);
-        draw->AddRect(rectangle.min, rectangle.max, rectangle.ready ? IM_COL32(47, 97, 86, 210) : IM_COL32(95, 73, 54, 210), 5.0f);
-        draw->AddCircleFilled(ImVec2(rectangle.min.x + 13.0f, rectangle.min.y + 17.0f), 4.0f, rectangle.ready ? IM_COL32(128, 255, 0, 220) : IM_COL32(255, 188, 0, 220));
-        if (g_small_font != nullptr) {
-            draw->AddText(
-                g_small_font,
-                g_small_font->LegacySize,
-                ImVec2(rectangle.min.x + 24.0f, rectangle.min.y + 9.0f),
-                rectangle.selected ? IM_COL32(243, 247, 245, 255) : IM_COL32(188, 204, 198, 235),
-                rectangle.label.c_str()
-            );
+        if (!selected) {
+            const ImU32 fill = hovered ? IM_COL32(15, 27, 24, 228) : IM_COL32(8, 15, 17, 224);
+            const ImU32 border = tab.ready ? IM_COL32(28, 78, 66, 170) : IM_COL32(110, 72, 38, 170);
+            draw->AddRectFilled(rectangle.min, rectangle.max, fill, ShellUi(3.0f));
+            draw->AddRect(rectangle.min, rectangle.max, border, ShellUi(3.0f), 0, 1.0f);
         }
+
+        const ImU32 text_color = selected
+            ? IM_COL32(245, 245, 235, static_cast<int>(235.0f * motion))
+            : IM_COL32(tab.ready ? 176 : 255, tab.ready ? 202 : 192, tab.ready ? 188 : 0, static_cast<int>((hovered ? 214.0f : 170.0f) * motion));
+        draw->AddText(tab_font, font_size, rectangle.text_pos, text_color, tab.label.c_str());
     }
 
-    ImGui::SetCursorScreenPos(ImVec2(strip_origin.x, strip_origin.y + tab_height + 12.0f));
+    ImGui::SetCursorScreenPos(ImVec2(strip_origin.x, strip_origin.y + tab_height + ShellUi(10.0f)));
 
     const TabItem* selected_tab = nullptr;
     for (const TabItem& tab : tabs) {
@@ -1335,13 +1572,12 @@ void RenderActionTabs(ShellState& state) {
 
     InlineSectionLabel("Selected Mode");
     ImGui::TextWrapped("%s", selected_tab->description.c_str());
-    if (!selected_tab->command_preview.empty()) {
-        ImGui::Spacing();
-        ImGui::TextDisabled("%s", selected_tab->command_preview.c_str());
-    }
     if (!selected_tab->ready && !selected_tab->blocker_message.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", selected_tab->blocker_message.c_str());
+    } else if (!selected_tab->command_preview.empty()) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", selected_tab->command_preview.c_str());
     }
 }
 
@@ -1459,7 +1695,7 @@ void RenderEvidencePanel(ShellState& state) {
             subtitle += "line " + std::to_string(item.line);
         }
         const std::string row_id = "evidence-" + std::to_string(index);
-        if (DrawSelectableCard(row_id.c_str(), item.path, subtitle, item.message, selected, 88.0f)) {
+        if (DrawSelectableCard(row_id.c_str(), item.path, subtitle, item.message, selected, ShellUi(88.0f))) {
             state.selected_evidence_index = static_cast<int>(index);
         }
     }
@@ -1487,7 +1723,7 @@ void RenderArtifactsPanel(ShellState& state) {
             }
             const bool selected = static_cast<int>(index) == state.selected_artifact_index;
             const std::string row_id = "artifact-" + std::to_string(index);
-            if (DrawSelectableCard(row_id.c_str(), artifact.label, artifact.section, artifact.path, selected, 68.0f)) {
+            if (DrawSelectableCard(row_id.c_str(), artifact.label, artifact.section, artifact.path, selected, ShellUi(68.0f))) {
                 state.selected_artifact_index = static_cast<int>(index);
             }
         }
@@ -1571,67 +1807,168 @@ void RenderButtonGuide(ShellState& state) {
         return false;
     };
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-    if (ImGui::BeginChild("button-guide", ImVec2(0.0f, 52.0f), false)) {
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        const ImVec2 min = ImGui::GetWindowPos();
-        const ImVec2 max = ImVec2(min.x + ImGui::GetWindowSize().x, min.y + ImGui::GetWindowSize().y);
-        draw->AddRectFilled(min, max, IM_COL32(8, 18, 20, 240), 4.0f);
-        draw->AddRect(min, max, IM_COL32(18, 92, 74, 220), 4.0f);
-        if (g_small_font != nullptr) {
-            draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(min.x + 10.0f, min.y + 9.0f), IM_COL32(255, 188, 0, 255), "BUTTON GUIDE");
+    struct GuideItem {
+        const char* id;
+        const char* key;
+        const char* label;
+        bool enabled;
+        bool right_aligned;
+    };
+
+    const std::wstring evidence_path = SelectedEvidencePath(state);
+    const std::wstring artifact_path = SelectedArtifactPath(state);
+    const bool has_report = state.run_snapshot.has_value() || (state.snapshot.has_value() && !state.snapshot->latest_run_links.html_report.empty());
+    const std::array<GuideItem, 8> guide_items = {{
+        {"guide-run", "A", "RUN", !CurrentActionId(state).empty(), false},
+        {"guide-open", "X", "OPEN FILE", !evidence_path.empty() || !artifact_path.empty(), false},
+        {"guide-reveal", "Y", "REVEAL", !evidence_path.empty() || !artifact_path.empty(), false},
+        {"guide-log", "LB", "RAW LOG", state.snapshot.has_value(), false},
+        {"guide-report", "RB", "REPORT", has_report, false},
+        {"guide-jira", "J", "COPY JIRA", true, true},
+        {"guide-hero", "Q", "COPY QA HERO", true, true},
+        {"guide-handoff", "H", "COPY HANDOFF", true, true},
+    }};
+
+    const ImVec2 region_min = ShellPoint(84.0f, 676.0f);
+    const ImVec2 region_max = ShellPoint(1196.0f, 716.0f);
+    const float font_size = ShellUi(15.0f);
+    const float key_height = ShellUi(24.0f);
+    const float item_gap = ShellUi(18.0f);
+    const float label_gap = ShellUi(8.0f);
+    const float vertical_padding = ShellUi(4.0f);
+    ImFont* guide_font = g_small_font != nullptr ? g_small_font : ImGui::GetFont();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+
+    draw->AddRectFilledMultiColor(
+        ImVec2(region_min.x - ShellUi(14.0f), region_min.y - ShellUi(10.0f)),
+        ImVec2(region_max.x + ShellUi(14.0f), region_min.y - ShellUi(6.0f)),
+        IM_COL32(0, 0, 0, 0),
+        IM_COL32(173, 255, 156, 65),
+        IM_COL32(173, 255, 156, 65),
+        IM_COL32(0, 0, 0, 0)
+    );
+    draw->AddRectFilled(
+        ImVec2(region_min.x - ShellUi(4.0f), region_min.y - ShellUi(2.0f)),
+        ImVec2(region_max.x + ShellUi(4.0f), region_min.y - ShellUi(1.0f)),
+        IM_COL32(115, 178, 104, 255)
+    );
+
+    auto item_width = [&](const GuideItem& item) {
+        const ImVec2 label_size = guide_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, item.label);
+        const ImVec2 key_size = guide_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, item.key);
+        const float key_width = std::max(ShellUi(26.0f), key_size.x + ShellUi(14.0f));
+        return key_width + label_gap + label_size.x + ShellUi(12.0f);
+    };
+
+    auto draw_guide_item = [&](const GuideItem& item, float x) {
+        const ImVec2 label_size = guide_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, item.label);
+        const ImVec2 key_size = guide_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, item.key);
+        const float key_width = std::max(ShellUi(26.0f), key_size.x + ShellUi(14.0f));
+        const float total_width = key_width + label_gap + label_size.x + ShellUi(12.0f);
+        const ImVec2 min(x, region_min.y);
+        const ImVec2 max(x + total_width, region_min.y + key_height + vertical_padding * 2.0f);
+
+        ImGui::SetCursorScreenPos(min);
+        if (!item.enabled) {
+            ImGui::BeginDisabled();
+        }
+        const bool pressed = ImGui::InvisibleButton(item.id, ImVec2(max.x - min.x, max.y - min.y));
+        const bool hovered = ImGui::IsItemHovered();
+        if (!item.enabled) {
+            ImGui::EndDisabled();
         }
 
-        ImGui::SetCursorPos(ImVec2(118.0f, 10.0f));
-        if (DrawGuideButton("guide-run", "A", "RUN", !CurrentActionId(state).empty())) {
-            StartAction(state, CurrentActionId(state));
+        const ImU32 text_color = item.enabled
+            ? (hovered ? IM_COL32(248, 250, 242, 255) : IM_COL32(226, 237, 231, 240))
+            : IM_COL32(120, 132, 125, 180);
+        const ImU32 key_border = hovered ? IM_COL32(255, 211, 88, 240) : IM_COL32(255, 188, 0, 210);
+        const ImU32 key_fill = hovered ? IM_COL32(32, 43, 25, 255) : IM_COL32(18, 20, 16, 245);
+        const ImVec2 key_min(min.x, min.y + vertical_padding);
+        const ImVec2 key_max(min.x + key_width, max.y - vertical_padding);
+
+        draw->AddRectFilled(key_min, key_max, key_fill, ShellUi(4.0f));
+        draw->AddRect(key_min, key_max, key_border, ShellUi(4.0f), 0, 1.1f);
+        draw->AddText(
+            guide_font,
+            font_size,
+            ImVec2(key_min.x + ((key_width - key_size.x) * 0.5f), key_min.y + ((key_max.y - key_min.y) - key_size.y) * 0.5f),
+            IM_COL32(255, 188, 0, item.enabled ? 255 : 170),
+            item.key
+        );
+        draw->AddText(
+            guide_font,
+            font_size,
+            ImVec2(key_max.x + label_gap, key_min.y + ((key_max.y - key_min.y) - label_size.y) * 0.5f),
+            text_color,
+            item.label
+        );
+
+        if (pressed && item.enabled) {
+            PlayCue(UiCue::Cursor);
         }
-        const std::wstring evidence_path = SelectedEvidencePath(state);
-        const std::wstring artifact_path = SelectedArtifactPath(state);
-        if (DrawGuideButton("guide-open", "X", "OPEN FILE", !evidence_path.empty() || !artifact_path.empty())) {
-            if (!evidence_path.empty()) {
-                OpenPath(evidence_path);
-            } else {
-                OpenPath(artifact_path);
-            }
+        return pressed && item.enabled;
+    };
+
+    float left_offset = 0.0f;
+    for (const GuideItem& item : guide_items) {
+        if (item.right_aligned) {
+            continue;
         }
-        if (DrawGuideButton("guide-reveal", "Y", "REVEAL", !evidence_path.empty() || !artifact_path.empty())) {
-            if (!evidence_path.empty()) {
-                RevealPath(evidence_path);
-            } else {
-                RevealPath(artifact_path);
-            }
-        }
-        if (DrawGuideButton("guide-log", "LB", "RAW LOG", state.snapshot.has_value())) {
-            OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->log_path));
-        }
-        const bool has_report = state.run_snapshot.has_value() || (state.snapshot.has_value() && !state.snapshot->latest_run_links.html_report.empty());
-        if (DrawGuideButton("guide-report", "RB", "REPORT", has_report)) {
-            if (state.run_snapshot.has_value()) {
-                for (const auto& artifact : state.run_snapshot->artifacts) {
-                    if (artifact.label == "HTML report") {
-                        OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
-                        break;
-                    }
+        const float x = region_min.x + left_offset;
+        if (draw_guide_item(item, x)) {
+            if (std::strcmp(item.id, "guide-run") == 0) {
+                StartAction(state, CurrentActionId(state));
+            } else if (std::strcmp(item.id, "guide-open") == 0) {
+                if (!evidence_path.empty()) {
+                    OpenPath(evidence_path);
+                } else {
+                    OpenPath(artifact_path);
                 }
-            } else if (state.snapshot.has_value()) {
-                OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->latest_run_links.html_report));
+            } else if (std::strcmp(item.id, "guide-reveal") == 0) {
+                if (!evidence_path.empty()) {
+                    RevealPath(evidence_path);
+                } else {
+                    RevealPath(artifact_path);
+                }
+            } else if (std::strcmp(item.id, "guide-log") == 0 && state.snapshot.has_value()) {
+                OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->log_path));
+            } else if (std::strcmp(item.id, "guide-report") == 0) {
+                if (state.run_snapshot.has_value()) {
+                    for (const auto& artifact : state.run_snapshot->artifacts) {
+                        if (artifact.label == "HTML report") {
+                            OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
+                            break;
+                        }
+                    }
+                } else if (state.snapshot.has_value()) {
+                    OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->latest_run_links.html_report));
+                }
             }
         }
-        if (DrawGuideButton("guide-jira", "J", "COPY JIRA", true)) {
-            copy_by_key("jira", "Copied Jira note.");
-        }
-        if (DrawGuideButton("guide-hero", "Q", "COPY QA HERO", true)) {
-            copy_by_key("qa_hero", "Copied QA Hero note.");
-        }
-        if (DrawGuideButton("guide-handoff", "H", "COPY HANDOFF", true)) {
-            copy_by_key("handoff", "Copied handoff note.");
-        }
+        left_offset += item_width(item) + item_gap;
     }
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
+
+    float right_offset = 0.0f;
+    for (auto it = guide_items.rbegin(); it != guide_items.rend(); ++it) {
+        if (!it->right_aligned) {
+            continue;
+        }
+        const float width = item_width(*it);
+        const float x = region_max.x - right_offset - width;
+        if (draw_guide_item(*it, x)) {
+            if (std::strcmp(it->id, "guide-jira") == 0) {
+                copy_by_key("jira", "Copied Jira note.");
+            } else if (std::strcmp(it->id, "guide-hero") == 0) {
+                copy_by_key("qa_hero", "Copied QA Hero note.");
+            } else if (std::strcmp(it->id, "guide-handoff") == 0) {
+                copy_by_key("handoff", "Copied handoff note.");
+            }
+        }
+        right_offset += width + item_gap;
+    }
+
+    ImGui::SetCursorScreenPos(ShellPoint(0.0f, 718.0f));
+    ImGui::Dummy(ShellSize(1.0f, 1.0f));
 }
 
 void RenderShell(ShellState& state) {
@@ -1653,59 +1990,48 @@ void RenderShell(ShellState& state) {
         return;
     }
 
-    ImGui::SetCursorPos(ImVec2(14.0f, 102.0f));
-    if (BeginDecoratedPanel("mode-select-panel", "MODE SELECT", ImVec2(0.0f, 132.0f))) {
+    if (BeginShellPanelAt("mode-select-panel", "MODE SELECT", 10.0f, 117.0f, 1260.0f, 72.0f)) {
         ImGui::TextDisabled("Recommended SG action tabs for the selected live slice.");
         RenderActionTabs(state);
     }
     EndDecoratedPanel();
 
-    ImGui::SetCursorPosX(14.0f);
-    const float rails_height = std::max(240.0f, ImGui::GetContentRegionAvail().y - kRailFooterReserve - 10.0f);
-    if (ImGui::BeginTable("shell-layout", 3, ImGuiTableFlags_SizingStretchSame, ImVec2(0.0f, rails_height))) {
-        ImGui::TableSetupColumn("left", ImGuiTableColumnFlags_WidthStretch, 0.25f);
-        ImGui::TableSetupColumn("center", ImGuiTableColumnFlags_WidthStretch, 0.45f);
-        ImGui::TableSetupColumn("right", ImGuiTableColumnFlags_WidthStretch, 0.30f);
-
-        ImGui::TableNextColumn();
-        if (BeginDecoratedPanel("profiles-panel", "PROFILES", ImVec2(0.0f, rails_height * 0.60f))) {
-            RenderProfilesPanel(state);
-        }
-        EndDecoratedPanel();
-        if (BeginDecoratedPanel("recent-actions-panel", "RECENT ACTIONS", ImVec2(0.0f, rails_height * 0.19f))) {
-            RenderRecentActionsPanel(state);
-        }
-        EndDecoratedPanel();
-        if (BeginDecoratedPanel("recent-runs-panel", "RECENT RESULTS", ImVec2(0.0f, 0.0f))) {
-            RenderRecentResultsPanel(state);
-        }
-        EndDecoratedPanel();
-
-        ImGui::TableNextColumn();
-        if (BeginDecoratedPanel("active-result-panel", "ACTIVE RUN / RESULT", ImVec2(0.0f, 0.0f))) {
-            RenderSummaryPanel(state);
-        }
-        EndDecoratedPanel();
-
-        ImGui::TableNextColumn();
-        if (BeginDecoratedPanel("evidence-panel", "OPEN FIRST", ImVec2(0.0f, rails_height * 0.43f), true)) {
-            ImGui::TextDisabled("TV-static-framed evidence panel for the first files to inspect.");
-            RenderEvidencePanel(state);
-        }
-        EndDecoratedPanel();
-        if (BeginDecoratedPanel("artifacts-panel", "ARTIFACTS / REPORTS", ImVec2(0.0f, rails_height * 0.25f))) {
-            RenderArtifactsPanel(state);
-        }
-        EndDecoratedPanel();
-        if (BeginDecoratedPanel("blockers-panel", "BLOCKED / MANUAL STAGES", ImVec2(0.0f, 0.0f))) {
-            RenderBlockersPanel(state);
-        }
-        EndDecoratedPanel();
-
-        ImGui::EndTable();
+    if (BeginShellPanelAt("profiles-panel", "PROFILES", 10.0f, 198.0f, 304.0f, 250.0f)) {
+        RenderProfilesPanel(state);
     }
+    EndDecoratedPanel();
 
-    ImGui::SetCursorPosX(14.0f);
+    if (BeginShellPanelAt("recent-actions-panel", "RECENT ACTIONS", 10.0f, 456.0f, 304.0f, 96.0f)) {
+        RenderRecentActionsPanel(state);
+    }
+    EndDecoratedPanel();
+
+    if (BeginShellPanelAt("recent-runs-panel", "RECENT RESULTS", 10.0f, 560.0f, 304.0f, 100.0f)) {
+        RenderRecentResultsPanel(state);
+    }
+    EndDecoratedPanel();
+
+    if (BeginShellPanelAt("active-result-panel", "ACTIVE RUN / RESULT", 324.0f, 198.0f, 550.0f, 462.0f)) {
+        RenderSummaryPanel(state);
+    }
+    EndDecoratedPanel();
+
+    if (BeginShellPanelAt("evidence-panel", "OPEN FIRST", 884.0f, 198.0f, 386.0f, 200.0f, true)) {
+        ImGui::TextDisabled("TV-static-framed evidence panel for the first files to inspect.");
+        RenderEvidencePanel(state);
+    }
+    EndDecoratedPanel();
+
+    if (BeginShellPanelAt("artifacts-panel", "ARTIFACTS / REPORTS", 884.0f, 406.0f, 386.0f, 116.0f)) {
+        RenderArtifactsPanel(state);
+    }
+    EndDecoratedPanel();
+
+    if (BeginShellPanelAt("blockers-panel", "BLOCKED / MANUAL STAGES", 884.0f, 530.0f, 386.0f, 130.0f)) {
+        RenderBlockersPanel(state);
+    }
+    EndDecoratedPanel();
+
     RenderButtonGuide(state);
     ImGui::End();
 }

@@ -32,13 +32,29 @@ The current desktop shell now applies a translated subset of those patterns in Q
 - static-framed evidence panel
 - bottom guide-button strip
 
-The native C++ shell now applies a stronger translated pass of the same source ideas:
+The native C++ shell now applies a stronger and more direct pass of the same source ideas:
 
 - animated title-square motion
 - deeper container framing instead of flat ImGui children
-- animated tab-highlight motion instead of stock tabs
+- category-tab highlight motion driven by the same style of timing math as `DrawCategories`
+- a fixed 1280x720 virtual menu canvas instead of a generic resizable table layout
+- side-aligned bottom guide placement modeled after `ButtonGuide::Draw`
 - selection-card treatment for operator lists
 - local cue hooks mapped to cursor / confirm / error actions
+
+The current native port is now intentionally closer to the real source structure:
+
+- `DrawTitle`-style title timing and square animation
+- `DrawContainer`-style panel growth and outline timing
+- `DrawCategories`-style category strip motion and highlight interpolation
+- `ButtonGuide::Draw`-style left/right guide layout at the bottom rail
+
+What is still not copied wholesale:
+
+- upstream textures
+- fonts
+- sounds
+- menu/game-specific assets or strings
 
 ## Repository rule
 
