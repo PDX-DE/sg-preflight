@@ -14,7 +14,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/ui/static/operator.css?v=20260417c" />
+  <link rel="stylesheet" href="/ui/static/operator.css?v=20260417e" />
 </head>
 <body data-guide-mode="on" {% block body_attrs %}{% endblock %}>
   <header class="shell-header">
@@ -48,8 +48,32 @@
   <div class="loading-overlay" id="loading-overlay" hidden>
     <div class="loading-screen">
       <p class="eyebrow">Live operator status</p>
-      <h2>NOW LOADING...</h2>
-      <div class="loading-spinner" aria-hidden="true"></div>
+      <div class="loading-native" aria-hidden="true">
+        <div class="loading-native-bars loading-native-bars--top">
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="loading-native-main">
+          <div class="loading-native-core">
+            <div class="loading-native-ring">
+              <span class="loading-native-ring-inner"></span>
+            </div>
+          </div>
+          <div class="loading-native-wordmark">
+            <span>Now</span>
+            <span>loading...</span>
+            <small>sg preflight live operator status</small>
+          </div>
+        </div>
+        <div class="loading-native-bars loading-native-bars--bottom">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+      <h2 class="sr-only">NOW LOADING...</h2>
       <div class="loading-progress">
         <div class="loading-progress-bar">
           <span id="loading-progress-fill"></span>
@@ -97,6 +121,6 @@
     </div>
   </div>
 
-  <script src="/ui/static/operator.js?v=20260417c"></script>
+  <script src="/ui/static/operator.js?v=20260417e"></script>
 </body>
 </html>
