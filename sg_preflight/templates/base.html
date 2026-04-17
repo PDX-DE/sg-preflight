@@ -14,7 +14,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/ui/static/operator.css?v=20260417e" />
+  <link rel="stylesheet" href="/ui/static/operator.css?v=20260417f" />
 </head>
 <body data-guide-mode="on" {% block body_attrs %}{% endblock %}>
   <header class="shell-header">
@@ -41,36 +41,14 @@
     </nav>
   </header>
 
-  <main class="page-shell {% block page_shell_class %}{% endblock %}">
-    {% block content %}{% endblock %}
-  </main>
-
   <div class="loading-overlay" id="loading-overlay" hidden>
     <div class="loading-screen">
-      <p class="eyebrow">Live operator status</p>
+      <p class="eyebrow">Tool is running now</p>
       <div class="loading-native" aria-hidden="true">
-        <div class="loading-native-bars loading-native-bars--top">
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
-        <div class="loading-native-main">
-          <div class="loading-native-core">
-            <div class="loading-native-ring">
-              <span class="loading-native-ring-inner"></span>
-            </div>
+        <div class="loading-native-screen">
+          <div class="loading-native-wordmark" data-text="NOW LOADING...">
+            <span>NOW LOADING...</span>
           </div>
-          <div class="loading-native-wordmark">
-            <span>Now</span>
-            <span>loading...</span>
-            <small>sg preflight live operator status</small>
-          </div>
-        </div>
-        <div class="loading-native-bars loading-native-bars--bottom">
-          <span></span>
-          <span></span>
-          <span></span>
         </div>
       </div>
       <h2 class="sr-only">NOW LOADING...</h2>
@@ -88,39 +66,43 @@
         <p id="loading-progress-detail">Waiting for the local run record to report the next step.</p>
       </div>
       <button class="button subtle loading-toggle" id="loading-toggle" type="button" aria-expanded="false">
-        Show exact live detail
+        Show exactly what the tool is doing
       </button>
       <div class="loading-expanded" id="loading-expanded" hidden>
         <div class="loading-expanded-summary">
-          <span class="detail-label">Current status</span>
+          <span class="detail-label">What the tool is doing right now</span>
           <div id="loading-progress-status">queued</div>
         </div>
         <div class="loading-detail-grid">
           <div>
             <div class="loading-expanded-summary">
-              <span class="detail-label">Run steps</span>
+              <span class="detail-label">Checks in this run</span>
             </div>
             <div class="loading-step-list" id="loading-step-list"></div>
           </div>
           <div class="loading-expanded-summary loading-step-detail-panel">
-            <span class="detail-label">Selected step detail</span>
+            <span class="detail-label">Exact detail for the selected step</span>
             <div class="loading-step-detail" id="loading-step-detail">
-              Click one step to inspect its exact events, target path, nested child status, and current command.
+              Click one step to see the exact events, files, nested child status, and current command behind it.
             </div>
           </div>
         </div>
         <div class="loading-expanded-summary">
-          <span class="detail-label">All framework events</span>
+          <span class="detail-label">Everything recorded so far</span>
           <div class="loading-event-list" id="loading-event-list"></div>
         </div>
         <div class="loading-expanded-summary">
-          <span class="detail-label">Live log tail</span>
+          <span class="detail-label">Latest raw script output</span>
           <pre class="loading-log-tail" id="loading-log-tail">No live log output yet.</pre>
         </div>
       </div>
     </div>
   </div>
 
-  <script src="/ui/static/operator.js?v=20260417e"></script>
+  <main class="page-shell {% block page_shell_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/ui/static/operator.js?v=20260417f"></script>
 </body>
 </html>

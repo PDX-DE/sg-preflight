@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Action {{ record.label }} - SG Preflight Operator UI{% endblock %}
-{% block body_attrs %}data-action-status="{{ record.status }}" data-action-run-id="{{ record.run_id }}"{% endblock %}
+{% block body_attrs %}data-action-status="{{ record.status }}" data-action-run-id="{{ record.run_id }}"{% if record.status in ["running", "queued"] %} data-loading-active="true" class="with-loading-overlay"{% endif %}{% endblock %}
 {% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
 {% block content %}
 {% set action_summary = action_result if action_result is defined and action_result else {

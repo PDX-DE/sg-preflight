@@ -17,6 +17,8 @@
   const guideToggle = document.getElementById("guide-toggle");
   let selectedStepKey = "";
   let nestedStepRequestId = 0;
+  let lastOverlayDetailSignature = "";
+  let lastOverlayLogSignature = "";
 
   const applyTheme = function (theme) {
     const resolved = theme === "light" ? "light" : "dark";
@@ -55,6 +57,8 @@
     if (!visible) {
       overlay.classList.remove("loading-overlay--expanded");
       overlay.scrollTop = 0;
+      lastOverlayDetailSignature = "";
+      lastOverlayLogSignature = "";
     }
   };
 
@@ -416,12 +420,24 @@
       : (progress.steps || []).map(function (step) {
           return Object.assign({}, step, { detail: "", events: [], meta: {} });
         });
-    renderOverlaySteps(stepDetails, progress.step_key || "", payload);
-    renderOverlayStepDetail(stepDetails, payload);
-    renderOverlayEvents(progress.events || []);
+    const detailSignature = JSON.stringify({
+      step_key: progress.step_key || "",
+      step_details: stepDetails,
+      events: progress.events || []
+    });
+    if (detailSignature !== lastOverlayDetailSignature) {
+      renderOverlaySteps(stepDetails, progress.step_key || "", payload);
+      renderOverlayStepDetail(stepDetails, payload);
+      renderOverlayEvents(progress.events || []);
+      lastOverlayDetailSignature = detailSignature;
+    }
     if (overlayLogTail) {
       const logLines = payload && Array.isArray(payload.live_log_tail) ? payload.live_log_tail : [];
-      overlayLogTail.textContent = logLines.length ? logLines.join("\n") : "No live log output yet.";
+      const logSignature = JSON.stringify(logLines);
+      if (logSignature !== lastOverlayLogSignature) {
+        overlayLogTail.textContent = logLines.length ? logLines.join("\n") : "No live log output yet.";
+        lastOverlayLogSignature = logSignature;
+      }
     }
   };
 
@@ -432,8 +448,8 @@
       overlayExpanded.hidden = expanded;
       syncOverlayExpandedState(true);
       overlayToggle.textContent = expanded
-        ? "Show exact live detail"
-        : "Hide exact live detail";
+        ? "Show exactly what the tool is doing"
+        : "Hide the exact live detail";
     });
   }
 
@@ -761,12 +777,10 @@
         events: []
       }
     });
-    window.setTimeout(function () {
-      pollStatus("/ui/api/runs/" + runId, {
-        pillSelector: "#run-status-pill",
-        messageSelector: "#run-state-message"
-      });
-    }, 600);
+    pollStatus("/ui/api/runs/" + runId, {
+      pillSelector: "#run-status-pill",
+      messageSelector: "#run-state-message"
+    });
   }
 
   const actionStatus = document.body.getAttribute("data-action-status");
@@ -782,11 +796,9 @@
         events: []
       }
     });
-    window.setTimeout(function () {
-      pollStatus("/ui/api/actions/" + actionRunId, {
-        pillSelector: "#action-status-pill",
-        messageSelector: "#action-state-message"
-      });
-    }, 600);
+    pollStatus("/ui/api/actions/" + actionRunId, {
+      pillSelector: "#action-status-pill",
+      messageSelector: "#action-state-message"
+    });
   }
 })();

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Result {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
-{% block body_attrs %}data-run-status="{{ record.status }}" data-run-id="{{ record.run_id }}"{% endblock %}
+{% block body_attrs %}data-run-status="{{ record.status }}" data-run-id="{{ record.run_id }}"{% if record.status in ["running", "queued"] %} data-loading-active="true" class="with-loading-overlay"{% endif %}{% endblock %}
 {% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
 {% block content %}
 {% set problem = first_problem if first_problem is defined and first_problem else {

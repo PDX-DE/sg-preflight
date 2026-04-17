@@ -453,14 +453,17 @@ class TestOperatorUI(unittest.TestCase):
     def test_operator_css_keeps_loading_overlay_hidden_by_default(self) -> None:
         css = (ROOT / "sg_preflight" / "static" / "operator.css").read_text(encoding="utf-8")
         self.assertIn(".loading-overlay[hidden]", css)
+        self.assertIn('body[data-loading-active="true"] .loading-overlay[hidden]', css)
         self.assertIn(".loading-overlay--expanded", css)
         self.assertIn("overflow-y: auto", css)
-        self.assertIn(".loading-native", css)
+        self.assertIn(".loading-native-screen", css)
         js = (ROOT / "sg_preflight" / "static" / "operator.js").read_text(encoding="utf-8")
         self.assertIn("const syncOverlayExpandedState = function (resetScroll)", js)
         self.assertIn("if (resetScroll && expanded)", js)
+        self.assertIn("Show exactly what the tool is doing", js)
         base = (ROOT / "sg_preflight" / "templates" / "base.html").read_text(encoding="utf-8")
-        self.assertIn("loading-native-wordmark", base)
+        self.assertIn("loading-native-screen", base)
+        self.assertIn("Show exactly what the tool is doing", base)
 
     def test_deep_audit_route_persists_and_renders_playground_note(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
