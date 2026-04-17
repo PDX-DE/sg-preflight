@@ -504,6 +504,9 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn(".loading-native-screen", css)
         self.assertIn(".guide-card strong,\n.guide-card p {\n  grid-column: 2;", css)
         self.assertIn("grid-row: 1 / span 2;", css)
+        self.assertIn(':root[data-theme="light"] .shell-header {', css)
+        self.assertIn(':root[data-theme="light"] .hero-panel,', css)
+        self.assertIn(':root[data-theme="light"] .button {', css)
         js = (ROOT / "sg_preflight" / "static" / "operator.js").read_text(encoding="utf-8")
         self.assertIn("const syncOverlayExpandedState = function (resetScroll)", js)
         self.assertIn("if (resetScroll && expanded)", js)
@@ -511,6 +514,7 @@ class TestOperatorUI(unittest.TestCase):
         base = (ROOT / "sg_preflight" / "templates" / "base.html").read_text(encoding="utf-8")
         self.assertIn("loading-native-screen", base)
         self.assertIn("Show exactly what the tool is doing", base)
+        self.assertIn("20260417l", base)
 
     def test_deep_audit_route_persists_and_renders_playground_note(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
