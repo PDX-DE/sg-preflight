@@ -1,5 +1,18 @@
 # SG Preflight Status - 2026-04-14
 
+## Update - 2026-04-17
+
+Current local status on `feature/live-sg-matrix-and-anchor-groups`:
+
+- the AssetRipper export at `C:\Users\DavidErikGarciaArena\Downloads\AssetRipper_export_20260417_024445\ExportedProject` has now been validated as a real Unity project layout with `Assets`, `Packages`, and `ProjectSettings`
+- the recovered export still points to `Unity 2019.2.21f1` via `ProjectSettings\ProjectVersion.txt`
+- the export includes recovered gameplay/runtime C# source under `Assets\Scripts\Assembly-CSharp`, with `79` `.cs` files currently visible on disk
+- representative recovered files include `GameManager.cs`, `PlayerBase.cs`, `AudioManager.cs`, `CameraEffects.cs`, and `DayNightCycle.cs`
+- the exact legacy Unity editor `2019.2.21f1` is now installed locally under `C:\Users\DavidErikGarciaArena\AppData\Local\UnityEditors\2019.2.21f1`
+- an actual editor open attempt against the exported project was executed on this machine
+- the remaining blocker is no longer "we have not tried it"; the editor exits before project import because Unity licensing is not activated locally, with the logged failure `Unity has not been activated with a valid License`
+- SG-side impact: the export/source-code recovery is confirmed, but a fully successful "opened in Unity here" claim still depends on a valid local Unity license/sign-in
+
 ## Update - 2026-04-16
 
 Current local status on `feature/live-sg-matrix-and-anchor-groups`:
