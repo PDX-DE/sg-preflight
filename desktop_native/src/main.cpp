@@ -1,4 +1,5 @@
 #include "backend_bridge.hpp"
+#include "texture_loader.hpp"
 
 #include <d3d11.h>
 #include <shellapi.h>
@@ -8,6 +9,7 @@
 #include <array>
 #include <cfloat>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <cwctype>
 #include <filesystem>
@@ -27,6 +29,7 @@ using sg_preflight::native_shell::ActionSnapshot;
 using sg_preflight::native_shell::BackendConfig;
 using sg_preflight::native_shell::BlockerItem;
 using sg_preflight::native_shell::CopyItem;
+using sg_preflight::native_shell::DdsTextureHandle;
 using sg_preflight::native_shell::EvidenceItem;
 using sg_preflight::native_shell::ManualCard;
 using sg_preflight::native_shell::ProfileItem;
@@ -47,6 +50,20 @@ double g_shell_appear_time = -1.0;
 ImVec2 g_tab_highlight_min{};
 ImVec2 g_tab_highlight_max{};
 bool g_tab_highlight_ready = false;
+
+struct ShellAssets {
+    std::filesystem::path resource_root;
+    DdsTextureHandle general_window;
+    DdsTextureHandle select;
+    DdsTextureHandle light;
+    DdsTextureHandle options_static;
+    DdsTextureHandle options_static_flash;
+    bool attempted = false;
+    bool loaded = false;
+    std::string error;
+};
+
+ShellAssets g_shell_assets;
 
 struct ShellState {
     BackendConfig backend;
@@ -202,6 +219,17 @@ bool PathExists(const std::filesystem::path& path) {
     return std::filesystem::exists(path, error);
 }
 
+std::wstring Lowercase(const std::wstring& text) {
+    std::wstring lowered = text;
+    std::transform(
+        lowered.begin(),
+        lowered.end(),
+        lowered.begin(),
+        [](wchar_t character) { return static_cast<wchar_t>(towlower(character)); }
+    );
+    return lowered;
+}
+
 std::optional<std::filesystem::path> DiscoverRepoRoot(std::filesystem::path start) {
     std::error_code error;
     if (start.empty()) {
@@ -263,6 +291,178 @@ std::wstring ResolvePythonExecutable(const std::filesystem::path& workspace_root
         }
     }
     return L"python";
+}
+
+bool IsResourceBundleRoot(const std::filesystem::path& root) {
+    return PathExists(root / "images" / "common" / "general_window.dds")
+        && PathExists(root / "images" / "common" / "select.dds")
+        && PathExists(root / "images" / "common" / "light.dds")
+        && PathExists(root / "images" / "options_menu" / "options_static.dds");
+}
+
+std::optional<std::filesystem::path> DiscoverResourceRoot(const std::filesystem::path& workspace_root) {
+    const std::array<std::filesystem::path, 5> direct_candidates = {
+        workspace_root / "UnleashedRecompResources-main" / "UnleashedRecompResources-main",
+        workspace_root / "UnleashedRecompResources-main",
+        workspace_root / "UnleashedRecompResources",
+        workspace_root / "UnleashedRecomp-1.0.3" / "UnleashedRecomp-1.0.3" / "UnleashedRecompResources",
+        workspace_root / "UnleashedRecomp-1.0.3" / "UnleashedRecomp-1.0.3" / "UnleashedRecompResources-main",
+    };
+    for (const auto& candidate : direct_candidates) {
+        if (IsResourceBundleRoot(candidate)) {
+            return candidate;
+        }
+    }
+
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator(workspace_root, error)) {
+        if (error || !entry.is_directory()) {
+            continue;
+        }
+        const std::wstring lower_name = Lowercase(entry.path().filename().wstring());
+        if (lower_name.find(L"unleashedrecompresources") == std::wstring::npos) {
+            continue;
+        }
+        if (IsResourceBundleRoot(entry.path())) {
+            return entry.path();
+        }
+        for (const auto& nested : std::filesystem::directory_iterator(entry.path(), error)) {
+            if (error || !nested.is_directory()) {
+                continue;
+            }
+            if (IsResourceBundleRoot(nested.path())) {
+                return nested.path();
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> ResolveDownloadsRoot() {
+    const DWORD length = GetEnvironmentVariableW(L"USERPROFILE", nullptr, 0);
+    if (length == 0) {
+        return std::nullopt;
+    }
+    std::wstring buffer(length, L'\0');
+    const DWORD copied = GetEnvironmentVariableW(L"USERPROFILE", buffer.data(), length);
+    if (copied == 0 || copied >= length) {
+        return std::nullopt;
+    }
+    buffer.resize(copied);
+    const std::filesystem::path downloads = std::filesystem::path(buffer) / "Downloads";
+    if (!PathExists(downloads)) {
+        return std::nullopt;
+    }
+    return downloads;
+}
+
+std::optional<std::filesystem::path> ResolveDownloadedFont(
+    const std::vector<std::filesystem::path>& relative_candidates,
+    const std::vector<std::wstring>& filename_needles
+) {
+    const auto downloads_root = ResolveDownloadsRoot();
+    if (!downloads_root.has_value()) {
+        return std::nullopt;
+    }
+
+    for (const auto& relative : relative_candidates) {
+        const std::filesystem::path candidate = *downloads_root / relative;
+        if (PathExists(candidate)) {
+            return candidate;
+        }
+    }
+
+    std::error_code error;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(*downloads_root, error)) {
+        if (error || !entry.is_regular_file()) {
+            continue;
+        }
+        const std::wstring lowered_name = Lowercase(entry.path().filename().wstring());
+        for (const auto& needle : filename_needles) {
+            if (lowered_name.find(Lowercase(needle)) != std::wstring::npos) {
+                return entry.path();
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+bool HasTexture(const DdsTextureHandle& texture) {
+    return texture.view != nullptr;
+}
+
+ImTextureID ToTextureId(const DdsTextureHandle& texture) {
+    return reinterpret_cast<ImTextureID>(texture.view);
+}
+
+void DrawTexturedRect(
+    ImDrawList* draw,
+    const DdsTextureHandle& texture,
+    ImVec2 min,
+    ImVec2 max,
+    ImU32 tint,
+    ImVec2 uv0 = ImVec2(0.0f, 0.0f),
+    ImVec2 uv1 = ImVec2(1.0f, 1.0f)
+) {
+    if (!HasTexture(texture)) {
+        return;
+    }
+    draw->AddImage(ToTextureId(texture), min, max, uv0, uv1, tint);
+}
+
+void DrawTexturedRectRounded(
+    ImDrawList* draw,
+    const DdsTextureHandle& texture,
+    ImVec2 min,
+    ImVec2 max,
+    ImU32 tint,
+    float rounding,
+    ImVec2 uv0 = ImVec2(0.0f, 0.0f),
+    ImVec2 uv1 = ImVec2(1.0f, 1.0f)
+) {
+    if (!HasTexture(texture)) {
+        return;
+    }
+    draw->AddImageRounded(ToTextureId(texture), min, max, uv0, uv1, tint, rounding);
+}
+
+void ReleaseShellAssets() {
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.general_window);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.select);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.light);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static_flash);
+    g_shell_assets = {};
+}
+
+void LoadShellAssets(const std::filesystem::path& workspace_root) {
+    ReleaseShellAssets();
+    g_shell_assets.attempted = true;
+    const auto resource_root = DiscoverResourceRoot(workspace_root);
+    if (!resource_root.has_value()) {
+        g_shell_assets.error = "UnleashedRecomp resource bundle was not found locally.";
+        return;
+    }
+
+    g_shell_assets.resource_root = *resource_root;
+    std::string error;
+    auto load_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target) {
+        if (!sg_preflight::native_shell::LoadDdsTexture(g_device, *resource_root / relative, target, &error)) {
+            g_shell_assets.error = error;
+            return false;
+        }
+        return true;
+    };
+
+    if (
+        load_texture(std::filesystem::path("images") / "common" / "general_window.dds", g_shell_assets.general_window)
+        && load_texture(std::filesystem::path("images") / "common" / "select.dds", g_shell_assets.select)
+        && load_texture(std::filesystem::path("images") / "common" / "light.dds", g_shell_assets.light)
+        && load_texture(std::filesystem::path("images") / "options_menu" / "options_static.dds", g_shell_assets.options_static)
+        && load_texture(std::filesystem::path("images") / "options_menu" / "options_static_flash.dds", g_shell_assets.options_static_flash)
+    ) {
+        g_shell_assets.loaded = true;
+    }
 }
 
 void PlayCue(UiCue cue) {
@@ -354,6 +554,7 @@ bool CreateDeviceD3D(HWND window_handle) {
 }
 
 void CleanupDeviceD3D() {
+    ReleaseShellAssets();
     CleanupRenderTarget();
     if (g_swap_chain != nullptr) {
         g_swap_chain->Release();
@@ -798,9 +999,41 @@ ImFont* TryLoadFont(ImGuiIO& io, const std::filesystem::path& path, float size) 
 }
 
 void LoadShellFonts(ImGuiIO& io) {
-    g_title_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeuib.ttf)", 31.0f);
-    g_body_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeuil.ttf)", 18.0f);
-    g_small_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeui.ttf)", 15.0f);
+    const auto seurat_font = ResolveDownloadedFont(
+        {
+            std::filesystem::path("fot-seurat-pro-m") / "FOT-Seurat Pro M" / "FOT-Seurat Pro M.otf",
+            std::filesystem::path("FOT-SeuratPro-M.otf"),
+        },
+        {L"seurat"}
+    );
+    const auto new_rodin_font = ResolveDownloadedFont(
+        {
+            std::filesystem::path("fot-newrodin-pro-db") / "FOT-NewRodin Pro DB" / "FOT-NewRodin Pro DB.otf",
+            std::filesystem::path("FOT-NewRodinPro-DB.otf"),
+        },
+        {L"newrodin", L"new rodin"}
+    );
+    const auto dfs_font = ResolveDownloadedFont(
+        {
+            std::filesystem::path("DFSoGeiStd-W7.otf"),
+            std::filesystem::path("DFHeiStd-W7.otf"),
+        },
+        {L"dfsogei", L"dfheistd-w7"}
+    );
+
+    g_title_font = new_rodin_font.has_value() ? TryLoadFont(io, *new_rodin_font, 31.0f) : nullptr;
+    g_body_font = seurat_font.has_value() ? TryLoadFont(io, *seurat_font, 18.0f) : nullptr;
+    g_small_font = dfs_font.has_value() ? TryLoadFont(io, *dfs_font, 15.0f) : nullptr;
+
+    if (g_title_font == nullptr) {
+        g_title_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeuib.ttf)", 31.0f);
+    }
+    if (g_body_font == nullptr) {
+        g_body_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeuil.ttf)", 18.0f);
+    }
+    if (g_small_font == nullptr) {
+        g_small_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeui.ttf)", 15.0f);
+    }
 
     if (g_body_font == nullptr) {
         g_body_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeui.ttf)", 18.0f);
@@ -1105,6 +1338,13 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
     draw_list->AddRectFilled(min, ImVec2(max.x, min.y + grid), outer_color);
     draw_list->AddRectFilled(ImVec2(min.x, max.y - grid), max, outer_color);
     draw_list->AddRectFilled(ImVec2(min.x + grid, min.y + grid), ImVec2(max.x - grid, max.y - grid), inner_color);
+    DrawTexturedRect(
+        draw_list,
+        g_shell_assets.general_window,
+        ImVec2(min.x + grid, min.y + grid),
+        ImVec2(max.x - grid, max.y - grid),
+        IM_COL32(108, 255, 147, static_cast<int>(150.0f * background_alpha))
+    );
 
     const float line_size = std::max(1.0f, ShellUi(2.0f));
     draw_list->AddLine(ImVec2(min.x + grid, min.y + grid), ImVec2(min.x + grid, min.y + grid * 2.0f), line_color, line_size);
@@ -1127,16 +1367,44 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
     );
 
     if (static_overlay) {
-        const float noise = std::fmod(static_cast<float>(ImGui::GetTime()) * 52.0f, ShellUi(28.0f));
         const ImVec2 clip_min(min.x + content_pad, min.y + label_height + grid + ShellUi(6.0f));
         const ImVec2 clip_max(max.x - content_pad, max.y - content_pad);
         draw_list->PushClipRect(clip_min, clip_max, true);
-        for (float x = clip_min.x - noise; x < clip_max.x + ShellUi(36.0f); x += ShellUi(46.0f)) {
-            draw_list->AddLine(
-                ImVec2(x, clip_min.y),
-                ImVec2(x + ShellUi(24.0f), clip_max.y),
-                IM_COL32(22, 58, 48, static_cast<int>(36.0f * background_alpha)),
-                1.0f
+        if (HasTexture(g_shell_assets.options_static)) {
+            const float time = static_cast<float>(ImGui::GetTime());
+            const ImVec2 uv_min(std::fmod(time * 0.031f, 1.0f), std::fmod(time * 0.017f, 1.0f));
+            const ImVec2 uv_max(
+                uv_min.x + ((clip_max.x - clip_min.x) / std::max(1U, g_shell_assets.options_static.width)),
+                uv_min.y + ((clip_max.y - clip_min.y) / std::max(1U, g_shell_assets.options_static.height))
+            );
+            DrawTexturedRect(
+                draw_list,
+                g_shell_assets.options_static,
+                clip_min,
+                clip_max,
+                IM_COL32(88, 255, 146, static_cast<int>(66.0f * background_alpha)),
+                uv_min,
+                uv_max
+            );
+        } else {
+            const float noise = std::fmod(static_cast<float>(ImGui::GetTime()) * 52.0f, ShellUi(28.0f));
+            for (float x = clip_min.x - noise; x < clip_max.x + ShellUi(36.0f); x += ShellUi(46.0f)) {
+                draw_list->AddLine(
+                    ImVec2(x, clip_min.y),
+                    ImVec2(x + ShellUi(24.0f), clip_max.y),
+                    IM_COL32(22, 58, 48, static_cast<int>(36.0f * background_alpha)),
+                    1.0f
+                );
+            }
+        }
+        if (HasTexture(g_shell_assets.options_static_flash)) {
+            const float flash = 0.35f + 0.65f * std::sin(static_cast<float>(ImGui::GetTime()) * 1.8f);
+            DrawTexturedRect(
+                draw_list,
+                g_shell_assets.options_static_flash,
+                clip_min,
+                clip_max,
+                IM_COL32(222, 255, 206, static_cast<int>(48.0f * background_alpha * flash))
             );
         }
         draw_list->PopClipRect();
@@ -1198,8 +1466,34 @@ bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool
     const ImU32 border = accent ? IM_COL32(122, 255, 168, 210) : IM_COL32(67, 128, 113, 190);
     const ImU32 text = enabled ? IM_COL32(236, 246, 239, 255) : IM_COL32(114, 134, 127, 255);
 
-    draw->AddRectFilled(min, max, bg, 4.0f);
-    draw->AddRect(min, max, border, 4.0f, 0, 1.2f);
+    draw->AddRectFilled(min, max, bg, ShellUi(4.0f));
+    DrawTexturedRectRounded(
+        draw,
+        g_shell_assets.general_window,
+        min,
+        max,
+        accent ? IM_COL32(116, 255, 170, hovered ? 170 : 140) : IM_COL32(88, 214, 157, hovered ? 120 : 90),
+        ShellUi(4.0f)
+    );
+    if (accent || hovered) {
+        DrawTexturedRectRounded(
+            draw,
+            g_shell_assets.select,
+            min,
+            max,
+            accent ? IM_COL32(131, 255, 125, hovered ? 136 : 112) : IM_COL32(116, 255, 170, 88),
+            ShellUi(4.0f)
+        );
+        DrawTexturedRectRounded(
+            draw,
+            g_shell_assets.light,
+            ImVec2(min.x, min.y - ShellUi(4.0f)),
+            ImVec2(max.x, max.y + ShellUi(4.0f)),
+            accent ? IM_COL32(205, 255, 170, hovered ? 130 : 106) : IM_COL32(179, 255, 214, 70),
+            ShellUi(4.0f)
+        );
+    }
+    draw->AddRect(min, max, border, ShellUi(4.0f), 0, 1.2f);
     draw->AddLine(ImVec2(min.x + 8.0f, max.y - 5.0f), ImVec2(max.x - 8.0f, max.y - 5.0f), border, 2.0f);
 
     if (g_small_font != nullptr) {
@@ -1273,10 +1567,36 @@ bool DrawSelectableCard(
             ? IM_COL32(73, 143, 124, 205)
             : IM_COL32(33, 84, 74, 180);
 
-    draw->AddRectFilled(min, max, bg, 4.0f);
-    draw->AddRect(min, max, border, 4.0f, 0, selected ? 1.8f : 1.1f);
+    draw->AddRectFilled(min, max, bg, ShellUi(4.0f));
+    DrawTexturedRectRounded(
+        draw,
+        g_shell_assets.general_window,
+        min,
+        max,
+        selected ? IM_COL32(125, 255, 164, 150) : hovered ? IM_COL32(100, 214, 182, 90) : IM_COL32(78, 196, 148, 56),
+        ShellUi(4.0f)
+    );
+    if (selected || hovered) {
+        DrawTexturedRectRounded(
+            draw,
+            g_shell_assets.select,
+            min,
+            max,
+            selected ? IM_COL32(146, 255, 135, static_cast<int>(124.0f + 42.0f * pulse)) : IM_COL32(114, 255, 198, 56),
+            ShellUi(4.0f)
+        );
+        DrawTexturedRectRounded(
+            draw,
+            g_shell_assets.light,
+            ImVec2(min.x - ShellUi(2.0f), min.y - ShellUi(6.0f)),
+            ImVec2(max.x + ShellUi(2.0f), min.y + (max.y - min.y) * 0.55f),
+            selected ? IM_COL32(221, 255, 188, 116) : IM_COL32(170, 255, 214, 46),
+            ShellUi(4.0f)
+        );
+    }
+    draw->AddRect(min, max, border, ShellUi(4.0f), 0, selected ? 1.8f : 1.1f);
     draw->AddRectFilled(ImVec2(min.x + 7.0f, min.y + 9.0f), ImVec2(min.x + 13.0f, max.y - 9.0f), selected ? IM_COL32(255, 188, 0, 255) : IM_COL32(45, 92, 80, 160), 3.0f);
-    for (float y = min.y + 2.0f; y < max.y; y += 8.0f) {
+    for (float y = min.y + ShellUi(2.0f); y < max.y; y += ShellUi(8.0f)) {
         draw->AddLine(ImVec2(min.x + 16.0f, y), ImVec2(max.x - 8.0f, y), IM_COL32(36, 88, 72, selected ? 28 : 12), 1.0f);
     }
 
@@ -1306,6 +1626,14 @@ void DrawProgressMeter(float progress, const std::string& label) {
     const ImVec2 max = ImGui::GetItemRectMax();
     const float width = (max.x - min.x) * Saturate(progress);
     draw->AddRectFilled(min, max, IM_COL32(8, 18, 20, 255), 3.0f);
+    DrawTexturedRectRounded(
+        draw,
+        g_shell_assets.general_window,
+        min,
+        max,
+        IM_COL32(106, 240, 172, 72),
+        ShellUi(3.0f)
+    );
     draw->AddRect(min, max, IM_COL32(52, 113, 97, 210), 3.0f);
     draw->AddRectFilledMultiColor(
         min,
@@ -1314,6 +1642,24 @@ void DrawProgressMeter(float progress, const std::string& label) {
         IM_COL32(157, 255, 93, 255),
         IM_COL32(45, 193, 128, 235),
         IM_COL32(157, 255, 93, 235)
+    );
+    DrawTexturedRectRounded(
+        draw,
+        g_shell_assets.select,
+        min,
+        ImVec2(min.x + width, max.y),
+        IM_COL32(150, 255, 126, 130),
+        ShellUi(3.0f),
+        ImVec2(0.0f, 0.0f),
+        ImVec2(std::max(0.12f, progress * 3.2f), 1.0f)
+    );
+    DrawTexturedRectRounded(
+        draw,
+        g_shell_assets.light,
+        ImVec2(min.x, min.y - ShellUi(4.0f)),
+        ImVec2(min.x + width, max.y + ShellUi(4.0f)),
+        IM_COL32(226, 255, 184, 78),
+        ShellUi(3.0f)
     );
     for (float x = min.x; x < min.x + width; x += 12.0f) {
         draw->AddLine(ImVec2(x, min.y + 1.0f), ImVec2(x + 8.0f, max.y - 1.0f), IM_COL32(255, 255, 255, 25), 1.0f);
@@ -1510,6 +1856,22 @@ void RenderActionTabs(ShellState& state) {
             g_tab_highlight_max = ImVec2(next_center.x + animated_width * 0.5f, next_center.y + height * 0.5f);
         }
 
+        DrawTexturedRectRounded(
+            draw,
+            g_shell_assets.select,
+            g_tab_highlight_min,
+            g_tab_highlight_max,
+            IM_COL32(131, 255, 122, static_cast<int>(168.0f * motion)),
+            ShellUi(3.0f)
+        );
+        DrawTexturedRectRounded(
+            draw,
+            g_shell_assets.light,
+            ImVec2(g_tab_highlight_min.x - ShellUi(8.0f), g_tab_highlight_min.y - ShellUi(10.0f)),
+            ImVec2(g_tab_highlight_max.x + ShellUi(8.0f), g_tab_highlight_max.y + ShellUi(4.0f)),
+            IM_COL32(225, 255, 188, static_cast<int>(78.0f * motion)),
+            ShellUi(3.0f)
+        );
         draw->AddRectFilledMultiColor(
             g_tab_highlight_min,
             g_tab_highlight_max,
@@ -1545,6 +1907,14 @@ void RenderActionTabs(ShellState& state) {
             const ImU32 fill = hovered ? IM_COL32(15, 27, 24, 228) : IM_COL32(8, 15, 17, 224);
             const ImU32 border = tab.ready ? IM_COL32(28, 78, 66, 170) : IM_COL32(110, 72, 38, 170);
             draw->AddRectFilled(rectangle.min, rectangle.max, fill, ShellUi(3.0f));
+            DrawTexturedRectRounded(
+                draw,
+                g_shell_assets.general_window,
+                rectangle.min,
+                rectangle.max,
+                hovered ? IM_COL32(103, 230, 172, 74) : IM_COL32(88, 214, 157, 42),
+                ShellUi(3.0f)
+            );
             draw->AddRect(rectangle.min, rectangle.max, border, ShellUi(3.0f), 0, 1.0f);
         }
 
@@ -2080,6 +2450,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     LoadShellFonts(io);
     ImGui::StyleColorsDark();
     ApplyStyle();
+    LoadShellAssets(std::filesystem::path(backend.workspace_root));
     g_shell_appear_time = ImGui::GetTime();
     PlayCue(UiCue::Window);
 
@@ -2088,6 +2459,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     ShellState state;
     state.backend = backend;
+    if (g_shell_assets.loaded) {
+        state.status_line = "Loaded real UnleashedRecomp DDS chrome.";
+    } else if (g_shell_assets.attempted && !g_shell_assets.error.empty()) {
+        state.status_line = "Fallback chrome active: " + g_shell_assets.error;
+    }
     RefreshProfiles(state);
     if (!state.profiles.empty()) {
         state.selected_action_id = state.profiles[static_cast<size_t>(state.selected_profile_index)].recommended_action_id;

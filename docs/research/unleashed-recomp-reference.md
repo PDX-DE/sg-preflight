@@ -48,13 +48,29 @@ The current native port is now intentionally closer to the real source structure
 - `DrawContainer`-style panel growth and outline timing
 - `DrawCategories`-style category strip motion and highlight interpolation
 - `ButtonGuide::Draw`-style left/right guide layout at the bottom rail
+- runtime DDS-backed chrome from the local `UnleashedRecompResources` bundle:
+  - `images/common/general_window.dds`
+  - `images/common/select.dds`
+  - `images/common/light.dds`
+  - `images/options_menu/options_static.dds`
+  - `images/options_menu/options_static_flash.dds`
 
 What is still not copied wholesale:
 
 - upstream textures
-- fonts
+- fonts as an upstream prebuilt atlas snapshot
 - sounds
 - menu/game-specific assets or strings
+
+## Current font decision
+
+The local resource pack includes `im_font_atlas.bin` and `im_font_atlas.dds`, but the upstream project loads those through a custom `ImFontAtlasSnapshot` path tied to its generated snapshot data and exact ImGui layout.
+
+For `sg-preflight`, the current safer path is:
+
+- use the real DDS chrome textures now
+- use direct OTF loading for the downloaded Seurat / New Rodin fonts when available
+- defer atlas-snapshot consumption until there is a concrete reason to port that exact font-snapshot pipeline too
 
 ## Repository rule
 

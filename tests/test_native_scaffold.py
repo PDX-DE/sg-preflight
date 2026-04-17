@@ -23,6 +23,8 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("launch-action", text)
         self.assertIn("desktop-state", text)
         self.assertIn("does not replace the Python core", text)
+        self.assertIn("general_window.dds", text)
+        self.assertIn("im_font_atlas.bin", text)
 
 
 if __name__ == "__main__":

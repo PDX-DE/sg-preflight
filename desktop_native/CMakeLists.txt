@@ -62,6 +62,7 @@ add_executable(
   sg_preflight_native_shell WIN32
   src/backend_bridge.cpp
   src/main.cpp
+  src/texture_loader.cpp
 )
 
 target_include_directories(

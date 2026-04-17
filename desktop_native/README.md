@@ -40,6 +40,10 @@ Current native-shell milestone:
   - animated action-tab highlight motion
   - selection cards for profiles, recent runs, evidence, and artifacts
   - local cue hooks for cursor / confirm / error feedback
+- runtime Unleashed resource discovery:
+  - auto-detects a local `UnleashedRecompResources` / `UnleashedRecompResources-main` bundle when present beside the repo
+  - loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures into the D3D11 shell
+  - keeps direct OTF font loading temporarily instead of consuming `im_font_atlas.bin` because the upstream atlas is tied to the custom `ImFontAtlasSnapshot` path and exact ImGui snapshot format
 
 ## Build
 
@@ -80,3 +84,4 @@ The CMake file fetches:
 - This shell is Windows-first because the current operator environment is Windows.
 - It is intentionally separate from the PySide shell so the native track can move toward a closer Unleashed-style interaction feel without cloning the Python engine.
 - BMW stages remain blocker/readiness surfaces until BMW-side access and scripts exist locally.
+- The current font path intentionally prefers direct local OTF files when available, because the upstream `im_font_atlas.bin` is a prebuilt snapshot generated for Unleashed's custom font-loading path rather than a drop-in ImGui runtime asset here.
