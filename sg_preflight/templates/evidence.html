@@ -1,6 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Files and proof {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="/ui/runs/{{ record.run_id }}#first-thing-to-do">
+    <span class="shell-route-title">Back to the result summary</span>
+    <span class="shell-route-detail">Return if you still need the short answer first.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#pinned-file">
+    <span class="shell-route-title">Open the pinned file first</span>
+    <span class="shell-route-detail">This is the quickest source-of-truth jump.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#files-proof">
+    <span class="shell-route-title">Use reports and SG proof files</span>
+    <span class="shell-route-detail">Open evidence only after the pinned file.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#stage-exports">
+    <span class="shell-route-title">Copy stage-shaped notes if needed</span>
+    <span class="shell-route-detail">Use these only when the short result note is not enough.</span>
+  </a>
+</li>
+{% endblock %}
 {% block content %}
 {% set problem = first_problem if first_problem is defined else none %}
 {% set sections = evidence_sections if evidence_sections is defined and evidence_sections else [] %}
@@ -47,7 +73,7 @@
 {% endif %}
 
 {% if problem and not problem.is_clean %}
-<section class="panel panel--priority">
+<section class="panel panel--priority" id="pinned-file">
   <div class="panel-head">
     <h3>Pinned first file</h3>
     <p>This file is tied most directly to the first problem on the result page.</p>
@@ -133,7 +159,7 @@
 </section>
 {% endif %}
 
-<section class="content-grid content-grid--evidence">
+<section class="content-grid content-grid--evidence" id="files-proof">
   {% if sections %}
   {% for section in sections %}
   <article class="panel">
@@ -167,7 +193,7 @@
 </section>
 
 {% if doc_exports %}
-<section class="panel">
+<section class="panel" id="stage-exports">
   <div class="panel-head panel-head--with-help">
     <div>
       <h3>Stage-specific exports</h3>

@@ -57,7 +57,7 @@ html {
 }
 body {
   margin: 0;
-  padding: 1.25rem;
+  padding: 1.55rem clamp(1rem, 2vw, 1.8rem) 2rem;
   background:
     radial-gradient(circle at 18% -4%, rgba(123, 215, 255, 0.16), transparent 22%),
     radial-gradient(circle at 84% 12%, rgba(255, 161, 124, 0.12), transparent 18%),
@@ -65,6 +65,11 @@ body {
   color: var(--text);
   font-family: var(--font-ui);
   line-height: 1.5;
+}
+body > * {
+  width: min(1680px, 100%);
+  margin-left: auto;
+  margin-right: auto;
 }
 body::before {
   content: "";
@@ -133,8 +138,8 @@ table::before,
   background: linear-gradient(90deg, rgba(123, 215, 255, 0.94), rgba(255, 161, 124, 0.58) 72%, transparent 100%);
 }
 .hero {
-  padding: 1.2rem 1.35rem 1.25rem;
-  margin-bottom: 0.9rem;
+  padding: 1.4rem 1.55rem 1.45rem;
+  margin-bottom: 1.05rem;
   background:
     linear-gradient(135deg, rgba(123, 215, 255, 0.08), rgba(255, 161, 124, 0.05) 52%, transparent 100%),
     linear-gradient(180deg, rgba(14, 24, 37, 0.98), rgba(8, 13, 20, 0.94));
@@ -164,12 +169,12 @@ th,
 .report-route {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.55rem;
-  margin-bottom: 1rem;
+  gap: 0.7rem;
+  margin-bottom: 1.15rem;
 }
 .report-route span {
   display: block;
-  padding: 0.8rem 0.9rem;
+  padding: 0.95rem 1rem;
   color: var(--text);
   font-family: var(--font-display);
   font-size: 0.84rem;
@@ -181,8 +186,8 @@ th,
 .action-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.85rem;
-  margin-bottom: 1rem;
+  gap: 1rem;
+  margin-bottom: 1.15rem;
 }
 .summary {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -191,7 +196,7 @@ th,
 .context-card,
 .pack-card,
 .action-card {
-  padding: 1rem 1.05rem;
+  padding: 1.1rem 1.18rem;
 }
 .card strong,
 .context-card strong {
@@ -224,7 +229,7 @@ th,
   color: var(--ok);
 }
 .section {
-  margin-bottom: 1rem;
+  margin-bottom: 1.15rem;
 }
 .pack-card h3,
 .action-card p {
@@ -259,7 +264,7 @@ table {
 th,
 td {
   border: 1px solid var(--border);
-  padding: 0.68rem;
+  padding: 0.78rem 0.8rem;
   text-align: left;
   vertical-align: top;
 }
@@ -314,8 +319,8 @@ code {
   background: var(--info);
 }
 .pack-details {
-  padding: 0.8rem 0.95rem;
-  margin-bottom: 0.9rem;
+  padding: 0.95rem 1.05rem;
+  margin-bottom: 1rem;
 }
 .pack-details summary {
   cursor: pointer;

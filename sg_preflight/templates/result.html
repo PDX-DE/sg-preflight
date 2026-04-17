@@ -2,6 +2,32 @@
 {% block title %}Result {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block body_attrs %}data-run-status="{{ record.status }}" data-run-id="{{ record.run_id }}"{% if record.status in ["running", "queued"] %} data-loading-active="true" class="with-loading-overlay"{% endif %}{% endblock %}
 {% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="#first-thing-to-do">
+    <span class="shell-route-title">Read the first thing to do</span>
+    <span class="shell-route-detail">This is the shortest path to the first real action.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#open-now">
+    <span class="shell-route-title">Open the right file now</span>
+    <span class="shell-route-detail">Jump straight to the best file or proof page.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="/ui/runs/{{ record.run_id }}/evidence#files-proof">
+    <span class="shell-route-title">Open files and proof</span>
+    <span class="shell-route-detail">See grouped reports, SG paths, and proof files.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#copy-ready-notes">
+    <span class="shell-route-title">Copy the note you need</span>
+    <span class="shell-route-detail">Use the first copy action before digging deeper.</span>
+  </a>
+</li>
+{% endblock %}
 {% block content %}
 {% set problem = first_problem if first_problem is defined and first_problem else {
   "title": "This result needs a page refresh",
@@ -123,7 +149,7 @@
 </section>
 
 <section class="quick-result-grid quick-result-grid--wide">
-  <article class="panel panel--priority">
+  <article class="panel panel--priority" id="first-thing-to-do">
     <div class="panel-head">
       <h3>First thing to do</h3>
       <p>{{ problem.title }}</p>
@@ -174,7 +200,7 @@
     {% endif %}
   </article>
 
-  <article class="panel">
+  <article class="panel" id="open-now">
     <div class="panel-head">
       <h3>Open this now</h3>
       <p>Shortest path from this result to the right file.</p>
@@ -210,7 +236,7 @@
     </div>
   </article>
 
-  <article class="panel">
+  <article class="panel" id="copy-ready-notes">
     <div class="panel-head">
       <h3>Copy this now</h3>
       <p>Use the first button when you want the shortest useful handoff.</p>

@@ -2,6 +2,32 @@
 {% block title %}Action {{ record.label }} - SG Preflight Operator UI{% endblock %}
 {% block body_attrs %}data-action-status="{{ record.status }}" data-action-run-id="{{ record.run_id }}"{% if record.status in ["running", "queued"] %} data-loading-active="true" class="with-loading-overlay"{% endif %}{% endblock %}
 {% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="#action-what-happened">
+    <span class="shell-route-title">Read what happened first</span>
+    <span class="shell-route-detail">Start with the short automation summary.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#action-next-steps">
+    <span class="shell-route-title">Follow the next steps</span>
+    <span class="shell-route-detail">Use these before opening logs.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#action-open-now">
+    <span class="shell-route-title">Open the best file now</span>
+    <span class="shell-route-detail">Jump to the fastest useful output from this action.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#action-raw-log">
+    <span class="shell-route-title">Use the raw log only if needed</span>
+    <span class="shell-route-detail">This is for exact script output, not the default path.</span>
+  </a>
+</li>
+{% endblock %}
 {% block content %}
 {% set action_summary = action_result if action_result is defined and action_result else {
   "title": "This action summary did not load cleanly",
@@ -64,7 +90,7 @@
 {% endif %}
 
 <section class="quick-result-grid quick-result-grid--wide">
-  <article class="panel panel--priority">
+  <article class="panel panel--priority" id="action-what-happened">
     <div class="panel-head">
       <h3>What happened</h3>
       <p>{{ action_summary.title }}</p>
@@ -93,7 +119,7 @@
     {% endif %}
   </article>
 
-  <article class="panel">
+  <article class="panel" id="action-next-steps">
     <div class="panel-head">
       <h3>Do this next</h3>
       <p>Use these next steps before going deeper into the raw log.</p>
@@ -105,7 +131,7 @@
     </ol>
   </article>
 
-  <article class="panel">
+  <article class="panel" id="action-open-now">
     <div class="panel-head">
       <h3>Open this now</h3>
       <p>These are the fastest useful outputs from this action run.</p>
@@ -153,7 +179,7 @@
 </section>
 
 {% if log_text %}
-<section class="panel">
+<section class="panel" id="action-raw-log">
   <div class="panel-head">
     <h3>Raw log</h3>
     <p>Raw output from the wrapped SG-side script or action runner.</p>

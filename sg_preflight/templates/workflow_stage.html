@@ -1,5 +1,31 @@
 {% extends "base.html" %}
 {% block title %}{{ stage.short_label }} - SG Preflight Operator UI{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="/ui#workflow-stage-start">
+    <span class="shell-route-title">Back to workflow stages</span>
+    <span class="shell-route-detail">Return if this is the wrong process context.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#stage-needs">
+    <span class="shell-route-title">Read what this stage needs</span>
+    <span class="shell-route-detail">Use this as the process guardrail.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#stage-change-type">
+    <span class="shell-route-title">Pick the change type</span>
+    <span class="shell-route-detail">Keep the selected stage attached to the run.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#stage-scope">
+    <span class="shell-route-title">Check local coverage honestly</span>
+    <span class="shell-route-detail">See what is covered, manual, or blocked.</span>
+  </a>
+</li>
+{% endblock %}
 {% block content %}
 {% set cards = job_cards if job_cards is defined else [] %}
 {% set scope = scope_items if scope_items is defined else [] %}
@@ -37,7 +63,7 @@
   </article>
 </section>
 
-<section class="panel panel--priority">
+<section class="panel panel--priority" id="stage-needs">
   <div class="panel-head panel-head--with-help">
     <div>
       <h3>What this stage needs</h3>
@@ -60,7 +86,7 @@
   </div>
 </section>
 
-<section class="panel">
+<section class="panel" id="stage-change-type">
   <div class="panel-head">
     <h3>Start from the kind of change</h3>
     <p>Pick the change type that matches what you touched, then keep the selected workflow stage attached to the run.</p>
@@ -80,7 +106,7 @@
   </div>
 </section>
 
-<section class="panel">
+<section class="panel" id="stage-scope">
   <div class="panel-head">
     <h3>What this stage covers here</h3>
     <p>This is the honest machine-local readout: what `sg-preflight` covers now, what still needs humans, and what is blocked elsewhere.</p>

@@ -1,5 +1,31 @@
 {% extends "base.html" %}
 {% block title %}Home - SG Preflight Operator UI{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="#change-type-start">
+    <span class="shell-route-title">Start from what changed</span>
+    <span class="shell-route-detail">Pick the change type first.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#workflow-stage-start">
+    <span class="shell-route-title">Use stage only when needed</span>
+    <span class="shell-route-detail">Choose this only when process context matters.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#more-tools">
+    <span class="shell-route-title">Open more tools only if needed</span>
+    <span class="shell-route-detail">Direct cars, matrix, and broader tools are here.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#recent-checks">
+    <span class="shell-route-title">Reuse recent checks and proof</span>
+    <span class="shell-route-detail">Jump back into the last useful run or action.</span>
+  </a>
+</li>
+{% endblock %}
 {% block content %}
 {% set jobs = guided_jobs if guided_jobs is defined else [] %}
 {% set home_profiles = profiles if profiles is defined else [] %}
@@ -41,7 +67,7 @@
   </article>
 </section>
 
-<section class="panel panel--priority">
+<section class="panel panel--priority" id="change-type-start">
   <div class="panel-head panel-head--with-help">
     <div>
       <h3>Start here: what changed?</h3>
@@ -74,7 +100,7 @@
   {% endif %}
 </section>
 
-<section class="panel">
+<section class="panel" id="workflow-stage-start">
   <div class="panel-head panel-head--with-help">
     <div>
       <h3>If the workflow stage matters</h3>
@@ -111,11 +137,11 @@
   {% endif %}
 </section>
 
-<section class="panel">
+<section class="panel" id="more-tools">
   <details class="foldout">
     <summary>Show more tools, direct car picks, and recent checks</summary>
 
-    <div class="panel-head panel-head--split">
+    <div class="panel-head panel-head--split" id="recent-checks">
       <h3>Broader tools</h3>
       <p>Use these only when you want a broad sweep or already know the guided path is not the right one.</p>
     </div>

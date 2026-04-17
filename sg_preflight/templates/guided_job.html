@@ -1,5 +1,31 @@
 {% extends "base.html" %}
 {% block title %}{{ job.short_label }} - SG Preflight Operator UI{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="/ui#change-type-start">
+    <span class="shell-route-title">Back to change types</span>
+    <span class="shell-route-detail">Return if this is the wrong guided start.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#recommended-car">
+    <span class="shell-route-title">Use the recommended car first</span>
+    <span class="shell-route-detail">This is the shortest path to signal.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#other-cars">
+    <span class="shell-route-title">Switch car only if needed</span>
+    <span class="shell-route-detail">Use another slice only if that is the one you changed.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#recommended-car">
+    <span class="shell-route-title">Run one check and follow the result</span>
+    <span class="shell-route-detail">You do not need to browse around first.</span>
+  </a>
+</li>
+{% endblock %}
 {% block content %}
 {% set recommended = primary_profile if primary_profile is defined else none %}
 {% set alternatives = other_profiles if other_profiles is defined else [] %}
@@ -46,7 +72,7 @@
 </section>
 
 {% if recommended %}
-<section class="panel panel--priority">
+<section class="panel panel--priority" id="recommended-car">
   <div class="panel-head panel-head--with-help">
     <div>
       <h3>Use this car first</h3>
@@ -125,7 +151,7 @@
 {% endif %}
 
 {% if alternatives %}
-<section class="panel">
+<section class="panel" id="other-cars">
   <div class="panel-head">
     <h3>Other cars</h3>
     <p>Open these only when the recommended car is not the slice you changed.</p>

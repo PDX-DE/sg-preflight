@@ -1,6 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Run {{ profile.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="/ui#change-type-start">
+    <span class="shell-route-title">Start from what changed</span>
+    <span class="shell-route-detail">Go back if you picked the wrong entry point.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#run-now">
+    <span class="shell-route-title">Run the recommended check</span>
+    <span class="shell-route-detail">This is the main first click on this page.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#run-files">
+    <span class="shell-route-title">Open the SG files behind the run</span>
+    <span class="shell-route-detail">Use these if you need to confirm inputs first.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#run-quick">
+    <span class="shell-route-title">Use the smaller path only if needed</span>
+    <span class="shell-route-detail">Custom packs and alternate actions live here.</span>
+  </a>
+</li>
+{% endblock %}
 {% block content %}
 {% set launch = primary_launch if primary_launch is defined and primary_launch else {
   "kind": "action",
@@ -55,7 +81,7 @@
 </section>
 
 <section class="content-grid content-grid--run">
-  <article class="panel panel--priority">
+  <article class="panel panel--priority" id="run-now">
     <div class="panel-head panel-head--with-help">
       <div>
         <h3>Run this now</h3>
@@ -120,7 +146,7 @@
     </div>
 
     {% if launch_file_cards %}
-    <div class="panel-head panel-head--split">
+    <div class="panel-head panel-head--split" id="run-files">
       <h3>Files this check will use</h3>
       <p>These are the SG source files behind this run.</p>
     </div>
@@ -139,7 +165,7 @@
     </div>
     {% endif %}
 
-    <details class="foldout">
+    <details class="foldout" id="run-quick">
       <summary>Show a smaller quick check</summary>
       <form id="run-form" class="stack" data-profile-id="{{ profile.profile_id }}">
         {% if selected_job %}

@@ -37,6 +37,8 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Changed
 
+- The top operator path is now a real clickable tutorial rail with arrows, plain-language hints, and page-specific jump targets on Home, guided starts, workflow-stage starts, Run, Result, Files And Proof, and Action pages, so teammates can click straight to the next relevant section instead of treating the strip as decorative chrome
+- Operator and report spacing is now less cramped at normal desktop widths: page shells, hero blocks, section heads, guide cards, and standalone SG HTML reports all have wider insets and calmer padding for side-by-side demo use
 - AssetRipper export verification is now grounded in a real local Unity validation pass: the recovered project was confirmed as a `2019.2.21f1` Unity project with `Assets` / `Packages` / `ProjectSettings` plus recovered `Assembly-CSharp` sources, and the exact legacy editor is now installed locally; the remaining blocker is explicitly narrowed to local Unity licensing because the editor exits with `Unity has not been activated with a valid License` before full project open/import
 - Operator UI now uses a darker sharper mission-control visual system inspired by the locally available Project06/P-06 menu code: left-anchored shell, compact title bars, clearer four-step route strip, slimmer section density, bevelled controls, and a refit loading screen that matches the same interface language instead of reading like a generic internal dashboard
 - SG-generated HTML reports and the `/ui/files` report path now pick up the same darker mission-control visual system, so report pages like `g45-report.html` no longer fall back to the old beige standalone styling when opened from the operator flow

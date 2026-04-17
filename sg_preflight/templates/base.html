@@ -14,7 +14,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/ui/static/operator.css?v=20260417i" />
+  <link rel="stylesheet" href="/ui/static/operator.css?v=20260417j" />
 </head>
 <body data-guide-mode="on" {% block body_attrs %}{% endblock %}>
   <header class="shell-header">
@@ -50,12 +50,34 @@
   </header>
 
   <section class="shell-route" data-guide aria-label="Operator path">
-    <div class="shell-route-label">Operator path</div>
+    <div class="shell-route-label">Tutorial path</div>
     <ol class="shell-route-list">
-      <li>Start from what changed</li>
-      <li>Run the recommended check</li>
-      <li>Open files and proof</li>
-      <li>Copy the note you need</li>
+      {% block shell_route %}
+      <li>
+        <a class="shell-route-link" href="/ui#change-type-start">
+          <span class="shell-route-title">Start from what changed</span>
+          <span class="shell-route-detail">Tell the tool what changed first.</span>
+        </a>
+      </li>
+      <li>
+        <a class="shell-route-link" href="/ui#workflow-stage-start">
+          <span class="shell-route-title">Use stage only when needed</span>
+          <span class="shell-route-detail">Use this when commit, review, or delivery context matters.</span>
+        </a>
+      </li>
+      <li>
+        <a class="shell-route-link" href="/ui#more-tools">
+          <span class="shell-route-title">Open more tools only if needed</span>
+          <span class="shell-route-detail">Direct cars, matrix, and broader tools live here.</span>
+        </a>
+      </li>
+      <li>
+        <a class="shell-route-link" href="/ui#recent-checks">
+          <span class="shell-route-title">Reuse recent checks and proof</span>
+          <span class="shell-route-detail">Jump back into the last useful result instead of starting blind.</span>
+        </a>
+      </li>
+      {% endblock %}
     </ol>
   </section>
 
@@ -122,6 +144,6 @@
     {% block content %}{% endblock %}
   </main>
 
-  <script src="/ui/static/operator.js?v=20260417i"></script>
+  <script src="/ui/static/operator.js?v=20260417j"></script>
 </body>
 </html>
