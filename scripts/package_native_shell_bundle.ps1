@@ -41,12 +41,43 @@ function Copy-Tree {
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
+function Remove-Tree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        return
+    }
+
+    $emptyDir = Join-Path ([System.IO.Path]::GetTempPath()) ("sg-preflight-empty-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $emptyDir | Out-Null
+    try {
+        robocopy $emptyDir $Path /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) {
+            throw "robocopy failed while clearing '$Path' (exit $LASTEXITCODE)."
+        }
+    }
+    finally {
+        if (Test-Path $emptyDir) {
+            Remove-Item -LiteralPath $emptyDir -Recurse -Force
+        }
+    }
+
+    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    if (-not $resolvedPath.StartsWith("\\?\")) {
+        $resolvedPath = "\\?\$resolvedPath"
+    }
+    [System.IO.Directory]::Delete($resolvedPath, $true)
+}
+
 if (-not (Test-Path $exePath)) {
     throw "Native shell executable was not found at $exePath. Build it first."
 }
 
 if (Test-Path $resolvedBundleDir) {
-    Remove-Item -LiteralPath $resolvedBundleDir -Recurse -Force
+    Remove-Tree -Path $resolvedBundleDir
 }
 
 New-Item -ItemType Directory -Path $resolvedBundleDir | Out-Null

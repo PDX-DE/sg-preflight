@@ -95,7 +95,9 @@ struct ShellWindowOptions {
 ShellWindowOptions g_window_options;
 
 enum class ShellScreen {
+    Introduction,
     Select,
+    Review,
     Run,
     Evidence,
     Files,
@@ -121,8 +123,8 @@ struct ShellState {
     std::string status_line = "Ready for the next SG QA action.";
     std::string last_error;
     double next_poll_at = 0.0;
-    ShellScreen current_screen = ShellScreen::Select;
-    ShellScreen previous_screen = ShellScreen::Select;
+    ShellScreen current_screen = ShellScreen::Introduction;
+    ShellScreen previous_screen = ShellScreen::Introduction;
     double screen_transition_started_at = -1.0;
 };
 
@@ -140,6 +142,8 @@ enum class UiCue {
 };
 
 void PlayCue(UiCue cue);
+std::string CurrentActionId(const ShellState& state);
+const ActionItem* FindSelectedAction(const ShellState& state);
 void RenderSummaryPanel(ShellState& state);
 void RenderEvidencePanel(ShellState& state);
 void RenderArtifactsPanel(ShellState& state);
@@ -706,10 +710,37 @@ void SetScreen(ShellState& state, ShellScreen screen, bool play_cursor = true) {
     }
 }
 
+int ScreenStepNumber(ShellScreen screen) {
+    switch (screen) {
+    case ShellScreen::Introduction:
+        return 1;
+    case ShellScreen::Select:
+        return 2;
+    case ShellScreen::Review:
+        return 3;
+    case ShellScreen::Run:
+        return 4;
+    case ShellScreen::Evidence:
+        return 5;
+    case ShellScreen::Files:
+        return 6;
+    case ShellScreen::Stages:
+        return 7;
+    default:
+        return 1;
+    }
+}
+
+constexpr int kWizardStepCount = 7;
+
 const char* ScreenLabel(ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Introduction:
+        return "INTRO";
     case ShellScreen::Select:
         return "SELECT";
+    case ShellScreen::Review:
+        return "REVIEW";
     case ShellScreen::Run:
         return "RUN";
     case ShellScreen::Evidence:
@@ -725,10 +756,14 @@ const char* ScreenLabel(ShellScreen screen) {
 
 const char* ScreenTitle(ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Introduction:
+        return "INSTALLER INTRO";
     case ShellScreen::Select:
-        return "OPERATOR SELECT";
+        return "SOURCE SELECT";
+    case ShellScreen::Review:
+        return "CHECK READINESS";
     case ShellScreen::Run:
-        return "RUN / RESULT";
+        return "RUN LOCAL QA";
     case ShellScreen::Evidence:
         return "OPEN FIRST";
     case ShellScreen::Files:
@@ -742,10 +777,14 @@ const char* ScreenTitle(ShellScreen screen) {
 
 const char* ScreenSummary(ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Introduction:
+        return "Open with the SG-side operator context first: what this pass does, what it does not do, and what the next input step is.";
     case ShellScreen::Select:
-        return "Choose the live slice, the SG action mode, and the shell settings before running.";
+        return "Choose the live slice and the SG action path. Keep this page focused on selecting inputs, not reading results.";
+    case ShellScreen::Review:
+        return "Confirm readiness, blockers, and the exact local command path before starting the action.";
     case ShellScreen::Run:
-        return "Focus on progress, summary lines, grouped findings, and signal log without the rest of the dashboard noise.";
+        return "Stay here for progress, summary lines, grouped findings, and the run/result transition.";
     case ShellScreen::Evidence:
         return "Open the first affected files, inspect checker reasoning, and move through the strongest SG evidence first.";
     case ShellScreen::Files:
@@ -754,6 +793,134 @@ const char* ScreenSummary(ShellScreen screen) {
         return "Keep blocked/manual stages visible, and control shell audio without hiding BMW-side honesty.";
     default:
         return "Screen flow";
+    }
+}
+
+ShellScreen FirstOperationalScreen() {
+    return ShellScreen::Introduction;
+}
+
+bool HasEvidenceReady(const ShellState& state) {
+    return state.snapshot.has_value() && !state.snapshot->top_paths.empty();
+}
+
+bool HasArtifactsReady(const ShellState& state) {
+    return state.snapshot.has_value() || state.run_snapshot.has_value();
+}
+
+bool HasCompletedRun(const ShellState& state) {
+    return state.snapshot.has_value() && state.snapshot->status == "completed";
+}
+
+std::string PrimaryActionId(const ShellState& state) {
+    return CurrentActionId(state);
+}
+
+bool SelectedActionReady(const ShellState& state) {
+    const std::string action_id = PrimaryActionId(state);
+    if (action_id == "daily_live_matrix") {
+        return true;
+    }
+    const ActionItem* action = FindSelectedAction(state);
+    return action != nullptr && action->ready;
+}
+
+bool CanAdvanceFromPage(const ShellState& state, ShellScreen screen) {
+    switch (screen) {
+    case ShellScreen::Introduction:
+        return true;
+    case ShellScreen::Select:
+        return !state.profiles.empty() && !PrimaryActionId(state).empty();
+    case ShellScreen::Review:
+        return SelectedActionReady(state);
+    case ShellScreen::Run:
+        return HasCompletedRun(state);
+    case ShellScreen::Evidence:
+        return HasArtifactsReady(state);
+    case ShellScreen::Files:
+        return true;
+    case ShellScreen::Stages:
+        return true;
+    default:
+        return false;
+    }
+}
+
+ShellScreen NextScreen(const ShellState& state, ShellScreen screen) {
+    switch (screen) {
+    case ShellScreen::Introduction:
+        return ShellScreen::Select;
+    case ShellScreen::Select:
+        return ShellScreen::Review;
+    case ShellScreen::Review:
+        return ShellScreen::Run;
+    case ShellScreen::Run:
+        if (HasEvidenceReady(state)) {
+            return ShellScreen::Evidence;
+        }
+        if (HasArtifactsReady(state)) {
+            return ShellScreen::Files;
+        }
+        return ShellScreen::Stages;
+    case ShellScreen::Evidence:
+        return ShellScreen::Files;
+    case ShellScreen::Files:
+        return ShellScreen::Stages;
+    case ShellScreen::Stages:
+        return ShellScreen::Select;
+    default:
+        return ShellScreen::Select;
+    }
+}
+
+ShellScreen PreviousScreen(const ShellState& state, ShellScreen screen) {
+    switch (screen) {
+    case ShellScreen::Introduction:
+        return ShellScreen::Introduction;
+    case ShellScreen::Select:
+        return ShellScreen::Introduction;
+    case ShellScreen::Review:
+        return ShellScreen::Select;
+    case ShellScreen::Run:
+        return ShellScreen::Review;
+    case ShellScreen::Evidence:
+        return ShellScreen::Run;
+    case ShellScreen::Files:
+        return HasEvidenceReady(state) ? ShellScreen::Evidence : ShellScreen::Run;
+    case ShellScreen::Stages:
+        return HasArtifactsReady(state) ? ShellScreen::Files : ShellScreen::Run;
+    default:
+        return ShellScreen::Introduction;
+    }
+}
+
+std::string NextButtonLabel(const ShellState& state) {
+    switch (state.current_screen) {
+    case ShellScreen::Introduction:
+        return "CONTINUE";
+    case ShellScreen::Select:
+        return "REVIEW";
+    case ShellScreen::Review:
+        return "RUN";
+    case ShellScreen::Run:
+        if (!HasCompletedRun(state)) {
+            return "WAIT";
+        }
+        if (HasEvidenceReady(state)) {
+            return "OPEN FIRST";
+        }
+        if (HasArtifactsReady(state)) {
+            return "FILES";
+        }
+        return "STAGES";
+    case ShellScreen::Evidence:
+        return "FILES";
+    case ShellScreen::Files:
+        return "STAGES";
+    case ShellScreen::Stages:
+        return "RETURN";
+    default:
+        return "NEXT";
     }
 }
 
@@ -2013,14 +2180,15 @@ float ScreenTransitionMotion(const ShellState& state) {
     if (state.screen_transition_started_at < 0.0) {
         return 1.0f;
     }
-    return SmoothStep(static_cast<float>((ImGui::GetTime() - state.screen_transition_started_at) / 0.28));
+    const double frames = (ImGui::GetTime() - state.screen_transition_started_at) * 60.0;
+    return SmoothStep(static_cast<float>(std::sqrt(std::clamp(frames / 23.0, 0.0, 1.0))));
 }
 
 void BeginScreenTransition(const ShellState& state) {
     const float motion = ScreenTransitionMotion(state);
     const ImVec2 cursor = ImGui::GetCursorPos();
-    ImGui::SetCursorPos(ImVec2(cursor.x + (1.0f - motion) * ShellUi(36.0f), cursor.y));
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, motion);
+    ImGui::SetCursorPos(ImVec2(cursor.x + (1.0f - motion) * ShellUi(52.0f), cursor.y + (1.0f - motion) * ShellUi(4.0f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.18f + 0.82f * motion);
 }
 
 void EndScreenTransition() {
@@ -2425,28 +2593,44 @@ void RenderActionTabs(ShellState& state) {
     }
 }
 
-void RenderScreenTabs(ShellState& state) {
-    struct ScreenItem {
+void RenderWizardFlow(ShellState& state) {
+    struct StepItem {
         ShellScreen screen;
         const char* label;
     };
-    const std::array<ScreenItem, 5> screens = {{
+    const std::array<StepItem, 7> steps = {{
+        {ShellScreen::Introduction, "INTRO"},
         {ShellScreen::Select, "SELECT"},
+        {ShellScreen::Review, "REVIEW"},
         {ShellScreen::Run, "RUN"},
         {ShellScreen::Evidence, "EVIDENCE"},
         {ShellScreen::Files, "FILES"},
         {ShellScreen::Stages, "STAGES"},
     }};
 
-    InlineSectionLabel("Screen Flow");
-    const float button_width = std::max(ShellUi(126.0f), (ImGui::GetContentRegionAvail().x - ShellUi(24.0f)) / 5.0f);
-    for (size_t index = 0; index < screens.size(); ++index) {
-        const auto& item = screens[index];
-        const bool selected = state.current_screen == item.screen;
-        if (DrawPanelButton(("screen-" + std::string(item.label)).c_str(), item.label, ImVec2(button_width, ShellUi(28.0f)), selected, true)) {
+    InlineSectionLabel("Wizard Flow");
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float item_gap = ShellUi(10.0f);
+    const float item_width = std::max(ShellUi(110.0f), (width - item_gap * static_cast<float>(steps.size() - 1U)) / static_cast<float>(steps.size()));
+    for (size_t index = 0; index < steps.size(); ++index) {
+        const StepItem& item = steps[index];
+        const bool current = state.current_screen == item.screen;
+        const bool completed = ScreenStepNumber(state.current_screen) > ScreenStepNumber(item.screen);
+        const bool accessible = completed || current;
+        std::string label = std::to_string(ScreenStepNumber(item.screen)) + ". " + item.label;
+        if (completed) {
+            label += " ✓";
+        }
+        if (DrawPanelButton(
+            ("wizard-step-" + std::string(item.label)).c_str(),
+            label,
+            ImVec2(item_width, ShellUi(30.0f)),
+            current || completed,
+            accessible
+        )) {
             SetScreen(state, item.screen, false);
         }
-        if (index + 1U < screens.size()) {
+        if (index + 1U < steps.size()) {
             ImGui::SameLine();
         }
     }
@@ -2454,15 +2638,42 @@ void RenderScreenTabs(ShellState& state) {
     ImGui::TextWrapped("%s", ScreenSummary(state.current_screen));
 }
 
-void RenderSelectScreen(ShellState& state) {
+void RenderIntroductionScreen(ShellState& state) {
     BeginScreenTransition(state);
     const ImVec2 hero_pos = ImGui::GetCursorScreenPos();
-    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(96.0f)), 0.86f, true);
-    ImGui::Dummy(ImVec2(0.0f, ShellUi(104.0f)));
+    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(88.0f)), 0.74f, true);
+    ImGui::Dummy(ImVec2(0.0f, ShellUi(94.0f)));
+    InlineSectionLabel("Step 1 / 7");
+    ImGui::TextWrapped("This shell follows a real wizard flow now: choose the SG slice, review the local readiness state, run the action, then move through evidence, files, and blocked/manual stages in order.");
+    ImGui::Spacing();
+    InlineSectionLabel("What This Covers");
+    ImGui::BulletText("Deterministic SG preflight packs plus the wrapped SG checker stack.");
+    ImGui::BulletText("Structured checker evidence with file-backed Open First guidance.");
+    ImGui::BulletText("Files, exports, and copy-ready handoff text after the run is understood.");
+    ImGui::BulletText("Blocked/manual BMW-side stages without hiding missing access.");
+    ImGui::Spacing();
+    InlineSectionLabel("Current Operator Context");
+    if (!state.profiles.empty()) {
+        const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
+        ImGui::Text("%s", profile.profile_id.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", profile.label.c_str());
+        ImGui::TextWrapped("%s", profile.summary.c_str());
+        ImGui::Spacing();
+        ImGui::TextDisabled("Recommended path: %s", ShortActionLabel(profile.recommended_action_id).c_str());
+    } else {
+        ImGui::TextDisabled("No ready live profiles were discovered locally.");
+    }
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", state.status_line.c_str());
+    EndScreenTransition();
+}
 
-    InlineSectionLabel("Step 1 / 5");
-    ImGui::TextWrapped("Choose the live slice and the SG action you want to start. This screen should stay calm: select, confirm, then move forward.");
-
+void RenderSelectScreen(ShellState& state) {
+    BeginScreenTransition(state);
+    InlineSectionLabel("Step 2 / 7");
+    ImGui::TextWrapped("Choose the live slice and the SG action path first. This page should stay about selecting inputs, not result drilling.");
+    ImGui::Spacing();
     InlineSectionLabel("Selected Live Slice");
     if (!state.profiles.empty()) {
         const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
@@ -2473,64 +2684,88 @@ void RenderSelectScreen(ShellState& state) {
     } else {
         ImGui::TextDisabled("No ready live profiles were discovered.");
     }
-
     ImGui::Spacing();
-    InlineSectionLabel("Selected SG Action");
+    InlineSectionLabel("SG Action Path");
+    RenderActionTabs(state);
+    ImGui::Spacing();
     const ActionItem* action = FindSelectedAction(state);
-    const std::string selected_action = CurrentActionId(state);
-    const bool action_ready = selected_action == "daily_live_matrix" || (action != nullptr && action->ready);
-    if (DrawPanelButton("select-screen-run", "RUN SELECTED ACTION", ImVec2(ShellUi(280.0f), ShellUi(34.0f)), true, action_ready)) {
-        if (action_ready) {
-            StartAction(state, selected_action);
-            SetScreen(state, ShellScreen::Run, false);
-        }
-    }
-    ImGui::Spacing();
-    ImGui::TextDisabled("%s", state.status_line.c_str());
-
     if (action != nullptr) {
-        ImGui::Spacing();
         ImGui::TextWrapped("%s", action->description.c_str());
-        if (!action->ready && !action->blocker_message.empty()) {
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", action->blocker_message.c_str());
-        } else if (!action->command_preview.empty()) {
+        if (!action->command_preview.empty()) {
             ImGui::Spacing();
             ImGui::TextDisabled("%s", action->command_preview.c_str());
         }
+        if (!action->ready && !action->blocker_message.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", action->blocker_message.c_str());
+        }
+    } else if (CurrentActionId(state) == "daily_live_matrix") {
+        ImGui::TextWrapped("Run the recommended SG QA stack across every ready live profile and collect one aggregated Open First surface.");
+        ImGui::Spacing();
+        ImGui::TextDisabled("python -m sg_preflight run-action daily_live_matrix");
     } else {
         ImGui::TextDisabled("No action metadata is available for the current selection.");
     }
+    EndScreenTransition();
+}
 
+void RenderReviewScreen(ShellState& state) {
+    BeginScreenTransition(state);
+    InlineSectionLabel("Step 3 / 7");
+    ImGui::TextWrapped("Confirm the chosen SG path before running it. This mirrors the installer check step: selection is done, readiness is explicit, and blockers stay visible before execution.");
     ImGui::Spacing();
-    InlineSectionLabel("What Happens Next");
-    ImGui::BulletText("Run the selected action from this screen.");
-    ImGui::BulletText("The shell will move to RUN for progress and result detail.");
-    ImGui::BulletText("Then move to EVIDENCE, FILES, and STAGES step by step.");
+    InlineSectionLabel("Selected Run");
+    if (!state.profiles.empty()) {
+        const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
+        ImGui::Text("%s", profile.profile_id.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", profile.label.c_str());
+    }
+    ImGui::Text("Action: %s", ShortActionLabel(CurrentActionId(state)).c_str());
+    const ActionItem* action = FindSelectedAction(state);
+    if (action != nullptr) {
+        ImGui::TextWrapped("%s", action->description.c_str());
+    }
+    ImGui::Spacing();
+    InlineSectionLabel("Command Preview");
+    if (action != nullptr && !action->command_preview.empty()) {
+        ImGui::TextWrapped("%s", action->command_preview.c_str());
+    } else if (CurrentActionId(state) == "daily_live_matrix") {
+        ImGui::TextWrapped("python -m sg_preflight run-action daily_live_matrix");
+    } else {
+        ImGui::TextDisabled("No command preview is available for this action.");
+    }
+    ImGui::Spacing();
+    InlineSectionLabel("Readiness");
+    if (SelectedActionReady(state)) {
+        ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "This local SG action is ready to run.");
+    } else if (action != nullptr && !action->blocker_message.empty()) {
+        ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", action->blocker_message.c_str());
+    } else {
+        ImGui::TextDisabled("This action is not ready on the current machine.");
+    }
+    ImGui::Spacing();
+    InlineSectionLabel("Known Blockers");
+    for (const BlockerItem& item : state.blockers) {
+        ImGui::Text("%s [%s]", item.label.c_str(), item.state.c_str());
+        ImGui::TextDisabled("%s", item.summary.c_str());
+        if (!item.blockers.empty()) {
+            ImGui::BulletText("%s", item.blockers.front().c_str());
+        }
+        if (&item != &state.blockers.back()) {
+            ImGui::Spacing();
+        }
+    }
     EndScreenTransition();
 }
 
 void RenderRunScreen(ShellState& state) {
     BeginScreenTransition(state);
     const ImVec2 hero_pos = ImGui::GetCursorScreenPos();
-    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(72.0f)), 0.82f, true);
-    ImGui::Dummy(ImVec2(0.0f, ShellUi(80.0f)));
-    InlineSectionLabel("Step 2 / 5");
-    ImGui::TextWrapped("Stay on this page while the action runs. Once the result is usable, move forward to the strongest checker evidence instead of reading everything at once.");
-    ImGui::Spacing();
-    const bool has_evidence = state.snapshot.has_value() && !state.snapshot->top_paths.empty();
-    const bool has_artifacts = state.snapshot.has_value() || state.run_snapshot.has_value();
-    if (DrawPanelButton("run-to-evidence", "GO TO EVIDENCE", ImVec2(ShellUi(178.0f), ShellUi(30.0f)), true, has_evidence)) {
-        SetScreen(state, ShellScreen::Evidence);
-    }
-    ImGui::SameLine();
-    if (DrawPanelButton("run-to-files", "GO TO FILES", ImVec2(ShellUi(158.0f), ShellUi(30.0f)), false, has_artifacts)) {
-        SetScreen(state, ShellScreen::Files);
-    }
-    ImGui::SameLine();
-    if (DrawPanelButton("run-to-stages", "GO TO STAGES", ImVec2(ShellUi(164.0f), ShellUi(30.0f)), false, true)) {
-        SetScreen(state, ShellScreen::Stages);
-    }
+    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(68.0f)), 0.76f, true);
+    ImGui::Dummy(ImVec2(0.0f, ShellUi(74.0f)));
+    InlineSectionLabel("Step 4 / 7");
+    ImGui::TextWrapped("Stay here while the local action runs. Once the result is completed, move forward to evidence first instead of reading every file or report at once.");
     ImGui::Spacing();
     RenderSummaryPanel(state);
     EndScreenTransition();
@@ -2538,7 +2773,7 @@ void RenderRunScreen(ShellState& state) {
 
 void RenderEvidenceScreen(ShellState& state) {
     BeginScreenTransition(state);
-    InlineSectionLabel("Step 3 / 5");
+    InlineSectionLabel("Step 5 / 7");
     ImGui::TextDisabled("Open these files first and keep the strongest checker path in front of you.");
     ImGui::Spacing();
     RenderEvidencePanel(state);
@@ -2562,37 +2797,21 @@ void RenderEvidenceScreen(ShellState& state) {
             ImGui::BulletText("%s", followup.c_str());
         }
     }
-    ImGui::Spacing();
-    if (DrawPanelButton("evidence-back-run", "BACK TO RUN", ImVec2(ShellUi(168.0f), ShellUi(30.0f)), false, true)) {
-        SetScreen(state, ShellScreen::Run);
-    }
-    ImGui::SameLine();
-    if (DrawPanelButton("evidence-next-files", "NEXT: FILES", ImVec2(ShellUi(168.0f), ShellUi(30.0f)), true, state.snapshot.has_value() || state.run_snapshot.has_value())) {
-        SetScreen(state, ShellScreen::Files);
-    }
     EndScreenTransition();
 }
 
 void RenderFilesScreen(ShellState& state) {
     BeginScreenTransition(state);
-    InlineSectionLabel("Step 4 / 5");
-    ImGui::TextWrapped("Use this page for reports, exports, and source-of-truth files after you already know what matters from EVIDENCE.");
+    InlineSectionLabel("Step 6 / 7");
+    ImGui::TextWrapped("Use this page for reports, exports, and source-of-truth files after you already know what matters from OPEN FIRST.");
     ImGui::Spacing();
     RenderArtifactsPanel(state);
-    ImGui::Spacing();
-    if (DrawPanelButton("files-back-evidence", "BACK TO EVIDENCE", ImVec2(ShellUi(194.0f), ShellUi(30.0f)), false, state.snapshot.has_value() && !state.snapshot->top_paths.empty())) {
-        SetScreen(state, ShellScreen::Evidence);
-    }
-    ImGui::SameLine();
-    if (DrawPanelButton("files-next-stages", "NEXT: STAGES", ImVec2(ShellUi(176.0f), ShellUi(30.0f)), true, true)) {
-        SetScreen(state, ShellScreen::Stages);
-    }
     EndScreenTransition();
 }
 
 void RenderStagesScreen(ShellState& state) {
     BeginScreenTransition(state);
-    InlineSectionLabel("Step 5 / 5");
+    InlineSectionLabel("Step 7 / 7");
     ImGui::TextWrapped("Finish on blockers, manual follow-up, and shell settings. BMW blockers stay visible here instead of being buried under the rest of the UI.");
     ImGui::Spacing();
     RenderBlockersPanel(state);
@@ -2622,21 +2841,19 @@ void RenderStagesScreen(ShellState& state) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", g_shell_audio.last_error.c_str());
     }
-    ImGui::Spacing();
-    if (DrawPanelButton("stages-back-files", "BACK TO FILES", ImVec2(ShellUi(178.0f), ShellUi(30.0f)), false, true)) {
-        SetScreen(state, ShellScreen::Files);
-    }
-    ImGui::SameLine();
-    if (DrawPanelButton("stages-return-select", "RETURN TO SELECT", ImVec2(ShellUi(198.0f), ShellUi(30.0f)), true, true)) {
-        SetScreen(state, ShellScreen::Select);
-    }
     EndScreenTransition();
 }
 
 void RenderCurrentScreen(ShellState& state) {
     switch (state.current_screen) {
+    case ShellScreen::Introduction:
+        RenderIntroductionScreen(state);
+        break;
     case ShellScreen::Select:
         RenderSelectScreen(state);
+        break;
+    case ShellScreen::Review:
+        RenderReviewScreen(state);
         break;
     case ShellScreen::Run:
         RenderRunScreen(state);
@@ -2650,6 +2867,27 @@ void RenderCurrentScreen(ShellState& state) {
     case ShellScreen::Stages:
         RenderStagesScreen(state);
         break;
+    }
+}
+
+void RenderWizardNavigation(ShellState& state) {
+    const bool can_go_back = state.current_screen != FirstOperationalScreen();
+    const bool can_go_next = CanAdvanceFromPage(state, state.current_screen);
+    const std::string next_label = NextButtonLabel(state);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (DrawPanelButton("wizard-back", "BACK", ImVec2(ShellUi(162.0f), ShellUi(30.0f)), false, can_go_back)) {
+        SetScreen(state, PreviousScreen(state, state.current_screen));
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton("wizard-next", next_label.c_str(), ImVec2(ShellUi(190.0f), ShellUi(30.0f)), true, can_go_next)) {
+        if (state.current_screen == ShellScreen::Review) {
+            StartAction(state, CurrentActionId(state));
+        } else {
+            SetScreen(state, NextScreen(state, state.current_screen));
+        }
     }
 }
 
@@ -3062,44 +3300,41 @@ void RenderShell(ShellState& state) {
         return;
     }
 
-    if (BeginShellPanelAt("mode-select-panel", "MODE SELECT", 10.0f, 117.0f, 1260.0f, 96.0f)) {
-        ImGui::TextDisabled("Recommended SG action tabs for the selected live slice.");
-        RenderActionTabs(state);
-        ImGui::Spacing();
-        RenderScreenTabs(state);
+    if (BeginShellPanelAt("wizard-flow-panel", "INSTALLER FLOW", 10.0f, 117.0f, 1260.0f, 112.0f)) {
+        ImGui::TextDisabled("%s", ScreenTitle(state.current_screen));
+        RenderWizardFlow(state);
     }
     EndDecoratedPanel();
 
     switch (state.current_screen) {
+    case ShellScreen::Introduction:
     case ShellScreen::Select:
-        if (BeginShellPanelAt("profiles-panel", "PROFILES", 10.0f, 221.0f, 304.0f, 448.0f)) {
+    case ShellScreen::Review:
+        if (BeginShellPanelAt("profiles-panel", "PROFILE SOURCE", 10.0f, 237.0f, 304.0f, 432.0f)) {
             RenderProfilesPanel(state);
         }
         EndDecoratedPanel();
-        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 324.0f, 221.0f, 946.0f, 448.0f, false)) {
+        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 324.0f, 237.0f, 946.0f, 432.0f, false)) {
             RenderCurrentScreen(state);
+            RenderWizardNavigation(state);
         }
         EndDecoratedPanel();
         break;
     case ShellScreen::Run:
-        if (BeginShellPanelAt("recent-actions-panel", "RECENT ACTIONS", 10.0f, 221.0f, 304.0f, 216.0f)) {
-            RenderRecentActionsPanel(state);
-        }
-        EndDecoratedPanel();
-        if (BeginShellPanelAt("recent-runs-panel", "RECENT RESULTS", 10.0f, 446.0f, 304.0f, 223.0f)) {
-            RenderRecentResultsPanel(state);
-        }
-        EndDecoratedPanel();
-        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 324.0f, 221.0f, 946.0f, 448.0f, false)) {
-            RenderCurrentScreen(state);
-        }
-        EndDecoratedPanel();
-        break;
     case ShellScreen::Evidence:
     case ShellScreen::Files:
     case ShellScreen::Stages:
-        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 10.0f, 221.0f, 1260.0f, 448.0f, false)) {
+        if (BeginShellPanelAt("recent-actions-panel", "RECENT ACTIONS", 10.0f, 237.0f, 304.0f, 206.0f)) {
+            RenderRecentActionsPanel(state);
+        }
+        EndDecoratedPanel();
+        if (BeginShellPanelAt("recent-runs-panel", "RECENT RESULTS", 10.0f, 454.0f, 304.0f, 215.0f)) {
+            RenderRecentResultsPanel(state);
+        }
+        EndDecoratedPanel();
+        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 324.0f, 237.0f, 946.0f, 432.0f, false)) {
             RenderCurrentScreen(state);
+            RenderWizardNavigation(state);
         }
         EndDecoratedPanel();
         break;
