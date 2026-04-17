@@ -12,6 +12,7 @@ This is a research note for the desktop operator shell track.
 
 That is the shipping product surface today.
 An experimental Desktop Operator Shell v0 now exists, but it is still intentionally thin and still depends on the same Python core plus the same persisted action/run records.
+A second experimental track now also exists under `desktop_native/`: a native C++ + Dear ImGui shell scaffold that still talks to the same Python backend instead of cloning the engine.
 
 ## Future direction
 
@@ -36,6 +37,14 @@ The important part is unchanged:
 - Do not fork the validation logic into a second engine.
 - The desktop GUI should call into the same core services/actions/evidence model.
 - The browser UI stays useful even after a desktop shell exists.
+- Native frontends should prefer a simple process/JSON contract first:
+  - `launch-action`
+  - `desktop-state profiles`
+  - `desktop-state actions`
+  - `desktop-state blockers`
+  - `desktop-state manual`
+  - `desktop-state recent-actions`
+  - `desktop-state snapshot`
 
 ## Why a desktop shell is justified later
 
@@ -60,6 +69,13 @@ The current experimental shell is intentionally narrow:
 - progress, log-tail, and blocker visibility from the same persisted records
 - checker-evidence `Open first` triage
 - local file open / reveal actions
+
+The native shell scaffold extends that with:
+
+- recent-action browsing
+- native `Open first` evidence triage
+- copy-ready export buttons from the same action snapshot payload
+- a Windows-first Dear ImGui shell that can move closer to the eventual broader 3D-department operator surface
 
 What it still does not try to do:
 

@@ -317,12 +317,16 @@ def list_operator_actions(
         OperatorAction(
             action_id="daily_live_matrix",
             label="Run daily SG check",
-            description="Run the standard preflight across the configured live SG slices and write one shared summary.",
+            description="Run the recommended SG QA stack across the ready live SG slices and write one shared summary.",
             kind="daily_live_matrix",
             scope="workspace",
-            ready=bool(live_profiles),
-            blocker_message="" if live_profiles else "No live SG profiles are configured on this machine.",
-            command_preview="internal: run all configured live profiles with fail_on=never",
+            ready=any(profile.project_root.exists() and profile.config_path.exists() for profile in live_profiles),
+            blocker_message=(
+                ""
+                if any(profile.project_root.exists() and profile.config_path.exists() for profile in live_profiles)
+                else "No ready live SG profiles are configured on this machine."
+            ),
+            command_preview="internal: run the recommended QA stack across all ready live profiles",
         ),
         OperatorAction(
             action_id="repo_checker_idcevo",
@@ -928,12 +932,16 @@ def _attach_scene_workbook_refs(
 
 
 def _execute_daily_live_matrix(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
-    profiles = list_run_profiles(root)
+    profiles = [
+        profile
+        for profile in list_run_profiles(root)
+        if profile.project_root.exists() and profile.config_path.exists()
+    ]
     lines = []
     artifacts: list[dict[str, str]] = []
     notes: list[str] = []
-    output_root = Path(record.paths["output_root"])
     total_profiles = max(len(profiles), 1)
+    child_summaries: list[dict[str, Any]] = []
 
     _set_action_progress(
         record,
@@ -945,43 +953,58 @@ def _execute_daily_live_matrix(record: ActionRecord, root: Path) -> tuple[dict[s
 
     for index, profile in enumerate(profiles, start=1):
         matrix_percent = 10 + int((index - 1) / total_profiles * 75)
-        child_run_id = f"{record.run_id}-{profile.profile_id.lower()}"
-        child_output = operator_ui_runs_root(root) / child_run_id
+        stack_action = get_operator_action(
+            f"qa_stack__{profile.profile_id.lower()}",
+            root,
+            profiles=profiles,
+        )
+        child_record = _nested_action_record(
+            record,
+            stack_action,
+            f"{profile.profile_id.lower()}-qa-stack",
+        )
         _set_action_progress(
             record,
             step_key="profiles",
             percent=matrix_percent,
             label=f"Running {profile.profile_id}",
-            detail=f"Live matrix {index}/{len(profiles)}: materializing and validating {profile.profile_id}.",
+            detail=f"Live matrix {index}/{len(profiles)}: running the recommended SG QA stack for {profile.profile_id}.",
             meta={
                 "profile_id": profile.profile_id,
                 "index": index,
                 "total": len(profiles),
-                "child_run_id": child_run_id,
-                "child_status_url": f"/ui/api/runs/{child_run_id}",
-                "child_result_url": f"/ui/runs/{child_run_id}",
+                "child_run_id": child_record.run_id,
+                "child_status_url": f"/ui/api/actions/{child_record.run_id}",
+                "child_result_url": f"/ui/actions/{child_record.run_id}",
+                "command": child_record.command_preview,
             },
         )
-        child = execute_profile_run(
-            profile,
-            RunRequest(
-                profile_id=profile.profile_id,
-                fail_on="never",
-                output_root=child_output,
-                run_id=child_run_id,
-            ),
-            root,
+        child_summary, child_artifacts, child_notes = _execute_profile_stack(child_record, root)
+        _complete_nested_action_record(
+            child_record,
+            child_summary,
+            child_artifacts,
+            child_notes,
         )
-        child_summary = child.summary or {}
+        child_summaries.append(child_summary)
+        preflight_errors = int(child_summary.get("preflight_errors", 0) or 0)
+        preflight_warnings = int(child_summary.get("preflight_warnings", 0) or 0)
+        repo_style_issues = int(child_summary.get("repo_style_issue_count", 0) or 0)
+        repo_error_batches = int(child_summary.get("repo_execute_error_batches", 0) or 0)
+        unused_candidates = int(child_summary.get("unused_candidate_count", 0) or 0)
+        scene_errors = int(child_summary.get("scene_error_count", 0) or 0)
         lines.append(
-            f"{profile.profile_id}: {child_summary.get('errors', 0)} errors, {child_summary.get('warnings', 0)} warnings, {child_summary.get('info', 0)} info"
+            f"{profile.profile_id}: preflight {preflight_errors} error(s), {preflight_warnings} warning(s); "
+            f"repo checker {repo_style_issues} style issue(s) / {repo_error_batches} executeChecks batch(es); "
+            f"unused resources {unused_candidates}; scene errors {scene_errors}"
         )
-        notes.extend(f"{profile.profile_id}: {note}" for note in child.notes[:3])
+        notes.extend(f"{profile.profile_id}: {note}" for note in child_notes[:3])
+        artifacts.extend(child_artifacts)
         artifacts.extend(
             [
-                _artifact(f"{profile.profile_id} HTML report", Path(child.paths["html_report"])),
-                _artifact(f"{profile.profile_id} Markdown report", Path(child.paths["markdown_report"])),
-                _artifact(f"{profile.profile_id} JSON report", Path(child.paths["json_report"])),
+                _artifact(f"{profile.profile_id} QA stack summary", Path(child_record.paths["summary_md"])),
+                _artifact(f"{profile.profile_id} QA stack JSON", Path(child_record.paths["summary_json"])),
+                _artifact(f"{profile.profile_id} QA stack log", Path(child_record.paths["log"])),
             ]
         )
         _log(record, f"{profile.profile_id}: completed with {child_summary}")
@@ -993,11 +1016,24 @@ def _execute_daily_live_matrix(record: ActionRecord, root: Path) -> tuple[dict[s
         label="Finalizing daily matrix",
         detail="Writing the shared SG live-matrix summary and artifacts.",
     )
+    checker_evidence = aggregate_child_checker_evidence(
+        *child_summaries,
+        raw_log_path=record.paths["log"],
+        source_kind="daily_live_matrix",
+    )
+    if checker_evidence is not None and checker_evidence.get("top_paths"):
+        first_path = checker_evidence["top_paths"][0]
+        first_line = f" line {first_path['line']}" if first_path.get("line") not in (None, "") else ""
+        lines.append(
+            f"Open first: {first_path['path']}{first_line} ({first_path.get('checker', 'checker')}) - {first_path.get('message', '')}"
+        )
     summary = {
         "title": "Daily SG check",
         "lines": lines,
         "profile_count": len(profiles),
     }
+    if checker_evidence is not None:
+        summary["checker_evidence"] = checker_evidence
     return summary, artifacts, notes
 
 
@@ -1264,6 +1300,22 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         "title": f"Recommended QA Stack - {profile.profile_id}",
         "lines": lines,
         "profile_id": profile.profile_id,
+        "preflight_errors": preflight_summary.get("errors", 0),
+        "preflight_warnings": preflight_summary.get("warnings", 0),
+        "preflight_info": preflight_summary.get("info", 0),
+        "repo_style_issue_count": repo_summary.get("style_issue_count", 0) if isinstance(repo_summary, dict) else 0,
+        "repo_execute_error_batches": (
+            repo_summary.get("reported_error_batches", 0) if isinstance(repo_summary, dict) else 0
+        ),
+        "unused_candidate_count": unused_summary.get("unused_count", 0) if isinstance(unused_summary, dict) else 0,
+        "scene_checked_scenes": scene_summary.get("checked_scenes", 0) if isinstance(scene_summary, dict) else 0,
+        "scene_error_count": scene_summary.get("scenes_with_errors", 0) if isinstance(scene_summary, dict) else 0,
+        "delivery_local_assets_found": (
+            delivery_summary.get("local_assets_found", 0) if isinstance(delivery_summary, dict) else 0
+        ),
+        "delivery_bmw_repo_ready": (
+            bool(delivery_summary.get("bmw_repo_ready")) if isinstance(delivery_summary, dict) else False
+        ),
     }
     if checker_evidence is not None:
         summary["checker_evidence"] = checker_evidence

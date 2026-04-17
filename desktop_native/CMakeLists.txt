@@ -1,0 +1,93 @@
+cmake_minimum_required(VERSION 3.24)
+
+project(sg_preflight_native_shell LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+include(FetchContent)
+
+FetchContent_Declare(
+  imgui
+  URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.7-docking.zip
+)
+
+FetchContent_Declare(
+  nlohmann_json
+  URL https://github.com/nlohmann/json/archive/refs/tags/v3.9.1.zip
+)
+
+FetchContent_MakeAvailable(imgui nlohmann_json)
+
+add_library(
+  sg_preflight_imgui STATIC
+  ${imgui_SOURCE_DIR}/imgui.cpp
+  ${imgui_SOURCE_DIR}/imgui_demo.cpp
+  ${imgui_SOURCE_DIR}/imgui_draw.cpp
+  ${imgui_SOURCE_DIR}/imgui_tables.cpp
+  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+)
+
+target_include_directories(
+  sg_preflight_imgui
+  PUBLIC
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+)
+
+target_compile_definitions(
+  sg_preflight_imgui
+  PUBLIC
+    UNICODE
+    _UNICODE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
+
+target_link_libraries(
+  sg_preflight_imgui
+  PUBLIC
+    d3d11
+    dxgi
+    dwmapi
+    gdi32
+    user32
+    shell32
+)
+
+add_executable(
+  sg_preflight_native_shell
+  src/backend_bridge.cpp
+  src/main.cpp
+)
+
+target_include_directories(
+  sg_preflight_native_shell
+  PRIVATE
+    src
+)
+
+target_link_libraries(
+  sg_preflight_native_shell
+  PRIVATE
+    sg_preflight_imgui
+    nlohmann_json::nlohmann_json
+)
+
+if(MSVC)
+  target_compile_options(
+    sg_preflight_native_shell
+    PRIVATE
+      /W4
+      /permissive-
+  )
+  target_compile_options(
+    sg_preflight_imgui
+    PRIVATE
+      /W3
+      /permissive-
+  )
+endif()

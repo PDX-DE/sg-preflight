@@ -78,6 +78,18 @@ class DesktopManualCard:
 
 
 @dataclass(frozen=True)
+class DesktopRecentActionItem:
+    run_id: str
+    action_id: str
+    title: str
+    status: str
+    profile_id: str
+    created_at_utc: str
+    progress_label: str
+    summary: str
+
+
+@dataclass(frozen=True)
 class DesktopLinks:
     output_root: str = ""
     html_report: str = ""
@@ -327,6 +339,38 @@ def desktop_manual_cards(
             note="Use the SG-side report links first, then append the BMW-side outcome once access exists.",
         ),
     ]
+
+
+def desktop_recent_actions(
+    workspace: Path | None = None,
+    *,
+    profile_id: str = "",
+    limit: int = 12,
+) -> list[DesktopRecentActionItem]:
+    root = workspace_root(workspace)
+    normalized_profile = profile_id.strip().lower()
+    items: list[DesktopRecentActionItem] = []
+    for record in list_recent_action_records(root, limit=max(limit * 4, limit)):
+        if normalized_profile and record.profile_id.strip().lower() != normalized_profile:
+            continue
+        summary = record.summary if isinstance(record.summary, dict) else {}
+        summary_lines = _summary_lines(summary)
+        progress = record.progress if isinstance(record.progress, dict) else {}
+        items.append(
+            DesktopRecentActionItem(
+                run_id=record.run_id,
+                action_id=record.action_id,
+                title=str(summary.get("title", record.label)).strip() or record.label,
+                status=record.status,
+                profile_id=record.profile_id,
+                created_at_utc=record.created_at_utc,
+                progress_label=str(progress.get("label", "")).strip(),
+                summary=summary_lines[0] if summary_lines else record.label,
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
 
 
 def _summary_lines(summary: dict[str, Any] | None) -> tuple[str, ...]:

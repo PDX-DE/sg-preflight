@@ -57,6 +57,7 @@ http://127.0.0.1:8765/ui
 
 The desktop shell does not replace this browser flow.
 It is a local wrapper over the same action/run records for cases where `Open file`, `Reveal in Explorer`, and blocker-heavy QA triage are better outside `localhost`.
+A second experimental native shell scaffold now exists under `desktop_native/`; it uses the same `launch-action` and `desktop-state` backend contract over the Python core.
 
 Shared shell:
 

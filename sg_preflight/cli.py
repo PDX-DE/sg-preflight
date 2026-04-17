@@ -1,15 +1,32 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict, is_dataclass
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 from sg_preflight.adapters.common import write_json as write_adapter_json
 from sg_preflight.adapters.discovery import default_search_roots, probe_workspace
 from sg_preflight.adapters.materialize import materialize_bundle
+from sg_preflight.desktop.evidence_model import (
+    desktop_action_snapshot,
+    desktop_actions_for_profile,
+    desktop_blocker_items,
+    desktop_manual_cards,
+    desktop_profiles,
+    desktop_recent_actions,
+)
 from sg_preflight.profiles import get_run_profile, list_run_profiles
-from sg_preflight.qa_actions import execute_operator_action, get_operator_action, list_operator_actions
+from sg_preflight.qa_actions import (
+    build_action_record,
+    execute_operator_action,
+    get_operator_action,
+    list_operator_actions,
+    load_action_record,
+    save_action_record,
+)
 from sg_preflight.retro import parse_retro_export, write_retro_json, write_retro_markdown
 from sg_preflight.services import (
     VALID_PACKS,
@@ -18,6 +35,7 @@ from sg_preflight.services import (
     execute_profile_run,
     parse_name_value_pairs,
     parse_packs,
+    qa_workflow_status,
     sg_checker_catalog,
 )
 
@@ -25,6 +43,18 @@ from sg_preflight.services import (
 def _console_safe(text: str) -> str:
     encoding = sys.stdout.encoding or "utf-8"
     return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
+def _json_ready(payload: object) -> object:
+    if is_dataclass(payload):
+        return asdict(payload)
+    if isinstance(payload, list):
+        return [_json_ready(item) for item in payload]
+    if isinstance(payload, tuple):
+        return [_json_ready(item) for item in payload]
+    if isinstance(payload, dict):
+        return {str(key): _json_ready(value) for key, value in payload.items()}
+    return payload
 
 
 def _console_report(report: object) -> None:
@@ -153,6 +183,26 @@ def _console_checkers(as_json: bool) -> None:
                 print(f"    - {blocker}")
 
 
+def _console_workflow_status(items: list[dict[str, object]], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(items, indent=2, ensure_ascii=False))
+        return
+
+    print("Workflow status:")
+    for item in items:
+        print(f"- {item['label']}: state={item['state']}")
+        print(f"  {item['summary']}")
+        blockers = item.get("blockers", [])
+        if blockers:
+            print("  blockers:")
+            for blocker in blockers:
+                print(f"    - {blocker}")
+
+
+def _console_desktop_payload(payload: object) -> None:
+    print(json.dumps(_json_ready(payload), indent=2, ensure_ascii=False))
+
+
 def _console_run_record(record: object, *, as_json: bool = False) -> None:
     if as_json:
         print(json.dumps(record.to_dict(), indent=2, ensure_ascii=False))
@@ -239,6 +289,9 @@ def build_parser() -> argparse.ArgumentParser:
     checker_list = sub.add_parser("list-checkers", help="List SG checker coverage and readiness")
     checker_list.add_argument("--json", action="store_true", help="Print checker coverage as JSON")
 
+    workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
+    workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
+
     run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
     run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
     run_profile.add_argument(
@@ -263,7 +316,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_action = sub.add_parser("run-action", help="Execute one-click SG QA action")
     run_action.add_argument("action_id", help="Operator action id such as daily_live_matrix or repo_checker_idcevo")
+    run_action.add_argument("--workspace", help="Workspace root override")
     run_action.add_argument("--json", action="store_true", help="Print action record as JSON")
+
+    launch_action = sub.add_parser(
+        "launch-action",
+        help="Queue one-click SG QA action and return immediately for polling clients",
+    )
+    launch_action.add_argument("action_id", help="Operator action id such as daily_live_matrix or qa_stack__g65")
+    launch_action.add_argument("--workspace", help="Workspace root override")
+    launch_action.add_argument("--json", action="store_true", help="Print the queued action record as JSON")
+
+    run_action_worker = sub.add_parser("run-action-worker", help=argparse.SUPPRESS)
+    run_action_worker.add_argument("action_id", help=argparse.SUPPRESS)
+    run_action_worker.add_argument("--run-id", required=True, help=argparse.SUPPRESS)
+    run_action_worker.add_argument("--workspace", required=True, help=argparse.SUPPRESS)
 
     ui = sub.add_parser("ui", help="Start the local operator UI")
     ui.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
@@ -276,6 +343,45 @@ def build_parser() -> argparse.ArgumentParser:
         description="Start the experimental desktop operator shell",
     )
     desktop.add_argument("--profile", help="Optional initial profile id to focus when the shell opens")
+
+    desktop_state = sub.add_parser(
+        "desktop-state",
+        help="Inspect native/desktop-shell state snapshots from the shared Python core",
+    )
+    desktop_state_sub = desktop_state.add_subparsers(dest="desktop_state_command", required=True)
+
+    desktop_profiles_parser = desktop_state_sub.add_parser("profiles", help="List ready desktop profiles")
+    desktop_profiles_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_profiles_parser.add_argument("--json", action="store_true", help="Print profile payload as JSON")
+
+    desktop_actions_parser = desktop_state_sub.add_parser("actions", help="List desktop actions for one profile")
+    desktop_actions_parser.add_argument("profile_id", help="Profile id such as G65")
+    desktop_actions_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_actions_parser.add_argument("--json", action="store_true", help="Print action payload as JSON")
+
+    desktop_blockers_parser = desktop_state_sub.add_parser("blockers", help="List blocker cards for one profile")
+    desktop_blockers_parser.add_argument("profile_id", help="Profile id such as G65")
+    desktop_blockers_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_blockers_parser.add_argument("--json", action="store_true", help="Print blocker payload as JSON")
+
+    desktop_manual_parser = desktop_state_sub.add_parser("manual", help="List manual-review cards for one profile")
+    desktop_manual_parser.add_argument("profile_id", help="Profile id such as G65")
+    desktop_manual_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_manual_parser.add_argument("--json", action="store_true", help="Print manual-card payload as JSON")
+
+    desktop_snapshot_parser = desktop_state_sub.add_parser("snapshot", help="Load one desktop action snapshot")
+    desktop_snapshot_parser.add_argument("run_id_or_path", help="Action run id or action.json path")
+    desktop_snapshot_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_snapshot_parser.add_argument("--json", action="store_true", help="Print snapshot payload as JSON")
+
+    desktop_recent_parser = desktop_state_sub.add_parser(
+        "recent-actions",
+        help="List recent action records for desktop-shell browsing",
+    )
+    desktop_recent_parser.add_argument("--profile-id", help="Optional profile filter")
+    desktop_recent_parser.add_argument("--limit", type=int, default=12, help="Maximum number of actions to return")
+    desktop_recent_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_recent_parser.add_argument("--json", action="store_true", help="Print recent-action payload as JSON")
 
     demo_good = sub.add_parser("demo-good", help="Run the good demo bundle")
     demo_good.add_argument("--fail-on", default="error", choices=["error", "warning", "never"])
@@ -380,6 +486,11 @@ def main(argv: list[str] | None = None) -> int:
         _console_checkers(args.json)
         return 0
 
+    if args.command == "workflow-status":
+        items = qa_workflow_status(root)
+        _console_workflow_status(items, as_json=args.json)
+        return 0
+
     if args.command == "run-profile":
         try:
             packs = parse_packs(args.packs)
@@ -408,18 +519,66 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run-action":
         try:
-            action = get_operator_action(args.action_id)
+            action_root = Path(args.workspace).resolve() if args.workspace else root
+            action = get_operator_action(args.action_id, action_root)
         except KeyError as exc:
             parser.error(str(exc))
             return 1
 
         try:
-            record = execute_operator_action(action)
+            record = execute_operator_action(action, action_root)
         except Exception as exc:
             print(_console_safe(f"run-action failed: {exc}"), file=sys.stderr)
             return 1
         _console_action_record(record, as_json=args.json)
         return 0 if record.status in {"completed", "blocked"} else 1
+
+    if args.command == "launch-action":
+        action_root = Path(args.workspace).resolve() if args.workspace else root
+        try:
+            action = get_operator_action(args.action_id, action_root)
+        except KeyError as exc:
+            parser.error(str(exc))
+            return 1
+
+        record = build_action_record(action, action_root)
+        save_action_record(record)
+        worker_command = [
+            sys.executable,
+            "-m",
+            "sg_preflight",
+            "run-action-worker",
+            action.action_id,
+            "--run-id",
+            record.run_id,
+            "--workspace",
+            str(action_root),
+        ]
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            subprocess.Popen(
+                worker_command,
+                cwd=action_root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+        except OSError as exc:
+            print(_console_safe(f"launch-action failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_action_record(record, as_json=args.json)
+        return 0
+
+    if args.command == "run-action-worker":
+        action_root = Path(args.workspace).resolve()
+        try:
+            action = get_operator_action(args.action_id, action_root)
+            record = load_action_record(args.run_id, action_root)
+            result = execute_operator_action(action, action_root, record=record)
+        except Exception as exc:
+            print(_console_safe(f"run-action-worker failed: {exc}"), file=sys.stderr)
+            return 1
+        return 0 if result.status in {"completed", "blocked"} else 1
 
     if args.command == "ui":
         from sg_preflight.ui import run_ui
@@ -433,6 +592,34 @@ def main(argv: list[str] | None = None) -> int:
         except RuntimeError as exc:
             print(_console_safe(str(exc)), file=sys.stderr)
             return 1
+
+    if args.command == "desktop-state":
+        state_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        if args.desktop_state_command == "profiles":
+            payload = desktop_profiles(state_root)
+        elif args.desktop_state_command == "actions":
+            payload = desktop_actions_for_profile(args.profile_id, state_root)
+        elif args.desktop_state_command == "blockers":
+            payload = desktop_blocker_items(args.profile_id, state_root)
+        elif args.desktop_state_command == "manual":
+            payload = desktop_manual_cards(args.profile_id, state_root)
+        elif args.desktop_state_command == "snapshot":
+            payload = desktop_action_snapshot(args.run_id_or_path, state_root)
+        elif args.desktop_state_command == "recent-actions":
+            payload = desktop_recent_actions(
+                state_root,
+                profile_id=args.profile_id or "",
+                limit=args.limit,
+            )
+        else:
+            parser.error(f"Unhandled desktop-state command: {args.desktop_state_command}")
+            return 1
+
+        if getattr(args, "json", False):
+            _console_desktop_payload(payload)
+        else:
+            _console_desktop_payload(payload)
+        return 0
 
     if args.command == "demo-good":
         result = execute_bundle_run(

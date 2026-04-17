@@ -12,6 +12,7 @@ from sg_preflight.desktop.evidence_model import (
     desktop_action_snapshot,
     desktop_actions_for_profile,
     desktop_blocker_items,
+    desktop_recent_actions,
     latest_action_snapshot_for_profile,
 )
 from sg_preflight.desktop.file_ops import build_open_command, build_reveal_command, normalize_local_path
@@ -97,6 +98,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
 
             snapshot = desktop_action_snapshot(record.run_id, root)
             latest = latest_action_snapshot_for_profile("G65", root, preferred_action_id="qa_stack__g65")
+            recent = desktop_recent_actions(root, profile_id="G65", limit=4)
             blockers = desktop_blocker_items("G65", root, profiles=[profile])
 
             self.assertEqual(snapshot.run_id, record.run_id)
@@ -105,6 +107,8 @@ class TestDesktopEvidenceModel(unittest.TestCase):
             self.assertTrue(snapshot.latest_run_links.html_report.endswith(".html"))
             self.assertIsNotNone(latest)
             self.assertEqual(latest.run_id, record.run_id)
+            self.assertEqual(recent[0].run_id, record.run_id)
+            self.assertIn("Standard preflight:", recent[0].summary)
             self.assertTrue(any(item.key == "bmw_screenshot_smoke" for item in blockers))
 
 

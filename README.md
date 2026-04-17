@@ -74,6 +74,7 @@ This tool is intentionally aimed at pain that is both:
 - local web UI as the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos
 - experimental desktop operator shell over the same engine for faster local file opening, blocker visibility, and checker-evidence triage without replacing the browser UI
   - current desktop v0 now translates the local UnleashedRecomp menu language into Qt chrome: scanline header bars, category-tab action strip, grid-framed panels, TV-static-style evidence framing, and a bottom button-guide band
+- experimental native desktop shell scaffold in `desktop_native/`, using C++ + Dear ImGui over the same Python action/evidence backend rather than a second validation engine
 
 ## Quick start
 
@@ -130,6 +131,20 @@ Start the experimental desktop operator shell:
 ```bash
 python -m pip install -e .[desktop]
 python -m sg_preflight desktop --profile G65
+```
+
+Inspect the native-shell backend contract directly:
+
+```bash
+python -m sg_preflight desktop-state profiles --json
+python -m sg_preflight desktop-state actions G65 --json
+python -m sg_preflight launch-action qa_stack__g65 --json
+```
+
+Configure and build the native shell scaffold:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_native_shell.ps1
 ```
 
 List the one-click SG QA actions:
@@ -194,6 +209,7 @@ Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate
 QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-alignment.md).
 SG checker coverage lives in [docs/sg-checker-coverage-matrix.md](docs/sg-checker-coverage-matrix.md).
 Future desktop-shell research and visual-direction notes live under [docs/research](docs/research), while the experimental shell itself still wraps the same Python actions, reports, and evidence model.
+The native C++ shell scaffold lives under [desktop_native](desktop_native/README.md) and uses the same `launch-action` / `desktop-state` backend contract rather than forking the QA logic.
 
 Run the full smoke-test flow:
 

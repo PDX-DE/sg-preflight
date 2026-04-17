@@ -311,6 +311,76 @@ starting  luacheck on  12  files
                 checker_evidence.get("top_paths", [{}])[0].get("checkers", []),
             )
 
+    def test_execute_daily_live_matrix_aggregates_child_checker_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            _create_checker_files(root)
+            (root / "config").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "config" / "sg_rules_live_g65.json", root / "config" / "sg_rules_live_g65.json")
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "SG_RACO_HEADLESS": str(root / "missing" / "RaCoHeadless.exe"),
+                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
+                },
+                clear=False,
+            ):
+                action = get_operator_action("daily_live_matrix", root, profiles=[profile])
+
+                sample_style_output = """
+Checking C:\\temp\\Cars\\BMW\\G65
+checked 8 files (src: 3; fmt: 7; license: 7)
+detected 2 style guide issues
+""".strip()
+
+                sample_execute_output = """
+############################################
+starting  luacheck on  12  files
+############################################
+0  errors found
+############################################
+""".strip()
+
+                sample_unused_output = str(profile.project_root / "resources" / "textures" / "unused_diffuse.png")
+
+                with mock.patch(
+                    "sg_preflight.qa_actions.subprocess.run",
+                    side_effect=[
+                        subprocess.CompletedProcess(
+                            args=["python"],
+                            returncode=1,
+                            stdout=sample_style_output,
+                            stderr="",
+                        ),
+                        subprocess.CompletedProcess(
+                            args=["python"],
+                            returncode=0,
+                            stdout=sample_execute_output,
+                            stderr="",
+                        ),
+                        subprocess.CompletedProcess(
+                            args=["python"],
+                            returncode=0,
+                            stdout=sample_unused_output,
+                            stderr="",
+                        ),
+                    ],
+                ):
+                    record = execute_operator_action(action, root)
+
+            self.assertEqual(record.status, "completed")
+            lines = record.summary.get("lines", []) if record.summary else []
+            self.assertTrue(any(line.startswith("G65: preflight") for line in lines))
+            self.assertTrue(any(line.startswith("Open first:") for line in lines))
+            checker_evidence = record.summary.get("checker_evidence", {})
+            self.assertFalse(checker_evidence.get("summary_only", True))
+            self.assertEqual(
+                checker_evidence.get("top_paths", [{}])[0].get("path"),
+                str(profile.project_root / "resources" / "textures" / "unused_diffuse.png"),
+            )
+            self.assertEqual(checker_evidence.get("source_kind"), "daily_live_matrix")
+
 
 if __name__ == "__main__":
     unittest.main()
