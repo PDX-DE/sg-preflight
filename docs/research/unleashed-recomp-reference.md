@@ -32,6 +32,14 @@ The current desktop shell now applies a translated subset of those patterns in Q
 - static-framed evidence panel
 - bottom guide-button strip
 
+The native C++ shell now applies a stronger translated pass of the same source ideas:
+
+- animated title-square motion
+- deeper container framing instead of flat ImGui children
+- animated tab-highlight motion instead of stock tabs
+- selection-card treatment for operator lists
+- local cue hooks mapped to cursor / confirm / error actions
+
 ## Repository rule
 
 - keep the reference source external or untracked

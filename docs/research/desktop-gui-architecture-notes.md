@@ -81,6 +81,7 @@ The native shell scaffold extends that with:
 - source-of-truth file browsing beside generated run outputs
 - broader copy-ready export buttons from the same shared evidence and report payloads
 - a Windows-first Dear ImGui shell that can move closer to the eventual broader 3D-department operator surface
+- repo-root and local-Python auto-discovery so the built exe can still call the Python backend when launched from `build\...\Release`
 
 What it still does not try to do:
 

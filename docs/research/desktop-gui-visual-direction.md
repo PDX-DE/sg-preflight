@@ -36,6 +36,15 @@ Desktop Operator Shell v0 now translates these qualities into the live Qt shell 
 - TV-static-style evidence framing for the `Open first` panel
 - bottom button-guide controls instead of a generic flat toolbar
 
+The native Dear ImGui shell now translates a stronger pass of the same language:
+
+- animated scanline top/bottom bars
+- amber title-square choreography instead of a static heading
+- framed panel containers with deeper line work
+- animated action-tab selection movement
+- file/evidence selection cards instead of stock list widgets
+- local UI cue hooks for cursor, confirm, and error feedback
+
 That is intentional reference translation, not an identity swap.
 
 ## Guardrails

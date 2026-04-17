@@ -20,6 +20,7 @@ It calls the same action system and evidence model through the shared CLI/JSON c
 Current native-shell milestone:
 
 - Dear ImGui + Win32 + DirectX 11 shell
+- repo-root auto-discovery from the built executable path, so the native shell can launch `python -m sg_preflight` from `build\...\Release` without a manual workspace override
 - live profile list
 - action tabs
 - recent action browsing
@@ -32,6 +33,13 @@ Current native-shell milestone:
 - local open / reveal actions
 - broader copy/export surfaces for Jira, QA Hero, pre-delivery, delivery-doc, quick-update, and full handoff text
 - bottom button-guide band
+- translated Unleashed-style shell systems in native code instead of stock ImGui widgets:
+  - animated scanline header bars
+  - amber title + activity-square choreography
+  - grid-framed dark panels
+  - animated action-tab highlight motion
+  - selection cards for profiles, recent runs, evidence, and artifacts
+  - local cue hooks for cursor / confirm / error feedback
 
 ## Build
 
@@ -40,6 +48,7 @@ Requirements:
 - CMake 3.24+
 - MSVC / Visual Studio C++ build tools
 - Python available as `python` on PATH
+  - optional but preferred: a local `.venv\Scripts\python.exe` or `venv\Scripts\python.exe` in the repo root, which the native shell now auto-detects
 
 Configure:
 
@@ -56,8 +65,10 @@ cmake --build build/native --config Release
 Run:
 
 ```powershell
-build\native\Release\sg_preflight_native_shell.exe --workspace-root C:\path\to\sg-preflight
+build\native\Release\sg_preflight_native_shell.exe
 ```
+
+Manual `--workspace-root` and `--python` overrides still work when needed.
 
 The CMake file fetches:
 

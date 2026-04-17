@@ -74,7 +74,8 @@ This tool is intentionally aimed at pain that is both:
 - local web UI as the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos
 - experimental desktop operator shell over the same engine for faster local file opening, blocker visibility, and checker-evidence triage without replacing the browser UI
   - current desktop v0 now translates the local UnleashedRecomp menu language into Qt chrome: scanline header bars, category-tab action strip, grid-framed panels, TV-static-style evidence framing, and a bottom button-guide band
-- experimental native desktop shell scaffold in `desktop_native/`, using C++ + Dear ImGui over the same Python action/evidence backend rather than a second validation engine
+- experimental native desktop shell in `desktop_native/`, using C++ + Dear ImGui over the same Python action/evidence backend rather than a second validation engine
+  - the native shell now auto-discovers the repo root from the built executable path, resolves a local workspace Python when present, and translates more of the Unleashed-style interaction systems into custom chrome: animated scanline bars, amber title choreography, framed containers, animated action tabs, selection cards, cue hooks, and a bottom button guide
 
 ## Quick start
 
@@ -210,7 +211,7 @@ QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-
 SG checker coverage lives in [docs/sg-checker-coverage-matrix.md](docs/sg-checker-coverage-matrix.md).
 Future desktop-shell research and visual-direction notes live under [docs/research](docs/research), while the experimental shell itself still wraps the same Python actions, reports, and evidence model.
 The native C++ shell scaffold lives under [desktop_native](desktop_native/README.md) and uses the same `launch-action` / `desktop-state` backend contract rather than forking the QA logic.
-It now also supports direct recent-run browsing, linked run/result drilldown beside action state, richer run-output and source-file panels, and a broader copy/export surface that stays backed by the same persisted SG evidence model.
+It now also supports direct recent-run browsing, linked run/result drilldown beside action state, richer run-output and source-file panels, broader copy/export surfaces from the same persisted SG evidence model, automatic repo-root discovery when launched from `build\...\Release`, and a more faithful translated Unleashed-style shell around the same Python backend.
 
 Run the full smoke-test flow:
 
