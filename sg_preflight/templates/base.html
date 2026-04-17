@@ -4,9 +4,19 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}SG Preflight Operator UI{% endblock %}</title>
+  <script>
+    (function () {
+      try {
+        var theme = window.localStorage.getItem("sg-theme") || "dark";
+        document.documentElement.dataset.theme = theme;
+      } catch (_error) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/ui/static/operator.css" />
 </head>
-<body {% block body_attrs %}{% endblock %}>
+<body data-guide-mode="on" {% block body_attrs %}{% endblock %}>
   <header class="shell-header">
     <div class="shell-brand">
       <p class="eyebrow">Paradox Cat GmbH Seriengrafik / 3D Car</p>
@@ -14,6 +24,20 @@
     </div>
     <nav class="shell-nav">
       <a href="/ui">Home</a>
+      <details class="inline-help shell-help">
+        <summary>What is this for?</summary>
+        <div class="inline-help-panel">
+          <strong>Use this to check one SG car before review.</strong>
+          <p>Start with what changed, run the recommended check, open the first file that matters, then copy the ready-made note into Jira, QA Hero, or a handoff.</p>
+          <p>If you only remember one rule: start from <strong>what changed</strong>, not from a car code.</p>
+        </div>
+      </details>
+      <button class="button subtle shell-toggle" id="guide-toggle" type="button" aria-pressed="true">
+        Hide guide
+      </button>
+      <button class="button subtle shell-toggle" id="theme-toggle" type="button" aria-pressed="true">
+        Light mode
+      </button>
     </nav>
   </header>
 
@@ -23,7 +47,7 @@
 
   <div class="loading-overlay" id="loading-overlay" hidden>
     <div class="loading-screen">
-      <p class="eyebrow">Live Operator Status</p>
+      <p class="eyebrow">Live operator status</p>
       <h2>NOW LOADING...</h2>
       <div class="loading-spinner" aria-hidden="true"></div>
       <div class="loading-progress">
@@ -40,7 +64,7 @@
         <p id="loading-progress-detail">Waiting for the local run record to report the next step.</p>
       </div>
       <button class="button subtle loading-toggle" id="loading-toggle" type="button" aria-expanded="false">
-        Show what is happening under the hood
+        Show exact live detail
       </button>
       <div class="loading-expanded" id="loading-expanded" hidden>
         <div class="loading-expanded-summary">

@@ -6,7 +6,7 @@
 {% set stage = selected_stage if selected_stage is defined else none %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Guided Check{% endif %}</p>
+    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Guided start{% endif %}</p>
     <h2>{{ job.label }}</h2>
     <p class="hero-text">
       {% if stage %}
@@ -22,20 +22,46 @@
     </div>
   </div>
   <div class="hero-actions hero-actions--stack">
-    <a class="button subtle" href="/ui">Back To Home</a>
+    <a class="button subtle" href="/ui">Back to home</a>
   </div>
+</section>
+
+<section class="guide-strip" data-guide>
+  <article class="guide-card">
+    <span class="guide-step">1</span>
+    <strong>Use the recommended car first</strong>
+    <p>This page already narrowed the best starting slice for the kind of change you picked.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">2</span>
+    <strong>Open another car only if needed</strong>
+    <p>If the recommended car is not the slice you actually changed, then choose an alternative below.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">3</span>
+    <strong>Run one check and follow the result</strong>
+    <p>You do not need to browse around. Run once, then let the result page tell you what to open and copy.</p>
+  </article>
 </section>
 
 {% if recommended %}
 <section class="panel panel--priority">
-  <div class="panel-head">
-    <h3>Use This Car First</h3>
-    <p>{{ job.description }}</p>
+  <div class="panel-head panel-head--with-help">
+    <div>
+      <h3>Use this car first</h3>
+      <p>{{ job.description }}</p>
+    </div>
+    <details class="inline-help" data-guide>
+      <summary>Why this one?</summary>
+      <div class="inline-help-panel">
+        <p>This is the best current live slice for this change type, so it should get you to useful signal with the least noise.</p>
+      </div>
+    </details>
   </div>
   <article class="car-choice-card car-choice-card--primary">
     <div class="status-row">
       <div>
-        <p class="eyebrow">Best Match</p>
+        <p class="eyebrow">Best match</p>
         <h4>{{ recommended.profile.profile_id }}</h4>
         <p class="profile-label">{{ recommended.profile.label }}</p>
       </div>
@@ -91,7 +117,7 @@
         {{ recommended.launch.button_label }}
       </button>
       {% endif %}
-      <a class="button subtle" href="/ui/profiles/{{ recommended.profile.profile_id }}?job={{ job.key }}{% if stage %}&stage={{ stage.key }}{% endif %}">More Options</a>
+      <a class="button subtle" href="/ui/profiles/{{ recommended.profile.profile_id }}?job={{ job.key }}{% if stage %}&stage={{ stage.key }}{% endif %}">More options</a>
     </div>
   </article>
 </section>
@@ -100,7 +126,7 @@
 {% if alternatives %}
 <section class="panel">
   <div class="panel-head">
-    <h3>Other Cars</h3>
+    <h3>Other cars</h3>
     <p>Open these only when the recommended car is not the slice you changed.</p>
   </div>
   <div class="car-choice-grid">
@@ -144,7 +170,7 @@
           {{ item.launch.button_label }}
         </button>
         {% endif %}
-        <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}?job={{ job.key }}{% if stage %}&stage={{ stage.key }}{% endif %}">More Options</a>
+        <a class="button subtle" href="/ui/profiles/{{ item.profile.profile_id }}?job={{ job.key }}{% if stage %}&stage={{ stage.key }}{% endif %}">More options</a>
       </div>
     </article>
     {% endfor %}

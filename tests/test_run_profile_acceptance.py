@@ -84,8 +84,8 @@ class TestRunProfileAcceptance(unittest.TestCase):
                 evidence_page = client.get(payload["result_url"] + "/evidence")
 
                 self.assertEqual(result_page.status_code, 200)
-                self.assertIn("Grouped Findings", result_page.text)
-                self.assertIn("Copy Quick Update", result_page.text)
+                self.assertIn("Show all grouped problems", result_page.text)
+                self.assertIn("Copy quick update", result_page.text)
                 self.assertIn(expected_code, result_page.text)
                 self.assertEqual(evidence_page.status_code, 200)
                 self.assertIn("Project manifest", evidence_page.text)

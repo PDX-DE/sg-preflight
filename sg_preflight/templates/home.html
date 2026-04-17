@@ -9,23 +9,50 @@
 {% set stages = workflow_stage_cards if workflow_stage_cards is defined else [] %}
 <section class="hero-panel hero-panel--home hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">Simple QA Start</p>
-    <h2>Use the first box below. Ignore the rest unless you know you need it.</h2>
+    <p class="eyebrow">Start here</p>
+    <h2>Check one car, open the right file, and copy the proof.</h2>
     <p class="hero-text">
-      This tool is for one job: start from the kind of change you made, run one recommended check, then open one source file and copy one handoff.
+      This tool helps the team run the fastest useful SG-side check before review, see what broke, open the file that matters, and reuse the result in Jira, QA Hero, or delivery notes.
     </p>
     <div class="hero-bullets">
-      <span>1. Pick what changed.</span>
+      <span>1. Say what changed.</span>
       <span>2. Run the recommended check.</span>
-      <span>3. Open the first problem.</span>
+      <span>3. Open the first problem or proof file.</span>
+      <span>4. Copy the note you need.</span>
     </div>
   </div>
 </section>
 
+<section class="guide-strip" data-guide>
+  <article class="guide-card">
+    <span class="guide-step">1</span>
+    <strong>Start with the change type</strong>
+    <p>This is the safest default. Do not start from a car code unless someone already told you which slice to open.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">2</span>
+    <strong>Use workflow stage only when it matters</strong>
+    <p>Choose a stage when you care about before commit, before review, pre-delivery, post-integration, or evidence updates.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">3</span>
+    <strong>Open files and proof after the run</strong>
+    <p>The result page tells you what to fix first. The files and proof page tells you what to open and what you can paste into tickets.</p>
+  </article>
+</section>
+
 <section class="panel panel--priority">
-  <div class="panel-head">
-    <h3>What Changed?</h3>
-    <p>Start here first. Do not start from car codes unless someone already told you exactly which slice to open.</p>
+  <div class="panel-head panel-head--with-help">
+    <div>
+      <h3>Start here: what changed?</h3>
+      <p>Choose the kind of change first. For most people this is the only box that matters.</p>
+    </div>
+    <details class="inline-help" data-guide>
+      <summary>What should I do here?</summary>
+      <div class="inline-help-panel">
+        <p>Pick the change type that matches what you touched. The next page will suggest the best car and the safest first check.</p>
+      </div>
+    </details>
   </div>
   {% if jobs %}
   <div class="start-list">
@@ -36,7 +63,7 @@
         <p class="workflow-summary">{{ job.description }}</p>
         <span class="start-hint">{{ job.start_hint }}</span>
       </div>
-      <a class="button" href="{{ job.href }}">Start {{ job.short_label }}</a>
+      <a class="button" href="{{ job.href }}">Open {{ job.short_label|lower }}</a>
     </article>
     {% endfor %}
   </div>
@@ -48,23 +75,31 @@
 </section>
 
 <section class="panel">
-  <div class="panel-head">
-    <h3>What Stage Are You In?</h3>
-    <p>Use this when the workflow step matters more than the file type, for example before commit, pre-delivery, or when you only need Jira / QA Hero evidence.</p>
+  <div class="panel-head panel-head--with-help">
+    <div>
+      <h3>If the workflow stage matters</h3>
+      <p>Use this when the step in the process matters more than the file type, for example before commit, pre-delivery, or when you only need Jira or QA Hero evidence.</p>
+    </div>
+    <details class="inline-help" data-guide>
+      <summary>When do I use this?</summary>
+      <div class="inline-help-panel">
+        <p>Use a workflow stage when you already know the context: before commit, before review, preparing delivery, checking after integration, or writing ticket evidence.</p>
+      </div>
+    </details>
   </div>
-  <div class="note-block">
+  <div class="note-block" data-guide>
     <strong>If this still feels like too much choice:</strong>
-    <div>Ignore the foldout and the direct car list below. Start from <code>What Changed?</code> unless someone explicitly asked you for a stage-specific or whole-matrix check.</div>
+    <div>Ignore the foldout and the direct car list below. Start from <code>what changed?</code> unless someone explicitly asked for a stage-specific or whole-matrix check.</div>
   </div>
   {% if stages %}
   <div class="quick-start-grid">
     {% for stage in stages %}
     <article class="quick-start-card workflow-stage-card">
-      <p class="eyebrow">Workflow Stage</p>
+      <p class="eyebrow">Workflow stage</p>
       <h4>{{ stage.short_label }}</h4>
       <p>{{ stage.description }}</p>
       <div class="action-row action-row--wrap">
-        <a class="button subtle" href="{{ stage.href }}">Open {{ stage.short_label }}</a>
+        <a class="button subtle" href="{{ stage.href }}">Open {{ stage.short_label|lower }}</a>
       </div>
     </article>
     {% endfor %}
@@ -78,10 +113,10 @@
 
 <section class="panel">
   <details class="foldout">
-    <summary>Show broader tools, direct car list, and recent checks</summary>
+    <summary>Show more tools, direct car picks, and recent checks</summary>
 
     <div class="panel-head panel-head--split">
-      <h3>Broader Tools</h3>
+      <h3>Broader tools</h3>
       <p>Use these only when you want a broad sweep or already know you do not want the guided path.</p>
     </div>
     <div class="quick-start-grid">
@@ -92,9 +127,9 @@
           <h4>Check all live cars</h4>
           <p>{{ item.description }}</p>
           <div class="action-row action-row--wrap">
-            <button class="button subtle action-launch" type="button" data-action-id="{{ item.action_id }}">Run Daily Check</button>
+            <button class="button subtle action-launch" type="button" data-action-id="{{ item.action_id }}">Run daily check</button>
             {% if matrix_summary is defined and matrix_summary.href %}
-            <a class="button subtle" href="{{ matrix_summary.href }}">Open Latest Summary</a>
+            <a class="button subtle" href="{{ matrix_summary.href }}">Open latest summary</a>
             {% endif %}
           </div>
         </article>
@@ -116,7 +151,7 @@
     </div>
 
     <div class="panel-head panel-head--split">
-      <h3>Pick A Car Directly</h3>
+      <h3>Pick a car directly</h3>
       <p>Use this only when someone already told you which slice to open.</p>
     </div>
     <div class="car-choice-grid">
@@ -124,7 +159,7 @@
       <article class="car-choice-card">
         <div class="status-row">
           <div>
-            <p class="eyebrow">Live Car</p>
+            <p class="eyebrow">Live car</p>
             <h4>{{ item.profile.profile_id }}</h4>
             <p class="profile-label">{{ item.profile.label }}</p>
           </div>
@@ -151,7 +186,7 @@
     </div>
 
     <div class="panel-head panel-head--split">
-      <h3>Recent Checks</h3>
+      <h3>Recent checks</h3>
       <p>Open one of these only if someone asks what already ran.</p>
     </div>
     <div class="stack">
@@ -190,7 +225,7 @@
       {% else %}
       <div class="empty-state">
         <strong>No checks have been run yet.</strong>
-        <p>Use the `What Changed?` options above to begin.</p>
+        <p>Use the <code>what changed?</code> options above to begin.</p>
       </div>
       {% endif %}
     </div>
@@ -199,9 +234,17 @@
 
 <section class="content-grid content-grid--home">
   <article class="panel">
-    <div class="panel-head">
-      <h3>If You Need More Detail</h3>
-      <p>Most people can ignore this. Open it only when setup, mirror, or workflow-boundary questions come up.</p>
+    <div class="panel-head panel-head--with-help">
+      <div>
+        <h3>If you need more detail</h3>
+        <p>Most people can ignore this. Open it only when setup, mirror, or workflow-boundary questions come up.</p>
+      </div>
+      <details class="inline-help" data-guide>
+        <summary>Why would I open this?</summary>
+        <div class="inline-help-panel">
+          <p>Use this area for machine setup, mirror-health questions, or when someone asks what the tool does and does not cover on this machine.</p>
+        </div>
+      </details>
     </div>
 
     <details class="foldout">
@@ -245,12 +288,12 @@
       <summary>Show mirror health</summary>
       <div class="audit-summary-grid">
         <div class="summary-card compact">
-          <span>Fast Audit</span>
+          <span>Fast audit</span>
           <strong>{{ fast_audit.status }}</strong>
           <div class="muted">{{ fast_audit.entry_count }} targets checked - {{ fast_audit.drift_count }} drifted</div>
         </div>
         <div class="summary-card compact">
-          <span>Deep Audit</span>
+          <span>Deep audit</span>
           <strong>{{ deep_audit.status }}</strong>
           <div class="muted">
             {% if deep_audit.entry_count %}
@@ -262,9 +305,9 @@
         </div>
       </div>
       <div class="action-row action-row--wrap">
-        <a class="button subtle" href="/ui/audits/mirror/deep">Refresh Deep Mirror Audit</a>
+        <a class="button subtle" href="/ui/audits/mirror/deep">Refresh deep mirror audit</a>
         {% if workflow_alignment is defined and workflow_alignment.href %}
-        <a class="button subtle" href="{{ workflow_alignment.href }}">Open Workflow Note</a>
+        <a class="button subtle" href="{{ workflow_alignment.href }}">Open workflow note</a>
         {% endif %}
       </div>
       {% if deep_audit.notes %}

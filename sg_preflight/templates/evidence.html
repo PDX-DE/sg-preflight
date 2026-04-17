@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Files And Proof {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
+{% block title %}Files and proof {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block content %}
 {% set problem = first_problem if first_problem is defined else none %}
 {% set sections = evidence_sections if evidence_sections is defined and evidence_sections else [] %}
@@ -10,13 +10,31 @@
 {% set manual_companion = manual_review_companion if manual_review_companion is defined else none %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Files And Proof{% endif %}</p>
+    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Files and proof{% endif %}</p>
     <h2>{{ record.profile_id }} - {{ record.profile_label }}</h2>
     <p class="hero-text">These are the reports and SG files behind run <code>{{ record.run_id }}</code>.</p>
   </div>
   <div class="hero-actions hero-actions--stack">
-    <a class="button subtle" href="/ui/runs/{{ record.run_id }}">Back to Result</a>
+    <a class="button subtle" href="/ui/runs/{{ record.run_id }}">Back to result</a>
   </div>
+</section>
+
+<section class="guide-strip" data-guide>
+  <article class="guide-card">
+    <span class="guide-step">1</span>
+    <strong>Open the pinned file first</strong>
+    <p>If the result page showed a real problem, this is the quickest route to the file behind it.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">2</span>
+    <strong>Use reports for proof</strong>
+    <p>The report links are for evidence. The source-of-truth files are for the actual fix or review.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">3</span>
+    <strong>Copy the right note only when needed</strong>
+    <p>Use the stage-specific exports or the manual review companion only when the short result-page handoff is not enough.</p>
+  </article>
 </section>
 
 {% if first_problem is not defined or evidence_sections is not defined %}
@@ -30,7 +48,7 @@
 {% if problem and not problem.is_clean %}
 <section class="panel panel--priority">
   <div class="panel-head">
-    <h3>Pinned First File</h3>
+    <h3>Pinned first file</h3>
     <p>This file is tied most directly to the first problem on the result page.</p>
   </div>
   <div class="status-item">
@@ -48,7 +66,7 @@
 {% if stage and stage_items %}
 <section class="panel">
   <div class="panel-head">
-    <h3>Stage Readiness</h3>
+    <h3>Stage readiness</h3>
     <p>Use this to see what proof is ready for {{ stage.short_label|lower }} and what still needs manual or blocked follow-up.</p>
   </div>
   <div class="stack tight">
@@ -67,9 +85,17 @@
 
 {% if completeness %}
 <section class="panel">
-  <div class="panel-head">
-    <h3>Evidence Completeness</h3>
-    <p>Use this to see what proof exists already, what is still manual, and what remains blocked externally.</p>
+  <div class="panel-head panel-head--with-help">
+    <div>
+      <h3>Evidence completeness</h3>
+      <p>Use this to see what proof exists already, what is still manual, and what remains blocked externally.</p>
+    </div>
+    <details class="inline-help" data-guide>
+      <summary>What does this mean?</summary>
+      <div class="inline-help-panel">
+        <p>This is the same readiness readout as the result page, but closer to the files. It separates local tool proof from the full stage chain.</p>
+      </div>
+    </details>
   </div>
   <div class="summary-inline">
     <span><strong>{{ completeness.local_score_percent }}%</strong> local SG evidence</span>
@@ -132,7 +158,7 @@
   {% else %}
   <article class="panel">
     <div class="panel-head">
-      <h3>Files And Proof did not load cleanly</h3>
+      <h3>Files and proof did not load cleanly</h3>
       <p>Restart the local operator UI and reload this page.</p>
     </div>
   </article>
@@ -141,9 +167,17 @@
 
 {% if doc_exports %}
 <section class="panel">
-  <div class="panel-head">
-    <h3>Stage-Specific Exports</h3>
-    <p>These copy blocks are ready to paste into Jira, QA Hero, pre-delivery notes, or delivery documentation.</p>
+  <div class="panel-head panel-head--with-help">
+    <div>
+      <h3>Stage-specific exports</h3>
+      <p>These copy blocks are ready to paste into Jira, QA Hero, pre-delivery notes, or delivery documentation.</p>
+    </div>
+    <details class="inline-help" data-guide>
+      <summary>When do I need these?</summary>
+      <div class="inline-help-panel">
+        <p>Use these when you need a stage-shaped note rather than just opening the underlying report or source file.</p>
+      </div>
+    </details>
   </div>
   <div class="action-row action-row--wrap">
     {% for item in doc_exports %}

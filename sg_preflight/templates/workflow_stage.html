@@ -5,7 +5,7 @@
 {% set scope = scope_items if scope_items is defined else [] %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">Workflow Stage</p>
+    <p class="eyebrow">Workflow stage</p>
     <h2>{{ stage.label }}</h2>
     <p class="hero-text">{{ stage.description }}</p>
     <div class="hero-bullets">
@@ -15,14 +15,40 @@
     </div>
   </div>
   <div class="hero-actions hero-actions--stack">
-    <a class="button subtle" href="/ui">Back To Home</a>
+    <a class="button subtle" href="/ui">Back to home</a>
   </div>
 </section>
 
+<section class="guide-strip" data-guide>
+  <article class="guide-card">
+    <span class="guide-step">1</span>
+    <strong>Use stage first only when process context matters</strong>
+    <p>Pick a workflow stage when you care about commit, review, delivery, integration, or ticket evidence more than the raw file type.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">2</span>
+    <strong>Then choose the change type</strong>
+    <p>This keeps the selected stage attached to the run while still pointing you at the right topic.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">3</span>
+    <strong>Use the scope panel honestly</strong>
+    <p>It tells you what the tool covers locally, what still needs a human, and what is blocked somewhere else.</p>
+  </article>
+</section>
+
 <section class="panel panel--priority">
-  <div class="panel-head">
-    <h3>What This Stage Needs</h3>
-    <p>These points come directly out of the deck’s delivery, testing, and documentation discipline.</p>
+  <div class="panel-head panel-head--with-help">
+    <div>
+      <h3>What this stage needs</h3>
+      <p>These points come directly out of the deck's delivery, testing, and documentation discipline.</p>
+    </div>
+    <details class="inline-help" data-guide>
+      <summary>How should I read this?</summary>
+      <div class="inline-help-panel">
+        <p>Use this as the process guardrail for the selected stage. It keeps manual, blocked, and documentation work visible instead of pretending the run solved everything.</p>
+      </div>
+    </details>
   </div>
   <div class="simple-checklist">
     <strong>Use this stage when:</strong>
@@ -36,18 +62,18 @@
 
 <section class="panel">
   <div class="panel-head">
-    <h3>Start From The Kind Of Change</h3>
+    <h3>Start from the kind of change</h3>
     <p>Pick the change type that matches what you touched, then keep the selected workflow stage attached to the run.</p>
   </div>
   <div class="quick-start-grid">
     {% for item in cards %}
     <article class="quick-start-card">
-      <p class="eyebrow">Stage-Aware Start</p>
+      <p class="eyebrow">Stage-aware start</p>
       <h4>{{ item.short_label }}</h4>
       <p>{{ item.description }}</p>
       <span class="start-hint">{{ item.start_hint }}</span>
       <div class="action-row action-row--wrap">
-        <a class="button" href="{{ item.href }}">Start {{ item.short_label }}</a>
+        <a class="button" href="{{ item.href }}">Open {{ item.short_label|lower }}</a>
       </div>
     </article>
     {% endfor %}
@@ -56,7 +82,7 @@
 
 <section class="panel">
   <div class="panel-head">
-    <h3>What This Stage Covers Here</h3>
+    <h3>What this stage covers here</h3>
     <p>This is the honest machine-local readout: what `sg-preflight` covers now, what still needs humans, and what is blocked elsewhere.</p>
   </div>
   <div class="workflow-grid">

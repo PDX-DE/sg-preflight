@@ -8,7 +8,7 @@
   "message": "The result summary is missing some UI context. Restart the local operator UI and reload this page.",
   "done_line": "The page reloads cleanly and shows the first problem again.",
   "open_link": {
-    "label": "Files And Proof",
+    "label": "Files and proof",
     "value": "/ui/runs/" ~ record.run_id ~ "/evidence",
     "href": "/ui/runs/" ~ record.run_id ~ "/evidence",
   },
@@ -16,7 +16,7 @@
 {% set sections = evidence_sections if evidence_sections is defined else [] %}
 {% set handoff = handoff_options if handoff_options is defined and handoff_options else {
   "primary": {
-    "label": "Copy Result Summary",
+    "label": "Copy result summary",
     "target_id": "copy-result-fallback",
     "text": "Result page fallback: restart the local operator UI and reload this page before copying handoff text.",
   },
@@ -36,11 +36,11 @@
 {% set manual_companion = manual_review_companion if manual_review_companion is defined else none %}
 {% set next_items = next_steps if next_steps is defined and next_steps else [
   "Restart the local operator UI and reload this page.",
-  "Open Files And Proof after the page reloads cleanly.",
+  "Open files and proof after the page reloads cleanly.",
 ] %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Check Result{% endif %}</p>
+    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Check result{% endif %}</p>
     <h2>{{ record.profile_id }} checked</h2>
     <p class="hero-text">
       {% if stage and job_label %}
@@ -56,9 +56,27 @@
   </div>
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% else %}warn{% endif %}" id="run-status-pill">{{ record.status }}</span>
-    <a class="button" href="/ui/runs/{{ record.run_id }}/evidence">Open Files And Proof</a>
-    <a class="button subtle" href="{{ run_again_url if run_again_url is defined else '/ui/profiles/' ~ record.profile_id }}">Run Again</a>
+    <a class="button" href="/ui/runs/{{ record.run_id }}/evidence">Open files and proof</a>
+    <a class="button subtle" href="{{ run_again_url if run_again_url is defined else '/ui/profiles/' ~ record.profile_id }}">Run again</a>
   </div>
+</section>
+
+<section class="guide-strip" data-guide>
+  <article class="guide-card">
+    <span class="guide-step">1</span>
+    <strong>Read the first thing to do</strong>
+    <p>This is the shortest path to the first real problem or the clean proof state.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">2</span>
+    <strong>Open files and proof</strong>
+    <p>That page pins the right file, the reports, and the source-of-truth paths behind this run.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">3</span>
+    <strong>Use the first copy button</strong>
+    <p>Only go deeper into grouped findings or exports when you need more detail than the short handoff.</p>
+  </article>
 </section>
 
 {% if record.status != 'completed' %}
@@ -105,7 +123,7 @@
 <section class="quick-result-grid">
   <article class="panel panel--priority">
     <div class="panel-head">
-      <h3>First Thing To Do</h3>
+      <h3>First thing to do</h3>
       <p>{{ problem.title }}</p>
     </div>
 
@@ -156,13 +174,13 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Open This Now</h3>
+      <h3>Open this now</h3>
       <p>Shortest path from this result to the right file.</p>
     </div>
     <div class="stack tight">
       <div class="status-item">
         <div>
-          <strong>Files And Proof</strong>
+          <strong>Files and proof</strong>
           <div class="muted">Grouped reports, SG source files, and run metadata</div>
         </div>
         <a href="/ui/runs/{{ record.run_id }}/evidence">Open</a>
@@ -192,7 +210,7 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Copy This Now</h3>
+      <h3>Copy this now</h3>
       <p>Use the first button when you want the shortest useful handoff.</p>
     </div>
     <div class="action-row action-row--wrap">
@@ -211,7 +229,7 @@
 <section class="content-grid content-grid--result">
   <article class="panel">
     <div class="panel-head">
-      <h3>What Happened</h3>
+      <h3>What happened</h3>
       <p>{{ summary.title }}</p>
     </div>
     <p>{{ summary.body }}</p>
@@ -233,7 +251,7 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Do This Next</h3>
+      <h3>Do this next</h3>
       <p>Use these only after you handle the first problem above.</p>
     </div>
     <ol class="step-list">
@@ -245,11 +263,11 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>If You Feel Lost</h3>
+      <h3>If you feel lost</h3>
       <p>Use this stripped-down path instead of reading the whole page.</p>
     </div>
     <ol class="step-list">
-      <li>Open <strong>Files And Proof</strong>.</li>
+      <li>Open <strong>files and proof</strong>.</li>
       <li>Open the pinned first file or report.</li>
       <li>Use the first copy button on this page for the shortest usable handoff.</li>
     </ol>
@@ -258,7 +276,7 @@
   {% if stage and stage_items %}
   <article class="panel">
     <div class="panel-head">
-      <h3>Stage Readiness</h3>
+      <h3>Stage readiness</h3>
       <p>What is already covered for {{ stage.short_label|lower }}, and what still needs manual or external follow-up.</p>
     </div>
     <div class="stack tight">
@@ -277,9 +295,17 @@
 
   {% if completeness %}
   <article class="panel">
-    <div class="panel-head">
-      <h3>Evidence Completeness</h3>
-      <p>What proof already exists on this machine, and what is still manual, pending, or blocked.</p>
+    <div class="panel-head panel-head--with-help">
+      <div>
+        <h3>Evidence completeness</h3>
+        <p>What proof already exists on this machine, and what is still manual, pending, or blocked.</p>
+      </div>
+      <details class="inline-help" data-guide>
+        <summary>How should I read this?</summary>
+        <div class="inline-help-panel">
+          <p>The local SG score tells you what this tool already proved. The full stage chain score tells you how much of the full process is actually complete once manual and blocked steps are counted too.</p>
+        </div>
+      </details>
     </div>
     <div class="summary-inline">
       <span><strong>{{ completeness.local_score_percent }}%</strong> local SG evidence</span>
@@ -326,9 +352,17 @@
 
   {% if doc_exports %}
   <article class="panel">
-    <div class="panel-head">
-      <h3>Stage-Specific Exports</h3>
-      <p>Copy directly into Jira, QA Hero, pre-delivery notes, or delivery documentation without rewriting from scratch.</p>
+    <div class="panel-head panel-head--with-help">
+      <div>
+        <h3>Stage-specific exports</h3>
+        <p>Copy directly into Jira, QA Hero, pre-delivery notes, or delivery documentation without rewriting from scratch.</p>
+      </div>
+      <details class="inline-help" data-guide>
+        <summary>When do I use these?</summary>
+        <div class="inline-help-panel">
+          <p>Use these when the short handoff is not enough and you need a format that already matches the stage or ticket context.</p>
+        </div>
+      </details>
     </div>
     <div class="action-row action-row--wrap">
       {% for item in doc_exports %}
@@ -373,7 +407,7 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Changed Since Last Check</h3>
+      <h3>Changed since last check</h3>
       <p>Use this when someone asks what actually moved since the previous run.</p>
     </div>
     {% if diff %}
@@ -416,7 +450,7 @@
     </div>
     {% endif %}
     <div class="action-row action-row--wrap">
-      <button class="button subtle copy-button" type="button" data-copy-target="copy-run-diff">Copy Diff Update</button>
+      <button class="button subtle copy-button" type="button" data-copy-target="copy-run-diff">Copy diff update</button>
     </div>
     <textarea id="copy-run-diff" hidden>{{ diff.copy_text }}</textarea>
     {% else %}
@@ -466,7 +500,7 @@
           <span class="muted path-text">{{ finding.location or "no location" }}</span>
         </summary>
         <div class="action-row action-row--wrap finding-detail-actions">
-          <button class="button subtle copy-button" type="button" data-copy-target="copy-{{ finding.finding_id }}">Copy Finding</button>
+          <button class="button subtle copy-button" type="button" data-copy-target="copy-{{ finding.finding_id }}">Copy finding</button>
         </div>
         <textarea id="copy-{{ finding.finding_id }}" hidden>{{ finding.copy_text }}</textarea>
         <div class="detail-grid">

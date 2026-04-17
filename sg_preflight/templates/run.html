@@ -5,7 +5,7 @@
   "kind": "action",
   "title": "Best default for " ~ profile.profile_id,
   "description": "Use the main button below. If this page still looks wrong after an update, restart the local operator UI and reload.",
-  "button_label": "Run Full Check For This Car",
+  "button_label": "Run full check for this car",
   "action_id": "qa_stack__" ~ (profile.profile_id|lower),
   "checklist": ["Run the widest useful SG-side check that is available on this machine."]
 } %}
@@ -16,7 +16,7 @@
 {% set stage = selected_stage if selected_stage is defined else none %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% elif selected_job %}{{ selected_job.short_label }}{% else %}Car Check{% endif %}</p>
+    <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% elif selected_job %}{{ selected_job.short_label }}{% else %}Car check{% endif %}</p>
     <h2>{{ profile.profile_id }} - {{ profile.label }}</h2>
     <p class="hero-text">
       {% if stage %}
@@ -30,15 +30,41 @@
   </div>
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if card.is_ready %}ok{% else %}warn{% endif %}">{{ card.readiness_label }}</span>
-    <a class="button subtle" href="/ui">Back To Home</a>
+    <a class="button subtle" href="/ui">Back to home</a>
   </div>
+</section>
+
+<section class="guide-strip" data-guide>
+  <article class="guide-card">
+    <span class="guide-step">1</span>
+    <strong>Press the big button first</strong>
+    <p>This page already picked the safest default for this car and this context.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">2</span>
+    <strong>Wait for the result page</strong>
+    <p>The loading overlay shows exact steps, progress, logs, nested work, and a live ETA while the check runs.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">3</span>
+    <strong>Open files and proof</strong>
+    <p>After the result opens, use the pinned file and the copy-ready note instead of guessing what to open next.</p>
+  </article>
 </section>
 
 <section class="content-grid content-grid--run">
   <article class="panel panel--priority">
-    <div class="panel-head">
-      <h3>Run This Now</h3>
-      <p>Use this button first. Open the foldouts only if you need a smaller or different path.</p>
+    <div class="panel-head panel-head--with-help">
+      <div>
+        <h3>Run this now</h3>
+        <p>Use this button first. Open the foldouts only if you need a smaller or different path.</p>
+      </div>
+      <details class="inline-help" data-guide>
+        <summary>What does this do?</summary>
+        <div class="inline-help-panel">
+          <p>This is the fastest useful SG-side path for this car and this context. It is the right first click unless you already know you need a narrower pack or a different action.</p>
+        </div>
+      </details>
     </div>
 
     <div class="primary-callout">
@@ -81,7 +107,7 @@
       </ul>
     </div>
 
-    <div class="note-block note-block--guide">
+    <div class="note-block note-block--guide" data-guide>
       <strong>If you are unsure, do only this:</strong>
       <ol class="step-list">
         <li>Press the big button above first.</li>
@@ -92,7 +118,7 @@
 
     {% if launch_file_cards %}
     <div class="panel-head panel-head--split">
-      <h3>Files This Check Will Use</h3>
+      <h3>Files this check will use</h3>
       <p>These are the SG source files behind this run.</p>
     </div>
     <div class="stack tight">
@@ -111,7 +137,7 @@
     {% endif %}
 
     <details class="foldout">
-      <summary>Need a smaller quick check?</summary>
+      <summary>Show a smaller quick check</summary>
       <form id="run-form" class="stack" data-profile-id="{{ profile.profile_id }}">
         {% if selected_job %}
         <input type="hidden" name="context-operator_job" value="{{ selected_job.key }}" />
@@ -126,7 +152,7 @@
         </div>
 
         <div class="action-row action-row--wrap">
-          <button class="button subtle" type="submit">Run Quick Check Only</button>
+          <button class="button subtle" type="submit">Run quick check only</button>
           <span class="muted" id="launch-status">Ready</span>
         </div>
 
@@ -166,7 +192,7 @@
 
     {% if secondary_actions %}
     <details class="foldout">
-      <summary>Need a different action?</summary>
+      <summary>Show other actions</summary>
       <div class="workflow-grid">
         {% for item in secondary_actions %}
         <article class="workflow-card">
@@ -202,9 +228,17 @@
   </article>
 
   <article class="panel">
-    <div class="panel-head">
-      <h3>Why this car is here</h3>
-      <p>{{ profile.workflow_value }}</p>
+    <div class="panel-head panel-head--with-help">
+      <div>
+        <h3>Why this car is a good start</h3>
+        <p>{{ profile.workflow_value }}</p>
+      </div>
+      <details class="inline-help" data-guide>
+        <summary>Why this car?</summary>
+        <div class="inline-help-panel">
+          <p>This section explains why this profile is useful right now, what it tends to catch, and what signal already exists from the last live matrix.</p>
+        </div>
+      </details>
     </div>
 
     <div class="detail-grid">
@@ -240,7 +274,7 @@
       <summary>Show profile and config paths</summary>
       <div class="detail-grid">
         <div>
-          <span class="detail-label">Project Root</span>
+          <span class="detail-label">Project root</span>
           <div class="path-text">{{ profile.project_root }}</div>
         </div>
         <div>

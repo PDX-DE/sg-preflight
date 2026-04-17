@@ -13,20 +13,38 @@
 {% set progress = record.progress if record.progress is defined and record.progress else none %}
 <section class="hero-panel hero-panel--simple">
   <div class="hero-copy">
-    <p class="eyebrow">Automation Result</p>
+    <p class="eyebrow">Automation result</p>
     <h2>{{ record.label }}</h2>
     <p class="hero-text">This page shows what the automation ran, what it produced, and what to open next.</p>
   </div>
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% elif record.status == 'blocked' %}warn{% else %}warn{% endif %}" id="action-status-pill">{{ record.status }}</span>
-    <a class="button subtle" href="/ui">Back to Home</a>
+    <a class="button subtle" href="/ui">Back to home</a>
   </div>
+</section>
+
+<section class="guide-strip" data-guide>
+  <article class="guide-card">
+    <span class="guide-step">1</span>
+    <strong>Read the summary first</strong>
+    <p>This tells you whether the automation finished, failed, or is blocked on this machine.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">2</span>
+    <strong>Open the first useful file</strong>
+    <p>The open list is faster than digging through raw logs unless you are already debugging a failure.</p>
+  </article>
+  <article class="guide-card">
+    <span class="guide-step">3</span>
+    <strong>Use the raw log only when needed</strong>
+    <p>It is for exact script output, not for the normal day-to-day path.</p>
+  </article>
 </section>
 
 {% if record.status != 'completed' and record.status != 'blocked' %}
 <section class="panel">
   <div class="panel-head">
-    <h3>Action State</h3>
+    <h3>Action state</h3>
     <p id="action-state-message">
       {% if record.status == 'running' %}
       {% if progress %}
@@ -47,7 +65,7 @@
 <section class="quick-result-grid">
   <article class="panel panel--priority">
     <div class="panel-head">
-      <h3>What Happened</h3>
+      <h3>What happened</h3>
       <p>{{ action_summary.title }}</p>
     </div>
     <p>{{ action_summary.body }}</p>
@@ -76,7 +94,7 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Do This Next</h3>
+      <h3>Do this next</h3>
       <p>Use these next steps before going deeper into the raw log.</p>
     </div>
     <ol class="step-list">
@@ -88,7 +106,7 @@
 
   <article class="panel">
     <div class="panel-head">
-      <h3>Open This Now</h3>
+      <h3>Open this now</h3>
       <p>These are the fastest useful outputs from this action run.</p>
     </div>
     <div class="stack tight">
@@ -136,7 +154,7 @@
 {% if log_text %}
 <section class="panel">
   <div class="panel-head">
-    <h3>Raw Log</h3>
+    <h3>Raw log</h3>
     <p>Raw output from the wrapped SG-side script or action runner.</p>
   </div>
   <pre class="code-block">{{ log_text }}</pre>

@@ -48,6 +48,9 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Run pages now push one default full-check path and keep the quick-check path secondary
 - Run pages now use one explicit primary launch model, surface `Files this check will use` near the main action, and keep quick-check customization plus secondary actions behind foldouts
 - Operator UI language and layout now reduce framework detail by default so teammates can start from daily jobs, not tooling concepts
+- Operator UI now defaults to dark mode, keeps a persistent light/dark toggle in the shared header, and also lets teammates hide or show the in-page guide layer without leaving the current screen
+- Home, guided, run, result, evidence, and action pages now lead with a clearer first-time path, inline "what is this?" help popovers, and more explicit step-by-step copy for teammate and PM demos
+- Visible UI labels now use cleaner sentence case instead of old title-case wording across headings, buttons, exports, and helper flows
 - Operator UI now starts from "what changed?" guided launchers so teammates can choose constants, anchors, carpaints, or file/reference sanity before choosing a car
 - Run pages now expose a recommended QA stack action per car so teammates can launch the available SG-side automation from one button
 - Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text

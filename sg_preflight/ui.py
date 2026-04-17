@@ -195,7 +195,7 @@ def _profile_card(root: Path, profile: RunProfile) -> dict[str, Any]:
         "project_exists": profile.project_root.exists(),
         "config_exists": profile.config_path.exists(),
         "is_ready": is_ready,
-        "readiness_label": "Ready for operator run" if is_ready else "Needs local setup attention",
+        "readiness_label": "Ready for a local run" if is_ready else "Needs local setup attention",
         "live_signal": live_signal,
     }
 
@@ -230,7 +230,7 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
             "description": "Safest default when you touched one car and want the widest useful check before review.",
             "launch_mode": "action",
             "packs": ["anchors", "constants", "carpaints", "project_sanity"],
-            "button_template": "Run Full Check For {profile_id}",
+            "button_template": "Run full check for {profile_id}",
             "highlights": (
                 "Runs the widest useful SG-side flow on this machine",
                 "Best first stop before review, rack, or handoff",
@@ -249,7 +249,7 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
             "description": "Use this when you touched Pivot_Master, Module_constants, or engineering values.",
             "launch_mode": "run",
             "packs": ["constants"],
-            "button_template": "Run Constants Check For {profile_id}",
+            "button_template": "Run constants check for {profile_id}",
             "highlights": (
                 "Checks expected vs exported engineering values",
                 "Best when you want hard evidence for a value mismatch",
@@ -268,7 +268,7 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
             "description": "Use this when you changed anchor names, positions, or the anchor scene itself.",
             "launch_mode": "run",
             "packs": ["anchors"],
-            "button_template": "Run Anchor Check For {profile_id}",
+            "button_template": "Run anchor check for {profile_id}",
             "highlights": (
                 "Checks anchor naming and required-anchor rules",
                 "Best before opening Ramses Composer for manual anchor review",
@@ -287,7 +287,7 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
             "description": "Use this when you touched CarPaint IDs, names, finish values, or paint metadata.",
             "launch_mode": "run",
             "packs": ["carpaints"],
-            "button_template": "Run Carpaint Check For {profile_id}",
+            "button_template": "Run carpaint check for {profile_id}",
             "highlights": (
                 "Checks duplicate IDs and normalized paint data",
                 "Best before any rack-side paint review",
@@ -306,7 +306,7 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
             "description": "Use this when you changed scene links, Lua files, export paths, or delivery-facing project files.",
             "launch_mode": "run",
             "packs": ["project_sanity"],
-            "button_template": "Run File Sanity For {profile_id}",
+            "button_template": "Run file sanity check for {profile_id}",
             "highlights": (
                 "Checks cross-car references, unused Lua, and path risks",
                 "Best before delivery review or repo handoff",
@@ -344,8 +344,8 @@ def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
                 "Document positive or negative testing, not only failures.",
                 "Keep manual RaCo / Blender review visible instead of pretending it is automated.",
             ),
-            "quick_copy_label": "Copy Commit Update",
-            "full_copy_label": "Copy Before-Commit Handoff",
+            "quick_copy_label": "Copy commit update",
+            "full_copy_label": "Copy before-commit handoff",
         },
         {
             "key": "before_review",
@@ -364,8 +364,8 @@ def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
                 "Make the likely owner and next action obvious.",
                 "Carry a short reviewer-ready note instead of vague chat context.",
             ),
-            "quick_copy_label": "Copy Reviewer Update",
-            "full_copy_label": "Copy Review Handoff",
+            "quick_copy_label": "Copy reviewer update",
+            "full_copy_label": "Copy review handoff",
         },
         {
             "key": "pre_delivery",
@@ -376,7 +376,7 @@ def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
             ),
             "hero_steps": (
                 "Run the widest useful deterministic check.",
-                "Open Files And Proof and make sure the evidence exists.",
+                "Open files and proof and make sure the evidence exists.",
                 "Treat performance tests, delivery docs, and BMW-side steps as explicit follow-up work.",
             ),
             "checklist": (
@@ -384,8 +384,8 @@ def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
                 "Performance test and delivery documentation expectations stay visible here.",
                 "Blocked BMW-side or rack steps should be shown honestly, not hidden.",
             ),
-            "quick_copy_label": "Copy Pre-Delivery Summary",
-            "full_copy_label": "Copy Delivery Handoff",
+            "quick_copy_label": "Copy pre-delivery summary",
+            "full_copy_label": "Copy delivery handoff",
         },
         {
             "key": "post_integration",
@@ -404,8 +404,8 @@ def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
                 "Use the result to separate local deterministic issues from external blockers.",
                 "Keep the handoff text short and source-backed.",
             ),
-            "quick_copy_label": "Copy Integration Update",
-            "full_copy_label": "Copy Integration Handoff",
+            "quick_copy_label": "Copy integration update",
+            "full_copy_label": "Copy integration handoff",
         },
         {
             "key": "evidence_update",
@@ -416,7 +416,7 @@ def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
             ),
             "hero_steps": (
                 "Run the smallest useful check for the topic.",
-                "Open Files And Proof.",
+                "Open files and proof.",
                 "Copy the right note into Jira or QA Hero without rewriting from scratch.",
             ),
             "checklist": (
@@ -424,10 +424,10 @@ def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
                 "Negative findings are part of production effort and need evidence.",
                 "Script output, files, screenshots, and protocols should stay attached to the same story.",
             ),
-            "problem_primary_label": "Copy Negative Test Note",
-            "clean_primary_label": "Copy Positive Test Note",
-            "quick_copy_label": "Copy Jira Update",
-            "full_copy_label": "Copy QA Hero Note",
+            "problem_primary_label": "Copy negative test note",
+            "clean_primary_label": "Copy positive test note",
+            "quick_copy_label": "Copy Jira update",
+            "full_copy_label": "Copy QA Hero note",
         },
     )
 
@@ -793,7 +793,7 @@ def _launch_checklist(selected_job: dict[str, Any] | None, selected_stage: dict[
             "Carry a short reviewer-ready note instead of vague chat context.",
         ],
         "pre_delivery": [
-            "Open Files And Proof and make sure the SG-side evidence is ready.",
+            "Open files and proof and make sure the SG-side evidence is ready.",
             "Treat performance tests, delivery documentation, and BMW-side checks as explicit follow-up work.",
         ],
         "post_integration": [
@@ -801,7 +801,7 @@ def _launch_checklist(selected_job: dict[str, Any] | None, selected_stage: dict[
             "Route the follow-up with evidence instead of guesswork.",
         ],
         "evidence_update": [
-            "Open Files And Proof right after the run and copy the right note into Jira or QA Hero.",
+            "Open files and proof right after the run and copy the right note into Jira or QA Hero.",
             "Positive testing needs documentation too, not only failures.",
         ],
     }
@@ -829,7 +829,7 @@ def _primary_launch(
             "kind": "run",
             "title": title,
             "description": description,
-            "button_label": str(selected_job["button_template"]).format(profile_id="This Car"),
+            "button_label": str(selected_job["button_template"]).format(profile_id="this car"),
             "packs": list(selected_job["packs"]),
             "job_key": str(selected_job["key"]),
             "job_label": str(selected_job["short_label"]),
@@ -843,7 +843,7 @@ def _primary_launch(
             "kind": "run",
             "title": f"Best default for {selected_stage['short_label'].lower()} on {profile.profile_id}",
             "description": "Run the full deterministic preflight for this car, then use the stage checklist to see what still needs manual or blocked follow-up.",
-            "button_label": "Run Full Check For This Car",
+            "button_label": "Run full check for this car",
             "packs": ["anchors", "constants", "carpaints", "project_sanity"],
             "job_key": "",
             "job_label": "",
@@ -859,7 +859,7 @@ def _primary_launch(
         "kind": "action",
         "title": f"Best default for {profile.profile_id}",
         "description": "Run the full SG-side check path that is available on this machine for this car.",
-        "button_label": "Run Full Check For This Car",
+        "button_label": "Run full check for this car",
         "action_id": f"qa_stack__{profile.profile_id.lower()}",
         "checklist": [
             "Run the normal preflight for anchors, constants, carpaints, and project sanity.",
@@ -1033,7 +1033,7 @@ def _first_problem(
         "occurrence_label": f"{top['count']} occurrence(s)",
         "open_link": evidence_link
         or {
-            "label": "Files And Proof",
+            "label": "Files and proof",
             "value": record.paths.get("html_report", ""),
             "href": f"/ui/runs/{record.run_id}/evidence",
             "kind": "path",
@@ -1173,10 +1173,10 @@ def _handoff_options(
     stage = _get_workflow_stage(str(record.context.get("workflow_stage", "")).strip())
     if first_problem.get("is_clean"):
         primary_label = stage.get("clean_primary_label") if stage is not None else None
-        primary_label = primary_label or "Copy Clean Run Handoff"
+        primary_label = primary_label or "Copy clean run handoff"
     else:
         primary_label = stage.get("problem_primary_label") if stage is not None else None
-        primary_label = primary_label or "Copy Handoff For This Problem"
+        primary_label = primary_label or "Copy handoff for this problem"
     primary_text = _problem_handoff_text(record, first_problem)
     return {
         "primary": {
@@ -1187,12 +1187,12 @@ def _handoff_options(
         "secondary": [
             {
                 "target_id": "copy-quick-update",
-                "label": stage.get("quick_copy_label", "Copy Quick Update") if stage is not None else "Copy Quick Update",
+                "label": stage.get("quick_copy_label", "Copy quick update") if stage is not None else "Copy quick update",
                 "text": quick_update_text,
             },
             {
                 "target_id": "copy-full-handoff",
-                "label": stage.get("full_copy_label", "Copy Full Handoff") if stage is not None else "Copy Full Handoff",
+                "label": stage.get("full_copy_label", "Copy full handoff") if stage is not None else "Copy full handoff",
                 "text": full_handoff_text or quick_update_text,
             },
         ],
@@ -1457,7 +1457,7 @@ def _documentation_exports(
     )
 
     implementation_lines = [
-        f"Jira Implementation Update - {record.profile_id}",
+        f"Jira implementation update - {record.profile_id}",
         f"Workflow stage: {stage_label}",
         f"Scope: {', '.join(record.packs)}",
         f"Result: {decision_summary['title']}",
@@ -1473,7 +1473,7 @@ def _documentation_exports(
     ]
 
     positive_lines = [
-        f"Jira Positive Test Note - {record.profile_id}",
+        f"Jira positive test note - {record.profile_id}",
         f"Workflow stage: {stage_label}",
         (
             "Status: clean deterministic SG-side run."
@@ -1488,7 +1488,7 @@ def _documentation_exports(
     ]
 
     negative_lines = [
-        f"Jira Negative Test Note - {record.profile_id}",
+        f"Jira negative test note - {record.profile_id}",
         f"Workflow stage: {stage_label}",
         f"Primary issue: {primary_problem}",
         f"Counts: {counts['errors']} errors, {counts['warnings']} warnings, {counts['info']} info, {counts['total']} total",
@@ -1502,7 +1502,7 @@ def _documentation_exports(
     ]
 
     qa_hero_lines = [
-        f"QA Hero Note - {record.profile_id}",
+        f"QA Hero note - {record.profile_id}",
         f"Workflow stage: {stage_label}",
         f"Result: {decision_summary['title']}",
         f"Primary issue: {primary_problem}",
@@ -1514,7 +1514,7 @@ def _documentation_exports(
     ]
 
     pre_delivery_lines = [
-        f"Pre-Delivery Summary - {record.profile_id}",
+        f"Pre-delivery summary - {record.profile_id}",
         f"Workflow stage: {stage_label}",
         f"Result: {decision_summary['title']}",
         f"Counts: {counts['errors']} errors, {counts['warnings']} warnings, {counts['info']} info, {counts['total']} total",
@@ -1539,7 +1539,7 @@ def _documentation_exports(
     ]
 
     delivery_doc_lines = [
-        f"Delivery-Doc Snippet - {record.profile_id}",
+        f"Delivery-doc snippet - {record.profile_id}",
         f"- SG deterministic stage: {stage_label}",
         f"- Result: {decision_summary['title']}",
         f"- Counts: {counts['errors']} errors / {counts['warnings']} warnings / {counts['info']} info",
@@ -1549,14 +1549,14 @@ def _documentation_exports(
     ]
 
     exports = [
-        ("Copy Jira Implementation Update", "\n".join(implementation_lines).strip()),
-        ("Copy Jira Positive Test Note", "\n".join(positive_lines).strip()),
-        ("Copy Jira Negative Test Note", "\n".join(negative_lines).strip()),
-        ("Copy QA Hero Note", "\n".join(qa_hero_lines).strip()),
-        ("Copy Pre-Delivery Summary", "\n".join(pre_delivery_lines).strip()),
-        ("Copy Delivery-Doc Snippet", "\n".join(delivery_doc_lines).strip()),
-        ("Copy Quick Update", quick_update_text),
-        ("Copy Full Handoff", full_handoff_text or quick_update_text),
+        ("Copy Jira implementation update", "\n".join(implementation_lines).strip()),
+        ("Copy Jira positive test note", "\n".join(positive_lines).strip()),
+        ("Copy Jira negative test note", "\n".join(negative_lines).strip()),
+        ("Copy QA Hero note", "\n".join(qa_hero_lines).strip()),
+        ("Copy pre-delivery summary", "\n".join(pre_delivery_lines).strip()),
+        ("Copy delivery-doc snippet", "\n".join(delivery_doc_lines).strip()),
+        ("Copy quick update", quick_update_text),
+        ("Copy full handoff", full_handoff_text or quick_update_text),
     ]
     items: list[dict[str, str]] = []
     for index, (label, text) in enumerate(exports, start=1):
@@ -1598,7 +1598,7 @@ def _manual_review_companion(
         "Problem-focused proof shot",
     ]
     manual_note_lines = [
-        f"Manual Review Record - {record.profile_id}",
+        f"Manual review record - {record.profile_id}",
         f"Workflow stage: {stage_label}",
         f"Deterministic baseline: {record.paths.get('html_report', '')}",
         f"Files and proof: /ui/runs/{record.run_id}/evidence",
@@ -1614,20 +1614,20 @@ def _manual_review_companion(
         "- ",
     ]
     screenshot_note_lines = [
-        f"Screenshot Evidence Slots - {record.profile_id}",
+        f"Screenshot evidence slots - {record.profile_id}",
         f"Workflow stage: {stage_label}",
         f"Run baseline: {record.paths.get('html_report', '')}",
         "",
         *[f"- {slot}: " for slot in screenshot_slots],
     ]
     checklist_lines = [
-        f"Blender vs RaCo Checklist - {record.profile_id}",
+        f"Blender vs RaCo checklist - {record.profile_id}",
         f"Workflow stage: {stage_label}",
         "",
         *[f"- {item}" for item in checklist],
     ]
     return {
-        "title": "Manual Review Companion",
+        "title": "Manual review companion",
         "summary": "Use this to keep still-manual work explicit instead of pretending the deterministic run replaced it.",
         "checklist": checklist,
         "scenario_items": [
@@ -1638,17 +1638,17 @@ def _manual_review_companion(
         "screenshot_slots": screenshot_slots,
         "copy_items": [
             {
-                "label": "Copy Manual Review Record",
+                "label": "Copy manual review record",
                 "target_id": "copy-manual-review-record",
                 "text": "\n".join(manual_note_lines).strip(),
             },
             {
-                "label": "Copy Screenshot Evidence Slots",
+                "label": "Copy screenshot evidence slots",
                 "target_id": "copy-screenshot-evidence-slots",
                 "text": "\n".join(screenshot_note_lines).strip(),
             },
             {
-                "label": "Copy Blender vs RaCo Checklist",
+                "label": "Copy Blender vs RaCo checklist",
                 "target_id": "copy-blender-raco-checklist",
                 "text": "\n".join(checklist_lines).strip(),
             },
@@ -1992,7 +1992,7 @@ def _evidence_sections(record: Any, first_problem: dict[str, Any] | None = None)
 def _action_links(record: Any) -> list[dict[str, str]]:
     links = [
         _path_evidence("Action log", record.paths.get("log")),
-        _path_evidence("Summary Markdown", record.paths.get("summary_md")),
+        _path_evidence("Summary markdown", record.paths.get("summary_md")),
         _path_evidence("Summary JSON", record.paths.get("summary_json")),
     ]
     for artifact in getattr(record, "artifacts", []):

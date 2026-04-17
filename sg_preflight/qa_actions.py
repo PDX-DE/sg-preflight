@@ -218,7 +218,7 @@ def list_operator_actions(
     actions = [
         OperatorAction(
             action_id="daily_live_matrix",
-            label="Run Daily SG Check",
+            label="Run daily SG check",
             description="Run the standard preflight across the configured live SG slices and write one shared summary.",
             kind="daily_live_matrix",
             scope="workspace",
@@ -228,7 +228,7 @@ def list_operator_actions(
         ),
         OperatorAction(
             action_id="repo_checker_idcevo",
-            label="Run IDCevo Repo Checkers",
+            label="Run IDCevo repo checkers",
             description="Run the SG checker stack over the mirrored `Cars_IDCevo` tree.",
             kind="repo_checker",
             scope="workspace",
@@ -242,7 +242,7 @@ def list_operator_actions(
         ),
         OperatorAction(
             action_id="repo_checker_classic",
-            label="Run Classic Repo Checkers",
+            label="Run classic repo checkers",
             description="Run the SG checker stack over the mirrored `Cars` tree.",
             kind="repo_checker",
             scope="workspace",
@@ -260,7 +260,7 @@ def list_operator_actions(
         actions.append(
             OperatorAction(
                 action_id=f"qa_stack__{profile.profile_id.lower()}",
-                label=f"Run Recommended QA Stack For {profile.profile_id}",
+                label=f"Run recommended QA stack for {profile.profile_id}",
                 description=(
                     f"Run the default preflight first, then every additional SG-side QA step that is available on this machine for {profile.profile_id}."
                 ),
@@ -282,7 +282,7 @@ def list_operator_actions(
         actions.append(
             OperatorAction(
                 action_id=f"repo_checker_profile__{profile.profile_id.lower()}",
-                label=f"Run Repo Check For {profile.profile_id}",
+                label=f"Run repo check for {profile.profile_id}",
                 description=f"Run the SG checker stack only for the {profile.profile_id} project tree.",
                 kind="repo_checker",
                 scope="profile",
@@ -300,7 +300,7 @@ def list_operator_actions(
         actions.append(
             OperatorAction(
                 action_id=f"scene_check__{profile.profile_id.lower()}",
-                label=f"Run Scene Check For {profile.profile_id}",
+                label=f"Run scene check for {profile.profile_id}",
                 description=f"Run SG scene checking over every `.rca` under the {profile.profile_id} project tree.",
                 kind="scene_check",
                 scope="profile",
@@ -321,7 +321,7 @@ def list_operator_actions(
         actions.append(
             OperatorAction(
                 action_id=f"bmw_screenshot_smoke__{profile.profile_id.lower()}",
-                label=f"Run BMW Screenshot Smoke For {profile.profile_id}",
+                label=f"Run BMW screenshot smoke for {profile.profile_id}",
                 description=(
                     f"Run BMW-side export and screenshot smoke for {profile.profile_id} when the BMW models repo and car mapping are available."
                 ),
@@ -568,7 +568,7 @@ def _parse_repo_checker_output(output: str) -> dict[str, Any]:
         lines.extend(phases)
     lines.append(f"Reported error batches: {error_total}")
     return {
-        "title": "Repo Checker Result",
+        "title": "Repo checker result",
         "lines": lines,
         "phase_count": len(phase_matches),
         "reported_error_batches": error_total,
@@ -666,7 +666,7 @@ def _execute_daily_live_matrix(record: ActionRecord, root: Path) -> tuple[dict[s
         detail="Writing the shared SG live-matrix summary and artifacts.",
     )
     summary = {
-        "title": "Daily SG Check",
+        "title": "Daily SG check",
         "lines": lines,
         "profile_count": len(profiles),
     }
@@ -949,7 +949,7 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
     _write_text(Path(record.paths["log"]), combined_log + ("\n" if combined_log else ""))
 
     summary = {
-        "title": "BMW Screenshot Smoke Result",
+        "title": "BMW screenshot smoke result",
         "lines": [
             f"Target: {target}",
             f"Export exit code: {export_process.returncode}",
@@ -1037,7 +1037,7 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
     workbook.close()
 
     summary = {
-        "title": "Scene Check Result",
+        "title": "Scene check result",
         "lines": [
             f"Checked scenes: {len(scenes)}",
             f"Scenes with errors: {scene_errors}",

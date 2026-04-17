@@ -42,6 +42,13 @@ Default address:
 http://127.0.0.1:8765/ui
 ```
 
+Shared shell:
+
+- dark mode is the default
+- every page keeps a light/dark toggle in the header
+- every page also keeps a guide toggle so teammate-facing help can be hidden without leaving the current view
+- the header `What is this for?` helper gives the shortest explanation for first-time users or PM demos
+
 ## Views
 
 ### Home
@@ -63,6 +70,10 @@ Shows:
   - check all live cars
   - run SG repo checkers
   - pick a car directly when you already know the slice
+- a short first-time guide strip so teammates can understand the path in one read:
+  - start with the change type
+  - use workflow stage only if process context matters more than file type
+  - open files and proof after the run
 - canonical live profiles kept lower on the page as a secondary direct-entry path
 - current live signal for the real `G70`, `G65`, and `G45` slices when the latest matrix output is present
 - recent persisted checks and action runs
@@ -92,6 +103,7 @@ For a selected profile, shows:
 - the other actions for the car behind a foldout
 - detected `Pivot_Master`, `Module_constants`, `CarPaint`, and anchor scene paths without making the operator hunt for them
 - hidden context fields so stage-aware quick checks keep the same job/stage metadata as the primary button
+- a first-time guide strip plus inline help popovers so the page explains when to trust the primary button and when to open the secondary foldouts
 
 ### Result
 
@@ -111,6 +123,7 @@ Shows:
 - an `Evidence Completeness` panel that separates local SG proof from full-stage readiness and makes proof/manual/blocked gaps explicit
 - a `Stage-Specific Exports` panel with copy-ready Jira implementation updates, Jira positive and negative test notes, QA Hero notes, pre-delivery summaries, and delivery-doc snippets
 - a `Manual Review Companion` panel with Blender-vs-RaCo checklist text, screenshot evidence slots, and a copy-ready manual verification record
+- sentence-case labels and section titles throughout the UI so the first read feels less like an internal debug surface
 - grouped findings behind a foldout
 - severity filtering
 - per-finding drilldown behind a foldout

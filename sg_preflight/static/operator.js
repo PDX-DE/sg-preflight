@@ -1,4 +1,5 @@
 (function () {
+  const rootElement = document.documentElement;
   const overlay = document.getElementById("loading-overlay");
   const overlayFill = document.getElementById("loading-progress-fill");
   const overlayPercent = document.getElementById("loading-progress-percent");
@@ -12,8 +13,38 @@
   const overlayStepDetail = document.getElementById("loading-step-detail");
   const overlayEvents = document.getElementById("loading-event-list");
   const overlayLogTail = document.getElementById("loading-log-tail");
+  const themeToggle = document.getElementById("theme-toggle");
+  const guideToggle = document.getElementById("guide-toggle");
   let selectedStepKey = "";
   let nestedStepRequestId = 0;
+
+  const applyTheme = function (theme) {
+    const resolved = theme === "light" ? "light" : "dark";
+    rootElement.dataset.theme = resolved;
+    if (themeToggle) {
+      const usingLight = resolved === "light";
+      themeToggle.setAttribute("aria-pressed", usingLight ? "false" : "true");
+      themeToggle.textContent = usingLight ? "Dark mode" : "Light mode";
+    }
+  };
+
+  const applyGuideMode = function (mode) {
+    const resolved = mode === "off" ? "off" : "on";
+    document.body.dataset.guideMode = resolved;
+    if (guideToggle) {
+      const enabled = resolved === "on";
+      guideToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+      guideToggle.textContent = enabled ? "Hide guide" : "Show guide";
+    }
+  };
+
+  try {
+    applyTheme(window.localStorage.getItem("sg-theme") || rootElement.dataset.theme || "dark");
+    applyGuideMode(window.localStorage.getItem("sg-guide-mode") || document.body.dataset.guideMode || "on");
+  } catch (_error) {
+    applyTheme(rootElement.dataset.theme || "dark");
+    applyGuideMode(document.body.dataset.guideMode || "on");
+  }
 
   const setOverlayVisibility = function (visible) {
     if (!overlay) {
@@ -383,8 +414,32 @@
       overlayToggle.setAttribute("aria-expanded", expanded ? "false" : "true");
       overlayExpanded.hidden = expanded;
       overlayToggle.textContent = expanded
-        ? "Show what is happening under the hood"
-        : "Hide under-the-hood detail";
+        ? "Show exact live detail"
+        : "Hide exact live detail";
+    });
+  }
+
+  if (themeToggle) {
+    themeToggle.addEventListener("click", function () {
+      const nextTheme = rootElement.dataset.theme === "light" ? "dark" : "light";
+      applyTheme(nextTheme);
+      try {
+        window.localStorage.setItem("sg-theme", nextTheme);
+      } catch (_error) {
+        return;
+      }
+    });
+  }
+
+  if (guideToggle) {
+    guideToggle.addEventListener("click", function () {
+      const nextMode = document.body.dataset.guideMode === "off" ? "on" : "off";
+      applyGuideMode(nextMode);
+      try {
+        window.localStorage.setItem("sg-guide-mode", nextMode);
+      } catch (_error) {
+        return;
+      }
     });
   }
 
