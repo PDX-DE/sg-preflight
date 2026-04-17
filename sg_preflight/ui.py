@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -30,7 +30,7 @@ from sg_preflight.qa_actions import (
     load_action_record,
     save_action_record as save_action_task_record,
 )
-from sg_preflight.reporting import build_report_presentation, finding_hint
+from sg_preflight.reporting import build_report_presentation, finding_hint, retheme_html_report
 from sg_preflight.services import (
     RunRequest,
     build_run_record,
@@ -2465,12 +2465,18 @@ def create_app(
         return RedirectResponse(url="/ui", status_code=302)
 
     @app.get("/ui/files")
-    async def file_proxy(path: str) -> FileResponse:
+    async def file_proxy(path: str, raw: bool = False):
         target = Path(path)
         if not target.exists() or not target.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         if not _is_allowed_file(app, target):
             raise HTTPException(status_code=403, detail="Path is outside allowed roots")
+        if not raw and target.suffix.lower() in {".html", ".htm"}:
+            try:
+                content = target.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                content = target.read_text(encoding="utf-8", errors="replace")
+            return HTMLResponse(retheme_html_report(content))
         return FileResponse(target)
 
     return app

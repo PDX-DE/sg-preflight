@@ -8,6 +8,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+from sg_preflight.models import Finding, PackResult, Report
 from sg_preflight.profiles import RunProfile
 from sg_preflight.qa_actions import (
     ACTION_PROGRESS_PLANS,
@@ -15,6 +16,7 @@ from sg_preflight.qa_actions import (
     get_operator_action,
     save_action_record as save_action_task_record,
 )
+from sg_preflight.reporting import write_html_report
 from sg_preflight.services import (
     RUN_PROGRESS_PLAN,
     RunRequest,
@@ -449,6 +451,41 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Running G65", page.text)
         self.assertIn("NOW LOADING...", page.text)
+
+    def test_file_route_rethemes_generated_html_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            report = Report(
+                bundle="demo://bundle",
+                context={"car_model": "G65", "delivery_phase": "preview"},
+                packs=[
+                    PackResult(
+                        pack="project_sanity",
+                        findings=[
+                            Finding(
+                                pack="project_sanity",
+                                code="project_sanity.unused_lua",
+                                severity="warning",
+                                message="Lua file is present but not referenced",
+                                location="Lua/test.lua",
+                            )
+                        ],
+                    )
+                ],
+            )
+            report_path = root / "out" / "operator-ui" / "runs" / "demo" / "report.html"
+            write_html_report(report, report_path)
+
+            page = client.get(f"/ui/files?path={report_path}")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Operator report", page.text)
+        self.assertIn("report-route", page.text)
+        self.assertIn("This report is the printable operator summary for one SG check", page.text)
+        self.assertIn("--bg: #040811", page.text)
 
     def test_operator_css_keeps_loading_overlay_hidden_by_default(self) -> None:
         css = (ROOT / "sg_preflight" / "static" / "operator.css").read_text(encoding="utf-8")

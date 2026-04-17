@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from html import escape
 from pathlib import Path
@@ -11,6 +12,379 @@ from sg_preflight.utils import ensure_parent
 
 
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
+SG_REPORT_TITLE = "<title>SG Preflight Report</title>"
+
+
+def _html_report_route_markup() -> str:
+    return """
+<div class="report-route">
+  <span>01 Check result</span>
+  <span>02 Review context</span>
+  <span>03 Act on findings</span>
+  <span>04 Hand off proof</span>
+</div>
+""".strip()
+
+
+def _html_report_styles() -> str:
+    return """
+:root {
+  color-scheme: dark;
+  --bg: #040811;
+  --bg-alt: #07111c;
+  --surface: rgba(10, 16, 25, 0.95);
+  --surface-strong: rgba(14, 24, 37, 0.98);
+  --surface-muted: rgba(8, 13, 20, 0.92);
+  --border: rgba(96, 129, 158, 0.34);
+  --border-strong: rgba(133, 172, 207, 0.5);
+  --text: #edf6ff;
+  --muted: #98aec2;
+  --accent: #7bd7ff;
+  --accent-hot: #ffa17c;
+  --error: #ff9f86;
+  --warning: #ffd27e;
+  --info: #91c6ff;
+  --ok: #7ce0b9;
+  --shadow: 0 16px 30px rgba(0, 0, 0, 0.28);
+  --font-ui: Aptos, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-display: "Bahnschrift SemiCondensed", "Aptos Narrow", "Arial Narrow", "Segoe UI", sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+}
+body {
+  margin: 0;
+  padding: 1.25rem;
+  background:
+    radial-gradient(circle at 18% -4%, rgba(123, 215, 255, 0.16), transparent 22%),
+    radial-gradient(circle at 84% 12%, rgba(255, 161, 124, 0.12), transparent 18%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-alt) 38%, #09131f 100%);
+  color: var(--text);
+  font-family: var(--font-ui);
+  line-height: 1.5;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 28%, transparent 74%, rgba(255, 255, 255, 0.015)),
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 4px);
+  opacity: 0.15;
+}
+h1,
+h2,
+h3,
+strong {
+  font-family: var(--font-display);
+}
+h1,
+h2,
+h3 {
+  margin: 0 0 0.35rem;
+  font-style: italic;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+h1 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 0.96;
+}
+h2 {
+  font-size: 1rem;
+}
+h3 {
+  font-size: 0.92rem;
+}
+.hero,
+.card,
+.context-card,
+.pack-card,
+.action-card,
+.pack-details,
+table,
+.report-route span {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px 4px 20px 4px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(12, 19, 30, 0.96), rgba(7, 12, 20, 0.94));
+  box-shadow: var(--shadow);
+}
+.hero::before,
+.card::before,
+.context-card::before,
+.pack-card::before,
+.action-card::before,
+.pack-details::before,
+table::before,
+.report-route span::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(123, 215, 255, 0.94), rgba(255, 161, 124, 0.58) 72%, transparent 100%);
+}
+.hero {
+  padding: 1.2rem 1.35rem 1.25rem;
+  margin-bottom: 0.9rem;
+  background:
+    linear-gradient(135deg, rgba(123, 215, 255, 0.08), rgba(255, 161, 124, 0.05) 52%, transparent 100%),
+    linear-gradient(180deg, rgba(14, 24, 37, 0.98), rgba(8, 13, 20, 0.94));
+}
+.eyebrow,
+.small strong,
+th,
+.card strong,
+.context-card strong,
+.pack-status,
+.issue-count,
+.report-route span {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.eyebrow {
+  margin: 0 0 0.3rem;
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 0.76rem;
+}
+.small {
+  margin: 0.28rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.report-route {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+.report-route span {
+  display: block;
+  padding: 0.8rem 0.9rem;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 0.84rem;
+  font-style: italic;
+}
+.summary,
+.context-grid,
+.pack-grid,
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+.summary {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+.card,
+.context-card,
+.pack-card,
+.action-card {
+  padding: 1rem 1.05rem;
+}
+.card strong,
+.context-card strong {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.card-value,
+.context-value {
+  margin-top: 0.32rem;
+  font-weight: 700;
+}
+.card-value {
+  font-size: 1.85rem;
+}
+.context-value {
+  font-size: 1rem;
+  word-break: break-word;
+}
+.card-errors .card-value {
+  color: var(--error);
+}
+.card-warnings .card-value {
+  color: var(--warning);
+}
+.card-info .card-value {
+  color: var(--info);
+}
+.card-total .card-value {
+  color: var(--ok);
+}
+.section {
+  margin-bottom: 1rem;
+}
+.pack-card h3,
+.action-card p {
+  margin-top: 0;
+}
+.pack-status {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+.pack-highlight-list,
+.notable-list {
+  margin: 0.7rem 0 0;
+  padding-left: 1.2rem;
+}
+.pack-highlight-list li,
+.notable-list li {
+  margin-bottom: 0.45rem;
+}
+.action-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+th,
+td {
+  border: 1px solid var(--border);
+  padding: 0.68rem;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: rgba(18, 30, 44, 0.96);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+}
+td {
+  background: rgba(9, 14, 22, 0.88);
+}
+code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Cascadia Code", monospace;
+  font-size: 0.92em;
+  color: #e6f3ff;
+}
+.muted {
+  color: var(--muted);
+}
+.issue-code {
+  font-family: Consolas, "Cascadia Code", monospace;
+}
+.issue-count {
+  color: var(--muted);
+  font-weight: 700;
+  margin-left: 0.35rem;
+}
+.severity-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 5rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+  color: #07111c;
+  background: #d9e6f2;
+}
+.severity-pill.severity-error {
+  background: var(--error);
+}
+.severity-pill.severity-warning {
+  background: var(--warning);
+}
+.severity-pill.severity-info {
+  background: var(--info);
+}
+.pack-details {
+  padding: 0.8rem 0.95rem;
+  margin-bottom: 0.9rem;
+}
+.pack-details summary {
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.86rem;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.severity-error td {
+  background: rgba(255, 159, 134, 0.08);
+}
+.severity-warning td {
+  background: rgba(255, 210, 126, 0.08);
+}
+.severity-info td {
+  background: rgba(145, 198, 255, 0.08);
+}
+@media (max-width: 900px) {
+  body {
+    padding: 1rem;
+  }
+  .report-route {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .report-route {
+    grid-template-columns: 1fr;
+  }
+}
+""".strip()
+
+
+def _is_sg_report_html(html_text: str) -> bool:
+    return SG_REPORT_TITLE in html_text and "SG Preflight Report" in html_text
+
+
+def retheme_html_report(html_text: str) -> str:
+    if not _is_sg_report_html(html_text):
+        return html_text
+
+    style_block = f"<style>\n{_html_report_styles()}\n</style>"
+    if "<style>" in html_text and "</style>" in html_text:
+        html_text = re.sub(r"<style>.*?</style>", style_block, html_text, count=1, flags=re.DOTALL)
+    else:
+        html_text = html_text.replace("</head>", f"{style_block}\n</head>", 1)
+
+    old_line = (
+        "Presentation-friendly summary first, with workflow context and handoff guidance before the raw findings."
+    )
+    new_line = (
+        "This report is the printable operator summary for one SG check: what failed, what looks clean, and what to hand off."
+    )
+    html_text = html_text.replace(old_line, new_line)
+    if 'class="eyebrow"' not in html_text:
+        html_text = html_text.replace(
+            '<section class="hero">\n  <h1>SG Preflight Report</h1>',
+            '<section class="hero">\n  <p class="eyebrow">Operator report</p>\n  <h1>SG Preflight Report</h1>',
+            1,
+        )
+    if 'class="report-route"' not in html_text:
+        html_text = html_text.replace(
+            "</section>\n<div class=\"summary\">",
+            "</section>\n" + _html_report_route_markup() + "\n<div class=\"summary\">",
+            1,
+        )
+    return html_text
 
 
 def _severity_rank(value: str) -> int:
@@ -435,205 +809,16 @@ def write_html_report(
 <head>
 <meta charset="utf-8" />
 <title>SG Preflight Report</title>
-<style>
-:root {{
-  --bg: #f6f3eb;
-  --panel: #fffdf8;
-  --panel-strong: #f1ebdc;
-  --border: #d8cfbc;
-  --text: #1f2328;
-  --muted: #645c4b;
-  --accent: #6d8b74;
-  --error: #b54a3b;
-  --warning: #c58c27;
-  --info: #4c7498;
-}}
-body {{
-  font-family: "Segoe UI", Arial, Helvetica, sans-serif;
-  margin: 2rem;
-  background: linear-gradient(180deg, #f4efe3 0%, #f8f6f0 100%);
-  color: var(--text);
-}}
-h1, h2, h3 {{
-  margin-bottom: 0.4rem;
-}}
-h1 {{
-  margin-top: 0;
-}}
-.hero {{
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 1.5rem;
-  margin-bottom: 1.5rem;
-  box-shadow: 0 8px 24px rgba(38, 34, 23, 0.06);
-}}
-.hero p {{
-  margin: 0.2rem 0 0;
-}}
-.summary,
-.context-grid,
-.pack-grid,
-.action-grid {{
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.9rem;
-  margin-bottom: 1.5rem;
-}}
-.summary {{
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-}}
-.card,
-.context-card,
-.pack-card,
-.action-card {{
-  background: var(--panel);
-  padding: 1rem;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 24px rgba(38, 34, 23, 0.04);
-}}
-.card strong,
-.context-card strong {{
-  color: var(--muted);
-  text-transform: uppercase;
-  font-size: 0.8rem;
-  letter-spacing: 0.04em;
-}}
-.card-value,
-.context-value {{
-  font-size: 1.1rem;
-  margin-top: 0.35rem;
-  font-weight: 600;
-}}
-.card-value {{
-  font-size: 1.8rem;
-}}
-.card-errors .card-value {{
-  color: var(--error);
-}}
-.card-warnings .card-value {{
-  color: var(--warning);
-}}
-.card-info .card-value {{
-  color: var(--info);
-}}
-.card-total .card-value {{
-  color: var(--accent);
-}}
-.section {{
-  margin-bottom: 1.5rem;
-}}
-.pack-card h3,
-.action-card p {{
-  margin-top: 0;
-}}
-.pack-status {{
-  color: var(--muted);
-  font-weight: 600;
-}}
-.pack-highlight-list,
-.notable-list {{
-  margin: 0.6rem 0 0;
-  padding-left: 1.2rem;
-}}
-.pack-highlight-list li,
-.notable-list li {{
-  margin-bottom: 0.5rem;
-}}
-.action-head {{
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 0.75rem;
-}}
-table {{
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--panel);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 8px 24px rgba(38, 34, 23, 0.04);
-}}
-th, td {{
-  border: 1px solid var(--border);
-  padding: 0.6rem;
-  text-align: left;
-  vertical-align: top;
-}}
-th {{
-  background: var(--panel-strong);
-}}
-.small {{
-  color: var(--muted);
-}}
-code {{
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 0.92em;
-}}
-.muted {{
-  color: var(--muted);
-}}
-.issue-code {{
-  font-family: Consolas, "Courier New", monospace;
-}}
-.issue-count {{
-  color: var(--muted);
-  font-weight: 600;
-  margin-left: 0.35rem;
-}}
-.severity-pill {{
-  display: inline-block;
-  min-width: 4.5rem;
-  padding: 0.15rem 0.45rem;
-  margin-right: 0.1rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-align: center;
-  color: white;
-}}
-.severity-pill.severity-error {{
-  background: var(--error);
-}}
-.severity-pill.severity-warning {{
-  background: var(--warning);
-}}
-.severity-pill.severity-info {{
-  background: var(--info);
-}}
-.pack-details {{
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-}}
-.pack-details summary {{
-  cursor: pointer;
-  font-weight: 700;
-  margin-bottom: 0.75rem;
-}}
-.severity-error td {{
-  background: rgba(181, 74, 59, 0.10);
-}}
-.severity-warning td {{
-  background: rgba(197, 140, 39, 0.10);
-}}
-.severity-info td {{
-  background: rgba(76, 116, 152, 0.10);
-}}
-</style>
+<style>{_html_report_styles()}</style>
 </head>
 <body>
 <section class="hero">
+  <p class="eyebrow">Operator report</p>
   <h1>SG Preflight Report</h1>
   <p class="small"><strong>Bundle:</strong> {escape(report.bundle)}</p>
-  <p class="small">Presentation-friendly summary first, with workflow context and handoff guidance before the raw findings.</p>
+  <p class="small">This report is the printable operator summary for one SG check: what failed, what looks clean, and what to hand off.</p>
 </section>
+{_html_report_route_markup()}
 <div class="summary">
   <div class="card card-errors"><strong>Errors</strong><div class="card-value">{summary["errors"]}</div></div>
   <div class="card card-warnings"><strong>Warnings</strong><div class="card-value">{summary["warnings"]}</div></div>
