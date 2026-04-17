@@ -23,7 +23,7 @@
   let wordmarkFrameIndex = 0;
   let wordmarkTimerId = 0;
 
-  const wordmarkFrames = [
+  const rawWordmarkFrames = [
     { x: 0, y: 0, scale: 0.91, opacity: 0.98, blueX: -1.2, blueY: 0, blueScale: 1, blueOpacity: 0.62, redX: 1.1, redY: 0, redScale: 1, redOpacity: 0.5 },
     { x: 0, y: 0, scale: 0.91, opacity: 0.98, blueX: -1.2, blueY: 0, blueScale: 1, blueOpacity: 0.62, redX: 1.1, redY: 0, redScale: 1, redOpacity: 0.5 },
     { x: 0, y: 0, scale: 0.91, opacity: 0.98, blueX: -1.2, blueY: 0, blueScale: 1, blueOpacity: 0.62, redX: 1.1, redY: 0, redScale: 1, redOpacity: 0.5 },
@@ -48,6 +48,22 @@
     { x: 0, y: 0, scale: 0.91, opacity: 0.97, blueX: -1.8, blueY: 0, blueScale: 1.003, blueOpacity: 0.62, redX: 1.5, redY: 0, redScale: 1.003, redOpacity: 0.48 },
     { x: 0, y: 0, scale: 0.91, opacity: 0.975, blueX: -1.4, blueY: 0, blueScale: 1.001, blueOpacity: 0.62, redX: 1.2, redY: 0, redScale: 1.001, redOpacity: 0.49 }
   ];
+  const wordmarkFrames = rawWordmarkFrames.map(function (frame) {
+    return {
+      x: frame.x * 0.72,
+      y: frame.y * 0.72,
+      scale: 0.88 + ((frame.scale - 0.91) * 0.58),
+      opacity: 0.96 + ((frame.opacity - 0.96) * 0.55),
+      blueX: frame.blueX * 0.36,
+      blueY: frame.blueY * 0.5,
+      blueScale: 1 + ((frame.blueScale - 1) * 0.42),
+      blueOpacity: 0.48 + ((frame.blueOpacity - 0.48) * 0.5),
+      redX: frame.redX * 0.34,
+      redY: frame.redY * 0.5,
+      redScale: 1 + ((frame.redScale - 1) * 0.4),
+      redOpacity: 0.4 + ((frame.redOpacity - 0.4) * 0.5)
+    };
+  });
 
   const applyTheme = function (theme) {
     const resolved = theme === "light" ? "light" : "dark";
