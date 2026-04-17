@@ -60,6 +60,7 @@ target_link_libraries(
 
 add_executable(
   sg_preflight_native_shell WIN32
+  src/audio_player.cpp
   src/backend_bridge.cpp
   src/main.cpp
   src/texture_loader.cpp
@@ -76,6 +77,7 @@ target_link_libraries(
   PRIVATE
     sg_preflight_imgui
     nlohmann_json::nlohmann_json
+    winmm
 )
 
 if(MSVC)

@@ -83,6 +83,8 @@ The native shell scaffold extends that with:
 - a Windows-first Dear ImGui shell that can move closer to the eventual broader 3D-department operator surface
 - repo-root and local-Python auto-discovery so the built exe can still call the Python backend when launched from `build\...\Release`
 - runtime discovery of the local `UnleashedRecompResources` bundle so the native shell can use real DDS chrome instead of only procedural approximations
+- borderless fullscreen startup by default plus a calmer installer-style screen flow, so the native shell behaves more like a dedicated operator surface than a debug dashboard
+- local WAV-based UI cues plus an optional looping installer-music toggle, both fed from the same local Unleashed resource bundle when it exists
 
 What it still does not try to do:
 

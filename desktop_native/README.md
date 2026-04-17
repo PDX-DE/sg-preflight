@@ -33,6 +33,13 @@ Current native-shell milestone:
 - local open / reveal actions
 - broader copy/export surfaces for Jira, QA Hero, pre-delivery, delivery-doc, quick-update, and full handoff text
 - bottom button-guide band
+- borderless fullscreen startup by default, so the shell reads like a dedicated operator surface instead of a floating tool window
+- calmer installer-style screen flow instead of one dense dashboard:
+  - `SELECT`
+  - `RUN`
+  - `EVIDENCE`
+  - `FILES`
+  - `STAGES`
 - translated Unleashed-style shell systems in native code instead of stock ImGui widgets:
   - animated scanline header bars
   - amber title + activity-square choreography
@@ -40,10 +47,12 @@ Current native-shell milestone:
   - animated action-tab highlight motion
   - selection cards for profiles, recent runs, evidence, and artifacts
   - local cue hooks for cursor / confirm / error feedback
+  - installer-style screen transitions and hero treatment
 - runtime Unleashed resource discovery:
   - auto-detects a local `UnleashedRecompResources` / `UnleashedRecompResources-main` bundle when present beside the repo
   - loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures into the D3D11 shell
   - keeps direct OTF font loading temporarily instead of consuming `im_font_atlas.bin` because the upstream atlas is tied to the custom `ImFontAtlasSnapshot` path and exact ImGui snapshot format
+  - loads local WAV cues and optional installer background music from that same bundle, with shell-side toggles under `STAGES`
 
 ## Build
 

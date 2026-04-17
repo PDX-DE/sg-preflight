@@ -77,6 +77,7 @@ This tool is intentionally aimed at pain that is both:
 - experimental native desktop shell in `desktop_native/`, using C++ + Dear ImGui over the same Python action/evidence backend rather than a second validation engine
   - the native shell now auto-discovers the repo root from the built executable path, resolves a local workspace Python when present, and translates more of the Unleashed-style interaction systems into custom chrome: animated scanline bars, amber title choreography, framed containers, animated action tabs, selection cards, cue hooks, and a bottom button guide
   - when `UnleashedRecompResources` is available locally, the native shell now loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures at runtime instead of only drawing hand-made approximations; fonts still use direct OTF loading for now instead of the upstream prebuilt atlas snapshot
+  - the native shell now starts borderless fullscreen by default, uses a calmer installer-style screen flow (`Select`, `Run`, `Evidence`, `Files`, `Stages`) instead of one overloaded dashboard, and adds local WAV-based UI cues plus an optional installer-music toggle in `Stages`
 
 ## Quick start
 
