@@ -422,8 +422,15 @@ def merge_checker_evidence(*items: dict[str, Any]) -> dict[str, Any]:
     )
     seen: set[tuple[Any, ...]] = set()
     checker_map: dict[str, dict[str, Any]] = {}
+    extra_followups: list[str] = []
 
     for item in items:
+        for followup in item.get("manual_followups", []):
+            if not isinstance(followup, str):
+                continue
+            text = followup.strip()
+            if text and text not in extra_followups:
+                extra_followups.append(text)
         for checker in item.get("checkers", []):
             if not isinstance(checker, dict):
                 continue
@@ -442,7 +449,12 @@ def merge_checker_evidence(*items: dict[str, Any]) -> dict[str, Any]:
                 _append_issue(merged, dict(affected), seen)
 
     merged["checkers"] = [checker_map[name] for name in sorted(checker_map)]
-    return _finalize(merged)
+    merged = _finalize(merged)
+    if extra_followups:
+        merged["manual_followups"] = extra_followups + [
+            note for note in merged.get("manual_followups", []) if note not in extra_followups
+        ]
+    return merged
 
 
 def parse_repo_checker_outputs(

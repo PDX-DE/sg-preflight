@@ -5,6 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 import unittest
+from unittest import mock
+
+from sg_preflight.cli import main
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +61,23 @@ class TestCLI(unittest.TestCase):
         self.assertIn("checkall_bat", checker_keys)
         self.assertIn("delivery_checklist", checker_keys)
         self.assertIn("bmw_smoke", checker_keys)
+
+    def test_desktop_help_is_available(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "desktop", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertIn("experimental desktop operator shell", result.stdout.lower())
+
+    def test_desktop_command_dispatches_to_runner(self) -> None:
+        with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=7) as runner:
+            result = main(["desktop", "--profile", "G65"])
+        self.assertEqual(result, 7)
+        runner.assert_called_once_with(initial_profile_id="G65")
 
     def test_good_demo_passes(self) -> None:
         result = subprocess.run(

@@ -31,6 +31,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - working tree: the main status/docs narrative now treats the browser UI as the current SG QA operator surface, keeps future desktop GUI work explicitly research-only, and removes Unity/AssetRipper recovery notes from the main product-status story
 - working tree: repo-checker and scene-check runs now parse frozen real checker outputs into structured file-level evidence, and that evidence now flows through action pages, Files And Proof, stage readiness, and stage-specific copy exports
 - working tree: unused-resource and delivery-checklist actions now feed the same structured checker-evidence flow, and the Python 3.11-incompatible nested f-string in `ui.py` is fixed so GitHub Actions can import the operator UI again
+- working tree: `qa_stack` now aggregates child checker evidence into one parent payload, and the first experimental PySide6 desktop operator shell can run the same SG actions, show the same checker evidence, expose blockers/manual cards, and open local files without replacing the browser UI
 
 #### 2026-04-16
 

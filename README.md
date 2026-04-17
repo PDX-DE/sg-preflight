@@ -72,7 +72,7 @@ This tool is intentionally aimed at pain that is both:
 - Python core engine
 - CLI over the same engine
 - local web UI as the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos
-- future desktop GUI wrapper later if the workflow needs richer local-system-heavy orchestration, built on the same engine rather than replacing it
+- experimental desktop operator shell over the same engine for faster local file opening, blocker visibility, and checker-evidence triage without replacing the browser UI
 
 ## Quick start
 
@@ -122,6 +122,13 @@ Start the local operator UI:
 
 ```bash
 python -m sg_preflight ui --reload
+```
+
+Start the experimental desktop operator shell:
+
+```bash
+python -m pip install -e .[desktop]
+python -m sg_preflight desktop --profile G65
 ```
 
 List the one-click SG QA actions:
@@ -185,7 +192,7 @@ Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-
 Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate-pilot-playbook.md).
 QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-alignment.md).
 SG checker coverage lives in [docs/sg-checker-coverage-matrix.md](docs/sg-checker-coverage-matrix.md).
-Future desktop-shell research lives under [docs/research](docs/research) and stays separate from the main SG QA / checker / evidence narrative.
+Future desktop-shell research and visual-direction notes live under [docs/research](docs/research), while the experimental shell itself still wraps the same Python actions, reports, and evidence model.
 
 Run the full smoke-test flow:
 

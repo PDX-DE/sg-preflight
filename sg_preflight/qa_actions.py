@@ -14,6 +14,7 @@ from typing import Any
 import openpyxl
 
 from sg_preflight.checker_evidence import (
+    merge_checker_evidence,
     parse_delivery_checklist_log,
     parse_repo_checker_outputs,
     parse_scene_check_output,
@@ -680,6 +681,31 @@ def _artifact(label: str, path: Path) -> dict[str, str]:
     return {"label": label, "path": str(path)}
 
 
+def _summary_checker_evidence(summary: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(summary, dict):
+        return None
+    evidence = summary.get("checker_evidence")
+    return evidence if isinstance(evidence, dict) else None
+
+
+def aggregate_child_checker_evidence(
+    *summaries: dict[str, Any] | None,
+    raw_log_path: str = "",
+    source_kind: str = "profile_stack",
+) -> dict[str, Any] | None:
+    evidence_items = [
+        evidence
+        for evidence in (_summary_checker_evidence(summary) for summary in summaries)
+        if evidence is not None
+    ]
+    if not evidence_items:
+        return None
+    merged = merge_checker_evidence(*evidence_items)
+    merged["raw_log_path"] = raw_log_path
+    merged["source_kind"] = source_kind
+    return merged
+
+
 def _nested_action_record(parent: ActionRecord, action: OperatorAction, slug: str) -> ActionRecord:
     run_id = f"{parent.run_id}-{slug}"
     output_root = operator_ui_actions_root(Path(parent.workspace_root)) / run_id
@@ -707,6 +733,34 @@ def _nested_action_record(parent: ActionRecord, action: OperatorAction, slug: st
             "xlsx_report": str(output_root / "scene-check.xlsx"),
         },
     )
+
+
+def _complete_nested_action_record(
+    record: ActionRecord,
+    summary: dict[str, Any],
+    artifacts: list[dict[str, str]],
+    notes: list[str],
+) -> None:
+    record.summary = summary
+    record.artifacts = artifacts
+    record.notes = notes
+    record.status = "completed"
+    record.completed_at_utc = utc_now()
+    record.progress = build_progress_payload(
+        ACTION_PROGRESS_PLANS.get(record.kind, (("queued", "Queued"), ("finalize", "Finalize action record"))),
+        step_key="finalize",
+        percent=100,
+        label="Action completed",
+        detail="The generated files and summary are ready to open.",
+        events=_merged_progress_events(
+            record.progress,
+            step_key="finalize",
+            label="Action completed",
+            detail="The generated files and summary are ready to open.",
+        ),
+    )
+    _save_action_summary(record)
+    save_action_record(record)
 
 
 def _log(record: ActionRecord, text: str) -> None:
@@ -998,6 +1052,10 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         ]
     )
     notes.extend(f"Preflight: {note}" for note in preflight.notes[:3])
+    repo_summary: dict[str, Any] | None = None
+    unused_summary: dict[str, Any] | None = None
+    scene_summary: dict[str, Any] | None = None
+    delivery_summary: dict[str, Any] | None = None
 
     repo_action = get_operator_action(
         f"repo_checker_profile__{profile.profile_id.lower()}",
@@ -1027,7 +1085,8 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
                 "command": repo_record.command_preview,
             },
         )
-        repo_summary, repo_artifacts, _ = _execute_repo_checker(repo_record, root)
+        repo_summary, repo_artifacts, repo_notes = _execute_repo_checker(repo_record, root)
+        _complete_nested_action_record(repo_record, repo_summary, repo_artifacts, repo_notes)
         lines.append(
             "Repo checker: "
             f"{repo_summary.get('style_issue_count', 0)} style issue(s), "
@@ -1066,7 +1125,8 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
                 "command": unused_record.command_preview,
             },
         )
-        unused_summary, unused_artifacts, _ = _execute_unused_resources(unused_record, root)
+        unused_summary, unused_artifacts, unused_notes = _execute_unused_resources(unused_record, root)
+        _complete_nested_action_record(unused_record, unused_summary, unused_artifacts, unused_notes)
         lines.append(
             "Unused resources: "
             f"{unused_summary.get('unused_count', 0)} candidate file(s) reported"
@@ -1103,7 +1163,8 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
                 "command": scene_record.command_preview,
             },
         )
-        scene_summary, scene_artifacts, _ = _execute_scene_check(scene_record, root)
+        scene_summary, scene_artifacts, scene_notes = _execute_scene_check(scene_record, root)
+        _complete_nested_action_record(scene_record, scene_summary, scene_artifacts, scene_notes)
         lines.append(
             "Scene check: "
             f"{scene_summary.get('checked_scenes', 0)} scenes checked, "
@@ -1141,7 +1202,8 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
                 "command": delivery_record.command_preview,
             },
         )
-        delivery_summary, delivery_artifacts, _ = _execute_delivery_checklist(delivery_record, root)
+        delivery_summary, delivery_artifacts, delivery_notes = _execute_delivery_checklist(delivery_record, root)
+        _complete_nested_action_record(delivery_record, delivery_summary, delivery_artifacts, delivery_notes)
         lines.append(
             "Delivery checklist: "
             + "; ".join(str(line) for line in delivery_summary.get("lines", [])[:2])
@@ -1184,11 +1246,27 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
     else:
         lines.append(f"BMW screenshot smoke: blocked - {bmw_action.blocker_message}")
 
+    checker_evidence = aggregate_child_checker_evidence(
+        repo_summary,
+        unused_summary,
+        scene_summary,
+        delivery_summary,
+        raw_log_path=record.paths["log"],
+        source_kind="profile_stack",
+    )
+    if checker_evidence is not None and checker_evidence.get("top_paths"):
+        first_path = checker_evidence["top_paths"][0]
+        first_line = f" line {first_path['line']}" if first_path.get("line") not in (None, "") else ""
+        lines.append(
+            f"Open first: {first_path['path']}{first_line} ({first_path.get('checker', 'checker')}) - {first_path.get('message', '')}"
+        )
     summary = {
         "title": f"Recommended QA Stack - {profile.profile_id}",
         "lines": lines,
         "profile_id": profile.profile_id,
     }
+    if checker_evidence is not None:
+        summary["checker_evidence"] = checker_evidence
     return summary, artifacts, notes
 
 

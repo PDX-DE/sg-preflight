@@ -300,6 +300,16 @@ starting  luacheck on  12  files
             self.assertTrue(any("2 style issue(s)" in line for line in lines))
             self.assertTrue(any("Scene check: blocked" in line for line in lines))
             self.assertTrue(any("BMW screenshot smoke: blocked" in line for line in lines))
+            checker_evidence = record.summary.get("checker_evidence", {})
+            self.assertFalse(checker_evidence.get("summary_only", True))
+            self.assertEqual(
+                checker_evidence.get("top_paths", [{}])[0].get("path"),
+                str(profile.project_root / "resources" / "textures" / "unused_diffuse.png"),
+            )
+            self.assertIn(
+                "unused_resources",
+                checker_evidence.get("top_paths", [{}])[0].get("checkers", []),
+            )
 
 
 if __name__ == "__main__":

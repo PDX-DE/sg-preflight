@@ -1,6 +1,6 @@
 # Desktop GUI Architecture Notes
 
-This is a research note for the future desktop operator shell.
+This is a research note for the desktop operator shell track.
 
 ## Current product shape
 
@@ -11,6 +11,7 @@ This is a research note for the future desktop operator shell.
 - local web UI over the same engine
 
 That is the shipping product surface today.
+An experimental Desktop Operator Shell v0 now exists, but it is still intentionally thin and still depends on the same Python core plus the same persisted action/run records.
 
 ## Future direction
 
@@ -22,6 +23,12 @@ Python core engine
   -> local web UI
   -> desktop GUI wrapper
 ```
+
+The important part is unchanged:
+
+- browser UI stays useful
+- desktop stays a wrapper
+- the Python engine remains the product core
 
 ## Rules
 
@@ -42,6 +49,23 @@ A browser-only surface becomes limiting once the workflow leans harder on:
 - BMW-side scripts once access exists
 
 At that point, a desktop wrapper becomes the better operator shell.
+
+## Current v0 scope
+
+The current experimental shell is intentionally narrow:
+
+- live profile list
+- recommended SG action list per profile
+- background action execution over the existing action system
+- progress, log-tail, and blocker visibility from the same persisted records
+- checker-evidence `Open first` triage
+- local file open / reveal actions
+
+What it still does not try to do:
+
+- replace the browser UI
+- replace report generation or handoff generation
+- automate BMW-only stages that are still blocked here
 
 ## What should not change
 

@@ -24,7 +24,8 @@ See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflo
 See [sg-checker-coverage-matrix.md](sg-checker-coverage-matrix.md) for the real SG checker inventory and current integration coverage.
 
 The browser UI is the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos.
-If a richer local shell is needed later for filesystem-heavy or tool-orchestration-heavy work, it should be a desktop wrapper over the same Python core rather than a replacement engine.
+An experimental desktop operator shell now exists for the same workflow when local file opening, blocker visibility, or checker-evidence triage is easier outside the browser.
+It still wraps the same Python core, actions, reports, and evidence model rather than introducing a second engine.
 Future desktop-shell notes belong under `docs/research/` so the main workflow docs stay focused on SG QA reality, `.pdx/checkers`, evidence, readiness, and BMW blocker visibility.
 
 ## Start
@@ -33,6 +34,13 @@ From the repository root:
 
 ```bash
 python -m sg_preflight ui --reload
+```
+
+Experimental desktop shell:
+
+```bash
+python -m pip install -e .[desktop]
+python -m sg_preflight desktop --profile G65
 ```
 
 PowerShell launcher:
@@ -46,6 +54,9 @@ Default address:
 ```text
 http://127.0.0.1:8765/ui
 ```
+
+The desktop shell does not replace this browser flow.
+It is a local wrapper over the same action/run records for cases where `Open file`, `Reveal in Explorer`, and blocker-heavy QA triage are better outside `localhost`.
 
 Shared shell:
 

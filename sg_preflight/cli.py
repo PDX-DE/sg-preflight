@@ -270,6 +270,13 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
     ui.add_argument("--reload", action="store_true", help="Reload automatically when local UI files change")
 
+    desktop = sub.add_parser(
+        "desktop",
+        help="Start the experimental desktop operator shell",
+        description="Start the experimental desktop operator shell",
+    )
+    desktop.add_argument("--profile", help="Optional initial profile id to focus when the shell opens")
+
     demo_good = sub.add_parser("demo-good", help="Run the good demo bundle")
     demo_good.add_argument("--fail-on", default="error", choices=["error", "warning", "never"])
 
@@ -418,6 +425,14 @@ def main(argv: list[str] | None = None) -> int:
         from sg_preflight.ui import run_ui
 
         return run_ui(host=args.host, port=args.port, reload=args.reload)
+
+    if args.command == "desktop":
+        try:
+            from sg_preflight.desktop.app import run_desktop_app
+            return run_desktop_app(initial_profile_id=args.profile or "")
+        except RuntimeError as exc:
+            print(_console_safe(str(exc)), file=sys.stderr)
+            return 1
 
     if args.command == "demo-good":
         result = execute_bundle_run(
