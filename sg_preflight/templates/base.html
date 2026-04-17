@@ -27,8 +27,8 @@
       <details class="inline-help shell-help">
         <summary>What is this for?</summary>
         <div class="inline-help-panel">
-          <strong>Use this to check one SG car before review.</strong>
-          <p>Start with what changed, run the recommended check, open the first file that matters, then copy the ready-made note into Jira, QA Hero, or a handoff.</p>
+          <strong>This is the fastest local way to check one SG car before review.</strong>
+          <p>Start with what changed, run the recommended check, open the right source file, then leave behind reusable SG-side evidence in Jira, QA Hero, or a handoff.</p>
           <p>If you only remember one rule: start from <strong>what changed</strong>, not from a car code.</p>
         </div>
       </details>
@@ -41,7 +41,7 @@
     </nav>
   </header>
 
-  <main class="page-shell">
+  <main class="page-shell {% block page_shell_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
 

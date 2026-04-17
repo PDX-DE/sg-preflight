@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Result {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
 {% block body_attrs %}data-run-status="{{ record.status }}" data-run-id="{{ record.run_id }}"{% endblock %}
+{% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
 {% block content %}
 {% set problem = first_problem if first_problem is defined and first_problem else {
   "title": "This result needs a page refresh",
@@ -38,7 +39,7 @@
   "Restart the local operator UI and reload this page.",
   "Open files and proof after the page reloads cleanly.",
 ] %}
-<section class="hero-panel hero-panel--simple">
+<section class="hero-panel hero-panel--simple hero-panel--compact">
   <div class="hero-copy">
     <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Check result{% endif %}</p>
     <h2>{{ record.profile_id }} checked</h2>
@@ -61,7 +62,7 @@
   </div>
 </section>
 
-<section class="guide-strip" data-guide>
+<section class="guide-strip guide-strip--compact" data-guide>
   <article class="guide-card">
     <span class="guide-step">1</span>
     <strong>Read the first thing to do</strong>
@@ -120,7 +121,7 @@
   </article>
 </section>
 
-<section class="quick-result-grid">
+<section class="quick-result-grid quick-result-grid--wide">
   <article class="panel panel--priority">
     <div class="panel-head">
       <h3>First thing to do</h3>

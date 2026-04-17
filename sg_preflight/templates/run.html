@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Run {{ profile.profile_id }} - SG Preflight Operator UI{% endblock %}
+{% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
 {% block content %}
 {% set launch = primary_launch if primary_launch is defined and primary_launch else {
   "kind": "action",
@@ -14,7 +15,7 @@
 {% set available_packs = packs if packs is defined else ["anchors", "constants", "carpaints", "project_sanity"] %}
 {% set custom_packs = selected_packs if selected_packs is defined else available_packs %}
 {% set stage = selected_stage if selected_stage is defined else none %}
-<section class="hero-panel hero-panel--simple">
+<section class="hero-panel hero-panel--simple hero-panel--compact">
   <div class="hero-copy">
     <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% elif selected_job %}{{ selected_job.short_label }}{% else %}Car check{% endif %}</p>
     <h2>{{ profile.profile_id }} - {{ profile.label }}</h2>
@@ -34,7 +35,7 @@
   </div>
 </section>
 
-<section class="guide-strip" data-guide>
+<section class="guide-strip guide-strip--compact" data-guide>
   <article class="guide-card">
     <span class="guide-step">1</span>
     <strong>Press the big button first</strong>

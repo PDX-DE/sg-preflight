@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Action {{ record.label }} - SG Preflight Operator UI{% endblock %}
 {% block body_attrs %}data-action-status="{{ record.status }}" data-action-run-id="{{ record.run_id }}"{% endblock %}
+{% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
 {% block content %}
 {% set action_summary = action_result if action_result is defined and action_result else {
   "title": "This action summary did not load cleanly",
@@ -11,11 +12,11 @@
 } %}
 {% set action_links = links if links is defined else [] %}
 {% set progress = record.progress if record.progress is defined and record.progress else none %}
-<section class="hero-panel hero-panel--simple">
+<section class="hero-panel hero-panel--simple hero-panel--compact">
   <div class="hero-copy">
     <p class="eyebrow">Automation result</p>
     <h2>{{ record.label }}</h2>
-    <p class="hero-text">This page shows what the automation ran, what it produced, and what to open next.</p>
+    <p class="hero-text">This is the fastest useful summary of what the automation ran, what it produced, and what to open next.</p>
   </div>
   <div class="hero-actions hero-actions--stack">
     <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% elif record.status == 'blocked' %}warn{% else %}warn{% endif %}" id="action-status-pill">{{ record.status }}</span>
@@ -23,7 +24,7 @@
   </div>
 </section>
 
-<section class="guide-strip" data-guide>
+<section class="guide-strip guide-strip--compact" data-guide>
   <article class="guide-card">
     <span class="guide-step">1</span>
     <strong>Read the summary first</strong>
@@ -62,7 +63,7 @@
 </section>
 {% endif %}
 
-<section class="quick-result-grid">
+<section class="quick-result-grid quick-result-grid--wide">
   <article class="panel panel--priority">
     <div class="panel-head">
       <h3>What happened</h3>
@@ -133,9 +134,9 @@
 </section>
 
 <section class="panel">
-  <details class="foldout" open>
+  <details class="foldout foldout--compact">
     <summary>Show all generated files</summary>
-    <div class="stack tight">
+    <div class="status-grid">
       {% for link in action_links %}
       <div class="status-item">
         <div>
@@ -157,7 +158,10 @@
     <h3>Raw log</h3>
     <p>Raw output from the wrapped SG-side script or action runner.</p>
   </div>
-  <pre class="code-block">{{ log_text }}</pre>
+  <details class="foldout foldout--compact">
+    <summary>Show exact script output</summary>
+    <pre class="code-block code-block--compact">{{ log_text }}</pre>
+  </details>
 </section>
 {% endif %}
 {% endblock %}

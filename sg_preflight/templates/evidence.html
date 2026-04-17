@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Files and proof {{ record.profile_id }} - SG Preflight Operator UI{% endblock %}
+{% block page_shell_class %}page-shell--wide page-shell--dense{% endblock %}
 {% block content %}
 {% set problem = first_problem if first_problem is defined else none %}
 {% set sections = evidence_sections if evidence_sections is defined and evidence_sections else [] %}
@@ -8,7 +9,7 @@
 {% set completeness = evidence_completeness if evidence_completeness is defined else none %}
 {% set doc_exports = documentation_exports if documentation_exports is defined else [] %}
 {% set manual_companion = manual_review_companion if manual_review_companion is defined else none %}
-<section class="hero-panel hero-panel--simple">
+<section class="hero-panel hero-panel--simple hero-panel--compact">
   <div class="hero-copy">
     <p class="eyebrow">{% if stage %}{{ stage.short_label }}{% else %}Files and proof{% endif %}</p>
     <h2>{{ record.profile_id }} - {{ record.profile_label }}</h2>
@@ -19,7 +20,7 @@
   </div>
 </section>
 
-<section class="guide-strip" data-guide>
+<section class="guide-strip guide-strip--compact" data-guide>
   <article class="guide-card">
     <span class="guide-step">1</span>
     <strong>Open the pinned file first</strong>
@@ -132,7 +133,7 @@
 </section>
 {% endif %}
 
-<section class="stack">
+<section class="content-grid content-grid--evidence">
   {% if sections %}
   {% for section in sections %}
   <article class="panel">

@@ -51,6 +51,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Operator UI now defaults to dark mode, keeps a persistent light/dark toggle in the shared header, and also lets teammates hide or show the in-page guide layer without leaving the current screen
 - Home, guided, run, result, evidence, and action pages now lead with a clearer first-time path, inline "what is this?" help popovers, and more explicit step-by-step copy for teammate and PM demos
 - Visible UI labels now use cleaner sentence case instead of old title-case wording across headings, buttons, exports, and helper flows
+- Demo-critical action, result, and Files And Proof pages now use a wider denser layout so the useful summary fits at normal desktop zoom instead of forcing narrow centered browsing
 - Operator UI now starts from "what changed?" guided launchers so teammates can choose constants, anchors, carpaints, or file/reference sanity before choosing a car
 - Run pages now expose a recommended QA stack action per car so teammates can launch the available SG-side automation from one button
 - Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text

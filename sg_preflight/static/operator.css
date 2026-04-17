@@ -194,6 +194,14 @@ pre,
   padding: 1.5rem;
 }
 
+.page-shell--wide {
+  max-width: 1680px;
+}
+
+.page-shell--dense {
+  padding-top: 1.1rem;
+}
+
 .hero-panel,
 .panel,
 .summary-card,
@@ -224,6 +232,11 @@ pre,
   gap: 1.5rem;
   padding: 1.4rem 1.5rem;
   margin-bottom: 1.25rem;
+}
+
+.hero-panel--compact {
+  gap: 1rem;
+  padding: 1.05rem 1.2rem;
 }
 
 .hero-panel--home {
@@ -292,8 +305,20 @@ pre,
   grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
 }
 
+.content-grid--evidence {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.page-shell--wide .content-grid--result {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .panel {
   padding: 1.35rem;
+}
+
+.page-shell--dense .panel {
+  padding: 1rem 1.05rem;
 }
 
 .panel--priority {
@@ -302,6 +327,10 @@ pre,
 
 .panel-head {
   margin-bottom: 1rem;
+}
+
+.page-shell--dense .panel-head {
+  margin-bottom: 0.8rem;
 }
 
 .panel-head--with-help {
@@ -442,6 +471,16 @@ pre,
   margin-bottom: 1.25rem;
 }
 
+.quick-result-grid--wide {
+  grid-template-columns: minmax(360px, 1.2fr) repeat(2, minmax(280px, 1fr));
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.75rem;
+}
+
 .workflow-card {
   display: flex;
   flex-direction: column;
@@ -518,12 +557,21 @@ pre,
   margin-bottom: 1.25rem;
 }
 
+.guide-strip--compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
 .guide-card {
   padding: 1rem 1.05rem;
   border-radius: var(--radius-lg);
   background: var(--surface-raised);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
+}
+
+.page-shell--dense .guide-card {
+  padding: 0.82rem 0.9rem;
 }
 
 .guide-step {
@@ -537,6 +585,13 @@ pre,
   background: var(--accent);
   color: #09110e;
   font-weight: 800;
+}
+
+.page-shell--dense .guide-step {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
 }
 
 .guide-card strong {
@@ -627,6 +682,15 @@ pre,
   padding: 0.9rem 1rem;
 }
 
+.page-shell--dense .status-item,
+.page-shell--dense .audit-item,
+.page-shell--dense .run-card,
+.page-shell--dense .evidence-item,
+.page-shell--dense .finding-group,
+.page-shell--dense .empty-state {
+  padding: 0.8rem 0.9rem;
+}
+
 .status-item,
 .audit-item,
 .run-card {
@@ -646,6 +710,10 @@ pre,
   gap: 1rem;
   margin: 0.6rem 0 0.8rem;
   color: var(--muted);
+}
+
+.page-shell--dense .summary-inline {
+  margin: 0.4rem 0 0.65rem;
 }
 
 .summary-inline strong {
@@ -668,6 +736,14 @@ pre,
 
 .step-list li + li {
   margin-top: 0.55rem;
+}
+
+.page-shell--dense .step-list {
+  margin-bottom: 0.8rem;
+}
+
+.page-shell--dense .step-list li + li {
+  margin-top: 0.38rem;
 }
 
 .stack {
@@ -787,6 +863,12 @@ pre {
   font-size: 0.92rem;
 }
 
+.code-block--compact {
+  max-height: 360px;
+  overflow: auto;
+  font-size: 0.85rem;
+}
+
 .note-block {
   background: var(--accent-soft);
   border: 1px solid rgba(107, 198, 163, 0.18);
@@ -823,6 +905,11 @@ pre {
   border: 1px solid var(--border);
   background: var(--surface-glass);
   padding: 0.9rem 1rem;
+}
+
+.foldout--compact {
+  margin-top: 0.45rem;
+  padding: 0.7rem 0.85rem;
 }
 
 .foldout summary {
@@ -1192,6 +1279,7 @@ select {
 @media (max-width: 1100px) {
   .content-grid--home,
   .content-grid--run,
+  .content-grid--evidence,
   .content-grid--result,
   .hero-panel {
     grid-template-columns: 1fr;
