@@ -13,6 +13,11 @@ from tests.operator_helpers import create_temp_g65_profile, write_text
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "checkers"
+
+
+def _checker_fixture(name: str) -> str:
+    return (FIXTURE_ROOT / name).read_text(encoding="utf-8")
 
 
 def _create_checker_files(root: Path) -> None:
@@ -69,20 +74,8 @@ class TestQaActions(unittest.TestCase):
             profile = create_temp_g65_profile(root)
             _create_checker_files(root)
             action = get_operator_action("repo_checker_profile__g65", root, profiles=[profile])
-
-            sample_style_output = """
-Checking C:\\temp\\Cars\\BMW\\G65
-checked 8 files (src: 3; fmt: 7; license: 7)
-detected 2 style guide issues
-""".strip()
-
-            sample_execute_output = """
-############################################
-starting  luacheck on  12  files
-############################################
-0  errors found
-############################################
-""".strip()
+            sample_style_output = _checker_fixture("style_checker_issue.log")
+            sample_execute_output = _checker_fixture("execute_checks_issue.log")
 
             with mock.patch(
                 "sg_preflight.qa_actions.subprocess.run",
@@ -106,9 +99,75 @@ starting  luacheck on  12  files
                 self.assertTrue(Path(record.paths["log"]).exists())
                 self.assertTrue(Path(record.paths["summary_json"]).exists())
                 joined = " ".join(record.summary.get("lines", []))
-                self.assertIn("Style checker: 2 style-guide issue(s)", joined)
-                self.assertIn("executeChecks: 0 error batch(es)", joined)
-                self.assertIn("luacheck: 12 file(s)", joined)
+                self.assertIn("Style checker: 1 style-guide issue(s)", joined)
+                self.assertIn("executeChecks: 2 error batch(es)", joined)
+                self.assertIn("luacheck: 124 file(s)", joined)
+                self.assertIn("Open first:", joined)
+                checker_evidence = record.summary.get("checker_evidence", {})
+                self.assertFalse(checker_evidence.get("summary_only", True))
+                self.assertEqual(
+                    checker_evidence.get("top_paths", [{}])[0].get("path"),
+                    r"C:\repo\repositories\trunk\Cars_IDCevo\RollsRoyce\PINT_RR\_Placeholders\scripts\Logic_Placeholder_Hood.lua",
+                )
+                self.assertIn("tabbingcheck", checker_evidence.get("top_paths", [{}])[0].get("checkers", []))
+                self.assertIn("luacheck", checker_evidence.get("top_paths", [{}])[0].get("checkers", []))
+
+    def test_execute_scene_check_action_persists_file_backed_scene_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            _create_checker_files(root)
+            raco_exe = root / "tools" / "RaCoHeadless.exe"
+            write_text(raco_exe, "fixture exe\n")
+
+            scene_error_output = "\n".join(_checker_fixture("scene_check_error.log").splitlines()[1:]).strip()
+            scene_clean_output = "\n".join(_checker_fixture("scene_check_clean.log").splitlines()[1:]).strip()
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "SG_RACO_HEADLESS": str(raco_exe),
+                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
+                },
+                clear=False,
+            ):
+                action = get_operator_action("scene_check__g65", root, profiles=[profile])
+                with mock.patch(
+                    "sg_preflight.qa_actions.subprocess.run",
+                    side_effect=[
+                        subprocess.CompletedProcess(
+                            args=[str(raco_exe)],
+                            returncode=1,
+                            stdout=scene_error_output,
+                            stderr="",
+                        ),
+                        subprocess.CompletedProcess(
+                            args=[str(raco_exe)],
+                            returncode=0,
+                            stdout=scene_clean_output,
+                            stderr="",
+                        ),
+                    ],
+                ):
+                    record = execute_operator_action(action, root)
+
+            self.assertEqual(record.status, "completed")
+            self.assertTrue(Path(record.paths["log"]).exists())
+            self.assertTrue(Path(record.paths["xlsx_report"]).exists())
+            self.assertIn("Scenes with errors: 1", " ".join(record.summary.get("lines", [])))
+            self.assertIn("Open first:", " ".join(record.summary.get("lines", [])))
+            checker_evidence = record.summary.get("checker_evidence", {})
+            self.assertFalse(checker_evidence.get("summary_only", True))
+            self.assertEqual(checker_evidence.get("checked_scenes"), 2)
+            self.assertEqual(checker_evidence.get("scenes_with_errors"), 1)
+            self.assertEqual(
+                checker_evidence.get("top_paths", [{}])[0].get("path"),
+                str(profile.project_root / "main.rca"),
+            )
+            affected = checker_evidence.get("affected_files", [{}])[0]
+            self.assertIn("File Load Error", affected.get("message", ""))
+            self.assertTrue(affected.get("workbook_sheet"))
+            self.assertEqual(affected.get("workbook_row"), 2)
 
     def test_execute_unused_resource_action_persists_log_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

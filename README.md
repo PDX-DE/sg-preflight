@@ -162,10 +162,11 @@ It provides:
 - Guided checks: show one recommended car first, then keep the other cars in a separate secondary section; the selected workflow stage stays attached when you start from the stage launcher
 - Run: one primary button only, plus a visible `Files this check will use` block; quick-check and alternate actions stay behind foldouts, and workflow-stage context now persists into quick checks too
 - Result: a primary `First Thing To Do` panel, direct source-file link for the first problem, a stage-aware handoff copy action, a `Stage Readiness` panel, and a `Changed Since Last Check` comparison against the previous completed run for the same profile
+- Result and action pages: repo-checker and scene-check runs now surface structured checker-derived evidence, including `Open these files first` guidance, concrete affected paths, and copy-ready SG checker references instead of only raw logs
 - Live progress: long-running runs and actions now show a `NOW LOADING...` overlay with estimated progress, coarse ETA, full step visibility, persisted framework events, live action-log tail, and clickable per-step drilldown with nested child-status detail where available
 - Guidance: Home, Run, and Result pages now include explicit "if you are unsure, do this" blocks so teammate pilots can stay on the main path without exploring every foldout
 - Result and Files And Proof: evidence-completeness scoring, explicit proof/manual/blocked grouping, richer stage-specific exports for Jira / QA Hero / pre-delivery use, and a manual-review companion with screenshot-slot and Blender-vs-RaCo copy blocks
-- Files And Proof: grouped `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned when a finding exists plus the same stage-readiness summary for evidence completeness
+- Files And Proof: grouped `Reports`, `Source-of-truth files`, `Run metadata`, and checker-derived evidence links, with the first relevant SG file pinned when a finding exists plus the same stage-readiness summary for evidence completeness
 - One-click actions for the wider SG QA flow:
   - daily live matrix
   - full mirrored repo checker coverage for `checkall.bat` scope, exposed as `repo_checker_all` without calling the batch wrapper directly

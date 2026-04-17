@@ -13,6 +13,7 @@ from typing import Any
 
 import openpyxl
 
+from sg_preflight.checker_evidence import parse_repo_checker_outputs, parse_scene_check_output
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.services import (
     RunRequest,
@@ -843,6 +844,30 @@ def _scene_error_blocks(output: str) -> list[str]:
     return errors
 
 
+def _attach_scene_workbook_refs(
+    checker_evidence: dict[str, Any],
+    workbook_refs: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    affected = checker_evidence.get("affected_files", [])
+    if not isinstance(affected, list):
+        return checker_evidence
+
+    refs_by_path = {
+        path: [dict(item) for item in refs]
+        for path, refs in workbook_refs.items()
+    }
+    for item in affected:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "")).strip()
+        if not path or path not in refs_by_path or not refs_by_path[path]:
+            continue
+        ref = refs_by_path[path].pop(0)
+        item["workbook_sheet"] = ref.get("workbook_sheet")
+        item["workbook_row"] = ref.get("workbook_row")
+    return checker_evidence
+
+
 def _execute_daily_live_matrix(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     profiles = list_run_profiles(root)
     lines = []
@@ -1228,6 +1253,11 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
     )
     style_summary = _parse_style_checker_output(style_output)
     checker_summary = _parse_repo_checker_output(checker_output)
+    checker_evidence = parse_repo_checker_outputs(
+        style_output,
+        checker_output,
+        raw_log_path=record.paths["log"],
+    )
     summary = {
         "title": "Repo checker result",
         "lines": [
@@ -1245,6 +1275,7 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
         "reported_error_batches": checker_summary.get("reported_error_batches", 0),
         "execute_return_code": result.returncode,
         "phases": list(checker_summary.get("lines", [])),
+        "checker_evidence": checker_evidence,
     }
     phase_lines = [
         line
@@ -1253,6 +1284,12 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
     ]
     if phase_lines:
         summary["lines"].append("Phases: " + "; ".join(phase_lines))
+    if checker_evidence.get("top_paths"):
+        first_path = checker_evidence["top_paths"][0]
+        first_line = f" line {first_path['line']}" if first_path.get("line") not in (None, "") else ""
+        summary["lines"].append(
+            f"Open first: {first_path['path']}{first_line} ({first_path.get('checker', 'checker')}) - {first_path.get('message', '')}"
+        )
     summary["lines"].append(
         f"Exit codes: style={style_result.returncode}, executeChecks={result.returncode}."
     )
@@ -1527,6 +1564,7 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
 def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     status_map = _status_map(root)
     raco_exe = _path_from_status(status_map, "raco_headless")
+    scene_checker = root / "repositories" / "trunk" / "check_scenes.py"
     project_root = Path(record.project_root)
     scenes = sorted(project_root.rglob("*.rca"))
     total_scenes = max(len(scenes), 1)
@@ -1534,6 +1572,7 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
     workbook.remove(workbook.active)
     scene_errors = 0
     log_lines: list[str] = []
+    workbook_refs: dict[str, list[dict[str, Any]]] = {}
 
     _set_action_progress(
         record,
@@ -1582,13 +1621,26 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
         sheet.append([str(scene)])
         title_cell = sheet.cell(column=1, row=1)
         title_cell.font = openpyxl.styles.Font(size=16, bold=True)
-        for item in errors:
+        workbook_refs[str(scene)] = []
+        for row_index, item in enumerate(errors, start=2):
             sheet.append([item])
+            workbook_refs[str(scene)].append(
+                {
+                    "workbook_sheet": sheet.title,
+                    "workbook_row": row_index,
+                }
+            )
         sheet.column_dimensions["A"].width = 155
         for cell in sheet["A"]:
             cell.alignment = openpyxl.styles.Alignment(wrap_text=True)
 
-    _write_text(Path(record.paths["log"]), "\n".join(log_lines).strip() + ("\n" if log_lines else ""))
+    scene_log = "\n".join(log_lines).strip() + ("\n" if log_lines else "")
+    _write_text(Path(record.paths["log"]), scene_log)
+    checker_evidence = parse_scene_check_output(
+        scene_log,
+        raw_log_path=record.paths["log"],
+        workbook_path=record.paths["xlsx_report"],
+    )
     artifacts = [
         _artifact("Scene checker log", Path(record.paths["log"])),
         _artifact("Scene checker script", scene_checker),
@@ -1598,6 +1650,7 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
         workbook_path.parent.mkdir(parents=True, exist_ok=True)
         workbook.save(workbook_path)
         artifacts.append(_artifact("Scene checker workbook", workbook_path))
+        checker_evidence = _attach_scene_workbook_refs(checker_evidence, workbook_refs)
     workbook.close()
 
     summary = {
@@ -1608,7 +1661,13 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
         ],
         "checked_scenes": len(scenes),
         "scenes_with_errors": scene_errors,
+        "checker_evidence": checker_evidence,
     }
+    if checker_evidence.get("top_paths"):
+        first_path = checker_evidence["top_paths"][0]
+        summary["lines"].append(
+            f"Open first: {first_path['path']} - {first_path.get('message', '')}"
+        )
     return summary, artifacts, []
 
 

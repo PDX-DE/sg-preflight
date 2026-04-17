@@ -1,0 +1,4 @@
+﻿Checking scene: C:\repo\repositories\trunk\Cars_IDCevo\BMW\G65\main\Main_G65.rca
+[I] [04/17/26 14:24:00:916759] [LOGGING] [log.cpp:177] [raco::log_system::init] log_system initialized logFileName: C:\Users\Operator\AppData\Roaming\RamsesComposer\logs\RaCoHeadless-1652.log
+GetConsoleMode failed: color output might be broken
+[1;37m20260417-14:24:00.924[0m | [1;32mInfo [0m | [1;36mRFRA[0m | R.main: RamsesLogger::setLogHandler: adding a user logger

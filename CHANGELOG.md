@@ -29,6 +29,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - `2021122` `feat(operator): align qa actions with sg checker flow`
 - working tree: SG checker coverage now has a shared discovery/catalog layer, `checkall.bat` scope is covered through `repo_checker_all`, and the main docs now split current operator-surface narrative from future desktop-shell research
 - working tree: the main status/docs narrative now treats the browser UI as the current SG QA operator surface, keeps future desktop GUI work explicitly research-only, and removes Unity/AssetRipper recovery notes from the main product-status story
+- working tree: repo-checker and scene-check runs now parse frozen real checker outputs into structured file-level evidence, and that evidence now flows through action pages, Files And Proof, stage readiness, and stage-specific copy exports
 
 #### 2026-04-16
 
@@ -75,6 +76,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Delivery-checklist actions now write their own readiness summary and log, including mirrored checklist assets plus BMW repo/helper discovery, instead of pretending the external BMW-owned checklist flow is runnable end-to-end on this machine
 - Per-car QA actions now also wrap `.pdx\checkers\printNotUsedResources.py`, and the recommended QA stack now includes a local unused-resource scan before the later manual or BMW-blocked stages
 - Repo-checker actions now wrap the real SG checker stack more truthfully by running `code_style_checker\check_all_styles.py` before `.pdx\checkers\executeChecks.py`, and their summaries now report style/license scope plus execute-check phase coverage instead of pretending the wrapper is only one script
+- Repo-checker and scene-check actions now parse their raw logs into a shared checker-evidence payload, backed by frozen real-output fixtures, so the UI can show `Open these files first`, surface concrete affected paths, and cite SG checker file evidence directly in Jira / QA Hero / delivery copy blocks
 - The top operator path is now a real clickable tutorial rail with arrows, plain-language hints, and page-specific jump targets on Home, guided starts, workflow-stage starts, Run, Result, Files And Proof, and Action pages, so teammates can click straight to the next relevant section instead of treating the strip as decorative chrome
 - The tutorial rail is now compact and readable at normal desktop widths instead of stretching into one tall band; step cards wrap cleanly, use a real arrow separator, and keep the helper text in a usable width
 - Guide cards under the hero no longer dump their paragraph text into the narrow step-number column, so the three-step walkthrough reads in normal sentences instead of one word per line

@@ -8,6 +8,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+from sg_preflight.checker_evidence import parse_repo_checker_log
 from sg_preflight.models import Finding, PackResult, Report
 from sg_preflight.profiles import RunProfile
 from sg_preflight.qa_actions import (
@@ -27,6 +28,11 @@ from sg_preflight.ui import create_app
 from tests.operator_helpers import create_temp_g65_profile, write_text
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "checkers"
+
+
+def _checker_fixture(name: str) -> str:
+    return (FIXTURE_ROOT / name).read_text(encoding="utf-8")
 
 
 class TestOperatorUI(unittest.TestCase):
@@ -432,13 +438,74 @@ class TestOperatorUI(unittest.TestCase):
 
         self.assertEqual(completed_page.status_code, 200)
         self.assertIn("This automation finished", completed_page.text)
-        self.assertIn("Open this now", completed_page.text)
+        self.assertIn("Open these files first", completed_page.text)
+        self.assertNotIn("Checker evidence", completed_page.text)
         self.assertIn("Show all generated files", completed_page.text)
         self.assertIn("Raw log", completed_page.text)
         self.assertEqual(failed_page.status_code, 200)
         self.assertIn("This automation failed before completion", failed_page.text)
         self.assertIn("synthetic failure", failed_page.text)
         self.assertIn("Open the action log first.", failed_page.text)
+
+    def test_action_and_evidence_pages_surface_checker_file_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            action = get_operator_action("repo_checker_profile__g65", root, profiles=[profile])
+            action_record = build_action_record(action, root)
+            action_record.status = "completed"
+            action_record.summary = {
+                "title": "Repo checker result",
+                "lines": [
+                    "Style checker: 1 style-guide issue(s) across 130 checked file(s).",
+                    "executeChecks: 2 error batch(es) across 4 phase(s).",
+                    "Open first: C:\\repo\\repositories\\trunk\\Cars_IDCevo\\RollsRoyce\\PINT_RR\\_Placeholders\\scripts\\Logic_Placeholder_Hood.lua line 16 (luacheck) - line contains only whitespace",
+                ],
+                "checker_evidence": parse_repo_checker_log(
+                    _checker_fixture("repo_checker_issue.log"),
+                    raw_log_path=action_record.paths["log"],
+                ),
+            }
+            write_text(Path(action_record.paths["log"]), _checker_fixture("repo_checker_issue.log"))
+            save_action_task_record(action_record)
+
+            create_response = client.post(
+                "/ui/api/runs",
+                json={
+                    "profile_id": "G65",
+                    "packs": ["anchors", "constants", "carpaints", "project_sanity"],
+                    "fail_on": "never",
+                    "context": {
+                        **profile.default_context,
+                        "workflow_stage": "pre_delivery",
+                        "workflow_stage_label": "Pre-delivery",
+                    },
+                },
+            )
+            self.assertEqual(create_response.status_code, 202)
+            payload = create_response.json()
+
+            action_page = client.get(f"/ui/actions/{action_record.run_id}")
+            result_page = client.get(payload["result_url"])
+            evidence_page = client.get(payload["result_url"] + "/evidence")
+
+        self.assertEqual(action_page.status_code, 200)
+        self.assertIn("Checker evidence", action_page.text)
+        self.assertIn("Logic_Placeholder_Hood.lua", action_page.text)
+        self.assertIn("line contains only whitespace", action_page.text)
+        self.assertIn("Open these files first", action_page.text)
+
+        self.assertEqual(result_page.status_code, 200)
+        self.assertIn("Latest SG checker evidence", result_page.text)
+        self.assertIn("Logic_Placeholder_Hood.lua", result_page.text)
+        self.assertIn("Latest SG checker evidence:", result_page.text)
+
+        self.assertEqual(evidence_page.status_code, 200)
+        self.assertIn("Checker evidence", evidence_page.text)
+        self.assertIn("Logic_Placeholder_Hood.lua", evidence_page.text)
+        self.assertIn("Latest SG checker evidence", evidence_page.text)
 
     def test_running_action_page_renders_live_progress_copy(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

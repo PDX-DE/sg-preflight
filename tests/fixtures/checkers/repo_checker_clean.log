@@ -1,0 +1,35 @@
+﻿=== check_all_styles.py ===
+Checking C:\repo\repositories\trunk\Cars_IDCevo\BMW\G65
+checked 105 files (src: 105; fmt: 105; license: 105)
+your style is awesome! no style guide violations detected.
+
+
+=== executeChecks.py ===
+
+
+############################################
+starting  luacheck on  104  files
+############################################ 
+
+0  errors found
+############################################
+
+
+
+
+############################################
+starting  tabbingcheck on  104  files
+############################################ 
+
+
+
+############################################
+starting  newlinecheck on  104  files
+############################################ 
+
+
+
+############################################
+starting  binarycheck on  24  files
+############################################ 
+

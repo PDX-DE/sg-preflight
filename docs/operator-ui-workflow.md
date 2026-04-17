@@ -127,6 +127,7 @@ Shows:
 - a `Stage Readiness` panel that shows what this run already covers, what is still manual, and what remains blocked on the current machine
 - an `Evidence Completeness` panel that separates local SG proof from full-stage readiness and makes proof/manual/blocked gaps explicit
 - a `Stage-Specific Exports` panel with copy-ready Jira implementation updates, Jira positive and negative test notes, QA Hero notes, pre-delivery summaries, and delivery-doc snippets
+- when recent repo-checker or scene-check actions exist for the same profile, stage exports now also cite concrete SG checker paths automatically instead of only generic checker-summary text
 - a `Manual Review Companion` panel with Blender-vs-RaCo checklist text, screenshot evidence slots, and a copy-ready manual verification record
 - sentence-case labels and section titles throughout the UI so the first read feels less like an internal debug surface
 - grouped findings behind a foldout
@@ -154,6 +155,7 @@ Shows grouped direct links to:
 - the same `Stage Readiness` summary so a teammate can see what evidence is still missing before the next workflow step
 - the same `Evidence Completeness` panel so the proof/manual/blocked split stays visible on the evidence page
 - the same stage-specific copy exports for ticket, QA Hero, pre-delivery, and delivery-doc work
+- a `Checker evidence` section that pulls the latest completed repo-checker and scene-check outputs for the same profile, with direct `Open` links for the top file-backed hits when they exist
 - the same manual-review companion so still-manual checks stay attached to the run evidence instead of living in chat memory
 
 ### Live Loading
@@ -169,6 +171,7 @@ That overlay shows:
 - a selectable per-step detail panel so clicking a step shows exact step events, current target path or command metadata, and nested child-status detail for wrapped automations
 - persisted framework-event history so operators can see every recorded phase transition in order
 - live action-log tail for long-running wrapped automations such as repo checker or scene check
+- completed action pages for repo checker and scene check now prefer `Open these files first` plus structured checker evidence before dropping the operator into the raw log
 
 ## Persistence
 
@@ -254,6 +257,7 @@ Current expectation:
 - use the one-click QA actions when you want repo checker, delivery-checklist readiness, scene check, or the recommended per-car QA stack without touching terminals
 - use `Show SG checker coverage` on Home when someone asks what real SG checker/tooling layer is available on this machine
 - the repo-checker action now wraps the real SG checker stack more truthfully by running `check_all_styles.py` before `executeChecks.py`, so style/license plus Lua/shader/formatting coverage live under one operator action
+- repo-checker and scene-check actions now parse their raw outputs into structured file-backed evidence, so action results, Files And Proof, stage readiness, and copy exports can point to concrete SG files instead of only saying that a checker ran
 - the workspace action list now also exposes a full mirrored repo-checker path for `checkall.bat` scope as `repo_checker_all`
 - the per-car action list now also exposes `printNotUsedResources.py` as an unused-resource scan, so leftover SG resource files can be checked from the same operator surface
 - the per-car action list now also exposes the mirrored `deliveryChecklist` files as a readiness bridge, so SG-side delivery expectations and BMW-side blockers stay visible before smoke or handoff
