@@ -1898,6 +1898,12 @@ details[id] {
 }
 
 .guide-card strong,
+.guide-card p {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.guide-card strong,
 .simple-checklist strong,
 .primary-callout strong,
 .detail-label,
@@ -1910,6 +1916,9 @@ details[id] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: start;
   width: 44px;
   height: 44px;
   border-radius: 12px 2px 12px 2px;
@@ -1921,6 +1930,12 @@ details[id] {
   font-style: italic;
   font-weight: 700;
   line-height: 1;
+}
+
+.guide-card p {
+  margin: 0;
+  line-height: 1.45;
+  text-wrap: pretty;
 }
 
 .quick-start-card,

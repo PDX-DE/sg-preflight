@@ -502,6 +502,8 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn(".loading-overlay--expanded", css)
         self.assertIn("overflow-y: auto", css)
         self.assertIn(".loading-native-screen", css)
+        self.assertIn(".guide-card strong,\n.guide-card p {\n  grid-column: 2;", css)
+        self.assertIn("grid-row: 1 / span 2;", css)
         js = (ROOT / "sg_preflight" / "static" / "operator.js").read_text(encoding="utf-8")
         self.assertIn("const syncOverlayExpandedState = function (resetScroll)", js)
         self.assertIn("if (resetScroll && expanded)", js)
