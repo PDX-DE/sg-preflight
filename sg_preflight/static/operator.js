@@ -13,12 +13,41 @@
   const overlayStepDetail = document.getElementById("loading-step-detail");
   const overlayEvents = document.getElementById("loading-event-list");
   const overlayLogTail = document.getElementById("loading-log-tail");
+  const overlayWordmark = document.querySelector(".loading-native-wordmark");
   const themeToggle = document.getElementById("theme-toggle");
   const guideToggle = document.getElementById("guide-toggle");
   let selectedStepKey = "";
   let nestedStepRequestId = 0;
   let lastOverlayDetailSignature = "";
   let lastOverlayLogSignature = "";
+  let wordmarkFrameIndex = 0;
+  let wordmarkTimerId = 0;
+
+  const wordmarkFrames = [
+    { x: 0, y: 0, scale: 0.91, opacity: 0.98, blueX: -1.2, blueY: 0, blueScale: 1, blueOpacity: 0.62, redX: 1.1, redY: 0, redScale: 1, redOpacity: 0.5 },
+    { x: 0, y: 0, scale: 0.91, opacity: 0.98, blueX: -1.2, blueY: 0, blueScale: 1, blueOpacity: 0.62, redX: 1.1, redY: 0, redScale: 1, redOpacity: 0.5 },
+    { x: 0, y: 0, scale: 0.91, opacity: 0.98, blueX: -1.2, blueY: 0, blueScale: 1, blueOpacity: 0.62, redX: 1.1, redY: 0, redScale: 1, redOpacity: 0.5 },
+    { x: 1, y: -0.4, scale: 0.912, opacity: 0.97, blueX: -2, blueY: 0, blueScale: 1.002, blueOpacity: 0.64, redX: 1.5, redY: 0, redScale: 1.002, redOpacity: 0.52 },
+    { x: 1, y: -0.2, scale: 0.913, opacity: 0.965, blueX: -2.5, blueY: 0, blueScale: 1.004, blueOpacity: 0.66, redX: 1.8, redY: 0, redScale: 1.003, redOpacity: 0.54 },
+    { x: 1.4, y: -0.2, scale: 0.914, opacity: 0.97, blueX: -3, blueY: 0, blueScale: 1.006, blueOpacity: 0.68, redX: 2.2, redY: 0, redScale: 1.004, redOpacity: 0.56 },
+    { x: 0.2, y: 0, scale: 0.91, opacity: 0.965, blueX: -2.1, blueY: 0, blueScale: 1.002, blueOpacity: 0.63, redX: 1.4, redY: 0, redScale: 1.002, redOpacity: 0.51 },
+    { x: 0.2, y: 0, scale: 0.91, opacity: 0.965, blueX: -2.1, blueY: 0, blueScale: 1.002, blueOpacity: 0.63, redX: 1.4, redY: 0, redScale: 1.002, redOpacity: 0.51 },
+    { x: -2.8, y: 0, scale: 0.916, opacity: 0.94, blueX: -18, blueY: 0, blueScale: 1.055, blueOpacity: 0.8, redX: 5, redY: 0, redScale: 1.015, redOpacity: 0.36 },
+    { x: -1.4, y: 0, scale: 0.918, opacity: 0.93, blueX: -28, blueY: 0, blueScale: 1.085, blueOpacity: 0.76, redX: 10, redY: 0, redScale: 1.03, redOpacity: 0.46 },
+    { x: 0.8, y: 0, scale: 0.918, opacity: 0.93, blueX: -22, blueY: 0, blueScale: 1.07, blueOpacity: 0.73, redX: 12, redY: 0, redScale: 1.034, redOpacity: 0.48 },
+    { x: 0, y: 0, scale: 0.92, opacity: 0.91, blueX: -34, blueY: 0, blueScale: 1.115, blueOpacity: 0.6, redX: 18, redY: 0, redScale: 1.055, redOpacity: 0.4 },
+    { x: -2.2, y: 0, scale: 0.914, opacity: 0.94, blueX: -12, blueY: 0, blueScale: 1.03, blueOpacity: 0.66, redX: 6, redY: 0, redScale: 1.018, redOpacity: 0.44 },
+    { x: -2.6, y: 0, scale: 0.913, opacity: 0.945, blueX: -9, blueY: 0, blueScale: 1.024, blueOpacity: 0.64, redX: 5, redY: 0, redScale: 1.015, redOpacity: 0.44 },
+    { x: -2.8, y: 0, scale: 0.912, opacity: 0.947, blueX: -8, blueY: 0, blueScale: 1.02, blueOpacity: 0.62, redX: 4.2, redY: 0, redScale: 1.012, redOpacity: 0.43 },
+    { x: -3, y: 0, scale: 0.912, opacity: 0.945, blueX: -8, blueY: 0, blueScale: 1.019, blueOpacity: 0.61, redX: 4, redY: 0, redScale: 1.011, redOpacity: 0.42 },
+    { x: -3.2, y: 0, scale: 0.911, opacity: 0.94, blueX: -7, blueY: 0, blueScale: 1.017, blueOpacity: 0.59, redX: 3.5, redY: 0, redScale: 1.01, redOpacity: 0.41 },
+    { x: -3.4, y: 0, scale: 0.91, opacity: 0.938, blueX: -6, blueY: 0, blueScale: 1.014, blueOpacity: 0.57, redX: 3.1, redY: 0, redScale: 1.009, redOpacity: 0.4 },
+    { x: -2.4, y: 0, scale: 0.91, opacity: 0.94, blueX: -5, blueY: 0, blueScale: 1.012, blueOpacity: 0.58, redX: 2.7, redY: 0, redScale: 1.008, redOpacity: 0.41 },
+    { x: -1.2, y: 0, scale: 0.91, opacity: 0.95, blueX: -3.5, blueY: 0, blueScale: 1.008, blueOpacity: 0.59, redX: 2.2, redY: 0, redScale: 1.006, redOpacity: 0.43 },
+    { x: 0, y: 0, scale: 0.91, opacity: 0.96, blueX: -2.2, blueY: 0, blueScale: 1.004, blueOpacity: 0.61, redX: 1.8, redY: 0, redScale: 1.004, redOpacity: 0.46 },
+    { x: 0, y: 0, scale: 0.91, opacity: 0.97, blueX: -1.8, blueY: 0, blueScale: 1.003, blueOpacity: 0.62, redX: 1.5, redY: 0, redScale: 1.003, redOpacity: 0.48 },
+    { x: 0, y: 0, scale: 0.91, opacity: 0.975, blueX: -1.4, blueY: 0, blueScale: 1.001, blueOpacity: 0.62, redX: 1.2, redY: 0, redScale: 1.001, redOpacity: 0.49 }
+  ];
 
   const applyTheme = function (theme) {
     const resolved = theme === "light" ? "light" : "dark";
@@ -47,6 +76,37 @@
     applyTheme(rootElement.dataset.theme || "dark");
     applyGuideMode(document.body.dataset.guideMode || "on");
   }
+
+  const applyWordmarkFrame = function (frame) {
+    if (!overlayWordmark || !frame) {
+      return;
+    }
+    overlayWordmark.style.setProperty("--wordmark-x", frame.x + "px");
+    overlayWordmark.style.setProperty("--wordmark-y", frame.y + "px");
+    overlayWordmark.style.setProperty("--wordmark-scale", String(frame.scale));
+    overlayWordmark.style.setProperty("--wordmark-opacity", String(frame.opacity));
+    overlayWordmark.style.setProperty("--wordmark-blue-x", frame.blueX + "px");
+    overlayWordmark.style.setProperty("--wordmark-blue-y", frame.blueY + "px");
+    overlayWordmark.style.setProperty("--wordmark-blue-scale", String(frame.blueScale));
+    overlayWordmark.style.setProperty("--wordmark-blue-opacity", String(frame.blueOpacity));
+    overlayWordmark.style.setProperty("--wordmark-red-x", frame.redX + "px");
+    overlayWordmark.style.setProperty("--wordmark-red-y", frame.redY + "px");
+    overlayWordmark.style.setProperty("--wordmark-red-scale", String(frame.redScale));
+    overlayWordmark.style.setProperty("--wordmark-red-opacity", String(frame.redOpacity));
+  };
+
+  const startWordmarkLoop = function () {
+    if (!overlayWordmark || wordmarkTimerId) {
+      return;
+    }
+    applyWordmarkFrame(wordmarkFrames[0]);
+    wordmarkTimerId = window.setInterval(function () {
+      wordmarkFrameIndex = (wordmarkFrameIndex + 1) % wordmarkFrames.length;
+      applyWordmarkFrame(wordmarkFrames[wordmarkFrameIndex]);
+    }, 50);
+  };
+
+  startWordmarkLoop();
 
   const setOverlayVisibility = function (visible) {
     if (!overlay) {

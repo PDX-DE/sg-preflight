@@ -55,6 +55,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - Expanded live-loading detail now behaves like a real scrollable full-screen surface instead of a clipped fixed modal, and the shared CSS/JS asset URLs now include a cache-busting version so local browsers pick up UI fixes immediately
 - The loading overlay now uses a native code retro game-style loading card instead of the plain `NOW LOADING...` heading and spinner, while keeping the real SG progress, ETA, logs, and exact-step drilldown below it
 - The loading overlay now uses a simpler Sonic-06-style native screen based on the real local `R.gif` frame timing and placement, renders before the page body content on running/queued pages to reduce first-paint flicker, and keeps the expanded live-detail area from re-rendering noisily when the underlying step data has not changed
+- The native Sonic-06-style loading screen now uses a smaller lower-contrast wordmark, a darker flatter plate, and a discrete 23-frame chromatic-split loop so the on-screen result lands closer to the local gif reference instead of a generic CSS interpretation
 - Operator UI now starts from "what changed?" guided launchers so teammates can choose constants, anchors, carpaints, or file/reference sanity before choosing a car
 - Run pages now expose a recommended QA stack action per car so teammates can launch the available SG-side automation from one button
 - Result pages now include a short "do this next" section plus copy-ready quick-update, full-handoff, and per-finding text
