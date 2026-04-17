@@ -288,6 +288,17 @@ void from_json(const json& payload, RecentActionItem& item) {
     item.summary = ValueString(payload, "summary");
 }
 
+void from_json(const json& payload, RecentRunItem& item) {
+    item.run_id = ValueString(payload, "run_id");
+    item.profile_id = ValueString(payload, "profile_id");
+    item.profile_label = ValueString(payload, "profile_label");
+    item.title = ValueString(payload, "title");
+    item.status = ValueString(payload, "status");
+    item.created_at_utc = ValueString(payload, "created_at_utc");
+    item.summary = ValueString(payload, "summary");
+    item.html_report = ValueString(payload, "html_report");
+}
+
 void from_json(const json& payload, SnapshotLinks& item) {
     item.output_root = ValueString(payload, "output_root");
     item.html_report = ValueString(payload, "html_report");
@@ -306,6 +317,7 @@ void from_json(const json& payload, ActionSnapshot& item) {
     item.progress_detail = ValueString(payload, "progress_detail");
     item.current_command = ValueString(payload, "current_command");
     item.child_run_id = ValueString(payload, "child_run_id");
+    item.linked_run_id = ValueString(payload, "linked_run_id");
     if (payload.contains("summary_lines") && payload.at("summary_lines").is_array()) {
         item.summary_lines = payload.at("summary_lines").get<std::vector<std::string>>();
     }
@@ -327,6 +339,37 @@ void from_json(const json& payload, ActionSnapshot& item) {
         item.copy_items = payload.at("copy_items").get<std::vector<CopyItem>>();
     }
     item.summary_only = ValueBool(payload, "summary_only", true);
+}
+
+void from_json(const json& payload, RunSnapshot& item) {
+    item.run_id = ValueString(payload, "run_id");
+    item.profile_id = ValueString(payload, "profile_id");
+    item.profile_label = ValueString(payload, "profile_label");
+    item.status = ValueString(payload, "status");
+    item.created_at_utc = ValueString(payload, "created_at_utc");
+    item.workflow_stage_label = ValueString(payload, "workflow_stage_label");
+    item.summary_title = ValueString(payload, "summary_title");
+    if (payload.contains("summary_lines") && payload.at("summary_lines").is_array()) {
+        item.summary_lines = payload.at("summary_lines").get<std::vector<std::string>>();
+    }
+    if (payload.contains("grouped_lines") && payload.at("grouped_lines").is_array()) {
+        item.grouped_lines = payload.at("grouped_lines").get<std::vector<std::string>>();
+    }
+    if (payload.contains("notes") && payload.at("notes").is_array()) {
+        item.notes = payload.at("notes").get<std::vector<std::string>>();
+    }
+    if (payload.contains("packs") && payload.at("packs").is_array()) {
+        item.packs = payload.at("packs").get<std::vector<std::string>>();
+    }
+    if (payload.contains("artifacts") && payload.at("artifacts").is_array()) {
+        item.artifacts = payload.at("artifacts").get<std::vector<ArtifactItem>>();
+    }
+    if (payload.contains("source_files") && payload.at("source_files").is_array()) {
+        item.source_files = payload.at("source_files").get<std::vector<ArtifactItem>>();
+    }
+    if (payload.contains("copy_items") && payload.at("copy_items").is_array()) {
+        item.copy_items = payload.at("copy_items").get<std::vector<CopyItem>>();
+    }
 }
 
 std::vector<ProfileItem> LoadProfiles(const BackendConfig& config) {
@@ -388,6 +431,26 @@ std::vector<RecentActionItem> LoadRecentActions(
     return ParseArray<RecentActionItem>(RunJsonCommand(config, args));
 }
 
+std::vector<RecentRunItem> LoadRecentRuns(
+    const BackendConfig& config,
+    const std::string& profile_id,
+    int limit
+) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"recent-runs",
+        L"--json",
+        L"--limit",
+        std::to_wstring(limit),
+    };
+    if (!profile_id.empty()) {
+        args.push_back(L"--profile-id");
+        args.push_back(ToWide(profile_id));
+    }
+    AppendWorkspace(args, config);
+    return ParseArray<RecentRunItem>(RunJsonCommand(config, args));
+}
+
 ActionSnapshot LoadSnapshot(const BackendConfig& config, const std::string& run_id_or_path) {
     std::vector<std::wstring> args = {
         L"desktop-state",
@@ -397,6 +460,17 @@ ActionSnapshot LoadSnapshot(const BackendConfig& config, const std::string& run_
     };
     AppendWorkspace(args, config);
     return RunJsonCommand(config, args).get<ActionSnapshot>();
+}
+
+RunSnapshot LoadRunSnapshot(const BackendConfig& config, const std::string& run_id_or_path) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"run-snapshot",
+        ToWide(run_id_or_path),
+        L"--json",
+    };
+    AppendWorkspace(args, config);
+    return RunJsonCommand(config, args).get<RunSnapshot>();
 }
 
 std::string LaunchAction(const BackendConfig& config, const std::string& action_id) {

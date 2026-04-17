@@ -274,6 +274,7 @@ Current expectation:
 - the workspace action list now also exposes a full mirrored repo-checker path for `checkall.bat` scope as `repo_checker_all`
 - the per-car action list now also exposes `printNotUsedResources.py` as an unused-resource scan, so leftover SG resource files can be checked from the same operator surface
 - the per-car action list now also exposes the mirrored `deliveryChecklist` files as a readiness bridge, so SG-side delivery expectations and BMW-side blockers stay visible before smoke or handoff
+- the native desktop shell now reads the same persisted records for recent actions and recent runs, so operators can drill from one SG action into the linked report outputs, source-of-truth files, and copy/export blocks without changing the underlying evidence model
 - default to the full-check button when you just want the safest useful path for one car
 - if the surface still feels noisy, ignore the secondary foldouts until after you have one result page
 - do not claim that the UI replaces Blender visual checks

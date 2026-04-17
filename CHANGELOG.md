@@ -34,6 +34,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - working tree: `qa_stack` now aggregates child checker evidence into one parent payload, and the first experimental PySide6 desktop operator shell can run the same SG actions, show the same checker evidence, expose blockers/manual cards, and open local files without replacing the browser UI
 - working tree: the desktop shell now translates the local UnleashedRecomp options-menu language into Qt chrome with scanline header bars, category tabs, grid-framed panels, TV-static evidence framing, and a bottom button-guide band while keeping the SG QA product framing intact
 - working tree: `daily_live_matrix` now runs the ready per-profile QA stacks and aggregates their child checker evidence into one fleet-level `Open first` surface, the CLI now exposes `launch-action` plus `desktop-state` polling commands for native clients, and an experimental `desktop_native/` C++ + Dear ImGui shell scaffold now sits over that same Python backend contract
+- working tree: the native C++ shell now browses both recent actions and recent runs, drills from action state into linked run outputs and source-of-truth files, exposes broader copy/export surfaces from the shared evidence model, and the Windows build helper now resolves a standard local `cmake.exe` install path instead of assuming PATH is already refreshed
 
 #### 2026-04-16
 

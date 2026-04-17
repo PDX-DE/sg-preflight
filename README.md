@@ -210,6 +210,7 @@ QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-
 SG checker coverage lives in [docs/sg-checker-coverage-matrix.md](docs/sg-checker-coverage-matrix.md).
 Future desktop-shell research and visual-direction notes live under [docs/research](docs/research), while the experimental shell itself still wraps the same Python actions, reports, and evidence model.
 The native C++ shell scaffold lives under [desktop_native](desktop_native/README.md) and uses the same `launch-action` / `desktop-state` backend contract rather than forking the QA logic.
+It now also supports direct recent-run browsing, linked run/result drilldown beside action state, richer run-output and source-file panels, and a broader copy/export surface that stays backed by the same persisted SG evidence model.
 
 Run the full smoke-test flow:
 

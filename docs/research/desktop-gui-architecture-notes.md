@@ -45,6 +45,8 @@ The important part is unchanged:
   - `desktop-state manual`
   - `desktop-state recent-actions`
   - `desktop-state snapshot`
+  - `desktop-state recent-runs`
+  - `desktop-state run-snapshot`
 
 ## Why a desktop shell is justified later
 
@@ -73,8 +75,11 @@ The current experimental shell is intentionally narrow:
 The native shell scaffold extends that with:
 
 - recent-action browsing
+- recent-run browsing
 - native `Open first` evidence triage
-- copy-ready export buttons from the same action snapshot payload
+- linked run/report drilldown from the same persisted records
+- source-of-truth file browsing beside generated run outputs
+- broader copy-ready export buttons from the same shared evidence and report payloads
 - a Windows-first Dear ImGui shell that can move closer to the eventual broader 3D-department operator surface
 
 What it still does not try to do:

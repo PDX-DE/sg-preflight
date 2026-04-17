@@ -15,7 +15,7 @@ FetchContent_Declare(
 
 FetchContent_Declare(
   nlohmann_json
-  URL https://github.com/nlohmann/json/archive/refs/tags/v3.9.1.zip
+  URL https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.zip
 )
 
 FetchContent_MakeAvailable(imgui nlohmann_json)
@@ -59,7 +59,7 @@ target_link_libraries(
 )
 
 add_executable(
-  sg_preflight_native_shell
+  sg_preflight_native_shell WIN32
   src/backend_bridge.cpp
   src/main.cpp
 )

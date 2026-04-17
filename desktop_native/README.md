@@ -12,6 +12,8 @@ It calls the same action system and evidence model through the shared CLI/JSON c
 - `python -m sg_preflight desktop-state manual ...`
 - `python -m sg_preflight desktop-state recent-actions ...`
 - `python -m sg_preflight desktop-state snapshot ...`
+- `python -m sg_preflight desktop-state recent-runs ...`
+- `python -m sg_preflight desktop-state run-snapshot ...`
 
 ## Scope
 
@@ -21,11 +23,14 @@ Current native-shell milestone:
 - live profile list
 - action tabs
 - recent action browsing
+- recent run/result browsing
 - action launch + polling
 - top checker-evidence rendering
+- linked run-report drilldown beside action state
+- run outputs and source-of-truth file panels
 - blocker/manual stage visibility
 - local open / reveal actions
-- copy-ready Jira / QA Hero / handoff surfaces
+- broader copy/export surfaces for Jira, QA Hero, pre-delivery, delivery-doc, quick-update, and full handoff text
 - bottom button-guide band
 
 ## Build
@@ -57,7 +62,7 @@ build\native\Release\sg_preflight_native_shell.exe --workspace-root C:\path\to\s
 The CMake file fetches:
 
 - Dear ImGui `v1.92.7-docking`
-- `nlohmann/json` `v3.9.1`
+- `nlohmann/json` `v3.12.0`
 
 ## Notes
 

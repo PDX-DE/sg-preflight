@@ -13,6 +13,7 @@ from unittest import mock
 
 from sg_preflight.cli import main
 from sg_preflight.qa_actions import build_action_record, get_operator_action, save_action_record
+from sg_preflight.services import RunRequest, execute_profile_run
 from tests.operator_helpers import create_temp_g65_profile, write_text
 from tests.test_qa_actions import _create_checker_files
 
@@ -128,10 +129,10 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(payload["status"], "queued")
         self.assertTrue(payload["run_id"])
 
-    def test_desktop_state_recent_actions_and_snapshot_use_workspace_override(self) -> None:
+    def test_desktop_state_recent_actions_runs_and_snapshots_use_workspace_override(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            create_temp_g65_profile(root)
+            profile = create_temp_g65_profile(root)
             _create_checker_files(root)
             (root / "config").mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / "config" / "sg_rules_live_g65.json", root / "config" / "sg_rules_live_g65.json")
@@ -148,6 +149,15 @@ class TestCLI(unittest.TestCase):
             }
             write_text(Path(record.paths["log"]), "synthetic log\n")
             save_action_record(record)
+            run_record = execute_profile_run(
+                profile,
+                RunRequest(
+                    profile_id="G65",
+                    packs=["anchors", "constants", "carpaints", "project_sanity"],
+                    fail_on="never",
+                ),
+                root,
+            )
 
             recent_stdout = io.StringIO()
             with redirect_stdout(recent_stdout):
@@ -155,6 +165,20 @@ class TestCLI(unittest.TestCase):
                     [
                         "desktop-state",
                         "recent-actions",
+                        "--workspace",
+                        str(root),
+                        "--profile-id",
+                        "G65",
+                        "--json",
+                    ]
+                )
+
+            recent_runs_stdout = io.StringIO()
+            with redirect_stdout(recent_runs_stdout):
+                recent_runs_result = main(
+                    [
+                        "desktop-state",
+                        "recent-runs",
                         "--workspace",
                         str(root),
                         "--profile-id",
@@ -176,14 +200,35 @@ class TestCLI(unittest.TestCase):
                     ]
                 )
 
+            run_snapshot_stdout = io.StringIO()
+            with redirect_stdout(run_snapshot_stdout):
+                run_snapshot_result = main(
+                    [
+                        "desktop-state",
+                        "run-snapshot",
+                        run_record.run_id,
+                        "--workspace",
+                        str(root),
+                        "--json",
+                    ]
+                )
+
         self.assertEqual(recent_result, 0)
         recent_payload = json.loads(recent_stdout.getvalue())
         self.assertEqual(recent_payload[0]["run_id"], record.run_id)
         self.assertEqual(recent_payload[0]["profile_id"], "G65")
+        self.assertEqual(recent_runs_result, 0)
+        recent_runs_payload = json.loads(recent_runs_stdout.getvalue())
+        self.assertEqual(recent_runs_payload[0]["run_id"], run_record.run_id)
+        self.assertEqual(recent_runs_payload[0]["profile_id"], "G65")
         self.assertEqual(snapshot_result, 0)
         snapshot_payload = json.loads(snapshot_stdout.getvalue())
         self.assertEqual(snapshot_payload["run_id"], record.run_id)
         self.assertIn("Style checker:", snapshot_payload["summary_lines"][0])
+        self.assertEqual(run_snapshot_result, 0)
+        run_snapshot_payload = json.loads(run_snapshot_stdout.getvalue())
+        self.assertEqual(run_snapshot_payload["run_id"], run_record.run_id)
+        self.assertIn("Counts:", run_snapshot_payload["summary_lines"][1])
 
     def test_good_demo_passes(self) -> None:
         result = subprocess.run(

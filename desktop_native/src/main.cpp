@@ -17,6 +17,8 @@
 #include "backends/imgui_impl_dx11.h"
 #include "backends/imgui_impl_win32.h"
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
+
 using sg_preflight::native_shell::ActionItem;
 using sg_preflight::native_shell::ActionSnapshot;
 using sg_preflight::native_shell::BackendConfig;
@@ -26,6 +28,8 @@ using sg_preflight::native_shell::EvidenceItem;
 using sg_preflight::native_shell::ManualCard;
 using sg_preflight::native_shell::ProfileItem;
 using sg_preflight::native_shell::RecentActionItem;
+using sg_preflight::native_shell::RecentRunItem;
+using sg_preflight::native_shell::RunSnapshot;
 
 namespace {
 
@@ -41,15 +45,24 @@ struct ShellState {
     std::vector<BlockerItem> blockers;
     std::vector<ManualCard> manual_cards;
     std::vector<RecentActionItem> recent_actions;
+    std::vector<RecentRunItem> recent_runs;
     std::optional<ActionSnapshot> snapshot;
+    std::optional<RunSnapshot> run_snapshot;
     int selected_profile_index = 0;
     int selected_evidence_index = 0;
     int selected_artifact_index = 0;
     std::string selected_action_id;
     std::string current_run_id;
+    std::string current_result_run_id;
     std::string status_line = "Ready for the next SG QA action.";
     std::string last_error;
     double next_poll_at = 0.0;
+};
+
+struct ArtifactChoice {
+    std::string section;
+    std::string label;
+    std::string path;
 };
 
 void CreateRenderTarget() {
@@ -232,19 +245,64 @@ std::string ShortActionLabel(const std::string& action_id) {
 }
 
 void ClampSelections(ShellState& state) {
+    const size_t top_paths = state.snapshot.has_value() ? state.snapshot->top_paths.size() : 0U;
+    size_t artifacts = 0U;
     if (state.snapshot.has_value()) {
-        const size_t top_paths = state.snapshot->top_paths.size();
-        const size_t artifacts = state.snapshot->artifacts.size();
-        state.selected_evidence_index = top_paths == 0
-            ? 0
-            : std::clamp(state.selected_evidence_index, 0, static_cast<int>(top_paths) - 1);
-        state.selected_artifact_index = artifacts == 0
-            ? 0
-            : std::clamp(state.selected_artifact_index, 0, static_cast<int>(artifacts) - 1);
-    } else {
-        state.selected_evidence_index = 0;
-        state.selected_artifact_index = 0;
+        artifacts += state.snapshot->artifacts.size();
     }
+    if (state.run_snapshot.has_value()) {
+        artifacts += state.run_snapshot->artifacts.size();
+        artifacts += state.run_snapshot->source_files.size();
+    }
+    state.selected_evidence_index = top_paths == 0
+        ? 0
+        : std::clamp(state.selected_evidence_index, 0, static_cast<int>(top_paths) - 1);
+    state.selected_artifact_index = artifacts == 0
+        ? 0
+        : std::clamp(state.selected_artifact_index, 0, static_cast<int>(artifacts) - 1);
+}
+
+std::vector<ArtifactChoice> CombinedArtifacts(const ShellState& state) {
+    std::vector<ArtifactChoice> items;
+    if (state.snapshot.has_value()) {
+        for (const auto& artifact : state.snapshot->artifacts) {
+            items.push_back({"Action files", artifact.label, artifact.path});
+        }
+    }
+    if (state.run_snapshot.has_value()) {
+        for (const auto& artifact : state.run_snapshot->artifacts) {
+            items.push_back({"Run outputs", artifact.label, artifact.path});
+        }
+        for (const auto& source : state.run_snapshot->source_files) {
+            items.push_back({"Source-of-truth files", source.label, source.path});
+        }
+    }
+    return items;
+}
+
+std::vector<CopyItem> CombinedCopyItems(const ShellState& state) {
+    std::vector<CopyItem> items;
+    std::vector<std::string> seen_keys;
+    const auto append_items = [&](const std::vector<CopyItem>& source) {
+        for (const CopyItem& item : source) {
+            if (item.text.empty()) {
+                continue;
+            }
+            const bool duplicate = std::find(seen_keys.begin(), seen_keys.end(), item.key) != seen_keys.end();
+            if (duplicate) {
+                continue;
+            }
+            seen_keys.push_back(item.key);
+            items.push_back(item);
+        }
+    };
+    if (state.snapshot.has_value()) {
+        append_items(state.snapshot->copy_items);
+    }
+    if (state.run_snapshot.has_value()) {
+        append_items(state.run_snapshot->copy_items);
+    }
+    return items;
 }
 
 void RefreshSnapshot(ShellState& state) {
@@ -254,6 +312,24 @@ void RefreshSnapshot(ShellState& state) {
     }
     try {
         state.snapshot = sg_preflight::native_shell::LoadSnapshot(state.backend, state.current_run_id);
+        if (state.snapshot.has_value() && !state.snapshot->linked_run_id.empty()) {
+            state.current_result_run_id = state.snapshot->linked_run_id;
+        }
+        ClampSelections(state);
+        state.last_error.clear();
+    } catch (const std::exception& error) {
+        state.last_error = error.what();
+    }
+}
+
+void RefreshRunSnapshot(ShellState& state) {
+    if (state.current_result_run_id.empty()) {
+        state.run_snapshot.reset();
+        ClampSelections(state);
+        return;
+    }
+    try {
+        state.run_snapshot = sg_preflight::native_shell::LoadRunSnapshot(state.backend, state.current_result_run_id);
         ClampSelections(state);
         state.last_error.clear();
     } catch (const std::exception& error) {
@@ -271,6 +347,46 @@ void RefreshRecentActions(ShellState& state) {
     }
 }
 
+void RefreshRecentRuns(ShellState& state) {
+    try {
+        state.recent_runs = sg_preflight::native_shell::LoadRecentRuns(state.backend, CurrentProfileId(state), 18);
+        state.last_error.clear();
+    } catch (const std::exception& error) {
+        state.last_error = error.what();
+    }
+}
+
+void RefreshResultPanels(ShellState& state) {
+    RefreshRecentActions(state);
+    RefreshRecentRuns(state);
+
+    if (state.snapshot.has_value() && !state.snapshot->linked_run_id.empty()) {
+        state.current_result_run_id = state.snapshot->linked_run_id;
+        RefreshRunSnapshot(state);
+        return;
+    }
+
+    if (!state.current_result_run_id.empty()) {
+        RefreshRunSnapshot(state);
+        if (
+            state.run_snapshot.has_value()
+            && state.run_snapshot->profile_id == CurrentProfileId(state)
+        ) {
+            return;
+        }
+    }
+
+    if (!state.recent_runs.empty()) {
+        state.current_result_run_id = state.recent_runs.front().run_id;
+        RefreshRunSnapshot(state);
+        return;
+    }
+
+    state.current_result_run_id.clear();
+    state.run_snapshot.reset();
+    ClampSelections(state);
+}
+
 void RefreshProfilePanels(ShellState& state) {
     const std::string profile_id = CurrentProfileId(state);
     if (profile_id.empty()) {
@@ -278,6 +394,8 @@ void RefreshProfilePanels(ShellState& state) {
         state.blockers.clear();
         state.manual_cards.clear();
         state.recent_actions.clear();
+        state.recent_runs.clear();
+        state.run_snapshot.reset();
         return;
     }
 
@@ -292,7 +410,7 @@ void RefreshProfilePanels(ShellState& state) {
     } catch (const std::exception& error) {
         state.last_error = error.what();
     }
-    RefreshRecentActions(state);
+    RefreshResultPanels(state);
 }
 
 void RefreshProfiles(ShellState& state) {
@@ -305,7 +423,9 @@ void RefreshProfiles(ShellState& state) {
             state.blockers.clear();
             state.manual_cards.clear();
             state.recent_actions.clear();
+            state.recent_runs.clear();
             state.snapshot.reset();
+            state.run_snapshot.reset();
             return;
         }
         const auto match = std::find_if(
@@ -345,8 +465,9 @@ void StartAction(ShellState& state, const std::string& action_id) {
         state.current_run_id = sg_preflight::native_shell::LaunchAction(state.backend, action_id);
         state.status_line = "Queued " + action_id + " locally.";
         state.last_error.clear();
-        RefreshRecentActions(state);
+        RefreshResultPanels(state);
         RefreshSnapshot(state);
+        RefreshRunSnapshot(state);
         state.next_poll_at = ImGui::GetTime() + 0.25;
     } catch (const std::exception& error) {
         state.last_error = error.what();
@@ -398,11 +519,12 @@ std::wstring SelectedEvidencePath(const ShellState& state) {
 }
 
 std::wstring SelectedArtifactPath(const ShellState& state) {
-    if (!state.snapshot.has_value() || state.snapshot->artifacts.empty()) {
+    const std::vector<ArtifactChoice> artifacts = CombinedArtifacts(state);
+    if (artifacts.empty()) {
         return {};
     }
-    const auto& artifact = state.snapshot->artifacts[static_cast<size_t>(state.selected_artifact_index)];
-    return sg_preflight::native_shell::ToWide(artifact.path);
+    const int clamped_index = std::clamp(state.selected_artifact_index, 0, static_cast<int>(artifacts.size()) - 1);
+    return sg_preflight::native_shell::ToWide(artifacts[static_cast<size_t>(clamped_index)].path);
 }
 
 void ApplyStyle() {
@@ -494,7 +616,7 @@ void RenderProfilesPanel(ShellState& state) {
 }
 
 void RenderRecentActionsPanel(ShellState& state) {
-    SectionTitle("Recent Runs");
+    SectionTitle("Recent Actions");
     if (state.recent_actions.empty()) {
         ImGui::TextDisabled("No recent actions yet for this selection.");
         return;
@@ -508,6 +630,28 @@ void RenderRecentActionsPanel(ShellState& state) {
                 SelectProfileById(state, item.profile_id);
             }
             RefreshSnapshot(state);
+            RefreshRunSnapshot(state);
+        }
+        ImGui::Indent(12.0f);
+        ImGui::TextDisabled("%s | %s", item.status.c_str(), item.created_at_utc.c_str());
+        ImGui::TextWrapped("%s", item.summary.c_str());
+        ImGui::Unindent(12.0f);
+        ImGui::Spacing();
+    }
+}
+
+void RenderRecentResultsPanel(ShellState& state) {
+    SectionTitle("Recent Results");
+    if (state.recent_runs.empty()) {
+        ImGui::TextDisabled("No recent run records yet for this profile.");
+        return;
+    }
+    for (const RecentRunItem& item : state.recent_runs) {
+        const bool selected = state.current_result_run_id == item.run_id;
+        const std::string label = item.profile_id + " - " + item.title + "###recent-run-" + item.run_id;
+        if (ImGui::Selectable(label.c_str(), selected)) {
+            state.current_result_run_id = item.run_id;
+            RefreshRunSnapshot(state);
         }
         ImGui::Indent(12.0f);
         ImGui::TextDisabled("%s | %s", item.status.c_str(), item.created_at_utc.c_str());
@@ -524,7 +668,7 @@ void RenderActionTabs(ShellState& state) {
         if (ImGui::BeginTabItem("DAILY")) {
             if (!daily_selected) {
                 state.selected_action_id = "daily_live_matrix";
-                RefreshRecentActions(state);
+                RefreshResultPanels(state);
             }
             ImGui::TextWrapped("Run the recommended SG QA stack across all ready live profiles and aggregate one shared `Open first` surface.");
             ImGui::EndTabItem();
@@ -534,7 +678,7 @@ void RenderActionTabs(ShellState& state) {
             if (ImGui::BeginTabItem(tab_label.c_str())) {
                 if (state.selected_action_id != action.action_id) {
                     state.selected_action_id = action.action_id;
-                    RefreshRecentActions(state);
+                    RefreshResultPanels(state);
                 }
                 ImGui::TextWrapped("%s", action.description.c_str());
                 if (!action.command_preview.empty()) {
@@ -573,46 +717,77 @@ void RenderSummaryPanel(ShellState& state) {
 
     ImGui::Spacing();
     SectionTitle("Active Run / Result");
-    if (!state.snapshot.has_value()) {
+    if (!state.snapshot.has_value() && !state.run_snapshot.has_value()) {
         ImGui::TextDisabled("Select a recent action or run a new one to populate the active result panel.");
         return;
     }
 
-    const ActionSnapshot& snapshot = *state.snapshot;
-    ImGui::Text("Action: %s", snapshot.title.c_str());
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "[%s]", snapshot.status.c_str());
-    ImGui::ProgressBar(static_cast<float>(snapshot.progress_percent) / 100.0f, ImVec2(-1.0f, 0.0f));
-    if (!snapshot.progress_label.empty()) {
-        ImGui::TextWrapped("%s", snapshot.progress_label.c_str());
-    }
-    if (!snapshot.progress_detail.empty()) {
-        ImGui::TextDisabled("%s", snapshot.progress_detail.c_str());
-    }
-    if (!snapshot.current_command.empty()) {
+    if (state.snapshot.has_value()) {
+        const ActionSnapshot& snapshot = *state.snapshot;
+        ImGui::Text("Action: %s", snapshot.title.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "[%s]", snapshot.status.c_str());
+        ImGui::ProgressBar(static_cast<float>(snapshot.progress_percent) / 100.0f, ImVec2(-1.0f, 0.0f));
+        if (!snapshot.progress_label.empty()) {
+            ImGui::TextWrapped("%s", snapshot.progress_label.c_str());
+        }
+        if (!snapshot.progress_detail.empty()) {
+            ImGui::TextDisabled("%s", snapshot.progress_detail.c_str());
+        }
+        if (!snapshot.current_command.empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("Command: %s", snapshot.current_command.c_str());
+        }
+
         ImGui::Spacing();
-        ImGui::TextDisabled("Command: %s", snapshot.current_command.c_str());
+        SectionTitle("Action Summary");
+        if (snapshot.summary_lines.empty()) {
+            ImGui::TextDisabled("No summary lines yet.");
+        } else {
+            for (const std::string& line : snapshot.summary_lines) {
+                ImGui::BulletText("%s", line.c_str());
+            }
+        }
+
+        ImGui::Spacing();
+        SectionTitle("Log Tail");
+        ImGui::BeginChild("log-tail", ImVec2(0.0f, 160.0f), true);
+        if (snapshot.log_tail.empty()) {
+            ImGui::TextDisabled("No action-log lines captured yet.");
+        } else {
+            ImGui::TextWrapped("%s", snapshot.log_tail.c_str());
+        }
+        ImGui::EndChild();
     }
 
-    ImGui::Spacing();
-    SectionTitle("Summary");
-    if (snapshot.summary_lines.empty()) {
-        ImGui::TextDisabled("No summary lines yet.");
-    } else {
-        for (const std::string& line : snapshot.summary_lines) {
+    if (state.run_snapshot.has_value()) {
+        const RunSnapshot& run_snapshot = *state.run_snapshot;
+        ImGui::Spacing();
+        SectionTitle("Result Drilldown");
+        ImGui::Text("Run: %s", run_snapshot.profile_label.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "[%s]", run_snapshot.status.c_str());
+        ImGui::TextDisabled("%s", run_snapshot.created_at_utc.c_str());
+        for (const std::string& line : run_snapshot.summary_lines) {
             ImGui::BulletText("%s", line.c_str());
         }
+        if (!run_snapshot.grouped_lines.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "Grouped Findings");
+            ImGui::BeginChild("grouped-findings", ImVec2(0.0f, 160.0f), true);
+            for (const std::string& line : run_snapshot.grouped_lines) {
+                ImGui::TextWrapped("%s", line.c_str());
+            }
+            ImGui::EndChild();
+        }
+        if (!run_snapshot.notes.empty()) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "Run Notes");
+            for (const std::string& note : run_snapshot.notes) {
+                ImGui::BulletText("%s", note.c_str());
+            }
+        }
     }
-
-    ImGui::Spacing();
-    SectionTitle("Log Tail");
-    ImGui::BeginChild("log-tail", ImVec2(0.0f, 180.0f), true);
-    if (snapshot.log_tail.empty()) {
-        ImGui::TextDisabled("No action-log lines captured yet.");
-    } else {
-        ImGui::TextWrapped("%s", snapshot.log_tail.c_str());
-    }
-    ImGui::EndChild();
 }
 
 void RenderEvidencePanel(ShellState& state) {
@@ -644,14 +819,24 @@ void RenderEvidencePanel(ShellState& state) {
 
 void RenderArtifactsPanel(ShellState& state) {
     SectionTitle("Artifacts / Reports");
-    if (!state.snapshot.has_value()) {
-        ImGui::TextDisabled("No action snapshot loaded.");
+    const std::vector<ArtifactChoice> artifacts = CombinedArtifacts(state);
+    const std::vector<CopyItem> copy_items = CombinedCopyItems(state);
+    if (!state.snapshot.has_value() && !state.run_snapshot.has_value()) {
+        ImGui::TextDisabled("No action or run snapshot loaded.");
         return;
     }
 
-    if (!state.snapshot->artifacts.empty()) {
-        for (size_t index = 0; index < state.snapshot->artifacts.size(); ++index) {
-            const auto& artifact = state.snapshot->artifacts[index];
+    if (!artifacts.empty()) {
+        std::string current_section;
+        for (size_t index = 0; index < artifacts.size(); ++index) {
+            const auto& artifact = artifacts[index];
+            if (artifact.section != current_section) {
+                current_section = artifact.section;
+                if (index > 0) {
+                    ImGui::Spacing();
+                }
+                ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "%s", current_section.c_str());
+            }
             const bool selected = static_cast<int>(index) == state.selected_artifact_index;
             const std::string label = artifact.label + "###artifact-" + std::to_string(index);
             if (ImGui::Selectable(label.c_str(), selected)) {
@@ -659,22 +844,32 @@ void RenderArtifactsPanel(ShellState& state) {
             }
         }
     } else {
-        ImGui::TextDisabled("No generated artifacts were attached to this action.");
+        ImGui::TextDisabled("No generated artifacts were attached to this selection.");
     }
 
     ImGui::Spacing();
-    if (ImGui::Button("Open Latest HTML", ImVec2(180.0f, 0.0f)) && !state.snapshot->latest_run_links.html_report.empty()) {
-        OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->latest_run_links.html_report));
+    const std::wstring selected_artifact_path = SelectedArtifactPath(state);
+    if (!selected_artifact_path.empty()) {
+        ImGui::TextWrapped("%s", sg_preflight::native_shell::ToUtf8(selected_artifact_path).c_str());
+        ImGui::Spacing();
     }
-    if (ImGui::Button("Open Latest Markdown", ImVec2(180.0f, 0.0f)) && !state.snapshot->latest_run_links.markdown_report.empty()) {
-        OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->latest_run_links.markdown_report));
+    if (ImGui::Button("Open Selected", ImVec2(180.0f, 0.0f))) {
+        OpenPath(selected_artifact_path);
     }
-    if (ImGui::Button("Open Raw Log", ImVec2(180.0f, 0.0f)) && !state.snapshot->log_path.empty()) {
-        OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->log_path));
+    if (ImGui::Button("Reveal Selected", ImVec2(180.0f, 0.0f))) {
+        RevealPath(selected_artifact_path);
     }
-
+    if (state.run_snapshot.has_value() && ImGui::Button("Open HTML Report", ImVec2(180.0f, 0.0f))) {
+        for (const auto& artifact : state.run_snapshot->artifacts) {
+            if (artifact.label == "HTML report") {
+                OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
+                break;
+            }
+        }
+    }
     ImGui::Spacing();
-    for (const CopyItem& item : state.snapshot->copy_items) {
+    SectionTitle("Copy / Export");
+    for (const CopyItem& item : copy_items) {
         if (ImGui::Button(item.label.c_str(), ImVec2(180.0f, 0.0f))) {
             if (CopyText(sg_preflight::native_shell::ToWide(item.text))) {
                 state.status_line = "Copied " + item.label + ".";
@@ -718,7 +913,12 @@ void RenderButtonGuide(ShellState& state) {
         }
         ImGui::SameLine();
         if (ImGui::Button("OPEN FILE")) {
-            OpenPath(SelectedEvidencePath(state));
+            const std::wstring evidence_path = SelectedEvidencePath(state);
+            if (!evidence_path.empty()) {
+                OpenPath(evidence_path);
+            } else {
+                OpenPath(SelectedArtifactPath(state));
+            }
         }
         ImGui::SameLine();
         if (ImGui::Button("REVEAL")) {
@@ -734,12 +934,21 @@ void RenderButtonGuide(ShellState& state) {
             OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->log_path));
         }
         ImGui::SameLine();
-        if (ImGui::Button("HTML") && state.snapshot.has_value()) {
-            OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->latest_run_links.html_report));
+        if (ImGui::Button("REPORT")) {
+            if (state.run_snapshot.has_value()) {
+                for (const auto& artifact : state.run_snapshot->artifacts) {
+                    if (artifact.label == "HTML report") {
+                        OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
+                        break;
+                    }
+                }
+            } else if (state.snapshot.has_value()) {
+                OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->latest_run_links.html_report));
+            }
         }
         ImGui::SameLine();
-        if (ImGui::Button("COPY JIRA") && state.snapshot.has_value()) {
-            for (const CopyItem& item : state.snapshot->copy_items) {
+        if (ImGui::Button("COPY JIRA")) {
+            for (const CopyItem& item : CombinedCopyItems(state)) {
                 if (item.key == "jira") {
                     if (CopyText(sg_preflight::native_shell::ToWide(item.text))) {
                         state.status_line = "Copied Jira note.";
@@ -789,6 +998,8 @@ void RenderShell(ShellState& state) {
         RenderProfilesPanel(state);
         ImGui::Spacing();
         RenderRecentActionsPanel(state);
+        ImGui::Spacing();
+        RenderRecentResultsPanel(state);
         ImGui::EndChild();
 
         ImGui::TableNextColumn();
@@ -868,6 +1079,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (!state.profiles.empty()) {
         state.selected_action_id = state.profiles[static_cast<size_t>(state.selected_profile_index)].recommended_action_id;
         RefreshProfilePanels(state);
+        if (!state.recent_actions.empty()) {
+            state.current_run_id = state.recent_actions.front().run_id;
+            RefreshSnapshot(state);
+        }
+        if (!state.recent_runs.empty()) {
+            state.current_result_run_id = state.recent_runs.front().run_id;
+            RefreshRunSnapshot(state);
+        }
     }
 
     bool done = false;
@@ -886,7 +1105,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
         if (!state.current_run_id.empty() && ImGui::GetTime() >= state.next_poll_at) {
             RefreshSnapshot(state);
-            RefreshRecentActions(state);
+            RefreshRunSnapshot(state);
+            RefreshResultPanels(state);
             state.next_poll_at = ImGui::GetTime() + (
                 state.snapshot.has_value() && (state.snapshot->status == "queued" || state.snapshot->status == "running")
                     ? 0.75

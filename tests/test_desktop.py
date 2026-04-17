@@ -13,6 +13,8 @@ from sg_preflight.desktop.evidence_model import (
     desktop_actions_for_profile,
     desktop_blocker_items,
     desktop_recent_actions,
+    desktop_recent_runs,
+    desktop_run_snapshot,
     latest_action_snapshot_for_profile,
 )
 from sg_preflight.desktop.file_ops import build_open_command, build_reveal_command, normalize_local_path
@@ -97,18 +99,27 @@ class TestDesktopEvidenceModel(unittest.TestCase):
                     record = execute_operator_action(action, root)
 
             snapshot = desktop_action_snapshot(record.run_id, root)
+            run_snapshot = desktop_run_snapshot(snapshot.linked_run_id, root)
             latest = latest_action_snapshot_for_profile("G65", root, preferred_action_id="qa_stack__g65")
             recent = desktop_recent_actions(root, profile_id="G65", limit=4)
+            recent_runs = desktop_recent_runs(root, profile_id="G65", limit=4)
             blockers = desktop_blocker_items("G65", root, profiles=[profile])
 
             self.assertEqual(snapshot.run_id, record.run_id)
             self.assertEqual(snapshot.top_paths[0].path, str(profile.project_root / "resources" / "textures" / "unused_diffuse.png"))
             self.assertTrue(any(item.label == "Copy Jira note" for item in snapshot.copy_items))
+            self.assertTrue(any(item.key == "pre_delivery" for item in snapshot.copy_items))
             self.assertTrue(snapshot.latest_run_links.html_report.endswith(".html"))
+            self.assertTrue(snapshot.linked_run_id)
+            self.assertEqual(run_snapshot.profile_id, "G65")
+            self.assertTrue(any(item.label == "HTML report" for item in run_snapshot.artifacts))
+            self.assertTrue(any(item.label == "Scene Hierarchy" for item in run_snapshot.source_files))
             self.assertIsNotNone(latest)
             self.assertEqual(latest.run_id, record.run_id)
             self.assertEqual(recent[0].run_id, record.run_id)
             self.assertIn("Standard preflight:", recent[0].summary)
+            self.assertEqual(recent_runs[0].profile_id, "G65")
+            self.assertTrue(recent_runs[0].summary.startswith("Counts:"))
             self.assertTrue(any(item.key == "bmw_screenshot_smoke" for item in blockers))
 
 

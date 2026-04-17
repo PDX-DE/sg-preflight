@@ -9,6 +9,7 @@ dist/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+imgui.ini
 /out/
 
 # Local source drops and archive snapshots

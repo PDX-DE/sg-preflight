@@ -17,6 +17,8 @@ from sg_preflight.desktop.evidence_model import (
     desktop_manual_cards,
     desktop_profiles,
     desktop_recent_actions,
+    desktop_recent_runs,
+    desktop_run_snapshot,
 )
 from sg_preflight.profiles import get_run_profile, list_run_profiles
 from sg_preflight.qa_actions import (
@@ -383,6 +385,23 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_recent_parser.add_argument("--workspace", help="Workspace root override")
     desktop_recent_parser.add_argument("--json", action="store_true", help="Print recent-action payload as JSON")
 
+    desktop_recent_runs_parser = desktop_state_sub.add_parser(
+        "recent-runs",
+        help="List recent run records for desktop-shell browsing",
+    )
+    desktop_recent_runs_parser.add_argument("--profile-id", help="Optional profile filter")
+    desktop_recent_runs_parser.add_argument("--limit", type=int, default=12, help="Maximum number of runs to return")
+    desktop_recent_runs_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_recent_runs_parser.add_argument("--json", action="store_true", help="Print recent-run payload as JSON")
+
+    desktop_run_snapshot_parser = desktop_state_sub.add_parser(
+        "run-snapshot",
+        help="Load one desktop run snapshot",
+    )
+    desktop_run_snapshot_parser.add_argument("run_id_or_path", help="Run id or run.json path")
+    desktop_run_snapshot_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_run_snapshot_parser.add_argument("--json", action="store_true", help="Print run snapshot payload as JSON")
+
     demo_good = sub.add_parser("demo-good", help="Run the good demo bundle")
     demo_good.add_argument("--fail-on", default="error", choices=["error", "warning", "never"])
 
@@ -611,6 +630,14 @@ def main(argv: list[str] | None = None) -> int:
                 profile_id=args.profile_id or "",
                 limit=args.limit,
             )
+        elif args.desktop_state_command == "recent-runs":
+            payload = desktop_recent_runs(
+                state_root,
+                profile_id=args.profile_id or "",
+                limit=args.limit,
+            )
+        elif args.desktop_state_command == "run-snapshot":
+            payload = desktop_run_snapshot(args.run_id_or_path, state_root)
         else:
             parser.error(f"Unhandled desktop-state command: {args.desktop_state_command}")
             return 1
