@@ -8,7 +8,11 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from sg_preflight.checker_evidence import parse_repo_checker_log
+from sg_preflight.checker_evidence import (
+    parse_delivery_checklist_log,
+    parse_repo_checker_log,
+    parse_unused_resources_output,
+)
 from sg_preflight.models import Finding, PackResult, Report
 from sg_preflight.profiles import RunProfile
 from sg_preflight.qa_actions import (
@@ -506,6 +510,83 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Checker evidence", evidence_page.text)
         self.assertIn("Logic_Placeholder_Hood.lua", evidence_page.text)
         self.assertIn("Latest SG checker evidence", evidence_page.text)
+
+    def test_unused_and_delivery_checker_evidence_flow_into_operator_surfaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            unused_action = get_operator_action("unused_resources__g65", root, profiles=[profile])
+            unused_record = build_action_record(unused_action, root)
+            unused_record.status = "completed"
+            unused_record.summary = {
+                "title": "Unused resource scan result",
+                "lines": [
+                    "Unused resources reported: 2",
+                    "First unused resources: resources/textures/unused_diffuse.png, resources/shaders/orphan_shader.vert",
+                    "Open first: C:\\repo\\repositories\\trunk\\Cars_IDCevo\\BMW\\G65\\resources\\shaders\\orphan_shader.vert (unused_resources) - Resource was not referenced by any scanned `.rca` scene.",
+                ],
+                "checker_evidence": parse_unused_resources_output(
+                    _checker_fixture("unused_resources_issue.log"),
+                    raw_log_path=unused_record.paths["log"],
+                ),
+            }
+            write_text(Path(unused_record.paths["log"]), _checker_fixture("unused_resources_issue.log"))
+            save_action_task_record(unused_record)
+
+            delivery_action = get_operator_action("delivery_checklist__g65", root, profiles=[profile])
+            delivery_record = build_action_record(delivery_action, root)
+            delivery_record.status = "completed"
+            delivery_record.summary = {
+                "title": "Delivery checklist readiness",
+                "lines": [
+                    "Local SG bridge: 4/4 mirrored deliveryChecklist asset(s) found.",
+                    "BMW-side prerequisites: blocked on local `digital-3d-car-models` access.",
+                    "Open first: C:\\repo\\repositories\\trunk\\.pdx\\checkers\\deliveryChecklist\\README.md (delivery_checklist) - Mirrored deliveryChecklist README is available locally.",
+                ],
+                "checker_evidence": parse_delivery_checklist_log(
+                    _checker_fixture("delivery_checklist_blocked.log"),
+                    raw_log_path=delivery_record.paths["log"],
+                ),
+            }
+            write_text(Path(delivery_record.paths["log"]), _checker_fixture("delivery_checklist_blocked.log"))
+            save_action_task_record(delivery_record)
+
+            delivery_page = client.get(f"/ui/actions/{delivery_record.run_id}")
+
+            create_response = client.post(
+                "/ui/api/runs",
+                json={
+                    "profile_id": "G65",
+                    "packs": ["anchors", "constants", "carpaints", "project_sanity"],
+                    "fail_on": "never",
+                    "context": {
+                        **profile.default_context,
+                        "workflow_stage": "pre_delivery",
+                        "workflow_stage_label": "Pre-delivery",
+                    },
+                },
+            )
+            self.assertEqual(create_response.status_code, 202)
+            payload = create_response.json()
+            result_page = client.get(payload["result_url"])
+            evidence_page = client.get(payload["result_url"] + "/evidence")
+
+        self.assertEqual(delivery_page.status_code, 200)
+        self.assertIn("Checker evidence", delivery_page.text)
+        self.assertIn("README.md", delivery_page.text)
+        self.assertIn("digital-3d-car-models", delivery_page.text)
+
+        self.assertEqual(result_page.status_code, 200)
+        self.assertIn("orphan_shader.vert", result_page.text)
+        self.assertIn("README.md", result_page.text)
+        self.assertIn("Latest SG checker evidence:", result_page.text)
+
+        self.assertEqual(evidence_page.status_code, 200)
+        self.assertIn("Checker evidence", evidence_page.text)
+        self.assertIn("orphan_shader.vert", evidence_page.text)
+        self.assertIn("README.md", evidence_page.text)
 
     def test_running_action_page_renders_live_progress_copy(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

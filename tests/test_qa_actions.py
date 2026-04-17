@@ -176,7 +176,7 @@ class TestQaActions(unittest.TestCase):
             _create_checker_files(root)
             action = get_operator_action("unused_resources__g65", root, profiles=[profile])
 
-            sample_output = str(profile.project_root / "resources" / "textures" / "unused_diffuse.png")
+            sample_output = _checker_fixture("unused_resources_issue.log")
 
             with mock.patch(
                 "sg_preflight.qa_actions.subprocess.run",
@@ -190,8 +190,16 @@ class TestQaActions(unittest.TestCase):
                 record = execute_operator_action(action, root)
 
             self.assertEqual(record.status, "completed")
-            self.assertEqual(record.summary.get("unused_count"), 1)
+            self.assertEqual(record.summary.get("unused_count"), 2)
             self.assertIn("unused_diffuse.png", " ".join(record.summary.get("lines", [])))
+            self.assertIn("Open first:", " ".join(record.summary.get("lines", [])))
+            checker_evidence = record.summary.get("checker_evidence", {})
+            self.assertFalse(checker_evidence.get("summary_only", True))
+            self.assertEqual(
+                checker_evidence.get("top_paths", [{}])[0].get("path"),
+                r"C:\repo\repositories\trunk\Cars_IDCevo\BMW\G65\resources\shaders\orphan_shader.vert",
+            )
+            self.assertEqual(checker_evidence.get("checkers", [{}])[0].get("name"), "unused_resources")
             self.assertTrue(Path(record.paths["log"]).exists())
 
     def test_execute_delivery_checklist_action_reports_missing_bmw_prerequisites(self) -> None:
@@ -214,6 +222,15 @@ class TestQaActions(unittest.TestCase):
                 "blocked on local `digital-3d-car-models` access",
                 " ".join(record.summary.get("lines", [])),
             )
+            self.assertIn("Open first:", " ".join(record.summary.get("lines", [])))
+            checker_evidence = record.summary.get("checker_evidence", {})
+            self.assertFalse(checker_evidence.get("summary_only", True))
+            self.assertTrue(
+                str(checker_evidence.get("top_paths", [{}])[0].get("path", "")).endswith(
+                    r"repositories\trunk\.pdx\checkers\deliveryChecklist\README.md"
+                )
+            )
+            self.assertTrue(any("digital-3d-car-models" in item for item in checker_evidence.get("manual_followups", [])))
             self.assertTrue(Path(record.paths["log"]).exists())
 
     def test_execute_profile_stack_runs_preflight_and_available_sg_steps(self) -> None:

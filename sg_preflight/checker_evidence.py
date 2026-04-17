@@ -33,6 +33,7 @@ _FILE_ISSUE_RE = re.compile(
     r"(?P<path>[A-Za-z]:[\\/].+?)(?::(?P<line>\d+))(?:[:](?P<column>\d+))?:\s+(?P<message>.+)"
 )
 _SCENE_START_RE = re.compile(r"^Checking scene:\s+(?P<path>.+)$")
+_DELIVERY_LOG_RE = re.compile(r"^(?P<key>[a-z0-9_]+)=(?P<path>.+?)\s+::\s+(?P<status>available|missing)$", flags=re.IGNORECASE)
 
 
 def _clean_text(text: str) -> str:
@@ -121,6 +122,7 @@ def _top_paths(affected_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "message": str(issue.get("message", "")).strip(),
                 "line": issue.get("line"),
                 "source_kind": str(issue.get("source_kind", "")).strip(),
+                "priority": int(issue.get("priority", 100)),
             },
         )
         bucket["issue_count"] += 1
@@ -131,6 +133,7 @@ def _top_paths(affected_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
             bucket["message"] = str(issue.get("message", "")).strip()
         if bucket.get("line") in (None, "") and issue.get("line") not in (None, ""):
             bucket["line"] = issue.get("line")
+        bucket["priority"] = min(int(bucket.get("priority", 100)), int(issue.get("priority", 100)))
 
     items = []
     for item in grouped.values():
@@ -145,6 +148,7 @@ def _top_paths(affected_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items.sort(
         key=lambda item: (
             -_severity_rank(str(item.get("severity", ""))),
+            int(item.get("priority", 100)),
             -int(item.get("issue_count", 0)),
             str(item.get("path", "")).lower(),
         )
@@ -549,3 +553,152 @@ def parse_scene_check_output(
         }
     )
     return _finalize(payload)
+
+
+def parse_unused_resources_output(
+    output: str,
+    *,
+    raw_log_path: str = "",
+) -> dict[str, Any]:
+    text = _clean_text(output)
+    payload = _empty_evidence(source_kind="unused_resources", raw_log_path=raw_log_path)
+    seen: set[tuple[Any, ...]] = set()
+
+    for raw_line in text.splitlines():
+        candidate = raw_line.strip()
+        if not candidate or candidate.startswith("Traceback") or candidate.lower().startswith("usage:"):
+            continue
+        path = _normalize_path(candidate)
+        suffix = Path(path).suffix.lower()
+        if suffix not in {".lua", ".png", ".vert", ".frag", ".gltf"}:
+            continue
+        _append_issue(
+            payload,
+            {
+                "path": path,
+                "checker": "unused_resources",
+                "rule": "unused_resource",
+                "severity": "warning",
+                "line": None,
+                "column": None,
+                "message": "Resource was not referenced by any scanned `.rca` scene.",
+                "excerpt": "",
+                "source_kind": "unused_resources",
+                "priority": 10,
+            },
+            seen,
+        )
+
+    payload["checkers"].append(
+        {
+            "name": "unused_resources",
+            "files_checked": 0,
+            "issues": len(payload["affected_files"]),
+            "status": _checker_status(len(payload["affected_files"])),
+        }
+    )
+    return _finalize(payload)
+
+
+def parse_delivery_checklist_log(
+    output: str,
+    *,
+    raw_log_path: str = "",
+) -> dict[str, Any]:
+    text = _clean_text(output)
+    payload = _empty_evidence(source_kind="delivery_checklist", raw_log_path=raw_log_path)
+    seen: set[tuple[Any, ...]] = set()
+    local_asset_count = 0
+    local_asset_missing = 0
+    bmw_missing: list[str] = []
+    viewer_hits = 0
+
+    label_map = {
+        "delivery_checklist_readme": ("delivery_checklist", "readme_available", 1, "Mirrored deliveryChecklist README is available locally."),
+        "delivery_checklist_helper": ("delivery_checklist", "helper_available", 2, "Mirrored deliveryChecklist Python helper is available locally."),
+        "delivery_checklist_camera_crane": ("delivery_checklist", "camera_crane_available", 3, "Mirrored deliveryChecklist cameraCrane helper is available locally."),
+        "delivery_checklist_tool": ("delivery_checklist", "tool_available", 4, "Mirrored deliveryChecklist executable is available locally."),
+        "bmw_car_manager_script": ("bmw_delivery_prereqs", "car_manager_available", 5, "BMW car_manager helper is available locally."),
+        "bmw_test_main_script": ("bmw_delivery_prereqs", "test_main_available", 6, "BMW test/main helper is available locally."),
+        "viewer_candidate": ("bmw_delivery_prereqs", "viewer_available", 7, "BMW viewer candidate is available locally."),
+    }
+    missing_messages = {
+        "delivery_checklist_tool": "Mirrored deliveryChecklist executable is missing locally.",
+        "delivery_checklist_helper": "Mirrored deliveryChecklist Python helper is missing locally.",
+        "delivery_checklist_readme": "Mirrored deliveryChecklist README is missing locally.",
+        "delivery_checklist_camera_crane": "Mirrored deliveryChecklist cameraCrane helper is missing locally.",
+        "bmw_models_repo": "BMW delivery repo is missing locally.",
+        "bmw_car_manager_script": "BMW `ci/scripts/car_manager.py` helper is missing locally.",
+        "bmw_test_main_script": "BMW `ci/scripts/test/main.py` helper is missing locally.",
+    }
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line == "viewer_candidate=<none>":
+            bmw_missing.append("No local `ramses*viewer*.exe` candidate was found during the BMW repo scan.")
+            continue
+        match = _DELIVERY_LOG_RE.match(line)
+        if match is None:
+            continue
+        key = match.group("key").strip().lower()
+        path = _normalize_path(match.group("path"))
+        status = match.group("status").strip().lower()
+
+        if key.startswith("delivery_checklist_"):
+            if status == "available":
+                local_asset_count += 1
+            else:
+                local_asset_missing += 1
+        if key == "viewer_candidate" and status == "available":
+            viewer_hits += 1
+
+        if status == "available" and key in label_map:
+            checker_name, rule, priority, message = label_map[key]
+            _append_issue(
+                payload,
+                {
+                    "path": path,
+                    "checker": checker_name,
+                    "rule": rule,
+                    "severity": "info",
+                    "line": None,
+                    "column": None,
+                    "message": message,
+                    "excerpt": "",
+                    "source_kind": "delivery_checklist",
+                    "priority": priority,
+                },
+                seen,
+            )
+            continue
+
+        if status == "missing":
+            message = missing_messages.get(key)
+            if message:
+                bmw_missing.append(f"{message} Path: {path}")
+
+    payload["checkers"].extend(
+        [
+            {
+                "name": "delivery_checklist_assets",
+                "files_checked": local_asset_count + local_asset_missing,
+                "issues": local_asset_missing,
+                "status": _checker_status(local_asset_missing),
+            },
+            {
+                "name": "bmw_delivery_prereqs",
+                "files_checked": len(bmw_missing) + viewer_hits,
+                "issues": len(bmw_missing),
+                "status": _checker_status(len(bmw_missing)),
+            },
+        ]
+    )
+    payload["manual_followups"] = bmw_missing
+    payload = _finalize(payload)
+    if bmw_missing:
+        payload["manual_followups"] = bmw_missing + [
+            note for note in payload["manual_followups"] if note not in bmw_missing
+        ]
+    return payload

@@ -1,0 +1,9 @@
+delivery_checklist_root=C:\repo\repositories\trunk\.pdx\checkers\deliveryChecklist
+delivery_checklist_tool=C:\repo\repositories\trunk\.pdx\checkers\deliveryChecklist\deliveryChecklist.exe :: available
+delivery_checklist_helper=C:\repo\repositories\trunk\.pdx\checkers\deliveryChecklist\deliveryChecklist.py :: available
+delivery_checklist_readme=C:\repo\repositories\trunk\.pdx\checkers\deliveryChecklist\README.md :: available
+delivery_checklist_camera_crane=C:\repo\repositories\trunk\.pdx\checkers\deliveryChecklist\cameraCrane.lua :: available
+bmw_models_repo=C:\external\digital-3d-car-models :: missing
+bmw_car_manager_script=C:\external\digital-3d-car-models\ci\scripts\car_manager.py :: missing
+bmw_test_main_script=C:\external\digital-3d-car-models\ci\scripts\test\main.py :: missing
+viewer_candidate=<none>

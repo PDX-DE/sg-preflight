@@ -2014,7 +2014,12 @@ def _recent_profile_checker_records(root: Path, profile_id: str, *, limit: int =
             continue
         if str(getattr(item, "profile_id", "")).strip().lower() != profile_id.strip().lower():
             continue
-        if str(getattr(item, "kind", "")).strip() not in {"repo_checker", "scene_check"}:
+        if str(getattr(item, "kind", "")).strip() not in {
+            "repo_checker",
+            "scene_check",
+            "unused_resources",
+            "delivery_checklist",
+        }:
             continue
         if _record_checker_evidence(item) is None:
             continue
@@ -2067,7 +2072,7 @@ def _checker_stage_item(record: Any, root: Path) -> dict[str, str]:
             "label": "Latest SG checker evidence",
             "state": "pending",
             "kind": "tool",
-            "summary": "No recent repo-checker or scene-check evidence is attached to this profile yet.",
+            "summary": "No recent SG checker or checker-adjacent evidence is attached to this profile yet.",
         }
     if bundle["file_backed"]:
         first = bundle["top_paths"][0]
@@ -2077,7 +2082,7 @@ def _checker_stage_item(record: Any, root: Path) -> dict[str, str]:
             "label": "Latest SG checker evidence",
             "state": "ready",
             "kind": "tool",
-            "summary": f"File-backed repo or scene checker evidence is available here; open {first['path']}{suffix} first.",
+            "summary": f"File-backed SG checker evidence is available here; open {first['path']}{suffix} first.",
         }
     labels = ", ".join(view["record"].label for view in bundle["actions"])
     return {
@@ -2128,7 +2133,7 @@ def _checker_evidence_section(record: Any, root: Path) -> dict[str, Any] | None:
     return {
         "key": "checker_evidence",
         "title": "Checker evidence",
-        "description": "Latest completed repo and scene checker outputs for this profile. Open the file-backed hits first when they exist.",
+        "description": "Latest completed SG checker and checker-adjacent outputs for this profile. Open the file-backed hits first when they exist.",
         "links": _dedupe_links(links),
     }
 
@@ -2144,8 +2149,10 @@ def _action_checker_evidence_view(record: Any) -> dict[str, Any] | None:
         path = str(item.get("path", "")).strip()
         if not path:
             continue
+        checker = str(item.get("checker", "")).strip()
+        label = Path(path).name + (f" [{checker}]" if checker else "")
         link = _path_evidence(
-            f"{Path(path).name}{f' [{item.get('checker', '')}]' if item.get('checker') else ''}",
+            label,
             path,
         )
         workbook_ref = ""
@@ -2165,7 +2172,7 @@ def _action_checker_evidence_view(record: Any) -> dict[str, Any] | None:
     if evidence.get("summary_only"):
         summary = "The checker action completed, but the latest output is summary-only rather than file-backed."
     else:
-        summary = f"{len(evidence.get('affected_files', []))} file-backed checker issue(s) were extracted from the raw output."
+        summary = f"{len(evidence.get('affected_files', []))} file-backed checker evidence item(s) were extracted from the raw output."
     return {
         "summary": summary,
         "summary_only": bool(evidence.get("summary_only")),

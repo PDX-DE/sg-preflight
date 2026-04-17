@@ -162,7 +162,7 @@ It provides:
 - Guided checks: show one recommended car first, then keep the other cars in a separate secondary section; the selected workflow stage stays attached when you start from the stage launcher
 - Run: one primary button only, plus a visible `Files this check will use` block; quick-check and alternate actions stay behind foldouts, and workflow-stage context now persists into quick checks too
 - Result: a primary `First Thing To Do` panel, direct source-file link for the first problem, a stage-aware handoff copy action, a `Stage Readiness` panel, and a `Changed Since Last Check` comparison against the previous completed run for the same profile
-- Result and action pages: repo-checker and scene-check runs now surface structured checker-derived evidence, including `Open these files first` guidance, concrete affected paths, and copy-ready SG checker references instead of only raw logs
+- Result and action pages: repo-checker, scene-check, unused-resource, and delivery-checklist runs now surface structured checker-derived evidence, including `Open these files first` guidance, concrete affected paths, and copy-ready SG checker references instead of only raw logs
 - Live progress: long-running runs and actions now show a `NOW LOADING...` overlay with estimated progress, coarse ETA, full step visibility, persisted framework events, live action-log tail, and clickable per-step drilldown with nested child-status detail where available
 - Guidance: Home, Run, and Result pages now include explicit "if you are unsure, do this" blocks so teammate pilots can stay on the main path without exploring every foldout
 - Result and Files And Proof: evidence-completeness scoring, explicit proof/manual/blocked grouping, richer stage-specific exports for Jira / QA Hero / pre-delivery use, and a manual-review companion with screenshot-slot and Blender-vs-RaCo copy blocks
@@ -171,8 +171,8 @@ It provides:
   - daily live matrix
   - full mirrored repo checker coverage for `checkall.bat` scope, exposed as `repo_checker_all` without calling the batch wrapper directly
   - repo checker on workspace or per-car scope, now wrapping the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
-  - per-car unused-resource scan through `.pdx\checkers\printNotUsedResources.py`
-  - per-car delivery-checklist readiness bridge through `.pdx\checkers\deliveryChecklist`, so the mirrored SG checklist assets and BMW-side blockers are visible from the same operator surface
+  - per-car unused-resource scan through `.pdx\checkers\printNotUsedResources.py`, now parsed into file-backed resource evidence
+  - per-car delivery-checklist readiness bridge through `.pdx\checkers\deliveryChecklist`, now parsed into openable local checklist assets plus explicit BMW-side blocked follow-ups
   - per-car recommended QA stack
   - scene check when `RaCoHeadless.exe` is configured
   - BMW screenshot smoke as an explicit blocked stage until BMW-side access and target mapping exist

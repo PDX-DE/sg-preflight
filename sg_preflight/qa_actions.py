@@ -13,7 +13,12 @@ from typing import Any
 
 import openpyxl
 
-from sg_preflight.checker_evidence import parse_repo_checker_outputs, parse_scene_check_output
+from sg_preflight.checker_evidence import (
+    parse_delivery_checklist_log,
+    parse_repo_checker_outputs,
+    parse_scene_check_output,
+    parse_unused_resources_output,
+)
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.services import (
     RunRequest,
@@ -1338,7 +1343,17 @@ def _execute_unused_resources(record: ActionRecord, root: Path) -> tuple[dict[st
         meta={"project_root": str(project_root)},
     )
     summary = _parse_unused_resources_output(output, project_root)
+    checker_evidence = parse_unused_resources_output(
+        output,
+        raw_log_path=record.paths["log"],
+    )
+    summary["checker_evidence"] = checker_evidence
     summary["return_code"] = result.returncode
+    if checker_evidence.get("top_paths"):
+        first_path = checker_evidence["top_paths"][0]
+        summary.setdefault("lines", []).append(
+            f"Open first: {first_path['path']} ({first_path.get('checker', 'checker')}) - {first_path.get('message', '')}"
+        )
     if result.returncode != 0:
         summary.setdefault("lines", []).append(f"Process returned exit code {result.returncode}.")
     artifacts = [
@@ -1462,6 +1477,10 @@ def _execute_delivery_checklist(
     else:
         log_lines.append("viewer_candidate=<none>")
     _write_text(Path(record.paths["log"]), "\n".join(log_lines) + "\n")
+    checker_evidence = parse_delivery_checklist_log(
+        "\n".join(log_lines),
+        raw_log_path=record.paths["log"],
+    )
 
     summary = {
         "title": "Delivery checklist readiness",
@@ -1471,7 +1490,13 @@ def _execute_delivery_checklist(
         "bmw_repo_ready": bmw_repo.exists(),
         "bmw_helpers_found": helper_labels,
         "viewer_count": len(viewer_candidates),
+        "checker_evidence": checker_evidence,
     }
+    if checker_evidence.get("top_paths"):
+        first_path = checker_evidence["top_paths"][0]
+        summary["lines"].append(
+            f"Open first: {first_path['path']} ({first_path.get('checker', 'checker')}) - {first_path.get('message', '')}"
+        )
     artifacts = [
         _artifact("Delivery checklist README", checklist_paths["readme"]),
         _artifact("Delivery checklist helper", checklist_paths["helper"]),

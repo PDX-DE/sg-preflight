@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from sg_preflight.checker_evidence import parse_repo_checker_log, parse_scene_check_output
+from sg_preflight.checker_evidence import (
+    parse_delivery_checklist_log,
+    parse_repo_checker_log,
+    parse_scene_check_output,
+    parse_unused_resources_output,
+)
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "checkers"
@@ -87,6 +92,46 @@ class TestCheckerEvidence(unittest.TestCase):
         self.assertTrue(scene_evidence["summary_only"])
         self.assertEqual(scene_evidence["checked_scenes"], 0)
         self.assertEqual(scene_evidence["scenes_with_errors"], 0)
+
+    def test_unused_resources_clean_output_stays_summary_only(self) -> None:
+        evidence = parse_unused_resources_output(_fixture("unused_resources_clean.log"))
+
+        self.assertTrue(evidence["summary_only"])
+        self.assertEqual(evidence["affected_files"], [])
+        self.assertEqual(evidence["checkers"][0]["name"], "unused_resources")
+        self.assertEqual(evidence["checkers"][0]["status"], "clean")
+
+    def test_unused_resources_issue_output_extracts_file_backed_paths(self) -> None:
+        evidence = parse_unused_resources_output(
+            _fixture("unused_resources_issue.log"),
+            raw_log_path="out/unused.log",
+        )
+
+        self.assertFalse(evidence["summary_only"])
+        self.assertEqual(evidence["raw_log_path"], "out/unused.log")
+        self.assertEqual(len(evidence["affected_files"]), 2)
+        self.assertEqual(
+            evidence["top_paths"][0]["path"],
+            r"C:\repo\repositories\trunk\Cars_IDCevo\BMW\G65\resources\shaders\orphan_shader.vert",
+        )
+        self.assertTrue(any("unused_diffuse.png" in item for item in evidence["manual_followups"]))
+
+    def test_delivery_checklist_blocked_log_preserves_openable_local_assets(self) -> None:
+        evidence = parse_delivery_checklist_log(
+            _fixture("delivery_checklist_blocked.log"),
+            raw_log_path="out/delivery.log",
+        )
+
+        self.assertFalse(evidence["summary_only"])
+        self.assertEqual(evidence["raw_log_path"], "out/delivery.log")
+        self.assertEqual(
+            evidence["top_paths"][0]["path"],
+            r"C:\repo\repositories\trunk\.pdx\checkers\deliveryChecklist\README.md",
+        )
+        checker_names = {item["name"] for item in evidence["checkers"]}
+        self.assertEqual(checker_names, {"delivery_checklist_assets", "bmw_delivery_prereqs"})
+        self.assertTrue(any("digital-3d-car-models" in item for item in evidence["manual_followups"]))
+        self.assertTrue(any("viewer" in item.lower() for item in evidence["manual_followups"]))
 
 
 if __name__ == "__main__":

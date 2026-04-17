@@ -171,7 +171,7 @@ That overlay shows:
 - a selectable per-step detail panel so clicking a step shows exact step events, current target path or command metadata, and nested child-status detail for wrapped automations
 - persisted framework-event history so operators can see every recorded phase transition in order
 - live action-log tail for long-running wrapped automations such as repo checker or scene check
-- completed action pages for repo checker and scene check now prefer `Open these files first` plus structured checker evidence before dropping the operator into the raw log
+- completed action pages for repo checker, scene check, unused-resource, and delivery-checklist actions now prefer `Open these files first` plus structured checker evidence before dropping the operator into the raw log
 
 ## Persistence
 
@@ -258,6 +258,7 @@ Current expectation:
 - use `Show SG checker coverage` on Home when someone asks what real SG checker/tooling layer is available on this machine
 - the repo-checker action now wraps the real SG checker stack more truthfully by running `check_all_styles.py` before `executeChecks.py`, so style/license plus Lua/shader/formatting coverage live under one operator action
 - repo-checker and scene-check actions now parse their raw outputs into structured file-backed evidence, so action results, Files And Proof, stage readiness, and copy exports can point to concrete SG files instead of only saying that a checker ran
+- unused-resource and delivery-checklist actions now feed the same checker-evidence flow, so the operator can open unused resource files directly or jump into mirrored delivery-checklist assets while BMW-side blockers stay explicit in the follow-up text
 - the workspace action list now also exposes a full mirrored repo-checker path for `checkall.bat` scope as `repo_checker_all`
 - the per-car action list now also exposes `printNotUsedResources.py` as an unused-resource scan, so leftover SG resource files can be checked from the same operator surface
 - the per-car action list now also exposes the mirrored `deliveryChecklist` files as a readiness bridge, so SG-side delivery expectations and BMW-side blockers stay visible before smoke or handoff
