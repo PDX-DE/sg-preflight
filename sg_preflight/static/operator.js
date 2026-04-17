@@ -58,13 +58,13 @@
     }
   };
 
-  const syncOverlayExpandedState = function () {
+  const syncOverlayExpandedState = function (resetScroll) {
     if (!overlay || !overlayExpanded) {
       return;
     }
     const expanded = !overlayExpanded.hidden;
     overlay.classList.toggle("loading-overlay--expanded", expanded);
-    if (expanded) {
+    if (resetScroll && expanded) {
       window.requestAnimationFrame(function () {
         overlay.scrollTop = 0;
       });
@@ -430,7 +430,7 @@
       const expanded = overlayToggle.getAttribute("aria-expanded") === "true";
       overlayToggle.setAttribute("aria-expanded", expanded ? "false" : "true");
       overlayExpanded.hidden = expanded;
-      syncOverlayExpandedState();
+      syncOverlayExpandedState(true);
       overlayToggle.textContent = expanded
         ? "Show exact live detail"
         : "Hide exact live detail";
@@ -467,7 +467,7 @@
     }
     renderOverlay(payload || { status: "queued", progress: { percent: 0, steps: [] } });
     setOverlayVisibility(true);
-    syncOverlayExpandedState();
+    syncOverlayExpandedState(false);
   };
 
   const hideLoadingOverlay = function () {
