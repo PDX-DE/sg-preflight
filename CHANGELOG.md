@@ -39,6 +39,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - working tree: the native C++ shell now ports the real UnleashedRecomp menu timing/layout systems more directly from `DrawTitle`, `DrawContainer`, `DrawCategories`, and `ButtonGuide`: the shell uses a fixed 1280x720 virtual canvas, source-style category motion, side-aligned bottom guide layout, proportional body fonts instead of `Consolas`, and no longer trips the Dear ImGui parent-boundary warning in the button-guide path
 - working tree: the native C++ shell now auto-discovers a local `UnleashedRecompResources` bundle, loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures into the D3D11 UI, and keeps direct OTF font loading temporarily instead of the upstream `im_font_atlas.bin` snapshot path
 - working tree: the native C++ shell now starts borderless fullscreen by default, swaps the overloaded dashboard for an installer-style `Select` / `Run` / `Evidence` / `Files` / `Stages` screen flow, tones down the noisiest Unleashed texture overlays, and adds local WAV UI cues plus an optional installer-music toggle sourced from the same resource bundle
+- working tree: the native C++ shell no longer renders character/cast art from installer textures, keeps the Unleashed reference language abstract, simplifies the fullscreen background/static load for smoother frame pacing, and makes each step read more like a dedicated page than a flashing wall of panels
 
 #### 2026-04-16
 

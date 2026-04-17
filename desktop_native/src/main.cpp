@@ -550,7 +550,6 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         && load_required_texture(std::filesystem::path("images") / "options_menu" / "options_static.dds", g_shell_assets.options_static)
         && load_required_texture(std::filesystem::path("images") / "options_menu" / "options_static_flash.dds", g_shell_assets.options_static_flash)
     ) {
-        load_optional_texture(std::filesystem::path("images") / "installer" / "install_001.dds", g_shell_assets.installer_panel);
         load_optional_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", g_shell_assets.arrow_circle);
         load_optional_texture(std::filesystem::path("images") / "installer" / "pulse_install.dds", g_shell_assets.pulse_install);
         g_shell_assets.loaded = true;
@@ -1351,24 +1350,27 @@ void DrawBackdropChrome(const ShellState& state) {
     ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
     const ImVec2 display_size = ImGui::GetIO().DisplaySize;
     const float time = static_cast<float>(ImGui::GetTime());
-    const float shift = std::fmod(time * 18.0f, ShellUi(10.0f));
-
-    draw_list->AddRectFilled(
+    draw_list->AddRectFilled(ImVec2(0.0f, 0.0f), display_size, IM_COL32(8, 14, 16, 255));
+    draw_list->AddRectFilledMultiColor(
         ImVec2(0.0f, 0.0f),
-        display_size,
-        IM_COL32(10, 17, 19, 255)
+        ImVec2(display_size.x, display_size.y * 0.35f),
+        IM_COL32(12, 22, 24, 255),
+        IM_COL32(12, 22, 24, 255),
+        IM_COL32(8, 14, 16, 0),
+        IM_COL32(8, 14, 16, 0)
     );
-
-    for (float y = -shift; y < display_size.y; y += ShellUi(10.0f)) {
+    for (int band = 0; band < 10; ++band) {
+        const float y = ShellUi(118.0f + band * 56.0f);
+        const int alpha = band < 3 ? 24 : 14;
         draw_list->AddLine(
-            ImVec2(0.0f, y),
-            ImVec2(display_size.x, y),
-            IM_COL32(35, 120, 96, 20),
+            ImVec2(ShellUi(22.0f), y),
+            ImVec2(display_size.x - ShellUi(22.0f), y),
+            IM_COL32(28, 98, 82, alpha),
             1.0f
         );
     }
 
-    const float bar_height = ShellUi(105.0f);
+    const float bar_height = ShellUi(92.0f);
     draw_list->AddRectFilledMultiColor(
         ImVec2(0.0f, 0.0f),
         ImVec2(display_size.x, bar_height),
@@ -1387,21 +1389,15 @@ void DrawBackdropChrome(const ShellState& state) {
     );
 
     const float bar_motion = static_cast<float>(ComputeMotionFrames(0.0, 16.0));
+    const float sweep_width = ShellUi(320.0f);
+    const float sweep_x = std::fmod(time * ShellUi(82.0f), display_size.x + sweep_width) - sweep_width;
     draw_list->AddRectFilledMultiColor(
-        ImVec2(0.0f, 0.0f),
-        ImVec2(display_size.x, bar_height),
-        ApplyAlpha(IM_COL32(203, 255, 0, 0), bar_motion),
-        ApplyAlpha(IM_COL32(203, 255, 0, 0), bar_motion),
-        ApplyAlpha(IM_COL32(203, 255, 0, 55), bar_motion),
-        ApplyAlpha(IM_COL32(203, 255, 0, 55), bar_motion)
-    );
-    draw_list->AddRectFilledMultiColor(
-        ImVec2(0.0f, display_size.y - bar_height),
-        display_size,
-        ApplyAlpha(IM_COL32(203, 255, 0, 55), bar_motion),
-        ApplyAlpha(IM_COL32(203, 255, 0, 55), bar_motion),
-        ApplyAlpha(IM_COL32(203, 255, 0, 0), bar_motion),
-        ApplyAlpha(IM_COL32(203, 255, 0, 0), bar_motion)
+        ImVec2(sweep_x, ShellUi(46.0f)),
+        ImVec2(sweep_x + sweep_width, ShellUi(58.0f)),
+        ApplyAlpha(IM_COL32(173, 255, 156, 0), bar_motion),
+        ApplyAlpha(IM_COL32(173, 255, 156, 80), bar_motion),
+        ApplyAlpha(IM_COL32(173, 255, 156, 80), bar_motion),
+        ApplyAlpha(IM_COL32(173, 255, 156, 0), bar_motion)
     );
 
     const auto draw_bar_line = [&](bool top) {
@@ -1589,7 +1585,7 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
         g_shell_assets.general_window,
         ImVec2(min.x + grid, min.y + grid),
         ImVec2(max.x - grid, max.y - grid),
-        IM_COL32(108, 255, 147, static_cast<int>(150.0f * background_alpha))
+        IM_COL32(108, 255, 147, static_cast<int>(52.0f * background_alpha))
     );
 
     const float line_size = std::max(1.0f, ShellUi(2.0f));
@@ -1618,7 +1614,7 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
         draw_list->PushClipRect(clip_min, clip_max, true);
         if (HasTexture(g_shell_assets.options_static)) {
             const float time = static_cast<float>(ImGui::GetTime());
-            const ImVec2 uv_min(std::fmod(time * 0.031f, 1.0f), std::fmod(time * 0.017f, 1.0f));
+            const ImVec2 uv_min(std::fmod(time * 0.008f, 1.0f), std::fmod(time * 0.004f, 1.0f));
             const ImVec2 uv_max(
                 uv_min.x + ((clip_max.x - clip_min.x) / std::max(1U, g_shell_assets.options_static.width)),
                 uv_min.y + ((clip_max.y - clip_min.y) / std::max(1U, g_shell_assets.options_static.height))
@@ -1628,29 +1624,9 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
                 g_shell_assets.options_static,
                 clip_min,
                 clip_max,
-                IM_COL32(88, 255, 146, static_cast<int>(66.0f * background_alpha)),
+                IM_COL32(88, 255, 146, static_cast<int>(18.0f * background_alpha)),
                 uv_min,
                 uv_max
-            );
-        } else {
-            const float noise = std::fmod(static_cast<float>(ImGui::GetTime()) * 52.0f, ShellUi(28.0f));
-            for (float x = clip_min.x - noise; x < clip_max.x + ShellUi(36.0f); x += ShellUi(46.0f)) {
-                draw_list->AddLine(
-                    ImVec2(x, clip_min.y),
-                    ImVec2(x + ShellUi(24.0f), clip_max.y),
-                    IM_COL32(22, 58, 48, static_cast<int>(36.0f * background_alpha)),
-                    1.0f
-                );
-            }
-        }
-        if (HasTexture(g_shell_assets.options_static_flash)) {
-            const float flash = 0.35f + 0.65f * std::sin(static_cast<float>(ImGui::GetTime()) * 1.8f);
-            DrawTexturedRect(
-                draw_list,
-                g_shell_assets.options_static_flash,
-                clip_min,
-                clip_max,
-                IM_COL32(222, 255, 206, static_cast<int>(48.0f * background_alpha * flash))
             );
         }
         draw_list->PopClipRect();
@@ -2005,17 +1981,14 @@ void DrawInstallerHero(ImVec2 top_left, ImVec2 size, float alpha, bool animated 
     const ImVec2 max(top_left.x + size.x, top_left.y + size.y);
     draw->AddRectFilled(min, max, IM_COL32(7, 14, 17, static_cast<int>(200.0f * alpha)), ShellUi(4.0f));
     draw->AddRect(min, max, IM_COL32(52, 113, 97, static_cast<int>(168.0f * alpha)), ShellUi(4.0f), 0, 1.0f);
-
-    if (HasTexture(g_shell_assets.installer_panel)) {
-        DrawTexturedRectRounded(
-            draw,
-            g_shell_assets.installer_panel,
-            min,
-            max,
-            IM_COL32(170, 255, 160, static_cast<int>(108.0f * alpha)),
-            ShellUi(4.0f)
-        );
-    }
+    draw->AddRectFilledMultiColor(
+        ImVec2(min.x + ShellUi(14.0f), min.y + ShellUi(14.0f)),
+        ImVec2(max.x - ShellUi(14.0f), max.y - ShellUi(14.0f)),
+        IM_COL32(18, 40, 34, static_cast<int>(180.0f * alpha)),
+        IM_COL32(10, 24, 22, static_cast<int>(180.0f * alpha)),
+        IM_COL32(5, 12, 14, static_cast<int>(210.0f * alpha)),
+        IM_COL32(5, 12, 14, static_cast<int>(210.0f * alpha))
+    );
 
     if (animated) {
         const ImVec2 center(max.x - size.x * 0.26f, min.y + size.y * 0.46f);
@@ -2037,17 +2010,25 @@ void DrawInstallerHero(ImVec2 top_left, ImVec2 size, float alpha, bool animated 
             IM_COL32(171, 255, 122, static_cast<int>(62.0f * alpha * pulse)),
             ShellUi(12.0f)
         );
+        DrawTexturedRectRounded(
+            draw,
+            g_shell_assets.light,
+            ImVec2(center.x - size.y * 0.88f, min.y + ShellUi(14.0f)),
+            ImVec2(max.x - ShellUi(18.0f), min.y + size.y * 0.52f),
+            IM_COL32(224, 255, 190, static_cast<int>(34.0f * alpha)),
+            ShellUi(8.0f)
+        );
     }
 
     const float time = static_cast<float>(ImGui::GetTime());
-    for (float y = min.y + ShellUi(12.0f); y < max.y; y += ShellUi(18.0f)) {
-        const float wobble = std::sin((time * 1.4f) + y * 0.03f) * ShellUi(18.0f);
+    for (float y = min.y + ShellUi(18.0f); y < max.y; y += ShellUi(28.0f)) {
+        const float wobble = std::sin((time * 1.1f) + y * 0.03f) * ShellUi(12.0f);
         draw->AddBezierCubic(
             ImVec2(min.x + ShellUi(12.0f), y),
             ImVec2(min.x + size.x * 0.34f, y - ShellUi(8.0f) + wobble),
             ImVec2(min.x + size.x * 0.66f, y + ShellUi(8.0f) - wobble),
             ImVec2(max.x - ShellUi(12.0f), y),
-            IM_COL32(171, 255, 192, static_cast<int>(24.0f * alpha)),
+            IM_COL32(171, 255, 192, static_cast<int>(14.0f * alpha)),
             1.0f
         );
     }
@@ -2358,8 +2339,11 @@ void RenderScreenTabs(ShellState& state) {
 void RenderSelectScreen(ShellState& state) {
     BeginScreenTransition(state);
     const ImVec2 hero_pos = ImGui::GetCursorScreenPos();
-    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(148.0f)), 0.95f, true);
-    ImGui::Dummy(ImVec2(0.0f, ShellUi(154.0f)));
+    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(96.0f)), 0.86f, true);
+    ImGui::Dummy(ImVec2(0.0f, ShellUi(104.0f)));
+
+    InlineSectionLabel("Step 1 / 5");
+    ImGui::TextWrapped("Choose the live slice and the SG action you want to start. This screen should stay calm: select, confirm, then move forward.");
 
     InlineSectionLabel("Selected Live Slice");
     if (!state.profiles.empty()) {
@@ -2399,20 +2383,44 @@ void RenderSelectScreen(ShellState& state) {
     } else {
         ImGui::TextDisabled("No action metadata is available for the current selection.");
     }
+
+    ImGui::Spacing();
+    InlineSectionLabel("What Happens Next");
+    ImGui::BulletText("Run the selected action from this screen.");
+    ImGui::BulletText("The shell will move to RUN for progress and result detail.");
+    ImGui::BulletText("Then move to EVIDENCE, FILES, and STAGES step by step.");
     EndScreenTransition();
 }
 
 void RenderRunScreen(ShellState& state) {
     BeginScreenTransition(state);
     const ImVec2 hero_pos = ImGui::GetCursorScreenPos();
-    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(126.0f)), 0.92f, true);
-    ImGui::Dummy(ImVec2(0.0f, ShellUi(132.0f)));
+    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(72.0f)), 0.82f, true);
+    ImGui::Dummy(ImVec2(0.0f, ShellUi(80.0f)));
+    InlineSectionLabel("Step 2 / 5");
+    ImGui::TextWrapped("Stay on this page while the action runs. Once the result is usable, move forward to the strongest checker evidence instead of reading everything at once.");
+    ImGui::Spacing();
+    const bool has_evidence = state.snapshot.has_value() && !state.snapshot->top_paths.empty();
+    const bool has_artifacts = state.snapshot.has_value() || state.run_snapshot.has_value();
+    if (DrawPanelButton("run-to-evidence", "GO TO EVIDENCE", ImVec2(ShellUi(178.0f), ShellUi(30.0f)), true, has_evidence)) {
+        SetScreen(state, ShellScreen::Evidence);
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton("run-to-files", "GO TO FILES", ImVec2(ShellUi(158.0f), ShellUi(30.0f)), false, has_artifacts)) {
+        SetScreen(state, ShellScreen::Files);
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton("run-to-stages", "GO TO STAGES", ImVec2(ShellUi(164.0f), ShellUi(30.0f)), false, true)) {
+        SetScreen(state, ShellScreen::Stages);
+    }
+    ImGui::Spacing();
     RenderSummaryPanel(state);
     EndScreenTransition();
 }
 
 void RenderEvidenceScreen(ShellState& state) {
     BeginScreenTransition(state);
+    InlineSectionLabel("Step 3 / 5");
     ImGui::TextDisabled("Open these files first and keep the strongest checker path in front of you.");
     ImGui::Spacing();
     RenderEvidencePanel(state);
@@ -2436,17 +2444,39 @@ void RenderEvidenceScreen(ShellState& state) {
             ImGui::BulletText("%s", followup.c_str());
         }
     }
+    ImGui::Spacing();
+    if (DrawPanelButton("evidence-back-run", "BACK TO RUN", ImVec2(ShellUi(168.0f), ShellUi(30.0f)), false, true)) {
+        SetScreen(state, ShellScreen::Run);
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton("evidence-next-files", "NEXT: FILES", ImVec2(ShellUi(168.0f), ShellUi(30.0f)), true, state.snapshot.has_value() || state.run_snapshot.has_value())) {
+        SetScreen(state, ShellScreen::Files);
+    }
     EndScreenTransition();
 }
 
 void RenderFilesScreen(ShellState& state) {
     BeginScreenTransition(state);
+    InlineSectionLabel("Step 4 / 5");
+    ImGui::TextWrapped("Use this page for reports, exports, and source-of-truth files after you already know what matters from EVIDENCE.");
+    ImGui::Spacing();
     RenderArtifactsPanel(state);
+    ImGui::Spacing();
+    if (DrawPanelButton("files-back-evidence", "BACK TO EVIDENCE", ImVec2(ShellUi(194.0f), ShellUi(30.0f)), false, state.snapshot.has_value() && !state.snapshot->top_paths.empty())) {
+        SetScreen(state, ShellScreen::Evidence);
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton("files-next-stages", "NEXT: STAGES", ImVec2(ShellUi(176.0f), ShellUi(30.0f)), true, true)) {
+        SetScreen(state, ShellScreen::Stages);
+    }
     EndScreenTransition();
 }
 
 void RenderStagesScreen(ShellState& state) {
     BeginScreenTransition(state);
+    InlineSectionLabel("Step 5 / 5");
+    ImGui::TextWrapped("Finish on blockers, manual follow-up, and shell settings. BMW blockers stay visible here instead of being buried under the rest of the UI.");
+    ImGui::Spacing();
     RenderBlockersPanel(state);
     ImGui::Spacing();
     InlineSectionLabel("Shell Audio");
@@ -2463,6 +2493,14 @@ void RenderStagesScreen(ShellState& state) {
     if (!g_shell_audio.last_error.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", g_shell_audio.last_error.c_str());
+    }
+    ImGui::Spacing();
+    if (DrawPanelButton("stages-back-files", "BACK TO FILES", ImVec2(ShellUi(178.0f), ShellUi(30.0f)), false, true)) {
+        SetScreen(state, ShellScreen::Files);
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton("stages-return-select", "RETURN TO SELECT", ImVec2(ShellUi(198.0f), ShellUi(30.0f)), true, true)) {
+        SetScreen(state, ShellScreen::Select);
     }
     EndScreenTransition();
 }
@@ -2904,25 +2942,40 @@ void RenderShell(ShellState& state) {
     }
     EndDecoratedPanel();
 
-    if (BeginShellPanelAt("profiles-panel", "PROFILES", 10.0f, 221.0f, 304.0f, 264.0f)) {
-        RenderProfilesPanel(state);
+    switch (state.current_screen) {
+    case ShellScreen::Select:
+        if (BeginShellPanelAt("profiles-panel", "PROFILES", 10.0f, 221.0f, 304.0f, 448.0f)) {
+            RenderProfilesPanel(state);
+        }
+        EndDecoratedPanel();
+        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 324.0f, 221.0f, 946.0f, 448.0f, false)) {
+            RenderCurrentScreen(state);
+        }
+        EndDecoratedPanel();
+        break;
+    case ShellScreen::Run:
+        if (BeginShellPanelAt("recent-actions-panel", "RECENT ACTIONS", 10.0f, 221.0f, 304.0f, 216.0f)) {
+            RenderRecentActionsPanel(state);
+        }
+        EndDecoratedPanel();
+        if (BeginShellPanelAt("recent-runs-panel", "RECENT RESULTS", 10.0f, 446.0f, 304.0f, 223.0f)) {
+            RenderRecentResultsPanel(state);
+        }
+        EndDecoratedPanel();
+        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 324.0f, 221.0f, 946.0f, 448.0f, false)) {
+            RenderCurrentScreen(state);
+        }
+        EndDecoratedPanel();
+        break;
+    case ShellScreen::Evidence:
+    case ShellScreen::Files:
+    case ShellScreen::Stages:
+        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 10.0f, 221.0f, 1260.0f, 448.0f, false)) {
+            RenderCurrentScreen(state);
+        }
+        EndDecoratedPanel();
+        break;
     }
-    EndDecoratedPanel();
-
-    if (BeginShellPanelAt("recent-actions-panel", "RECENT ACTIONS", 10.0f, 494.0f, 304.0f, 82.0f)) {
-        RenderRecentActionsPanel(state);
-    }
-    EndDecoratedPanel();
-
-    if (BeginShellPanelAt("recent-runs-panel", "RECENT RESULTS", 10.0f, 585.0f, 304.0f, 84.0f)) {
-        RenderRecentResultsPanel(state);
-    }
-    EndDecoratedPanel();
-
-    if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 324.0f, 221.0f, 946.0f, 448.0f, state.current_screen == ShellScreen::Evidence)) {
-        RenderCurrentScreen(state);
-    }
-    EndDecoratedPanel();
 
     RenderButtonGuide(state);
     ImGui::End();

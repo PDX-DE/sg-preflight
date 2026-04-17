@@ -85,6 +85,7 @@ The native shell scaffold extends that with:
 - runtime discovery of the local `UnleashedRecompResources` bundle so the native shell can use real DDS chrome instead of only procedural approximations
 - borderless fullscreen startup by default plus a calmer installer-style screen flow, so the native shell behaves more like a dedicated operator surface than a debug dashboard
 - local WAV-based UI cues plus an optional looping installer-music toggle, both fed from the same local Unleashed resource bundle when it exists
+- the native shell now keeps the reference language abstract instead of rendering Sonic/cast art directly inside the SG operator workflow
 
 What it still does not try to do:
 

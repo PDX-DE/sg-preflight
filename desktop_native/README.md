@@ -53,6 +53,7 @@ Current native-shell milestone:
   - loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures into the D3D11 shell
   - keeps direct OTF font loading temporarily instead of consuming `im_font_atlas.bin` because the upstream atlas is tied to the custom `ImFontAtlasSnapshot` path and exact ImGui snapshot format
   - loads local WAV cues and optional installer background music from that same bundle, with shell-side toggles under `STAGES`
+  - intentionally does not render Sonic/cast character art in the operator shell; the native track now keeps the reference language abstract and workflow-first
 
 ## Build
 
