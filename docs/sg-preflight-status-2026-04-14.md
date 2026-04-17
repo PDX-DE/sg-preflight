@@ -2,16 +2,13 @@
 
 ## Update - 2026-04-17
 
-Current local status on `feature/live-sg-matrix-and-anchor-groups`:
+Current local status on `feature/unleashed-ui-ux`:
 
-- the AssetRipper export at `C:\Users\DavidErikGarciaArena\Downloads\AssetRipper_export_20260417_024445\ExportedProject` has now been validated as a real Unity project layout with `Assets`, `Packages`, and `ProjectSettings`
-- the recovered export still points to `Unity 2019.2.21f1` via `ProjectSettings\ProjectVersion.txt`
-- the export includes recovered gameplay/runtime C# source under `Assets\Scripts\Assembly-CSharp`, with `79` `.cs` files currently visible on disk
-- representative recovered files include `GameManager.cs`, `PlayerBase.cs`, `AudioManager.cs`, `CameraEffects.cs`, and `DayNightCycle.cs`
-- the exact legacy Unity editor `2019.2.21f1` is now installed locally under `C:\Users\DavidErikGarciaArena\AppData\Local\UnityEditors\2019.2.21f1`
-- an actual editor open attempt against the exported project was executed on this machine
-- the remaining blocker is no longer "we have not tried it"; the editor exits before project import because Unity licensing is not activated locally, with the logged failure `Unity has not been activated with a valid License`
-- SG-side impact: the export/source-code recovery is confirmed, but a fully successful "opened in Unity here" claim still depends on a valid local Unity license/sign-in
+- `sg-preflight` is now a working SG-side QA / preflight / evidence toolkit over one shared Python engine
+- the current operator surfaces are the CLI and the local browser UI; any future desktop GUI must wrap the same engine rather than replace it
+- the tool now carries a real SG checker coverage layer for `.pdx/checkers` instead of treating repo checks as a parallel custom universe
+- the recommended per-car QA stack now includes repo checker coverage, unused-resource scans, delivery-checklist readiness, scene checks when available, and explicit BMW smoke blocker visibility
+- the strongest remaining gaps are BMW-side access/execution and deeper file-level parsing of checker outputs into even stronger handoff evidence
 
 ## Update - 2026-04-16
 
@@ -26,22 +23,23 @@ Current local status on `feature/live-sg-matrix-and-anchor-groups`:
 
 ## What This Project Is
 
-`sg-preflight` is an internal Python-first preflight and evidence framework for Seriengrafik / 3D Car QA.
+`sg-preflight` is an internal Python-first SG QA / preflight / evidence toolkit for Seriengrafik / 3D Car.
 
-The goal is not to build a flashy dashboard first.
-The goal is to catch deterministic issues earlier, reduce obvious rack-session findings, and turn repeated manual checks into reusable evidence.
+The goal is not to build a flashy dashboard or a fake all-in-one replacement workflow.
+The goal is to catch deterministic issues earlier, reduce obvious rack-session findings, route operators to the right source-of-truth files, and turn repeated manual checks into reusable evidence.
 
 In practical terms, it is now a shared Python engine with two operator surfaces:
 
 - ingests SG-shaped source inputs
 - normalizes them into a stable bundle contract
-- runs deterministic validation packs
+- runs deterministic validation packs and SG-side checker wrappers
 - writes JSON, HTML, and Markdown reports that QA, TA, and pipeline people can read
-- serves a local operator UI for simple daily checks and file-backed proof
+- serves a local browser UI for daily checks, file-backed proof, and handoff copy
+- keeps future desktop-shell research separate from the current SG QA product surface
 
 ## What It Does Today
 
-The repo is runnable today from the terminal.
+The repo is runnable today from the terminal and from the local browser UI.
 
 Current validation packs:
 
@@ -61,6 +59,7 @@ Current CLI surfaces:
 - `python -m sg_preflight run`
 - `python -m sg_preflight list-profiles`
 - `python -m sg_preflight run-profile`
+- `python -m sg_preflight list-checkers`
 - `python -m sg_preflight ui --reload`
 - `python -m sg_preflight demo-good`
 - `python -m sg_preflight demo-broken`
@@ -68,9 +67,38 @@ Current CLI surfaces:
 Current operator UI surfaces:
 
 - Home
+- Guided Check
+- Workflow Stage
 - Run
 - Result
 - Files And Proof
+
+Current one-click QA actions:
+
+- daily live matrix
+- repo checker on full mirrored scope or per-car scope
+- per-car unused-resource scan
+- per-car delivery-checklist readiness bridge
+- scene check when `RaCoHeadless.exe` is configured
+- BMW screenshot smoke as an explicit blocked stage until BMW-side access exists
+
+## Current Product Surface
+
+The browser UI is the current lightweight operator shell.
+
+It is the right surface today for:
+
+- guided checks
+- report viewing
+- evidence and handoff copy
+- action orchestration
+- run history
+- teammate demos
+
+A future desktop GUI may still become the better operator shell later when the workflow needs tighter local-system-heavy integration around Blender, RaCo, local file opening, screenshot capture, filesystem packaging, or BMW-side scripts.
+
+That future desktop shell must wrap the existing Python engine, services, actions, reports, and evidence model.
+It is research and future architecture, not the current product identity.
 
 ## What It Already Proves
 
@@ -91,6 +119,39 @@ Working local source-backed slices today:
 - `carpaints`
   - driven by workbook `.xlsx` files and legacy SG-style JSON
 
+## Real SG Checker Coverage
+
+The tool no longer ignores the mirrored SG checker layer under `.pdx/checkers`.
+
+Current real checker-aware coverage:
+
+- `code_style_checker\check_all_styles.py`
+  - wrapped directly through repo-checker actions
+- `.pdx\checkers\executeChecks.py`
+  - wrapped directly through repo-checker actions
+- `.pdx\checkers\printNotUsedResources.py`
+  - wrapped directly as per-car unused-resource actions
+- `.pdx\checkers\deliveryChecklist`
+  - exposed as a truthful readiness bridge in the same action/result/evidence flow
+- `check_scenes.py`
+  - exposed directly when `RaCoHeadless.exe` is configured
+- BMW smoke
+  - visible as a real blocked stage, not hidden or faked
+
+The detailed checker-by-checker mapping lives in [sg-checker-coverage-matrix.md](sg-checker-coverage-matrix.md).
+
+## Evidence And Handoff State
+
+Current evidence model strengths:
+
+- persistent run records
+- persistent action records
+- JSON / HTML / Markdown reporting
+- grouped findings with owner/action hints
+- stage readiness and evidence completeness
+- copy-ready Jira / QA Hero / pre-delivery / delivery-doc exports
+- manual-review companion text for Blender vs RaCo and screenshot evidence slots
+
 ## Why It Matters
 
 This project directly maps to the pain points raised in onboarding, retro material, and current SG/BMW workflow conversations:
@@ -103,64 +164,33 @@ This project directly maps to the pain points raised in onboarding, retro materi
 
 `sg-preflight` addresses that by creating one deterministic layer in front of manual review and integration.
 
-## Most Useful Local Sources Found So Far
-
-High-value local source buckets:
-
-- `OneDrive_1_14-04-2026`
-  - tool depot, PDX SG Toolkit, Blendifier, carpaint scale converter, Zohan trace editor
-- `OneDrive_2_14-04-2026`
-  - QA Doctor prototype, legacy Ramsifier/export code, `.rca` helper context
-- `OneDrive_4_14-04-2026`
-  - pivot generator scripts, `carmodel_data.json`, `resource_mappings.json`
-- `OneDrive_5_14-04-2026`
-  - best current `.rca` / `.lua` corpus for `project_sanity`
-- `Markus_Delete`
-  - real carpaint workbooks and overlapping dev surfaces
-- `Introduction`
-  - Ramses Composer docs and smaller reference corpora
-
-Important note:
-
-- the extracted folders are usable
-- several top-level ZIPs are damaged or unreadable with native tooling on this machine
-- the extracted folders should be treated as the reliable local source
-
 ## Current Blockers
 
-These do not stop current progress, but they still block the next jump beyond the current widened BMW rollout:
+These do not stop current SG-side progress, but they still block the next major jump:
 
+- BMW repo access and helper scripts for real screenshot/export/interface smoke
+- BMW smoke target mapping per live profile
+- end-to-end delivery-checklist execution beyond the current readiness bridge
+- deeper file-level parsing of SG checker outputs into even stronger handoff artifacts
 - MINI live profile rollout
-- optional direct RaCo-runtime checks such as `check_scenes.py`
-- richer integration hooks beyond local preflight and evidence capture
-
-## Exact Files Still Needed From SG/BMW
-
-When access improves further, the highest-value next fetches are:
-
-1. additional live SG/BMW project roots beyond the current three-car baseline
-2. representative MINI-side live slices to widen coverage beyond BMW
-3. practical RaCo-runtime entry points that can be called non-interactively from the local workflow
 
 ## Current Strategic Position
 
 The project is currently strongest in two areas:
 
-- `project_sanity`
-  - because we already have real-ish corpora to scan
-- `carpaints`
-  - because we already have workbook and legacy JSON sources to normalize
+- deterministic local SG-side preflight and evidence generation
+- truthful workflow routing across current SG checkers, manual review, and BMW blockers
 
 The next most important engineering slice is:
 
-- `constants`
-  - using the pivot-script ecosystem plus SG metadata sources we already have
+- deeper evidence parsing for repo-checker, scene-check, and related SG-side action outputs
 
 After that:
 
-- improve evidence-oriented reporting so large corpora produce summaries, not just warning floods
-- return to `anchors` as soon as a genuine SG hierarchy sample arrives
+- integrate BMW-side smoke properly once access exists
+- decide on a future desktop shell only when the richer local workflow actually demands it
+- keep that future desktop shell built on the same Python core instead of fragmenting the product
 
 ## One-Sentence Description For Others
 
-`sg-preflight` is an internal QA preflight and evidence layer for Seriengrafik 3D Car that turns scattered manual checks into repeatable validation, persistent run records, and operator-friendly evidence before integration and rack review.
+`sg-preflight` is an internal SG-side QA / preflight / evidence tool for Seriengrafik 3D Car that runs deterministic checks, exposes the real `.pdx/checkers` workflow, and turns daily review and delivery prep into reusable evidence before integration and rack review.

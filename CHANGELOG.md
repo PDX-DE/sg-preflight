@@ -28,6 +28,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - `c4dcb3e` `feat(ui): add dark mode and clearer operator guidance`
 - `2021122` `feat(operator): align qa actions with sg checker flow`
 - working tree: SG checker coverage now has a shared discovery/catalog layer, `checkall.bat` scope is covered through `repo_checker_all`, and the main docs now split current operator-surface narrative from future desktop-shell research
+- working tree: the main status/docs narrative now treats the browser UI as the current SG QA operator surface, keeps future desktop GUI work explicitly research-only, and removes Unity/AssetRipper recovery notes from the main product-status story
 
 #### 2026-04-16
 

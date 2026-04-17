@@ -25,4 +25,5 @@ Coverage labels used here:
 - `sg-preflight` now has one shared SG checker catalog in code and can dump it through `python -m sg_preflight list-checkers --json`.
 - The operator UI Home view now exposes the same checker catalog under `Show SG checker coverage`.
 - The browser UI remains the current operator surface, but checker discovery, action readiness, result artifacts, and workflow-stage messaging are all driven from the same SG-side reality.
+- Future desktop-shell direction is tracked separately under `docs/research/`; this matrix stays focused on the current SG QA workflow surface instead of future visual-direction research.
 - The remaining maturity gap is no longer basic SG checker awareness; it is deeper result parsing plus BMW-side access/execution.

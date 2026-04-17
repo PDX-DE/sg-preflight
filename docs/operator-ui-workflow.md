@@ -23,8 +23,9 @@ It is the deterministic front end of that workflow:
 See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflow fit, manual stages, and BMW-side blockers.
 See [sg-checker-coverage-matrix.md](sg-checker-coverage-matrix.md) for the real SG checker inventory and current integration coverage.
 
-The browser UI is the current operator surface.
-If a richer local shell is needed later, it should be a desktop wrapper over the same Python core rather than a replacement engine.
+The browser UI is the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos.
+If a richer local shell is needed later for filesystem-heavy or tool-orchestration-heavy work, it should be a desktop wrapper over the same Python core rather than a replacement engine.
+Future desktop-shell notes belong under `docs/research/` so the main workflow docs stay focused on SG QA reality, `.pdx/checkers`, evidence, readiness, and BMW blocker visibility.
 
 ## Start
 
