@@ -51,6 +51,7 @@ double g_shell_appear_time = -1.0;
 ImVec2 g_tab_highlight_min{};
 ImVec2 g_tab_highlight_max{};
 bool g_tab_highlight_ready = false;
+bool g_using_warp = false;
 
 struct ShellAssets {
     std::filesystem::path resource_root;
@@ -84,6 +85,14 @@ struct ShellAudio {
 };
 
 ShellAudio g_shell_audio;
+
+struct ShellWindowOptions {
+    bool fullscreen = true;
+    int width = 0;
+    int height = 0;
+};
+
+ShellWindowOptions g_window_options;
 
 enum class ShellScreen {
     Select,
@@ -139,8 +148,8 @@ void RenderBlockersPanel(ShellState& state);
 constexpr float kPanelGrid = 9.0f;
 constexpr float kPanelHeaderHeight = 34.0f;
 constexpr float kRailFooterReserve = 62.0f;
-constexpr float kVirtualWidth = 1280.0f;
-constexpr float kVirtualHeight = 720.0f;
+constexpr float kDesignWidth = 1280.0f;
+constexpr float kDesignHeight = 720.0f;
 constexpr double kContainerLineAnimationDuration = 8.0;
 constexpr double kContainerOuterTime = kContainerLineAnimationDuration + 8.0;
 constexpr double kContainerOuterDuration = 8.0;
@@ -227,18 +236,22 @@ ImU32 ApplyAlpha(ImU32 color, float alpha_scale) {
     return ImGui::ColorConvertFloat4ToU32(rgba);
 }
 
-float ShellScale() {
+float ShellScaleX() {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    return std::min(display.x / kVirtualWidth, display.y / kVirtualHeight);
+    return display.x / kDesignWidth;
+}
+
+float ShellScaleY() {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    return display.y / kDesignHeight;
+}
+
+float ShellScale() {
+    return std::min(ShellScaleX(), ShellScaleY());
 }
 
 ImVec2 ShellOffset() {
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    const float scale = ShellScale();
-    return ImVec2(
-        (display.x - kVirtualWidth * scale) * 0.5f,
-        (display.y - kVirtualHeight * scale) * 0.5f
-    );
+    return ImVec2(0.0f, 0.0f);
 }
 
 float ShellUi(float value) {
@@ -247,8 +260,7 @@ float ShellUi(float value) {
 
 ImVec2 ShellPoint(float x, float y) {
     const ImVec2 offset = ShellOffset();
-    const float scale = ShellScale();
-    return ImVec2(offset.x + x * scale, offset.y + y * scale);
+    return ImVec2(offset.x + x * ShellScaleX(), offset.y + y * ShellScaleY());
 }
 
 bool PathExists(const std::filesystem::path& path) {
@@ -772,20 +784,29 @@ bool CreateDeviceD3D(HWND window_handle) {
     };
     D3D_FEATURE_LEVEL feature_level{};
 
-    const HRESULT result = D3D11CreateDeviceAndSwapChain(
-        nullptr,
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,
-        0,
-        feature_levels,
-        static_cast<UINT>(sizeof(feature_levels) / sizeof(feature_levels[0])),
-        D3D11_SDK_VERSION,
-        &swap_chain_desc,
-        &g_swap_chain,
-        &g_device,
-        &feature_level,
-        &g_device_context
-    );
+    const auto create_device = [&](D3D_DRIVER_TYPE driver_type) {
+        return D3D11CreateDeviceAndSwapChain(
+            nullptr,
+            driver_type,
+            nullptr,
+            0,
+            feature_levels,
+            static_cast<UINT>(sizeof(feature_levels) / sizeof(feature_levels[0])),
+            D3D11_SDK_VERSION,
+            &swap_chain_desc,
+            &g_swap_chain,
+            &g_device,
+            &feature_level,
+            &g_device_context
+        );
+    };
+
+    HRESULT result = create_device(D3D_DRIVER_TYPE_HARDWARE);
+    g_using_warp = false;
+    if (FAILED(result)) {
+        result = create_device(D3D_DRIVER_TYPE_WARP);
+        g_using_warp = SUCCEEDED(result);
+    }
     if (FAILED(result)) {
         return false;
     }
@@ -881,6 +902,30 @@ BackendConfig ParseArguments() {
         if (StartsWithInsensitive(std::wstring(arg), L"--python=")) {
             config.python_executable = std::wstring(arg.substr(9));
             python_override = true;
+            continue;
+        }
+        if (arg == L"--windowed") {
+            g_window_options.fullscreen = false;
+            continue;
+        }
+        if (arg == L"--fullscreen") {
+            g_window_options.fullscreen = true;
+            continue;
+        }
+        if ((arg == L"--width" || arg == L"--window-width") && index + 1 < __argc) {
+            g_window_options.width = std::max(0, _wtoi(__wargv[++index]));
+            continue;
+        }
+        if ((arg == L"--height" || arg == L"--window-height") && index + 1 < __argc) {
+            g_window_options.height = std::max(0, _wtoi(__wargv[++index]));
+            continue;
+        }
+        if (StartsWithInsensitive(std::wstring(arg), L"--width=")) {
+            g_window_options.width = std::max(0, _wtoi(std::wstring(arg.substr(8)).c_str()));
+            continue;
+        }
+        if (StartsWithInsensitive(std::wstring(arg), L"--height=")) {
+            g_window_options.height = std::max(0, _wtoi(std::wstring(arg.substr(9)).c_str()));
             continue;
         }
     }
@@ -1350,54 +1395,54 @@ void DrawBackdropChrome(const ShellState& state) {
     ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
     const ImVec2 display_size = ImGui::GetIO().DisplaySize;
     const float time = static_cast<float>(ImGui::GetTime());
-    draw_list->AddRectFilled(ImVec2(0.0f, 0.0f), display_size, IM_COL32(8, 14, 16, 255));
+    draw_list->AddRectFilled(ImVec2(0.0f, 0.0f), display_size, IM_COL32(6, 11, 13, 255));
     draw_list->AddRectFilledMultiColor(
         ImVec2(0.0f, 0.0f),
         ImVec2(display_size.x, display_size.y * 0.35f),
-        IM_COL32(12, 22, 24, 255),
-        IM_COL32(12, 22, 24, 255),
-        IM_COL32(8, 14, 16, 0),
-        IM_COL32(8, 14, 16, 0)
+        IM_COL32(10, 20, 24, 255),
+        IM_COL32(10, 20, 24, 255),
+        IM_COL32(6, 11, 13, 0),
+        IM_COL32(6, 11, 13, 0)
     );
-    for (int band = 0; band < 10; ++band) {
-        const float y = ShellUi(118.0f + band * 56.0f);
-        const int alpha = band < 3 ? 24 : 14;
+    for (int band = 0; band < 8; ++band) {
+        const float y = ShellUi(122.0f + band * 62.0f);
+        const int alpha = band < 2 ? 18 : 10;
         draw_list->AddLine(
             ImVec2(ShellUi(22.0f), y),
             ImVec2(display_size.x - ShellUi(22.0f), y),
-            IM_COL32(28, 98, 82, alpha),
+            IM_COL32(32, 92, 96, alpha),
             1.0f
         );
     }
 
-    const float bar_height = ShellUi(92.0f);
+    const float bar_height = ShellUi(84.0f);
     draw_list->AddRectFilledMultiColor(
         ImVec2(0.0f, 0.0f),
         ImVec2(display_size.x, bar_height),
-        IM_COL32(3, 7, 8, 255),
-        IM_COL32(3, 7, 8, 255),
-        IM_COL32(3, 7, 8, 0),
-        IM_COL32(3, 7, 8, 0)
+        IM_COL32(2, 6, 8, 255),
+        IM_COL32(2, 6, 8, 255),
+        IM_COL32(2, 6, 8, 0),
+        IM_COL32(2, 6, 8, 0)
     );
     draw_list->AddRectFilledMultiColor(
         ImVec2(0.0f, display_size.y - bar_height),
         display_size,
-        IM_COL32(3, 7, 8, 0),
-        IM_COL32(3, 7, 8, 0),
-        IM_COL32(3, 7, 8, 255),
-        IM_COL32(3, 7, 8, 255)
+        IM_COL32(2, 6, 8, 0),
+        IM_COL32(2, 6, 8, 0),
+        IM_COL32(2, 6, 8, 255),
+        IM_COL32(2, 6, 8, 255)
     );
 
     const float bar_motion = static_cast<float>(ComputeMotionFrames(0.0, 16.0));
-    const float sweep_width = ShellUi(320.0f);
-    const float sweep_x = std::fmod(time * ShellUi(82.0f), display_size.x + sweep_width) - sweep_width;
+    const float sweep_width = ShellUi(256.0f);
+    const float sweep_x = std::fmod(time * ShellUi(56.0f), display_size.x + sweep_width) - sweep_width;
     draw_list->AddRectFilledMultiColor(
-        ImVec2(sweep_x, ShellUi(46.0f)),
-        ImVec2(sweep_x + sweep_width, ShellUi(58.0f)),
-        ApplyAlpha(IM_COL32(173, 255, 156, 0), bar_motion),
-        ApplyAlpha(IM_COL32(173, 255, 156, 80), bar_motion),
-        ApplyAlpha(IM_COL32(173, 255, 156, 80), bar_motion),
-        ApplyAlpha(IM_COL32(173, 255, 156, 0), bar_motion)
+        ImVec2(sweep_x, ShellUi(43.0f)),
+        ImVec2(sweep_x + sweep_width, ShellUi(54.0f)),
+        ApplyAlpha(IM_COL32(255, 210, 120, 0), bar_motion),
+        ApplyAlpha(IM_COL32(255, 210, 120, 34), bar_motion),
+        ApplyAlpha(IM_COL32(150, 232, 203, 34), bar_motion),
+        ApplyAlpha(IM_COL32(150, 232, 203, 0), bar_motion)
     );
 
     const auto draw_bar_line = [&](bool top) {
@@ -1405,23 +1450,23 @@ void DrawBackdropChrome(const ShellState& state) {
         draw_list->AddRectFilledMultiColor(
             ImVec2(0.0f, y - ShellUi(2.0f)),
             ImVec2(display_size.x, y),
-            top ? IM_COL32(222, 255, 189, 7) : IM_COL32(173, 255, 156, 7),
-            top ? IM_COL32(222, 255, 189, 7) : IM_COL32(173, 255, 156, 7),
-            top ? IM_COL32(222, 255, 189, 65) : IM_COL32(173, 255, 156, 65),
-            top ? IM_COL32(222, 255, 189, 65) : IM_COL32(173, 255, 156, 65)
+            top ? IM_COL32(255, 222, 159, 6) : IM_COL32(141, 220, 206, 6),
+            top ? IM_COL32(255, 222, 159, 6) : IM_COL32(141, 220, 206, 6),
+            top ? IM_COL32(255, 222, 159, 34) : IM_COL32(141, 220, 206, 34),
+            top ? IM_COL32(255, 222, 159, 34) : IM_COL32(141, 220, 206, 34)
         );
         draw_list->AddRectFilledMultiColor(
             ImVec2(0.0f, y + ShellUi(1.0f)),
             ImVec2(display_size.x, y + ShellUi(3.0f)),
-            top ? IM_COL32(173, 255, 156, 65) : IM_COL32(222, 255, 189, 65),
-            top ? IM_COL32(173, 255, 156, 65) : IM_COL32(222, 255, 189, 65),
-            top ? IM_COL32(173, 255, 156, 7) : IM_COL32(222, 255, 189, 7),
-            top ? IM_COL32(173, 255, 156, 7) : IM_COL32(222, 255, 189, 7)
+            top ? IM_COL32(141, 220, 206, 34) : IM_COL32(255, 222, 159, 34),
+            top ? IM_COL32(141, 220, 206, 34) : IM_COL32(255, 222, 159, 34),
+            top ? IM_COL32(141, 220, 206, 6) : IM_COL32(255, 222, 159, 6),
+            top ? IM_COL32(141, 220, 206, 6) : IM_COL32(255, 222, 159, 6)
         );
         draw_list->AddRectFilled(
             ImVec2(0.0f, y),
             ImVec2(display_size.x, y + ShellUi(1.0f)),
-            IM_COL32(115, 178, 104, 255)
+            top ? IM_COL32(116, 137, 82, 255) : IM_COL32(73, 134, 128, 255)
         );
     };
     draw_bar_line(true);
@@ -1535,14 +1580,14 @@ void DrawBackdropChrome(const ShellState& state) {
             g_small_font,
             ShellUi(14.0f),
             ShellPoint(122.0f, 92.0f),
-            IM_COL32(120, 225, 170, 220),
+            IM_COL32(124, 214, 196, 220),
             "QA OPERATOR SHELL"
         );
         draw_list->AddText(
             g_small_font,
             ShellUi(13.0f),
             ShellPoint(860.0f, 92.0f),
-            IM_COL32(180, 198, 189, 180),
+            IM_COL32(164, 182, 178, 168),
             workspace.c_str()
         );
     }
@@ -1569,10 +1614,10 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
     min.y = LerpFloat(center_y, min.y, container_height);
     max.y = LerpFloat(center_y, max.y, container_height);
 
-    const ImU32 line_color = IM_COL32(0, 89, 0, static_cast<int>(255.0f * container_height));
-    const ImU32 outer_color = IM_COL32(0, 49, 0, static_cast<int>(255.0f * outer_alpha));
-    const ImU32 inner_color = IM_COL32(0, 33, 0, static_cast<int>(255.0f * inner_alpha));
-    const ImU32 background_color = IM_COL32(0, 0, 0, static_cast<int>(223.0f * background_alpha));
+    const ImU32 line_color = IM_COL32(22, 92, 90, static_cast<int>(180.0f * container_height));
+    const ImU32 outer_color = IM_COL32(7, 36, 40, static_cast<int>(215.0f * outer_alpha));
+    const ImU32 inner_color = IM_COL32(5, 22, 26, static_cast<int>(230.0f * inner_alpha));
+    const ImU32 background_color = IM_COL32(4, 10, 12, static_cast<int>(232.0f * background_alpha));
 
     draw_list->AddRectFilled(min, max, background_color);
     draw_list->AddRectFilled(ImVec2(min.x, min.y + grid), ImVec2(min.x + grid, max.y - grid), outer_color);
@@ -1585,7 +1630,7 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
         g_shell_assets.general_window,
         ImVec2(min.x + grid, min.y + grid),
         ImVec2(max.x - grid, max.y - grid),
-        IM_COL32(108, 255, 147, static_cast<int>(52.0f * background_alpha))
+        IM_COL32(94, 188, 176, static_cast<int>(18.0f * background_alpha))
     );
 
     const float line_size = std::max(1.0f, ShellUi(2.0f));
@@ -1599,12 +1644,12 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
     draw_list->AddRectFilled(
         ImVec2(min.x + grid, min.y + grid),
         ImVec2(min.x + ShellUi(102.0f), min.y + grid + label_height),
-        IM_COL32(20, 26, 18, static_cast<int>(255.0f * inner_alpha))
+        IM_COL32(23, 24, 17, static_cast<int>(248.0f * inner_alpha))
     );
     draw_list->AddLine(
         ImVec2(min.x + grid, min.y + grid + label_height + ShellUi(2.0f)),
         ImVec2(max.x - grid, min.y + grid + label_height + ShellUi(2.0f)),
-        IM_COL32(18, 72, 62, static_cast<int>(120.0f * outer_alpha)),
+        IM_COL32(32, 88, 86, static_cast<int>(94.0f * outer_alpha)),
         1.0f
     );
 
@@ -1624,7 +1669,7 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
                 g_shell_assets.options_static,
                 clip_min,
                 clip_max,
-                IM_COL32(88, 255, 146, static_cast<int>(18.0f * background_alpha)),
+                IM_COL32(112, 214, 188, static_cast<int>(8.0f * background_alpha)),
                 uv_min,
                 uv_max
             );
@@ -1637,7 +1682,7 @@ bool BeginDecoratedPanel(const char* id, const char* title, ImVec2 size, bool st
             g_small_font,
             ShellUi(14.0f),
             ImVec2(min.x + ShellUi(10.0f), min.y + ShellUi(7.0f)),
-            IM_COL32(255, 188, 0, static_cast<int>(255.0f * inner_alpha)),
+            IM_COL32(238, 181, 42, static_cast<int>(255.0f * inner_alpha)),
             title
         );
     }
@@ -1653,7 +1698,7 @@ void EndDecoratedPanel() {
 }
 
 ImVec2 ShellSize(float width, float height) {
-    return ImVec2(ShellUi(width), ShellUi(height));
+    return ImVec2(width * ShellScaleX(), height * ShellScaleY());
 }
 
 bool BeginShellPanelAt(
@@ -1683,31 +1728,29 @@ bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
     const ImU32 bg = accent
-        ? (hovered ? IM_COL32(34, 112, 76, 230) : IM_COL32(22, 79, 56, 230))
-        : (hovered ? IM_COL32(18, 42, 44, 230) : IM_COL32(12, 26, 29, 230));
-    const ImU32 border = accent ? IM_COL32(122, 255, 168, 210) : IM_COL32(67, 128, 113, 190);
+        ? (hovered ? IM_COL32(24, 82, 74, 228) : IM_COL32(16, 58, 54, 228))
+        : (hovered ? IM_COL32(14, 32, 36, 226) : IM_COL32(9, 20, 24, 226));
+    const ImU32 border = accent ? IM_COL32(120, 228, 204, 188) : IM_COL32(60, 114, 118, 178);
     const ImU32 text = enabled ? IM_COL32(236, 246, 239, 255) : IM_COL32(114, 134, 127, 255);
 
     draw->AddRectFilled(min, max, bg, ShellUi(4.0f));
-    if (accent || hovered) {
+    if (accent) {
         DrawTexturedRectRounded(
             draw,
             g_shell_assets.select,
             min,
             max,
-            accent ? IM_COL32(131, 255, 125, hovered ? 78 : 64) : IM_COL32(116, 255, 170, 28),
+            IM_COL32(108, 226, 170, hovered ? 42 : 30),
             ShellUi(4.0f)
         );
-        if (accent) {
-            DrawTexturedRectRounded(
-                draw,
-                g_shell_assets.light,
-                ImVec2(min.x, min.y - ShellUi(2.0f)),
-                ImVec2(max.x, min.y + (max.y - min.y) * 0.72f),
-                IM_COL32(205, 255, 170, hovered ? 62 : 48),
-                ShellUi(4.0f)
-            );
-        }
+        DrawTexturedRectRounded(
+            draw,
+            g_shell_assets.light,
+            ImVec2(min.x, min.y - ShellUi(2.0f)),
+            ImVec2(max.x, min.y + (max.y - min.y) * 0.56f),
+            IM_COL32(240, 225, 146, hovered ? 32 : 24),
+            ShellUi(4.0f)
+        );
     }
     draw->AddRect(min, max, border, ShellUi(4.0f), 0, 1.2f);
     draw->AddLine(ImVec2(min.x + 8.0f, max.y - 5.0f), ImVec2(max.x - 8.0f, max.y - 5.0f), border, 2.0f);
@@ -1771,43 +1814,41 @@ bool DrawSelectableCard(
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
 
-    const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 5.0f);
+    const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 3.2f);
     const ImU32 bg = selected
-        ? ApplyAlpha(IM_COL32(19, 84, 60, 255), 0.88f)
+        ? ApplyAlpha(IM_COL32(16, 62, 64, 255), 0.86f)
         : hovered
-            ? ApplyAlpha(IM_COL32(13, 32, 36, 255), 0.92f)
-            : ApplyAlpha(IM_COL32(9, 18, 22, 255), 0.92f);
+            ? ApplyAlpha(IM_COL32(10, 26, 30, 255), 0.92f)
+            : ApplyAlpha(IM_COL32(8, 17, 21, 255), 0.92f);
     const ImU32 border = selected
-        ? ApplyAlpha(IM_COL32(118, 255, 165, 230), 0.85f + 0.15f * pulse)
+        ? ApplyAlpha(IM_COL32(122, 226, 204, 220), 0.82f + 0.10f * pulse)
         : hovered
-            ? IM_COL32(73, 143, 124, 205)
-            : IM_COL32(33, 84, 74, 180);
+            ? IM_COL32(72, 124, 128, 196)
+            : IM_COL32(31, 73, 78, 168);
 
     draw->AddRectFilled(min, max, bg, ShellUi(4.0f));
-    if (selected || hovered) {
+    if (selected) {
         DrawTexturedRectRounded(
             draw,
             g_shell_assets.select,
             min,
             max,
-            selected ? IM_COL32(146, 255, 135, static_cast<int>(82.0f + 24.0f * pulse)) : IM_COL32(114, 255, 198, 24),
+            IM_COL32(108, 226, 170, static_cast<int>(46.0f + 12.0f * pulse)),
             ShellUi(4.0f)
         );
-        if (selected) {
-            DrawTexturedRectRounded(
-                draw,
-                g_shell_assets.light,
-                ImVec2(min.x - ShellUi(2.0f), min.y - ShellUi(4.0f)),
-                ImVec2(max.x + ShellUi(2.0f), min.y + (max.y - min.y) * 0.34f),
-                IM_COL32(221, 255, 188, 56),
-                ShellUi(4.0f)
-            );
-        }
+        DrawTexturedRectRounded(
+            draw,
+            g_shell_assets.light,
+            ImVec2(min.x - ShellUi(2.0f), min.y - ShellUi(4.0f)),
+            ImVec2(max.x + ShellUi(2.0f), min.y + (max.y - min.y) * 0.28f),
+            IM_COL32(240, 225, 146, 26),
+            ShellUi(4.0f)
+        );
     }
     draw->AddRect(min, max, border, ShellUi(4.0f), 0, selected ? 1.8f : 1.1f);
-    draw->AddRectFilled(ImVec2(min.x + 7.0f, min.y + 9.0f), ImVec2(min.x + 13.0f, max.y - 9.0f), selected ? IM_COL32(255, 188, 0, 255) : IM_COL32(45, 92, 80, 160), 3.0f);
+    draw->AddRectFilled(ImVec2(min.x + 7.0f, min.y + 9.0f), ImVec2(min.x + 13.0f, max.y - 9.0f), selected ? IM_COL32(238, 181, 42, 255) : IM_COL32(52, 86, 90, 150), 3.0f);
     for (float y = min.y + ShellUi(2.0f); y < max.y; y += ShellUi(8.0f)) {
-        draw->AddLine(ImVec2(min.x + 16.0f, y), ImVec2(max.x - 8.0f, y), IM_COL32(36, 88, 72, selected ? 28 : 12), 1.0f);
+        draw->AddLine(ImVec2(min.x + 16.0f, y), ImVec2(max.x - 8.0f, y), IM_COL32(36, 88, 92, selected ? 18 : 8), 1.0f);
     }
 
     const float text_x = min.x + 24.0f;
@@ -1844,21 +1885,21 @@ void DrawProgressMeter(float progress, const std::string& label) {
         IM_COL32(106, 240, 172, 72),
         ShellUi(3.0f)
     );
-    draw->AddRect(min, max, IM_COL32(52, 113, 97, 210), 3.0f);
+    draw->AddRect(min, max, IM_COL32(55, 109, 114, 210), 3.0f);
     draw->AddRectFilledMultiColor(
         min,
         ImVec2(min.x + width, max.y),
-        IM_COL32(45, 193, 128, 255),
-        IM_COL32(157, 255, 93, 255),
-        IM_COL32(45, 193, 128, 235),
-        IM_COL32(157, 255, 93, 235)
+        IM_COL32(48, 184, 168, 255),
+        IM_COL32(207, 222, 90, 255),
+        IM_COL32(48, 184, 168, 235),
+        IM_COL32(207, 222, 90, 235)
     );
     DrawTexturedRectRounded(
         draw,
         g_shell_assets.select,
         min,
         ImVec2(min.x + width, max.y),
-        IM_COL32(150, 255, 126, 130),
+        IM_COL32(132, 232, 180, 92),
         ShellUi(3.0f),
         ImVec2(0.0f, 0.0f),
         ImVec2(std::max(0.12f, progress * 3.2f), 1.0f)
@@ -1868,7 +1909,7 @@ void DrawProgressMeter(float progress, const std::string& label) {
         g_shell_assets.light,
         ImVec2(min.x, min.y - ShellUi(4.0f)),
         ImVec2(min.x + width, max.y + ShellUi(4.0f)),
-        IM_COL32(226, 255, 184, 78),
+        IM_COL32(240, 225, 146, 34),
         ShellUi(3.0f)
     );
     for (float x = min.x; x < min.x + width; x += 12.0f) {
@@ -1979,56 +2020,56 @@ void DrawInstallerHero(ImVec2 top_left, ImVec2 size, float alpha, bool animated 
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 min = top_left;
     const ImVec2 max(top_left.x + size.x, top_left.y + size.y);
-    draw->AddRectFilled(min, max, IM_COL32(7, 14, 17, static_cast<int>(200.0f * alpha)), ShellUi(4.0f));
-    draw->AddRect(min, max, IM_COL32(52, 113, 97, static_cast<int>(168.0f * alpha)), ShellUi(4.0f), 0, 1.0f);
+    draw->AddRectFilled(min, max, IM_COL32(7, 13, 16, static_cast<int>(192.0f * alpha)), ShellUi(4.0f));
+    draw->AddRect(min, max, IM_COL32(56, 108, 112, static_cast<int>(160.0f * alpha)), ShellUi(4.0f), 0, 1.0f);
     draw->AddRectFilledMultiColor(
         ImVec2(min.x + ShellUi(14.0f), min.y + ShellUi(14.0f)),
         ImVec2(max.x - ShellUi(14.0f), max.y - ShellUi(14.0f)),
-        IM_COL32(18, 40, 34, static_cast<int>(180.0f * alpha)),
-        IM_COL32(10, 24, 22, static_cast<int>(180.0f * alpha)),
-        IM_COL32(5, 12, 14, static_cast<int>(210.0f * alpha)),
-        IM_COL32(5, 12, 14, static_cast<int>(210.0f * alpha))
+        IM_COL32(15, 34, 38, static_cast<int>(168.0f * alpha)),
+        IM_COL32(10, 23, 28, static_cast<int>(168.0f * alpha)),
+        IM_COL32(5, 12, 14, static_cast<int>(206.0f * alpha)),
+        IM_COL32(5, 12, 14, static_cast<int>(206.0f * alpha))
     );
 
     if (animated) {
         const ImVec2 center(max.x - size.x * 0.26f, min.y + size.y * 0.46f);
-        const float pulse = 0.55f + 0.45f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.6f);
-        const float angle = static_cast<float>(ImGui::GetTime()) * 0.9f;
+        const float pulse = 0.72f + 0.28f * std::sin(static_cast<float>(ImGui::GetTime()) * 1.8f);
+        const float angle = static_cast<float>(ImGui::GetTime()) * 0.72f;
         DrawRotatedTexture(
             draw,
             g_shell_assets.arrow_circle,
             center,
-            ImVec2(size.y * 0.44f, size.y * 0.44f),
+            ImVec2(size.y * 0.34f, size.y * 0.34f),
             angle,
-            IM_COL32(255, 188, 0, static_cast<int>(168.0f * alpha))
+            IM_COL32(236, 181, 42, static_cast<int>(152.0f * alpha))
         );
         DrawTexturedRectRounded(
             draw,
             g_shell_assets.pulse_install,
-            ImVec2(center.x - size.y * 0.30f * pulse, center.y - size.y * 0.30f * pulse),
-            ImVec2(center.x + size.y * 0.30f * pulse, center.y + size.y * 0.30f * pulse),
-            IM_COL32(171, 255, 122, static_cast<int>(62.0f * alpha * pulse)),
+            ImVec2(center.x - size.y * 0.20f * pulse, center.y - size.y * 0.20f * pulse),
+            ImVec2(center.x + size.y * 0.20f * pulse, center.y + size.y * 0.20f * pulse),
+            IM_COL32(112, 214, 188, static_cast<int>(22.0f * alpha * pulse)),
             ShellUi(12.0f)
         );
         DrawTexturedRectRounded(
             draw,
             g_shell_assets.light,
-            ImVec2(center.x - size.y * 0.88f, min.y + ShellUi(14.0f)),
-            ImVec2(max.x - ShellUi(18.0f), min.y + size.y * 0.52f),
-            IM_COL32(224, 255, 190, static_cast<int>(34.0f * alpha)),
+            ImVec2(center.x - size.y * 0.72f, min.y + ShellUi(18.0f)),
+            ImVec2(max.x - ShellUi(22.0f), min.y + size.y * 0.40f),
+            IM_COL32(240, 225, 146, static_cast<int>(18.0f * alpha)),
             ShellUi(8.0f)
         );
     }
 
     const float time = static_cast<float>(ImGui::GetTime());
     for (float y = min.y + ShellUi(18.0f); y < max.y; y += ShellUi(28.0f)) {
-        const float wobble = std::sin((time * 1.1f) + y * 0.03f) * ShellUi(12.0f);
+        const float wobble = std::sin((time * 0.8f) + y * 0.03f) * ShellUi(7.0f);
         draw->AddBezierCubic(
             ImVec2(min.x + ShellUi(12.0f), y),
             ImVec2(min.x + size.x * 0.34f, y - ShellUi(8.0f) + wobble),
             ImVec2(min.x + size.x * 0.66f, y + ShellUi(8.0f) - wobble),
             ImVec2(max.x - ShellUi(12.0f), y),
-            IM_COL32(171, 255, 192, static_cast<int>(14.0f * alpha)),
+            IM_COL32(128, 202, 194, static_cast<int>(10.0f * alpha)),
             1.0f
         );
     }
@@ -2367,7 +2408,7 @@ void RenderSelectScreen(ShellState& state) {
             SetScreen(state, ShellScreen::Run, false);
         }
     }
-    ImGui::SameLine();
+    ImGui::Spacing();
     ImGui::TextDisabled("%s", state.status_line.c_str());
 
     if (action != nullptr) {
@@ -2479,6 +2520,16 @@ void RenderStagesScreen(ShellState& state) {
     ImGui::Spacing();
     RenderBlockersPanel(state);
     ImGui::Spacing();
+    InlineSectionLabel("Display Mode");
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::TextWrapped(
+        "Current output: %.0fx%.0f%s",
+        display.x,
+        display.y,
+        g_using_warp ? " | software renderer fallback (WARP)" : " | hardware D3D11"
+    );
+    ImGui::TextWrapped("Default startup uses the current monitor size. Use --windowed --width <n> --height <n> if you want an override.");
+    ImGui::Spacing();
     InlineSectionLabel("Shell Audio");
     if (DrawSettingToggle("toggle-sfx", "UI sound effects", "Cursor, confirm, cancel, and window-open cues from the local Unleashed resource bundle.", g_shell_audio.sfx_enabled)) {
         SetSfxEnabled(!g_shell_audio.sfx_enabled);
@@ -2536,7 +2587,7 @@ void RenderSummaryPanel(ShellState& state) {
             PlayCue(UiCue::Confirm);
         }
     }
-    ImGui::SameLine();
+    ImGui::Spacing();
     ImGui::TextDisabled("%s", state.status_line.c_str());
 
     if (!state.last_error.empty()) {
@@ -2995,14 +3046,34 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     RegisterClassExW(&window_class);
 
     const RECT monitor_rect = PrimaryMonitorRect();
+    const int monitor_width = monitor_rect.right - monitor_rect.left;
+    const int monitor_height = monitor_rect.bottom - monitor_rect.top;
+    const int requested_width = g_window_options.width > 0 ? g_window_options.width : monitor_width;
+    const int requested_height = g_window_options.height > 0 ? g_window_options.height : monitor_height;
+    const bool use_fullscreen = g_window_options.fullscreen && g_window_options.width <= 0 && g_window_options.height <= 0;
+    const DWORD window_style = use_fullscreen ? WS_POPUP : WS_OVERLAPPEDWINDOW;
+
+    RECT window_rect{0, 0, requested_width, requested_height};
+    if (!use_fullscreen) {
+        AdjustWindowRect(&window_rect, window_style, FALSE);
+    }
+    const int window_width = window_rect.right - window_rect.left;
+    const int window_height = window_rect.bottom - window_rect.top;
+    const int window_x = use_fullscreen
+        ? monitor_rect.left
+        : monitor_rect.left + std::max(0, (monitor_width - window_width) / 2);
+    const int window_y = use_fullscreen
+        ? monitor_rect.top
+        : monitor_rect.top + std::max(0, (monitor_height - window_height) / 2);
+
     HWND window_handle = CreateWindowW(
         window_class.lpszClassName,
         L"SG Preflight - Native Operator Shell",
-        WS_POPUP,
-        monitor_rect.left,
-        monitor_rect.top,
-        monitor_rect.right - monitor_rect.left,
-        monitor_rect.bottom - monitor_rect.top,
+        window_style,
+        window_x,
+        window_y,
+        window_width,
+        window_height,
         nullptr,
         nullptr,
         instance,
@@ -3040,6 +3111,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         state.status_line = "Loaded real UnleashedRecomp DDS chrome.";
     } else if (g_shell_assets.attempted && !g_shell_assets.error.empty()) {
         state.status_line = "Fallback chrome active: " + g_shell_assets.error;
+    }
+    state.status_line += use_fullscreen
+        ? " Display: native fullscreen."
+        : " Display: windowed " + std::to_string(requested_width) + "x" + std::to_string(requested_height) + ".";
+    if (g_using_warp) {
+        state.status_line += " Renderer fallback: D3D11 WARP.";
     }
     if (g_shell_audio.available) {
         state.status_line += " Shell audio is ready; toggle music in Stages.";
