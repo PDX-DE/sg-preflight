@@ -3,18 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
-    QPushButton,
     QSplitter,
     QStatusBar,
     QVBoxLayout,
@@ -33,6 +32,14 @@ from sg_preflight.desktop.evidence_model import (
     latest_action_snapshot_for_profile,
 )
 from sg_preflight.desktop.file_ops import open_local_path, reveal_in_file_manager
+from sg_preflight.desktop.widgets import (
+    ActionTabButton,
+    GuideButton,
+    HeaderBanner,
+    OperatorChrome,
+    StaticListWidget,
+    UnleashedPanel,
+)
 from sg_preflight.desktop.workers import ActionRunner
 from sg_preflight.qa_actions import build_action_record, get_operator_action
 from sg_preflight.services import workspace_root
@@ -47,9 +54,10 @@ class DesktopMainWindow(QMainWindow):
         self._current_run_id = ""
         self._current_snapshot: DesktopActionSnapshot | None = None
         self._copy_map: dict[str, str] = {}
+        self._action_tab_buttons: dict[str, ActionTabButton] = {}
 
         self.setWindowTitle("SG Preflight - QA Operator Shell")
-        self.resize(1540, 920)
+        self.resize(1640, 950)
         self._build_ui()
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(800)
@@ -57,17 +65,27 @@ class DesktopMainWindow(QMainWindow):
         self._reload_profiles()
 
     def _build_ui(self) -> None:
-        central = QWidget(self)
+        central = OperatorChrome(self)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(16, 16, 16, 12)
-        layout.setSpacing(12)
+        layout.setContentsMargins(14, 10, 14, 12)
+        layout.setSpacing(10)
 
-        title = QLabel("SG Preflight")
-        title.setProperty("role", "title")
-        subtitle = QLabel("QA Operator Shell")
-        subtitle.setProperty("role", "subtitle")
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
+        self.header_banner = HeaderBanner("SG Preflight", "QA Operator Shell", central)
+        layout.addWidget(self.header_banner)
+
+        self.mode_panel = UnleashedPanel("Mode Select", central)
+        mode_layout = QVBoxLayout(self.mode_panel)
+        mode_layout.setSpacing(8)
+        mode_label = QLabel("Recommended SG action tabs for the selected live slice.")
+        mode_label.setObjectName("modeLabel")
+        mode_layout.addWidget(mode_label)
+
+        self.action_tab_host = QWidget(self.mode_panel)
+        self.action_tab_layout = QHBoxLayout(self.action_tab_host)
+        self.action_tab_layout.setContentsMargins(0, 0, 0, 0)
+        self.action_tab_layout.setSpacing(8)
+        mode_layout.addWidget(self.action_tab_host)
+        layout.addWidget(self.mode_panel)
 
         splitter = QSplitter(Qt.Horizontal, self)
         splitter.addWidget(self._build_left_column())
@@ -83,39 +101,39 @@ class DesktopMainWindow(QMainWindow):
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(8)
 
-        self.run_button = QPushButton("Run")
+        self.run_button = GuideButton("A", "Run", bottom)
         self.run_button.clicked.connect(self._run_selected_action)
         bottom_layout.addWidget(self.run_button)
 
-        self.open_file_button = QPushButton("Open File")
+        self.open_file_button = GuideButton("X", "Open File", bottom)
         self.open_file_button.clicked.connect(self._open_selected_evidence)
         bottom_layout.addWidget(self.open_file_button)
 
-        self.reveal_button = QPushButton("Reveal")
+        self.reveal_button = GuideButton("Y", "Reveal", bottom)
         self.reveal_button.clicked.connect(self._reveal_selected_evidence)
         bottom_layout.addWidget(self.reveal_button)
 
-        self.open_log_button = QPushButton("Open Raw Log")
+        self.open_log_button = GuideButton("LB", "Open Log", bottom)
         self.open_log_button.clicked.connect(self._open_log)
         bottom_layout.addWidget(self.open_log_button)
 
-        self.open_report_button = QPushButton("Open Latest Report")
+        self.open_report_button = GuideButton("RB", "Open Report", bottom)
         self.open_report_button.clicked.connect(self._open_latest_report)
         bottom_layout.addWidget(self.open_report_button)
 
-        self.open_evidence_button = QPushButton("Open Latest Evidence")
+        self.open_evidence_button = GuideButton("RT", "Open Evidence", bottom)
         self.open_evidence_button.clicked.connect(self._open_latest_evidence)
         bottom_layout.addWidget(self.open_evidence_button)
 
-        self.copy_jira_button = QPushButton("Copy Jira Note")
+        self.copy_jira_button = GuideButton("J", "Copy Jira", bottom)
         self.copy_jira_button.clicked.connect(lambda: self._copy_text("jira"))
         bottom_layout.addWidget(self.copy_jira_button)
 
-        self.copy_qa_hero_button = QPushButton("Copy QA Hero Note")
+        self.copy_qa_hero_button = GuideButton("Q", "Copy QA Hero", bottom)
         self.copy_qa_hero_button.clicked.connect(lambda: self._copy_text("qa_hero"))
         bottom_layout.addWidget(self.copy_qa_hero_button)
 
-        self.copy_handoff_button = QPushButton("Copy Handoff")
+        self.copy_handoff_button = GuideButton("H", "Copy Handoff", bottom)
         self.copy_handoff_button.clicked.connect(lambda: self._copy_text("handoff"))
         bottom_layout.addWidget(self.copy_handoff_button)
 
@@ -132,19 +150,27 @@ class DesktopMainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        profiles_box = QGroupBox("Profiles", widget)
+        profiles_box = UnleashedPanel("Profiles", widget)
         profiles_layout = QVBoxLayout(profiles_box)
-        self.profile_list = QListWidget(profiles_box)
+        self.profile_detail = QLabel("Canonical live slices on the mirrored SG tree.")
+        self.profile_detail.setObjectName("panelHint")
+        profiles_layout.addWidget(self.profile_detail)
+        self.profile_list = StaticListWidget(parent=profiles_box)
         self.profile_list.currentItemChanged.connect(self._profile_changed)
+        self.profile_list.setMinimumWidth(320)
         profiles_layout.addWidget(self.profile_list)
-        layout.addWidget(profiles_box, stretch=1)
+        layout.addWidget(profiles_box, stretch=2)
 
-        actions_box = QGroupBox("Actions", widget)
+        actions_box = UnleashedPanel("Command Deck", widget)
         actions_layout = QVBoxLayout(actions_box)
-        self.action_list = QListWidget(actions_box)
+        self.action_detail = QLabel("The selected tab and the command deck stay in sync.")
+        self.action_detail.setObjectName("panelHint")
+        actions_layout.addWidget(self.action_detail)
+        self.action_list = StaticListWidget(parent=actions_box)
         self.action_list.currentItemChanged.connect(self._action_changed)
+        self.action_list.setMinimumHeight(220)
         actions_layout.addWidget(self.action_list)
-        layout.addWidget(actions_box, stretch=2)
+        layout.addWidget(actions_box, stretch=1)
         return widget
 
     def _build_center_column(self) -> QWidget:
@@ -153,14 +179,16 @@ class DesktopMainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        run_box = QGroupBox("Active Run / Result", widget)
+        run_box = UnleashedPanel("Active Run / Result", widget)
         run_layout = QVBoxLayout(run_box)
+        run_layout.setSpacing(10)
 
         self.run_title = QLabel("No action selected")
-        self.run_title.setProperty("role", "subtitle")
+        self.run_title.setObjectName("runTitle")
         run_layout.addWidget(self.run_title)
 
         self.run_status = QLabel("Choose a profile and action.")
+        self.run_status.setObjectName("runStatus")
         run_layout.addWidget(self.run_status)
 
         self.progress_bar = QProgressBar(run_box)
@@ -170,24 +198,28 @@ class DesktopMainWindow(QMainWindow):
 
         self.progress_detail = QLabel("")
         self.progress_detail.setWordWrap(True)
+        self.progress_detail.setObjectName("progressDetail")
         run_layout.addWidget(self.progress_detail)
 
         self.command_label = QLabel("")
         self.command_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.command_label.setWordWrap(True)
+        self.command_label.setObjectName("commandLabel")
         run_layout.addWidget(self.command_label)
 
-        summary_box = QGroupBox("Summary", run_box)
+        summary_box = UnleashedPanel("Summary", run_box)
         summary_layout = QVBoxLayout(summary_box)
         self.summary_text = QPlainTextEdit(summary_box)
         self.summary_text.setReadOnly(True)
+        self.summary_text.setObjectName("summaryText")
         summary_layout.addWidget(self.summary_text)
         run_layout.addWidget(summary_box, stretch=2)
 
-        log_box = QGroupBox("Log Tail", run_box)
+        log_box = UnleashedPanel("Signal Log", run_box)
         log_layout = QVBoxLayout(log_box)
         self.log_tail = QPlainTextEdit(log_box)
         self.log_tail.setReadOnly(True)
+        self.log_tail.setObjectName("logTail")
         log_layout.addWidget(self.log_tail)
         run_layout.addWidget(log_box, stretch=2)
 
@@ -200,24 +232,46 @@ class DesktopMainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        evidence_box = QGroupBox("Open First", widget)
+        evidence_box = UnleashedPanel("Open First", widget)
         evidence_layout = QVBoxLayout(evidence_box)
-        self.evidence_list = QListWidget(evidence_box)
+        self.evidence_hint = QLabel("TV-static-framed evidence panel for the first files to inspect.")
+        self.evidence_hint.setObjectName("panelHint")
+        evidence_layout.addWidget(self.evidence_hint)
+        self.evidence_list = StaticListWidget(flash=True, parent=evidence_box)
         evidence_layout.addWidget(self.evidence_list)
         layout.addWidget(evidence_box, stretch=2)
 
-        blockers_box = QGroupBox("Blockers", widget)
+        blockers_box = UnleashedPanel("Blockers", widget)
         blockers_layout = QVBoxLayout(blockers_box)
-        self.blocker_list = QListWidget(blockers_box)
+        self.blocker_list = StaticListWidget(parent=blockers_box)
         blockers_layout.addWidget(self.blocker_list)
         layout.addWidget(blockers_box, stretch=1)
 
-        manual_box = QGroupBox("Manual Review Companion", widget)
+        manual_box = UnleashedPanel("Manual Review Companion", widget)
         manual_layout = QVBoxLayout(manual_box)
-        self.manual_list = QListWidget(manual_box)
+        self.manual_list = StaticListWidget(parent=manual_box)
         manual_layout.addWidget(self.manual_list)
         layout.addWidget(manual_box, stretch=1)
         return widget
+
+    def _action_tab_text(self, action: DesktopActionChoice) -> str:
+        normalized = action.action_id.split("__", 1)[0]
+        mapping = {
+            "qa_stack": "STACK",
+            "repo_checker_profile": "REPO",
+            "scene_check": "SCENE",
+            "unused_resources": "UNUSED",
+            "delivery_checklist": "DELIVERY",
+        }
+        return mapping.get(normalized, action.label)
+
+    def _clear_action_tabs(self) -> None:
+        self._action_tab_buttons.clear()
+        while self.action_tab_layout.count():
+            item = self.action_tab_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
 
     def _reload_profiles(self) -> None:
         profiles = desktop_profiles(self.workspace_root)
@@ -242,7 +296,9 @@ class DesktopMainWindow(QMainWindow):
 
     def _reload_actions(self, profile_id: str) -> None:
         self.action_list.clear()
-        for action in desktop_actions_for_profile(profile_id, self.workspace_root):
+        self._clear_action_tabs()
+        actions = desktop_actions_for_profile(profile_id, self.workspace_root)
+        for action in actions:
             state = "ready" if action.ready else "blocked"
             item = QListWidgetItem(f"{action.label} [{state}]")
             tooltip = action.description
@@ -252,6 +308,13 @@ class DesktopMainWindow(QMainWindow):
             item.setData(Qt.UserRole, action.action_id)
             item.setData(Qt.UserRole + 1, action)
             self.action_list.addItem(item)
+
+            button = ActionTabButton(action.action_id, self._action_tab_text(action), action.ready, self.action_tab_host)
+            button.selected.connect(self._select_action_by_id)
+            self.action_tab_layout.addWidget(button)
+            self._action_tab_buttons[action.action_id] = button
+
+        self.action_tab_layout.addStretch(1)
         if self.action_list.count():
             self.action_list.setCurrentRow(0)
 
@@ -270,12 +333,26 @@ class DesktopMainWindow(QMainWindow):
             row.setToolTip(item.summary)
             self.manual_list.addItem(row)
 
+    def _select_action_by_id(self, action_id: str) -> None:
+        for index in range(self.action_list.count()):
+            item = self.action_list.item(index)
+            if str(item.data(Qt.UserRole)) == action_id:
+                self.action_list.setCurrentItem(item)
+                break
+
+    def _sync_action_tabs(self, action_id: str) -> None:
+        for candidate_id, button in self._action_tab_buttons.items():
+            button.blockSignals(True)
+            button.setChecked(candidate_id == action_id)
+            button.blockSignals(False)
+
     def _action_changed(self, current: QListWidgetItem | None, previous: QListWidgetItem | None = None) -> None:
         del previous
         if current is None:
             return
         profile_id = self._current_profile_id()
         action_id = str(current.data(Qt.UserRole))
+        self._sync_action_tabs(action_id)
         snapshot = latest_action_snapshot_for_profile(profile_id, self.workspace_root, preferred_action_id=action_id)
         if snapshot is not None:
             self._apply_snapshot(snapshot)
@@ -292,6 +369,7 @@ class DesktopMainWindow(QMainWindow):
         if snapshot is None:
             self._clear_snapshot()
             return
+        self._sync_action_tabs(snapshot.action_id)
         self._apply_snapshot(snapshot)
 
     def _apply_empty_action(self, action: DesktopActionChoice) -> None:
@@ -326,7 +404,7 @@ class DesktopMainWindow(QMainWindow):
     def _apply_snapshot(self, snapshot: DesktopActionSnapshot) -> None:
         self._current_snapshot = snapshot
         self._copy_map = {item.key: item.text for item in snapshot.copy_items if item.text.strip()}
-        self.run_title.setText(snapshot.title)
+        self.run_title.setText(snapshot.title.upper())
         self.run_status.setText(f"{snapshot.action_id} [{snapshot.status}]")
         self.progress_bar.setValue(snapshot.progress_percent)
         detail_lines = [snapshot.progress_detail] if snapshot.progress_detail else []
@@ -348,6 +426,7 @@ class DesktopMainWindow(QMainWindow):
             row = QListWidgetItem(line)
             row.setData(Qt.UserRole, item)
             self.evidence_list.addItem(row)
+        self._sync_action_tabs(snapshot.action_id)
         self._refresh_buttons()
 
     def _current_profile_id(self) -> str:
@@ -401,6 +480,7 @@ class DesktopMainWindow(QMainWindow):
             self._poll_timer.stop()
             self._reload_side_panels(snapshot.profile_id)
             self._reload_actions(snapshot.profile_id)
+            self._sync_action_tabs(snapshot.action_id)
 
     def _selected_evidence_item(self) -> DesktopEvidenceItem | None:
         item = self.evidence_list.currentItem()

@@ -23,11 +23,21 @@ Use the reference to study:
 - bottom button-guide rhythm
 - static/noise framing ideas
 
+The current desktop shell now applies a translated subset of those patterns in Qt code:
+
+- scanline header bars
+- amber title + activity-square rhythm
+- category-tab action strip
+- grid-framed panels
+- static-framed evidence panel
+- bottom guide-button strip
+
 ## Repository rule
 
 - keep the reference source external or untracked
 - do not commit that source tree into `sg-preflight`
 - extract principles, not wholesale imitation
+- keep the source tree untracked and outside commits even when the live desktop shell is using translated reference ideas
 
 ## Product rule
 

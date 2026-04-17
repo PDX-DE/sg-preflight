@@ -73,6 +73,7 @@ This tool is intentionally aimed at pain that is both:
 - CLI over the same engine
 - local web UI as the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos
 - experimental desktop operator shell over the same engine for faster local file opening, blocker visibility, and checker-evidence triage without replacing the browser UI
+  - current desktop v0 now translates the local UnleashedRecomp menu language into Qt chrome: scanline header bars, category-tab action strip, grid-framed panels, TV-static-style evidence framing, and a bottom button-guide band
 
 ## Quick start
 
