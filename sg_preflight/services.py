@@ -739,10 +739,15 @@ def _bmw_models_repo_path(root: Path) -> Path:
     return path
 
 
+def _delivery_checklist_root(root: Path) -> Path:
+    return root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist"
+
+
 def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
     root = workspace_root(repo_root)
     mirror_root = root / "repositories" / "trunk"
     bmw_models_repo = _bmw_models_repo_path(root)
+    delivery_checklist_root = _delivery_checklist_root(root)
     raco_headless = _raco_headless_path(root)
     checks = [
         ("workspace_root", root),
@@ -757,6 +762,12 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
         ("raco_headless", raco_headless),
         ("carmodel_data", mirror_root / ".pdx" / "python" / "carmodel_data.json"),
         ("resource_mappings", mirror_root / ".pdx" / "python" / "resource_mappings.json"),
+        ("delivery_checklist_tool", delivery_checklist_root / "deliveryChecklist.exe"),
+        ("delivery_checklist_helper", delivery_checklist_root / "deliveryChecklist.py"),
+        ("delivery_checklist_readme", delivery_checklist_root / "README.md"),
+        ("delivery_checklist_camera_crane", delivery_checklist_root / "cameraCrane.lua"),
+        ("bmw_car_manager_script", bmw_models_repo / "ci" / "scripts" / "car_manager.py"),
+        ("bmw_test_main_script", bmw_models_repo / "ci" / "scripts" / "test" / "main.py"),
     ]
 
     payload = []
@@ -831,8 +842,19 @@ def qa_workflow_status(
     raco_headless_ready = readiness.get("raco_headless", {}).get("status") == "available"
     bmw_models_ready = readiness.get("bmw_models_repo", {}).get("status") == "available"
     bmw_scripts_ready = readiness.get("bmw_screenshot_scripts", {}).get("status") == "available"
+    bmw_car_manager_ready = readiness.get("bmw_car_manager_script", {}).get("status") == "available"
+    bmw_test_main_ready = readiness.get("bmw_test_main_script", {}).get("status") == "available"
     adb_ready = readiness.get("adb", {}).get("status") == "available"
     bmw_targets_ready = any(profile.bmw_smoke_target.strip() for profile in live_profiles)
+    delivery_checklist_ready = all(
+        readiness.get(key, {}).get("status") == "available"
+        for key in (
+            "delivery_checklist_tool",
+            "delivery_checklist_helper",
+            "delivery_checklist_readme",
+            "delivery_checklist_camera_crane",
+        )
+    )
 
     return [
         {
@@ -853,17 +875,17 @@ def qa_workflow_status(
         },
         {
             "key": "repo_scene_checks",
-            "label": "Repo checker and scene-checker path",
+            "label": "SG checker stack and scene-check path",
             "state": "covered" if scene_checker_ready and raco_headless_ready else "partial" if scene_checker_ready else "blocked",
             "summary": (
-                "SG-side repo checker and scene-check actions can run from the same operator surface on this machine."
+                "The operator UI can run the SG checker stack (`check_all_styles.py` + `executeChecks.py`) and the optional scene-check path from the same local surface."
                 if scene_checker_ready and raco_headless_ready
-                else "SG-side helper scripts are visible, but direct RaCo scene execution is still blocked on the local runtime setup."
+                else "The operator UI can run the SG checker stack here, but direct RaCo scene execution is still blocked on the local runtime setup."
                 if scene_checker_ready
                 else "Scene-checker helper discovery is not ready on this machine."
             ),
             "sg_preflight_role": (
-                "The framework now wraps SG repo-checker and scene-check steps as one-click actions alongside the standard preflight flow."
+                "The framework now wraps the real SG repo-checker stack and optional scene-check steps as one-click actions alongside the standard preflight flow."
             ),
             "blockers": [
                 blocker
@@ -872,6 +894,36 @@ def qa_workflow_status(
                     None
                     if raco_headless_ready
                     else "A local `RaCoHeadless.exe` is not configured, so direct scene execution remains blocked.",
+                )
+                if blocker
+            ],
+        },
+        {
+            "key": "delivery_checklist",
+            "label": "BMW delivery checklist bridge",
+            "state": "partial" if delivery_checklist_ready else "blocked",
+            "summary": (
+                "The mirrored SG delivery-checklist assets are present locally, so the operator surface can show the checklist bridge and its BMW-side prerequisites honestly."
+                if delivery_checklist_ready and not (bmw_models_ready and (bmw_car_manager_ready or bmw_test_main_ready))
+                else "The mirrored SG delivery-checklist assets and BMW-side helpers are both present locally, but the checklist flow still remains an externally owned step."
+                if delivery_checklist_ready
+                else "The mirrored `.pdx/checkers/deliveryChecklist` assets are not complete on this machine."
+            ),
+            "sg_preflight_role": (
+                "SG Preflight now exposes the real delivery-checklist bridge as part of the operator workflow instead of pretending BMW-side delivery steps do not exist."
+            ),
+            "blockers": [
+                blocker
+                for blocker in (
+                    None
+                    if delivery_checklist_ready
+                    else "The mirrored `.pdx/checkers/deliveryChecklist` assets are incomplete locally.",
+                    None
+                    if bmw_models_ready
+                    else "Blocked on BMW Git access or a local `digital-3d-car-models` clone.",
+                    None
+                    if bmw_car_manager_ready or bmw_test_main_ready
+                    else "The BMW-side `ci/scripts/car_manager.py` or `ci/scripts/test/main.py` helpers are not available locally.",
                 )
                 if blocker
             ],

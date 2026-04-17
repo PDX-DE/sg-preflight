@@ -18,7 +18,7 @@ It is the deterministic front end of that workflow:
 - before rack
 - before BMW screenshot smoke
 - before delivery handoff
-- while making the current SG-side repo and scene checks runnable from the same local surface
+- while making the current SG-side repo, delivery-checklist, and scene checks visible from the same local surface
 
 See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflow fit, manual stages, and BMW-side blockers.
 
@@ -246,7 +246,10 @@ Current expectation:
 - use the UI to catch deterministic issues and produce evidence before manual review
 - use the "what changed?" launcher first when you already know what kind of file or workflow step you touched
 - use the workflow-stage launcher when the phase matters more than the file type, especially before commit, pre-delivery, after integration, or when you only need Jira / QA Hero evidence
-- use the one-click QA actions when you want repo checker, scene check, or the recommended per-car QA stack without touching terminals
+- use the one-click QA actions when you want repo checker, delivery-checklist readiness, scene check, or the recommended per-car QA stack without touching terminals
+- the repo-checker action now wraps the real SG checker stack more truthfully by running `check_all_styles.py` before `executeChecks.py`, so style/license plus Lua/shader/formatting coverage live under one operator action
+- the per-car action list now also exposes `printNotUsedResources.py` as an unused-resource scan, so leftover SG resource files can be checked from the same operator surface
+- the per-car action list now also exposes the mirrored `deliveryChecklist` files as a readiness bridge, so SG-side delivery expectations and BMW-side blockers stay visible before smoke or handoff
 - default to the full-check button when you just want the safest useful path for one car
 - if the surface still feels noisy, ignore the secondary foldouts until after you have one result page
 - do not claim that the UI replaces Blender visual checks

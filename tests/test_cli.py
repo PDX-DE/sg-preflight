@@ -38,6 +38,8 @@ class TestCLI(unittest.TestCase):
         self.assertIn("daily_live_matrix", action_ids)
         self.assertIn("repo_checker_idcevo", action_ids)
         self.assertIn("qa_stack__g65", action_ids)
+        self.assertIn("unused_resources__g65", action_ids)
+        self.assertIn("delivery_checklist__g65", action_ids)
         self.assertIn("bmw_screenshot_smoke__g65", action_ids)
 
     def test_good_demo_passes(self) -> None:

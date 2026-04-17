@@ -155,7 +155,9 @@ It provides:
 - Files And Proof: grouped `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned when a finding exists plus the same stage-readiness summary for evidence completeness
 - One-click actions for the wider SG QA flow:
   - daily live matrix
-  - repo checker on workspace or per-car scope
+  - repo checker on workspace or per-car scope, now wrapping the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
+  - per-car unused-resource scan through `.pdx\checkers\printNotUsedResources.py`
+  - per-car delivery-checklist readiness bridge through `.pdx\checkers\deliveryChecklist`, so the mirrored SG checklist assets and BMW-side blockers are visible from the same operator surface
   - per-car recommended QA stack
   - scene check when `RaCoHeadless.exe` is configured
   - BMW screenshot smoke as an explicit blocked stage until BMW-side access and target mapping exist

@@ -18,6 +18,14 @@ ROOT = Path(__file__).resolve().parents[1]
 def _create_checker_files(root: Path) -> None:
     mirror_root = root / "repositories" / "trunk"
     write_text(mirror_root / ".pdx" / "checkers" / "executeChecks.py", "print('checker stub')\n")
+    write_text(
+        mirror_root / ".pdx" / "checkers" / "code_style_checker" / "check_all_styles.py",
+        "print('style stub')\n",
+    )
+    write_text(
+        mirror_root / ".pdx" / "checkers" / "printNotUsedResources.py",
+        "print('unused stub')\n",
+    )
     write_text(mirror_root / "check_scenes.py", "print('scene stub')\n")
     (mirror_root / "Cars").mkdir(parents=True, exist_ok=True)
 
@@ -44,6 +52,8 @@ class TestQaActions(unittest.TestCase):
         self.assertTrue(action_map["daily_live_matrix"].ready)
         self.assertTrue(action_map["qa_stack__g65"].ready)
         self.assertTrue(action_map["repo_checker_profile__g65"].ready)
+        self.assertTrue(action_map["unused_resources__g65"].ready)
+        self.assertTrue(action_map["delivery_checklist__g65"].ready)
         self.assertFalse(action_map["scene_check__g65"].ready)
         self.assertFalse(action_map["bmw_screenshot_smoke__g65"].ready)
         self.assertIn("RaCoHeadless.exe", action_map["scene_check__g65"].blocker_message)
@@ -56,13 +66,54 @@ class TestQaActions(unittest.TestCase):
             _create_checker_files(root)
             action = get_operator_action("repo_checker_profile__g65", root, profiles=[profile])
 
-            sample_output = """
+            sample_style_output = """
+Checking C:\\temp\\Cars\\BMW\\G65
+checked 8 files (src: 3; fmt: 7; license: 7)
+detected 2 style guide issues
+""".strip()
+
+            sample_execute_output = """
 ############################################
 starting  luacheck on  12  files
 ############################################
 0  errors found
 ############################################
 """.strip()
+
+            with mock.patch(
+                "sg_preflight.qa_actions.subprocess.run",
+                side_effect=[
+                    subprocess.CompletedProcess(
+                        args=["python"],
+                        returncode=1,
+                        stdout=sample_style_output,
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(
+                        args=["python"],
+                        returncode=0,
+                        stdout=sample_execute_output,
+                        stderr="",
+                    ),
+                ],
+            ):
+                record = execute_operator_action(action, root)
+                self.assertEqual(record.status, "completed")
+                self.assertTrue(Path(record.paths["log"]).exists())
+                self.assertTrue(Path(record.paths["summary_json"]).exists())
+                joined = " ".join(record.summary.get("lines", []))
+                self.assertIn("Style checker: 2 style-guide issue(s)", joined)
+                self.assertIn("executeChecks: 0 error batch(es)", joined)
+                self.assertIn("luacheck: 12 file(s)", joined)
+
+    def test_execute_unused_resource_action_persists_log_and_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            _create_checker_files(root)
+            action = get_operator_action("unused_resources__g65", root, profiles=[profile])
+
+            sample_output = str(profile.project_root / "resources" / "textures" / "unused_diffuse.png")
 
             with mock.patch(
                 "sg_preflight.qa_actions.subprocess.run",
@@ -74,10 +125,33 @@ starting  luacheck on  12  files
                 ),
             ):
                 record = execute_operator_action(action, root)
-                self.assertEqual(record.status, "completed")
-                self.assertTrue(Path(record.paths["log"]).exists())
-                self.assertTrue(Path(record.paths["summary_json"]).exists())
-                self.assertIn("luacheck: 12 file(s)", " ".join(record.summary.get("lines", [])))
+
+            self.assertEqual(record.status, "completed")
+            self.assertEqual(record.summary.get("unused_count"), 1)
+            self.assertIn("unused_diffuse.png", " ".join(record.summary.get("lines", [])))
+            self.assertTrue(Path(record.paths["log"]).exists())
+
+    def test_execute_delivery_checklist_action_reports_missing_bmw_prerequisites(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            action = get_operator_action("delivery_checklist__g65", root, profiles=[profile])
+
+            with mock.patch.dict(
+                os.environ,
+                {"SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models")},
+                clear=False,
+            ):
+                record = execute_operator_action(action, root)
+
+            self.assertEqual(record.status, "completed")
+            self.assertEqual(record.summary.get("local_assets_found"), 4)
+            self.assertFalse(record.summary.get("bmw_repo_ready"))
+            self.assertIn(
+                "blocked on local `digital-3d-car-models` access",
+                " ".join(record.summary.get("lines", [])),
+            )
+            self.assertTrue(Path(record.paths["log"]).exists())
 
     def test_execute_profile_stack_runs_preflight_and_available_sg_steps(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -96,7 +170,13 @@ starting  luacheck on  12  files
             ):
                 action = get_operator_action("qa_stack__g65", root, profiles=[profile])
 
-                sample_output = """
+                sample_style_output = """
+Checking C:\\temp\\Cars\\BMW\\G65
+checked 8 files (src: 3; fmt: 7; license: 7)
+detected 2 style guide issues
+""".strip()
+
+                sample_execute_output = """
 ############################################
 starting  luacheck on  12  files
 ############################################
@@ -104,14 +184,30 @@ starting  luacheck on  12  files
 ############################################
 """.strip()
 
+                sample_unused_output = str(profile.project_root / "resources" / "textures" / "unused_diffuse.png")
+
                 with mock.patch(
                     "sg_preflight.qa_actions.subprocess.run",
-                    return_value=subprocess.CompletedProcess(
-                        args=["python"],
-                        returncode=0,
-                        stdout=sample_output,
-                        stderr="",
-                    ),
+                    side_effect=[
+                        subprocess.CompletedProcess(
+                            args=["python"],
+                            returncode=1,
+                            stdout=sample_style_output,
+                            stderr="",
+                        ),
+                        subprocess.CompletedProcess(
+                            args=["python"],
+                            returncode=0,
+                            stdout=sample_execute_output,
+                            stderr="",
+                        ),
+                        subprocess.CompletedProcess(
+                            args=["python"],
+                            returncode=0,
+                            stdout=sample_unused_output,
+                            stderr="",
+                        ),
+                    ],
                 ):
                     record = execute_operator_action(action, root)
 
@@ -119,6 +215,9 @@ starting  luacheck on  12  files
             self.assertEqual(record.status, "completed")
             self.assertTrue(any(line.startswith("Standard preflight:") for line in lines))
             self.assertTrue(any(line.startswith("Repo checker:") for line in lines))
+            self.assertTrue(any(line.startswith("Unused resources:") for line in lines))
+            self.assertTrue(any(line.startswith("Delivery checklist:") for line in lines))
+            self.assertTrue(any("2 style issue(s)" in line for line in lines))
             self.assertTrue(any("Scene check: blocked" in line for line in lines))
             self.assertTrue(any("BMW screenshot smoke: blocked" in line for line in lines))
 

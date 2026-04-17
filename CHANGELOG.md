@@ -6,6 +6,35 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ## [Unreleased]
 
+### Timeline
+
+#### 2026-04-17
+
+- `18f3d05` `fix(ui): refresh generated report styling`
+- `b52a933` `fix(ui): restore readable light mode`
+- `cc5da75` `fix(ui): repair guide card layout`
+- `dce4741` `fix(ui): compact operator tutorial rail`
+- `447af66` `refactor(ui): add guided tutorial path`
+- `94b566c` `docs(status): record unity export validation`
+- `396762d` `feat(reporting): restyle SG html report outputs`
+- `a19f1e5` `refactor(ui): apply mission-control operator styling`
+- `e4ef4d6` `refactor(ui): apply project06 loading treatment`
+- `4818249` `refactor(ui): tune native loading animation`
+- `bf4be12` `fix(ui): tighten native loading screen match`
+- `87c073c` `feat(ui): add native loading screen easter egg`
+- `9bba8c1` `fix(ui): stop live loading from jumping to top`
+- `d50f870` `fix(ui): make live loading detail scrollable`
+- `e3ff320` `fix(ui): widen and compress demo pages`
+- `c4dcb3e` `feat(ui): add dark mode and clearer operator guidance`
+- working tree: repo-checker now wraps `check_all_styles.py` plus `executeChecks.py`, the operator action system now also wraps `printNotUsedResources.py` per car, and pre-delivery flow now exposes the mirrored `deliveryChecklist` bridge with BMW-side blockers
+
+#### 2026-04-16
+
+- `0376165` `feat(ui): deepen evidence workflow and progress drilldown`
+- `1ed615a` `fix(ui): unstick loading overlay and expand live progress detail`
+- `5b50a34` `feat(ui): add live progress and previous-run diffing`
+- `3aa8e84` `feat(ui): add workflow-stage operator starts`
+
 ### Added
 
 - Internal proprietary `LICENSE` for repository ownership and internal-use handling
@@ -37,6 +66,10 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Changed
 
+- Pre-delivery workflow status, run-page action lists, and the recommended per-car QA stack now surface a delivery-checklist readiness bridge based on the mirrored `.pdx\checkers\deliveryChecklist` assets, so SG-side delivery expectations sit visibly between deterministic proof and BMW-side smoke
+- Delivery-checklist actions now write their own readiness summary and log, including mirrored checklist assets plus BMW repo/helper discovery, instead of pretending the external BMW-owned checklist flow is runnable end-to-end on this machine
+- Per-car QA actions now also wrap `.pdx\checkers\printNotUsedResources.py`, and the recommended QA stack now includes a local unused-resource scan before the later manual or BMW-blocked stages
+- Repo-checker actions now wrap the real SG checker stack more truthfully by running `code_style_checker\check_all_styles.py` before `.pdx\checkers\executeChecks.py`, and their summaries now report style/license scope plus execute-check phase coverage instead of pretending the wrapper is only one script
 - The top operator path is now a real clickable tutorial rail with arrows, plain-language hints, and page-specific jump targets on Home, guided starts, workflow-stage starts, Run, Result, Files And Proof, and Action pages, so teammates can click straight to the next relevant section instead of treating the strip as decorative chrome
 - The tutorial rail is now compact and readable at normal desktop widths instead of stretching into one tall band; step cards wrap cleanly, use a real arrow separator, and keep the helper text in a usable width
 - Guide cards under the hero no longer dump their paragraph text into the narrow step-number column, so the three-step walkthrough reads in normal sentences instead of one word per line

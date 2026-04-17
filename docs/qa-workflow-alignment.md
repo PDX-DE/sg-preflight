@@ -69,20 +69,23 @@ What this means:
 
 This supports the existing repo-level sanity work and reduces black-box debugging.
 
-### 5. Repo checker and `check_scenes.py`
+### 5. SG checker stack and `check_scenes.py`
 
-Current status: covered for repo checker, partial for scene check on machines without `RaCoHeadless.exe`
+Current status: partially covered, with the main SG checker stack plus the delivery-checklist bridge now exposed more truthfully than before
 
 What this means:
 
 - the mirrored repo already contains `check_scenes.py`
-- the UI now exposes repo checker, scene check, and recommended QA-stack actions directly
-- repo checker is already runnable as a one-click action
+- the UI now exposes repo checker, delivery-checklist readiness, scene check, and recommended QA-stack actions directly
+- repo checker now runs the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
+- the per-car action list now also wraps `printNotUsedResources.py` for local unused-resource scans against the mirrored car project
+- the per-car action list now also wraps the mirrored `.pdx/checkers/deliveryChecklist` assets as a local readiness bridge before BMW-owned delivery steps
 - scene check is also wrapped, but only runs when a local `RaCoHeadless.exe` is configured
 
 Current blocker:
 
 - scene execution still depends on a local `RaCoHeadless.exe`
+- the BMW-backed `deliveryChecklist` procedure is still only bridged here; actual execution still depends on BMW repo access plus the external `ci/scripts` helpers
 
 ### 6. BMW screenshot / export / interface smoke
 

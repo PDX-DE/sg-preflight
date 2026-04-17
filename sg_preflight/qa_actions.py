@@ -36,12 +36,15 @@ ACTION_PROGRESS_PLANS: dict[str, tuple[tuple[str, str], ...]] = {
         ("queued", "Queued"),
         ("preflight", "Run standard preflight"),
         ("repo_checker", "Run repo checker"),
+        ("unused_resources", "Run unused resource scan"),
         ("scene_check", "Run scene check"),
+        ("delivery_checklist", "Check delivery checklist readiness"),
         ("bmw_smoke", "Check BMW smoke readiness"),
         ("finalize", "Finalize action record"),
     ),
     "repo_checker": (
         ("queued", "Queued"),
+        ("style", "Run style checker"),
         ("execute", "Run checker"),
         ("parse", "Parse checker output"),
         ("finalize", "Finalize action record"),
@@ -58,11 +61,69 @@ ACTION_PROGRESS_PLANS: dict[str, tuple[tuple[str, str], ...]] = {
         ("execute", "Run scene checks"),
         ("finalize", "Finalize action record"),
     ),
+    "unused_resources": (
+        ("queued", "Queued"),
+        ("execute", "Run scan"),
+        ("parse", "Parse scan output"),
+        ("finalize", "Finalize action record"),
+    ),
+    "delivery_checklist": (
+        ("queued", "Queued"),
+        ("inspect", "Inspect checklist bridge"),
+        ("summarize", "Summarize readiness"),
+        ("finalize", "Finalize action record"),
+    ),
 }
 
 
 def operator_ui_actions_root(explicit_root: Path | None = None) -> Path:
     return workspace_root(explicit_root) / "out" / "operator-ui" / "actions"
+
+
+def _repo_checker_paths(mirror_root: Path) -> tuple[Path, Path]:
+    checkers_root = mirror_root / ".pdx" / "checkers"
+    return (
+        checkers_root / "code_style_checker" / "check_all_styles.py",
+        checkers_root / "executeChecks.py",
+    )
+
+
+def _repo_checker_command_preview(style_script: Path, checker_script: Path, target: Path) -> str:
+    return (
+        f"{sys.executable} {style_script} {target} && "
+        f"{sys.executable} {checker_script} {target}"
+    )
+
+
+def _unused_resources_script_path(mirror_root: Path) -> Path:
+    return mirror_root / ".pdx" / "checkers" / "printNotUsedResources.py"
+
+
+def _unused_resources_inputs(project_root: Path) -> tuple[Path, Path]:
+    return project_root / "resources", project_root
+
+
+def _unused_resources_command_preview(script: Path, project_root: Path) -> str:
+    resources_root, rca_root = _unused_resources_inputs(project_root)
+    return f"{sys.executable} {script} --res {resources_root} --rca {rca_root}"
+
+
+def _delivery_checklist_paths(mirror_root: Path) -> dict[str, Path]:
+    checklist_root = mirror_root / ".pdx" / "checkers" / "deliveryChecklist"
+    return {
+        "root": checklist_root,
+        "tool": checklist_root / "deliveryChecklist.exe",
+        "helper": checklist_root / "deliveryChecklist.py",
+        "readme": checklist_root / "README.md",
+        "camera_crane": checklist_root / "cameraCrane.lua",
+    }
+
+
+def _delivery_checklist_command_preview(profile: RunProfile) -> str:
+    return (
+        "internal: inspect mirrored deliveryChecklist assets and BMW-side prerequisites "
+        f"for {profile.profile_id}"
+    )
 
 
 @dataclass(frozen=True)
@@ -209,10 +270,12 @@ def list_operator_actions(
     live_profiles = profiles or list_run_profiles(root)
     status_map = _status_map(root)
     mirror_root = root / "repositories" / "trunk"
-    checker_script = mirror_root / ".pdx" / "checkers" / "executeChecks.py"
+    style_script, checker_script = _repo_checker_paths(mirror_root)
+    unused_resources_script = _unused_resources_script_path(mirror_root)
+    delivery_checklist_paths = _delivery_checklist_paths(mirror_root)
     scene_checker = mirror_root / "check_scenes.py"
     raco_headless = _path_from_status(status_map, "raco_headless")
-    checker_ready = checker_script.exists()
+    checker_ready = style_script.exists() and checker_script.exists()
     scene_ready = scene_checker.exists() and raco_headless.exists()
 
     actions = [
@@ -236,9 +299,13 @@ def list_operator_actions(
             blocker_message=(
                 ""
                 if checker_ready and (mirror_root / "Cars_IDCevo").exists()
-                else "The mirrored checker stack or `Cars_IDCevo` tree is missing."
+                else "The mirrored SG checker stack (`check_all_styles.py` + `executeChecks.py`) or `Cars_IDCevo` tree is missing."
             ),
-            command_preview=f"{sys.executable} {checker_script} {mirror_root / 'Cars_IDCevo'}",
+            command_preview=_repo_checker_command_preview(
+                style_script,
+                checker_script,
+                mirror_root / "Cars_IDCevo",
+            ),
         ),
         OperatorAction(
             action_id="repo_checker_classic",
@@ -250,9 +317,13 @@ def list_operator_actions(
             blocker_message=(
                 ""
                 if checker_ready and (mirror_root / "Cars").exists()
-                else "The mirrored checker stack or `Cars` tree is missing."
+                else "The mirrored SG checker stack (`check_all_styles.py` + `executeChecks.py`) or `Cars` tree is missing."
             ),
-            command_preview=f"{sys.executable} {checker_script} {mirror_root / 'Cars'}",
+            command_preview=_repo_checker_command_preview(
+                style_script,
+                checker_script,
+                mirror_root / "Cars",
+            ),
         ),
     ]
 
@@ -275,7 +346,7 @@ def list_operator_actions(
                 profile_id=profile.profile_id,
                 project_root=str(profile.project_root),
                 command_preview=(
-                    "internal: standard preflight + repo checker + scene check if available + BMW smoke readiness summary"
+                    "internal: standard preflight + repo checker + unused resource scan + scene check + delivery checklist readiness + BMW smoke readiness summary"
                 ),
             )
         )
@@ -290,11 +361,81 @@ def list_operator_actions(
                 blocker_message=(
                     ""
                     if checker_ready and profile.project_root.exists()
-                    else f"The mirrored checker stack or project root for {profile.profile_id} is missing."
+                    else (
+                        f"The mirrored SG checker stack (`check_all_styles.py` + `executeChecks.py`) "
+                        f"or project root for {profile.profile_id} is missing."
+                    )
                 ),
                 profile_id=profile.profile_id,
                 project_root=str(profile.project_root),
-                command_preview=f"{sys.executable} {checker_script} {profile.project_root}",
+                command_preview=_repo_checker_command_preview(
+                    style_script,
+                    checker_script,
+                    profile.project_root,
+                ),
+            )
+        )
+        actions.append(
+            OperatorAction(
+                action_id=f"unused_resources__{profile.profile_id.lower()}",
+                label=f"Run unused resource scan for {profile.profile_id}",
+                description=(
+                    f"Run the SG unused-resource checker for the {profile.profile_id} project so leftover resource files can be reviewed before handoff."
+                ),
+                kind="unused_resources",
+                scope="profile",
+                ready=(
+                    unused_resources_script.exists()
+                    and profile.project_root.exists()
+                    and _unused_resources_inputs(profile.project_root)[0].exists()
+                    and any(profile.project_root.rglob("*.rca"))
+                ),
+                blocker_message=(
+                    ""
+                    if (
+                        unused_resources_script.exists()
+                        and profile.project_root.exists()
+                        and _unused_resources_inputs(profile.project_root)[0].exists()
+                        and any(profile.project_root.rglob("*.rca"))
+                    )
+                    else (
+                        "Unused resource scan needs `printNotUsedResources.py`, a local `resources` tree, and at least one `.rca` scene under the project root."
+                    )
+                ),
+                profile_id=profile.profile_id,
+                project_root=str(profile.project_root),
+                command_preview=_unused_resources_command_preview(
+                    unused_resources_script,
+                    profile.project_root,
+                ),
+            )
+        )
+        delivery_checklist_ready = profile.project_root.exists() and all(
+            path.exists()
+            for key, path in delivery_checklist_paths.items()
+            if key != "root"
+        )
+        actions.append(
+            OperatorAction(
+                action_id=f"delivery_checklist__{profile.profile_id.lower()}",
+                label=f"Check delivery checklist readiness for {profile.profile_id}",
+                description=(
+                    f"Inspect the mirrored SG delivery-checklist assets plus BMW-side prerequisites for {profile.profile_id} without pretending the external BMW flow runs here."
+                ),
+                kind="delivery_checklist",
+                scope="profile",
+                ready=delivery_checklist_ready,
+                blocker_message=(
+                    ""
+                    if delivery_checklist_ready
+                    else (
+                        "Delivery checklist readiness needs the mirrored `.pdx/checkers/deliveryChecklist` assets "
+                        "(`deliveryChecklist.exe`, `deliveryChecklist.py`, `README.md`, and `cameraCrane.lua`)."
+                    )
+                ),
+                profile_id=profile.profile_id,
+                project_root=str(profile.project_root),
+                command_preview=_delivery_checklist_command_preview(profile),
             )
         )
         actions.append(
@@ -575,6 +716,81 @@ def _parse_repo_checker_output(output: str) -> dict[str, Any]:
     }
 
 
+def _parse_style_checker_output(output: str) -> dict[str, Any]:
+    checked_match = re.search(
+        r"checked\s+(\d+)\s+files\s+\(src:\s*(\d+);\s*fmt:\s*(\d+);\s*license:\s*(\d+)\)",
+        output,
+        flags=re.IGNORECASE,
+    )
+    issue_match = re.search(r"detected\s+(\d+)\s+style guide issues", output, flags=re.IGNORECASE)
+    clean = "no style guide violations detected" in output.lower()
+    warning_lines = re.findall(r"warning\s+PRJ9999", output, flags=re.IGNORECASE)
+
+    checked_files = int(checked_match.group(1)) if checked_match else 0
+    issue_count = int(issue_match.group(1)) if issue_match else (0 if clean else len(warning_lines))
+    src_files = int(checked_match.group(2)) if checked_match else 0
+    formatting_files = int(checked_match.group(3)) if checked_match else 0
+    license_files = int(checked_match.group(4)) if checked_match else 0
+
+    lines = []
+    if checked_match:
+        lines.append(
+            "Style checker scope: "
+            f"{checked_files} file(s) checked "
+            f"(src: {src_files}, formatting: {formatting_files}, license: {license_files})."
+        )
+    if clean:
+        lines.append("Style checker: no style-guide issues reported.")
+    else:
+        lines.append(f"Style checker: {issue_count} style-guide issue(s) reported.")
+
+    return {
+        "title": "Style checker result",
+        "lines": lines,
+        "checked_files": checked_files,
+        "src_files": src_files,
+        "formatting_files": formatting_files,
+        "license_files": license_files,
+        "issue_count": issue_count,
+        "clean": clean,
+    }
+
+
+def _parse_unused_resources_output(output: str, project_root: Path) -> dict[str, Any]:
+    unused_files = []
+    for raw_line in output.splitlines():
+        candidate = raw_line.strip()
+        if not candidate:
+            continue
+        if candidate.startswith("Traceback") or candidate.lower().startswith("usage:"):
+            continue
+        try:
+            path = Path(candidate)
+        except OSError:
+            continue
+        if not path.suffix:
+            continue
+        try:
+            display = str(path.resolve().relative_to(project_root.resolve())).replace("\\", "/")
+        except (OSError, ValueError):
+            display = str(path)
+        unused_files.append(display)
+
+    lines = [f"Unused resources reported: {len(unused_files)}"]
+    if unused_files:
+        preview = ", ".join(unused_files[:5])
+        lines.append(f"First unused resources: {preview}")
+    else:
+        lines.append("No unused resources were reported in the scanned resource tree.")
+
+    return {
+        "title": "Unused resource scan result",
+        "lines": lines,
+        "unused_count": len(unused_files),
+        "unused_files": unused_files,
+    }
+
+
 def _scene_error_blocks(output: str) -> list[str]:
     errors: list[str] = []
     current = ""
@@ -756,12 +972,50 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         repo_summary, repo_artifacts, _ = _execute_repo_checker(repo_record, root)
         lines.append(
             "Repo checker: "
-            f"{repo_summary.get('reported_error_batches', 0)} reported error batches across "
-            f"{repo_summary.get('phase_count', 0)} phases"
+            f"{repo_summary.get('style_issue_count', 0)} style issue(s), "
+            f"{repo_summary.get('reported_error_batches', 0)} executeChecks error batch(es), "
+            f"{repo_summary.get('phase_count', 0)} executeChecks phase(s)"
         )
         artifacts.extend(repo_artifacts)
     else:
         lines.append(f"Repo checker: blocked - {repo_action.blocker_message}")
+
+    unused_resources_action = get_operator_action(
+        f"unused_resources__{profile.profile_id.lower()}",
+        root,
+        profiles=[profile],
+    )
+    _set_action_progress(
+        record,
+        step_key="unused_resources",
+        percent=58,
+        label="Checking unused resources",
+        detail=f"Running resource-to-scene usage scan for {profile.profile_id}.",
+        meta={},
+    )
+    if unused_resources_action.ready:
+        unused_record = _nested_action_record(record, unused_resources_action, "unused-resources")
+        _set_action_progress(
+            record,
+            step_key="unused_resources",
+            percent=58,
+            label="Checking unused resources",
+            detail=f"Running resource-to-scene usage scan for {profile.profile_id}.",
+            meta={
+                "child_run_id": unused_record.run_id,
+                "child_status_url": f"/ui/api/actions/{unused_record.run_id}",
+                "child_result_url": f"/ui/actions/{unused_record.run_id}",
+                "command": unused_record.command_preview,
+            },
+        )
+        unused_summary, unused_artifacts, _ = _execute_unused_resources(unused_record, root)
+        lines.append(
+            "Unused resources: "
+            f"{unused_summary.get('unused_count', 0)} candidate file(s) reported"
+        )
+        artifacts.extend(unused_artifacts)
+    else:
+        lines.append(f"Unused resources: blocked - {unused_resources_action.blocker_message}")
 
     scene_action = get_operator_action(
         f"scene_check__{profile.profile_id.lower()}",
@@ -771,7 +1025,7 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
     _set_action_progress(
         record,
         step_key="scene_check",
-        percent=68,
+        percent=72,
         label="Checking RaCo scenes",
         detail=f"Running scene-check coverage for {profile.profile_id} where local RaCo is available.",
         meta={},
@@ -781,7 +1035,7 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         _set_action_progress(
             record,
             step_key="scene_check",
-            percent=68,
+            percent=72,
             label="Checking RaCo scenes",
             detail=f"Running scene-check coverage for {profile.profile_id} where local RaCo is available.",
             meta={
@@ -801,6 +1055,43 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
     else:
         lines.append(f"Scene check: blocked - {scene_action.blocker_message}")
 
+    delivery_action = get_operator_action(
+        f"delivery_checklist__{profile.profile_id.lower()}",
+        root,
+        profiles=[profile],
+    )
+    _set_action_progress(
+        record,
+        step_key="delivery_checklist",
+        percent=84,
+        label="Checking delivery checklist bridge",
+        detail=f"Inspecting mirrored delivery-checklist assets and BMW-side prerequisites for {profile.profile_id}.",
+        meta={},
+    )
+    if delivery_action.ready:
+        delivery_record = _nested_action_record(record, delivery_action, "delivery-checklist")
+        _set_action_progress(
+            record,
+            step_key="delivery_checklist",
+            percent=84,
+            label="Checking delivery checklist bridge",
+            detail=f"Inspecting mirrored delivery-checklist assets and BMW-side prerequisites for {profile.profile_id}.",
+            meta={
+                "child_run_id": delivery_record.run_id,
+                "child_status_url": f"/ui/api/actions/{delivery_record.run_id}",
+                "child_result_url": f"/ui/actions/{delivery_record.run_id}",
+                "command": delivery_record.command_preview,
+            },
+        )
+        delivery_summary, delivery_artifacts, _ = _execute_delivery_checklist(delivery_record, root)
+        lines.append(
+            "Delivery checklist: "
+            + "; ".join(str(line) for line in delivery_summary.get("lines", [])[:2])
+        )
+        artifacts.extend(delivery_artifacts)
+    else:
+        lines.append(f"Delivery checklist: blocked - {delivery_action.blocker_message}")
+
     bmw_action = get_operator_action(
         f"bmw_screenshot_smoke__{profile.profile_id.lower()}",
         root,
@@ -809,7 +1100,7 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
     _set_action_progress(
         record,
         step_key="bmw_smoke",
-        percent=86,
+        percent=92,
         label="Checking BMW smoke stage",
         detail=f"Evaluating BMW-side screenshot smoke coverage for {profile.profile_id}.",
         meta={},
@@ -819,7 +1110,7 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
         _set_action_progress(
             record,
             step_key="bmw_smoke",
-            percent=86,
+            percent=92,
             label="Checking BMW smoke stage",
             detail=f"Evaluating BMW-side screenshot smoke coverage for {profile.profile_id}.",
             meta={
@@ -845,7 +1136,7 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
 
 def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     mirror_root = root / "repositories" / "trunk"
-    checker_script = mirror_root / ".pdx" / "checkers" / "executeChecks.py"
+    style_script, checker_script = _repo_checker_paths(mirror_root)
     target = Path(record.project_root) if record.project_root else (
         mirror_root / ("Cars_IDCevo" if record.action_id == "repo_checker_idcevo" else "Cars")
     )
@@ -853,10 +1144,29 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
     env["SG-Repo"] = str(mirror_root)
     _set_action_progress(
         record,
+        step_key="style",
+        percent=18,
+        label="Running SG style checker",
+        detail=f"Launching check_all_styles.py on {target}.",
+        meta={
+            "target": str(target),
+            "command": f"{sys.executable} {style_script} {target}",
+        },
+    )
+    style_result = subprocess.run(
+        [sys.executable, str(style_script), str(target)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    _set_action_progress(
+        record,
         step_key="execute",
-        percent=24,
+        percent=46,
         label="Running SG repo checker",
-        detail=f"Launching checker stack on {target}.",
+        detail=f"Launching executeChecks.py on {target}.",
         meta={
             "target": str(target),
             "command": f"{sys.executable} {checker_script} {target}",
@@ -870,21 +1180,238 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
         check=False,
         env=env,
     )
-    output = ((result.stdout or "") + ("\n" + result.stderr if result.stderr else "")).strip()
-    _write_text(Path(record.paths["log"]), output + ("\n" if output else ""))
+    style_output = ((style_result.stdout or "") + ("\n" + style_result.stderr if style_result.stderr else "")).strip()
+    checker_output = ((result.stdout or "") + ("\n" + result.stderr if result.stderr else "")).strip()
+    combined_output = "\n\n".join(
+        [
+            "=== check_all_styles.py ===",
+            style_output,
+            "",
+            "=== executeChecks.py ===",
+            checker_output,
+        ]
+    ).strip()
+    _write_text(Path(record.paths["log"]), combined_output + ("\n" if combined_output else ""))
     _set_action_progress(
         record,
         step_key="parse",
         percent=78,
         label="Parsing SG repo checker output",
-        detail="Summarizing checker phases and reported error batches.",
+        detail="Summarizing style, license, Lua, shader, and executeChecks results.",
         meta={"target": str(target)},
     )
-    summary = _parse_repo_checker_output(output)
+    style_summary = _parse_style_checker_output(style_output)
+    checker_summary = _parse_repo_checker_output(checker_output)
+    summary = {
+        "title": "Repo checker result",
+        "lines": [
+            f"Style checker: {style_summary.get('issue_count', 0)} style-guide issue(s) across {style_summary.get('checked_files', 0)} checked file(s).",
+            f"executeChecks: {checker_summary.get('reported_error_batches', 0)} error batch(es) across {checker_summary.get('phase_count', 0)} phase(s).",
+        ],
+        "style_issue_count": style_summary.get("issue_count", 0),
+        "style_checked_files": style_summary.get("checked_files", 0),
+        "style_src_files": style_summary.get("src_files", 0),
+        "style_formatting_files": style_summary.get("formatting_files", 0),
+        "style_license_files": style_summary.get("license_files", 0),
+        "style_return_code": style_result.returncode,
+        "phase_count": checker_summary.get("phase_count", 0),
+        "reported_error_batches": checker_summary.get("reported_error_batches", 0),
+        "execute_return_code": result.returncode,
+        "phases": list(checker_summary.get("lines", [])),
+    }
+    phase_lines = [
+        line
+        for line in checker_summary.get("lines", [])
+        if isinstance(line, str) and line.lower().startswith(("luacheck:", "shadercheck:", "tabbingcheck:", "newlinecheck:", "binarycheck:"))
+    ]
+    if phase_lines:
+        summary["lines"].append("Phases: " + "; ".join(phase_lines))
+    summary["lines"].append(
+        f"Exit codes: style={style_result.returncode}, executeChecks={result.returncode}."
+    )
+    artifacts = [_artifact("Checker log", Path(record.paths["log"]))]
+    return summary, artifacts, []
+
+
+def _execute_unused_resources(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
+    mirror_root = root / "repositories" / "trunk"
+    script_path = _unused_resources_script_path(mirror_root)
+    project_root = Path(record.project_root)
+    resources_root, rca_root = _unused_resources_inputs(project_root)
+
+    _set_action_progress(
+        record,
+        step_key="execute",
+        percent=28,
+        label="Running unused resource scan",
+        detail=f"Scanning {resources_root} against `.rca` files under {rca_root}.",
+        meta={
+            "resources_root": str(resources_root),
+            "rca_root": str(rca_root),
+            "command": f"{sys.executable} {script_path} --res {resources_root} --rca {rca_root}",
+        },
+    )
+    result = subprocess.run(
+        [sys.executable, str(script_path), "--res", str(resources_root), "--rca", str(rca_root)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = ((result.stdout or "") + ("\n" + result.stderr if result.stderr else "")).strip()
+    _write_text(Path(record.paths["log"]), output + ("\n" if output else ""))
+
+    _set_action_progress(
+        record,
+        step_key="parse",
+        percent=76,
+        label="Parsing unused resource output",
+        detail="Summarizing candidate resource files that are not referenced by any scanned scene.",
+        meta={"project_root": str(project_root)},
+    )
+    summary = _parse_unused_resources_output(output, project_root)
     summary["return_code"] = result.returncode
     if result.returncode != 0:
         summary.setdefault("lines", []).append(f"Process returned exit code {result.returncode}.")
-    artifacts = [_artifact("Checker log", Path(record.paths["log"]))]
+    artifacts = [_artifact("Unused resource scan log", Path(record.paths["log"]))]
+    return summary, artifacts, []
+
+
+def _delivery_checklist_viewer_candidates(bmw_repo: Path) -> list[Path]:
+    if not bmw_repo.exists():
+        return []
+
+    matches: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in ("ramses*viewer*.exe", "Ramses*Viewer*.exe"):
+        try:
+            for candidate in bmw_repo.rglob(pattern):
+                resolved = candidate.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                matches.append(candidate)
+                if len(matches) >= 4:
+                    return matches
+        except OSError:
+            break
+    return matches
+
+
+def _execute_delivery_checklist(
+    record: ActionRecord,
+    root: Path,
+) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
+    mirror_root = root / "repositories" / "trunk"
+    checklist_paths = _delivery_checklist_paths(mirror_root)
+    status_map = _status_map(root)
+    bmw_repo = _path_from_status(status_map, "bmw_models_repo")
+    car_manager = _path_from_status(status_map, "bmw_car_manager_script")
+    test_main = _path_from_status(status_map, "bmw_test_main_script")
+    viewer_candidates = _delivery_checklist_viewer_candidates(bmw_repo)
+
+    _set_action_progress(
+        record,
+        step_key="inspect",
+        percent=34,
+        label="Inspecting delivery checklist bridge",
+        detail=f"Reading mirrored `.pdx/checkers/deliveryChecklist` assets for {record.profile_id}.",
+        meta={
+            "delivery_checklist_root": str(checklist_paths["root"]),
+            "bmw_repo": str(bmw_repo),
+        },
+    )
+
+    local_assets = {
+        key: path.exists()
+        for key, path in checklist_paths.items()
+        if key != "root"
+    }
+    local_found = sum(1 for value in local_assets.values() if value)
+    helper_paths = [path for path in (car_manager, test_main) if path.exists()]
+
+    _set_action_progress(
+        record,
+        step_key="summarize",
+        percent=78,
+        label="Summarizing delivery checklist readiness",
+        detail="Combining mirrored SG checklist assets with BMW-side dependency discovery.",
+        meta={
+            "local_assets_found": local_found,
+            "local_assets_total": len(local_assets),
+            "bmw_repo_ready": bmw_repo.exists(),
+            "bmw_helper_count": len(helper_paths),
+            "viewer_count": len(viewer_candidates),
+        },
+    )
+
+    helper_labels = []
+    if car_manager.exists():
+        helper_labels.append("ci/scripts/car_manager.py")
+    if test_main.exists():
+        helper_labels.append("ci/scripts/test/main.py")
+
+    lines = [
+        f"Local SG bridge: {local_found}/{len(local_assets)} mirrored deliveryChecklist asset(s) found.",
+        (
+            "BMW-side prerequisites: repo available; helper scripts found: " + ", ".join(helper_labels) + "."
+            if helper_labels
+            else "BMW-side prerequisites: blocked on local `digital-3d-car-models` access."
+            if not bmw_repo.exists()
+            else "BMW-side prerequisites: repo available, but `ci/scripts/car_manager.py` and `ci/scripts/test/main.py` are not present locally."
+        ),
+    ]
+    if viewer_candidates:
+        viewer_lines: list[str] = []
+        for candidate in viewer_candidates[:2]:
+            try:
+                viewer_lines.append(str(candidate.relative_to(bmw_repo)))
+            except ValueError:
+                viewer_lines.append(str(candidate))
+        lines.append("Viewer candidates: " + ", ".join(viewer_lines))
+    elif bmw_repo.exists():
+        lines.append("Viewer candidates: no local `ramses*viewer*.exe` hit was found in the BMW repo scan.")
+    lines.append(
+        "Current role: this is a readiness bridge into the BMW-owned delivery checklist, not a replacement for that external flow."
+    )
+
+    log_lines = [
+        f"delivery_checklist_root={checklist_paths['root']}",
+        f"delivery_checklist_tool={checklist_paths['tool']} :: {'available' if checklist_paths['tool'].exists() else 'missing'}",
+        f"delivery_checklist_helper={checklist_paths['helper']} :: {'available' if checklist_paths['helper'].exists() else 'missing'}",
+        f"delivery_checklist_readme={checklist_paths['readme']} :: {'available' if checklist_paths['readme'].exists() else 'missing'}",
+        f"delivery_checklist_camera_crane={checklist_paths['camera_crane']} :: {'available' if checklist_paths['camera_crane'].exists() else 'missing'}",
+        f"bmw_models_repo={bmw_repo} :: {'available' if bmw_repo.exists() else 'missing'}",
+        f"bmw_car_manager_script={car_manager} :: {'available' if car_manager.exists() else 'missing'}",
+        f"bmw_test_main_script={test_main} :: {'available' if test_main.exists() else 'missing'}",
+    ]
+    if viewer_candidates:
+        for candidate in viewer_candidates:
+            log_lines.append(f"viewer_candidate={candidate}")
+    else:
+        log_lines.append("viewer_candidate=<none>")
+    _write_text(Path(record.paths["log"]), "\n".join(log_lines) + "\n")
+
+    summary = {
+        "title": "Delivery checklist readiness",
+        "lines": lines,
+        "local_assets_found": local_found,
+        "local_assets_total": len(local_assets),
+        "bmw_repo_ready": bmw_repo.exists(),
+        "bmw_helpers_found": helper_labels,
+        "viewer_count": len(viewer_candidates),
+    }
+    artifacts = [
+        _artifact("Delivery checklist README", checklist_paths["readme"]),
+        _artifact("Delivery checklist helper", checklist_paths["helper"]),
+        _artifact("Delivery checklist executable", checklist_paths["tool"]),
+        _artifact("Delivery checklist camera crane", checklist_paths["camera_crane"]),
+        _artifact("Delivery checklist log", Path(record.paths["log"])),
+    ]
+    if car_manager.exists():
+        artifacts.append(_artifact("BMW car manager helper", car_manager))
+    if test_main.exists():
+        artifacts.append(_artifact("BMW test main helper", test_main))
     return summary, artifacts, []
 
 
@@ -1108,6 +1635,10 @@ def execute_operator_action(
             summary, artifacts, notes = _execute_profile_stack(record, root)
         elif action.kind == "repo_checker":
             summary, artifacts, notes = _execute_repo_checker(record, root)
+        elif action.kind == "unused_resources":
+            summary, artifacts, notes = _execute_unused_resources(record, root)
+        elif action.kind == "delivery_checklist":
+            summary, artifacts, notes = _execute_delivery_checklist(record, root)
         elif action.kind == "bmw_screenshot_smoke":
             summary, artifacts, notes = _execute_bmw_screenshot_smoke(record, root)
         elif action.kind == "scene_check":

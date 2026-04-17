@@ -389,12 +389,12 @@ def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
             "hero_steps": (
                 "Run the widest useful deterministic check.",
                 "Open files and proof and make sure the evidence exists.",
-                "Treat performance tests, delivery docs, and BMW-side steps as explicit follow-up work.",
+                "Treat delivery-checklist, performance-test, delivery-doc, and BMW-side steps as explicit follow-up work.",
             ),
             "checklist": (
                 "Ticket completion is not delivery completion.",
-                "Performance test and delivery documentation expectations stay visible here.",
-                "Blocked BMW-side or rack steps should be shown honestly, not hidden.",
+                "Performance-test, delivery-checklist, and delivery-documentation expectations stay visible here.",
+                "Blocked BMW-side, delivery-checklist, or rack steps should be shown honestly, not hidden.",
             ),
             "quick_copy_label": "Copy pre-delivery summary",
             "full_copy_label": "Copy delivery handoff",
@@ -550,6 +550,7 @@ def _stage_scope_items(root: Path, stage: dict[str, Any], profiles: list[RunProf
     workflow = _workflow_step_map(root, profiles)
     deterministic = workflow.get("deterministic_preflight", {})
     handoff = workflow.get("handoff_evidence", {})
+    delivery = workflow.get("delivery_checklist", {})
     bmw = workflow.get("bmw_screenshot_smoke", {})
     rack = workflow.get("rack_review", {})
 
@@ -607,6 +608,11 @@ def _stage_scope_items(root: Path, stage: dict[str, Any], profiles: list[RunProf
                 "label": "Performance tests and delivery documentation",
                 "state": "manual",
                 "summary": "Required by the deck, but still manual and external to this local SG-side surface.",
+            },
+            {
+                "label": str(delivery.get("label", "BMW delivery checklist bridge")),
+                "state": str(delivery.get("state", "blocked")),
+                "summary": str(delivery.get("summary", "Delivery-checklist bridge status is not available.")),
             },
             {
                 "label": str(bmw.get("label", "BMW screenshot smoke")),
@@ -806,7 +812,7 @@ def _launch_checklist(selected_job: dict[str, Any] | None, selected_stage: dict[
         ],
         "pre_delivery": [
             "Open files and proof and make sure the SG-side evidence is ready.",
-            "Treat performance tests, delivery documentation, and BMW-side checks as explicit follow-up work.",
+            "Treat delivery-checklist, performance-test, delivery-documentation, and BMW-side checks as explicit follow-up work.",
         ],
         "post_integration": [
             "Use the result to separate local deterministic drift from later-stage external blockers.",
@@ -876,7 +882,7 @@ def _primary_launch(
         "checklist": [
             "Run the normal preflight for anchors, constants, carpaints, and project sanity.",
             "Run the SG repo checker for this car when it is available here.",
-            "Run scene check or BMW smoke only when the local machine is ready for them.",
+            "Use scene check, delivery-checklist, or BMW smoke only when the local machine is actually ready for those later stages.",
         ],
     }
 
@@ -1235,6 +1241,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
     report_ready = record.status == "completed" and Path(record.paths.get("html_report", "")).exists()
     markdown_ready = Path(record.paths.get("markdown_report", "")).exists()
     workflow = _workflow_step_map(root, list_run_profiles(root))
+    delivery = workflow.get("delivery_checklist", {})
     bmw = workflow.get("bmw_screenshot_smoke", {})
     rack = workflow.get("rack_review", {})
 
@@ -1313,6 +1320,12 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
                 "state": "manual",
                 "kind": "manual",
                 "summary": "Still manual and required by the delivery chain in the deck.",
+            },
+            {
+                "label": str(delivery.get("label", "BMW delivery checklist bridge")),
+                "state": str(delivery.get("state", "blocked")),
+                "kind": "external",
+                "summary": str(delivery.get("summary", "Delivery-checklist bridge status is not available.")),
             },
             {
                 "label": str(bmw.get("label", "BMW screenshot smoke")),
