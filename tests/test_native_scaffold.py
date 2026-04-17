@@ -26,6 +26,15 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("general_window.dds", text)
         self.assertIn("im_font_atlas.bin", text)
 
+    def test_native_bundle_script_is_present(self) -> None:
+        script_path = ROOT / "scripts" / "package_native_shell_bundle.ps1"
+        self.assertTrue(script_path.exists())
+        text = script_path.read_text(encoding="utf-8")
+        self.assertIn("workspace", text)
+        self.assertIn("python", text)
+        self.assertIn("resources", text)
+        self.assertIn("sg_preflight_native_shell.exe", text)
+
 
 if __name__ == "__main__":
     unittest.main()

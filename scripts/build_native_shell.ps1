@@ -39,7 +39,10 @@ if ($LASTEXITCODE -ne 0) {
 
 $exePath = Join-Path $resolvedBuildDir "$Configuration\sg_preflight_native_shell.exe"
 if (Test-Path $exePath) {
+    $latestPathFile = Join-Path (Join-Path $repoRoot "build") "latest_native_shell_path.txt"
+    Set-Content -Path $latestPathFile -Value $exePath -Encoding UTF8
     Write-Host "Built native shell:" $exePath
+    Write-Host "Latest native shell pointer:" $latestPathFile
 } else {
     Write-Warning "Build finished, but the expected executable was not found at $exePath"
 }

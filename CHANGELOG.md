@@ -41,6 +41,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 - working tree: the native C++ shell now starts borderless fullscreen by default, swaps the overloaded dashboard for an installer-style `Select` / `Run` / `Evidence` / `Files` / `Stages` screen flow, tones down the noisiest Unleashed texture overlays, and adds local WAV UI cues plus an optional installer-music toggle sourced from the same resource bundle
 - working tree: the native C++ shell no longer renders character/cast art from installer textures, keeps the Unleashed reference language abstract, simplifies the fullscreen background/static load for smoother frame pacing, and makes each step read more like a dedicated page than a flashing wall of panels
 - working tree: the native C++ shell now defaults to the current monitor's native size instead of letterboxing a fixed 1280x720 canvas, supports `--windowed --width --height` overrides, falls back to D3D11 WARP when hardware device creation fails, and retunes the PDA framing toward calmer teal/amber readability instead of flat neon-green smear
+- working tree: the native C++ shell now recognizes a portable bundle layout with sibling `workspace`, `python`, `resources`, and `fonts` folders, the build script writes `build/latest_native_shell_path.txt` after successful native builds, and a new `scripts/package_native_shell_bundle.ps1` can stage a copyable another-PC test bundle around the current exe
 
 #### 2026-04-16
 

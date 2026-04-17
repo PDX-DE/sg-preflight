@@ -302,6 +302,29 @@ std::optional<std::filesystem::path> DiscoverRepoRoot(std::filesystem::path star
     return std::nullopt;
 }
 
+std::optional<std::filesystem::path> DiscoverBundleWorkspace(std::filesystem::path start) {
+    std::error_code error;
+    if (start.empty()) {
+        return std::nullopt;
+    }
+    if (PathExists(start) && std::filesystem::is_regular_file(start, error)) {
+        start = start.parent_path();
+    }
+    for (std::filesystem::path current = start; !current.empty(); current = current.parent_path()) {
+        const std::filesystem::path workspace = current / "workspace";
+        if (
+            PathExists(workspace / "pyproject.toml")
+            && PathExists(workspace / "sg_preflight")
+        ) {
+            return workspace;
+        }
+        if (current == current.root_path()) {
+            break;
+        }
+    }
+    return std::nullopt;
+}
+
 std::filesystem::path GetExecutableDirectory() {
     std::wstring buffer(MAX_PATH, L'\0');
     DWORD copied = 0;
@@ -320,8 +343,14 @@ std::filesystem::path GetExecutableDirectory() {
 }
 
 std::filesystem::path ResolveWorkspaceRoot() {
+    if (const auto from_bundle = DiscoverBundleWorkspace(GetExecutableDirectory())) {
+        return *from_bundle;
+    }
     if (const auto from_executable = DiscoverRepoRoot(GetExecutableDirectory())) {
         return *from_executable;
+    }
+    if (const auto from_bundle_cwd = DiscoverBundleWorkspace(std::filesystem::current_path())) {
+        return *from_bundle_cwd;
     }
     if (const auto from_cwd = DiscoverRepoRoot(std::filesystem::current_path())) {
         return *from_cwd;
@@ -330,7 +359,13 @@ std::filesystem::path ResolveWorkspaceRoot() {
 }
 
 std::wstring ResolvePythonExecutable(const std::filesystem::path& workspace_root) {
-    const std::array<std::filesystem::path, 2> candidates = {
+    const std::filesystem::path bundle_root = workspace_root.filename() == "workspace"
+        ? workspace_root.parent_path()
+        : workspace_root;
+    const std::array<std::filesystem::path, 5> candidates = {
+        bundle_root / "python" / "python.exe",
+        bundle_root / "python" / "Scripts" / "python.exe",
+        bundle_root / "runtime" / "python.exe",
         workspace_root / ".venv" / "Scripts" / "python.exe",
         workspace_root / "venv" / "Scripts" / "python.exe",
     };
@@ -350,7 +385,14 @@ bool IsResourceBundleRoot(const std::filesystem::path& root) {
 }
 
 std::optional<std::filesystem::path> DiscoverResourceRoot(const std::filesystem::path& workspace_root) {
-    const std::array<std::filesystem::path, 5> direct_candidates = {
+    const std::filesystem::path bundle_root = workspace_root.filename() == "workspace"
+        ? workspace_root.parent_path()
+        : workspace_root;
+    const std::array<std::filesystem::path, 9> direct_candidates = {
+        bundle_root / "resources",
+        bundle_root / "UnleashedRecompResources-main" / "UnleashedRecompResources-main",
+        bundle_root / "UnleashedRecompResources-main",
+        bundle_root / "UnleashedRecompResources",
         workspace_root / "UnleashedRecompResources-main" / "UnleashedRecompResources-main",
         workspace_root / "UnleashedRecompResources-main",
         workspace_root / "UnleashedRecompResources",
@@ -423,6 +465,41 @@ std::optional<std::filesystem::path> ResolveDownloadedFont(
 
     std::error_code error;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(*downloads_root, error)) {
+        if (error || !entry.is_regular_file()) {
+            continue;
+        }
+        const std::wstring lowered_name = Lowercase(entry.path().filename().wstring());
+        for (const auto& needle : filename_needles) {
+            if (lowered_name.find(Lowercase(needle)) != std::wstring::npos) {
+                return entry.path();
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> ResolveBundledFont(
+    const std::filesystem::path& workspace_root,
+    const std::vector<std::filesystem::path>& relative_candidates,
+    const std::vector<std::wstring>& filename_needles
+) {
+    const std::filesystem::path bundle_root = workspace_root.filename() == "workspace"
+        ? workspace_root.parent_path()
+        : workspace_root;
+    const std::filesystem::path fonts_root = bundle_root / "fonts";
+    if (!PathExists(fonts_root)) {
+        return std::nullopt;
+    }
+
+    for (const auto& relative : relative_candidates) {
+        const std::filesystem::path candidate = fonts_root / relative;
+        if (PathExists(candidate)) {
+            return candidate;
+        }
+    }
+
+    std::error_code error;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(fonts_root, error)) {
         if (error || !entry.is_regular_file()) {
             continue;
         }
@@ -1288,28 +1365,28 @@ ImFont* TryLoadFont(ImGuiIO& io, const std::filesystem::path& path, float size) 
     return io.Fonts->AddFontFromFileTTF(path.string().c_str(), size);
 }
 
-void LoadShellFonts(ImGuiIO& io) {
-    const auto seurat_font = ResolveDownloadedFont(
-        {
-            std::filesystem::path("fot-seurat-pro-m") / "FOT-Seurat Pro M" / "FOT-Seurat Pro M.otf",
-            std::filesystem::path("FOT-SeuratPro-M.otf"),
-        },
-        {L"seurat"}
-    );
-    const auto new_rodin_font = ResolveDownloadedFont(
-        {
-            std::filesystem::path("fot-newrodin-pro-db") / "FOT-NewRodin Pro DB" / "FOT-NewRodin Pro DB.otf",
-            std::filesystem::path("FOT-NewRodinPro-DB.otf"),
-        },
-        {L"newrodin", L"new rodin"}
-    );
-    const auto dfs_font = ResolveDownloadedFont(
-        {
-            std::filesystem::path("DFSoGeiStd-W7.otf"),
-            std::filesystem::path("DFHeiStd-W7.otf"),
-        },
-        {L"dfsogei", L"dfheistd-w7"}
-    );
+void LoadShellFonts(ImGuiIO& io, const std::filesystem::path& workspace_root) {
+    const std::vector<std::filesystem::path> seurat_candidates = {
+        std::filesystem::path("fot-seurat-pro-m") / "FOT-Seurat Pro M" / "FOT-Seurat Pro M.otf",
+        std::filesystem::path("FOT-SeuratPro-M.otf"),
+    };
+    const std::vector<std::filesystem::path> new_rodin_candidates = {
+        std::filesystem::path("fot-newrodin-pro-db") / "FOT-NewRodin Pro DB" / "FOT-NewRodin Pro DB.otf",
+        std::filesystem::path("FOT-NewRodinPro-DB.otf"),
+    };
+    const std::vector<std::filesystem::path> dfs_candidates = {
+        std::filesystem::path("DFSoGeiStd-W7.otf"),
+        std::filesystem::path("DFHeiStd-W7.otf"),
+    };
+
+    const auto resolve_font = [&](const std::vector<std::filesystem::path>& candidates, const std::vector<std::wstring>& needles) {
+        const auto bundled = ResolveBundledFont(workspace_root, candidates, needles);
+        return bundled.has_value() ? bundled : ResolveDownloadedFont(candidates, needles);
+    };
+
+    const auto seurat_font = resolve_font(seurat_candidates, {L"seurat"});
+    const auto new_rodin_font = resolve_font(new_rodin_candidates, {L"newrodin", L"new rodin"});
+    const auto dfs_font = resolve_font(dfs_candidates, {L"dfsogei", L"dfheistd-w7"});
 
     g_title_font = new_rodin_font.has_value() ? TryLoadFont(io, *new_rodin_font, 31.0f) : nullptr;
     g_body_font = seurat_font.has_value() ? TryLoadFont(io, *seurat_font, 18.0f) : nullptr;
@@ -3094,7 +3171,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigWindowsMoveFromTitleBarOnly = true;
-    LoadShellFonts(io);
+    LoadShellFonts(io, std::filesystem::path(backend.workspace_root));
     ImGui::StyleColorsDark();
     ApplyStyle();
     LoadShellAssets(std::filesystem::path(backend.workspace_root));
