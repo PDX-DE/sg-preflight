@@ -28,6 +28,7 @@ enum class UiText {
     Next,
     Back,
     Quit,
+    Help,
     Select,
     RawLog,
     Report,

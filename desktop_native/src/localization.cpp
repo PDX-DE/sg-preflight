@@ -31,6 +31,7 @@ const char* TranslateEnglish(UiText text) {
     case Next: return "Next";
     case Back: return "Back";
     case Quit: return "Quit";
+    case Help: return "Help";
     case Select: return "Select";
     case RawLog: return "RAW LOG";
     case Report: return "REPORT";
@@ -88,16 +89,16 @@ const char* TranslateEnglish(UiText text) {
     case LanguageScreenBody: return "Choose the language used by the shell interface.";
     case LanguageScreenHint: return "This changes only the shell text. Project data and generated results stay the same.";
     case IntroWelcome: return "Welcome to SG Preflight.";
-    case IntroBodyPrimary: return "SG Preflight is a local checking tool for car slices, scenes, reports, and handoff material. It helps you pick the right check, run it once, and open the first result that needs attention.";
-    case IntroBodySecondary: return "Move left to right through the workflow: choose the slice, review the selected check, run it, open the first files to inspect, then review reports, exports, and any blocked or manual follow-up.";
+    case IntroBodyPrimary: return "SG Preflight is a local tool for checking car slices before review or handoff. It brings the main local checks, results, files, and follow-up steps into one place so you can see what to run next.";
+    case IntroBodySecondary: return "Work from left to right: choose a slice, choose the check, review what will run, start it, open the first files that need attention, then review reports, exports, and any manual follow-up.";
     case SelectLoadingTitle: return "Loading local project data.";
-    case SelectLoadingBody: return "The shell is loading slices, checks, recent runs, and generated results so the workflow is ready to use.";
-    case SelectTitle: return "Choose the slice and check for this run.";
-    case SelectDailyMatrixBody: return "Run the recommended check flow across all ready live slices and collect one shared review surface.";
+    case SelectLoadingBody: return "The shell is loading the available slices, checks, and recent results so you can choose what to run.";
+    case SelectTitle: return "Pick one slice on the right, then choose the check for this run.";
+    case SelectDailyMatrixBody: return "Run the recommended check flow across all ready slices and collect one shared review surface.";
     case NoActionMetadata: return "No action metadata is available for the current selection.";
-    case ReviewLoadingTitle: return "Review the selected run.";
-    case ReviewLoadingBody: return "This step is preparing the selected slice, check, and recent local results.";
-    case ReviewTitle: return "Review what will run.";
+    case ReviewLoadingTitle: return "Loading the selected slice and check.";
+    case ReviewLoadingBody: return "This step is preparing the selected slice, the chosen check, and the most recent local results.";
+    case ReviewTitle: return "Review what will run before you start.";
     case NoCommandPreview: return "No extra run details are available for this check yet.";
     case RunTitle: return "Run the selected check and watch its status.";
     case EvidenceTitle: return "Open the first result that needs attention.";
@@ -148,6 +149,7 @@ const char* TranslateSpanish(UiText text) {
     case Next: return "SIGUIENTE";
     case Back: return "ATRAS";
     case Quit: return "SALIR";
+    case Help: return "AYUDA";
     case Select: return "SELECCIONAR";
     case RawLog: return "LOG EN BRUTO";
     case Report: return "REPORTE";
@@ -261,6 +263,7 @@ const char* TranslateGerman(UiText text) {
     case Next: return "WEITER";
     case Back: return "ZURUECK";
     case Quit: return "BEENDEN";
+    case Help: return "HILFE";
     case Select: return "AUSWAHL";
     case RawLog: return "ROHLOG";
     case Report: return "BERICHT";
@@ -374,6 +377,7 @@ const char* TranslateRomanian(UiText text) {
     case Next: return "URMATORUL";
     case Back: return "INAPOI";
     case Quit: return "IESIRE";
+    case Help: return "AJUTOR";
     case Select: return "SELECTEAZA";
     case RawLog: return "LOG BRUT";
     case Report: return "RAPORT";
@@ -533,7 +537,7 @@ ShellLanguage LanguageFromIndex(int index) {
 
 std::string FormatReadyForNextActionStatus(ShellLanguage language) {
     switch (language) {
-    case English: return "Ready for the next SG QA action.";
+    case English: return "Ready to choose the next check.";
     case Spanish: return "Listo para la siguiente accion SG QA.";
     case German: return "Bereit fuer die naechste SG-QA-Aktion.";
     case Romanian: return "Gata pentru urmatoarea actiune SG QA.";
@@ -553,7 +557,7 @@ std::string FormatInitialLoadFailedStatus(ShellLanguage language) {
 
 std::string FormatNoProfilesDiscoveredStatus(ShellLanguage language) {
     switch (language) {
-    case English: return "No ready live slices were found in the current workspace.";
+    case English: return "No ready slices were found in the current workspace.";
     case Spanish: return "No se descubrieron perfiles SG listos en el workspace actual.";
     case German: return "Im aktuellen Workspace wurden keine bereiten SG-Live-Profile gefunden.";
     case Romanian: return "Nu au fost descoperite profile SG live pregatite in workspace-ul curent.";
@@ -563,7 +567,7 @@ std::string FormatNoProfilesDiscoveredStatus(ShellLanguage language) {
 
 std::string FormatLoadedDesktopStateStatus(ShellLanguage language, std::string_view profile_id) {
     switch (language) {
-    case English: return "Loaded local project data for " + std::string(profile_id) + ".";
+    case English: return "Ready to choose a check for " + std::string(profile_id) + ".";
     case Spanish: return "Estado SG cargado para " + std::string(profile_id) + ".";
     case German: return "SG-Desktopstatus fuer " + std::string(profile_id) + " geladen.";
     case Romanian: return "Starea SG a fost incarcata pentru " + std::string(profile_id) + ".";
@@ -653,7 +657,7 @@ std::string FormatMusicStatus(ShellLanguage language, bool enabled) {
 
 std::string FormatLoadedChromeStatus(ShellLanguage language) {
     switch (language) {
-    case English: return "Loaded the shell interface assets.";
+    case English: return "Preparing the local workspace.";
     case Spanish: return "Se cargaron los recursos visuales del shell.";
     case German: return "Die Oberflaechenressourcen des Shells wurden geladen.";
     case Romanian: return "Au fost incarcate resursele vizuale ale shell-ului.";

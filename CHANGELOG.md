@@ -8,6 +8,11 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Timeline
 
+#### 2026-04-19
+
+- working tree: the native C++ shell now fades the header text on an earlier disappear path than the remaining chrome, rewrites the intro/select English copy into clearer operator-facing language, adds an `F1` / footer `Help` prompt that explains each page and the `DAILY` / `STACK` / `REPO` / `SCENE` / `UNUSED` / `DELIVERY` checks, and stops slice changes from reloading the heavier recent-result panes when only the per-slice check metadata needs to change
+- working tree: the Select page now uses a wider real installer side rail for available slices instead of cramming slice cards into the main text panel, the slice cards are shortened toward clearer `profile -> label -> recommended check` reading, and the native verification script now captures the new Select-page Help popup alongside the existing intro/select/review/run/prompt evidence set
+
 #### 2026-04-18
 
 - working tree: the native C++ shell now splits quit/disappear timing between text and chrome, so page copy drops out before the remaining installer controls/footer during shell close-out while the current verification harness also writes backend command traces plus `Run`-screen captures for deeper local QA evidence

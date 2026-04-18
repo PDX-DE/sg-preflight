@@ -204,6 +204,10 @@ try {
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
     Capture-Stage -TargetProcess $process -Name "select"
 
+    Send-Key -TargetProcess $process -Keys "{F1}" -SettleMs $PromptSettleMs
+    Capture-Stage -TargetProcess $process -Name "help_select"
+    Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $PromptSettleMs
+
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
     Capture-Stage -TargetProcess $process -Name "review"
 

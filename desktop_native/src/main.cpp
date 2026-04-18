@@ -21,6 +21,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "imgui.h"
@@ -257,6 +258,15 @@ struct ShellState {
 
 ShellState* g_live_shell_state = nullptr;
 
+struct ProfileSelectionCacheEntry {
+    std::vector<ActionItem> actions;
+    std::vector<BlockerItem> blockers;
+    std::vector<ManualCard> manual_cards;
+};
+
+std::mutex g_profile_selection_cache_mutex;
+std::unordered_map<std::string, ProfileSelectionCacheEntry> g_profile_selection_cache;
+
 enum class GuideInputMode {
     Keyboard,
     Mouse,
@@ -372,11 +382,13 @@ void ClampSelections(ShellState& state);
 void RefreshSnapshot(ShellState& state);
 void RefreshRunSnapshot(ShellState& state);
 void RefreshResultPanels(ShellState& state);
+void RefreshProfilePanels(ShellState& state, bool refresh_results = true);
 void RenderLocalStatePanel(ShellState& state, const char* id, const char* title, float height, const std::string& loading_copy);
 void StartInitialShellLoad(ShellState& state);
 void PollInitialShellLoad(ShellState& state);
 float ShellTextLifecycleMotion();
 float ShellChromeLifecycleMotion();
+float ShellHeaderTextLifecycleMotion();
 
 constexpr float kPanelGrid = 9.0f;
 constexpr float kPanelHeaderHeight = 34.0f;
@@ -2130,6 +2142,82 @@ std::string ShortActionLabel(const std::string& action_id) {
     return "ACTION";
 }
 
+void StoreProfileSelectionCache(
+    const std::string& profile_id,
+    const std::vector<ActionItem>& actions,
+    const std::vector<BlockerItem>& blockers,
+    const std::vector<ManualCard>& manual_cards
+) {
+    if (profile_id.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_profile_selection_cache_mutex);
+    g_profile_selection_cache[profile_id] = ProfileSelectionCacheEntry{actions, blockers, manual_cards};
+}
+
+bool TryLoadProfileSelectionCache(
+    const std::string& profile_id,
+    std::vector<ActionItem>& actions,
+    std::vector<BlockerItem>& blockers,
+    std::vector<ManualCard>& manual_cards
+) {
+    std::lock_guard<std::mutex> lock(g_profile_selection_cache_mutex);
+    const auto found = g_profile_selection_cache.find(profile_id);
+    if (found == g_profile_selection_cache.end()) {
+        return false;
+    }
+    actions = found->second.actions;
+    blockers = found->second.blockers;
+    manual_cards = found->second.manual_cards;
+    return true;
+}
+
+std::string FriendlyActionDescription(std::string_view action_id) {
+    const std::string short_label = ShortActionLabel(std::string(action_id));
+    if (short_label == "DAILY") {
+        return "Run the recommended local checks across every ready slice and collect one shared review surface.";
+    }
+    if (short_label == "STACK") {
+        return "Run the standard per-slice SG preflight stack for the selected slice.";
+    }
+    if (short_label == "REPO") {
+        return "Run the SG repository-wide checker pass to catch broader issues outside one slice.";
+    }
+    if (short_label == "SCENE") {
+        return "Run the scene-specific check for the selected slice.";
+    }
+    if (short_label == "UNUSED") {
+        return "Scan the selected slice for unused resources that should be cleaned up or reviewed.";
+    }
+    if (short_label == "DELIVERY") {
+        return "Prepare the delivery-readiness view and show the follow-up items that still need attention.";
+    }
+    return {};
+}
+
+std::string BuildHelpPromptMessage(const ShellState& state) {
+    switch (state.current_screen) {
+    case ShellScreen::Introduction:
+        return "SG Preflight is the local checking shell for car slices.\n\nUse it to choose a slice, choose the right local check, run it once, open the first files that need attention, and then review reports, exports, and follow-up work.";
+    case ShellScreen::Select:
+        return "Choose one slice on the right, then choose one check below.\n\nDAILY: Runs the recommended local checks across every ready slice.\nSTACK: Runs the standard preflight stack for the selected slice.\nREPO: Runs the wider SG repository checker pass.\nSCENE: Runs the scene-specific check for the selected slice.\nUNUSED: Scans for unused resources linked to the selected slice.\nDELIVERY: Shows delivery-readiness follow-up for the selected slice.";
+    case ShellScreen::Review:
+        return "Review confirms what is about to run.\n\nCheck that the selected slice and the selected check match what you want before starting the run.";
+    case ShellScreen::Run:
+        return "Run shows live status while the selected check is queued or running.\n\nStay here to watch progress, refresh the state, and open the raw log or report when they are available.";
+    case ShellScreen::Evidence:
+        return "Open First points to the first files that need attention.\n\nUse this page when you want the most important evidence first instead of searching through every output manually.";
+    case ShellScreen::Files:
+        return "Files collects generated outputs, reports, source files, and copy-ready exports.\n\nUse it when you need to open deliverables or copy material into Jira, QA Hero, or handoff notes.";
+    case ShellScreen::Stages:
+        return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked items, manual steps, display settings, and audio settings before you loop back to the next slice.";
+    case ShellScreen::Language:
+        return "Choose the language used by the shell interface.\n\nProject data, checker output, and generated files stay the same.";
+    default:
+        return "Use SG Preflight from left to right: choose a slice, choose the check, review it, run it, open the first results, then review files and follow-up.";
+    }
+}
+
 InitialShellLoadResult BuildInitialShellLoad(const BackendConfig& backend) {
     InitialShellLoadResult result;
     result.profiles = sg_preflight::native_shell::LoadProfiles(backend);
@@ -2143,6 +2231,7 @@ InitialShellLoadResult BuildInitialShellLoad(const BackendConfig& backend) {
     result.actions = sg_preflight::native_shell::LoadActions(backend, profile.profile_id);
     result.blockers = sg_preflight::native_shell::LoadBlockers(backend, profile.profile_id);
     result.manual_cards = sg_preflight::native_shell::LoadManualCards(backend, profile.profile_id);
+    StoreProfileSelectionCache(profile.profile_id, result.actions, result.blockers, result.manual_cards);
     if (result.selected_action_id.empty()) {
         result.selected_action_id = result.actions.empty() ? "daily_live_matrix" : result.actions.front().action_id;
     }
@@ -2220,6 +2309,9 @@ void PollInitialShellLoad(ShellState& state) {
     state.current_result_run_id = std::move(pending->current_result_run_id);
     state.last_error = std::move(pending->error);
     ClampSelections(state);
+    if (!CurrentProfileId(state).empty()) {
+        StoreProfileSelectionCache(CurrentProfileId(state), state.actions, state.blockers, state.manual_cards);
+    }
 
     if (!state.last_error.empty()) {
         state.status_line = sg_preflight::native_shell::FormatInitialLoadFailedStatus(state.language);
@@ -2379,31 +2471,39 @@ void RefreshResultPanels(ShellState& state) {
     ClampSelections(state);
 }
 
-void RefreshProfilePanels(ShellState& state) {
+void RefreshProfilePanels(ShellState& state, bool refresh_results) {
     const std::string profile_id = CurrentProfileId(state);
     if (profile_id.empty()) {
         state.actions.clear();
         state.blockers.clear();
         state.manual_cards.clear();
-        state.recent_actions.clear();
-        state.recent_runs.clear();
-        state.run_snapshot.reset();
+        if (refresh_results) {
+            state.recent_actions.clear();
+            state.recent_runs.clear();
+            state.run_snapshot.reset();
+        }
         return;
     }
 
     try {
-        state.actions = sg_preflight::native_shell::LoadActions(state.backend, profile_id);
-        state.blockers = sg_preflight::native_shell::LoadBlockers(state.backend, profile_id);
-        state.manual_cards = sg_preflight::native_shell::LoadManualCards(state.backend, profile_id);
+        if (!TryLoadProfileSelectionCache(profile_id, state.actions, state.blockers, state.manual_cards)) {
+            state.actions = sg_preflight::native_shell::LoadActions(state.backend, profile_id);
+            state.blockers = sg_preflight::native_shell::LoadBlockers(state.backend, profile_id);
+            state.manual_cards = sg_preflight::native_shell::LoadManualCards(state.backend, profile_id);
+            StoreProfileSelectionCache(profile_id, state.actions, state.blockers, state.manual_cards);
+        }
         if (state.selected_action_id.empty() || (state.selected_action_id != "daily_live_matrix" && FindSelectedAction(state) == nullptr)) {
             state.selected_action_id = state.actions.empty() ? "daily_live_matrix" : state.actions.front().action_id;
         }
         state.last_error.clear();
+        state.status_line = sg_preflight::native_shell::FormatLoadedDesktopStateStatus(state.language, profile_id);
     } catch (const std::exception& error) {
         state.last_error = error.what();
         PlayCue(UiCue::Error);
     }
-    RefreshResultPanels(state);
+    if (refresh_results) {
+        RefreshResultPanels(state);
+    }
 }
 
 void RefreshProfiles(ShellState& state) {
@@ -2451,7 +2551,7 @@ void SelectProfileById(ShellState& state, const std::string& profile_id) {
     }
     state.selected_profile_index = static_cast<int>(std::distance(state.profiles.begin(), match));
     state.selected_action_id = match->recommended_action_id;
-    RefreshProfilePanels(state);
+    RefreshProfilePanels(state, false);
     SetScreen(state, ShellScreen::Select, false);
 }
 
@@ -2962,10 +3062,11 @@ void DrawBackdropChrome(const ShellState& state) {
     draw_bar_line(true);
     draw_bar_line(false);
 
-    const float title_alpha = static_cast<float>(ComputeMotionFrames(15.0, 30.0));
+    const float chrome_title_alpha = static_cast<float>(ComputeMotionFrames(15.0, 30.0));
+    const float header_text_alpha = ShellHeaderTextLifecycleMotion();
     const char* header_text = ShouldShowInstallerLoadingChrome(state) ? Tr(state, UiText::HeaderChecking) : Tr(state, UiText::HeaderPreflight);
     if (HasTexture(g_shell_assets.miles_electric_icon)) {
-        const float scale = 62.0f * (2.0f - title_alpha);
+        const float scale = 62.0f * (2.0f - chrome_title_alpha);
         const ImVec2 center = ShellPoint(256.0f, 80.0f);
         const ImVec2 min(center.x - ShellUi(scale) * 0.5f, center.y - ShellUi(scale) * 0.5f);
         const ImVec2 max(center.x + ShellUi(scale) * 0.5f, center.y + ShellUi(scale) * 0.5f);
@@ -2975,15 +3076,15 @@ void DrawBackdropChrome(const ShellState& state) {
             max,
             ImVec2(0.0f, 0.0f),
             ImVec2(1.0f, 1.0f),
-            IM_COL32(255, 255, 255, static_cast<int>(255.0f * title_alpha))
+            IM_COL32(255, 255, 255, static_cast<int>(255.0f * chrome_title_alpha))
         );
     }
 
     if (g_title_font != nullptr) {
         const float size = ShellUi(std::strlen(header_text) > 10U ? 36.0f : 42.0f);
         const ImVec2 pos = ShellPoint(288.0f, 54.0f);
-        draw_list->AddText(g_title_font, size, ImVec2(pos.x + ShellUi(3.0f), pos.y + ShellUi(3.0f)), IM_COL32(0, 0, 0, static_cast<int>(255.0f * title_alpha)), header_text);
-        draw_list->AddText(g_title_font, size, pos, IM_COL32(255, 195, 0, static_cast<int>(255.0f * title_alpha)), header_text);
+        draw_list->AddText(g_title_font, size, ImVec2(pos.x + ShellUi(3.0f), pos.y + ShellUi(3.0f)), IM_COL32(0, 0, 0, static_cast<int>(255.0f * header_text_alpha)), header_text);
+        draw_list->AddText(g_title_font, size, pos, IM_COL32(255, 195, 0, static_cast<int>(255.0f * header_text_alpha)), header_text);
     }
 
     if (ShouldShowInstallerLoadingChrome(state) && HasTexture(g_shell_assets.arrow_circle)) {
@@ -2994,7 +3095,7 @@ void DrawBackdropChrome(const ShellState& state) {
             center,
             ImVec2(ShellUi(62.0f), ShellUi(62.0f)),
             static_cast<float>(ImGui::GetTime()) * -2.0f,
-            IM_COL32(255, 255, 255, static_cast<int>(96.0 * title_alpha))
+            IM_COL32(255, 255, 255, static_cast<int>(96.0 * chrome_title_alpha))
         );
         if (HasTexture(g_shell_assets.pulse_install)) {
             const float pulse = 0.65f + 0.35f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.6f));
@@ -3003,7 +3104,7 @@ void DrawBackdropChrome(const ShellState& state) {
                 g_shell_assets.pulse_install,
                 ImVec2(center.x - ShellUi(34.0f) * pulse, center.y - ShellUi(34.0f) * pulse),
                 ImVec2(center.x + ShellUi(34.0f) * pulse, center.y + ShellUi(34.0f) * pulse),
-                IM_COL32(255, 255, 255, static_cast<int>(40.0 * pulse * title_alpha)),
+                IM_COL32(255, 255, 255, static_cast<int>(40.0 * pulse * chrome_title_alpha)),
                 ShellUi(20.0f)
             );
         }
@@ -3160,11 +3261,11 @@ struct InstallerCanvasLayout {
     ImVec2 side_content_max;
 };
 
-InstallerCanvasLayout GetInstallerCanvasLayout() {
+InstallerCanvasLayout GetInstallerCanvasLayout(float description_width = kInstallerContainerWidth) {
     InstallerCanvasLayout layout{};
     layout.description_min = ShellPoint(kInstallerContainerX + 0.5f, kInstallerContainerY + 0.5f);
     layout.description_max = ShellPoint(
-        kInstallerContainerX + kInstallerContainerWidth + 0.5f,
+        kInstallerContainerX + description_width + 0.5f,
         kInstallerContainerY + kInstallerContainerHeight + 0.5f
     );
     layout.side_min = ImVec2(layout.description_max.x, layout.description_min.y);
@@ -3221,8 +3322,7 @@ void DrawInstallerCanvasSurface(const ImVec2& min, const ImVec2& max, bool text_
     }
 }
 
-void DrawInstallerCanvasBackground() {
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+void DrawInstallerCanvasBackground(const InstallerCanvasLayout& layout = GetInstallerCanvasLayout()) {
     DrawInstallerCanvasSurface(layout.description_min, layout.description_max, true);
     DrawInstallerCanvasSurface(layout.side_min, layout.side_max, false);
 }
@@ -3590,6 +3690,15 @@ float ShellChromeLifecycleMotion() {
     ));
 }
 
+float ShellHeaderTextLifecycleMotion() {
+    return static_cast<float>(ComputeMotionFramesAsymmetric(
+        15.0,
+        30.0,
+        0.0,
+        8.0
+    ));
+}
+
 float ShellTransitionAlpha(float motion) {
     return 0.18f + 0.82f * motion;
 }
@@ -3788,18 +3897,16 @@ void RenderProfilesPanel(ShellState& state) {
         ImGui::TextDisabled("%s", Tr(state, UiText::NoProfilesDiscovered));
         return;
     }
-    const float card_height = state.current_screen == ShellScreen::Select ? ShellUi(74.0f) : ShellUi(82.0f);
+    const float card_height = state.current_screen == ShellScreen::Select ? ShellUi(72.0f) : ShellUi(82.0f);
     for (size_t index = 0; index < state.profiles.size(); ++index) {
         const ProfileItem& profile = state.profiles[index];
         const bool selected = static_cast<int>(index) == state.selected_profile_index;
         const std::string row_id = "profile-" + profile.profile_id;
-        const std::string title = profile.profile_id + "  " + profile.label;
-        const std::string subtitle = "Suggested check: " + ShortActionLabel(profile.recommended_action_id);
-        if (DrawSelectableCard(row_id.c_str(), title, subtitle, Ellipsize(profile.summary, 82U), selected, card_height)) {
-            state.selected_profile_index = static_cast<int>(index);
-            state.selected_action_id = profile.recommended_action_id;
-            RefreshProfilePanels(state);
-            SetScreen(state, ShellScreen::Select, false);
+        const std::string title = profile.profile_id;
+        const std::string subtitle = Ellipsize(profile.label, 24U);
+        const std::string detail = "Recommended check: " + ShortActionLabel(profile.recommended_action_id);
+        if (DrawSelectableCard(row_id.c_str(), title, subtitle, detail, selected, card_height)) {
+            SelectProfileById(state, profile.profile_id);
         }
     }
 }
@@ -3859,18 +3966,19 @@ void RenderActionTabs(ShellState& state) {
         {
             "daily_live_matrix",
             "DAILY",
-            "Run the recommended SG QA stack across all ready live profiles and aggregate one shared 'Open first' surface.",
+            FriendlyActionDescription("daily_live_matrix"),
             "python -m sg_preflight run-action daily_live_matrix",
             {},
             true,
         }
     );
     for (const ActionItem& action : state.actions) {
+        const std::string friendly_description = FriendlyActionDescription(action.action_id);
         tabs.push_back(
             {
                 action.action_id,
                 ShortActionLabel(action.action_id),
-                action.description,
+                friendly_description.empty() ? action.description : friendly_description,
                 action.command_preview,
                 action.blocker_message,
                 action.ready,
@@ -4488,8 +4596,8 @@ void RenderIntroductionScreen(ShellState& state) {
 
 void RenderSelectScreen(ShellState& state) {
     BeginScreenTransition(state);
-    DrawInstallerCanvasBackground();
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+    const InstallerCanvasLayout layout = GetInstallerCanvasLayout(452.0f);
+    DrawInstallerCanvasBackground(layout);
 
     if (state.initial_state_loading) {
         if (BeginCanvasOverlayRegion("select-loading-description", layout.description_content_min, layout.description_content_max)) {
@@ -4510,74 +4618,71 @@ void RenderSelectScreen(ShellState& state) {
     }
 
     if (BeginCanvasOverlayRegion("select-description", layout.description_content_min, layout.description_content_max)) {
-        const float total_width = ImGui::GetContentRegionAvail().x;
-        const float total_height = ImGui::GetContentRegionAvail().y;
-        const float column_gap = ShellUi(16.0f);
-        const float right_margin = ShellUi(12.0f);
-        const float usable_width = std::max(ShellUi(420.0f), total_width - right_margin);
-        const float list_width = std::clamp(usable_width * 0.18f, ShellUi(150.0f), ShellUi(176.0f));
-        const float summary_width = std::max(ShellUi(350.0f), usable_width - list_width - column_gap);
+        BeginScreenTextTransition(state);
+        const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        DrawCanvasPageTitle(Tr(state, UiText::SelectTitle), wrap_x);
 
-        if (ImGui::BeginChild("select-summary-column", ImVec2(summary_width, total_height), false, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-            BeginScreenTextTransition(state);
-            const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-            DrawCanvasPageTitle(Tr(state, UiText::SelectTitle), wrap_x);
+        ImGui::Dummy(ImVec2(0.0f, ShellUi(6.0f)));
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextWrapped("Choose one slice on the right. Then choose the local check you want to run for that slice. Review opens the next page so you can confirm the selection before anything starts.");
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0.0f, ShellUi(10.0f)));
 
-            ImGui::Dummy(ImVec2(0.0f, ShellUi(4.0f)));
-            if (!state.profiles.empty()) {
-                const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
-                if (g_small_font != nullptr) {
-                    ImGui::PushFont(g_small_font);
-                }
-                ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::SelectedSlice));
-                if (g_small_font != nullptr) {
-                    ImGui::PopFont();
-                }
-                if (g_body_font != nullptr) {
-                    ImGui::PushFont(g_body_font);
-                }
-                ImGui::Text("%s", profile.profile_id.c_str());
-                if (g_body_font != nullptr) {
-                    ImGui::PopFont();
-                }
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", Ellipsize(profile.label, 20U).c_str());
-                ImGui::Dummy(ImVec2(0.0f, ShellUi(4.0f)));
-            }
-
+        if (!state.profiles.empty()) {
+            const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
             if (g_small_font != nullptr) {
                 ImGui::PushFont(g_small_font);
             }
-            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionPath));
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::SelectedSlice));
             if (g_small_font != nullptr) {
                 ImGui::PopFont();
             }
-            EndScreenTextTransition();
-            RenderActionTabs(state);
-        }
-        ImGui::EndChild();
-
-        ImGui::SameLine(0.0f, column_gap);
-
-        if (ImGui::BeginChild("select-slices-column", ImVec2(list_width, total_height), false, ImGuiWindowFlags_NoBackground)) {
-            BeginScreenTextTransition(state);
-            if (g_small_font != nullptr) {
-                ImGui::PushFont(g_small_font);
+            if (g_body_font != nullptr) {
+                ImGui::PushFont(g_body_font);
             }
-            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::LiveSlices));
-            if (g_small_font != nullptr) {
+            ImGui::Text("%s", profile.profile_id.c_str());
+            if (g_body_font != nullptr) {
                 ImGui::PopFont();
             }
-            EndScreenTextTransition();
-            ImGui::Spacing();
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-            if (ImGui::BeginChild("select-live-slices-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false)) {
-                RenderProfilesPanel(state);
-            }
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", Ellipsize(profile.label, 28U).c_str());
+            ImGui::PushTextWrapPos(wrap_x);
+            ImGui::TextWrapped("%s", profile.summary.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(0.0f, ShellUi(8.0f)));
+        }
+
+        if (g_small_font != nullptr) {
+            ImGui::PushFont(g_small_font);
+        }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionPath));
+        if (g_small_font != nullptr) {
+            ImGui::PopFont();
+        }
+        EndScreenTextTransition();
+        RenderActionTabs(state);
+    }
+    EndCanvasOverlayRegion();
+
+    if (BeginCanvasOverlayRegion("select-side", layout.side_content_min, layout.side_content_max)) {
+        BeginScreenTextTransition(state);
+        if (g_small_font != nullptr) {
+            ImGui::PushFont(g_small_font);
+        }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::LiveSlices));
+        if (g_small_font != nullptr) {
+            ImGui::PopFont();
+        }
+        ImGui::Dummy(ImVec2(0.0f, ShellUi(4.0f)));
+        ImGui::TextDisabled("%s", "Pick one slice. Scroll only if the full list does not fit.");
+        EndScreenTextTransition();
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        if (ImGui::BeginChild("select-live-slices-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false)) {
+            RenderProfilesPanel(state);
         }
         ImGui::EndChild();
+        ImGui::PopStyleColor();
     }
     EndCanvasOverlayRegion();
     EndScreenTransition();
@@ -5359,6 +5464,7 @@ void RenderButtonGuide(ShellState& state) {
         };
         break;
     }
+    guide_items.push_back({"guide-help", "F1", Tr(state, UiText::Help), true, false, false});
     }
 
     enum class GuideAtlasIcon {
@@ -5419,6 +5525,8 @@ void RenderButtonGuide(ShellState& state) {
             copy_by_key("qa_hero", sg_preflight::native_shell::FormatCopiedQaHeroStatus(state.language));
         } else if (std::strcmp(item.id, "guide-handoff") == 0) {
             copy_by_key("handoff", sg_preflight::native_shell::FormatCopiedHandoffStatus(state.language));
+        } else if (std::strcmp(item.id, "guide-help") == 0) {
+            OpenPrompt(state, Tr(state, UiText::Help), BuildHelpPromptMessage(state), false, false, false);
         }
     };
 
@@ -5714,6 +5822,11 @@ void HandleShellHotkeys(ShellState& state) {
         return;
     }
 
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
+        OpenPrompt(state, Tr(state, UiText::Help), BuildHelpPromptMessage(state), false, false, false);
+        return;
+    }
+
     if (!ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
         switch (state.current_screen) {
         case ShellScreen::Language:
@@ -5938,6 +6051,7 @@ void RenderPromptModal(ShellState& state) {
     const float chooser_open = state.prompt_controls_visible
         ? SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.prompt_controls_opened_at) * 60.0 / 11.0, 0.0, 1.0)))
         : 0.0f;
+    const bool information_prompt = !state.prompt_confirmation;
     const float background_overlay_alpha = alpha * (state.prompt_controls_visible ? (1.0f - chooser_open) : 1.0f);
     draw->AddRectFilled(ImVec2(0.0f, 0.0f), display, IM_COL32(0, 0, 0, static_cast<int>(190.0f * background_overlay_alpha)));
 
@@ -5954,9 +6068,14 @@ void RenderPromptModal(ShellState& state) {
     }
 
     ImFont* prompt_banner_font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
-    const float prompt_banner_font_size = ShellUi(28.0f);
-    const float prompt_banner_wrap_width = std::min(ShellUi(820.0f), display.x - ShellUi(110.0f));
-    const ImVec2 prompt_center(display.x * 0.5f, display.y * 0.5f + ShellUi(3.0f));
+    const float prompt_banner_font_size = information_prompt ? ShellUi(21.0f) : ShellUi(28.0f);
+    const float prompt_banner_wrap_width = information_prompt
+        ? std::min(ShellUi(640.0f), display.x - ShellUi(220.0f))
+        : std::min(ShellUi(820.0f), display.x - ShellUi(110.0f));
+    const ImVec2 prompt_center(
+        display.x * 0.5f,
+        information_prompt ? (display.y * 0.47f) : (display.y * 0.5f + ShellUi(3.0f))
+    );
     const ImVec2 prompt_text_size = prompt_banner_font->CalcTextSizeA(
         prompt_banner_font_size,
         prompt_banner_wrap_width,
@@ -5964,8 +6083,8 @@ void RenderPromptModal(ShellState& state) {
         state.prompt_message.c_str()
     );
     const ImVec2 banner_half(
-        std::max(ShellUi(190.0f), prompt_text_size.x * 0.5f + ShellUi(37.0f)),
-        std::max(ShellUi(54.0f), prompt_text_size.y * 0.5f + ShellUi(45.0f))
+        std::max(information_prompt ? ShellUi(220.0f) : ShellUi(190.0f), prompt_text_size.x * 0.5f + ShellUi(37.0f)),
+        std::max(information_prompt ? ShellUi(120.0f) : ShellUi(54.0f), prompt_text_size.y * 0.5f + ShellUi(45.0f))
     );
     const float banner_open = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.prompt_opened_at) * 60.0 / 11.0, 0.0, 1.0)));
     const float banner_alpha = alpha * (state.prompt_controls_visible ? LerpFloat(1.0f, 0.34f, chooser_open) : 1.0f);
@@ -6281,20 +6400,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     } else if (g_shell_assets.attempted && !g_shell_assets.error.empty()) {
         state.status_line = sg_preflight::native_shell::FormatFallbackChromeStatus(state.language, g_shell_assets.error);
     }
-    state.status_line += use_fullscreen
-        ? " Display: native fullscreen."
-        : " Display: windowed " + std::to_string(requested_width) + "x" + std::to_string(requested_height) + ".";
     if (g_using_warp) {
-        state.status_line += " Renderer fallback: D3D12 WARP.";
+        state.status_line += " Renderer fallback active.";
     }
     if (g_shell_audio.available) {
         state.status_line += music_enabled_preference
-            ? " UI sound is ready, and background music starts enabled from imgui.ini."
-            : " UI sound is ready. Background music stays off unless enabled in imgui.ini or Stages.";
+            ? " Background music starts enabled."
+            : " Background music stays off unless you enable it.";
     } else if (g_shell_audio.attempted && !g_shell_audio.last_error.empty()) {
         state.status_line += " Audio fallback active: " + g_shell_audio.last_error;
     }
-    state.status_line += " Loading local workspace data.";
+    state.status_line += " Loading local project data.";
     StartInitialShellLoad(state);
 
     bool done = false;
@@ -6332,7 +6448,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
         PollInitialShellLoad(state);
 
-        if (!state.current_run_id.empty() && IsActionStillRunning(state) && ImGui::GetTime() >= state.next_poll_at) {
+        if (!state.exit_transition_active && !state.current_run_id.empty() && IsActionStillRunning(state) && ImGui::GetTime() >= state.next_poll_at) {
             RefreshActiveRunState(state, false);
         }
 
