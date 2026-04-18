@@ -10,6 +10,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 #### 2026-04-18
 
+- working tree: the native C++ shell now stops auto-polling stale completed runs after initial hydration, keeps installer SFX forced on while leaving music optional, rewrites the quit modal around the OG centered message-window geometry with the original `Are you sure you want to quit?` wording, and stretches the shell close-out into a longer installer-style fade instead of the old near-instant exit snap
 - working tree: the native C++ shell now ports the bottom guide toward the real OG button-guide model instead of the older full-width hotkey bar, keeps primary next/back prompts centered in the installer strip, tightens the intro text block and right-rail density, and fixes windowed DPI sizing so `--windowed --width 1280 --height 720` again produces a true `1280x720` client instead of a scaled-down client on high-DPI Windows desktops
 
 - working tree: the native C++ shell now starts directly on the English SG intro instead of forcing the language screen, restores the original `Español` label for the reserved language list, and ports the quit/leave-run prompt closer to the OG two-stage Unleashed message-window rhythm with a banner-first open, a second pause-window reveal for the Yes/No chooser, and a more faithful selection-card animation path

@@ -120,7 +120,7 @@ const char* TranslateEnglish(UiText text) {
     case NoRecentResults: return "No recent run records yet for this profile.";
     case NoManualFollowUp: return "No additional manual follow-up is attached to the current evidence selection.";
     case PromptQuitTitle: return "QUIT SG PREFLIGHT";
-    case PromptQuitMessage: return "Close SG Preflight now?";
+    case PromptQuitMessage: return "Are you sure you want to quit?";
     case PromptQuitRunningMessage: return "Close the shell now? The current SG action will keep running in the background.";
     case PromptLeaveRunTitle: return "LEAVE RUN SCREEN";
     case PromptLeaveRunMessage: return "The current SG action is still running. Leave this page anyway? The action will keep running in the background.";

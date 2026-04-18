@@ -144,6 +144,9 @@ constexpr float kInstallerContainerY = 226.0f;
 constexpr float kInstallerContainerWidth = 526.5f;
 constexpr float kInstallerContainerHeight = 246.0f;
 constexpr bool kRenderPlaceholderInstallerCharacters = false;
+constexpr double kRunAutoPollDelaySeconds = 0.75;
+constexpr double kRunInitialPollDelaySeconds = 0.25;
+constexpr double kExitTransitionDurationFrames = 180.0;
 
 struct ShellAssets {
     std::filesystem::path resource_root;
@@ -222,7 +225,7 @@ struct ShellState {
     std::string current_result_run_id;
     std::string status_line = sg_preflight::native_shell::FormatReadyForNextActionStatus(ShellLanguage::English);
     std::string last_error;
-    double next_poll_at = 0.0;
+    double next_poll_at = DBL_MAX;
     ShellScreen current_screen = ShellScreen::Introduction;
     ShellScreen previous_screen = ShellScreen::Introduction;
     int selected_language_index = 0;
@@ -365,6 +368,9 @@ void RenderEvidencePanel(ShellState& state);
 void RenderArtifactsPanel(ShellState& state);
 void RenderBlockersPanel(ShellState& state);
 void ClampSelections(ShellState& state);
+void RefreshSnapshot(ShellState& state);
+void RefreshRunSnapshot(ShellState& state);
+void RefreshResultPanels(ShellState& state);
 void RenderLocalStatePanel(ShellState& state, const char* id, const char* title, float height, const std::string& loading_copy);
 void StartInitialShellLoad(ShellState& state);
 void PollInitialShellLoad(ShellState& state);
@@ -916,6 +922,7 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
     sg_preflight::native_shell::StopLoopingWaveMusic();
     g_shell_audio = {};
     g_shell_audio.attempted = true;
+    g_shell_audio.sfx_enabled = true;
 
     const auto resource_root = DiscoverResourceRoot(workspace_root);
     if (!resource_root.has_value()) {
@@ -1253,6 +1260,36 @@ bool IsActionStillRunning(const ShellState& state) {
         return false;
     }
     return state.snapshot->status == "queued" || state.snapshot->status == "running";
+}
+
+void UpdateRunPollingDeadline(ShellState& state, double delay_seconds = kRunAutoPollDelaySeconds) {
+    state.next_poll_at = (!state.current_run_id.empty() && IsActionStillRunning(state))
+        ? (ImGui::GetTime() + delay_seconds)
+        : DBL_MAX;
+}
+
+void RefreshActiveRunState(ShellState& state, bool refresh_recent_lists) {
+    if (state.current_run_id.empty()) {
+        state.snapshot.reset();
+        state.current_result_run_id.clear();
+        state.run_snapshot.reset();
+        state.next_poll_at = DBL_MAX;
+        ClampSelections(state);
+        return;
+    }
+
+    const std::string previous_result_run_id = state.current_result_run_id;
+    RefreshSnapshot(state);
+    const bool still_running = IsActionStillRunning(state);
+    const bool result_changed = state.current_result_run_id != previous_result_run_id;
+
+    if (refresh_recent_lists || result_changed || !still_running) {
+        RefreshResultPanels(state);
+    } else {
+        RefreshRunSnapshot(state);
+    }
+
+    UpdateRunPollingDeadline(state);
 }
 
 void OpenPrompt(
@@ -2019,6 +2056,10 @@ void PollInitialShellLoad(ShellState& state) {
         pending = std::move(g_initial_load_result);
         g_initial_load_result.reset();
     }
+    if (g_initial_load_thread.joinable()) {
+        g_initial_load_thread.join();
+    }
+    g_initial_load_started = false;
 
     state.initial_state_loading = false;
     state.profiles = std::move(pending->profiles);
@@ -2044,6 +2085,7 @@ void PollInitialShellLoad(ShellState& state) {
     } else {
         state.status_line = sg_preflight::native_shell::FormatLoadedDesktopStateStatus(state.language, CurrentProfileId(state));
     }
+    UpdateRunPollingDeadline(state);
 }
 
 void ClampSelections(ShellState& state) {
@@ -2277,7 +2319,7 @@ void StartAction(ShellState& state, const std::string& action_id) {
         RefreshResultPanels(state);
         RefreshSnapshot(state);
         RefreshRunSnapshot(state);
-        state.next_poll_at = ImGui::GetTime() + 0.25;
+        UpdateRunPollingDeadline(state, kRunInitialPollDelaySeconds);
         SetScreen(state, ShellScreen::Run);
     } catch (const std::exception& error) {
         state.last_error = error.what();
@@ -3546,6 +3588,7 @@ void RenderRecentActionsPanel(ShellState& state) {
             }
             RefreshSnapshot(state);
             RefreshRunSnapshot(state);
+            UpdateRunPollingDeadline(state);
             SetScreen(state, ShellScreen::Run);
         }
     }
@@ -3794,9 +3837,7 @@ void RenderRunStatusContent(ShellState& state) {
 
     if (DrawPanelButton("run-selected-action", button_label, ImVec2(ShellUi(248.0f), ShellUi(34.0f)), true, button_enabled)) {
         if (running) {
-            RefreshSnapshot(state);
-            RefreshRunSnapshot(state);
-            RefreshResultPanels(state);
+            RefreshActiveRunState(state, true);
             state.status_line = sg_preflight::native_shell::FormatRefreshedRunStateStatus(state.language);
         } else if (button_enabled) {
             StartAction(state, selected_action);
@@ -4137,11 +4178,12 @@ void RenderDisplayModeContent(ShellState& state) {
 }
 
 void RenderAudioSettingsContent(ShellState& state) {
-    if (DrawSettingToggle("toggle-sfx", Tr(state, UiText::UiSoundEffects), Tr(state, UiText::UiSoundEffectsSummary), g_shell_audio.sfx_enabled)) {
-        SetSfxEnabled(!g_shell_audio.sfx_enabled);
-        state.status_line = sg_preflight::native_shell::FormatSfxStatus(state.language, g_shell_audio.sfx_enabled);
-        PlayCue(g_shell_audio.sfx_enabled ? UiCue::Confirm : UiCue::Error);
+    if (!g_shell_audio.sfx_enabled) {
+        SetSfxEnabled(true);
     }
+    ImGui::BeginDisabled();
+    DrawSettingToggle("toggle-sfx", Tr(state, UiText::UiSoundEffects), Tr(state, UiText::UiSoundEffectsSummary), true);
+    ImGui::EndDisabled();
     ImGui::Spacing();
     if (DrawSettingToggle("toggle-bgm", Tr(state, UiText::InstallerBackgroundMusic), Tr(state, UiText::InstallerBackgroundMusicSummary), g_shell_audio.music_enabled)) {
         SetMusicEnabled(!g_shell_audio.music_enabled);
@@ -5212,9 +5254,7 @@ void RenderButtonGuide(ShellState& state) {
             if (state.current_screen == ShellScreen::Review) {
                 StartAction(state, CurrentActionId(state));
             } else if (state.current_screen == ShellScreen::Run && IsActionStillRunning(state)) {
-                RefreshSnapshot(state);
-                RefreshRunSnapshot(state);
-                RefreshResultPanels(state);
+                RefreshActiveRunState(state, true);
                 state.status_line = sg_preflight::native_shell::FormatRefreshedRunStateStatus(state.language);
             } else {
                 SetScreen(state, NextScreen(state, state.current_screen));
@@ -5654,9 +5694,7 @@ void HandleShellHotkeys(ShellState& state) {
     }
 
     if (state.current_screen == ShellScreen::Run && IsActionStillRunning(state)) {
-        RefreshSnapshot(state);
-        RefreshRunSnapshot(state);
-        RefreshResultPanels(state);
+        RefreshActiveRunState(state, true);
         state.status_line = sg_preflight::native_shell::FormatRefreshedRunStateStatus(state.language);
         return;
     }
@@ -5701,34 +5739,49 @@ void RenderPromptModal(ShellState& state) {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     draw->AddRectFilled(ImVec2(0.0f, 0.0f), display, IM_COL32(0, 0, 0, static_cast<int>(168.0f * alpha)));
 
-    const ImVec2 banner_min = ShellPoint(26.0f, 42.0f);
-    const ImVec2 banner_max = ShellPoint(565.0f, 145.0f);
+    ImFont* prompt_banner_font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
+    const float prompt_banner_font_size = prompt_banner_font == g_title_font ? ShellUi(28.0f) : ImGui::GetFontSize();
+    const float prompt_banner_wrap_width = std::min(ShellUi(820.0f), display.x - ShellUi(110.0f));
+    const ImVec2 prompt_center(display.x * 0.5f, display.y * 0.5f + ShellUi(3.0f));
+    const ImVec2 prompt_text_size = prompt_banner_font->CalcTextSizeA(
+        prompt_banner_font_size,
+        prompt_banner_wrap_width,
+        prompt_banner_wrap_width,
+        state.prompt_message.c_str()
+    );
+    const ImVec2 banner_half(
+        std::max(ShellUi(190.0f), prompt_text_size.x * 0.5f + ShellUi(37.0f)),
+        std::max(ShellUi(54.0f), prompt_text_size.y * 0.5f + ShellUi(45.0f))
+    );
+    const float banner_open = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.prompt_opened_at) * 60.0 / 11.0, 0.0, 1.0)));
+    const ImVec2 banner_current_half(banner_half.x * banner_open, banner_half.y * banner_open);
+    const ImVec2 banner_min(prompt_center.x - banner_current_half.x, prompt_center.y - banner_current_half.y);
+    const ImVec2 banner_max(prompt_center.x + banner_current_half.x, prompt_center.y + banner_current_half.y);
     DrawPromptPlate(draw, banner_min, banner_max, alpha);
 
-    const float banner_pad_x = ShellUi(28.0f);
-    const float banner_pad_y = ShellUi(18.0f);
-    ImFont* prompt_banner_font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
-    const float prompt_banner_font_size = prompt_banner_font == g_title_font ? ShellUi(34.0f) : ImGui::GetFontSize();
-    const float prompt_banner_wrap_width = (banner_max.x - banner_min.x) - banner_pad_x * 2.0f;
-    const ImVec2 prompt_banner_text_pos(banner_min.x + banner_pad_x, banner_min.y + banner_pad_y + ShellUi(10.0f));
-    draw->AddText(
-        prompt_banner_font,
-        prompt_banner_font_size,
-        ImVec2(prompt_banner_text_pos.x + ShellUi(2.0f), prompt_banner_text_pos.y + ShellUi(2.0f)),
-        IM_COL32(255, 255, 255, static_cast<int>(120.0f * alpha)),
-        state.prompt_message.c_str(),
-        nullptr,
-        prompt_banner_wrap_width
-    );
-    draw->AddText(
-        prompt_banner_font,
-        prompt_banner_font_size,
-        prompt_banner_text_pos,
-        IM_COL32(18, 18, 18, static_cast<int>(255.0f * alpha)),
-        state.prompt_message.c_str(),
-        nullptr,
-        prompt_banner_wrap_width
-    );
+    if (banner_open > 0.0f) {
+        const ImVec2 prompt_banner_text_pos(prompt_center.x - prompt_text_size.x * 0.5f, prompt_center.y - prompt_text_size.y * 0.5f);
+        draw->PushClipRect(banner_min, banner_max, true);
+        draw->AddText(
+            prompt_banner_font,
+            prompt_banner_font_size,
+            ImVec2(prompt_banner_text_pos.x + ShellUi(2.0f), prompt_banner_text_pos.y + ShellUi(2.0f)),
+            IM_COL32(255, 255, 255, static_cast<int>(120.0f * alpha)),
+            state.prompt_message.c_str(),
+            nullptr,
+            prompt_banner_wrap_width
+        );
+        draw->AddText(
+            prompt_banner_font,
+            prompt_banner_font_size,
+            prompt_banner_text_pos,
+            IM_COL32(18, 18, 18, static_cast<int>(255.0f * alpha)),
+            state.prompt_message.c_str(),
+            nullptr,
+            prompt_banner_wrap_width
+        );
+        draw->PopClipRect();
+    }
 
     if (!state.prompt_controls_visible) {
         return;
@@ -5736,8 +5789,22 @@ void RenderPromptModal(ShellState& state) {
 
     const bool confirmation = state.prompt_confirmation;
     const float chooser_open = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.prompt_controls_opened_at) * 60.0 / 11.0, 0.0, 1.0)));
-    const ImVec2 chooser_center = ShellPoint(445.5f, 185.0f);
-    const ImVec2 chooser_half = ShellSize(confirmation ? 98.5f : 62.0f, confirmation ? 93.0f : 51.0f);
+    const std::vector<std::string> labels = confirmation
+        ? std::vector<std::string>{state.prompt_accept_label, state.prompt_cancel_label}
+        : std::vector<std::string>{state.prompt_accept_label};
+    ImFont* font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
+    const float font_size = font == g_title_font ? ShellUi(28.0f) : ImGui::GetFontSize();
+    float widest_label = 0.0f;
+    for (const std::string& label : labels) {
+        widest_label = std::max(widest_label, font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, label.c_str()).x);
+    }
+    const float row_height = ShellUi(57.0f);
+    const float row_gap = 0.0f;
+    const float button_width = std::max(ShellUi(162.0f), widest_label + ShellUi(40.0f));
+    const float chooser_pad_x = ShellUi(23.0f);
+    const float chooser_pad_y = ShellUi(30.0f);
+    const ImVec2 chooser_center = prompt_center;
+    const ImVec2 chooser_half(button_width * 0.5f + chooser_pad_x, (row_height * 0.5f * static_cast<float>(labels.size())) + chooser_pad_y);
     const ImVec2 chooser_current_half(chooser_half.x * chooser_open, chooser_half.y * chooser_open);
     const ImVec2 chooser_min(chooser_center.x - chooser_current_half.x, chooser_center.y - chooser_current_half.y);
     const ImVec2 chooser_max(chooser_center.x + chooser_current_half.x, chooser_center.y + chooser_current_half.y);
@@ -5746,19 +5813,10 @@ void RenderPromptModal(ShellState& state) {
         return;
     }
 
-    const float chooser_pad_x = ShellUi(26.0f);
-    const float chooser_pad_y = ShellUi(18.0f);
     if (!BeginCanvasOverlayRegion("prompt-choice-content", ImVec2(chooser_min.x + chooser_pad_x, chooser_min.y + chooser_pad_y), ImVec2(chooser_max.x - chooser_pad_x, chooser_max.y - chooser_pad_y))) {
         EndCanvasOverlayRegion();
         return;
     }
-
-    const std::vector<std::string> labels = confirmation
-        ? std::vector<std::string>{state.prompt_accept_label, state.prompt_cancel_label}
-        : std::vector<std::string>{state.prompt_accept_label};
-    const float row_height = confirmation ? ShellUi(54.0f) : ShellUi(46.0f);
-    const float row_gap = confirmation ? ShellUi(10.0f) : 0.0f;
-    const float button_width = ImGui::GetContentRegionAvail().x;
     std::vector<ImVec2> row_mins;
     std::vector<ImVec2> row_maxs;
     row_mins.reserve(labels.size());
@@ -5815,8 +5873,6 @@ void RenderPromptModal(ShellState& state) {
         );
     }
 
-    ImFont* font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
-    const float font_size = font == g_title_font ? ShellUi(32.0f) : ImGui::GetFontSize();
     for (size_t index = 0; index < labels.size(); ++index) {
         const bool selected = state.prompt_selected_index == static_cast<int>(index);
         const ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, labels[index].c_str());
@@ -5835,7 +5891,7 @@ float ShellContentAlpha(const ShellState& state) {
     if (!state.exit_transition_active || state.exit_transition_started_at < 0.0) {
         return 1.0f;
     }
-    const float motion = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.exit_transition_started_at) * 60.0 / 18.0, 0.0, 1.0)));
+    const float motion = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.exit_transition_started_at) * 60.0 / kExitTransitionDurationFrames, 0.0, 1.0)));
     return 1.0f - motion;
 }
 
@@ -5843,7 +5899,7 @@ void RenderExitFade(const ShellState& state) {
     if (!state.exit_transition_active || state.exit_transition_started_at < 0.0) {
         return;
     }
-    const float motion = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.exit_transition_started_at) * 60.0 / 18.0, 0.0, 1.0)));
+    const float motion = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.exit_transition_started_at) * 60.0 / kExitTransitionDurationFrames, 0.0, 1.0)));
     ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), ImGui::GetIO().DisplaySize, IM_COL32(0, 0, 0, static_cast<int>(255.0f * motion)));
 }
 
@@ -6043,22 +6099,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             g_request_close_prompt = false;
         }
 
-        if (state.exit_transition_active && state.exit_transition_started_at >= 0.0 && ((ImGui::GetTime() - state.exit_transition_started_at) * 60.0) >= 18.0) {
+        if (state.exit_transition_active && state.exit_transition_started_at >= 0.0 && ((ImGui::GetTime() - state.exit_transition_started_at) * 60.0) >= kExitTransitionDurationFrames) {
             done = true;
             break;
         }
 
         PollInitialShellLoad(state);
 
-        if (!state.current_run_id.empty() && ImGui::GetTime() >= state.next_poll_at) {
-            RefreshSnapshot(state);
-            RefreshRunSnapshot(state);
-            RefreshResultPanels(state);
-            state.next_poll_at = ImGui::GetTime() + (
-                state.snapshot.has_value() && (state.snapshot->status == "queued" || state.snapshot->status == "running")
-                    ? 0.75
-                    : 3.0
-            );
+        if (!state.current_run_id.empty() && IsActionStillRunning(state) && ImGui::GetTime() >= state.next_poll_at) {
+            RefreshActiveRunState(state, false);
         }
 
         ImGui_ImplDX12_NewFrame();
