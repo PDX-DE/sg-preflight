@@ -19,7 +19,7 @@ const char* TranslateEnglish(UiText text) {
     switch (text) {
     case HeaderPreflight: return "SG PREFLIGHT";
     case HeaderChecking: return "SG CHECKING";
-    case ImageSlotReserved: return "IMAGE SLOT RESERVED";
+    case ImageSlotReserved: return "";
     case Continue: return "Continue";
     case Review: return "Review";
     case Run: return "Run";
@@ -42,11 +42,11 @@ const char* TranslateEnglish(UiText text) {
     case Yes: return "Yes";
     case No: return "No";
     case Ok: return "OK";
-    case CurrentDefault: return "CURRENT DEFAULT";
-    case LiveSlices: return "LIVE SLICES";
+    case CurrentDefault: return "CURRENT SELECTION";
+    case LiveSlices: return "AVAILABLE SLICES";
     case SelectedSlice: return "SELECTED SLICE";
-    case ActionPath: return "ACTION PATH";
-    case ReadyBlocked: return "READY / BLOCKED";
+    case ActionPath: return "CHECK TO RUN";
+    case ReadyBlocked: return "READY STATUS";
     case CurrentExecution: return "CURRENT EXECUTION";
     case ActionSignalLog: return "ACTION SIGNAL LOG";
     case LinkedResult: return "LINKED RESULT";
@@ -60,9 +60,9 @@ const char* TranslateEnglish(UiText text) {
     case DisplayMode: return "DISPLAY MODE";
     case ShellAudio: return "SHELL AUDIO";
     case UiSoundEffects: return "UI sound effects";
-    case UiSoundEffectsSummary: return "Cursor, confirm, cancel, and window-open cues from the local Unleashed resource bundle.";
+    case UiSoundEffectsSummary: return "Menu sounds stay on so selection, confirm, cancel, and prompt feedback are always audible.";
     case InstallerBackgroundMusic: return "Installer background music";
-    case InstallerBackgroundMusicSummary: return "Loops the local installer music WAV while the shell is open. Toggle it when you want the stronger installer manner.";
+    case InstallerBackgroundMusicSummary: return "Plays background music while the shell is open. It stays off by default unless enabled in imgui.ini or here.";
     case Summary: return "SUMMARY";
     case Snapshot: return "SNAPSHOT";
     case GroupedFindings: return "GROUPED FINDINGS";
@@ -85,24 +85,24 @@ const char* TranslateEnglish(UiText text) {
     case CurrentSelection: return "CURRENT SELECTION";
     case AvailableLanguages: return "AVAILABLE LANGUAGES";
     case LanguageScreenTitle: return "Please select a language.";
-    case LanguageScreenBody: return "Choose the shell language first, then continue into the SG operator flow.";
-    case LanguageScreenHint: return "This only translates shell-owned copy. Real SG action data and checker output stay source-accurate.";
+    case LanguageScreenBody: return "Choose the language used by the shell interface.";
+    case LanguageScreenHint: return "This changes only the shell text. Project data and generated results stay the same.";
     case IntroWelcome: return "Welcome to SG Preflight.";
-    case IntroBodyPrimary: return "Select the SG slice, confirm local readiness, run the real SG checker-backed action once, then move through Open First, Files, and blocked/manual follow-up in order.";
-    case IntroBodySecondary: return "This native shell stays a shell over the Python backend. The browser flow, deterministic packs, SG checker evidence, and BMW-blocker honesty all stay intact.";
-    case SelectLoadingTitle: return "Loading SG desktop state.";
-    case SelectLoadingBody: return "The native shell now paints first and hydrates the shared backend in the background so startup stops presenting a blank white hung window.";
-    case SelectTitle: return "Choose the SG slice and action for this run.";
-    case SelectDailyMatrixBody: return "Run the recommended SG QA stack across every ready live profile and collect one aggregated Open First surface.";
+    case IntroBodyPrimary: return "SG Preflight is a local checking tool for car slices, scenes, reports, and handoff material. It helps you pick the right check, run it once, and open the first result that needs attention.";
+    case IntroBodySecondary: return "Move left to right through the workflow: choose the slice, review the selected check, run it, open the first files to inspect, then review reports, exports, and any blocked or manual follow-up.";
+    case SelectLoadingTitle: return "Loading local project data.";
+    case SelectLoadingBody: return "The shell is loading slices, checks, recent runs, and generated results so the workflow is ready to use.";
+    case SelectTitle: return "Choose the slice and check for this run.";
+    case SelectDailyMatrixBody: return "Run the recommended check flow across all ready live slices and collect one shared review surface.";
     case NoActionMetadata: return "No action metadata is available for the current selection.";
-    case ReviewLoadingTitle: return "Review the selected run target.";
-    case ReviewLoadingBody: return "The confirmation step waits for the same Python-backed SG desktop state as the browser/operator flow.";
-    case ReviewTitle: return "Confirm the local SG run before launching it.";
-    case NoCommandPreview: return "No command preview is available for this action.";
-    case RunTitle: return "Run or refresh the current SG action.";
-    case EvidenceTitle: return "Open the strongest SG evidence first.";
-    case FilesTitle: return "Review generated files and reports.";
-    case StagesTitle: return "Keep blocked/manual BMW-side stages visible and tune shell behavior without hiding the real blockers.";
+    case ReviewLoadingTitle: return "Review the selected run.";
+    case ReviewLoadingBody: return "This step is preparing the selected slice, check, and recent local results.";
+    case ReviewTitle: return "Review what will run.";
+    case NoCommandPreview: return "No extra run details are available for this check yet.";
+    case RunTitle: return "Run the selected check and watch its status.";
+    case EvidenceTitle: return "Open the first result that needs attention.";
+    case FilesTitle: return "Open generated files, reports, and exports.";
+    case StagesTitle: return "Review blocked steps, manual follow-up, display mode, and audio settings.";
     case ReadyToRun: return "This local SG action is ready to run.";
     case ActionNotReady: return "This action is not ready on the current machine.";
     case CurrentOutputHelp: return "Default startup uses the current monitor size. Use --windowed --width <n> --height <n> if you want an override.";
@@ -121,9 +121,9 @@ const char* TranslateEnglish(UiText text) {
     case NoManualFollowUp: return "No additional manual follow-up is attached to the current evidence selection.";
     case PromptQuitTitle: return "QUIT SG PREFLIGHT";
     case PromptQuitMessage: return "Are you sure you want to quit?";
-    case PromptQuitRunningMessage: return "Close the shell now? The current SG action will keep running in the background.";
+    case PromptQuitRunningMessage: return "Are you sure you want to quit? The current check will keep running in the background.";
     case PromptLeaveRunTitle: return "LEAVE RUN SCREEN";
-    case PromptLeaveRunMessage: return "The current SG action is still running. Leave this page anyway? The action will keep running in the background.";
+    case PromptLeaveRunMessage: return "The current check is still running. Leave this page anyway? The check will keep running in the background.";
     }
     return "";
 }
@@ -543,7 +543,7 @@ std::string FormatReadyForNextActionStatus(ShellLanguage language) {
 
 std::string FormatInitialLoadFailedStatus(ShellLanguage language) {
     switch (language) {
-    case English: return "Initial SG desktop-state load failed.";
+    case English: return "Loading local project data failed.";
     case Spanish: return "Fallo la carga inicial del estado SG.";
     case German: return "Der initiale SG-Desktopstatus konnte nicht geladen werden.";
     case Romanian: return "Incarcarea initiala a starii SG a esuat.";
@@ -553,7 +553,7 @@ std::string FormatInitialLoadFailedStatus(ShellLanguage language) {
 
 std::string FormatNoProfilesDiscoveredStatus(ShellLanguage language) {
     switch (language) {
-    case English: return "No ready SG live profiles were discovered in the current workspace.";
+    case English: return "No ready live slices were found in the current workspace.";
     case Spanish: return "No se descubrieron perfiles SG listos en el workspace actual.";
     case German: return "Im aktuellen Workspace wurden keine bereiten SG-Live-Profile gefunden.";
     case Romanian: return "Nu au fost descoperite profile SG live pregatite in workspace-ul curent.";
@@ -563,7 +563,7 @@ std::string FormatNoProfilesDiscoveredStatus(ShellLanguage language) {
 
 std::string FormatLoadedDesktopStateStatus(ShellLanguage language, std::string_view profile_id) {
     switch (language) {
-    case English: return "Loaded SG desktop state for " + std::string(profile_id) + ".";
+    case English: return "Loaded local project data for " + std::string(profile_id) + ".";
     case Spanish: return "Estado SG cargado para " + std::string(profile_id) + ".";
     case German: return "SG-Desktopstatus fuer " + std::string(profile_id) + " geladen.";
     case Romanian: return "Starea SG a fost incarcata pentru " + std::string(profile_id) + ".";
@@ -573,7 +573,7 @@ std::string FormatLoadedDesktopStateStatus(ShellLanguage language, std::string_v
 
 std::string FormatQueuedActionStatus(ShellLanguage language, std::string_view action_id) {
     switch (language) {
-    case English: return "Queued " + std::string(action_id) + " locally.";
+    case English: return "Started the " + std::string(action_id) + " check.";
     case Spanish: return "Accion " + std::string(action_id) + " puesta en cola localmente.";
     case German: return std::string(action_id) + " lokal in die Warteschlange gestellt.";
     case Romanian: return "Actiunea " + std::string(action_id) + " a fost pusa local in coada.";
@@ -583,7 +583,7 @@ std::string FormatQueuedActionStatus(ShellLanguage language, std::string_view ac
 
 std::string FormatRefreshedRunStateStatus(ShellLanguage language) {
     switch (language) {
-    case English: return "Refreshed local run state.";
+    case English: return "Refreshed the current run status.";
     case Spanish: return "Estado local de ejecucion refrescado.";
     case German: return "Lokaler Laufstatus aktualisiert.";
     case Romanian: return "Starea locala a rularii a fost actualizata.";
@@ -643,7 +643,7 @@ std::string FormatSfxStatus(ShellLanguage language, bool enabled) {
 
 std::string FormatMusicStatus(ShellLanguage language, bool enabled) {
     switch (language) {
-    case English: return std::string("Installer background music ") + (enabled ? "enabled." : "disabled.");
+    case English: return std::string("Background music ") + (enabled ? "enabled." : "disabled.");
     case Spanish: return std::string("Musica del instalador ") + (enabled ? "activada." : "desactivada.");
     case German: return std::string("Installer-Hintergrundmusik ") + (enabled ? "aktiviert." : "deaktiviert.");
     case Romanian: return std::string("Muzica instalatorului este ") + (enabled ? "activata." : "dezactivata.");
@@ -653,17 +653,17 @@ std::string FormatMusicStatus(ShellLanguage language, bool enabled) {
 
 std::string FormatLoadedChromeStatus(ShellLanguage language) {
     switch (language) {
-    case English: return "Loaded real UnleashedRecomp DDS chrome.";
-    case Spanish: return "Chrome DDS real de UnleashedRecomp cargado.";
-    case German: return "Echte UnleashedRecomp-DDS-Chrome geladen.";
-    case Romanian: return "Chrome-ul DDS real UnleashedRecomp a fost incarcat.";
+    case English: return "Loaded the shell interface assets.";
+    case Spanish: return "Se cargaron los recursos visuales del shell.";
+    case German: return "Die Oberflaechenressourcen des Shells wurden geladen.";
+    case Romanian: return "Au fost incarcate resursele vizuale ale shell-ului.";
     }
-    return "Loaded real UnleashedRecomp DDS chrome.";
+    return "Loaded the shell interface assets.";
 }
 
 std::string FormatFallbackChromeStatus(ShellLanguage language, std::string_view error) {
     switch (language) {
-    case English: return "Fallback chrome active: " + std::string(error);
+    case English: return "Fallback interface active: " + std::string(error);
     case Spanish: return "Chrome de reserva activo: " + std::string(error);
     case German: return "Fallback-Chrome aktiv: " + std::string(error);
     case Romanian: return "Chrome de rezerva activ: " + std::string(error);
@@ -707,7 +707,7 @@ std::string FormatLanguageAppliedStatus(ShellLanguage active_language, ShellLang
 
 std::string FormatActionLabel(ShellLanguage language, std::string_view label) {
     switch (language) {
-    case English: return "Action: " + std::string(label);
+    case English: return "Selected check: " + std::string(label);
     case Spanish: return "Accion: " + std::string(label);
     case German: return "Aktion: " + std::string(label);
     case Romanian: return "Actiune: " + std::string(label);

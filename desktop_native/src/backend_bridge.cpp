@@ -2,7 +2,10 @@
 
 #include <windows.h>
 
+#include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -19,6 +22,43 @@ struct ProcessResult {
     DWORD exit_code = 0;
     std::string output;
 };
+
+std::mutex g_trace_mutex;
+
+std::string WideToUtf8(std::wstring_view text) {
+    if (text.empty()) {
+        return {};
+    }
+    const int length = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (length <= 0) {
+        return {};
+    }
+    std::string result(static_cast<size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), length, nullptr, nullptr);
+    return result;
+}
+
+std::filesystem::path NativeTracePath() {
+    wchar_t buffer[32767];
+    const DWORD length = GetEnvironmentVariableW(L"SG_PREFLIGHT_NATIVE_TRACE_FILE", buffer, static_cast<DWORD>(std::size(buffer)));
+    if (length == 0 || length >= std::size(buffer)) {
+        return {};
+    }
+    return std::filesystem::path(std::wstring(buffer, length));
+}
+
+void AppendNativeTraceLine(std::string_view line) {
+    const std::filesystem::path trace_path = NativeTracePath();
+    if (trace_path.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_trace_mutex);
+    std::ofstream stream(trace_path, std::ios::app | std::ios::binary);
+    if (!stream) {
+        return;
+    }
+    stream << line << "\r\n";
+}
 
 std::wstring QuoteWindowsArg(const std::wstring& arg) {
     if (arg.empty()) {
@@ -93,6 +133,10 @@ ProcessResult RunProcessCapture(const std::vector<std::wstring>& args, const std
     const std::wstring effective_working_directory = working_directory.empty()
         ? std::filesystem::current_path().wstring()
         : working_directory;
+    const auto started_at = std::chrono::steady_clock::now();
+    AppendNativeTraceLine(
+        "START cwd=\"" + WideToUtf8(effective_working_directory) + "\" cmd=\"" + WideToUtf8(command_line) + "\""
+    );
 
     const BOOL started = CreateProcessW(
         nullptr,
@@ -112,6 +156,7 @@ ProcessResult RunProcessCapture(const std::vector<std::wstring>& args, const std
 
     if (!started) {
         CloseHandle(read_pipe);
+        AppendNativeTraceLine("FAILED cmd=\"" + WideToUtf8(command_line) + "\" reason=\"CreateProcessW\"");
         throw std::runtime_error("Failed to launch Python backend command.");
     }
 
@@ -125,10 +170,32 @@ ProcessResult RunProcessCapture(const std::vector<std::wstring>& args, const std
     WaitForSingleObject(process.hProcess, INFINITE);
     DWORD exit_code = 0;
     GetExitCodeProcess(process.hProcess, &exit_code);
+    const auto finished_at = std::chrono::steady_clock::now();
+    const auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(finished_at - started_at).count();
 
     CloseHandle(read_pipe);
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
+
+    std::string trace_line =
+        "END exit_code=" + std::to_string(exit_code)
+        + " duration_ms=" + std::to_string(duration_ms)
+        + " output_bytes=" + std::to_string(output.size())
+        + " cmd=\"" + WideToUtf8(command_line) + "\"";
+    AppendNativeTraceLine(trace_line);
+    if (exit_code != 0 && !output.empty()) {
+        std::string sanitized = output;
+        for (char& ch : sanitized) {
+            if (ch == '\r' || ch == '\n') {
+                ch = ' ';
+            }
+        }
+        if (sanitized.size() > 1200U) {
+            sanitized.resize(1200U);
+            sanitized += "...";
+        }
+        AppendNativeTraceLine("ERROR_OUTPUT \"" + sanitized + "\"");
+    }
 
     return ProcessResult{exit_code, output};
 }

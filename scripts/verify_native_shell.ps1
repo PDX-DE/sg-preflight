@@ -33,6 +33,10 @@ if (Test-Path $OutputRoot) {
     Remove-Item -LiteralPath $OutputRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+$tracePath = Join-Path $OutputRoot "backend-trace.log"
+if (Test-Path $tracePath) {
+    Remove-Item -LiteralPath $tracePath -Force
+}
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
@@ -65,11 +69,14 @@ $log.Add("Native shell verification")
 $log.Add("Created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
 $log.Add("Executable: $ExePath")
 $log.Add("Output: $OutputRoot")
+$log.Add("Trace: $tracePath")
 $log.Add("")
 
 $shell = New-Object -ComObject WScript.Shell
 $launchArgs = @("--windowed", "--width", "1280", "--height", "720")
 $process = $null
+$previousTraceEnv = $env:SG_PREFLIGHT_NATIVE_TRACE_FILE
+$env:SG_PREFLIGHT_NATIVE_TRACE_FILE = $tracePath
 
 function Write-VerificationLog {
     Set-Content -Path (Join-Path $OutputRoot "verification.log") -Encoding UTF8 -Value $log
@@ -155,18 +162,56 @@ function Send-Key {
     Start-Sleep -Milliseconds $SettleMs
 }
 
+function Wait-ForTraceIdle {
+    param(
+        [string]$Path,
+        [int]$TimeoutSeconds = 30,
+        [int]$StableMs = 1800
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastSize = -1L
+    $stableSince = $null
+
+    while ((Get-Date) -lt $deadline) {
+        $currentSize = if (Test-Path $Path) { (Get-Item $Path).Length } else { -1L }
+        if ($currentSize -eq $lastSize -and $currentSize -ge 0) {
+            if ($null -eq $stableSince) {
+                $stableSince = Get-Date
+            }
+            if (((Get-Date) - $stableSince).TotalMilliseconds -ge $StableMs) {
+                $log.Add("[trace] idle after $currentSize bytes")
+                return
+            }
+        } else {
+            $stableSince = $null
+            $lastSize = $currentSize
+        }
+        Start-Sleep -Milliseconds 250
+    }
+
+    $log.Add("[trace] idle wait timed out")
+}
+
 try {
     $process = Start-Process -FilePath $ExePath -ArgumentList $launchArgs -WorkingDirectory $repoRoot -PassThru
     Wait-ForMainWindow -TargetProcess $process
     Start-Sleep -Milliseconds $InitialSettleMs
 
     Capture-Stage -TargetProcess $process -Name "intro"
+    Wait-ForTraceIdle -Path $tracePath
 
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
     Capture-Stage -TargetProcess $process -Name "select"
 
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
     Capture-Stage -TargetProcess $process -Name "review"
+
+    Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs 2600
+    Capture-Stage -TargetProcess $process -Name "run"
+
+    Start-Sleep -Milliseconds 3200
+    Capture-Stage -TargetProcess $process -Name "run_after_3s"
 
     if (-not $process.HasExited) {
         Stop-Process -Id $process.Id -Force
@@ -176,6 +221,7 @@ try {
     $process = Start-Process -FilePath $ExePath -ArgumentList $launchArgs -WorkingDirectory $repoRoot -PassThru
     Wait-ForMainWindow -TargetProcess $process
     Start-Sleep -Milliseconds $InitialSettleMs
+    Wait-ForTraceIdle -Path $tracePath
 
     Capture-Stage -TargetProcess $process -Name "prompt_intro"
 
@@ -203,8 +249,19 @@ try {
     }
 }
 finally {
-    if (-not $process.HasExited) {
+    if ($null -ne $process -and -not $process.HasExited) {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    }
+    if ($null -eq $previousTraceEnv) {
+        Remove-Item Env:SG_PREFLIGHT_NATIVE_TRACE_FILE -ErrorAction SilentlyContinue
+    } else {
+        $env:SG_PREFLIGHT_NATIVE_TRACE_FILE = $previousTraceEnv
+    }
+    if (Test-Path $tracePath) {
+        $traceSize = (Get-Item $tracePath).Length
+        $log.Add("[trace] backend trace captured ($traceSize bytes)")
+    } else {
+        $log.Add("[trace] backend trace file was not created")
     }
     Write-VerificationLog
 }
