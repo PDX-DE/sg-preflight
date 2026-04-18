@@ -508,7 +508,7 @@ const char* LanguageCode(ShellLanguage language) {
 const char* LanguageNativeName(ShellLanguage language) {
     switch (language) {
     case English: return "English";
-    case Spanish: return "Espanol";
+    case Spanish: return "Espa\xC3\xB1ol";
     case German: return "Deutsch";
     case Romanian: return "Romana";
     }

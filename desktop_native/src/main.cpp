@@ -221,8 +221,8 @@ struct ShellState {
     std::string status_line = sg_preflight::native_shell::FormatReadyForNextActionStatus(ShellLanguage::English);
     std::string last_error;
     double next_poll_at = 0.0;
-    ShellScreen current_screen = ShellScreen::Language;
-    ShellScreen previous_screen = ShellScreen::Language;
+    ShellScreen current_screen = ShellScreen::Introduction;
+    ShellScreen previous_screen = ShellScreen::Introduction;
     int selected_language_index = 0;
     double screen_transition_started_at = -1.0;
     bool prompt_visible = false;
@@ -239,6 +239,10 @@ struct ShellState {
     double prompt_opened_at = -1.0;
     double prompt_closing_started_at = -1.0;
     int prompt_selected_index = 0;
+    int prompt_previous_selected_index = 0;
+    bool prompt_controls_visible = false;
+    double prompt_controls_opened_at = -1.0;
+    double prompt_selection_changed_at = -1.0;
     bool request_exit = false;
     bool initial_state_loading = true;
     bool exit_transition_active = false;
@@ -1055,7 +1059,7 @@ const char* ScreenSummary(ShellScreen screen) {
 }
 
 ShellScreen FirstOperationalScreen() {
-    return ShellScreen::Language;
+    return ShellScreen::Introduction;
 }
 
 bool HasEvidenceReady(const ShellState& state) {
@@ -1260,6 +1264,10 @@ void OpenPrompt(
     state.prompt_opened_at = ImGui::GetTime();
     state.prompt_closing_started_at = -1.0;
     state.prompt_selected_index = 0;
+    state.prompt_previous_selected_index = 0;
+    state.prompt_controls_visible = false;
+    state.prompt_controls_opened_at = -1.0;
+    state.prompt_selection_changed_at = state.prompt_opened_at;
     PlayCue(UiCue::Window);
 }
 
@@ -1278,6 +1286,38 @@ void ClosePrompt(ShellState& state) {
     state.prompt_opened_at = -1.0;
     state.prompt_closing_started_at = -1.0;
     state.prompt_selected_index = 0;
+    state.prompt_previous_selected_index = 0;
+    state.prompt_controls_visible = false;
+    state.prompt_controls_opened_at = -1.0;
+    state.prompt_selection_changed_at = -1.0;
+}
+
+void SetPromptSelection(ShellState& state, int index, bool play_cursor = true) {
+    if (!state.prompt_confirmation || !state.prompt_controls_visible) {
+        return;
+    }
+    const int clamped_index = std::clamp(index, 0, 1);
+    if (clamped_index == state.prompt_selected_index) {
+        return;
+    }
+    state.prompt_previous_selected_index = state.prompt_selected_index;
+    state.prompt_selected_index = clamped_index;
+    state.prompt_selection_changed_at = ImGui::GetTime();
+    if (play_cursor) {
+        PlayCue(UiCue::Cursor);
+    }
+}
+
+void OpenPromptControls(ShellState& state) {
+    if (!state.prompt_visible || state.prompt_closing || state.prompt_controls_visible || !state.prompt_confirmation) {
+        return;
+    }
+    state.prompt_controls_visible = true;
+    state.prompt_controls_opened_at = ImGui::GetTime();
+    state.prompt_previous_selected_index = 0;
+    state.prompt_selected_index = 0;
+    state.prompt_selection_changed_at = state.prompt_controls_opened_at;
+    PlayCue(UiCue::Window);
 }
 
 void BeginExitTransition(ShellState& state) {
@@ -4988,14 +5028,20 @@ void RenderButtonGuide(ShellState& state) {
     const std::string run_primary_label = IsActionStillRunning(state) ? RefreshShortLabel(state.language) : NextButtonLabel(state);
     std::vector<GuideItem> guide_items;
     if (state.prompt_visible) {
-        guide_items = state.prompt_confirmation
-            ? std::vector<GuideItem>{
-                {"guide-prompt-accept", "Enter", state.prompt_accept_label, true, false},
-                {"guide-prompt-cancel", "Esc", state.prompt_cancel_label, true, false},
-            }
-            : std::vector<GuideItem>{
-                {"guide-prompt-ok", "Enter", state.prompt_accept_label, true, false},
+        if (state.prompt_confirmation && !state.prompt_controls_visible) {
+            guide_items = {
+                {"guide-prompt-next", "Enter", Tr(state, UiText::Next), true, false},
             };
+        } else {
+            guide_items = state.prompt_confirmation
+                ? std::vector<GuideItem>{
+                    {"guide-prompt-select", "Enter", Tr(state, UiText::Select), true, false},
+                    {"guide-prompt-back", "Esc", Tr(state, UiText::Back), true, false},
+                }
+                : std::vector<GuideItem>{
+                    {"guide-prompt-ok", "Enter", Tr(state, UiText::Next), true, false},
+                };
+        }
     } else {
     switch (state.current_screen) {
     case ShellScreen::Language:
@@ -5007,7 +5053,7 @@ void RenderButtonGuide(ShellState& state) {
     case ShellScreen::Introduction:
         guide_items = {
             {"guide-next", "Enter", Tr(state, UiText::Continue), true, false},
-            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
+            {"guide-back", "Esc", Tr(state, UiText::Quit), true, false},
         };
         break;
     case ShellScreen::Select:
@@ -5138,7 +5184,7 @@ void RenderButtonGuide(ShellState& state) {
             item.label.c_str()
         );
 
-        if (pressed && item.enabled) {
+        if (pressed && item.enabled && std::strncmp(item.id, "guide-prompt", 12) != 0) {
             PlayCue(UiCue::Confirm);
         }
         return pressed && item.enabled;
@@ -5151,9 +5197,11 @@ void RenderButtonGuide(ShellState& state) {
         }
         const float x = region_min.x + left_offset;
         if (draw_guide_item(item, x)) {
-            if (std::strcmp(item.id, "guide-prompt-accept") == 0 || std::strcmp(item.id, "guide-prompt-ok") == 0) {
+            if (std::strcmp(item.id, "guide-prompt-next") == 0) {
+                OpenPromptControls(state);
+            } else if (std::strcmp(item.id, "guide-prompt-select") == 0 || std::strcmp(item.id, "guide-prompt-ok") == 0) {
                 AcceptPrompt(state);
-            } else if (std::strcmp(item.id, "guide-prompt-cancel") == 0) {
+            } else if (std::strcmp(item.id, "guide-prompt-back") == 0) {
                 BeginPromptClose(state, false);
             } else if (std::strcmp(item.id, "guide-next") == 0) {
                 if (state.current_screen == ShellScreen::Review) {
@@ -5231,19 +5279,13 @@ void HandleShellHotkeys(ShellState& state) {
             return;
         }
 
-        if (state.prompt_confirmation && (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false))) {
-            if (state.prompt_selected_index != 0) {
-                state.prompt_selected_index = 0;
-                PlayCue(UiCue::Cursor);
-            }
+        if (state.prompt_confirmation && state.prompt_controls_visible && (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false))) {
+            SetPromptSelection(state, 0);
             return;
         }
 
-        if (state.prompt_confirmation && (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false))) {
-            if (state.prompt_selected_index != 1) {
-                state.prompt_selected_index = 1;
-                PlayCue(UiCue::Cursor);
-            }
+        if (state.prompt_confirmation && state.prompt_controls_visible && (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false) || ImGui::IsKeyPressed(ImGuiKey_RightArrow, false))) {
+            SetPromptSelection(state, 1);
             return;
         }
 
@@ -5253,7 +5295,9 @@ void HandleShellHotkeys(ShellState& state) {
         }
 
         if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
-            if (!state.prompt_confirmation || state.prompt_selected_index == 0) {
+            if (state.prompt_confirmation && !state.prompt_controls_visible) {
+                OpenPromptControls(state);
+            } else if (!state.prompt_confirmation || state.prompt_selected_index == 0) {
                 AcceptPrompt(state);
             } else {
                 BeginPromptClose(state, false);
@@ -5425,41 +5469,55 @@ void RenderPromptModal(ShellState& state) {
 
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    draw->AddRectFilled(ImVec2(0.0f, 0.0f), display, IM_COL32(0, 0, 0, static_cast<int>(194.0f * alpha)));
+    draw->AddRectFilled(ImVec2(0.0f, 0.0f), display, IM_COL32(0, 0, 0, static_cast<int>(168.0f * alpha)));
 
     const ImVec2 banner_min = ShellPoint(26.0f, 42.0f);
     const ImVec2 banner_max = ShellPoint(565.0f, 145.0f);
     DrawPromptPlate(draw, banner_min, banner_max, alpha);
 
-    const bool confirmation = state.prompt_confirmation;
-    const ImVec2 chooser_min = confirmation ? ShellPoint(347.0f, 92.0f) : ShellPoint(402.0f, 112.0f);
-    const ImVec2 chooser_max = confirmation ? ShellPoint(544.0f, 278.0f) : ShellPoint(526.0f, 214.0f);
-    DrawPromptPlate(draw, chooser_min, chooser_max, alpha, true);
-
     const float banner_pad_x = ShellUi(28.0f);
     const float banner_pad_y = ShellUi(18.0f);
+    ImFont* prompt_banner_font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
+    const float prompt_banner_font_size = prompt_banner_font == g_title_font ? ShellUi(34.0f) : ImGui::GetFontSize();
+    const float prompt_banner_wrap_width = (banner_max.x - banner_min.x) - banner_pad_x * 2.0f;
+    const ImVec2 prompt_banner_text_pos(banner_min.x + banner_pad_x, banner_min.y + banner_pad_y + ShellUi(10.0f));
+    draw->AddText(
+        prompt_banner_font,
+        prompt_banner_font_size,
+        ImVec2(prompt_banner_text_pos.x + ShellUi(2.0f), prompt_banner_text_pos.y + ShellUi(2.0f)),
+        IM_COL32(255, 255, 255, static_cast<int>(120.0f * alpha)),
+        state.prompt_message.c_str(),
+        nullptr,
+        prompt_banner_wrap_width
+    );
+    draw->AddText(
+        prompt_banner_font,
+        prompt_banner_font_size,
+        prompt_banner_text_pos,
+        IM_COL32(18, 18, 18, static_cast<int>(255.0f * alpha)),
+        state.prompt_message.c_str(),
+        nullptr,
+        prompt_banner_wrap_width
+    );
+
+    if (!state.prompt_controls_visible) {
+        return;
+    }
+
+    const bool confirmation = state.prompt_confirmation;
+    const float chooser_open = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.prompt_controls_opened_at) * 60.0 / 11.0, 0.0, 1.0)));
+    const ImVec2 chooser_center = ShellPoint(445.5f, 185.0f);
+    const ImVec2 chooser_half = ShellSize(confirmation ? 98.5f : 62.0f, confirmation ? 93.0f : 51.0f);
+    const ImVec2 chooser_current_half(chooser_half.x * chooser_open, chooser_half.y * chooser_open);
+    const ImVec2 chooser_min(chooser_center.x - chooser_current_half.x, chooser_center.y - chooser_current_half.y);
+    const ImVec2 chooser_max(chooser_center.x + chooser_current_half.x, chooser_center.y + chooser_current_half.y);
+    DrawPromptPlate(draw, chooser_min, chooser_max, alpha * chooser_open, true);
+    if (chooser_open < 0.999f) {
+        return;
+    }
+
     const float chooser_pad_x = ShellUi(26.0f);
     const float chooser_pad_y = ShellUi(18.0f);
-
-    if (BeginCanvasOverlayRegion("prompt-banner-content", ImVec2(banner_min.x + banner_pad_x, banner_min.y + banner_pad_y), ImVec2(banner_max.x - banner_pad_x, banner_max.y - banner_pad_y))) {
-        if (g_small_font != nullptr) {
-            ImGui::PushFont(g_small_font);
-            ImGui::TextColored(ImVec4(0.93f, 0.67f, 0.17f, alpha), "%s", state.prompt_title.c_str());
-            ImGui::PopFont();
-        }
-        ImGui::Spacing();
-        if (g_title_font != nullptr) {
-            ImGui::PushFont(g_title_font);
-        }
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-        ImGui::TextWrapped("%s", state.prompt_message.c_str());
-        ImGui::PopTextWrapPos();
-        if (g_title_font != nullptr) {
-            ImGui::PopFont();
-        }
-    }
-    EndCanvasOverlayRegion();
-
     if (!BeginCanvasOverlayRegion("prompt-choice-content", ImVec2(chooser_min.x + chooser_pad_x, chooser_min.y + chooser_pad_y), ImVec2(chooser_max.x - chooser_pad_x, chooser_max.y - chooser_pad_y))) {
         EndCanvasOverlayRegion();
         return;
@@ -5471,6 +5529,13 @@ void RenderPromptModal(ShellState& state) {
     const float row_height = confirmation ? ShellUi(54.0f) : ShellUi(46.0f);
     const float row_gap = confirmation ? ShellUi(10.0f) : 0.0f;
     const float button_width = ImGui::GetContentRegionAvail().x;
+    std::vector<ImVec2> row_mins;
+    std::vector<ImVec2> row_maxs;
+    row_mins.reserve(labels.size());
+    row_maxs.reserve(labels.size());
+    ImVec2 selected_min;
+    ImVec2 selected_max;
+    bool selected_rect_set = false;
     for (size_t index = 0; index < labels.size(); ++index) {
         if (index > 0U) {
             ImGui::Dummy(ImVec2(0.0f, row_gap));
@@ -5481,24 +5546,20 @@ void RenderPromptModal(ShellState& state) {
         const ImVec2 row_size(button_width, row_height);
         const bool pressed = ImGui::InvisibleButton(row_id.c_str(), row_size);
         const bool hovered = ImGui::IsItemHovered();
-        if (hovered && state.prompt_selected_index != static_cast<int>(index)) {
-            state.prompt_selected_index = static_cast<int>(index);
+        if (hovered) {
+            SetPromptSelection(state, static_cast<int>(index), false);
         }
         PlayHoverCueIfNeeded(hovered, !state.prompt_closing);
 
         const ImVec2 min = ImGui::GetItemRectMin();
         const ImVec2 max = ImGui::GetItemRectMax();
-        DrawPromptPlate(draw, min, max, alpha, selected || hovered);
-
-        ImFont* font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
-        const float font_size = font == g_title_font ? ShellUi(32.0f) : ImGui::GetFontSize();
-        const ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, labels[index].c_str());
-        const ImVec2 text_pos(
-            min.x + ((max.x - min.x) - text_size.x) * 0.5f,
-            min.y + ((max.y - min.y) - text_size.y) * 0.5f - ShellUi(1.0f)
-        );
-        draw->AddText(font, font_size, ImVec2(text_pos.x + ShellUi(2.0f), text_pos.y + ShellUi(2.0f)), IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha)), labels[index].c_str());
-        draw->AddText(font, font_size, text_pos, selected ? IM_COL32(255, 150, 24, static_cast<int>(255.0f * alpha)) : IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha)), labels[index].c_str());
+        row_mins.push_back(min);
+        row_maxs.push_back(max);
+        if (selected) {
+            selected_min = min;
+            selected_max = max;
+            selected_rect_set = true;
+        }
 
         if (pressed && !state.prompt_closing) {
             if (!confirmation || index == 0U) {
@@ -5507,6 +5568,34 @@ void RenderPromptModal(ShellState& state) {
                 BeginPromptClose(state, false);
             }
         }
+    }
+
+    if (selected_rect_set) {
+        float selection_offset = 0.0f;
+        if (state.prompt_selection_changed_at >= 0.0) {
+            const float motion = std::clamp(static_cast<float>((ImGui::GetTime() - state.prompt_selection_changed_at) * 60.0 / 8.0), 0.0f, 1.0f);
+            selection_offset = static_cast<float>(state.prompt_previous_selected_index - state.prompt_selected_index) * (row_height + row_gap) * std::pow(1.0f - motion, 3.0f);
+        }
+        DrawPromptPlate(
+            draw,
+            ImVec2(selected_min.x, selected_min.y + selection_offset),
+            ImVec2(selected_max.x, selected_max.y + selection_offset),
+            alpha,
+            true
+        );
+    }
+
+    ImFont* font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
+    const float font_size = font == g_title_font ? ShellUi(32.0f) : ImGui::GetFontSize();
+    for (size_t index = 0; index < labels.size(); ++index) {
+        const bool selected = state.prompt_selected_index == static_cast<int>(index);
+        const ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, labels[index].c_str());
+        const ImVec2 text_pos(
+            row_mins[index].x + ((row_maxs[index].x - row_mins[index].x) - text_size.x) * 0.5f,
+            row_mins[index].y + ((row_maxs[index].y - row_mins[index].y) - text_size.y) * 0.5f - ShellUi(1.0f)
+        );
+        draw->AddText(font, font_size, ImVec2(text_pos.x + ShellUi(2.0f), text_pos.y + ShellUi(2.0f)), IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha)), labels[index].c_str());
+        draw->AddText(font, font_size, text_pos, selected ? IM_COL32(255, 128, 0, static_cast<int>(255.0f * alpha)) : IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha)), labels[index].c_str());
     }
 
     EndCanvasOverlayRegion();
