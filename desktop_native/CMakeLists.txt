@@ -27,7 +27,7 @@ add_library(
   ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
   ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-  ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
   ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
 )
 
@@ -45,12 +45,13 @@ target_compile_definitions(
     _UNICODE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
+    IMGUI_IMPL_DX12_CPP
 )
 
 target_link_libraries(
   sg_preflight_imgui
   PUBLIC
-    d3d11
+    d3d12
     dxgi
     dwmapi
     gdi32
@@ -62,6 +63,7 @@ add_executable(
   sg_preflight_native_shell WIN32
   src/audio_player.cpp
   src/backend_bridge.cpp
+  src/localization.cpp
   src/main.cpp
   src/texture_loader.cpp
 )

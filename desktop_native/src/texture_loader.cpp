@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <optional>
 #include <vector>
 
 namespace sg_preflight::native_shell {
@@ -211,27 +212,73 @@ bool ResolveFormat(
     return false;
 }
 
+bool CreateBufferResource(
+    ID3D12Device* device,
+    UINT64 size,
+    D3D12_HEAP_TYPE heap_type,
+    D3D12_RESOURCE_STATES initial_state,
+    ID3D12Resource** resource
+) {
+    D3D12_HEAP_PROPERTIES heap_properties{};
+    heap_properties.Type = heap_type;
+
+    D3D12_RESOURCE_DESC resource_desc{};
+    resource_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    resource_desc.Width = size;
+    resource_desc.Height = 1;
+    resource_desc.DepthOrArraySize = 1;
+    resource_desc.MipLevels = 1;
+    resource_desc.Format = DXGI_FORMAT_UNKNOWN;
+    resource_desc.SampleDesc.Count = 1;
+    resource_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    return SUCCEEDED(device->CreateCommittedResource(
+        &heap_properties,
+        D3D12_HEAP_FLAG_NONE,
+        &resource_desc,
+        initial_state,
+        nullptr,
+        IID_PPV_ARGS(resource)
+    ));
+}
+
 }  // namespace
 
 void ReleaseTexture(DdsTextureHandle& texture) {
-    if (texture.view != nullptr) {
-        texture.view->Release();
-        texture.view = nullptr;
+    if (texture.resource != nullptr) {
+        texture.resource->Release();
+        texture.resource = nullptr;
     }
+    if (texture.descriptor_free_fn != nullptr && texture.gpu_descriptor.ptr != 0) {
+        texture.descriptor_free_fn(texture.descriptor_user_data, texture.cpu_descriptor, texture.gpu_descriptor);
+    }
+    texture.cpu_descriptor.ptr = 0;
+    texture.gpu_descriptor.ptr = 0;
     texture.format = DXGI_FORMAT_UNKNOWN;
     texture.width = 0;
     texture.height = 0;
+    texture.descriptor_user_data = nullptr;
+    texture.descriptor_free_fn = nullptr;
 }
 
 bool LoadDdsTexture(
-    ID3D11Device* device,
+    const D3d12TextureUploadContext& context,
     const std::filesystem::path& path,
     DdsTextureHandle& texture,
     std::string* error
 ) {
-    if (device == nullptr) {
+    if (
+        context.device == nullptr
+        || context.command_queue == nullptr
+        || context.command_allocator == nullptr
+        || context.command_list == nullptr
+        || context.fence == nullptr
+        || context.fence_event == nullptr
+        || context.next_fence_value == nullptr
+        || context.descriptors.alloc == nullptr
+    ) {
         if (error != nullptr) {
-            *error = "D3D11 device is not initialized.";
+            *error = "D3D12 texture upload context is not initialized.";
         }
         return false;
     }
@@ -266,8 +313,70 @@ bool LoadDdsTexture(
     }
 
     const uint32_t mip_levels = std::max(1U, header.mip_map_count);
-    std::vector<D3D11_SUBRESOURCE_DATA> subresources;
-    subresources.reserve(mip_levels);
+    D3D12_RESOURCE_DESC description{};
+    description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    description.Alignment = 0;
+    description.Width = header.width;
+    description.Height = header.height;
+    description.DepthOrArraySize = 1;
+    description.MipLevels = static_cast<UINT16>(mip_levels);
+    description.Format = format;
+    description.SampleDesc.Count = 1;
+    description.SampleDesc.Quality = 0;
+    description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    description.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* texture_resource = nullptr;
+    if (FAILED(context.device->CreateCommittedResource(
+        &default_heap,
+        D3D12_HEAP_FLAG_NONE,
+        &description,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&texture_resource)
+    )) || texture_resource == nullptr) {
+        if (error != nullptr) {
+            *error = "D3D12 failed to create a texture resource from the DDS data.";
+        }
+        return false;
+    }
+
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(mip_levels);
+    std::vector<UINT> row_counts(mip_levels);
+    std::vector<UINT64> row_sizes(mip_levels);
+    UINT64 upload_buffer_size = 0;
+    context.device->GetCopyableFootprints(
+        &description,
+        0,
+        mip_levels,
+        0,
+        footprints.data(),
+        row_counts.data(),
+        row_sizes.data(),
+        &upload_buffer_size
+    );
+
+    ID3D12Resource* upload_buffer = nullptr;
+    if (!CreateBufferResource(context.device, upload_buffer_size, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, &upload_buffer) || upload_buffer == nullptr) {
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to create a texture upload buffer.";
+        }
+        return false;
+    }
+
+    std::byte* mapped = nullptr;
+    if (FAILED(upload_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) || mapped == nullptr) {
+        upload_buffer->Release();
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to map the texture upload buffer.";
+        }
+        return false;
+    }
 
     uint32_t width = header.width;
     uint32_t height = header.height;
@@ -283,63 +392,122 @@ bool LoadDdsTexture(
             : row_pitch * current_height;
 
         if (current_offset + slice_pitch > file_bytes.size()) {
+            upload_buffer->Unmap(0, nullptr);
+            upload_buffer->Release();
+            texture_resource->Release();
             if (error != nullptr) {
                 *error = "DDS mip data is truncated.";
             }
             return false;
         }
 
-        D3D11_SUBRESOURCE_DATA subresource{};
-        subresource.pSysMem = file_bytes.data() + current_offset;
-        subresource.SysMemPitch = row_pitch;
-        subresource.SysMemSlicePitch = slice_pitch;
-        subresources.push_back(subresource);
+        const auto& footprint = footprints[mip];
+        std::byte* destination = mapped + footprint.Offset;
+        const std::byte* source = file_bytes.data() + current_offset;
+        for (UINT row = 0; row < row_counts[mip]; ++row) {
+            std::memcpy(
+                destination + (row * footprint.Footprint.RowPitch),
+                source + (row * row_pitch),
+                row_pitch
+            );
+        }
+
         current_offset += slice_pitch;
     }
+    upload_buffer->Unmap(0, nullptr);
 
-    D3D11_TEXTURE2D_DESC description{};
-    description.Width = header.width;
-    description.Height = header.height;
-    description.MipLevels = mip_levels;
-    description.ArraySize = 1;
-    description.Format = format;
-    description.SampleDesc.Count = 1;
-    description.Usage = D3D11_USAGE_DEFAULT;
-    description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-    ID3D11Texture2D* texture_handle = nullptr;
-    const HRESULT texture_result = device->CreateTexture2D(
-        &description,
-        subresources.data(),
-        &texture_handle
-    );
-    if (FAILED(texture_result) || texture_handle == nullptr) {
+    if (FAILED(context.command_allocator->Reset()) || FAILED(context.command_list->Reset(context.command_allocator, nullptr))) {
+        upload_buffer->Release();
+        texture_resource->Release();
         if (error != nullptr) {
-            *error = "D3D11 failed to create a texture from the DDS data.";
+            *error = "D3D12 failed to reset the upload command list.";
         }
         return false;
     }
 
-    D3D11_SHADER_RESOURCE_VIEW_DESC view_description{};
-    view_description.Format = description.Format;
-    view_description.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    view_description.Texture2D.MipLevels = description.MipLevels;
+    for (uint32_t mip = 0; mip < mip_levels; ++mip) {
+        D3D12_TEXTURE_COPY_LOCATION destination{};
+        destination.pResource = texture_resource;
+        destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        destination.SubresourceIndex = mip;
 
-    ID3D11ShaderResourceView* shader_view = nullptr;
-    const HRESULT view_result = device->CreateShaderResourceView(texture_handle, &view_description, &shader_view);
-    texture_handle->Release();
-    if (FAILED(view_result) || shader_view == nullptr) {
+        D3D12_TEXTURE_COPY_LOCATION source{};
+        source.pResource = upload_buffer;
+        source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        source.PlacedFootprint = footprints[mip];
+
+        context.command_list->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+    }
+
+    D3D12_RESOURCE_BARRIER barrier{};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = texture_resource;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    context.command_list->ResourceBarrier(1, &barrier);
+
+    if (FAILED(context.command_list->Close())) {
+        upload_buffer->Release();
+        texture_resource->Release();
         if (error != nullptr) {
-            *error = "D3D11 failed to create a shader resource view for the DDS texture.";
+            *error = "D3D12 failed to close the upload command list.";
         }
         return false;
     }
+
+    ID3D12CommandList* lists[] = { context.command_list };
+    context.command_queue->ExecuteCommandLists(1, lists);
+
+    const UINT64 fence_value = ++(*context.next_fence_value);
+    if (FAILED(context.command_queue->Signal(context.fence, fence_value))) {
+        upload_buffer->Release();
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to signal the texture upload fence.";
+        }
+        return false;
+    }
+    if (context.fence->GetCompletedValue() < fence_value) {
+        if (FAILED(context.fence->SetEventOnCompletion(fence_value, context.fence_event))) {
+            upload_buffer->Release();
+            texture_resource->Release();
+            if (error != nullptr) {
+                *error = "D3D12 failed to wait for the texture upload fence.";
+            }
+            return false;
+        }
+        WaitForSingleObject(context.fence_event, INFINITE);
+    }
+
+    upload_buffer->Release();
+
+    DdsTextureHandle candidate{};
+    candidate.resource = texture_resource;
+    candidate.format = format;
+    candidate.width = header.width;
+    candidate.height = header.height;
+    candidate.descriptor_user_data = context.descriptors.user_data;
+    candidate.descriptor_free_fn = context.descriptors.free;
+
+    context.descriptors.alloc(context.descriptors.user_data, &candidate.cpu_descriptor, &candidate.gpu_descriptor);
+    if (candidate.gpu_descriptor.ptr == 0) {
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to allocate an SRV descriptor for the DDS texture.";
+        }
+        return false;
+    }
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC view_description{};
+    view_description.Format = format;
+    view_description.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    view_description.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    view_description.Texture2D.MipLevels = mip_levels;
+    context.device->CreateShaderResourceView(texture_resource, &view_description, candidate.cpu_descriptor);
 
     ReleaseTexture(texture);
-    texture.view = shader_view;
-    texture.format = format;
-    texture.width = header.width;
-    texture.height = header.height;
+    texture = candidate;
     return true;
 }
 

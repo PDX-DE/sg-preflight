@@ -1,8 +1,10 @@
 #include "backend_bridge.hpp"
 #include "audio_player.hpp"
+#include "localization.hpp"
 #include "texture_loader.hpp"
 
-#include <d3d11.h>
+#include <d3d12.h>
+#include <dxgi1_5.h>
 #include <shellapi.h>
 #include <windows.h>
 
@@ -22,7 +24,7 @@
 #include <vector>
 
 #include "imgui.h"
-#include "backends/imgui_impl_dx11.h"
+#include "backends/imgui_impl_dx12.h"
 #include "backends/imgui_impl_win32.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
@@ -39,13 +41,89 @@ using sg_preflight::native_shell::ProfileItem;
 using sg_preflight::native_shell::RecentActionItem;
 using sg_preflight::native_shell::RecentRunItem;
 using sg_preflight::native_shell::RunSnapshot;
+using sg_preflight::native_shell::ShellLanguage;
+using sg_preflight::native_shell::UiText;
 
 namespace {
 
-ID3D11Device* g_device = nullptr;
-ID3D11DeviceContext* g_device_context = nullptr;
-IDXGISwapChain* g_swap_chain = nullptr;
-ID3D11RenderTargetView* g_render_target = nullptr;
+constexpr UINT kFrameCount = 3U;
+constexpr UINT kSrvHeapSize = 128U;
+
+struct FrameContext {
+    ID3D12CommandAllocator* allocator = nullptr;
+    UINT64 fence_value = 0;
+};
+
+struct DescriptorHeapAllocator {
+    ID3D12DescriptorHeap* heap = nullptr;
+    D3D12_DESCRIPTOR_HEAP_TYPE heap_type = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
+    D3D12_CPU_DESCRIPTOR_HANDLE heap_start_cpu{};
+    D3D12_GPU_DESCRIPTOR_HANDLE heap_start_gpu{};
+    UINT heap_handle_increment = 0;
+    std::vector<int> free_indices;
+
+    void Create(ID3D12Device* device, ID3D12DescriptorHeap* descriptor_heap) {
+        heap = descriptor_heap;
+        const D3D12_DESCRIPTOR_HEAP_DESC desc = heap->GetDesc();
+        heap_type = desc.Type;
+        heap_start_cpu = heap->GetCPUDescriptorHandleForHeapStart();
+        heap_start_gpu = heap->GetGPUDescriptorHandleForHeapStart();
+        heap_handle_increment = device->GetDescriptorHandleIncrementSize(heap_type);
+        free_indices.reserve(desc.NumDescriptors);
+        for (int index = static_cast<int>(desc.NumDescriptors); index > 0; --index) {
+            free_indices.push_back(index - 1);
+        }
+    }
+
+    void Destroy() {
+        heap = nullptr;
+        heap_type = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
+        heap_start_cpu.ptr = 0;
+        heap_start_gpu.ptr = 0;
+        heap_handle_increment = 0;
+        free_indices.clear();
+    }
+
+    void Alloc(D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu_desc_handle, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu_desc_handle) {
+        if (free_indices.empty()) {
+            out_cpu_desc_handle->ptr = 0;
+            out_gpu_desc_handle->ptr = 0;
+            return;
+        }
+        const int index = free_indices.back();
+        free_indices.pop_back();
+        out_cpu_desc_handle->ptr = heap_start_cpu.ptr + (static_cast<SIZE_T>(index) * heap_handle_increment);
+        out_gpu_desc_handle->ptr = heap_start_gpu.ptr + (static_cast<UINT64>(index) * heap_handle_increment);
+    }
+
+    void Free(D3D12_CPU_DESCRIPTOR_HANDLE cpu_desc_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_desc_handle) {
+        if (heap == nullptr || cpu_desc_handle.ptr == 0 || gpu_desc_handle.ptr == 0) {
+            return;
+        }
+        const int cpu_index = static_cast<int>((cpu_desc_handle.ptr - heap_start_cpu.ptr) / heap_handle_increment);
+        const int gpu_index = static_cast<int>((gpu_desc_handle.ptr - heap_start_gpu.ptr) / heap_handle_increment);
+        if (cpu_index == gpu_index) {
+            free_indices.push_back(cpu_index);
+        }
+    }
+};
+
+FrameContext g_frame_contexts[kFrameCount]{};
+UINT g_frame_index = 0U;
+ID3D12Device* g_device = nullptr;
+IDXGISwapChain3* g_swap_chain = nullptr;
+ID3D12DescriptorHeap* g_rtv_descriptor_heap = nullptr;
+ID3D12DescriptorHeap* g_srv_descriptor_heap = nullptr;
+DescriptorHeapAllocator g_srv_descriptor_allocator;
+ID3D12CommandQueue* g_command_queue = nullptr;
+ID3D12GraphicsCommandList* g_command_list = nullptr;
+ID3D12CommandAllocator* g_upload_command_allocator = nullptr;
+ID3D12GraphicsCommandList* g_upload_command_list = nullptr;
+ID3D12Fence* g_fence = nullptr;
+HANDLE g_fence_event = nullptr;
+UINT64 g_fence_last_signaled_value = 0;
+ID3D12Resource* g_main_render_targets[kFrameCount]{};
+D3D12_CPU_DESCRIPTOR_HANDLE g_main_render_target_descriptors[kFrameCount]{};
 ImFont* g_title_font = nullptr;
 ImFont* g_body_font = nullptr;
 ImFont* g_small_font = nullptr;
@@ -113,6 +191,7 @@ struct ShellWindowOptions {
 ShellWindowOptions g_window_options;
 
 enum class ShellScreen {
+    Language,
     Introduction,
     Select,
     Review,
@@ -124,6 +203,7 @@ enum class ShellScreen {
 
 struct ShellState {
     BackendConfig backend;
+    ShellLanguage language = ShellLanguage::English;
     std::vector<ProfileItem> profiles;
     std::vector<ActionItem> actions;
     std::vector<BlockerItem> blockers;
@@ -138,11 +218,12 @@ struct ShellState {
     std::string selected_action_id;
     std::string current_run_id;
     std::string current_result_run_id;
-    std::string status_line = "Ready for the next SG QA action.";
+    std::string status_line = sg_preflight::native_shell::FormatReadyForNextActionStatus(ShellLanguage::English);
     std::string last_error;
     double next_poll_at = 0.0;
-    ShellScreen current_screen = ShellScreen::Introduction;
-    ShellScreen previous_screen = ShellScreen::Introduction;
+    ShellScreen current_screen = ShellScreen::Language;
+    ShellScreen previous_screen = ShellScreen::Language;
+    int selected_language_index = 0;
     double screen_transition_started_at = -1.0;
     bool prompt_visible = false;
     bool prompt_confirmation = false;
@@ -203,6 +284,64 @@ enum class UiCue {
 };
 
 void PlayCue(UiCue cue);
+
+const char* Tr(const ShellState& state, UiText text) {
+    return sg_preflight::native_shell::Translate(text, state.language);
+}
+
+const char* RefreshShortLabel(ShellLanguage language) {
+    switch (language) {
+    case ShellLanguage::English: return "REFRESH";
+    case ShellLanguage::Spanish: return "REFRESCAR";
+    case ShellLanguage::German: return "AKTUALISIEREN";
+    case ShellLanguage::Romanian: return "REFRESH";
+    }
+    return "REFRESH";
+}
+
+const char* RefreshActiveRunLabel(ShellLanguage language) {
+    switch (language) {
+    case ShellLanguage::English: return "REFRESH ACTIVE RUN";
+    case ShellLanguage::Spanish: return "REFRESCAR EJECUCION";
+    case ShellLanguage::German: return "AKTIVEN LAUF AKTUALISIEREN";
+    case ShellLanguage::Romanian: return "REFRESH RULARE";
+    }
+    return "REFRESH ACTIVE RUN";
+}
+
+const char* RunSelectedActionLabel(ShellLanguage language) {
+    switch (language) {
+    case ShellLanguage::English: return "RUN SELECTED ACTION";
+    case ShellLanguage::Spanish: return "EJECUTAR ACCION";
+    case ShellLanguage::German: return "AKTION STARTEN";
+    case ShellLanguage::Romanian: return "RULEAZA ACTIUNEA";
+    }
+    return "RUN SELECTED ACTION";
+}
+
+void SetShellLanguage(ShellState& state, ShellLanguage language, bool announce = true) {
+    state.language = language;
+    state.selected_language_index = sg_preflight::native_shell::LanguageIndex(language);
+    (void)announce;
+}
+
+void MoveLanguageSelection(ShellState& state, int delta_x, int delta_y) {
+    const int columns = 2;
+    const int rows = 2;
+    int index = std::clamp(state.selected_language_index, 0, static_cast<int>(sg_preflight::native_shell::SupportedLanguages().size()) - 1);
+    int column = index % columns;
+    int row = index / columns;
+    column = std::clamp(column + delta_x, 0, columns - 1);
+    row = std::clamp(row + delta_y, 0, rows - 1);
+    const int next_index = std::clamp(row * columns + column, 0, static_cast<int>(sg_preflight::native_shell::SupportedLanguages().size()) - 1);
+    if (next_index == state.selected_language_index) {
+        return;
+    }
+    state.selected_language_index = next_index;
+    SetShellLanguage(state, sg_preflight::native_shell::LanguageFromIndex(next_index), false);
+    PlayCue(UiCue::Cursor);
+}
+
 std::string CurrentActionId(const ShellState& state);
 const ActionItem* FindSelectedAction(const ShellState& state);
 ShellScreen PreviousScreen(const ShellState& state, ShellScreen screen);
@@ -592,11 +731,11 @@ std::optional<std::filesystem::path> ResolveBundledFont(
 }
 
 bool HasTexture(const DdsTextureHandle& texture) {
-    return texture.view != nullptr;
+    return texture.resource != nullptr && texture.gpu_descriptor.ptr != 0;
 }
 
 ImTextureID ToTextureId(const DdsTextureHandle& texture) {
-    return reinterpret_cast<ImTextureID>(texture.view);
+    return static_cast<ImTextureID>(texture.gpu_descriptor.ptr);
 }
 
 void DrawTexturedRect(
@@ -691,6 +830,29 @@ void ReleaseShellAssets() {
     g_shell_assets = {};
 }
 
+void AllocSrvDescriptor(void*, D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu_desc_handle, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu_desc_handle) {
+    g_srv_descriptor_allocator.Alloc(out_cpu_desc_handle, out_gpu_desc_handle);
+}
+
+void FreeSrvDescriptor(void*, D3D12_CPU_DESCRIPTOR_HANDLE cpu_desc_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_desc_handle) {
+    g_srv_descriptor_allocator.Free(cpu_desc_handle, gpu_desc_handle);
+}
+
+sg_preflight::native_shell::D3d12TextureUploadContext BuildTextureUploadContext() {
+    sg_preflight::native_shell::D3d12TextureUploadContext context{};
+    context.device = g_device;
+    context.command_queue = g_command_queue;
+    context.command_allocator = g_upload_command_allocator;
+    context.command_list = g_upload_command_list;
+    context.fence = g_fence;
+    context.fence_event = g_fence_event;
+    context.next_fence_value = &g_fence_last_signaled_value;
+    context.descriptors.user_data = nullptr;
+    context.descriptors.alloc = &AllocSrvDescriptor;
+    context.descriptors.free = &FreeSrvDescriptor;
+    return context;
+}
+
 void LoadShellAssets(const std::filesystem::path& workspace_root) {
     ReleaseShellAssets();
     g_shell_assets.attempted = true;
@@ -702,8 +864,9 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
 
     g_shell_assets.resource_root = *resource_root;
     std::string error;
+    const auto upload_context = BuildTextureUploadContext();
     auto load_required_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target) {
-        if (!sg_preflight::native_shell::LoadDdsTexture(g_device, *resource_root / relative, target, &error)) {
+        if (!sg_preflight::native_shell::LoadDdsTexture(upload_context, *resource_root / relative, target, &error)) {
             g_shell_assets.error = error;
             return false;
         }
@@ -711,7 +874,7 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
     };
     auto load_optional_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target) {
         std::string optional_error;
-        sg_preflight::native_shell::LoadDdsTexture(g_device, *resource_root / relative, target, &optional_error);
+        sg_preflight::native_shell::LoadDdsTexture(upload_context, *resource_root / relative, target, &optional_error);
     };
 
     if (
@@ -799,6 +962,8 @@ void SetScreen(ShellState& state, ShellScreen screen, bool play_cursor = true) {
 
 int ScreenStepNumber(ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Language:
+        return 0;
     case ShellScreen::Introduction:
         return 1;
     case ShellScreen::Select:
@@ -822,6 +987,8 @@ constexpr int kWizardStepCount = 7;
 
 const char* ScreenLabel(ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Language:
+        return "LANG";
     case ShellScreen::Introduction:
         return "INTRO";
     case ShellScreen::Select:
@@ -843,6 +1010,8 @@ const char* ScreenLabel(ShellScreen screen) {
 
 const char* ScreenTitle(ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Language:
+        return "LANGUAGE SELECT";
     case ShellScreen::Introduction:
         return "INSTALLER INTRO";
     case ShellScreen::Select:
@@ -864,6 +1033,8 @@ const char* ScreenTitle(ShellScreen screen) {
 
 const char* ScreenSummary(ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Language:
+        return "Choose the shell language before entering the SG operator flow.";
     case ShellScreen::Introduction:
         return "Open with the SG-side operator context first: what this pass does, what it does not do, and what the next input step is.";
     case ShellScreen::Select:
@@ -884,7 +1055,7 @@ const char* ScreenSummary(ShellScreen screen) {
 }
 
 ShellScreen FirstOperationalScreen() {
-    return ShellScreen::Introduction;
+    return ShellScreen::Language;
 }
 
 bool HasEvidenceReady(const ShellState& state) {
@@ -908,6 +1079,9 @@ bool ShouldShowInstallerLoadingChrome(const ShellState& state) {
 size_t InstallerTextureIndexForState(const ShellState& state) {
     size_t index = 0U;
     switch (state.current_screen) {
+    case ShellScreen::Language:
+        index = 0U;
+        break;
     case ShellScreen::Introduction:
         index = 0U;
         break;
@@ -952,6 +1126,8 @@ bool SelectedActionReady(const ShellState& state) {
 
 bool CanAdvanceFromPage(const ShellState& state, ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Language:
+        return true;
     case ShellScreen::Introduction:
         return true;
     case ShellScreen::Select:
@@ -973,6 +1149,8 @@ bool CanAdvanceFromPage(const ShellState& state, ShellScreen screen) {
 
 ShellScreen NextScreen(const ShellState& state, ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Language:
+        return ShellScreen::Introduction;
     case ShellScreen::Introduction:
         return ShellScreen::Select;
     case ShellScreen::Select:
@@ -1000,8 +1178,10 @@ ShellScreen NextScreen(const ShellState& state, ShellScreen screen) {
 
 ShellScreen PreviousScreen(const ShellState& state, ShellScreen screen) {
     switch (screen) {
+    case ShellScreen::Language:
+        return ShellScreen::Language;
     case ShellScreen::Introduction:
-        return ShellScreen::Introduction;
+        return ShellScreen::Language;
     case ShellScreen::Select:
         return ShellScreen::Introduction;
     case ShellScreen::Review:
@@ -1021,31 +1201,33 @@ ShellScreen PreviousScreen(const ShellState& state, ShellScreen screen) {
 
 std::string NextButtonLabel(const ShellState& state) {
     switch (state.current_screen) {
+    case ShellScreen::Language:
+        return Tr(state, UiText::Next);
     case ShellScreen::Introduction:
-        return "CONTINUE";
+        return Tr(state, UiText::Continue);
     case ShellScreen::Select:
-        return "REVIEW";
+        return Tr(state, UiText::Review);
     case ShellScreen::Review:
-        return "RUN";
+        return Tr(state, UiText::Run);
     case ShellScreen::Run:
         if (!HasCompletedRun(state)) {
-            return "WAIT";
+            return Tr(state, UiText::Wait);
         }
         if (HasEvidenceReady(state)) {
-            return "OPEN FIRST";
+            return Tr(state, UiText::OpenFirst);
         }
         if (HasArtifactsReady(state)) {
-            return "FILES";
+            return Tr(state, UiText::Files);
         }
-        return "STAGES";
+        return Tr(state, UiText::Stages);
     case ShellScreen::Evidence:
-        return "FILES";
+        return Tr(state, UiText::Files);
     case ShellScreen::Files:
-        return "STAGES";
+        return Tr(state, UiText::Stages);
     case ShellScreen::Stages:
-        return "RETURN";
+        return Tr(state, UiText::Return);
     default:
-        return "NEXT";
+        return Tr(state, UiText::Next);
     }
 }
 
@@ -1070,8 +1252,8 @@ void OpenPrompt(
     state.prompt_accepts_leave_run = accepts_leave_run;
     state.prompt_title = title;
     state.prompt_message = message;
-    state.prompt_accept_label = confirmation ? "YES" : "OK";
-    state.prompt_cancel_label = "NO";
+    state.prompt_accept_label = confirmation ? Tr(state, UiText::Yes) : Tr(state, UiText::Ok);
+    state.prompt_cancel_label = Tr(state, UiText::No);
     state.prompt_closing = false;
     state.prompt_accept_pending = false;
     state.prompt_cancel_pending = false;
@@ -1088,8 +1270,8 @@ void ClosePrompt(ShellState& state) {
     state.prompt_accepts_leave_run = false;
     state.prompt_title.clear();
     state.prompt_message.clear();
-    state.prompt_accept_label = "YES";
-    state.prompt_cancel_label = "NO";
+    state.prompt_accept_label = sg_preflight::native_shell::Translate(UiText::Yes, state.language);
+    state.prompt_cancel_label = sg_preflight::native_shell::Translate(UiText::No, state.language);
     state.prompt_closing = false;
     state.prompt_accept_pending = false;
     state.prompt_cancel_pending = false;
@@ -1170,10 +1352,10 @@ void RequestBackAction(ShellState& state) {
     if (state.current_screen == FirstOperationalScreen()) {
         OpenPrompt(
             state,
-            "QUIT SG PREFLIGHT",
+            Tr(state, UiText::PromptQuitTitle),
             IsActionStillRunning(state)
-                ? "Close the shell now? The current SG action will keep running in the background."
-                : "Close SG Preflight now?",
+                ? Tr(state, UiText::PromptQuitRunningMessage)
+                : Tr(state, UiText::PromptQuitMessage),
             true,
             true,
             false
@@ -1184,8 +1366,8 @@ void RequestBackAction(ShellState& state) {
     if (state.current_screen == ShellScreen::Run && IsActionStillRunning(state)) {
         OpenPrompt(
             state,
-            "LEAVE RUN SCREEN",
-            "The current SG action is still running. Leave this page anyway? The action will keep running in the background.",
+            Tr(state, UiText::PromptLeaveRunTitle),
+            Tr(state, UiText::PromptLeaveRunMessage),
             true,
             false,
             true
@@ -1276,19 +1458,41 @@ void PlayCue(UiCue cue) {
     MessageBeep(beep);
 }
 
+void WaitForPendingOperations() {
+    if (g_command_queue == nullptr || g_fence == nullptr || g_fence_event == nullptr) {
+        return;
+    }
+    g_command_queue->Signal(g_fence, ++g_fence_last_signaled_value);
+    g_fence->SetEventOnCompletion(g_fence_last_signaled_value, g_fence_event);
+    WaitForSingleObject(g_fence_event, INFINITE);
+}
+
+FrameContext* WaitForNextFrameContext() {
+    FrameContext* frame_context = &g_frame_contexts[g_frame_index % kFrameCount];
+    if (g_fence->GetCompletedValue() < frame_context->fence_value) {
+        g_fence->SetEventOnCompletion(frame_context->fence_value, g_fence_event);
+        WaitForSingleObject(g_fence_event, INFINITE);
+    }
+    return frame_context;
+}
+
 void CreateRenderTarget() {
-    ID3D11Texture2D* back_buffer = nullptr;
-    g_swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
-    if (back_buffer != nullptr) {
-        g_device->CreateRenderTargetView(back_buffer, nullptr, &g_render_target);
-        back_buffer->Release();
+    for (UINT index = 0; index < kFrameCount; ++index) {
+        ID3D12Resource* back_buffer = nullptr;
+        if (SUCCEEDED(g_swap_chain->GetBuffer(index, IID_PPV_ARGS(&back_buffer))) && back_buffer != nullptr) {
+            g_device->CreateRenderTargetView(back_buffer, nullptr, g_main_render_target_descriptors[index]);
+            g_main_render_targets[index] = back_buffer;
+        }
     }
 }
 
 void CleanupRenderTarget() {
-    if (g_render_target != nullptr) {
-        g_render_target->Release();
-        g_render_target = nullptr;
+    WaitForPendingOperations();
+    for (UINT index = 0; index < kFrameCount; ++index) {
+        if (g_main_render_targets[index] != nullptr) {
+            g_main_render_targets[index]->Release();
+            g_main_render_targets[index] = nullptr;
+        }
     }
 }
 
@@ -1305,45 +1509,137 @@ RECT PrimaryMonitorRect() {
 }
 
 bool CreateDeviceD3D(HWND window_handle) {
-    DXGI_SWAP_CHAIN_DESC swap_chain_desc{};
-    swap_chain_desc.BufferCount = 3;
-    swap_chain_desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    DXGI_SWAP_CHAIN_DESC1 swap_chain_desc{};
+    swap_chain_desc.BufferCount = kFrameCount;
+    swap_chain_desc.Width = 0;
+    swap_chain_desc.Height = 0;
+    swap_chain_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swap_chain_desc.OutputWindow = window_handle;
     swap_chain_desc.SampleDesc.Count = 1;
-    swap_chain_desc.Windowed = TRUE;
     swap_chain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    swap_chain_desc.Scaling = DXGI_SCALING_STRETCH;
+    swap_chain_desc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
 
-    constexpr D3D_FEATURE_LEVEL feature_levels[] = {
-        D3D_FEATURE_LEVEL_11_0,
-        D3D_FEATURE_LEVEL_10_0,
-    };
-    D3D_FEATURE_LEVEL feature_level{};
-
-    const auto create_device = [&](D3D_DRIVER_TYPE driver_type) {
-        return D3D11CreateDeviceAndSwapChain(
-            nullptr,
-            driver_type,
-            nullptr,
-            0,
-            feature_levels,
-            static_cast<UINT>(sizeof(feature_levels) / sizeof(feature_levels[0])),
-            D3D11_SDK_VERSION,
-            &swap_chain_desc,
-            &g_swap_chain,
-            &g_device,
-            &feature_level,
-            &g_device_context
-        );
-    };
-
-    HRESULT result = create_device(D3D_DRIVER_TYPE_HARDWARE);
-    g_using_warp = false;
-    if (FAILED(result)) {
-        result = create_device(D3D_DRIVER_TYPE_WARP);
-        g_using_warp = SUCCEEDED(result);
+    IDXGIFactory4* dxgi_factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&dxgi_factory))) || dxgi_factory == nullptr) {
+        return false;
     }
-    if (FAILED(result)) {
+
+    IDXGIAdapter1* adapter = nullptr;
+    for (UINT index = 0; dxgi_factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND; ++index) {
+        DXGI_ADAPTER_DESC1 description{};
+        adapter->GetDesc1(&description);
+        if ((description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0) {
+            adapter->Release();
+            adapter = nullptr;
+            continue;
+        }
+        if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device)))) {
+            g_using_warp = false;
+            break;
+        }
+        adapter->Release();
+        adapter = nullptr;
+    }
+
+    if (g_device == nullptr) {
+        IDXGIAdapter* warp_adapter = nullptr;
+        if (SUCCEEDED(dxgi_factory->EnumWarpAdapter(IID_PPV_ARGS(&warp_adapter))) && warp_adapter != nullptr) {
+            if (SUCCEEDED(D3D12CreateDevice(warp_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device)))) {
+                g_using_warp = true;
+            }
+            warp_adapter->Release();
+        }
+    }
+    if (adapter != nullptr) {
+        adapter->Release();
+        adapter = nullptr;
+    }
+    if (g_device == nullptr) {
+        dxgi_factory->Release();
+        return false;
+    }
+
+    D3D12_DESCRIPTOR_HEAP_DESC rtv_desc{};
+    rtv_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    rtv_desc.NumDescriptors = kFrameCount;
+    if (FAILED(g_device->CreateDescriptorHeap(&rtv_desc, IID_PPV_ARGS(&g_rtv_descriptor_heap))) || g_rtv_descriptor_heap == nullptr) {
+        dxgi_factory->Release();
+        return false;
+    }
+    const UINT rtv_descriptor_size = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv_handle = g_rtv_descriptor_heap->GetCPUDescriptorHandleForHeapStart();
+    for (UINT index = 0; index < kFrameCount; ++index) {
+        g_main_render_target_descriptors[index] = rtv_handle;
+        rtv_handle.ptr += rtv_descriptor_size;
+    }
+
+    D3D12_DESCRIPTOR_HEAP_DESC srv_desc{};
+    srv_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    srv_desc.NumDescriptors = kSrvHeapSize;
+    srv_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    if (FAILED(g_device->CreateDescriptorHeap(&srv_desc, IID_PPV_ARGS(&g_srv_descriptor_heap))) || g_srv_descriptor_heap == nullptr) {
+        dxgi_factory->Release();
+        return false;
+    }
+    g_srv_descriptor_allocator.Create(g_device, g_srv_descriptor_heap);
+
+    D3D12_COMMAND_QUEUE_DESC queue_desc{};
+    queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    if (FAILED(g_device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&g_command_queue))) || g_command_queue == nullptr) {
+        dxgi_factory->Release();
+        return false;
+    }
+
+    for (UINT index = 0; index < kFrameCount; ++index) {
+        if (FAILED(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g_frame_contexts[index].allocator))) || g_frame_contexts[index].allocator == nullptr) {
+            dxgi_factory->Release();
+            return false;
+        }
+    }
+
+    if (FAILED(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g_upload_command_allocator))) || g_upload_command_allocator == nullptr) {
+        dxgi_factory->Release();
+        return false;
+    }
+
+    if (
+        FAILED(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_frame_contexts[0].allocator, nullptr, IID_PPV_ARGS(&g_command_list)))
+        || g_command_list == nullptr
+        || FAILED(g_command_list->Close())
+    ) {
+        dxgi_factory->Release();
+        return false;
+    }
+
+    if (
+        FAILED(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_upload_command_allocator, nullptr, IID_PPV_ARGS(&g_upload_command_list)))
+        || g_upload_command_list == nullptr
+        || FAILED(g_upload_command_list->Close())
+    ) {
+        dxgi_factory->Release();
+        return false;
+    }
+
+    if (FAILED(g_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence))) || g_fence == nullptr) {
+        dxgi_factory->Release();
+        return false;
+    }
+    g_fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (g_fence_event == nullptr) {
+        dxgi_factory->Release();
+        return false;
+    }
+
+    IDXGISwapChain1* swap_chain1 = nullptr;
+    if (FAILED(dxgi_factory->CreateSwapChainForHwnd(g_command_queue, window_handle, &swap_chain_desc, nullptr, nullptr, &swap_chain1)) || swap_chain1 == nullptr) {
+        dxgi_factory->Release();
+        return false;
+    }
+    const HRESULT swap_chain_result = swap_chain1->QueryInterface(IID_PPV_ARGS(&g_swap_chain));
+    swap_chain1->Release();
+    dxgi_factory->Release();
+    if (FAILED(swap_chain_result) || g_swap_chain == nullptr) {
         return false;
     }
 
@@ -1357,13 +1653,52 @@ void CleanupDeviceD3D() {
     ReleaseShellAssets();
     CleanupRenderTarget();
     if (g_swap_chain != nullptr) {
+        g_swap_chain->SetFullscreenState(FALSE, nullptr);
         g_swap_chain->Release();
         g_swap_chain = nullptr;
     }
-    if (g_device_context != nullptr) {
-        g_device_context->Release();
-        g_device_context = nullptr;
+    if (g_upload_command_list != nullptr) {
+        g_upload_command_list->Release();
+        g_upload_command_list = nullptr;
     }
+    if (g_upload_command_allocator != nullptr) {
+        g_upload_command_allocator->Release();
+        g_upload_command_allocator = nullptr;
+    }
+    for (FrameContext& frame_context : g_frame_contexts) {
+        if (frame_context.allocator != nullptr) {
+            frame_context.allocator->Release();
+            frame_context.allocator = nullptr;
+        }
+        frame_context.fence_value = 0;
+    }
+    if (g_command_queue != nullptr) {
+        g_command_queue->Release();
+        g_command_queue = nullptr;
+    }
+    if (g_command_list != nullptr) {
+        g_command_list->Release();
+        g_command_list = nullptr;
+    }
+    if (g_rtv_descriptor_heap != nullptr) {
+        g_rtv_descriptor_heap->Release();
+        g_rtv_descriptor_heap = nullptr;
+    }
+    if (g_srv_descriptor_heap != nullptr) {
+        g_srv_descriptor_heap->Release();
+        g_srv_descriptor_heap = nullptr;
+    }
+    g_srv_descriptor_allocator.Destroy();
+    if (g_fence != nullptr) {
+        g_fence->Release();
+        g_fence = nullptr;
+    }
+    if (g_fence_event != nullptr) {
+        CloseHandle(g_fence_event);
+        g_fence_event = nullptr;
+    }
+    g_fence_last_signaled_value = 0;
+    g_frame_index = 0;
     if (g_device != nullptr) {
         g_device->Release();
         g_device = nullptr;
@@ -1379,7 +1714,9 @@ LRESULT WINAPI WndProc(HWND window_handle, UINT message, WPARAM w_param, LPARAM 
     case WM_SIZE:
         if (g_device != nullptr && w_param != SIZE_MINIMIZED) {
             CleanupRenderTarget();
-            g_swap_chain->ResizeBuffers(0, static_cast<UINT>(LOWORD(l_param)), static_cast<UINT>(HIWORD(l_param)), DXGI_FORMAT_UNKNOWN, 0);
+            DXGI_SWAP_CHAIN_DESC1 description{};
+            g_swap_chain->GetDesc1(&description);
+            g_swap_chain->ResizeBuffers(0, static_cast<UINT>(LOWORD(l_param)), static_cast<UINT>(HIWORD(l_param)), description.Format, description.Flags);
             CreateRenderTarget();
         }
         return 0;
@@ -1609,12 +1946,12 @@ void PollInitialShellLoad(ShellState& state) {
     ClampSelections(state);
 
     if (!state.last_error.empty()) {
-        state.status_line = "Initial SG desktop-state load failed.";
+        state.status_line = sg_preflight::native_shell::FormatInitialLoadFailedStatus(state.language);
         PlayCue(UiCue::Error);
     } else if (state.profiles.empty()) {
-        state.status_line = "No ready SG live profiles were discovered in the current workspace.";
+        state.status_line = sg_preflight::native_shell::FormatNoProfilesDiscoveredStatus(state.language);
     } else {
-        state.status_line = "Loaded SG desktop state for " + CurrentProfileId(state) + ".";
+        state.status_line = sg_preflight::native_shell::FormatLoadedDesktopStateStatus(state.language, CurrentProfileId(state));
     }
 }
 
@@ -1844,7 +2181,7 @@ void SelectProfileById(ShellState& state, const std::string& profile_id) {
 void StartAction(ShellState& state, const std::string& action_id) {
     try {
         state.current_run_id = sg_preflight::native_shell::LaunchAction(state.backend, action_id);
-        state.status_line = "Queued " + action_id + " locally.";
+        state.status_line = sg_preflight::native_shell::FormatQueuedActionStatus(state.language, action_id);
         state.last_error.clear();
         RefreshResultPanels(state);
         RefreshSnapshot(state);
@@ -2253,7 +2590,7 @@ void DrawInstallerLeftImage(const ShellState& state) {
                 ShellUi(14.0f),
                 ImVec2(min.x + ShellUi(26.0f), max.y - ShellUi(40.0f)),
                 IM_COL32(238, 181, 42, static_cast<int>(210.0f * alpha)),
-                "IMAGE SLOT RESERVED"
+                Tr(state, UiText::ImageSlotReserved)
             );
         }
         return;
@@ -2322,7 +2659,7 @@ void DrawBackdropChrome(const ShellState& state) {
     draw_bar_line(false);
 
     const float title_alpha = static_cast<float>(ComputeMotionFrames(15.0, 30.0));
-    const char* header_text = ShouldShowInstallerLoadingChrome(state) ? "SG CHECKING" : "SG PREFLIGHT";
+    const char* header_text = ShouldShowInstallerLoadingChrome(state) ? Tr(state, UiText::HeaderChecking) : Tr(state, UiText::HeaderPreflight);
     if (HasTexture(g_shell_assets.miles_electric_icon)) {
         const float scale = 62.0f * (2.0f - title_alpha);
         const ImVec2 center = ShellPoint(256.0f, 80.0f);
@@ -2767,6 +3104,50 @@ bool DrawSelectableCard(
     return pressed;
 }
 
+bool DrawLanguageOptionButton(const char* id, const char* label, bool selected, ImVec2 size) {
+    const bool pressed = ImGui::InvisibleButton(id, size);
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+
+    const int base_r = selected || hovered ? 48 : 0;
+    const int base_g = selected ? 32 : (hovered ? 18 : 0);
+    DrawInstallerButtonContainer(min, max, base_r, base_g, 1.0f);
+    PlayHoverCueIfNeeded(hovered, true);
+
+    const ImVec2 indicator_min(min.x + ShellUi(10.0f), min.y + ShellUi(8.0f));
+    const ImVec2 indicator_max(min.x + ShellUi(22.0f), max.y - ShellUi(8.0f));
+    draw->AddRectFilled(
+        indicator_min,
+        indicator_max,
+        selected ? IM_COL32(255, 188, 0, 255) : IM_COL32(64, 106, 84, hovered ? 190 : 142),
+        ShellUi(2.0f)
+    );
+    draw->AddRect(
+        indicator_min,
+        indicator_max,
+        selected ? IM_COL32(255, 222, 130, 220) : IM_COL32(104, 154, 128, hovered ? 176 : 124),
+        ShellUi(2.0f),
+        0,
+        1.0f
+    );
+
+    ImFont* font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
+    const float font_size = font == g_body_font ? g_body_font->LegacySize : ImGui::GetFontSize();
+    const ImVec2 text_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, label);
+    const ImVec2 text_pos(
+        min.x + ((max.x - min.x) - text_size.x) * 0.5f + ShellUi(6.0f),
+        min.y + ((max.y - min.y) - text_size.y) * 0.5f - ShellUi(1.0f)
+    );
+    draw->AddText(font, font_size, text_pos, IM_COL32(245, 245, 235, 255), label);
+
+    if (pressed) {
+        PlayCue(UiCue::Confirm);
+    }
+    return pressed;
+}
+
 void DrawProgressMeter(float progress, const std::string& label) {
     const ImVec2 size(ImGui::GetContentRegionAvail().x, 22.0f);
     const ImVec2 start = ImGui::GetCursorScreenPos();
@@ -3010,7 +3391,7 @@ void RenderLocalStatePanel(
 
 void RenderProfilesPanel(ShellState& state) {
     if (state.profiles.empty()) {
-        ImGui::TextDisabled("No ready live profiles were discovered.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoProfilesDiscovered));
         return;
     }
     for (size_t index = 0; index < state.profiles.size(); ++index) {
@@ -3030,7 +3411,7 @@ void RenderProfilesPanel(ShellState& state) {
 
 void RenderRecentActionsPanel(ShellState& state) {
     if (state.recent_actions.empty()) {
-        ImGui::TextDisabled("No recent actions yet for this selection.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoRecentActions));
         return;
     }
     for (const RecentActionItem& item : state.recent_actions) {
@@ -3051,7 +3432,7 @@ void RenderRecentActionsPanel(ShellState& state) {
 
 void RenderRecentResultsPanel(ShellState& state) {
     if (state.recent_runs.empty()) {
-        ImGui::TextDisabled("No recent run records yet for this profile.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoRecentRuns));
         return;
     }
     for (const RecentRunItem& item : state.recent_runs) {
@@ -3287,7 +3668,7 @@ void RenderRunStatusContent(ShellState& state) {
     const ActionItem* action = FindSelectedAction(state);
     const bool action_ready = selected_action == "daily_live_matrix" || (action != nullptr && action->ready);
     const bool running = IsActionStillRunning(state);
-    const std::string button_label = running ? "REFRESH ACTIVE RUN" : "RUN SELECTED ACTION";
+    const std::string button_label = running ? RefreshActiveRunLabel(state.language) : RunSelectedActionLabel(state.language);
     const bool button_enabled = running || action_ready;
 
     if (DrawPanelButton("run-selected-action", button_label, ImVec2(ShellUi(248.0f), ShellUi(34.0f)), true, button_enabled)) {
@@ -3295,7 +3676,7 @@ void RenderRunStatusContent(ShellState& state) {
             RefreshSnapshot(state);
             RefreshRunSnapshot(state);
             RefreshResultPanels(state);
-            state.status_line = "Refreshed local run state.";
+            state.status_line = sg_preflight::native_shell::FormatRefreshedRunStateStatus(state.language);
         } else if (button_enabled) {
             StartAction(state, selected_action);
         }
@@ -3327,13 +3708,13 @@ void RenderRunStatusContent(ShellState& state) {
         }
         if (!snapshot.current_command.empty()) {
             ImGui::Spacing();
-            ImGui::TextDisabled("Command: %s", snapshot.current_command.c_str());
+            ImGui::TextDisabled("%s", sg_preflight::native_shell::FormatCommandLabel(state.language, snapshot.current_command).c_str());
         }
 
         ImGui::Spacing();
-        InlineSectionLabel("Summary");
+        InlineSectionLabel(Tr(state, UiText::Summary));
         if (snapshot.summary_lines.empty()) {
-            ImGui::TextDisabled("No summary lines yet.");
+            ImGui::TextDisabled("%s", Tr(state, UiText::NoSummaryLines));
         } else {
             for (const std::string& line : snapshot.summary_lines) {
                 ImGui::BulletText("%s", line.c_str());
@@ -3353,12 +3734,12 @@ void RenderRunStatusContent(ShellState& state) {
         return;
     }
 
-    ImGui::TextDisabled("No active action or linked run is loaded yet.");
+    ImGui::TextDisabled("%s", Tr(state, UiText::NoActiveActionLoaded));
 }
 
 void RenderRunLinkedResultContent(ShellState& state) {
     if (!state.run_snapshot.has_value()) {
-        ImGui::TextDisabled("No linked run snapshot is available yet.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoLinkedRunSnapshot));
         return;
     }
 
@@ -3375,7 +3756,7 @@ void RenderRunLinkedResultContent(ShellState& state) {
 
     if (!run_snapshot.summary_lines.empty()) {
         ImGui::Spacing();
-        InlineSectionLabel("Snapshot");
+        InlineSectionLabel(Tr(state, UiText::Snapshot));
         for (const std::string& line : run_snapshot.summary_lines) {
             ImGui::BulletText("%s", line.c_str());
         }
@@ -3383,19 +3764,19 @@ void RenderRunLinkedResultContent(ShellState& state) {
 
     if (!run_snapshot.grouped_lines.empty()) {
         ImGui::Spacing();
-        InlineSectionLabel("Grouped Findings");
+        InlineSectionLabel(Tr(state, UiText::GroupedFindings));
         const size_t limit = std::min<size_t>(run_snapshot.grouped_lines.size(), 8U);
         for (size_t index = 0; index < limit; ++index) {
             ImGui::TextWrapped("%s", run_snapshot.grouped_lines[index].c_str());
         }
         if (run_snapshot.grouped_lines.size() > limit) {
-            ImGui::TextDisabled("More grouped lines are available in Files / report drilldown.");
+            ImGui::TextDisabled("%s", Tr(state, UiText::FilesTitle));
         }
     }
 
     if (!run_snapshot.notes.empty()) {
         ImGui::Spacing();
-        InlineSectionLabel("Run Notes");
+        InlineSectionLabel(Tr(state, UiText::RunNotes));
         for (const std::string& note : run_snapshot.notes) {
             ImGui::BulletText("%s", note.c_str());
         }
@@ -3404,7 +3785,7 @@ void RenderRunLinkedResultContent(ShellState& state) {
 
 void RenderRunSignalLogContent(ShellState& state) {
     if (!state.snapshot.has_value()) {
-        ImGui::TextDisabled("No action log is available until a run is queued.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoActionLog));
         return;
     }
 
@@ -3416,7 +3797,7 @@ void RenderRunSignalLogContent(ShellState& state) {
 
     ImGui::BeginChild("log-tail", ImVec2(0.0f, std::max(ShellUi(96.0f), ImGui::GetContentRegionAvail().y)), true);
     if (snapshot.log_tail.empty()) {
-        ImGui::TextDisabled("No action-log lines captured yet.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoActionLog));
     } else {
         ImGui::TextWrapped("%s", snapshot.log_tail.c_str());
     }
@@ -3424,13 +3805,13 @@ void RenderRunSignalLogContent(ShellState& state) {
 }
 
 void RenderRunHistoryContent(ShellState& state) {
-    InlineSectionLabel("Recent Actions");
+    InlineSectionLabel(Tr(state, UiText::RecentActions));
     ImGui::BeginChild("run-recent-actions-list", ImVec2(0.0f, ShellUi(88.0f)), false);
     RenderRecentActionsPanel(state);
     ImGui::EndChild();
 
     ImGui::Spacing();
-    InlineSectionLabel("Recent Results");
+    InlineSectionLabel(Tr(state, UiText::RecentResults));
     ImGui::BeginChild(
         "run-recent-results-list",
         ImVec2(0.0f, std::max(ShellUi(72.0f), ImGui::GetContentRegionAvail().y)),
@@ -3442,7 +3823,7 @@ void RenderRunHistoryContent(ShellState& state) {
 
 void RenderSelectedEvidenceContent(ShellState& state) {
     if (!state.snapshot.has_value() || state.snapshot->top_paths.empty()) {
-        ImGui::TextDisabled("No file-backed checker evidence is available for the current action.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoEvidenceAvailable));
         return;
     }
 
@@ -3451,7 +3832,7 @@ void RenderSelectedEvidenceContent(ShellState& state) {
     ImGui::TextWrapped("%s", item.path.c_str());
     ImGui::Spacing();
     if (!item.checker.empty()) {
-        ImGui::Text("Checker: %s", item.checker.c_str());
+        ImGui::Text("%s", sg_preflight::native_shell::FormatCheckerLabel(state.language, item.checker).c_str());
     }
     if (!item.source_kind.empty()) {
         ImGui::TextDisabled("%s", item.source_kind.c_str());
@@ -3461,21 +3842,21 @@ void RenderSelectedEvidenceContent(ShellState& state) {
         ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "[%s]", item.severity.c_str());
     }
     if (item.line >= 0) {
-        ImGui::TextDisabled("Line %d", item.line);
+        ImGui::TextDisabled("%s", sg_preflight::native_shell::FormatLineNumberLabel(state.language, item.line).c_str());
     }
 
     ImGui::Spacing();
-    InlineSectionLabel("Finding");
+    InlineSectionLabel(Tr(state, UiText::Finding));
     ImGui::TextWrapped("%s", item.message.c_str());
 
     const std::wstring evidence_path = SelectedEvidencePath(state);
     if (!evidence_path.empty()) {
         ImGui::Spacing();
-        if (DrawPanelButton("open-evidence-file", "OPEN FILE", ImVec2(ShellUi(180.0f), ShellUi(30.0f)), true, true)) {
+        if (DrawPanelButton("open-evidence-file", Tr(state, UiText::OpenFile), ImVec2(ShellUi(180.0f), ShellUi(30.0f)), true, true)) {
             OpenPath(evidence_path);
         }
         ImGui::SameLine();
-        if (DrawPanelButton("reveal-evidence-file", "REVEAL IN EXPLORER", ImVec2(ShellUi(220.0f), ShellUi(30.0f)), false, true)) {
+        if (DrawPanelButton("reveal-evidence-file", Tr(state, UiText::Reveal), ImVec2(ShellUi(220.0f), ShellUi(30.0f)), false, true)) {
             RevealPath(evidence_path);
         }
     }
@@ -3483,7 +3864,7 @@ void RenderSelectedEvidenceContent(ShellState& state) {
 
 void RenderFollowupContent(ShellState& state) {
     if (state.snapshot.has_value() && !state.snapshot->manual_followups.empty()) {
-        InlineSectionLabel("Manual Follow-Ups");
+        InlineSectionLabel(Tr(state, UiText::FollowUp));
         for (const std::string& followup : state.snapshot->manual_followups) {
             ImGui::BulletText("%s", followup.c_str());
         }
@@ -3491,7 +3872,7 @@ void RenderFollowupContent(ShellState& state) {
     }
 
     if (state.snapshot.has_value() && !state.snapshot->summary_lines.empty()) {
-        InlineSectionLabel("Action Snapshot");
+        InlineSectionLabel(Tr(state, UiText::Snapshot));
         for (const std::string& line : state.snapshot->summary_lines) {
             ImGui::BulletText("%s", line.c_str());
         }
@@ -3499,20 +3880,20 @@ void RenderFollowupContent(ShellState& state) {
     }
 
     if (state.run_snapshot.has_value() && !state.run_snapshot->notes.empty()) {
-        InlineSectionLabel("Run Notes");
+        InlineSectionLabel(Tr(state, UiText::RunNotes));
         for (const std::string& note : state.run_snapshot->notes) {
             ImGui::BulletText("%s", note.c_str());
         }
         return;
     }
 
-    ImGui::TextDisabled("No additional manual follow-up is attached to the current evidence selection.");
+    ImGui::TextDisabled("%s", Tr(state, UiText::NoManualFollowUp));
 }
 
 void RenderArtifactListOnly(ShellState& state) {
     const std::vector<ArtifactChoice> artifacts = CombinedArtifacts(state);
     if (artifacts.empty()) {
-        ImGui::TextDisabled("No generated artifacts were attached to this selection.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoGeneratedArtifacts));
         return;
     }
 
@@ -3538,7 +3919,7 @@ void RenderArtifactListOnly(ShellState& state) {
 void RenderSelectedArtifactContent(ShellState& state) {
     const std::vector<ArtifactChoice> artifacts = CombinedArtifacts(state);
     if (artifacts.empty()) {
-        ImGui::TextDisabled("No artifact or report is attached to the current selection.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoArtifactsAvailable));
         return;
     }
 
@@ -3553,15 +3934,15 @@ void RenderSelectedArtifactContent(ShellState& state) {
     ImGui::TextWrapped("%s", artifact.path.c_str());
 
     ImGui::Spacing();
-    if (DrawPanelButton("open-selected-artifact", "OPEN SELECTED", ImVec2(ShellUi(180.0f), ShellUi(30.0f)), true, !selected_artifact_path.empty())) {
+    if (DrawPanelButton("open-selected-artifact", Tr(state, UiText::OpenSelected), ImVec2(ShellUi(180.0f), ShellUi(30.0f)), true, !selected_artifact_path.empty())) {
         OpenPath(selected_artifact_path);
     }
     ImGui::SameLine();
-    if (DrawPanelButton("reveal-selected-artifact", "REVEAL SELECTED", ImVec2(ShellUi(180.0f), ShellUi(30.0f)), false, !selected_artifact_path.empty())) {
+    if (DrawPanelButton("reveal-selected-artifact", Tr(state, UiText::RevealSelected), ImVec2(ShellUi(180.0f), ShellUi(30.0f)), false, !selected_artifact_path.empty())) {
         RevealPath(selected_artifact_path);
     }
     ImGui::Spacing();
-    if (DrawPanelButton("open-html-report", "OPEN HTML REPORT", ImVec2(ShellUi(190.0f), ShellUi(30.0f)), false, state.run_snapshot.has_value())) {
+    if (DrawPanelButton("open-html-report", Tr(state, UiText::OpenHtmlReport), ImVec2(ShellUi(190.0f), ShellUi(30.0f)), false, state.run_snapshot.has_value())) {
         for (const auto& run_artifact : state.run_snapshot->artifacts) {
             if (run_artifact.label == "HTML report") {
                 OpenPath(sg_preflight::native_shell::ToWide(run_artifact.path));
@@ -3574,7 +3955,7 @@ void RenderSelectedArtifactContent(ShellState& state) {
 void RenderCopyExportContent(ShellState& state) {
     const std::vector<CopyItem> copy_items = CombinedCopyItems(state);
     if (copy_items.empty()) {
-        ImGui::TextDisabled("No copy/export items are attached to this selection.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::CopyExport));
         return;
     }
 
@@ -3583,7 +3964,7 @@ void RenderCopyExportContent(ShellState& state) {
         const std::string button_id = "copy-item-" + item.key;
         if (DrawPanelButton(button_id.c_str(), item.label, ImVec2(button_width, ShellUi(30.0f)), false, !item.text.empty())) {
             if (CopyText(sg_preflight::native_shell::ToWide(item.text))) {
-                state.status_line = "Copied " + item.label + ".";
+                state.status_line = sg_preflight::native_shell::FormatCopiedItemStatus(state.language, item.label);
             }
         }
         ImGui::Spacing();
@@ -3592,7 +3973,7 @@ void RenderCopyExportContent(ShellState& state) {
 
 void RenderBlockedStagesOnly(ShellState& state) {
     if (state.blockers.empty()) {
-        ImGui::TextDisabled("No blocked stages are recorded for this selection.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::BlockedStageStatus));
         return;
     }
 
@@ -3610,7 +3991,7 @@ void RenderBlockedStagesOnly(ShellState& state) {
 
 void RenderManualReviewOnly(ShellState& state) {
     if (state.manual_cards.empty()) {
-        ImGui::TextDisabled("No manual review companion cards are attached yet.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::ManualReview));
         return;
     }
 
@@ -3626,28 +4007,24 @@ void RenderManualReviewOnly(ShellState& state) {
 
 void RenderDisplayModeContent(ShellState& state) {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    ImGui::TextWrapped(
-        "Current output: %.0fx%.0f%s",
-        display.x,
-        display.y,
-        g_using_warp ? " | software renderer fallback (WARP)" : " | hardware D3D11"
-    );
+    const std::string display_line = sg_preflight::native_shell::FormatDisplayModeLine(state.language, display.x, display.y, g_using_warp);
+    ImGui::TextWrapped("%s", display_line.c_str());
     ImGui::Spacing();
-    ImGui::TextWrapped("Default startup uses the current monitor size. Use --windowed --width <n> --height <n> if you want an override.");
+    ImGui::TextWrapped("%s", Tr(state, UiText::CurrentOutputHelp));
     ImGui::Spacing();
     ImGui::TextDisabled("%s", state.status_line.c_str());
 }
 
 void RenderAudioSettingsContent(ShellState& state) {
-    if (DrawSettingToggle("toggle-sfx", "UI sound effects", "Cursor, confirm, cancel, and window-open cues from the local Unleashed resource bundle.", g_shell_audio.sfx_enabled)) {
+    if (DrawSettingToggle("toggle-sfx", Tr(state, UiText::UiSoundEffects), Tr(state, UiText::UiSoundEffectsSummary), g_shell_audio.sfx_enabled)) {
         SetSfxEnabled(!g_shell_audio.sfx_enabled);
-        state.status_line = g_shell_audio.sfx_enabled ? "UI sound effects enabled." : "UI sound effects disabled.";
+        state.status_line = sg_preflight::native_shell::FormatSfxStatus(state.language, g_shell_audio.sfx_enabled);
         PlayCue(g_shell_audio.sfx_enabled ? UiCue::Confirm : UiCue::Error);
     }
     ImGui::Spacing();
-    if (DrawSettingToggle("toggle-bgm", "Installer background music", "Loops the local installer music WAV while the shell is open. Toggle it when you want the stronger installer manner.", g_shell_audio.music_enabled)) {
+    if (DrawSettingToggle("toggle-bgm", Tr(state, UiText::InstallerBackgroundMusic), Tr(state, UiText::InstallerBackgroundMusicSummary), g_shell_audio.music_enabled)) {
         SetMusicEnabled(!g_shell_audio.music_enabled);
-        state.status_line = g_shell_audio.music_enabled ? "Installer background music enabled." : "Installer background music disabled.";
+        state.status_line = sg_preflight::native_shell::FormatMusicStatus(state.language, g_shell_audio.music_enabled);
     }
     if (!g_shell_audio.last_error.empty()) {
         ImGui::Spacing();
@@ -3700,6 +4077,83 @@ void RenderWizardFlow(ShellState& state) {
     ImGui::TextWrapped("%s", ScreenSummary(state.current_screen));
 }
 
+void RenderLanguageScreen(ShellState& state) {
+    BeginScreenTransition(state);
+    DrawInstallerCanvasBackground();
+    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+
+    if (BeginCanvasOverlayRegion("language-description", layout.description_content_min, layout.description_content_max)) {
+        const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        if (g_title_font != nullptr) {
+            ImGui::PushFont(g_title_font);
+        }
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextWrapped("%s", Tr(state, UiText::LanguageScreenTitle));
+        ImGui::PopTextWrapPos();
+        if (g_title_font != nullptr) {
+            ImGui::PopFont();
+        }
+
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextWrapped("%s", Tr(state, UiText::LanguageScreenBody));
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", Tr(state, UiText::LanguageScreenHint));
+        ImGui::PopTextWrapPos();
+
+        ImGui::Spacing();
+        if (g_small_font != nullptr) {
+            ImGui::PushFont(g_small_font);
+        }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::AvailableLanguages));
+        if (g_small_font != nullptr) {
+            ImGui::PopFont();
+        }
+        ImGui::Spacing();
+
+        const float gap = ShellUi(12.0f);
+        const float button_width = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
+        const ImVec2 button_size(button_width, ShellUi(42.0f));
+        const auto& languages = sg_preflight::native_shell::SupportedLanguages();
+        for (size_t index = 0; index < languages.size(); ++index) {
+            const auto& option = languages[index];
+            const bool selected = static_cast<int>(index) == state.selected_language_index;
+            if (DrawLanguageOptionButton(
+                    ("language-option-" + std::string(option.code)).c_str(),
+                    sg_preflight::native_shell::LanguageNativeName(option.language),
+                    selected,
+                    button_size
+                )) {
+                state.selected_language_index = static_cast<int>(index);
+                SetShellLanguage(state, option.language, true);
+            }
+            if ((index % 2U) == 0U && index + 1U < languages.size()) {
+                ImGui::SameLine(0.0f, gap);
+            }
+        }
+    }
+    EndCanvasOverlayRegion();
+
+    if (BeginCanvasOverlayRegion("language-side", layout.side_content_min, layout.side_content_max)) {
+        if (g_small_font != nullptr) {
+            ImGui::PushFont(g_small_font);
+        }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::CurrentSelection));
+        if (g_small_font != nullptr) {
+            ImGui::PopFont();
+        }
+        ImGui::Spacing();
+        ImGui::Text("%s", sg_preflight::native_shell::LanguageNativeName(state.language));
+        ImGui::TextDisabled("%s", sg_preflight::native_shell::LanguageCode(state.language));
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+        ImGui::TextWrapped("%s", sg_preflight::native_shell::FormatLanguageAppliedStatus(state.language, state.language).c_str());
+        ImGui::PopTextWrapPos();
+    }
+    EndCanvasOverlayRegion();
+    EndScreenTransition();
+}
+
 void RenderIntroductionScreen(ShellState& state) {
     BeginScreenTransition(state);
     DrawInstallerCanvasBackground();
@@ -3711,7 +4165,7 @@ void RenderIntroductionScreen(ShellState& state) {
             ImGui::PushFont(g_title_font);
         }
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("Welcome to SG Preflight.");
+        ImGui::TextWrapped("%s", Tr(state, UiText::IntroWelcome));
         ImGui::PopTextWrapPos();
         if (g_title_font != nullptr) {
             ImGui::PopFont();
@@ -3719,13 +4173,9 @@ void RenderIntroductionScreen(ShellState& state) {
 
         ImGui::Spacing();
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped(
-            "Select the SG slice, confirm local readiness, run the real SG checker-backed action once, then move through Open First, Files, and blocked/manual follow-up in order."
-        );
+        ImGui::TextWrapped("%s", Tr(state, UiText::IntroBodyPrimary));
         ImGui::Spacing();
-        ImGui::TextWrapped(
-            "This native shell stays a shell over the Python backend. The browser flow, deterministic packs, SG checker evidence, and BMW-blocker honesty all stay intact."
-        );
+        ImGui::TextWrapped("%s", Tr(state, UiText::IntroBodySecondary));
         ImGui::PopTextWrapPos();
     }
     EndCanvasOverlayRegion();
@@ -3734,7 +4184,7 @@ void RenderIntroductionScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "CURRENT DEFAULT");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::CurrentDefault));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -3743,7 +4193,7 @@ void RenderIntroductionScreen(ShellState& state) {
         const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
         ImGui::PushTextWrapPos(wrap_x);
         if (state.initial_state_loading) {
-            ImGui::TextWrapped("The shell is hydrating the shared SG desktop state now.");
+            ImGui::TextWrapped("%s", Tr(state, UiText::SelectLoadingTitle));
             ImGui::Spacing();
             ImGui::TextDisabled("%s", state.status_line.c_str());
         } else if (!state.profiles.empty()) {
@@ -3754,10 +4204,10 @@ void RenderIntroductionScreen(ShellState& state) {
             ImGui::Spacing();
             ImGui::TextWrapped("%s", profile.summary.c_str());
             ImGui::Spacing();
-            ImGui::Text("Action: %s", ShortActionLabel(profile.recommended_action_id).c_str());
+            ImGui::Text("%s", sg_preflight::native_shell::FormatActionLabel(state.language, ShortActionLabel(profile.recommended_action_id)).c_str());
             ImGui::TextDisabled("%s", state.status_line.c_str());
         } else {
-            ImGui::TextDisabled("No ready live profiles were discovered locally.");
+            ImGui::TextDisabled("%s", Tr(state, UiText::NoProfilesDiscovered));
             ImGui::Spacing();
             ImGui::TextWrapped("%s", state.status_line.c_str());
         }
@@ -3779,14 +4229,14 @@ void RenderSelectScreen(ShellState& state) {
                 ImGui::PushFont(g_title_font);
             }
             ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextWrapped("Loading SG desktop state.");
+            ImGui::TextWrapped("%s", Tr(state, UiText::SelectLoadingTitle));
             ImGui::PopTextWrapPos();
             if (g_title_font != nullptr) {
                 ImGui::PopFont();
             }
             ImGui::Spacing();
             ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextWrapped("The native shell now paints first and hydrates the shared backend in the background so startup stops presenting a blank white hung window.");
+            ImGui::TextWrapped("%s", Tr(state, UiText::SelectLoadingBody));
             ImGui::Spacing();
             ImGui::TextDisabled("%s", state.status_line.c_str());
             ImGui::PopTextWrapPos();
@@ -3802,7 +4252,7 @@ void RenderSelectScreen(ShellState& state) {
             ImGui::PushFont(g_title_font);
         }
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("Choose the live SG slice and action path for this run.");
+        ImGui::TextWrapped("%s", Tr(state, UiText::SelectTitle));
         ImGui::PopTextWrapPos();
         if (g_title_font != nullptr) {
             ImGui::PopFont();
@@ -3814,7 +4264,7 @@ void RenderSelectScreen(ShellState& state) {
             if (g_small_font != nullptr) {
                 ImGui::PushFont(g_small_font);
             }
-            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "SELECTED SLICE");
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::SelectedSlice));
             if (g_small_font != nullptr) {
                 ImGui::PopFont();
             }
@@ -3830,7 +4280,7 @@ void RenderSelectScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "ACTION PATH");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionPath));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -3850,11 +4300,11 @@ void RenderSelectScreen(ShellState& state) {
                 ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", action->blocker_message.c_str());
             }
         } else if (CurrentActionId(state) == "daily_live_matrix") {
-            ImGui::TextWrapped("Run the recommended SG QA stack across every ready live profile and collect one aggregated Open First surface.");
+            ImGui::TextWrapped("%s", Tr(state, UiText::SelectDailyMatrixBody));
             ImGui::Spacing();
             ImGui::TextDisabled("python -m sg_preflight run-action daily_live_matrix");
         } else {
-            ImGui::TextDisabled("No action metadata is available for the current selection.");
+            ImGui::TextDisabled("%s", Tr(state, UiText::NoActionMetadata));
         }
         ImGui::PopTextWrapPos();
     }
@@ -3864,7 +4314,7 @@ void RenderSelectScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "LIVE SLICES");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::LiveSlices));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -3887,14 +4337,14 @@ void RenderReviewScreen(ShellState& state) {
                 ImGui::PushFont(g_title_font);
             }
             ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextWrapped("Review the selected run target.");
+            ImGui::TextWrapped("%s", Tr(state, UiText::ReviewLoadingTitle));
             ImGui::PopTextWrapPos();
             if (g_title_font != nullptr) {
                 ImGui::PopFont();
             }
             ImGui::Spacing();
             ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextWrapped("The confirmation step waits for the same Python-backed SG desktop state as the browser/operator flow.");
+            ImGui::TextWrapped("%s", Tr(state, UiText::ReviewLoadingBody));
             ImGui::Spacing();
             ImGui::TextDisabled("%s", state.status_line.c_str());
             ImGui::PopTextWrapPos();
@@ -3911,7 +4361,7 @@ void RenderReviewScreen(ShellState& state) {
             ImGui::PushFont(g_title_font);
         }
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("Confirm the local SG run before launching it.");
+        ImGui::TextWrapped("%s", Tr(state, UiText::ReviewTitle));
         ImGui::PopTextWrapPos();
         if (g_title_font != nullptr) {
             ImGui::PopFont();
@@ -3929,7 +4379,7 @@ void RenderReviewScreen(ShellState& state) {
             ImGui::Spacing();
         }
 
-        ImGui::Text("Action: %s", ShortActionLabel(CurrentActionId(state)).c_str());
+        ImGui::Text("%s", sg_preflight::native_shell::FormatActionLabel(state.language, ShortActionLabel(CurrentActionId(state))).c_str());
         ImGui::PushTextWrapPos(wrap_x);
         if (action != nullptr) {
             ImGui::TextWrapped("%s", action->description.c_str());
@@ -3940,7 +4390,7 @@ void RenderReviewScreen(ShellState& state) {
         } else if (CurrentActionId(state) == "daily_live_matrix") {
             ImGui::TextWrapped("python -m sg_preflight run-action daily_live_matrix");
         } else {
-            ImGui::TextDisabled("No command preview is available for this action.");
+            ImGui::TextDisabled("%s", Tr(state, UiText::NoCommandPreview));
         }
         ImGui::PopTextWrapPos();
     }
@@ -3950,17 +4400,17 @@ void RenderReviewScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "READY / BLOCKED");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ReadyBlocked));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
         ImGui::Spacing();
         if (SelectedActionReady(state)) {
-            ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "This local SG action is ready to run.");
+            ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "%s", Tr(state, UiText::ReadyToRun));
         } else if (action != nullptr && !action->blocker_message.empty()) {
             ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", action->blocker_message.c_str());
         } else {
-            ImGui::TextDisabled("This action is not ready on the current machine.");
+            ImGui::TextDisabled("%s", Tr(state, UiText::ActionNotReady));
         }
         if (!state.blockers.empty()) {
             ImGui::Spacing();
@@ -3986,7 +4436,7 @@ void RenderRunScreen(ShellState& state) {
             ImGui::PushFont(g_title_font);
         }
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("Run or refresh the current SG action.");
+        ImGui::TextWrapped("%s", Tr(state, UiText::RunTitle));
         ImGui::PopTextWrapPos();
         if (g_title_font != nullptr) {
             ImGui::PopFont();
@@ -3996,7 +4446,7 @@ void RenderRunScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "CURRENT EXECUTION");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::CurrentExecution));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4006,7 +4456,7 @@ void RenderRunScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "ACTION SIGNAL LOG");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionSignalLog));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4020,7 +4470,7 @@ void RenderRunScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "LINKED RESULT");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::LinkedResult));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4030,7 +4480,7 @@ void RenderRunScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "RECENT LOCAL HISTORY");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::RecentLocalHistory));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4053,7 +4503,7 @@ void RenderEvidenceScreen(ShellState& state) {
             ImGui::PushFont(g_title_font);
         }
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("Open the strongest SG evidence first.");
+        ImGui::TextWrapped("%s", Tr(state, UiText::EvidenceTitle));
         ImGui::PopTextWrapPos();
         if (g_title_font != nullptr) {
             ImGui::PopFont();
@@ -4063,7 +4513,7 @@ void RenderEvidenceScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "SELECTED TARGET");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::SelectedTarget));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4073,7 +4523,7 @@ void RenderEvidenceScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "OPEN FIRST PATHS");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::OpenFirstPaths));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4087,7 +4537,7 @@ void RenderEvidenceScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "FOLLOW-UP");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::FollowUp));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4108,7 +4558,7 @@ void RenderFilesScreen(ShellState& state) {
             ImGui::PushFont(g_title_font);
         }
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("Review generated files and reports.");
+        ImGui::TextWrapped("%s", Tr(state, UiText::FilesTitle));
         ImGui::PopTextWrapPos();
         if (g_title_font != nullptr) {
             ImGui::PopFont();
@@ -4118,7 +4568,7 @@ void RenderFilesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "SELECTED OUTPUT");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::SelectedTarget));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4128,7 +4578,7 @@ void RenderFilesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "FILES AND REPORTS");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::GeneratedFiles));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4142,7 +4592,7 @@ void RenderFilesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "COPY / EXPORT");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::CopyExport));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4163,7 +4613,7 @@ void RenderStagesScreen(ShellState& state) {
             ImGui::PushFont(g_title_font);
         }
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("Finish on blockers and manual review.");
+        ImGui::TextWrapped("%s", Tr(state, UiText::StagesTitle));
         ImGui::PopTextWrapPos();
         if (g_title_font != nullptr) {
             ImGui::PopFont();
@@ -4173,7 +4623,7 @@ void RenderStagesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "BLOCKED STAGES");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::BlockedStageStatus));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4185,7 +4635,7 @@ void RenderStagesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "MANUAL REVIEW");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ManualReview));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4199,7 +4649,7 @@ void RenderStagesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "DISPLAY MODE");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::DisplayMode));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4209,7 +4659,7 @@ void RenderStagesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "SHELL AUDIO");
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ShellAudio));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
@@ -4221,6 +4671,9 @@ void RenderStagesScreen(ShellState& state) {
 
 void RenderCurrentScreen(ShellState& state) {
     switch (state.current_screen) {
+    case ShellScreen::Language:
+        RenderLanguageScreen(state);
+        break;
     case ShellScreen::Introduction:
         RenderIntroductionScreen(state);
         break;
@@ -4250,7 +4703,8 @@ void RenderWizardNavigation(ShellState& state) {
     const bool can_go_next = CanAdvanceFromPage(state, state.current_screen);
     const std::string next_label = NextButtonLabel(state);
     const bool source_style_page =
-        state.current_screen == ShellScreen::Introduction
+        state.current_screen == ShellScreen::Language
+        || state.current_screen == ShellScreen::Introduction
         || state.current_screen == ShellScreen::Select
         || state.current_screen == ShellScreen::Review;
 
@@ -4281,7 +4735,7 @@ void RenderWizardNavigation(ShellState& state) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    if (DrawInstallerNavButton("wizard-back", can_go_back ? "BACK" : "QUIT", ImVec2(ShellUi(162.0f), ShellUi(30.0f)), false, true)) {
+    if (DrawInstallerNavButton("wizard-back", can_go_back ? Tr(state, UiText::Back) : Tr(state, UiText::Quit), ImVec2(ShellUi(162.0f), ShellUi(30.0f)), false, true)) {
         RequestBackAction(state);
     }
     ImGui::SameLine();
@@ -4395,7 +4849,7 @@ void RenderSummaryPanel(ShellState& state) {
 
 void RenderEvidencePanel(ShellState& state) {
     if (!state.snapshot.has_value() || state.snapshot->top_paths.empty()) {
-        ImGui::TextDisabled("No file-backed checker evidence is available for the current action.");
+        ImGui::TextDisabled("%s", Tr(state, UiText::NoEvidenceAvailable));
         return;
     }
 
@@ -4531,7 +4985,7 @@ void RenderButtonGuide(ShellState& state) {
     const std::wstring evidence_path = SelectedEvidencePath(state);
     const std::wstring artifact_path = SelectedArtifactPath(state);
     const bool has_report = state.run_snapshot.has_value() || (state.snapshot.has_value() && !state.snapshot->latest_run_links.html_report.empty());
-    const std::string run_primary_label = IsActionStillRunning(state) ? "REFRESH" : NextButtonLabel(state);
+    const std::string run_primary_label = IsActionStillRunning(state) ? RefreshShortLabel(state.language) : NextButtonLabel(state);
     std::vector<GuideItem> guide_items;
     if (state.prompt_visible) {
         guide_items = state.prompt_confirmation
@@ -4540,64 +4994,70 @@ void RenderButtonGuide(ShellState& state) {
                 {"guide-prompt-cancel", "Esc", state.prompt_cancel_label, true, false},
             }
             : std::vector<GuideItem>{
-                {"guide-prompt-ok", "Enter", "OK", true, false},
+                {"guide-prompt-ok", "Enter", state.prompt_accept_label, true, false},
             };
     } else {
     switch (state.current_screen) {
+    case ShellScreen::Language:
+        guide_items = {
+            {"guide-next", "Enter", Tr(state, UiText::Next), true, false},
+            {"guide-back", "Esc", Tr(state, UiText::Quit), true, false},
+        };
+        break;
     case ShellScreen::Introduction:
         guide_items = {
-            {"guide-next", "Enter", "CONTINUE", true, false},
-            {"guide-back", "Esc", "QUIT", true, false},
+            {"guide-next", "Enter", Tr(state, UiText::Continue), true, false},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
         };
         break;
     case ShellScreen::Select:
         guide_items = {
-            {"guide-next", "Enter", "REVIEW", CanAdvanceFromPage(state, state.current_screen), false},
-            {"guide-back", "Esc", "BACK", true, false},
+            {"guide-next", "Enter", Tr(state, UiText::Review), CanAdvanceFromPage(state, state.current_screen), false},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
         };
         break;
     case ShellScreen::Review:
         guide_items = {
-            {"guide-next", "Enter", "RUN", SelectedActionReady(state), false},
-            {"guide-back", "Esc", "BACK", true, false},
+            {"guide-next", "Enter", Tr(state, UiText::Run), SelectedActionReady(state), false},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
         };
         break;
     case ShellScreen::Run:
         guide_items = {
             {"guide-next", "Enter", run_primary_label, IsActionStillRunning(state) || CanAdvanceFromPage(state, state.current_screen), false},
-            {"guide-back", "Esc", "BACK", true, false},
-            {"guide-log", "L", "RAW LOG", state.snapshot.has_value(), false},
-            {"guide-report", "P", "REPORT", has_report, false},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
+            {"guide-log", "L", Tr(state, UiText::RawLog), state.snapshot.has_value(), false},
+            {"guide-report", "P", Tr(state, UiText::Report), has_report, false},
         };
         break;
     case ShellScreen::Evidence:
         guide_items = {
-            {"guide-next", "Enter", "FILES", HasArtifactsReady(state), false},
-            {"guide-back", "Esc", "BACK", true, false},
-            {"guide-open", "O", "OPEN FILE", !evidence_path.empty(), false},
-            {"guide-reveal", "R", "REVEAL", !evidence_path.empty(), false},
-            {"guide-jira", "J", "COPY JIRA", true, true},
+            {"guide-next", "Enter", Tr(state, UiText::Files), HasArtifactsReady(state), false},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
+            {"guide-open", "O", Tr(state, UiText::OpenFile), !evidence_path.empty(), false},
+            {"guide-reveal", "R", Tr(state, UiText::Reveal), !evidence_path.empty(), false},
+            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true},
         };
         break;
     case ShellScreen::Files:
         guide_items = {
-            {"guide-next", "Enter", "STAGES", true, false},
-            {"guide-back", "Esc", "BACK", true, false},
-            {"guide-open", "O", "OPEN FILE", !artifact_path.empty(), false},
-            {"guide-reveal", "R", "REVEAL", !artifact_path.empty(), false},
-            {"guide-report", "P", "REPORT", has_report, false},
-            {"guide-jira", "J", "COPY JIRA", true, true},
-            {"guide-hero", "Q", "COPY QA HERO", true, true},
-            {"guide-handoff", "H", "COPY HANDOFF", true, true},
+            {"guide-next", "Enter", Tr(state, UiText::Stages), true, false},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
+            {"guide-open", "O", Tr(state, UiText::OpenFile), !artifact_path.empty(), false},
+            {"guide-reveal", "R", Tr(state, UiText::Reveal), !artifact_path.empty(), false},
+            {"guide-report", "P", Tr(state, UiText::Report), has_report, false},
+            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true},
+            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true},
+            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true},
         };
         break;
     case ShellScreen::Stages:
         guide_items = {
-            {"guide-next", "Enter", "RETURN", true, false},
-            {"guide-back", "Esc", "BACK", true, false},
-            {"guide-jira", "J", "COPY JIRA", true, true},
-            {"guide-hero", "Q", "COPY QA HERO", true, true},
-            {"guide-handoff", "H", "COPY HANDOFF", true, true},
+            {"guide-next", "Enter", Tr(state, UiText::Return), true, false},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
+            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true},
+            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true},
+            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true},
         };
         break;
     }
@@ -4702,7 +5162,7 @@ void RenderButtonGuide(ShellState& state) {
                     RefreshSnapshot(state);
                     RefreshRunSnapshot(state);
                     RefreshResultPanels(state);
-                    state.status_line = "Refreshed local run state.";
+                    state.status_line = sg_preflight::native_shell::FormatRefreshedRunStateStatus(state.language);
                 } else {
                     SetScreen(state, NextScreen(state, state.current_screen));
                 }
@@ -4747,11 +5207,11 @@ void RenderButtonGuide(ShellState& state) {
         const float x = region_max.x - right_offset - width;
         if (draw_guide_item(*it, x)) {
             if (std::strcmp(it->id, "guide-jira") == 0) {
-                copy_by_key("jira", "Copied Jira note.");
+                copy_by_key("jira", sg_preflight::native_shell::FormatCopiedJiraStatus(state.language));
             } else if (std::strcmp(it->id, "guide-hero") == 0) {
-                copy_by_key("qa_hero", "Copied QA Hero note.");
+                copy_by_key("qa_hero", sg_preflight::native_shell::FormatCopiedQaHeroStatus(state.language));
             } else if (std::strcmp(it->id, "guide-handoff") == 0) {
-                copy_by_key("handoff", "Copied handoff note.");
+                copy_by_key("handoff", sg_preflight::native_shell::FormatCopiedHandoffStatus(state.language));
             }
         }
         right_offset += width + item_gap;
@@ -4811,6 +5271,17 @@ void HandleShellHotkeys(ShellState& state) {
 
     if (!ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
         switch (state.current_screen) {
+        case ShellScreen::Language:
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
+                MoveLanguageSelection(state, -1, 0);
+            } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+                MoveLanguageSelection(state, 1, 0);
+            } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)) {
+                MoveLanguageSelection(state, 0, -1);
+            } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
+                MoveLanguageSelection(state, 0, 1);
+            }
+            break;
         case ShellScreen::Run:
             if (ImGui::IsKeyPressed(ImGuiKey_L, false) && state.snapshot.has_value()) {
                 OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->log_path));
@@ -4844,7 +5315,7 @@ void HandleShellHotkeys(ShellState& state) {
             if (ImGui::IsKeyPressed(ImGuiKey_J, false)) {
                 for (const CopyItem& item : CombinedCopyItems(state)) {
                     if (item.key == "jira" && !item.text.empty() && CopyText(sg_preflight::native_shell::ToWide(item.text))) {
-                        state.status_line = "Copied Jira note.";
+                        state.status_line = sg_preflight::native_shell::FormatCopiedJiraStatus(state.language);
                         break;
                     }
                 }
@@ -4883,9 +5354,9 @@ void HandleShellHotkeys(ShellState& state) {
                     copy_hero ? "qa_hero" :
                     "handoff";
                 const std::string status =
-                    wanted_key == "jira" ? "Copied Jira note." :
-                    wanted_key == "qa_hero" ? "Copied QA Hero note." :
-                    "Copied handoff note.";
+                    wanted_key == "jira" ? sg_preflight::native_shell::FormatCopiedJiraStatus(state.language) :
+                    wanted_key == "qa_hero" ? sg_preflight::native_shell::FormatCopiedQaHeroStatus(state.language) :
+                    sg_preflight::native_shell::FormatCopiedHandoffStatus(state.language);
                 for (const CopyItem& item : CombinedCopyItems(state)) {
                     if (item.key == wanted_key && !item.text.empty() && CopyText(sg_preflight::native_shell::ToWide(item.text))) {
                         state.status_line = status;
@@ -4912,7 +5383,7 @@ void HandleShellHotkeys(ShellState& state) {
         RefreshSnapshot(state);
         RefreshRunSnapshot(state);
         RefreshResultPanels(state);
-        state.status_line = "Refreshed local run state.";
+        state.status_line = sg_preflight::native_shell::FormatRefreshedRunStateStatus(state.language);
         return;
     }
 
@@ -5082,6 +5553,7 @@ void RenderShell(ShellState& state) {
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ShellContentAlpha(state));
 
     switch (state.current_screen) {
+    case ShellScreen::Language:
     case ShellScreen::Introduction:
     case ShellScreen::Select:
     case ShellScreen::Review:
@@ -5170,27 +5642,41 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     LoadShellFonts(io, std::filesystem::path(backend.workspace_root));
     ImGui::StyleColorsDark();
     ApplyStyle();
+
+    ImGui_ImplWin32_Init(window_handle);
+    ImGui_ImplDX12_InitInfo init_info{};
+    init_info.Device = g_device;
+    init_info.CommandQueue = g_command_queue;
+    init_info.NumFramesInFlight = static_cast<int>(kFrameCount);
+    init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+    init_info.DSVFormat = DXGI_FORMAT_UNKNOWN;
+    init_info.SrvDescriptorHeap = g_srv_descriptor_heap;
+    init_info.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu_handle) {
+        g_srv_descriptor_allocator.Alloc(out_cpu_handle, out_gpu_handle);
+    };
+    init_info.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) {
+        g_srv_descriptor_allocator.Free(cpu_handle, gpu_handle);
+    };
+    ImGui_ImplDX12_Init(&init_info);
+
     LoadShellAssets(std::filesystem::path(backend.workspace_root));
     LoadShellAudio(std::filesystem::path(backend.workspace_root));
     g_shell_appear_time = ImGui::GetTime();
     PlayCue(UiCue::Window);
 
-    ImGui_ImplWin32_Init(window_handle);
-    ImGui_ImplDX11_Init(g_device, g_device_context);
-
     ShellState state;
     g_live_shell_state = &state;
     state.backend = backend;
     if (g_shell_assets.loaded) {
-        state.status_line = "Loaded real UnleashedRecomp DDS chrome.";
+        state.status_line = sg_preflight::native_shell::FormatLoadedChromeStatus(state.language);
     } else if (g_shell_assets.attempted && !g_shell_assets.error.empty()) {
-        state.status_line = "Fallback chrome active: " + g_shell_assets.error;
+        state.status_line = sg_preflight::native_shell::FormatFallbackChromeStatus(state.language, g_shell_assets.error);
     }
     state.status_line += use_fullscreen
         ? " Display: native fullscreen."
         : " Display: windowed " + std::to_string(requested_width) + "x" + std::to_string(requested_height) + ".";
     if (g_using_warp) {
-        state.status_line += " Renderer fallback: D3D11 WARP.";
+        state.status_line += " Renderer fallback: D3D12 WARP.";
     }
     if (g_shell_audio.available) {
         state.status_line += " Shell audio is ready; toggle music in Stages.";
@@ -5217,10 +5703,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         if (g_request_close_prompt && !state.exit_transition_active && !state.prompt_visible) {
             OpenPrompt(
                 state,
-                "QUIT SG PREFLIGHT",
+                Tr(state, UiText::PromptQuitTitle),
                 IsActionStillRunning(state)
-                    ? "Close the shell now? The current SG action will keep running in the background."
-                    : "Close SG Preflight now?",
+                    ? Tr(state, UiText::PromptQuitRunningMessage)
+                    : Tr(state, UiText::PromptQuitMessage),
                 true,
                 true,
                 false
@@ -5246,23 +5732,48 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             );
         }
 
-        ImGui_ImplDX11_NewFrame();
+        ImGui_ImplDX12_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
         RenderShell(state);
 
         ImGui::Render();
+        FrameContext* frame_context = WaitForNextFrameContext();
+        const UINT back_buffer_index = g_swap_chain->GetCurrentBackBufferIndex();
+        frame_context->allocator->Reset();
+
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = g_main_render_targets[back_buffer_index];
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        g_command_list->Reset(frame_context->allocator, nullptr);
+        g_command_list->ResourceBarrier(1, &barrier);
+
         const float clear_color[4] = {0.03f, 0.05f, 0.06f, 1.0f};
-        g_device_context->OMSetRenderTargets(1, &g_render_target, nullptr);
-        g_device_context->ClearRenderTargetView(g_render_target, clear_color);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        g_command_list->ClearRenderTargetView(g_main_render_target_descriptors[back_buffer_index], clear_color, 0, nullptr);
+        g_command_list->OMSetRenderTargets(1, &g_main_render_target_descriptors[back_buffer_index], FALSE, nullptr);
+        g_command_list->SetDescriptorHeaps(1, &g_srv_descriptor_heap);
+        ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), g_command_list);
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+        g_command_list->ResourceBarrier(1, &barrier);
+        g_command_list->Close();
+
+        ID3D12CommandList* command_lists[] = { g_command_list };
+        g_command_queue->ExecuteCommandLists(1, command_lists);
+        g_command_queue->Signal(g_fence, ++g_fence_last_signaled_value);
+        frame_context->fence_value = g_fence_last_signaled_value;
         g_swap_chain->Present(1, 0);
+        ++g_frame_index;
     }
 
     g_live_shell_state = nullptr;
 
-    ImGui_ImplDX11_Shutdown();
+    WaitForPendingOperations();
+    ImGui_ImplDX12_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
 
