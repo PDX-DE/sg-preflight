@@ -79,6 +79,8 @@ This tool is intentionally aimed at pain that is both:
   - when `UnleashedRecompResources` is available locally, the native shell now loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures at runtime instead of only drawing hand-made approximations; fonts still use direct OTF loading for now instead of the upstream prebuilt atlas snapshot
   - the native shell now starts borderless fullscreen by default, uses a direct installer-style wizard flow (`Introduction`, `Select`, `Review`, `Run`, `Evidence`, `Files`, `Stages`) instead of the older dashboard-screen model, and adds local WAV-based UI cues plus an optional installer-music toggle in `Stages`
   - the native shell now keeps the Unleashed-derived visual language abstract: no character/cast art in the operator flow, lighter chrome/static overlays, and screen-specific layouts so the shell reads more like step-by-step QA pages than one noisy control wall
+  - the native shell now ports more of the actual `installer_wizard.cpp` draw layer directly: top and bottom scanline-bar treatment, installer-style borders, bottom navigation button containers, page-specific button-guide behavior, and message-prompt/modal rhythm
+  - `scripts\build_native_shell.ps1` writes `build\latest_native_shell_path.txt`, and `scripts\package_native_shell_bundle.ps1` stages a copyable bundled shell for another-PC testing instead of assuming the raw `.exe` is enough by itself
 
 ## Quick start
 
@@ -149,6 +151,12 @@ Configure and build the native shell scaffold:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build_native_shell.ps1
+```
+
+Stage a portable native-shell bundle for another PC:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package_native_shell_bundle.ps1 -BuildDir build/native-installer-layer -BundleDir build/native-installer-layer-bundle
 ```
 
 Check the latest built native-shell path:

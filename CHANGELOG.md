@@ -8,6 +8,11 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Timeline
 
+#### 2026-04-18
+
+- working tree: the native C++ shell now ports more of the real `installer_wizard.cpp` draw layer directly, including top/bottom scanline-bar treatment, installer-style borders, bottom navigation button containers, page-specific button-guide behavior, and message-prompt/modal rhythm
+- working tree: the current installer-layer build is smoke-verified at `build/native-installer-layer/Release/sg_preflight_native_shell.exe`, and the refreshed another-PC bundle is staged at `build/native-installer-layer-bundle/sg_preflight_native_shell.exe` with `build/latest_native_shell_path.txt` updated to that bundled exe
+
 #### 2026-04-17
 
 - `18f3d05` `fix(ui): refresh generated report styling`
