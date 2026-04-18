@@ -14,9 +14,11 @@
 #include <cstring>
 #include <cwctype>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 #include "imgui.h"
@@ -147,9 +149,31 @@ struct ShellState {
     std::string prompt_accept_label = "YES";
     std::string prompt_cancel_label = "NO";
     bool request_exit = false;
+    bool initial_state_loading = true;
 };
 
 ShellState* g_live_shell_state = nullptr;
+
+struct InitialShellLoadResult {
+    std::vector<ProfileItem> profiles;
+    std::vector<ActionItem> actions;
+    std::vector<BlockerItem> blockers;
+    std::vector<ManualCard> manual_cards;
+    std::vector<RecentActionItem> recent_actions;
+    std::vector<RecentRunItem> recent_runs;
+    std::optional<ActionSnapshot> snapshot;
+    std::optional<RunSnapshot> run_snapshot;
+    int selected_profile_index = 0;
+    std::string selected_action_id;
+    std::string current_run_id;
+    std::string current_result_run_id;
+    std::string error;
+};
+
+std::mutex g_initial_load_mutex;
+std::optional<InitialShellLoadResult> g_initial_load_result;
+std::jthread g_initial_load_thread;
+bool g_initial_load_started = false;
 
 struct ArtifactChoice {
     std::string section;
@@ -173,6 +197,10 @@ void RenderSummaryPanel(ShellState& state);
 void RenderEvidencePanel(ShellState& state);
 void RenderArtifactsPanel(ShellState& state);
 void RenderBlockersPanel(ShellState& state);
+void ClampSelections(ShellState& state);
+void RenderLocalStatePanel(ShellState& state, const char* id, const char* title, float height, const std::string& loading_copy);
+void StartInitialShellLoad(ShellState& state);
+void PollInitialShellLoad(ShellState& state);
 
 constexpr float kPanelGrid = 9.0f;
 constexpr float kPanelHeaderHeight = 34.0f;
@@ -1391,6 +1419,103 @@ std::string ShortActionLabel(const std::string& action_id) {
     return "ACTION";
 }
 
+InitialShellLoadResult BuildInitialShellLoad(const BackendConfig& backend) {
+    InitialShellLoadResult result;
+    result.profiles = sg_preflight::native_shell::LoadProfiles(backend);
+    if (result.profiles.empty()) {
+        return result;
+    }
+
+    result.selected_profile_index = 0;
+    const ProfileItem& profile = result.profiles[0];
+    result.selected_action_id = profile.recommended_action_id;
+    result.actions = sg_preflight::native_shell::LoadActions(backend, profile.profile_id);
+    result.blockers = sg_preflight::native_shell::LoadBlockers(backend, profile.profile_id);
+    result.manual_cards = sg_preflight::native_shell::LoadManualCards(backend, profile.profile_id);
+    if (result.selected_action_id.empty()) {
+        result.selected_action_id = result.actions.empty() ? "daily_live_matrix" : result.actions.front().action_id;
+    }
+
+    const std::string recent_actions_profile = result.selected_action_id == "daily_live_matrix"
+        ? std::string{}
+        : profile.profile_id;
+    result.recent_actions = sg_preflight::native_shell::LoadRecentActions(backend, recent_actions_profile, 18);
+    result.recent_runs = sg_preflight::native_shell::LoadRecentRuns(backend, profile.profile_id, 18);
+
+    if (!result.recent_actions.empty()) {
+        result.current_run_id = result.recent_actions.front().run_id;
+        result.snapshot = sg_preflight::native_shell::LoadSnapshot(backend, result.current_run_id);
+        if (result.snapshot.has_value() && !result.snapshot->linked_run_id.empty()) {
+            result.current_result_run_id = result.snapshot->linked_run_id;
+        }
+    }
+
+    if (result.current_result_run_id.empty() && !result.recent_runs.empty()) {
+        result.current_result_run_id = result.recent_runs.front().run_id;
+    }
+    if (!result.current_result_run_id.empty()) {
+        result.run_snapshot = sg_preflight::native_shell::LoadRunSnapshot(backend, result.current_result_run_id);
+    }
+
+    return result;
+}
+
+void StartInitialShellLoad(ShellState& state) {
+    if (g_initial_load_started) {
+        return;
+    }
+
+    g_initial_load_started = true;
+    g_initial_load_thread = std::jthread([backend = state.backend]() {
+        InitialShellLoadResult result;
+        try {
+            result = BuildInitialShellLoad(backend);
+        } catch (const std::exception& error) {
+            result.error = error.what();
+        }
+
+        std::lock_guard<std::mutex> lock(g_initial_load_mutex);
+        g_initial_load_result = std::move(result);
+    });
+}
+
+void PollInitialShellLoad(ShellState& state) {
+    std::optional<InitialShellLoadResult> pending;
+    {
+        std::lock_guard<std::mutex> lock(g_initial_load_mutex);
+        if (!g_initial_load_result.has_value()) {
+            return;
+        }
+        pending = std::move(g_initial_load_result);
+        g_initial_load_result.reset();
+    }
+
+    state.initial_state_loading = false;
+    state.profiles = std::move(pending->profiles);
+    state.actions = std::move(pending->actions);
+    state.blockers = std::move(pending->blockers);
+    state.manual_cards = std::move(pending->manual_cards);
+    state.recent_actions = std::move(pending->recent_actions);
+    state.recent_runs = std::move(pending->recent_runs);
+    state.snapshot = std::move(pending->snapshot);
+    state.run_snapshot = std::move(pending->run_snapshot);
+    state.selected_profile_index = pending->selected_profile_index;
+    state.selected_action_id = std::move(pending->selected_action_id);
+    state.current_run_id = std::move(pending->current_run_id);
+    state.current_result_run_id = std::move(pending->current_result_run_id);
+    state.last_error = std::move(pending->error);
+    ClampSelections(state);
+
+    if (!state.last_error.empty()) {
+        state.status_line = "Initial SG desktop-state load failed.";
+        PlayCue(UiCue::Error);
+    } else if (state.profiles.empty()) {
+        state.status_line = "No ready SG live profiles were discovered in the current workspace.";
+    } else {
+        state.status_line = "Loaded SG desktop state for " + CurrentProfileId(state) + ".";
+    }
+}
+
 void ClampSelections(ShellState& state) {
     const size_t top_paths = state.snapshot.has_value() ? state.snapshot->top_paths.size() : 0U;
     size_t artifacts = 0U;
@@ -2534,6 +2659,38 @@ void DrawInstallerHero(ImVec2 top_left, ImVec2 size, float alpha, bool animated 
     }
 }
 
+void RenderLocalStatePanel(
+    ShellState& state,
+    const char* id,
+    const char* title,
+    float height,
+    const std::string& loading_copy
+) {
+    if (!BeginDecoratedPanel(id, title, ImVec2(ImGui::GetContentRegionAvail().x, height), true)) {
+        EndDecoratedPanel();
+        return;
+    }
+
+    InlineSectionLabel(state.initial_state_loading ? "LOCAL STATE" : "LOCAL STATE READY");
+    ImGui::TextWrapped("%s", loading_copy.c_str());
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s", state.status_line.c_str());
+
+    if (state.initial_state_loading) {
+        ImGui::Spacing();
+        const float pulse = 0.18f + 0.22f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.4f));
+        DrawProgressMeter(pulse, "CONNECTING TO PYTHON BACKEND");
+        ImGui::TextDisabled("Profiles, SG action metadata, blockers, and recent evidence are loading in the background.");
+    }
+
+    if (!state.last_error.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", state.last_error.c_str());
+    }
+
+    EndDecoratedPanel();
+}
+
 void RenderProfilesPanel(ShellState& state) {
     if (state.profiles.empty()) {
         ImGui::TextDisabled("No ready live profiles were discovered.");
@@ -2855,52 +3012,110 @@ void RenderWizardFlow(ShellState& state) {
 void RenderIntroductionScreen(ShellState& state) {
     BeginScreenTransition(state);
     InlineSectionLabel("Step 1 / 7");
-    ImGui::TextWrapped("This shell follows a real wizard flow now: choose the SG slice, review the local readiness state, run the action, then move through evidence, files, and blocked/manual stages in order.");
+    ImGui::TextWrapped("Use the installer rhythm without pretending the product is an installer: select the SG slice, confirm readiness, run once, then read evidence before reports and BMW-blocked follow-up.");
     ImGui::Spacing();
-    InlineSectionLabel("What This Covers");
-    ImGui::BulletText("Deterministic SG preflight packs plus the wrapped SG checker stack.");
-    ImGui::BulletText("Structured checker evidence with file-backed Open First guidance.");
-    ImGui::BulletText("Files, exports, and copy-ready handoff text after the run is understood.");
-    ImGui::BulletText("Blocked/manual BMW-side stages without hiding missing access.");
-    ImGui::Spacing();
-    InlineSectionLabel("Current Operator Context");
-    if (!state.profiles.empty()) {
+
+    const float gap = ShellUi(14.0f);
+    const float full_width = ImGui::GetContentRegionAvail().x;
+    const float left_width = std::max(ShellUi(250.0f), (full_width - gap) * 0.52f);
+    const float right_width = std::max(ShellUi(210.0f), full_width - gap - left_width);
+    const float panel_height = ShellUi(246.0f);
+
+    if (BeginDecoratedPanel("intro-mission-panel", "OPERATOR FLOW", ImVec2(left_width, panel_height), true)) {
+        InlineSectionLabel("What This Shell Does");
+        ImGui::BulletText("Runs the shared SG Python preflight and checker stack.");
+        ImGui::BulletText("Pins open-first evidence before broader file/report browsing.");
+        ImGui::BulletText("Keeps BMW-side blockers explicit instead of faking readiness.");
+        ImGui::Spacing();
+        InlineSectionLabel("Native Layer");
+        ImGui::TextWrapped("C++ shell, same backend contract, same persisted SG evidence. No validation logic was forked into the native layer.");
+    }
+    EndDecoratedPanel();
+
+    ImGui::SameLine(0.0f, gap);
+    if (!BeginDecoratedPanel("intro-context-panel", "CURRENT DEFAULT", ImVec2(right_width, panel_height), false)) {
+        EndDecoratedPanel();
+        EndScreenTransition();
+        return;
+    }
+
+    if (state.initial_state_loading) {
+        InlineSectionLabel("Loading");
+        ImGui::TextWrapped("The shell is hydrating the shared SG desktop state now.");
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", state.status_line.c_str());
+    } else if (!state.profiles.empty()) {
         const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
         ImGui::Text("%s", profile.profile_id.c_str());
         ImGui::SameLine();
         ImGui::TextDisabled("%s", profile.label.c_str());
         ImGui::TextWrapped("%s", profile.summary.c_str());
         ImGui::Spacing();
-        ImGui::TextDisabled("Recommended path: %s", ShortActionLabel(profile.recommended_action_id).c_str());
+        InlineSectionLabel("Recommended Path");
+        ImGui::Text("Action: %s", ShortActionLabel(profile.recommended_action_id).c_str());
+        ImGui::TextDisabled("%s", state.status_line.c_str());
     } else {
+        InlineSectionLabel("Workspace State");
         ImGui::TextDisabled("No ready live profiles were discovered locally.");
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", state.status_line.c_str());
     }
-    ImGui::Spacing();
-    ImGui::TextDisabled("%s", state.status_line.c_str());
+
+    EndDecoratedPanel();
     EndScreenTransition();
 }
 
 void RenderSelectScreen(ShellState& state) {
     BeginScreenTransition(state);
     InlineSectionLabel("Step 2 / 7");
-    ImGui::TextWrapped("Choose the live slice and the SG action path first. This page should stay about selecting inputs, not result drilling.");
+    ImGui::TextWrapped("Select the live slice and the SG path here. This screen should feel like a real choice page, not like a report browser.");
     ImGui::Spacing();
-    InlineSectionLabel("Selected Live Slice");
+
+    if (state.initial_state_loading) {
+        RenderLocalStatePanel(
+            state,
+            "select-loading-panel",
+            "LOCAL STATE",
+            ShellUi(228.0f),
+            "The native shell now paints first and hydrates the SG backend in the background so startup stops presenting a blank white hung window."
+        );
+        EndScreenTransition();
+        return;
+    }
+
+    const float gap = ShellUi(14.0f);
+    const float full_width = ImGui::GetContentRegionAvail().x;
+    const float left_width = std::max(ShellUi(252.0f), (full_width - gap) * 0.42f);
+    const float right_width = std::max(ShellUi(228.0f), full_width - gap - left_width);
+    const float panel_height = std::max(ShellUi(260.0f), ImGui::GetContentRegionAvail().y);
+
+    if (BeginDecoratedPanel("select-slices-panel", "LIVE SLICES", ImVec2(left_width, panel_height), false)) {
+        RenderProfilesPanel(state);
+    }
+    EndDecoratedPanel();
+
+    ImGui::SameLine(0.0f, gap);
+    if (!BeginDecoratedPanel("select-actions-panel", "ACTION PATH", ImVec2(right_width, panel_height), true)) {
+        EndDecoratedPanel();
+        EndScreenTransition();
+        return;
+    }
+
     if (!state.profiles.empty()) {
         const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
+        InlineSectionLabel("Selected Slice");
         ImGui::Text("%s", profile.profile_id.c_str());
         ImGui::SameLine();
         ImGui::TextDisabled("%s", profile.label.c_str());
         ImGui::TextWrapped("%s", profile.summary.c_str());
-    } else {
-        ImGui::TextDisabled("No ready live profiles were discovered.");
+        ImGui::Spacing();
     }
-    ImGui::Spacing();
-    InlineSectionLabel("SG Action Path");
+
     RenderActionTabs(state);
     ImGui::Spacing();
     const ActionItem* action = FindSelectedAction(state);
     if (action != nullptr) {
+        InlineSectionLabel("Readiness");
         ImGui::TextWrapped("%s", action->description.c_str());
         if (!action->command_preview.empty()) {
             ImGui::Spacing();
@@ -2911,62 +3126,84 @@ void RenderSelectScreen(ShellState& state) {
             ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", action->blocker_message.c_str());
         }
     } else if (CurrentActionId(state) == "daily_live_matrix") {
+        InlineSectionLabel("Fleet Mode");
         ImGui::TextWrapped("Run the recommended SG QA stack across every ready live profile and collect one aggregated Open First surface.");
         ImGui::Spacing();
         ImGui::TextDisabled("python -m sg_preflight run-action daily_live_matrix");
     } else {
         ImGui::TextDisabled("No action metadata is available for the current selection.");
     }
+
+    EndDecoratedPanel();
     EndScreenTransition();
 }
 
 void RenderReviewScreen(ShellState& state) {
     BeginScreenTransition(state);
     InlineSectionLabel("Step 3 / 7");
-    ImGui::TextWrapped("Confirm the chosen SG path before running it. This mirrors the installer check step: selection is done, readiness is explicit, and blockers stay visible before execution.");
+    ImGui::TextWrapped("This is the installer-style confirmation step: the selection should already be done, and this page should only answer whether the chosen local run is ready and what stays blocked.");
     ImGui::Spacing();
-    InlineSectionLabel("Selected Run");
-    if (!state.profiles.empty()) {
-        const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
-        ImGui::Text("%s", profile.profile_id.c_str());
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", profile.label.c_str());
+
+    if (state.initial_state_loading) {
+        RenderLocalStatePanel(
+            state,
+            "review-loading-panel",
+            "LOCAL STATE",
+            ShellUi(228.0f),
+            "The confirmation step waits for the same Python-backed SG desktop state as the browser/operator flow."
+        );
+        EndScreenTransition();
+        return;
     }
-    ImGui::Text("Action: %s", ShortActionLabel(CurrentActionId(state)).c_str());
+
     const ActionItem* action = FindSelectedAction(state);
-    if (action != nullptr) {
-        ImGui::TextWrapped("%s", action->description.c_str());
-    }
-    ImGui::Spacing();
-    InlineSectionLabel("Command Preview");
-    if (action != nullptr && !action->command_preview.empty()) {
-        ImGui::TextWrapped("%s", action->command_preview.c_str());
-    } else if (CurrentActionId(state) == "daily_live_matrix") {
-        ImGui::TextWrapped("python -m sg_preflight run-action daily_live_matrix");
-    } else {
-        ImGui::TextDisabled("No command preview is available for this action.");
-    }
-    ImGui::Spacing();
-    InlineSectionLabel("Readiness");
-    if (SelectedActionReady(state)) {
-        ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "This local SG action is ready to run.");
-    } else if (action != nullptr && !action->blocker_message.empty()) {
-        ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", action->blocker_message.c_str());
-    } else {
-        ImGui::TextDisabled("This action is not ready on the current machine.");
-    }
-    ImGui::Spacing();
-    InlineSectionLabel("Known Blockers");
-    for (const BlockerItem& item : state.blockers) {
-        ImGui::Text("%s [%s]", item.label.c_str(), item.state.c_str());
-        ImGui::TextDisabled("%s", item.summary.c_str());
-        if (!item.blockers.empty()) {
-            ImGui::BulletText("%s", item.blockers.front().c_str());
-        }
-        if (&item != &state.blockers.back()) {
+    const float gap = ShellUi(14.0f);
+    const float full_width = ImGui::GetContentRegionAvail().x;
+    const float top_width = (full_width - gap) * 0.5f;
+    const float top_height = ShellUi(158.0f);
+
+    if (BeginDecoratedPanel("review-target-panel", "RUN TARGET", ImVec2(top_width, top_height), false)) {
+        if (!state.profiles.empty()) {
+            const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
+            ImGui::Text("%s", profile.profile_id.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", profile.label.c_str());
+            ImGui::TextWrapped("%s", profile.summary.c_str());
             ImGui::Spacing();
         }
+        ImGui::Text("Action: %s", ShortActionLabel(CurrentActionId(state)).c_str());
+        if (action != nullptr) {
+            ImGui::TextWrapped("%s", action->description.c_str());
+        }
     }
+    EndDecoratedPanel();
+
+    ImGui::SameLine(0.0f, gap);
+    if (BeginDecoratedPanel("review-ready-panel", "READY / BLOCKED", ImVec2(full_width - gap - top_width, top_height), true)) {
+        if (SelectedActionReady(state)) {
+            ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "This local SG action is ready to run.");
+        } else if (action != nullptr && !action->blocker_message.empty()) {
+            ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", action->blocker_message.c_str());
+        } else {
+            ImGui::TextDisabled("This action is not ready on the current machine.");
+        }
+        ImGui::Spacing();
+        InlineSectionLabel("Command Preview");
+        if (action != nullptr && !action->command_preview.empty()) {
+            ImGui::TextWrapped("%s", action->command_preview.c_str());
+        } else if (CurrentActionId(state) == "daily_live_matrix") {
+            ImGui::TextWrapped("python -m sg_preflight run-action daily_live_matrix");
+        } else {
+            ImGui::TextDisabled("No command preview is available for this action.");
+        }
+    }
+    EndDecoratedPanel();
+
+    ImGui::Spacing();
+    if (BeginDecoratedPanel("review-blockers-panel", "BLOCKERS TO CARRY FORWARD", ImVec2(full_width, std::max(ShellUi(118.0f), ImGui::GetContentRegionAvail().y)), true)) {
+        RenderBlockersPanel(state);
+    }
+    EndDecoratedPanel();
     EndScreenTransition();
 }
 
@@ -3660,10 +3897,6 @@ void RenderShell(ShellState& state) {
         break;
     case ShellScreen::Select:
     case ShellScreen::Review:
-        if (BeginShellPanelAt("profiles-panel", "PROFILE SOURCE", 22.0f, 402.0f, 282.0f, 266.0f)) {
-            RenderProfilesPanel(state);
-        }
-        EndDecoratedPanel();
         if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), kInstallerContainerX, kInstallerContainerY, 757.0f, 432.0f, false)) {
             RenderCurrentScreen(state);
             RenderWizardNavigation(state);
@@ -3788,19 +4021,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     } else if (g_shell_audio.attempted && !g_shell_audio.last_error.empty()) {
         state.status_line += " Audio fallback active: " + g_shell_audio.last_error;
     }
-    RefreshProfiles(state);
-    if (!state.profiles.empty()) {
-        state.selected_action_id = state.profiles[static_cast<size_t>(state.selected_profile_index)].recommended_action_id;
-        RefreshProfilePanels(state);
-        if (!state.recent_actions.empty()) {
-            state.current_run_id = state.recent_actions.front().run_id;
-            RefreshSnapshot(state);
-        }
-        if (!state.recent_runs.empty()) {
-            state.current_result_run_id = state.recent_runs.front().run_id;
-            RefreshRunSnapshot(state);
-        }
-    }
+    state.status_line += " Loading SG desktop state in the background.";
+    StartInitialShellLoad(state);
 
     bool done = false;
     while (!done) {
@@ -3834,6 +4056,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             done = true;
             break;
         }
+
+        PollInitialShellLoad(state);
 
         if (!state.current_run_id.empty() && ImGui::GetTime() >= state.next_poll_at) {
             RefreshSnapshot(state);
