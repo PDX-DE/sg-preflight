@@ -150,6 +150,8 @@ struct ShellAssets {
     DdsTextureHandle general_window;
     DdsTextureHandle select;
     DdsTextureHandle light;
+    DdsTextureHandle controller_icons;
+    DdsTextureHandle kbm_icons;
     DdsTextureHandle options_static;
     DdsTextureHandle options_static_flash;
     DdsTextureHandle installer_panel;
@@ -250,6 +252,13 @@ struct ShellState {
 };
 
 ShellState* g_live_shell_state = nullptr;
+
+enum class GuideInputMode {
+    Keyboard,
+    Mouse,
+};
+
+GuideInputMode g_guide_input_mode = GuideInputMode::Keyboard;
 
 struct InitialShellLoadResult {
     std::vector<ProfileItem> profiles;
@@ -822,6 +831,8 @@ void ReleaseShellAssets() {
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.general_window);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.select);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.light);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.controller_icons);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.kbm_icons);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static_flash);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.installer_panel);
@@ -889,6 +900,8 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         && load_required_texture(std::filesystem::path("images") / "options_menu" / "options_static_flash.dds", g_shell_assets.options_static_flash)
         && load_required_texture(std::filesystem::path("images") / "installer" / "miles_electric_icon.dds", g_shell_assets.miles_electric_icon)
     ) {
+        load_optional_texture(std::filesystem::path("images") / "common" / "controller.dds", g_shell_assets.controller_icons);
+        load_optional_texture(std::filesystem::path("images") / "common" / "kbm.dds", g_shell_assets.kbm_icons);
         load_optional_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", g_shell_assets.arrow_circle);
         load_optional_texture(std::filesystem::path("images") / "installer" / "pulse_install.dds", g_shell_assets.pulse_install);
         for (size_t index = 0; index < g_shell_assets.install_images.size(); ++index) {
@@ -1548,6 +1561,31 @@ RECT PrimaryMonitorRect() {
     return fallback;
 }
 
+UINT SystemDpi() {
+    using GetDpiForSystemFn = UINT(WINAPI*)();
+    const HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 != nullptr) {
+        const auto get_dpi_for_system = reinterpret_cast<GetDpiForSystemFn>(GetProcAddress(user32, "GetDpiForSystem"));
+        if (get_dpi_for_system != nullptr) {
+            return get_dpi_for_system();
+        }
+    }
+    return 96U;
+}
+
+void AdjustWindowRectForDpi(RECT& rect, DWORD style, UINT dpi) {
+    using AdjustWindowRectExForDpiFn = BOOL(WINAPI*)(LPRECT, DWORD, BOOL, DWORD, UINT);
+    const HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32 != nullptr) {
+        const auto adjust_for_dpi = reinterpret_cast<AdjustWindowRectExForDpiFn>(GetProcAddress(user32, "AdjustWindowRectExForDpi"));
+        if (adjust_for_dpi != nullptr) {
+            adjust_for_dpi(&rect, style, FALSE, 0, dpi);
+            return;
+        }
+    }
+    AdjustWindowRect(&rect, style, FALSE);
+}
+
 bool CreateDeviceD3D(HWND window_handle) {
     DXGI_SWAP_CHAIN_DESC1 swap_chain_desc{};
     swap_chain_desc.BufferCount = kFrameCount;
@@ -1758,6 +1796,19 @@ LRESULT WINAPI WndProc(HWND window_handle, UINT message, WPARAM w_param, LPARAM 
             g_swap_chain->GetDesc1(&description);
             g_swap_chain->ResizeBuffers(0, static_cast<UINT>(LOWORD(l_param)), static_cast<UINT>(HIWORD(l_param)), description.Format, description.Flags);
             CreateRenderTarget();
+        }
+        return 0;
+    case WM_DPICHANGED:
+        if (const RECT* suggested = reinterpret_cast<const RECT*>(l_param)) {
+            SetWindowPos(
+                window_handle,
+                nullptr,
+                suggested->left,
+                suggested->top,
+                suggested->right - suggested->left,
+                suggested->bottom - suggested->top,
+                SWP_NOZORDER | SWP_NOACTIVATE
+            );
         }
         return 0;
     case WM_SYSCOMMAND:
@@ -2522,6 +2573,36 @@ void PlayHoverCueIfNeeded(bool hovered, bool enabled = true) {
 
     if (g_last_hovered_control == item_id) {
         g_last_hovered_control = 0;
+    }
+}
+
+void UpdateGuideInputMode() {
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool keyboard_active =
+        ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_UpArrow, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_DownArrow, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_O, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_R, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_P, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_L, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_J, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Q, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_H, false);
+    const bool mouse_active =
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left, false) ||
+        ImGui::IsMouseClicked(ImGuiMouseButton_Right, false) ||
+        std::abs(io.MouseDelta.x) > 0.0f ||
+        std::abs(io.MouseDelta.y) > 0.0f;
+
+    if (mouse_active) {
+        g_guide_input_mode = GuideInputMode::Mouse;
+    } else if (keyboard_active) {
+        g_guide_input_mode = GuideInputMode::Keyboard;
     }
 }
 
@@ -4200,7 +4281,7 @@ void RenderIntroductionScreen(ShellState& state) {
     const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
 
     if (BeginCanvasOverlayRegion("intro-description", layout.description_content_min, layout.description_content_max)) {
-        const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        const float wrap_x = ImGui::GetCursorPosX() + std::min(ImGui::GetContentRegionAvail().x, ShellUi(348.0f));
         if (g_title_font != nullptr) {
             ImGui::PushFont(g_title_font);
         }
@@ -4211,10 +4292,10 @@ void RenderIntroductionScreen(ShellState& state) {
             ImGui::PopFont();
         }
 
-        ImGui::Spacing();
+        ImGui::Dummy(ImVec2(0.0f, ShellUi(8.0f)));
         ImGui::PushTextWrapPos(wrap_x);
         ImGui::TextWrapped("%s", Tr(state, UiText::IntroBodyPrimary));
-        ImGui::Spacing();
+        ImGui::Dummy(ImVec2(0.0f, ShellUi(10.0f)));
         ImGui::TextWrapped("%s", Tr(state, UiText::IntroBodySecondary));
         ImGui::PopTextWrapPos();
     }
@@ -4245,7 +4326,6 @@ void RenderIntroductionScreen(ShellState& state) {
             ImGui::TextWrapped("%s", profile.summary.c_str());
             ImGui::Spacing();
             ImGui::Text("%s", sg_preflight::native_shell::FormatActionLabel(state.language, ShortActionLabel(profile.recommended_action_id)).c_str());
-            ImGui::TextDisabled("%s", state.status_line.c_str());
         } else {
             ImGui::TextDisabled("%s", Tr(state, UiText::NoProfilesDiscovered));
             ImGui::Spacing();
@@ -5001,6 +5081,8 @@ void RenderBlockersPanel(ShellState& state) {
 }
 
 void RenderButtonGuide(ShellState& state) {
+    UpdateGuideInputMode();
+
     const std::vector<CopyItem> copy_items = CombinedCopyItems(state);
     const auto copy_by_key = [&](const std::string& key, const std::string& status) {
         for (const CopyItem& item : copy_items) {
@@ -5020,6 +5102,7 @@ void RenderButtonGuide(ShellState& state) {
         std::string label;
         bool enabled;
         bool right_aligned;
+        bool primary;
     };
 
     const std::wstring evidence_path = SelectedEvidencePath(state);
@@ -5030,123 +5113,246 @@ void RenderButtonGuide(ShellState& state) {
     if (state.prompt_visible) {
         if (state.prompt_confirmation && !state.prompt_controls_visible) {
             guide_items = {
-                {"guide-prompt-next", "Enter", Tr(state, UiText::Next), true, false},
+                {"guide-prompt-next", "Enter", Tr(state, UiText::Next), true, false, true},
             };
         } else {
             guide_items = state.prompt_confirmation
                 ? std::vector<GuideItem>{
-                    {"guide-prompt-select", "Enter", Tr(state, UiText::Select), true, false},
-                    {"guide-prompt-back", "Esc", Tr(state, UiText::Back), true, false},
+                    {"guide-prompt-select", "Enter", Tr(state, UiText::Select), true, false, true},
+                    {"guide-prompt-back", "Esc", Tr(state, UiText::Back), true, true, true},
                 }
                 : std::vector<GuideItem>{
-                    {"guide-prompt-ok", "Enter", Tr(state, UiText::Next), true, false},
+                    {"guide-prompt-ok", "Enter", Tr(state, UiText::Next), true, false, true},
                 };
         }
     } else {
     switch (state.current_screen) {
     case ShellScreen::Language:
         guide_items = {
-            {"guide-next", "Enter", Tr(state, UiText::Next), true, false},
-            {"guide-back", "Esc", Tr(state, UiText::Quit), true, false},
+            {"guide-next", "Enter", Tr(state, UiText::Select), true, false, true},
+            {"guide-back", "Esc", Tr(state, UiText::Quit), true, true, true},
         };
         break;
     case ShellScreen::Introduction:
         guide_items = {
-            {"guide-next", "Enter", Tr(state, UiText::Continue), true, false},
-            {"guide-back", "Esc", Tr(state, UiText::Quit), true, false},
+            {"guide-next", "Enter", Tr(state, UiText::Continue), true, false, true},
+            {"guide-back", "Esc", Tr(state, UiText::Quit), true, true, true},
         };
         break;
     case ShellScreen::Select:
         guide_items = {
-            {"guide-next", "Enter", Tr(state, UiText::Review), CanAdvanceFromPage(state, state.current_screen), false},
-            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
+            {"guide-next", "Enter", Tr(state, UiText::Review), CanAdvanceFromPage(state, state.current_screen), false, true},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
         };
         break;
     case ShellScreen::Review:
         guide_items = {
-            {"guide-next", "Enter", Tr(state, UiText::Run), SelectedActionReady(state), false},
-            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
+            {"guide-next", "Enter", Tr(state, UiText::Run), SelectedActionReady(state), false, true},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
         };
         break;
     case ShellScreen::Run:
         guide_items = {
-            {"guide-next", "Enter", run_primary_label, IsActionStillRunning(state) || CanAdvanceFromPage(state, state.current_screen), false},
-            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
-            {"guide-log", "L", Tr(state, UiText::RawLog), state.snapshot.has_value(), false},
-            {"guide-report", "P", Tr(state, UiText::Report), has_report, false},
+            {"guide-next", "Enter", run_primary_label, IsActionStillRunning(state) || CanAdvanceFromPage(state, state.current_screen), false, true},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
+            {"guide-log", "L", Tr(state, UiText::RawLog), state.snapshot.has_value(), false, false},
+            {"guide-report", "P", Tr(state, UiText::Report), has_report, false, false},
         };
         break;
     case ShellScreen::Evidence:
         guide_items = {
-            {"guide-next", "Enter", Tr(state, UiText::Files), HasArtifactsReady(state), false},
-            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
-            {"guide-open", "O", Tr(state, UiText::OpenFile), !evidence_path.empty(), false},
-            {"guide-reveal", "R", Tr(state, UiText::Reveal), !evidence_path.empty(), false},
-            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true},
+            {"guide-next", "Enter", Tr(state, UiText::Files), HasArtifactsReady(state), false, true},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
+            {"guide-open", "O", Tr(state, UiText::OpenFile), !evidence_path.empty(), false, false},
+            {"guide-reveal", "R", Tr(state, UiText::Reveal), !evidence_path.empty(), false, false},
+            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true, false},
         };
         break;
     case ShellScreen::Files:
         guide_items = {
-            {"guide-next", "Enter", Tr(state, UiText::Stages), true, false},
-            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
-            {"guide-open", "O", Tr(state, UiText::OpenFile), !artifact_path.empty(), false},
-            {"guide-reveal", "R", Tr(state, UiText::Reveal), !artifact_path.empty(), false},
-            {"guide-report", "P", Tr(state, UiText::Report), has_report, false},
-            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true},
-            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true},
-            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true},
+            {"guide-next", "Enter", Tr(state, UiText::Stages), true, false, true},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
+            {"guide-open", "O", Tr(state, UiText::OpenFile), !artifact_path.empty(), false, false},
+            {"guide-reveal", "R", Tr(state, UiText::Reveal), !artifact_path.empty(), false, false},
+            {"guide-report", "P", Tr(state, UiText::Report), has_report, false, false},
+            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true, false},
+            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true, false},
+            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true, false},
         };
         break;
     case ShellScreen::Stages:
         guide_items = {
-            {"guide-next", "Enter", Tr(state, UiText::Return), true, false},
-            {"guide-back", "Esc", Tr(state, UiText::Back), true, false},
-            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true},
-            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true},
-            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true},
+            {"guide-next", "Enter", Tr(state, UiText::Return), true, false, true},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
+            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true, false},
+            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true, false},
+            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true, false},
         };
         break;
     }
     }
 
-    const ImVec2 region_min = ShellPoint(84.0f, 676.0f);
-    const ImVec2 region_max = ShellPoint(1196.0f, 716.0f);
-    const float font_size = ShellUi(15.0f);
-    const float key_height = ShellUi(24.0f);
-    const float item_gap = ShellUi(18.0f);
-    const float label_gap = ShellUi(8.0f);
-    const float vertical_padding = ShellUi(4.0f);
-    ImFont* guide_font = g_small_font != nullptr ? g_small_font : ImGui::GetFont();
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-
-    draw->AddRectFilledMultiColor(
-        ImVec2(region_min.x - ShellUi(14.0f), region_min.y - ShellUi(10.0f)),
-        ImVec2(region_max.x + ShellUi(14.0f), region_min.y - ShellUi(6.0f)),
-        IM_COL32(0, 0, 0, 0),
-        IM_COL32(173, 255, 156, 65),
-        IM_COL32(173, 255, 156, 65),
-        IM_COL32(0, 0, 0, 0)
-    );
-    draw->AddRectFilled(
-        ImVec2(region_min.x - ShellUi(4.0f), region_min.y - ShellUi(2.0f)),
-        ImVec2(region_max.x + ShellUi(4.0f), region_min.y - ShellUi(1.0f)),
-        IM_COL32(115, 178, 104, 255)
-    );
-
-    auto item_width = [&](const GuideItem& item) {
-        const ImVec2 label_size = guide_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, item.label.c_str());
-        const ImVec2 key_size = guide_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, item.key);
-        const float key_width = std::max(ShellUi(26.0f), key_size.x + ShellUi(14.0f));
-        return key_width + label_gap + label_size.x + ShellUi(12.0f);
+    enum class GuideAtlasIcon {
+        None,
+        A,
+        B,
+        Lmb,
+        Enter,
+        Escape,
     };
 
-    auto draw_guide_item = [&](const GuideItem& item, float x) {
-        const ImVec2 label_size = guide_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, item.label.c_str());
-        const ImVec2 key_size = guide_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, item.key);
-        const float key_width = std::max(ShellUi(26.0f), key_size.x + ShellUi(14.0f));
-        const float total_width = key_width + label_gap + label_size.x + ShellUi(12.0f);
-        const ImVec2 min(x, region_min.y);
-        const ImVec2 max(x + total_width, region_min.y + key_height + vertical_padding * 2.0f);
+    const auto activate_item = [&](const GuideItem& item) {
+        if (std::strcmp(item.id, "guide-prompt-next") == 0) {
+            OpenPromptControls(state);
+        } else if (std::strcmp(item.id, "guide-prompt-select") == 0 || std::strcmp(item.id, "guide-prompt-ok") == 0) {
+            AcceptPrompt(state);
+        } else if (std::strcmp(item.id, "guide-prompt-back") == 0) {
+            BeginPromptClose(state, false);
+        } else if (std::strcmp(item.id, "guide-next") == 0) {
+            if (state.current_screen == ShellScreen::Review) {
+                StartAction(state, CurrentActionId(state));
+            } else if (state.current_screen == ShellScreen::Run && IsActionStillRunning(state)) {
+                RefreshSnapshot(state);
+                RefreshRunSnapshot(state);
+                RefreshResultPanels(state);
+                state.status_line = sg_preflight::native_shell::FormatRefreshedRunStateStatus(state.language);
+            } else {
+                SetScreen(state, NextScreen(state, state.current_screen));
+            }
+        } else if (std::strcmp(item.id, "guide-back") == 0) {
+            RequestBackAction(state);
+        } else if (std::strcmp(item.id, "guide-open") == 0) {
+            if (!evidence_path.empty()) {
+                OpenPath(evidence_path);
+            } else {
+                OpenPath(artifact_path);
+            }
+        } else if (std::strcmp(item.id, "guide-reveal") == 0) {
+            if (!evidence_path.empty()) {
+                RevealPath(evidence_path);
+            } else {
+                RevealPath(artifact_path);
+            }
+        } else if (std::strcmp(item.id, "guide-log") == 0 && state.snapshot.has_value()) {
+            OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->log_path));
+        } else if (std::strcmp(item.id, "guide-report") == 0) {
+            if (state.run_snapshot.has_value()) {
+                for (const auto& artifact : state.run_snapshot->artifacts) {
+                    if (artifact.label == "HTML report") {
+                        OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
+                        break;
+                    }
+                }
+            } else if (state.snapshot.has_value()) {
+                OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->latest_run_links.html_report));
+            }
+        } else if (std::strcmp(item.id, "guide-jira") == 0) {
+            copy_by_key("jira", sg_preflight::native_shell::FormatCopiedJiraStatus(state.language));
+        } else if (std::strcmp(item.id, "guide-hero") == 0) {
+            copy_by_key("qa_hero", sg_preflight::native_shell::FormatCopiedQaHeroStatus(state.language));
+        } else if (std::strcmp(item.id, "guide-handoff") == 0) {
+            copy_by_key("handoff", sg_preflight::native_shell::FormatCopiedHandoffStatus(state.language));
+        }
+    };
+
+    const auto resolve_atlas_icon = [&](const GuideItem& item) {
+        const bool back_item =
+            std::strcmp(item.id, "guide-back") == 0 ||
+            std::strcmp(item.id, "guide-prompt-back") == 0;
+        if (back_item) {
+            return GuideAtlasIcon::Escape;
+        }
+        if (item.primary) {
+            return g_guide_input_mode == GuideInputMode::Mouse ? GuideAtlasIcon::Lmb : GuideAtlasIcon::Enter;
+        }
+        return GuideAtlasIcon::None;
+    };
+
+    const auto try_get_atlas = [&](GuideAtlasIcon icon, DdsTextureHandle*& texture, ImVec2& uv_min, ImVec2& uv_max, ImVec2& size) {
+        texture = nullptr;
+        uv_min = ImVec2(0.0f, 0.0f);
+        uv_max = ImVec2(1.0f, 1.0f);
+        size = ImVec2(ShellUi(40.0f), ShellUi(40.0f));
+        switch (icon) {
+        case GuideAtlasIcon::A:
+            texture = &g_shell_assets.controller_icons;
+            uv_min = ImVec2(0.0f / 512.0f, 0.0f / 128.0f);
+            uv_max = ImVec2(40.0f / 512.0f, 40.0f / 128.0f);
+            break;
+        case GuideAtlasIcon::B:
+            texture = &g_shell_assets.controller_icons;
+            uv_min = ImVec2(40.0f / 512.0f, 0.0f / 128.0f);
+            uv_max = ImVec2(80.0f / 512.0f, 40.0f / 128.0f);
+            break;
+        case GuideAtlasIcon::Lmb:
+            texture = &g_shell_assets.kbm_icons;
+            uv_min = ImVec2(0.0f / 384.0f, 0.0f);
+            uv_max = ImVec2(128.0f / 384.0f, 1.0f);
+            break;
+        case GuideAtlasIcon::Enter:
+            texture = &g_shell_assets.kbm_icons;
+            uv_min = ImVec2(128.0f / 384.0f, 0.0f);
+            uv_max = ImVec2(256.0f / 384.0f, 1.0f);
+            break;
+        case GuideAtlasIcon::Escape:
+            texture = &g_shell_assets.kbm_icons;
+            uv_min = ImVec2(256.0f / 384.0f, 0.0f);
+            uv_max = ImVec2(1.0f, 1.0f);
+            break;
+        case GuideAtlasIcon::None:
+            break;
+        }
+        return texture != nullptr && HasTexture(*texture);
+    };
+
+    const ImVec2 primary_region_min = ShellPoint(379.0f, 618.0f);
+    const ImVec2 primary_region_max = ShellPoint(901.0f, 720.0f);
+    const ImVec2 secondary_left_region_min = ShellPoint(82.0f, 680.0f);
+    const ImVec2 secondary_left_region_max = ShellPoint(368.0f, 720.0f);
+    const ImVec2 secondary_right_region_min = ShellPoint(934.0f, 680.0f);
+    const ImVec2 secondary_right_region_max = ShellPoint(1196.0f, 720.0f);
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    ImFont* primary_font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
+    const float primary_font_size = primary_font == g_title_font ? ShellUi(21.8f) : ImGui::GetFontSize();
+    ImFont* secondary_font = g_small_font != nullptr ? g_small_font : ImGui::GetFont();
+    const float secondary_font_size = secondary_font == g_small_font ? g_small_font->LegacySize : ImGui::GetFontSize();
+
+    const auto primary_item_width = [&](const GuideItem& item) {
+        DdsTextureHandle* texture = nullptr;
+        ImVec2 uv_min;
+        ImVec2 uv_max;
+        ImVec2 icon_size;
+        if (try_get_atlas(resolve_atlas_icon(item), texture, uv_min, uv_max, icon_size)) {
+            const ImVec2 text_size = primary_font->CalcTextSizeA(primary_font_size, FLT_MAX, 0.0f, item.label.c_str());
+            return icon_size.x + ShellUi(4.0f) + text_size.x;
+        }
+        const ImVec2 label_size = primary_font->CalcTextSizeA(primary_font_size, FLT_MAX, 0.0f, item.label.c_str());
+        const ImVec2 key_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.key);
+        const float key_width = std::max(ShellUi(28.0f), key_size.x + ShellUi(14.0f));
+        return key_width + ShellUi(10.0f) + label_size.x;
+    };
+
+    const auto secondary_item_width = [&](const GuideItem& item) {
+        const ImVec2 label_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.label.c_str());
+        const ImVec2 key_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.key);
+        const float key_width = std::max(ShellUi(24.0f), key_size.x + ShellUi(12.0f));
+        return key_width + ShellUi(7.0f) + label_size.x + ShellUi(10.0f);
+    };
+
+    const auto draw_primary_item = [&](const GuideItem& item, float x) {
+        DdsTextureHandle* texture = nullptr;
+        ImVec2 uv_min;
+        ImVec2 uv_max;
+        ImVec2 icon_size;
+        const bool has_atlas = try_get_atlas(resolve_atlas_icon(item), texture, uv_min, uv_max, icon_size);
+        const ImVec2 text_size = primary_font->CalcTextSizeA(primary_font_size, FLT_MAX, 0.0f, item.label.c_str());
+        const ImVec2 key_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.key);
+        const float key_width = std::max(ShellUi(28.0f), key_size.x + ShellUi(14.0f));
+        const float total_width = has_atlas
+            ? (icon_size.x + ShellUi(4.0f) + text_size.x)
+            : (key_width + ShellUi(10.0f) + text_size.x);
+        const ImVec2 min(x, primary_region_min.y);
+        const ImVec2 max(x + total_width, primary_region_min.y + std::max(icon_size.y, text_size.y + ShellUi(18.0f)));
 
         ImGui::SetCursorScreenPos(min);
         if (!item.enabled) {
@@ -5159,110 +5365,134 @@ void RenderButtonGuide(ShellState& state) {
         }
         PlayHoverCueIfNeeded(hovered, item.enabled);
 
-        const ImU32 text_color = item.enabled
-            ? (hovered ? IM_COL32(248, 250, 242, 255) : IM_COL32(226, 237, 231, 240))
-            : IM_COL32(120, 132, 125, 180);
-        const ImU32 key_border = hovered ? IM_COL32(255, 211, 88, 240) : IM_COL32(255, 188, 0, 210);
-        const ImU32 key_fill = hovered ? IM_COL32(32, 43, 25, 255) : IM_COL32(18, 20, 16, 245);
-        const ImVec2 key_min(min.x, min.y + vertical_padding);
-        const ImVec2 key_max(min.x + key_width, max.y - vertical_padding);
-
-        draw->AddRectFilled(key_min, key_max, key_fill, ShellUi(4.0f));
-        draw->AddRect(key_min, key_max, key_border, ShellUi(4.0f), 0, 1.1f);
-        draw->AddText(
-            guide_font,
-            font_size,
-            ImVec2(key_min.x + ((key_width - key_size.x) * 0.5f), key_min.y + ((key_max.y - key_min.y) - key_size.y) * 0.5f),
-            IM_COL32(255, 188, 0, item.enabled ? 255 : 170),
-            item.key
-        );
-        draw->AddText(
-            guide_font,
-            font_size,
-            ImVec2(key_max.x + label_gap, key_min.y + ((key_max.y - key_min.y) - label_size.y) * 0.5f),
-            text_color,
-            item.label.c_str()
-        );
+        ImVec2 text_pos;
+        if (has_atlas) {
+            const ImVec2 icon_min(min.x, primary_region_min.y);
+            const ImVec2 icon_max(icon_min.x + icon_size.x, icon_min.y + icon_size.y);
+            draw->AddImage(ToTextureId(*texture), icon_min, icon_max, uv_min, uv_max, IM_COL32(255, 255, 255, item.enabled ? (hovered ? 255 : 238) : 110));
+            text_pos = ImVec2(icon_max.x + ShellUi(4.0f), primary_region_min.y + ShellUi(9.0f));
+        } else {
+            const ImU32 key_border = hovered ? IM_COL32(255, 211, 88, 240) : IM_COL32(255, 188, 0, 210);
+            const ImU32 key_fill = hovered ? IM_COL32(32, 43, 25, 255) : IM_COL32(18, 20, 16, 245);
+            const ImVec2 key_min(min.x, min.y + ShellUi(6.0f));
+            const ImVec2 key_max(min.x + key_width, key_min.y + ShellUi(28.0f));
+            draw->AddRectFilled(key_min, key_max, key_fill, ShellUi(4.0f));
+            draw->AddRect(key_min, key_max, key_border, ShellUi(4.0f), 0, 1.1f);
+            draw->AddText(
+                secondary_font,
+                secondary_font_size,
+                ImVec2(key_min.x + ((key_width - key_size.x) * 0.5f), key_min.y + ((key_max.y - key_min.y) - key_size.y) * 0.5f),
+                IM_COL32(255, 188, 0, item.enabled ? 255 : 170),
+                item.key
+            );
+            text_pos = ImVec2(key_max.x + ShellUi(10.0f), primary_region_min.y + ShellUi(9.0f));
+        }
+        const int text_alpha = item.enabled ? 255 : 148;
+        draw->AddText(primary_font, primary_font_size, ImVec2(text_pos.x + ShellUi(2.0f), text_pos.y + ShellUi(2.0f)), IM_COL32(0, 0, 0, text_alpha), item.label.c_str());
+        draw->AddText(primary_font, primary_font_size, text_pos, IM_COL32(255, 255, 255, text_alpha), item.label.c_str());
 
         if (pressed && item.enabled && std::strncmp(item.id, "guide-prompt", 12) != 0) {
             PlayCue(UiCue::Confirm);
         }
+        if (pressed && item.enabled) {
+            activate_item(item);
+        }
         return pressed && item.enabled;
     };
 
-    float left_offset = 0.0f;
+    const auto draw_secondary_item = [&](const GuideItem& item, float x) {
+        const ImVec2 label_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.label.c_str());
+        const ImVec2 key_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.key);
+        const float key_width = std::max(ShellUi(24.0f), key_size.x + ShellUi(12.0f));
+        const ImVec2 min(x, secondary_left_region_min.y);
+        const ImVec2 max(x + secondary_item_width(item), secondary_left_region_min.y + ShellUi(26.0f));
+
+        ImGui::SetCursorScreenPos(min);
+        if (!item.enabled) {
+            ImGui::BeginDisabled();
+        }
+        const bool pressed = ImGui::InvisibleButton(item.id, ImVec2(max.x - min.x, max.y - min.y));
+        const bool hovered = ImGui::IsItemHovered();
+        if (!item.enabled) {
+            ImGui::EndDisabled();
+        }
+        PlayHoverCueIfNeeded(hovered, item.enabled);
+
+        const ImU32 key_border = hovered ? IM_COL32(255, 211, 88, 218) : IM_COL32(255, 188, 0, 180);
+        const ImU32 key_fill = hovered ? IM_COL32(38, 48, 28, 225) : IM_COL32(20, 24, 20, 214);
+        const ImU32 label_color = item.enabled ? IM_COL32(226, 237, 231, hovered ? 255 : 222) : IM_COL32(122, 132, 126, 180);
+        const ImVec2 key_min(min.x, min.y + ShellUi(1.0f));
+        const ImVec2 key_max(min.x + key_width, max.y - ShellUi(1.0f));
+        draw->AddRectFilled(key_min, key_max, key_fill, ShellUi(3.0f));
+        draw->AddRect(key_min, key_max, key_border, ShellUi(3.0f), 0, 1.0f);
+        draw->AddText(secondary_font, secondary_font_size, ImVec2(key_min.x + ((key_width - key_size.x) * 0.5f), key_min.y + ((key_max.y - key_min.y) - key_size.y) * 0.5f), IM_COL32(255, 188, 0, item.enabled ? 255 : 170), item.key);
+        draw->AddText(secondary_font, secondary_font_size, ImVec2(key_max.x + ShellUi(7.0f), key_min.y + ((key_max.y - key_min.y) - label_size.y) * 0.5f), label_color, item.label.c_str());
+
+        if (pressed && item.enabled) {
+            PlayCue(UiCue::Confirm);
+            activate_item(item);
+        }
+        return pressed && item.enabled;
+    };
+
+    std::vector<GuideItem> primary_items;
+    std::vector<GuideItem> secondary_items;
+    primary_items.reserve(guide_items.size());
+    secondary_items.reserve(guide_items.size());
     for (const GuideItem& item : guide_items) {
+        if (item.primary) {
+            primary_items.push_back(item);
+        } else {
+            secondary_items.push_back(item);
+        }
+    }
+
+    float primary_left_offset = 0.0f;
+    const float primary_gap = ShellUi(28.0f);
+    for (const GuideItem& item : primary_items) {
         if (item.right_aligned) {
             continue;
         }
-        const float x = region_min.x + left_offset;
-        if (draw_guide_item(item, x)) {
-            if (std::strcmp(item.id, "guide-prompt-next") == 0) {
-                OpenPromptControls(state);
-            } else if (std::strcmp(item.id, "guide-prompt-select") == 0 || std::strcmp(item.id, "guide-prompt-ok") == 0) {
-                AcceptPrompt(state);
-            } else if (std::strcmp(item.id, "guide-prompt-back") == 0) {
-                BeginPromptClose(state, false);
-            } else if (std::strcmp(item.id, "guide-next") == 0) {
-                if (state.current_screen == ShellScreen::Review) {
-                    StartAction(state, CurrentActionId(state));
-                } else if (state.current_screen == ShellScreen::Run && IsActionStillRunning(state)) {
-                    RefreshSnapshot(state);
-                    RefreshRunSnapshot(state);
-                    RefreshResultPanels(state);
-                    state.status_line = sg_preflight::native_shell::FormatRefreshedRunStateStatus(state.language);
-                } else {
-                    SetScreen(state, NextScreen(state, state.current_screen));
-                }
-            } else if (std::strcmp(item.id, "guide-back") == 0) {
-                RequestBackAction(state);
-            } else if (std::strcmp(item.id, "guide-open") == 0) {
-                if (!evidence_path.empty()) {
-                    OpenPath(evidence_path);
-                } else {
-                    OpenPath(artifact_path);
-                }
-            } else if (std::strcmp(item.id, "guide-reveal") == 0) {
-                if (!evidence_path.empty()) {
-                    RevealPath(evidence_path);
-                } else {
-                    RevealPath(artifact_path);
-                }
-            } else if (std::strcmp(item.id, "guide-log") == 0 && state.snapshot.has_value()) {
-                OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->log_path));
-            } else if (std::strcmp(item.id, "guide-report") == 0) {
-                if (state.run_snapshot.has_value()) {
-                    for (const auto& artifact : state.run_snapshot->artifacts) {
-                        if (artifact.label == "HTML report") {
-                            OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
-                            break;
-                        }
-                    }
-                } else if (state.snapshot.has_value()) {
-                    OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->latest_run_links.html_report));
-                }
-            }
-        }
-        left_offset += item_width(item) + item_gap;
+        draw_primary_item(item, primary_region_min.x + primary_left_offset);
+        primary_left_offset += primary_item_width(item) + primary_gap;
     }
 
-    float right_offset = 0.0f;
-    for (auto it = guide_items.rbegin(); it != guide_items.rend(); ++it) {
+    float primary_right_offset = 0.0f;
+    for (auto it = primary_items.rbegin(); it != primary_items.rend(); ++it) {
         if (!it->right_aligned) {
             continue;
         }
-        const float width = item_width(*it);
-        const float x = region_max.x - right_offset - width;
-        if (draw_guide_item(*it, x)) {
-            if (std::strcmp(it->id, "guide-jira") == 0) {
-                copy_by_key("jira", sg_preflight::native_shell::FormatCopiedJiraStatus(state.language));
-            } else if (std::strcmp(it->id, "guide-hero") == 0) {
-                copy_by_key("qa_hero", sg_preflight::native_shell::FormatCopiedQaHeroStatus(state.language));
-            } else if (std::strcmp(it->id, "guide-handoff") == 0) {
-                copy_by_key("handoff", sg_preflight::native_shell::FormatCopiedHandoffStatus(state.language));
-            }
+        const float width = primary_item_width(*it);
+        draw_primary_item(*it, primary_region_max.x - primary_right_offset - width);
+        primary_right_offset += width + primary_gap;
+    }
+
+    float secondary_left_offset = 0.0f;
+    const float secondary_gap = ShellUi(10.0f);
+    for (const GuideItem& item : secondary_items) {
+        if (item.right_aligned) {
+            continue;
         }
-        right_offset += width + item_gap;
+        const float width = secondary_item_width(item);
+        if ((secondary_left_region_min.x + secondary_left_offset + width) > secondary_left_region_max.x) {
+            break;
+        }
+        draw_secondary_item(item, secondary_left_region_min.x + secondary_left_offset);
+        secondary_left_offset += width + secondary_gap;
+    }
+
+    float secondary_right_offset = 0.0f;
+    for (auto it = secondary_items.rbegin(); it != secondary_items.rend(); ++it) {
+        if (!it->right_aligned) {
+            continue;
+        }
+        const float width = secondary_item_width(*it);
+        const float x = secondary_right_region_max.x - secondary_right_offset - width;
+        if (x < secondary_right_region_min.x) {
+            continue;
+        }
+        draw_secondary_item(*it, x);
+        secondary_right_offset += width + secondary_gap;
     }
 
     ImGui::SetCursorScreenPos(ShellPoint(0.0f, 718.0f));
@@ -5671,6 +5901,8 @@ void RenderShell(ShellState& state) {
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     BackendConfig backend = ParseArguments();
 
+    ImGui_ImplWin32_EnableDpiAwareness();
+
     WNDCLASSEXW window_class{};
     window_class.cbSize = sizeof(window_class);
     window_class.style = CS_CLASSDC;
@@ -5686,10 +5918,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const int requested_height = g_window_options.height > 0 ? g_window_options.height : monitor_height;
     const bool use_fullscreen = g_window_options.fullscreen && g_window_options.width <= 0 && g_window_options.height <= 0;
     const DWORD window_style = use_fullscreen ? WS_POPUP : WS_OVERLAPPEDWINDOW;
+    const UINT system_dpi = SystemDpi();
+    const int windowed_physical_width = MulDiv(requested_width, static_cast<int>(system_dpi), 96);
+    const int windowed_physical_height = MulDiv(requested_height, static_cast<int>(system_dpi), 96);
 
-    RECT window_rect{0, 0, requested_width, requested_height};
+    RECT window_rect{
+        0,
+        0,
+        use_fullscreen ? requested_width : windowed_physical_width,
+        use_fullscreen ? requested_height : windowed_physical_height
+    };
     if (!use_fullscreen) {
-        AdjustWindowRect(&window_rect, window_style, FALSE);
+        AdjustWindowRectForDpi(window_rect, window_style, system_dpi);
     }
     const int window_width = window_rect.right - window_rect.left;
     const int window_height = window_rect.bottom - window_rect.top;

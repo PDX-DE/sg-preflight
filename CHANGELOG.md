@@ -10,6 +10,8 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 #### 2026-04-18
 
+- working tree: the native C++ shell now ports the bottom guide toward the real OG button-guide model instead of the older full-width hotkey bar, keeps primary next/back prompts centered in the installer strip, tightens the intro text block and right-rail density, and fixes windowed DPI sizing so `--windowed --width 1280 --height 720` again produces a true `1280x720` client instead of a scaled-down client on high-DPI Windows desktops
+
 - working tree: the native C++ shell now starts directly on the English SG intro instead of forcing the language screen, restores the original `Español` label for the reserved language list, and ports the quit/leave-run prompt closer to the OG two-stage Unleashed message-window rhythm with a banner-first open, a second pause-window reveal for the Yes/No chooser, and a more faithful selection-card animation path
 - working tree: the native C++ shell now runs on a real D3D12 + ImGui DX12 renderer instead of the old D3D11 path, so the fullscreen installer shell, DDS chrome, and bundled `D3D12/` runtime payload finally match the intended DX12 packaging direction instead of only shipping dormant support files
 - working tree: the native C++ shell now adds a real pre-intro language selector and shell-owned localization layer for `EN`, `ES`, `DE`, and `RO`, so the installer-style shell can enter the SG operator flow through a dedicated language screen while translating its own headers, prompts, guide labels, status lines, and main installer pages without rewriting backend/checker truth
