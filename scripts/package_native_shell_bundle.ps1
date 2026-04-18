@@ -27,7 +27,8 @@ function Copy-Tree {
     $item = Get-Item -LiteralPath $Source
     if ($item.PSIsContainer) {
         New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-        robocopy $Source $Destination /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
+        $robocopyArgs = @($Source, $Destination, "/E", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP", "/XD", ".svn", ".git")
+        robocopy @robocopyArgs | Out-Null
         if ($LASTEXITCODE -ge 8) {
             throw "robocopy failed while copying '$Source' to '$Destination' (exit $LASTEXITCODE)."
         }
@@ -65,11 +66,9 @@ function Remove-Tree {
         }
     }
 
-    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
-    if (-not $resolvedPath.StartsWith("\\?\")) {
-        $resolvedPath = "\\?\$resolvedPath"
+    if (-not (Test-Path $Path)) {
+        return
     }
-    [System.IO.Directory]::Delete($resolvedPath, $true)
 }
 
 if (-not (Test-Path $exePath)) {
@@ -80,17 +79,28 @@ if (Test-Path $resolvedBundleDir) {
     Remove-Tree -Path $resolvedBundleDir
 }
 
-New-Item -ItemType Directory -Path $resolvedBundleDir | Out-Null
+New-Item -ItemType Directory -Path $resolvedBundleDir -Force | Out-Null
 $workspaceDir = Join-Path $resolvedBundleDir "workspace"
 $pythonDir = Join-Path $resolvedBundleDir "python"
 $resourcesDir = Join-Path $resolvedBundleDir "resources"
 $fontsDir = Join-Path $resolvedBundleDir "fonts"
 
 foreach ($dir in @($workspaceDir, $pythonDir, $resourcesDir, $fontsDir)) {
-    New-Item -ItemType Directory -Path $dir | Out-Null
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
 }
 
 Copy-Tree -Source $exePath -Destination (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe")
+
+$directxItems = @(
+    @{ Source = (Join-Path $repoRoot "D3D12"); Destination = (Join-Path $resolvedBundleDir "D3D12") },
+    @{ Source = (Join-Path $repoRoot "dxcompiler.dll"); Destination = (Join-Path $resolvedBundleDir "dxcompiler.dll") },
+    @{ Source = (Join-Path $repoRoot "dxil.dll"); Destination = (Join-Path $resolvedBundleDir "dxil.dll") }
+)
+foreach ($item in $directxItems) {
+    if (Test-Path $item.Source) {
+        Copy-Tree -Source $item.Source -Destination $item.Destination
+    }
+}
 
 $latestPathFile = Join-Path (Join-Path $repoRoot "build") "latest_native_shell_path.txt"
 Set-Content -Path $latestPathFile -Value (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe") -Encoding UTF8
@@ -180,6 +190,9 @@ $manifest = [ordered]@{
     workspace = $workspaceDir
     resources = if ($resourceRoot) { $resourcesDir } else { "" }
     fonts = $fontsDir
+    d3d12 = if (Test-Path (Join-Path $resolvedBundleDir "D3D12")) { (Join-Path $resolvedBundleDir "D3D12") } else { "" }
+    dxcompiler = if (Test-Path (Join-Path $resolvedBundleDir "dxcompiler.dll")) { (Join-Path $resolvedBundleDir "dxcompiler.dll") } else { "" }
+    dxil = if (Test-Path (Join-Path $resolvedBundleDir "dxil.dll")) { (Join-Path $resolvedBundleDir "dxil.dll") } else { "" }
     built_from = $exePath
 }
 $manifest | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $resolvedBundleDir "bundle_manifest.json") -Encoding UTF8
