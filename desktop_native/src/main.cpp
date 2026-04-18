@@ -128,6 +128,7 @@ ImFont* g_title_font = nullptr;
 ImFont* g_body_font = nullptr;
 ImFont* g_small_font = nullptr;
 double g_shell_appear_time = -1.0;
+double g_shell_disappear_time = -1.0;
 ImVec2 g_tab_highlight_min{};
 ImVec2 g_tab_highlight_max{};
 bool g_tab_highlight_ready = false;
@@ -449,11 +450,24 @@ double ComputeLinearMotionFrames(double offset_frames, double total_frames) {
     if (g_shell_appear_time < 0.0) {
         return 1.0;
     }
-    return std::clamp(
+
+    const double appear_motion = std::clamp(
         (ImGui::GetTime() - g_shell_appear_time - offset_frames / 60.0) / total_frames * 60.0,
         0.0,
         1.0
     );
+
+    if (g_shell_disappear_time < 0.0) {
+        return appear_motion;
+    }
+
+    const double disappear_offset = std::max(0.0, kExitTransitionDurationFrames - offset_frames - total_frames);
+    const double disappear_motion = std::clamp(
+        (ImGui::GetTime() - g_shell_disappear_time - disappear_offset / 60.0) / total_frames * 60.0,
+        0.0,
+        1.0
+    );
+    return appear_motion * (1.0 - disappear_motion);
 }
 
 double ComputeMotionFrames(double offset_frames, double total_frames) {
@@ -502,6 +516,39 @@ ImVec2 ShellPoint(float x, float y) {
 bool PathExists(const std::filesystem::path& path) {
     std::error_code error;
     return std::filesystem::exists(path, error);
+}
+
+std::filesystem::path ResolveShellIniPath() {
+    const char* ini_filename = ImGui::GetIO().IniFilename;
+    if (ini_filename == nullptr || *ini_filename == '\0') {
+        return std::filesystem::current_path() / "imgui.ini";
+    }
+
+    const std::filesystem::path path = std::filesystem::path(ini_filename);
+    if (path.is_absolute()) {
+        return path;
+    }
+    return std::filesystem::current_path() / path;
+}
+
+bool LoadMusicPreferenceFromIni() {
+    const std::filesystem::path ini_path = ResolveShellIniPath();
+    return GetPrivateProfileIntW(
+        L"sg_preflight_native_shell",
+        L"music_enabled",
+        0,
+        ini_path.wstring().c_str()
+    ) != 0;
+}
+
+void SaveMusicPreferenceToIni(bool enabled) {
+    const std::filesystem::path ini_path = ResolveShellIniPath();
+    WritePrivateProfileStringW(
+        L"sg_preflight_native_shell",
+        L"music_enabled",
+        enabled ? L"1" : L"0",
+        ini_path.wstring().c_str()
+    );
 }
 
 std::wstring Lowercase(const std::wstring& text) {
@@ -919,6 +966,7 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
 }
 
 void LoadShellAudio(const std::filesystem::path& workspace_root) {
+    sg_preflight::native_shell::ShutdownAudio();
     sg_preflight::native_shell::StopLoopingWaveMusic();
     g_shell_audio = {};
     g_shell_audio.attempted = true;
@@ -938,25 +986,54 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
     g_shell_audio.window_close = *resource_root / "sounds" / "raw" / "sys_actstg_pausewinclose.wav";
     g_shell_audio.music = *resource_root / "music" / "raw" / "installer.wav";
 
-    if (
-        PathExists(g_shell_audio.cursor)
-        && PathExists(g_shell_audio.confirm)
-        && PathExists(g_shell_audio.cancel)
-        && PathExists(g_shell_audio.window)
-        && PathExists(g_shell_audio.page)
-        && PathExists(g_shell_audio.window_close)
-    ) {
-        g_shell_audio.available = true;
-    } else {
-        g_shell_audio.last_error = "One or more UnleashedRecomp WAV files are missing from the local resource bundle.";
+    const std::array<std::filesystem::path, 6> sfx_paths = {
+        g_shell_audio.cursor,
+        g_shell_audio.confirm,
+        g_shell_audio.cancel,
+        g_shell_audio.window,
+        g_shell_audio.page,
+        g_shell_audio.window_close,
+    };
+
+    for (const auto& sound_path : sfx_paths) {
+        if (!PathExists(sound_path)) {
+            g_shell_audio.last_error = "One or more UnleashedRecomp SFX WAV files are missing from the local resource bundle.";
+            return;
+        }
     }
+
+    const bool music_available = PathExists(g_shell_audio.music);
+
+    if (!sg_preflight::native_shell::PrimeAudio(&g_shell_audio.last_error)) {
+        if (g_shell_audio.last_error.empty()) {
+            g_shell_audio.last_error = "The native audio engine could not be initialized.";
+        }
+        return;
+    }
+
+    for (const auto& sound_path : sfx_paths) {
+        std::string preload_error;
+        if (!sg_preflight::native_shell::PreloadWave(sound_path, &preload_error)) {
+            g_shell_audio.last_error = preload_error.empty()
+                ? ("Could not preload SFX WAV: " + sound_path.string())
+                : preload_error;
+            return;
+        }
+    }
+
+    g_shell_audio.available = true;
+    g_shell_audio.last_error = music_available
+        ? std::string()
+        : "Installer music WAV is missing from the local resource bundle.";
 }
 
 void SetMusicEnabled(bool enabled) {
     g_shell_audio.music_enabled = enabled;
+    SaveMusicPreferenceToIni(enabled);
     if (!enabled) {
         sg_preflight::native_shell::StopLoopingWaveMusic();
         g_shell_audio.music_playing = false;
+        g_shell_audio.last_error.clear();
         return;
     }
     if (PathExists(g_shell_audio.music) && sg_preflight::native_shell::StartLoopingWaveMusic(g_shell_audio.music, 20U)) {
@@ -964,7 +1041,10 @@ void SetMusicEnabled(bool enabled) {
         g_shell_audio.last_error.clear();
     } else {
         g_shell_audio.music_playing = false;
-        g_shell_audio.last_error = "Installer music WAV is not available for looping playback.";
+        g_shell_audio.last_error = sg_preflight::native_shell::GetAudioLastError();
+        if (g_shell_audio.last_error.empty()) {
+            g_shell_audio.last_error = "Installer music WAV is not available for looping playback.";
+        }
     }
 }
 
@@ -1376,6 +1456,7 @@ void BeginExitTransition(ShellState& state) {
     }
     state.exit_transition_active = true;
     state.exit_transition_started_at = ImGui::GetTime();
+    g_shell_disappear_time = state.exit_transition_started_at;
 }
 
 void BeginPromptClose(ShellState& state, bool accepted) {
@@ -1403,6 +1484,16 @@ float PromptVisibilityAlpha(const ShellState& state) {
 
     const float close_motion = 1.0f - SmoothStep(static_cast<float>(std::clamp((now - state.prompt_closing_started_at) * 60.0 / 8.0, 0.0, 1.0)));
     return open_motion * close_motion;
+}
+
+float ExitBlackFadeProgress(const ShellState& state) {
+    if (!state.exit_transition_active || state.exit_transition_started_at < 0.0) {
+        return 0.0f;
+    }
+    constexpr double kExitBlackFadeFrames = 60.0;
+    const double elapsed_frames = (ImGui::GetTime() - state.exit_transition_started_at) * 60.0;
+    const double fade_start_frames = std::max(0.0, kExitTransitionDurationFrames - kExitBlackFadeFrames);
+    return SmoothStep(static_cast<float>(std::clamp((elapsed_frames - fade_start_frames) / kExitBlackFadeFrames, 0.0, 1.0)));
 }
 
 void FinalizePromptIfReady(ShellState& state) {
@@ -1540,8 +1631,16 @@ void PlayCue(UiCue cue) {
             sound_path = &g_shell_audio.window_close;
             break;
         }
-        if (sound_path != nullptr && PathExists(*sound_path) && sg_preflight::native_shell::PlayWaveOneShot(*sound_path)) {
-            return;
+        if (sound_path != nullptr && PathExists(*sound_path)) {
+            if (sg_preflight::native_shell::PlayWaveOneShot(*sound_path)) {
+                g_shell_audio.last_error.clear();
+                return;
+            }
+
+            const std::string audio_error = sg_preflight::native_shell::GetAudioLastError();
+            if (!audio_error.empty()) {
+                g_shell_audio.last_error = audio_error;
+            }
         }
     }
 
@@ -2648,13 +2747,18 @@ void UpdateGuideInputMode() {
     }
 }
 
+bool IsBackgroundInteractionBlocked() {
+    return g_live_shell_state != nullptr && g_live_shell_state->prompt_visible;
+}
+
 bool DrawInstallerNavButton(const char* id, const std::string& label, ImVec2 size, bool accent = false, bool enabled = true) {
-    if (!enabled) {
+    const bool interaction_enabled = enabled && !IsBackgroundInteractionBlocked();
+    if (!interaction_enabled) {
         ImGui::BeginDisabled();
     }
     const bool pressed = ImGui::InvisibleButton(id, size);
-    const bool hovered = ImGui::IsItemHovered();
-    if (!enabled) {
+    const bool hovered = interaction_enabled && ImGui::IsItemHovered();
+    if (!interaction_enabled) {
         ImGui::EndDisabled();
     }
 
@@ -2677,10 +2781,10 @@ bool DrawInstallerNavButton(const char* id, const std::string& label, ImVec2 siz
     draw->AddText(font, font_size, ImVec2(text_pos.x + ShellUi(1.0f), text_pos.y + ShellUi(1.0f)), IM_COL32(base_r, base_g, 0, static_cast<int>(255.0f * alpha)), label.c_str());
     draw->AddText(font, font_size, text_pos, IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha)), label.c_str());
 
-    if (pressed && enabled) {
+    if (pressed && interaction_enabled) {
         PlayCue(UiCue::Confirm);
     }
-    return pressed && enabled;
+    return pressed && interaction_enabled;
 }
 
 void DrawInstallerLeftImage(const ShellState& state) {
@@ -2747,15 +2851,6 @@ void DrawInstallerLeftImage(const ShellState& state) {
             );
         }
 
-        if (g_small_font != nullptr) {
-            draw_list->AddText(
-                g_small_font,
-                ShellUi(14.0f),
-                ImVec2(min.x + ShellUi(26.0f), max.y - ShellUi(40.0f)),
-                IM_COL32(238, 181, 42, static_cast<int>(210.0f * alpha)),
-                Tr(state, UiText::ImageSlotReserved)
-            );
-        }
         return;
     }
 
@@ -3104,13 +3199,26 @@ void EndCanvasOverlayRegion() {
     ImGui::PopStyleVar();
 }
 
+void DrawCanvasPageTitle(const char* text, float wrap_x) {
+    if (g_body_font != nullptr) {
+        ImGui::PushFont(g_body_font);
+    }
+    ImGui::PushTextWrapPos(wrap_x);
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopTextWrapPos();
+    if (g_body_font != nullptr) {
+        ImGui::PopFont();
+    }
+}
+
 bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool accent = false, bool enabled = true) {
-    if (!enabled) {
+    const bool interaction_enabled = enabled && !IsBackgroundInteractionBlocked();
+    if (!interaction_enabled) {
         ImGui::BeginDisabled();
     }
     const bool pressed = ImGui::InvisibleButton(id, size);
-    const bool hovered = ImGui::IsItemHovered();
-    if (!enabled) {
+    const bool hovered = interaction_enabled && ImGui::IsItemHovered();
+    if (!interaction_enabled) {
         ImGui::EndDisabled();
     }
 
@@ -3121,8 +3229,8 @@ bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool
         ? (hovered ? IM_COL32(24, 82, 74, 228) : IM_COL32(16, 58, 54, 228))
         : (hovered ? IM_COL32(14, 32, 36, 226) : IM_COL32(9, 20, 24, 226));
     const ImU32 border = accent ? IM_COL32(120, 228, 204, 188) : IM_COL32(60, 114, 118, 178);
-    const ImU32 text = enabled ? IM_COL32(236, 246, 239, 255) : IM_COL32(114, 134, 127, 255);
-    PlayHoverCueIfNeeded(hovered, enabled);
+    const ImU32 text = interaction_enabled ? IM_COL32(236, 246, 239, 255) : IM_COL32(114, 134, 127, 255);
+    PlayHoverCueIfNeeded(hovered, interaction_enabled);
 
     draw->AddRectFilled(min, max, bg, ShellUi(4.0f));
     if (accent) {
@@ -3155,24 +3263,25 @@ bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool
         draw->AddText(g_small_font, g_small_font->LegacySize, text_pos, text, label.c_str());
     }
 
-    if (pressed && enabled) {
+    if (pressed && interaction_enabled) {
         PlayCue(UiCue::Confirm);
     }
-    return pressed && enabled;
+    return pressed && interaction_enabled;
 }
 
 bool DrawGuideButton(const char* id, const char* key, const char* label, bool enabled) {
     const ImVec2 start = ImGui::GetCursorScreenPos();
     const ImVec2 size(165.0f, 30.0f);
-    if (!enabled) {
+    const bool interaction_enabled = enabled && !IsBackgroundInteractionBlocked();
+    if (!interaction_enabled) {
         ImGui::BeginDisabled();
     }
     const bool pressed = ImGui::InvisibleButton(id, size);
-    const bool hovered = ImGui::IsItemHovered();
-    if (!enabled) {
+    const bool hovered = interaction_enabled && ImGui::IsItemHovered();
+    if (!interaction_enabled) {
         ImGui::EndDisabled();
     }
-    PlayHoverCueIfNeeded(hovered, enabled);
+    PlayHoverCueIfNeeded(hovered, interaction_enabled);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
@@ -3182,13 +3291,13 @@ bool DrawGuideButton(const char* id, const char* key, const char* label, bool en
     draw->AddRect(ImVec2(min.x + 6.0f, min.y + 5.0f), ImVec2(min.x + 30.0f, max.y - 5.0f), IM_COL32(255, 188, 0, 210), 3.0f);
     if (g_small_font != nullptr) {
         draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(min.x + 13.0f, min.y + 7.0f), IM_COL32(255, 188, 0, 255), key);
-        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(min.x + 40.0f, min.y + 7.0f), enabled ? IM_COL32(235, 244, 239, 255) : IM_COL32(122, 134, 127, 255), label);
+        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(min.x + 40.0f, min.y + 7.0f), interaction_enabled ? IM_COL32(235, 244, 239, 255) : IM_COL32(122, 134, 127, 255), label);
     }
     ImGui::SetCursorScreenPos(ImVec2(start.x + size.x + 8.0f, start.y));
-    if (pressed && enabled) {
+    if (pressed && interaction_enabled) {
         PlayCue(UiCue::Confirm);
     }
-    return pressed && enabled;
+    return pressed && interaction_enabled;
 }
 
 bool DrawSelectableCard(
@@ -3200,8 +3309,15 @@ bool DrawSelectableCard(
     float height = 74.0f
 ) {
     const ImVec2 size(ImGui::GetContentRegionAvail().x, height);
+    const bool interaction_enabled = !IsBackgroundInteractionBlocked();
+    if (!interaction_enabled) {
+        ImGui::BeginDisabled();
+    }
     const bool pressed = ImGui::InvisibleButton(id, size);
-    const bool hovered = ImGui::IsItemHovered();
+    const bool hovered = interaction_enabled && ImGui::IsItemHovered();
+    if (!interaction_enabled) {
+        ImGui::EndDisabled();
+    }
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
@@ -3209,7 +3325,7 @@ bool DrawSelectableCard(
     const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 3.2f);
     const int base_r = selected || hovered ? 48 : 0;
     const int base_g = selected ? 32 : (hovered ? 18 : 0);
-    PlayHoverCueIfNeeded(hovered, true);
+    PlayHoverCueIfNeeded(hovered, interaction_enabled);
     DrawInstallerButtonContainer(min, max, base_r, base_g, 1.0f);
     draw->AddRect(
         min,
@@ -3241,15 +3357,20 @@ bool DrawSelectableCard(
 
     const ImVec2 light_min(min.x + ShellUi(9.0f), min.y + ShellUi(10.0f));
     const ImVec2 light_max(min.x + ShellUi(22.0f), max.y - ShellUi(10.0f));
+    const float card_width = max.x - min.x;
+    const size_t title_budget = static_cast<size_t>(std::clamp((card_width - ShellUi(44.0f)) / ShellUi(8.6f), 18.0f, 44.0f));
+    const size_t subtitle_budget = static_cast<size_t>(std::clamp((card_width - ShellUi(44.0f)) / ShellUi(9.2f), 16.0f, 40.0f));
+    const std::string display_title = Ellipsize(title, title_budget);
+    const std::string display_subtitle = Ellipsize(subtitle, subtitle_budget);
     draw->AddRectFilled(light_min, light_max, selected ? IM_COL32(255, 188, 0, 255) : IM_COL32(64, 106, 84, hovered ? 190 : 142), ShellUi(2.0f));
     draw->AddRect(light_min, light_max, selected ? IM_COL32(255, 222, 130, 220) : IM_COL32(104, 154, 128, hovered ? 176 : 124), ShellUi(2.0f), 0, 1.0f);
 
     const float text_x = min.x + ShellUi(32.0f);
     if (g_body_font != nullptr) {
-        draw->AddText(g_body_font, g_body_font->LegacySize, ImVec2(text_x, min.y + ShellUi(9.0f)), IM_COL32(240, 247, 243, 255), title.c_str());
+        draw->AddText(g_body_font, g_body_font->LegacySize, ImVec2(text_x, min.y + ShellUi(9.0f)), IM_COL32(240, 247, 243, 255), display_title.c_str());
     }
     if (!subtitle.empty() && g_small_font != nullptr) {
-        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(text_x, min.y + ShellUi(30.0f)), IM_COL32(255, 188, 0, 220), subtitle.c_str());
+        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(text_x, min.y + ShellUi(30.0f)), IM_COL32(255, 188, 0, 220), display_subtitle.c_str());
     }
     if (!detail.empty() && g_small_font != nullptr) {
         draw->AddText(
@@ -3261,15 +3382,22 @@ bool DrawSelectableCard(
         );
     }
 
-    if (pressed) {
+    if (pressed && interaction_enabled) {
         PlayCue(UiCue::Confirm);
     }
-    return pressed;
+    return pressed && interaction_enabled;
 }
 
 bool DrawLanguageOptionButton(const char* id, const char* label, bool selected, ImVec2 size) {
+    const bool interaction_enabled = !IsBackgroundInteractionBlocked();
+    if (!interaction_enabled) {
+        ImGui::BeginDisabled();
+    }
     const bool pressed = ImGui::InvisibleButton(id, size);
-    const bool hovered = ImGui::IsItemHovered();
+    const bool hovered = interaction_enabled && ImGui::IsItemHovered();
+    if (!interaction_enabled) {
+        ImGui::EndDisabled();
+    }
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
@@ -3277,7 +3405,7 @@ bool DrawLanguageOptionButton(const char* id, const char* label, bool selected, 
     const int base_r = selected || hovered ? 48 : 0;
     const int base_g = selected ? 32 : (hovered ? 18 : 0);
     DrawInstallerButtonContainer(min, max, base_r, base_g, 1.0f);
-    PlayHoverCueIfNeeded(hovered, true);
+    PlayHoverCueIfNeeded(hovered, interaction_enabled);
 
     const ImVec2 indicator_min(min.x + ShellUi(10.0f), min.y + ShellUi(8.0f));
     const ImVec2 indicator_max(min.x + ShellUi(22.0f), max.y - ShellUi(8.0f));
@@ -3305,10 +3433,10 @@ bool DrawLanguageOptionButton(const char* id, const char* label, bool selected, 
     );
     draw->AddText(font, font_size, text_pos, IM_COL32(245, 245, 235, 255), label);
 
-    if (pressed) {
+    if (pressed && interaction_enabled) {
         PlayCue(UiCue::Confirm);
     }
-    return pressed;
+    return pressed && interaction_enabled;
 }
 
 void DrawProgressMeter(float progress, const std::string& label) {
@@ -3402,13 +3530,20 @@ bool DrawSettingToggle(
 ) {
     const float height = ShellUi(82.0f);
     const ImVec2 size(ImGui::GetContentRegionAvail().x, height);
+    const bool interaction_enabled = !IsBackgroundInteractionBlocked();
+    if (!interaction_enabled) {
+        ImGui::BeginDisabled();
+    }
     const bool pressed = ImGui::InvisibleButton(id, size);
-    const bool hovered = ImGui::IsItemHovered();
+    const bool hovered = interaction_enabled && ImGui::IsItemHovered();
+    if (!interaction_enabled) {
+        ImGui::EndDisabled();
+    }
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
     const ImU32 border = value ? IM_COL32(122, 255, 168, 208) : IM_COL32(67, 128, 113, hovered ? 196 : 160);
-    PlayHoverCueIfNeeded(hovered, true);
+    PlayHoverCueIfNeeded(hovered, interaction_enabled);
 
     draw->AddRectFilled(min, max, hovered ? IM_COL32(11, 26, 29, 234) : IM_COL32(8, 17, 19, 228), ShellUi(4.0f));
     DrawTexturedRectRounded(
@@ -3455,10 +3590,10 @@ bool DrawSettingToggle(
         draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(toggle_min.x, min.y + ShellUi(58.0f)), value ? IM_COL32(255, 188, 0, 240) : IM_COL32(136, 152, 148, 220), value ? "ON" : "OFF");
     }
 
-    if (pressed) {
+    if (pressed && interaction_enabled) {
         PlayCue(UiCue::Confirm);
     }
-    return pressed;
+    return pressed && interaction_enabled;
 }
 
 void DrawInstallerHero(ImVec2 top_left, ImVec2 size, float alpha, bool animated = true) {
@@ -3557,13 +3692,14 @@ void RenderProfilesPanel(ShellState& state) {
         ImGui::TextDisabled("%s", Tr(state, UiText::NoProfilesDiscovered));
         return;
     }
+    const float card_height = state.current_screen == ShellScreen::Select ? ShellUi(74.0f) : ShellUi(82.0f);
     for (size_t index = 0; index < state.profiles.size(); ++index) {
         const ProfileItem& profile = state.profiles[index];
         const bool selected = static_cast<int>(index) == state.selected_profile_index;
         const std::string row_id = "profile-" + profile.profile_id;
         const std::string title = profile.profile_id + "  " + profile.label;
         const std::string subtitle = "Recommended action: " + ShortActionLabel(profile.recommended_action_id);
-        if (DrawSelectableCard(row_id.c_str(), title, subtitle, profile.summary, selected, ShellUi(82.0f))) {
+        if (DrawSelectableCard(row_id.c_str(), title, subtitle, profile.summary, selected, card_height)) {
             state.selected_profile_index = static_cast<int>(index);
             state.selected_action_id = profile.recommended_action_id;
             RefreshProfilePanels(state);
@@ -3651,156 +3787,39 @@ void RenderActionTabs(ShellState& state) {
         return;
     }
 
-    ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 strip_origin = ImGui::GetCursorScreenPos();
-    const float grid = ShellUi(kPanelGrid);
-    const float font_size = ShellUi(18.0f);
-    const float tab_height = grid * 4.0f;
-    const float clip_width = ImGui::GetContentRegionAvail().x - grid * 2.0f;
-    ImFont* tab_font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
-    std::vector<ImVec2> text_sizes(tabs.size());
+    const int columns = tabs.size() >= 5U ? 4 : (tabs.size() > 1 ? 2 : 1);
+    const float gap_x = ShellUi(8.0f);
+    const float gap_y = ShellUi(8.0f);
+    const float button_height = ShellUi(34.0f);
+    const float clip_width = ImGui::GetContentRegionAvail().x;
+    const float button_width = std::max(ShellUi(76.0f), (clip_width - gap_x * static_cast<float>(columns - 1)) / static_cast<float>(columns));
 
-    float text_width_sum = 0.0f;
-    for (size_t index = 0; index < tabs.size(); ++index) {
-        text_sizes[index] = tab_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, tabs[index].label.c_str());
-        text_width_sum += text_sizes[index].x;
-    }
+    g_tab_highlight_ready = false;
 
-    float text_squash_ratio = 1.0f;
-    const float max_text_width_sum = clip_width - (grid * 4.0f * static_cast<float>(std::max<size_t>(0U, tabs.size() - 1U)));
-    if (text_width_sum > max_text_width_sum && text_width_sum > 0.0f) {
-        text_squash_ratio = max_text_width_sum / text_width_sum;
-        for (ImVec2& size : text_sizes) {
-            size.x *= text_squash_ratio;
-        }
-        text_width_sum = max_text_width_sum;
-    }
-
-    float text_padding = (clip_width - text_width_sum) / (static_cast<float>(tabs.size()) + 1.0f);
-    float x_offset = text_padding - (1.0f - motion) * grid * 4.0f;
-    struct TabRect {
-        size_t index = 0U;
-        ImVec2 min{};
-        ImVec2 max{};
-        ImVec2 text_pos{};
-    };
-    std::vector<TabRect> rectangles;
-    rectangles.reserve(tabs.size());
-
-    ImVec2 target_highlight_min{};
-    ImVec2 target_highlight_max{};
-    bool highlight_found = false;
     for (size_t index = 0; index < tabs.size(); ++index) {
         const TabItem& tab = tabs[index];
-        const float tab_padding = std::min(text_padding * 0.5f, grid * 3.0f);
-        const ImVec2 min(strip_origin.x + x_offset - tab_padding, strip_origin.y);
-        const ImVec2 max(min.x + text_sizes[index].x + tab_padding * 2.0f, min.y + tab_height);
-        const ImVec2 text_pos(strip_origin.x + x_offset, strip_origin.y + ShellUi(6.0f));
-
-        ImGui::SetCursorScreenPos(min);
-        ImGui::InvisibleButton(("tab-" + tab.action_id).c_str(), ImVec2(max.x - min.x, max.y - min.y));
-        PlayHoverCueIfNeeded(ImGui::IsItemHovered(), true);
-        if (ImGui::IsItemClicked() && state.selected_action_id != tab.action_id) {
-            state.selected_action_id = tab.action_id;
-            RefreshResultPanels(state);
-            PlayCue(UiCue::Confirm);
+        if (index > 0 && (index % static_cast<size_t>(columns)) != 0U) {
+            ImGui::SameLine(0.0f, gap_x);
         }
 
-        if (state.selected_action_id == tab.action_id) {
-            target_highlight_min = min;
-            target_highlight_max = max;
-            highlight_found = true;
-        }
-        rectangles.push_back({index, min, max, text_pos});
-        x_offset += text_sizes[index].x + text_padding;
-    }
-
-    if (highlight_found) {
-        if (!g_tab_highlight_ready) {
-            g_tab_highlight_min = target_highlight_min;
-            g_tab_highlight_max = target_highlight_max;
-            g_tab_highlight_ready = true;
-        } else {
-            const float width = target_highlight_max.x - target_highlight_min.x;
-            const float height = target_highlight_max.y - target_highlight_min.y;
-            float animated_width = g_tab_highlight_max.x - g_tab_highlight_min.x;
-            animated_width = LerpFloat(animated_width, width, 1.0f - std::exp(-64.0f * ImGui::GetIO().DeltaTime));
-            const ImVec2 target_center = LerpVec2(target_highlight_min, target_highlight_max, 0.5f);
-            const ImVec2 animated_center = LerpVec2(g_tab_highlight_min, g_tab_highlight_max, 0.5f);
-            const ImVec2 next_center = LerpVec2(animated_center, target_center, 1.0f - std::exp(-16.0f * ImGui::GetIO().DeltaTime));
-            g_tab_highlight_min = ImVec2(next_center.x - animated_width * 0.5f, next_center.y - height * 0.5f);
-            g_tab_highlight_max = ImVec2(next_center.x + animated_width * 0.5f, next_center.y + height * 0.5f);
-        }
-
-        DrawTexturedRectRounded(
-            draw,
-            g_shell_assets.select,
-            g_tab_highlight_min,
-            g_tab_highlight_max,
-            IM_COL32(131, 255, 122, static_cast<int>(168.0f * motion)),
-            ShellUi(3.0f)
-        );
-        DrawTexturedRectRounded(
-            draw,
-            g_shell_assets.light,
-            ImVec2(g_tab_highlight_min.x - ShellUi(8.0f), g_tab_highlight_min.y - ShellUi(10.0f)),
-            ImVec2(g_tab_highlight_max.x + ShellUi(8.0f), g_tab_highlight_max.y + ShellUi(4.0f)),
-            IM_COL32(225, 255, 188, static_cast<int>(78.0f * motion)),
-            ShellUi(3.0f)
-        );
-        draw->AddRectFilledMultiColor(
-            g_tab_highlight_min,
-            g_tab_highlight_max,
-            IM_COL32(0, 130, 0, static_cast<int>(223.0f * motion)),
-            IM_COL32(0, 130, 0, static_cast<int>(178.0f * motion)),
-            IM_COL32(0, 130, 0, static_cast<int>(223.0f * motion)),
-            IM_COL32(0, 130, 0, static_cast<int>(178.0f * motion))
-        );
-        draw->AddRectFilledMultiColor(
-            g_tab_highlight_min,
-            g_tab_highlight_max,
-            IM_COL32(0, 0, 0, static_cast<int>(13.0f * motion)),
-            IM_COL32(0, 0, 0, 0),
-            IM_COL32(0, 0, 0, static_cast<int>(55.0f * motion)),
-            IM_COL32(0, 0, 0, 6)
-        );
-        draw->AddRectFilledMultiColor(
-            g_tab_highlight_min,
-            g_tab_highlight_max,
-            IM_COL32(0, 130, 0, static_cast<int>(13.0f * motion)),
-            IM_COL32(0, 130, 0, static_cast<int>(111.0f * motion)),
-            IM_COL32(0, 130, 0, 0),
-            IM_COL32(0, 130, 0, static_cast<int>(55.0f * motion))
-        );
-        draw->AddRect(g_tab_highlight_min, g_tab_highlight_max, IM_COL32(118, 255, 168, 150), ShellUi(3.0f), 0, 1.1f);
-    }
-
-    for (const TabRect& rectangle : rectangles) {
-        const TabItem& tab = tabs[rectangle.index];
         const bool selected = state.selected_action_id == tab.action_id;
-        const bool hovered = ImGui::IsMouseHoveringRect(rectangle.min, rectangle.max);
-        if (!selected) {
-            const ImU32 fill = hovered ? IM_COL32(15, 27, 24, 228) : IM_COL32(8, 15, 17, 224);
-            const ImU32 border = tab.ready ? IM_COL32(28, 78, 66, 170) : IM_COL32(110, 72, 38, 170);
-            draw->AddRectFilled(rectangle.min, rectangle.max, fill, ShellUi(3.0f));
-            DrawTexturedRectRounded(
-                draw,
-                g_shell_assets.general_window,
-                rectangle.min,
-                rectangle.max,
-                hovered ? IM_COL32(103, 230, 172, 74) : IM_COL32(88, 214, 157, 42),
-                ShellUi(3.0f)
-            );
-            draw->AddRect(rectangle.min, rectangle.max, border, ShellUi(3.0f), 0, 1.0f);
+        const size_t label_budget = button_width < ShellUi(78.0f) ? 7U : 10U;
+        const std::string label = Ellipsize(tab.label, label_budget);
+        if (DrawLanguageOptionButton(("tab-" + tab.action_id).c_str(), label.c_str(), selected, ImVec2(button_width, button_height))) {
+            if (state.selected_action_id != tab.action_id) {
+                state.selected_action_id = tab.action_id;
+                RefreshResultPanels(state);
+            }
         }
 
-        const ImU32 text_color = selected
-            ? IM_COL32(245, 245, 235, static_cast<int>(235.0f * motion))
-            : IM_COL32(tab.ready ? 176 : 255, tab.ready ? 202 : 192, tab.ready ? 188 : 0, static_cast<int>((hovered ? 214.0f : 170.0f) * motion));
-        draw->AddText(tab_font, font_size, rectangle.text_pos, text_color, tab.label.c_str());
+        if (((index + 1U) % static_cast<size_t>(columns)) == 0U && index + 1U < tabs.size()) {
+            ImGui::Dummy(ImVec2(0.0f, gap_y));
+        }
     }
 
-    ImGui::SetCursorScreenPos(ImVec2(strip_origin.x, strip_origin.y + tab_height + ShellUi(10.0f)));
+    if ((tabs.size() % static_cast<size_t>(columns)) != 0U) {
+        ImGui::Dummy(ImVec2(0.0f, gap_y));
+    }
 
     const TabItem* selected_tab = nullptr;
     for (const TabItem& tab : tabs) {
@@ -3816,14 +3835,9 @@ void RenderActionTabs(ShellState& state) {
         return;
     }
 
-    InlineSectionLabel("Selected Mode");
-    ImGui::TextWrapped("%s", selected_tab->description.c_str());
     if (!selected_tab->ready && !selected_tab->blocker_message.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", selected_tab->blocker_message.c_str());
-    } else if (!selected_tab->command_preview.empty()) {
-        ImGui::Spacing();
-        ImGui::TextDisabled("%s", selected_tab->command_preview.c_str());
     }
 }
 
@@ -4247,15 +4261,7 @@ void RenderLanguageScreen(ShellState& state) {
 
     if (BeginCanvasOverlayRegion("language-description", layout.description_content_min, layout.description_content_max)) {
         const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-        if (g_title_font != nullptr) {
-            ImGui::PushFont(g_title_font);
-        }
-        ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("%s", Tr(state, UiText::LanguageScreenTitle));
-        ImGui::PopTextWrapPos();
-        if (g_title_font != nullptr) {
-            ImGui::PopFont();
-        }
+        DrawCanvasPageTitle(Tr(state, UiText::LanguageScreenTitle), wrap_x);
 
         ImGui::Spacing();
         ImGui::PushTextWrapPos(wrap_x);
@@ -4324,15 +4330,7 @@ void RenderIntroductionScreen(ShellState& state) {
 
     if (BeginCanvasOverlayRegion("intro-description", layout.description_content_min, layout.description_content_max)) {
         const float wrap_x = ImGui::GetCursorPosX() + std::min(ImGui::GetContentRegionAvail().x, ShellUi(348.0f));
-        if (g_title_font != nullptr) {
-            ImGui::PushFont(g_title_font);
-        }
-        ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("%s", Tr(state, UiText::IntroWelcome));
-        ImGui::PopTextWrapPos();
-        if (g_title_font != nullptr) {
-            ImGui::PopFont();
-        }
+        DrawCanvasPageTitle(Tr(state, UiText::IntroWelcome), wrap_x);
 
         ImGui::Dummy(ImVec2(0.0f, ShellUi(8.0f)));
         ImGui::PushTextWrapPos(wrap_x);
@@ -4387,15 +4385,7 @@ void RenderSelectScreen(ShellState& state) {
     if (state.initial_state_loading) {
         if (BeginCanvasOverlayRegion("select-loading-description", layout.description_content_min, layout.description_content_max)) {
             const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-            if (g_title_font != nullptr) {
-                ImGui::PushFont(g_title_font);
-            }
-            ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextWrapped("%s", Tr(state, UiText::SelectLoadingTitle));
-            ImGui::PopTextWrapPos();
-            if (g_title_font != nullptr) {
-                ImGui::PopFont();
-            }
+            DrawCanvasPageTitle(Tr(state, UiText::SelectLoadingTitle), wrap_x);
             ImGui::Spacing();
             ImGui::PushTextWrapPos(wrap_x);
             ImGui::TextWrapped("%s", Tr(state, UiText::SelectLoadingBody));
@@ -4409,79 +4399,70 @@ void RenderSelectScreen(ShellState& state) {
     }
 
     if (BeginCanvasOverlayRegion("select-description", layout.description_content_min, layout.description_content_max)) {
-        const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-        if (g_title_font != nullptr) {
-            ImGui::PushFont(g_title_font);
-        }
-        ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("%s", Tr(state, UiText::SelectTitle));
-        ImGui::PopTextWrapPos();
-        if (g_title_font != nullptr) {
-            ImGui::PopFont();
-        }
+        const float total_width = ImGui::GetContentRegionAvail().x;
+        const float total_height = ImGui::GetContentRegionAvail().y;
+        const float column_gap = ShellUi(16.0f);
+        const float right_margin = ShellUi(12.0f);
+        const float usable_width = std::max(ShellUi(420.0f), total_width - right_margin);
+        const float list_width = std::clamp(usable_width * 0.21f, ShellUi(166.0f), ShellUi(188.0f));
+        const float summary_width = std::max(ShellUi(336.0f), usable_width - list_width - column_gap);
 
-        ImGui::Spacing();
-        if (!state.profiles.empty()) {
-            const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
+        if (ImGui::BeginChild("select-summary-column", ImVec2(summary_width, total_height), false, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+            const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+            DrawCanvasPageTitle(Tr(state, UiText::SelectTitle), wrap_x);
+
+            ImGui::Dummy(ImVec2(0.0f, ShellUi(4.0f)));
+            if (!state.profiles.empty()) {
+                const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
+                if (g_small_font != nullptr) {
+                    ImGui::PushFont(g_small_font);
+                }
+                ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::SelectedSlice));
+                if (g_small_font != nullptr) {
+                    ImGui::PopFont();
+                }
+                if (g_body_font != nullptr) {
+                    ImGui::PushFont(g_body_font);
+                }
+                ImGui::Text("%s", profile.profile_id.c_str());
+                if (g_body_font != nullptr) {
+                    ImGui::PopFont();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", Ellipsize(profile.label, 22U).c_str());
+                ImGui::Dummy(ImVec2(0.0f, ShellUi(4.0f)));
+            }
+
             if (g_small_font != nullptr) {
                 ImGui::PushFont(g_small_font);
             }
-            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::SelectedSlice));
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionPath));
             if (g_small_font != nullptr) {
                 ImGui::PopFont();
             }
-            ImGui::Text("%s", profile.profile_id.c_str());
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", profile.label.c_str());
-            ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextWrapped("%s", profile.summary.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::Spacing();
+            RenderActionTabs(state);
         }
+        ImGui::EndChild();
 
-        if (g_small_font != nullptr) {
-            ImGui::PushFont(g_small_font);
-        }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionPath));
-        if (g_small_font != nullptr) {
-            ImGui::PopFont();
-        }
-        RenderActionTabs(state);
-        ImGui::Spacing();
+        ImGui::SameLine(0.0f, column_gap);
 
-        const ActionItem* action = FindSelectedAction(state);
-        ImGui::PushTextWrapPos(wrap_x);
-        if (action != nullptr) {
-            ImGui::TextWrapped("%s", action->description.c_str());
-            if (!action->command_preview.empty()) {
-                ImGui::Spacing();
-                ImGui::TextDisabled("%s", action->command_preview.c_str());
+        if (ImGui::BeginChild("select-slices-column", ImVec2(list_width, total_height), false, ImGuiWindowFlags_NoBackground)) {
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
             }
-            if (!action->ready && !action->blocker_message.empty()) {
-                ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", action->blocker_message.c_str());
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::LiveSlices));
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
             }
-        } else if (CurrentActionId(state) == "daily_live_matrix") {
-            ImGui::TextWrapped("%s", Tr(state, UiText::SelectDailyMatrixBody));
             ImGui::Spacing();
-            ImGui::TextDisabled("python -m sg_preflight run-action daily_live_matrix");
-        } else {
-            ImGui::TextDisabled("%s", Tr(state, UiText::NoActionMetadata));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+            if (ImGui::BeginChild("select-live-slices-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false)) {
+                RenderProfilesPanel(state);
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
         }
-        ImGui::PopTextWrapPos();
-    }
-    EndCanvasOverlayRegion();
-
-    if (BeginCanvasOverlayRegion("select-side", layout.side_content_min, layout.side_content_max)) {
-        if (g_small_font != nullptr) {
-            ImGui::PushFont(g_small_font);
-        }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::LiveSlices));
-        if (g_small_font != nullptr) {
-            ImGui::PopFont();
-        }
-        ImGui::Spacing();
-        RenderProfilesPanel(state);
+        ImGui::EndChild();
     }
     EndCanvasOverlayRegion();
     EndScreenTransition();
@@ -4495,15 +4476,7 @@ void RenderReviewScreen(ShellState& state) {
     if (state.initial_state_loading) {
         if (BeginCanvasOverlayRegion("review-loading-description", layout.description_content_min, layout.description_content_max)) {
             const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-            if (g_title_font != nullptr) {
-                ImGui::PushFont(g_title_font);
-            }
-            ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextWrapped("%s", Tr(state, UiText::ReviewLoadingTitle));
-            ImGui::PopTextWrapPos();
-            if (g_title_font != nullptr) {
-                ImGui::PopFont();
-            }
+            DrawCanvasPageTitle(Tr(state, UiText::ReviewLoadingTitle), wrap_x);
             ImGui::Spacing();
             ImGui::PushTextWrapPos(wrap_x);
             ImGui::TextWrapped("%s", Tr(state, UiText::ReviewLoadingBody));
@@ -4519,15 +4492,7 @@ void RenderReviewScreen(ShellState& state) {
     const ActionItem* action = FindSelectedAction(state);
     if (BeginCanvasOverlayRegion("review-description", layout.description_content_min, layout.description_content_max)) {
         const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-        if (g_title_font != nullptr) {
-            ImGui::PushFont(g_title_font);
-        }
-        ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("%s", Tr(state, UiText::ReviewTitle));
-        ImGui::PopTextWrapPos();
-        if (g_title_font != nullptr) {
-            ImGui::PopFont();
-        }
+        DrawCanvasPageTitle(Tr(state, UiText::ReviewTitle), wrap_x);
 
         ImGui::Spacing();
         if (!state.profiles.empty()) {
@@ -4881,7 +4846,7 @@ void RenderWizardNavigation(ShellState& state) {
             squash_ratio = max_text_width / text_size.x;
         }
         const float button_width = std::max(ShellUi(104.0f), text_size.x * squash_ratio + ShellUi(28.0f));
-        const ImVec2 min(layout.description_max.x - button_width - ShellUi(4.0f), layout.description_max.y + ShellUi(5.0f));
+        const ImVec2 min(layout.description_content_max.x - button_width, layout.description_max.y + ShellUi(5.0f));
 
         ImGui::SetCursorScreenPos(min);
         if (DrawInstallerNavButton("wizard-next-source", next_label.c_str(), ImVec2(button_width, ShellUi(22.0f)), true, can_go_next)) {
@@ -5123,6 +5088,10 @@ void RenderBlockersPanel(ShellState& state) {
 }
 
 void RenderButtonGuide(ShellState& state) {
+    if (state.exit_transition_active) {
+        return;
+    }
+
     UpdateGuideInputMode();
 
     const std::vector<CopyItem> copy_items = CombinedCopyItems(state);
@@ -5725,6 +5694,71 @@ void DrawPromptPlate(ImDrawList* draw, const ImVec2& min, const ImVec2& max, flo
     draw->AddPolyline(points.data(), static_cast<int>(points.size()), IM_COL32(250, 250, 245, static_cast<int>(255.0f * alpha)), ImDrawFlags_Closed, 1.3f);
 }
 
+void DrawPromptTextureSlice(
+    ImDrawList* draw,
+    const DdsTextureHandle& texture,
+    const ImVec2& min,
+    const ImVec2& max,
+    const ImVec2& uv_min,
+    const ImVec2& uv_max,
+    ImU32 tint
+) {
+    if (!HasTexture(texture)) {
+        return;
+    }
+    draw->AddImage(ToTextureId(texture), min, max, uv_min, uv_max, tint);
+}
+
+void DrawPauseContainerChrome(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float alpha) {
+    if (!HasTexture(g_shell_assets.general_window)) {
+        DrawPromptPlate(draw, min, max, alpha);
+        return;
+    }
+
+    const float common_width = ShellUi(35.0f);
+    const float common_height = ShellUi(35.0f);
+    const float bottom_height = ShellUi(5.0f);
+    const ImU32 tint = IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha));
+
+    DrawPromptTextureSlice(draw, g_shell_assets.general_window, min, ImVec2(min.x + common_width, min.y + common_height), ImVec2(0.0f / 128.0f, 0.0f / 512.0f), ImVec2(35.0f / 128.0f, 35.0f / 512.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.general_window, ImVec2(min.x + common_width, min.y), ImVec2(max.x - common_width, min.y + common_height), ImVec2(51.0f / 128.0f, 0.0f / 512.0f), ImVec2(56.0f / 128.0f, 35.0f / 512.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.general_window, ImVec2(max.x - common_width, min.y), ImVec2(max.x, min.y + common_height), ImVec2(70.0f / 128.0f, 0.0f / 512.0f), ImVec2(105.0f / 128.0f, 35.0f / 512.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.general_window, ImVec2(min.x, min.y + common_height), ImVec2(min.x + common_width, max.y - common_height), ImVec2(0.0f / 128.0f, 35.0f / 512.0f), ImVec2(35.0f / 128.0f, 270.0f / 512.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.general_window, ImVec2(min.x + common_width, min.y + common_height), ImVec2(max.x - common_width, max.y - common_height), ImVec2(51.0f / 128.0f, 35.0f / 512.0f), ImVec2(56.0f / 128.0f, 270.0f / 512.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.general_window, ImVec2(max.x - common_width, min.y + common_height), ImVec2(max.x, max.y - common_height), ImVec2(70.0f / 128.0f, 35.0f / 512.0f), ImVec2(105.0f / 128.0f, 270.0f / 512.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.general_window, ImVec2(min.x, max.y - common_height), ImVec2(min.x + common_width, max.y + bottom_height), ImVec2(0.0f / 128.0f, 270.0f / 512.0f), ImVec2(35.0f / 128.0f, 310.0f / 512.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.general_window, ImVec2(min.x + common_width, max.y - common_height), ImVec2(max.x - common_width, max.y + bottom_height), ImVec2(51.0f / 128.0f, 270.0f / 512.0f), ImVec2(56.0f / 128.0f, 310.0f / 512.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.general_window, ImVec2(max.x - common_width, max.y - common_height), ImVec2(max.x, max.y + bottom_height), ImVec2(70.0f / 128.0f, 270.0f / 512.0f), ImVec2(105.0f / 128.0f, 310.0f / 512.0f), tint);
+}
+
+void DrawSelectionContainerChrome(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float alpha, bool fade_top) {
+    if (!HasTexture(g_shell_assets.select)) {
+        DrawPromptPlate(draw, min, max, alpha, true);
+        return;
+    }
+
+    const float common_width = ShellUi(11.0f);
+    const float common_height = ShellUi(24.0f);
+    const ImU32 tint = IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha));
+
+    if (fade_top) {
+        DrawPromptTextureSlice(draw, g_shell_assets.select, min, ImVec2(min.x + common_width, max.y), ImVec2(0.0f / 64.0f, 0.0f / 64.0f), ImVec2(11.0f / 64.0f, 50.0f / 64.0f), tint);
+        DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(min.x + common_width, min.y), ImVec2(max.x - common_width, max.y), ImVec2(11.0f / 64.0f, 0.0f / 64.0f), ImVec2(19.0f / 64.0f, 50.0f / 64.0f), tint);
+        DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(max.x - common_width, min.y), max, ImVec2(19.0f / 64.0f, 0.0f / 64.0f), ImVec2(30.0f / 64.0f, 50.0f / 64.0f), tint);
+        return;
+    }
+
+    DrawPromptTextureSlice(draw, g_shell_assets.select, min, ImVec2(min.x + common_width, min.y + common_height), ImVec2(34.0f / 64.0f, 0.0f / 64.0f), ImVec2(45.0f / 64.0f, 24.0f / 64.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(min.x + common_width, min.y), ImVec2(max.x - common_width, min.y + common_height), ImVec2(45.0f / 64.0f, 0.0f / 64.0f), ImVec2(53.0f / 64.0f, 24.0f / 64.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(max.x - common_width, min.y), ImVec2(max.x, min.y + common_height), ImVec2(53.0f / 64.0f, 0.0f / 64.0f), ImVec2(1.0f, 24.0f / 64.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(min.x, min.y + common_height), ImVec2(min.x + common_width, max.y - common_height), ImVec2(34.0f / 64.0f, 24.0f / 64.0f), ImVec2(45.0f / 64.0f, 26.0f / 64.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(min.x + common_width, min.y + common_height), ImVec2(max.x - common_width, max.y - common_height), ImVec2(45.0f / 64.0f, 24.0f / 64.0f), ImVec2(53.0f / 64.0f, 26.0f / 64.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(max.x - common_width, min.y + common_height), ImVec2(max.x, max.y - common_height), ImVec2(53.0f / 64.0f, 24.0f / 64.0f), ImVec2(1.0f, 26.0f / 64.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(min.x, max.y - common_height), ImVec2(min.x + common_width, max.y), ImVec2(34.0f / 64.0f, 26.0f / 64.0f), ImVec2(45.0f / 64.0f, 50.0f / 64.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(min.x + common_width, max.y - common_height), ImVec2(max.x - common_width, max.y), ImVec2(45.0f / 64.0f, 26.0f / 64.0f), ImVec2(53.0f / 64.0f, 50.0f / 64.0f), tint);
+    DrawPromptTextureSlice(draw, g_shell_assets.select, ImVec2(max.x - common_width, max.y - common_height), max, ImVec2(53.0f / 64.0f, 26.0f / 64.0f), ImVec2(1.0f, 50.0f / 64.0f), tint);
+}
+
 void RenderPromptModal(ShellState& state) {
     if (!state.prompt_visible) {
         return;
@@ -5737,10 +5771,26 @@ void RenderPromptModal(ShellState& state) {
 
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     const ImVec2 display = ImGui::GetIO().DisplaySize;
-    draw->AddRectFilled(ImVec2(0.0f, 0.0f), display, IM_COL32(0, 0, 0, static_cast<int>(168.0f * alpha)));
+    const float chooser_open = state.prompt_controls_visible
+        ? SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.prompt_controls_opened_at) * 60.0 / 11.0, 0.0, 1.0)))
+        : 0.0f;
+    const float background_overlay_alpha = alpha * (state.prompt_controls_visible ? (1.0f - chooser_open) : 1.0f);
+    draw->AddRectFilled(ImVec2(0.0f, 0.0f), display, IM_COL32(0, 0, 0, static_cast<int>(190.0f * background_overlay_alpha)));
 
-    ImFont* prompt_banner_font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
-    const float prompt_banner_font_size = prompt_banner_font == g_title_font ? ShellUi(28.0f) : ImGui::GetFontSize();
+    if (BeginCanvasOverlayRegion("prompt-blocker", ImVec2(0.0f, 0.0f), display)) {
+        const bool blocker_clicked = ImGui::InvisibleButton("prompt-blocker-input", display);
+        if (blocker_clicked && !state.prompt_closing) {
+            if (state.prompt_confirmation && !state.prompt_controls_visible) {
+                OpenPromptControls(state);
+            } else if (!state.prompt_confirmation) {
+                AcceptPrompt(state);
+            }
+        }
+        EndCanvasOverlayRegion();
+    }
+
+    ImFont* prompt_banner_font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
+    const float prompt_banner_font_size = ShellUi(28.0f);
     const float prompt_banner_wrap_width = std::min(ShellUi(820.0f), display.x - ShellUi(110.0f));
     const ImVec2 prompt_center(display.x * 0.5f, display.y * 0.5f + ShellUi(3.0f));
     const ImVec2 prompt_text_size = prompt_banner_font->CalcTextSizeA(
@@ -5757,7 +5807,7 @@ void RenderPromptModal(ShellState& state) {
     const ImVec2 banner_current_half(banner_half.x * banner_open, banner_half.y * banner_open);
     const ImVec2 banner_min(prompt_center.x - banner_current_half.x, prompt_center.y - banner_current_half.y);
     const ImVec2 banner_max(prompt_center.x + banner_current_half.x, prompt_center.y + banner_current_half.y);
-    DrawPromptPlate(draw, banner_min, banner_max, alpha);
+    DrawPauseContainerChrome(draw, banner_min, banner_max, alpha);
 
     if (banner_open > 0.0f) {
         const ImVec2 prompt_banner_text_pos(prompt_center.x - prompt_text_size.x * 0.5f, prompt_center.y - prompt_text_size.y * 0.5f);
@@ -5766,7 +5816,7 @@ void RenderPromptModal(ShellState& state) {
             prompt_banner_font,
             prompt_banner_font_size,
             ImVec2(prompt_banner_text_pos.x + ShellUi(2.0f), prompt_banner_text_pos.y + ShellUi(2.0f)),
-            IM_COL32(255, 255, 255, static_cast<int>(120.0f * alpha)),
+            IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha)),
             state.prompt_message.c_str(),
             nullptr,
             prompt_banner_wrap_width
@@ -5775,7 +5825,7 @@ void RenderPromptModal(ShellState& state) {
             prompt_banner_font,
             prompt_banner_font_size,
             prompt_banner_text_pos,
-            IM_COL32(18, 18, 18, static_cast<int>(255.0f * alpha)),
+            IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha)),
             state.prompt_message.c_str(),
             nullptr,
             prompt_banner_wrap_width
@@ -5788,12 +5838,12 @@ void RenderPromptModal(ShellState& state) {
     }
 
     const bool confirmation = state.prompt_confirmation;
-    const float chooser_open = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.prompt_controls_opened_at) * 60.0 / 11.0, 0.0, 1.0)));
+    draw->AddRectFilled(ImVec2(0.0f, 0.0f), display, IM_COL32(0, 0, 0, static_cast<int>(190.0f * alpha * chooser_open)));
     const std::vector<std::string> labels = confirmation
         ? std::vector<std::string>{state.prompt_accept_label, state.prompt_cancel_label}
         : std::vector<std::string>{state.prompt_accept_label};
-    ImFont* font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
-    const float font_size = font == g_title_font ? ShellUi(28.0f) : ImGui::GetFontSize();
+    ImFont* font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
+    const float font_size = ShellUi(28.0f);
     float widest_label = 0.0f;
     for (const std::string& label : labels) {
         widest_label = std::max(widest_label, font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, label.c_str()).x);
@@ -5808,7 +5858,7 @@ void RenderPromptModal(ShellState& state) {
     const ImVec2 chooser_current_half(chooser_half.x * chooser_open, chooser_half.y * chooser_open);
     const ImVec2 chooser_min(chooser_center.x - chooser_current_half.x, chooser_center.y - chooser_current_half.y);
     const ImVec2 chooser_max(chooser_center.x + chooser_current_half.x, chooser_center.y + chooser_current_half.y);
-    DrawPromptPlate(draw, chooser_min, chooser_max, alpha * chooser_open, true);
+    DrawPauseContainerChrome(draw, chooser_min, chooser_max, alpha * chooser_open);
     if (chooser_open < 0.999f) {
         return;
     }
@@ -5864,7 +5914,7 @@ void RenderPromptModal(ShellState& state) {
             const float motion = std::clamp(static_cast<float>((ImGui::GetTime() - state.prompt_selection_changed_at) * 60.0 / 8.0), 0.0f, 1.0f);
             selection_offset = static_cast<float>(state.prompt_previous_selected_index - state.prompt_selected_index) * (row_height + row_gap) * std::pow(1.0f - motion, 3.0f);
         }
-        DrawPromptPlate(
+        DrawSelectionContainerChrome(
             draw,
             ImVec2(selected_min.x, selected_min.y + selection_offset),
             ImVec2(selected_max.x, selected_max.y + selection_offset),
@@ -5888,18 +5938,14 @@ void RenderPromptModal(ShellState& state) {
 }
 
 float ShellContentAlpha(const ShellState& state) {
-    if (!state.exit_transition_active || state.exit_transition_started_at < 0.0) {
-        return 1.0f;
-    }
-    const float motion = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.exit_transition_started_at) * 60.0 / kExitTransitionDurationFrames, 0.0, 1.0)));
-    return 1.0f - motion;
+    return 1.0f - ExitBlackFadeProgress(state);
 }
 
 void RenderExitFade(const ShellState& state) {
     if (!state.exit_transition_active || state.exit_transition_started_at < 0.0) {
         return;
     }
-    const float motion = SmoothStep(static_cast<float>(std::clamp((ImGui::GetTime() - state.exit_transition_started_at) * 60.0 / kExitTransitionDurationFrames, 0.0, 1.0)));
+    const float motion = ExitBlackFadeProgress(state);
     ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), ImGui::GetIO().DisplaySize, IM_COL32(0, 0, 0, static_cast<int>(255.0f * motion)));
 }
 
@@ -5926,6 +5972,9 @@ void RenderShell(ShellState& state) {
     FinalizePromptIfReady(state);
     HandleShellHotkeys(state);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ShellContentAlpha(state));
+    if (state.prompt_visible) {
+        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+    }
 
     switch (state.current_screen) {
     case ShellScreen::Language:
@@ -5936,12 +5985,16 @@ void RenderShell(ShellState& state) {
     case ShellScreen::Evidence:
     case ShellScreen::Files:
     case ShellScreen::Stages:
-        if (BeginLayoutRegionAt("screen-region", kInstallerContainerX, kInstallerContainerY, 757.0f, 432.0f)) {
+        if (BeginLayoutRegionAt("screen-region", 0.0f, 0.0f, 1280.0f, 720.0f)) {
             RenderCurrentScreen(state);
             RenderWizardNavigation(state);
         }
         EndLayoutRegion();
         break;
+    }
+
+    if (state.prompt_visible) {
+        ImGui::PopItemFlag();
     }
 
     ImGui::PopStyleVar();
@@ -6044,9 +6097,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     };
     ImGui_ImplDX12_Init(&init_info);
 
+    const bool music_enabled_preference = LoadMusicPreferenceFromIni();
     LoadShellAssets(std::filesystem::path(backend.workspace_root));
     LoadShellAudio(std::filesystem::path(backend.workspace_root));
+    g_shell_audio.music_enabled = music_enabled_preference;
+    if (music_enabled_preference) {
+        SetMusicEnabled(true);
+    }
     g_shell_appear_time = ImGui::GetTime();
+    g_shell_disappear_time = -1.0;
     PlayCue(UiCue::Window);
 
     ShellState state;
@@ -6064,7 +6123,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         state.status_line += " Renderer fallback: D3D12 WARP.";
     }
     if (g_shell_audio.available) {
-        state.status_line += " Shell audio is ready; toggle music in Stages.";
+        state.status_line += music_enabled_preference
+            ? " Shell SFX are ready and installer music is enabled from imgui.ini."
+            : " Shell SFX are ready; installer music stays off unless enabled in imgui.ini or Stages.";
     } else if (g_shell_audio.attempted && !g_shell_audio.last_error.empty()) {
         state.status_line += " Audio fallback active: " + g_shell_audio.last_error;
     }
@@ -6151,6 +6212,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     g_live_shell_state = nullptr;
 
     WaitForPendingOperations();
+    sg_preflight::native_shell::ShutdownAudio();
     ImGui_ImplDX12_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();

@@ -79,6 +79,8 @@ target_link_libraries(
   PRIVATE
     sg_preflight_imgui
     nlohmann_json::nlohmann_json
+    ole32
+    xaudio2
     winmm
 )
 
