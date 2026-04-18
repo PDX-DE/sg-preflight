@@ -10,6 +10,8 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 #### 2026-04-18
 
+- working tree: the native C++ shell now uses the full viewport instead of the work-area viewport, loads the real installer left-image set plus `miles_electric_icon`, keeps the loading spinner/pulse strictly in the actual run/install phase, and anchors the main page closer to the OG installer container layout instead of the extra top flow panel
+- working tree: the latest plain native build is smoke-verified at `build/native-installer-fullscreen/Release/sg_preflight_native_shell.exe`, and the latest portable another-PC bundle is staged at `..\sgpf-native-bundle/sg_preflight_native_shell.exe` with `build/latest_native_shell_path.txt` updated to that bundled exe
 - working tree: the native C++ shell now ports more of the real `installer_wizard.cpp` draw layer directly, including top/bottom scanline-bar treatment, installer-style borders, bottom navigation button containers, page-specific button-guide behavior, and message-prompt/modal rhythm
 - working tree: the current installer-layer build is smoke-verified at `build/native-installer-layer/Release/sg_preflight_native_shell.exe`, and the refreshed another-PC bundle is staged at `build/native-installer-layer-bundle/sg_preflight_native_shell.exe` with `build/latest_native_shell_path.txt` updated to that bundled exe
 

@@ -54,6 +54,15 @@ bool g_tab_highlight_ready = false;
 bool g_using_warp = false;
 bool g_request_close_prompt = false;
 
+constexpr float kInstallerImageX = 161.5f;
+constexpr float kInstallerImageY = 103.5f;
+constexpr float kInstallerImageWidth = 512.0f;
+constexpr float kInstallerImageHeight = 512.0f;
+constexpr float kInstallerContainerX = 513.0f;
+constexpr float kInstallerContainerY = 226.0f;
+constexpr float kInstallerContainerWidth = 526.5f;
+constexpr float kInstallerContainerHeight = 246.0f;
+
 struct ShellAssets {
     std::filesystem::path resource_root;
     DdsTextureHandle general_window;
@@ -62,8 +71,10 @@ struct ShellAssets {
     DdsTextureHandle options_static;
     DdsTextureHandle options_static_flash;
     DdsTextureHandle installer_panel;
+    DdsTextureHandle miles_electric_icon;
     DdsTextureHandle arrow_circle;
     DdsTextureHandle pulse_install;
+    std::array<DdsTextureHandle, 8> install_images;
     bool attempted = false;
     bool loaded = false;
     std::string error;
@@ -269,7 +280,13 @@ float ShellScale() {
 }
 
 ImVec2 ShellOffset() {
-    return ImVec2(0.0f, 0.0f);
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float scaled_width = kDesignWidth * ShellScale();
+    const float scaled_height = kDesignHeight * ShellScale();
+    return ImVec2(
+        std::max(0.0f, (display.x - scaled_width) * 0.5f),
+        std::max(0.0f, (display.y - scaled_height) * 0.5f)
+    );
 }
 
 float ShellUi(float value) {
@@ -278,7 +295,7 @@ float ShellUi(float value) {
 
 ImVec2 ShellPoint(float x, float y) {
     const ImVec2 offset = ShellOffset();
-    return ImVec2(offset.x + x * ShellScaleX(), offset.y + y * ShellScaleY());
+    return ImVec2(offset.x + x * ShellScale(), offset.y + y * ShellScale());
 }
 
 bool PathExists(const std::filesystem::path& path) {
@@ -622,8 +639,12 @@ void ReleaseShellAssets() {
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static_flash);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.installer_panel);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.miles_electric_icon);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.arrow_circle);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.pulse_install);
+    for (auto& texture : g_shell_assets.install_images) {
+        sg_preflight::native_shell::ReleaseTexture(texture);
+    }
     g_shell_assets = {};
 }
 
@@ -656,9 +677,14 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         && load_required_texture(std::filesystem::path("images") / "common" / "light.dds", g_shell_assets.light)
         && load_required_texture(std::filesystem::path("images") / "options_menu" / "options_static.dds", g_shell_assets.options_static)
         && load_required_texture(std::filesystem::path("images") / "options_menu" / "options_static_flash.dds", g_shell_assets.options_static_flash)
+        && load_required_texture(std::filesystem::path("images") / "installer" / "miles_electric_icon.dds", g_shell_assets.miles_electric_icon)
     ) {
         load_optional_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", g_shell_assets.arrow_circle);
         load_optional_texture(std::filesystem::path("images") / "installer" / "pulse_install.dds", g_shell_assets.pulse_install);
+        for (size_t index = 0; index < g_shell_assets.install_images.size(); ++index) {
+            const std::string filename = "install_00" + std::to_string(index + 1U) + ".dds";
+            load_optional_texture(std::filesystem::path("images") / "installer" / filename, g_shell_assets.install_images[index]);
+        }
         g_shell_assets.loaded = true;
     }
 }
@@ -824,6 +850,44 @@ bool HasArtifactsReady(const ShellState& state) {
 
 bool HasCompletedRun(const ShellState& state) {
     return state.snapshot.has_value() && state.snapshot->status == "completed";
+}
+
+bool ShouldShowInstallerLoadingChrome(const ShellState& state) {
+    return state.current_screen == ShellScreen::Run
+        && state.snapshot.has_value()
+        && (state.snapshot->status == "queued" || state.snapshot->status == "running");
+}
+
+size_t InstallerTextureIndexForState(const ShellState& state) {
+    size_t index = 0U;
+    switch (state.current_screen) {
+    case ShellScreen::Introduction:
+        index = 0U;
+        break;
+    case ShellScreen::Select:
+        index = 1U;
+        break;
+    case ShellScreen::Review:
+        index = 2U;
+        break;
+    case ShellScreen::Run:
+        index = 4U;
+        if (ShouldShowInstallerLoadingChrome(state)) {
+            const double elapsed = std::max(0.0, ImGui::GetTime() - std::max(0.0, g_shell_appear_time));
+            index += static_cast<size_t>(elapsed / 0.45);
+        }
+        break;
+    case ShellScreen::Evidence:
+        index = 7U;
+        break;
+    case ShellScreen::Files:
+        index = 3U;
+        break;
+    case ShellScreen::Stages:
+        index = 5U;
+        break;
+    }
+    return index % g_shell_assets.install_images.size();
 }
 
 std::string PrimaryActionId(const ShellState& state) {
@@ -1797,11 +1861,11 @@ void DrawInstallerVerticalBorder(float x, float min_y, float max_y, bool right_b
 }
 
 void DrawInstallerBorders() {
-    const float full_left = ShellPoint(10.0f, 0.0f).x;
+    const float full_left = ShellPoint(kInstallerContainerX - 1.0f, 0.0f).x;
     const float full_right = ShellPoint(1270.0f, 0.0f).x;
-    const float top_y = ShellPoint(0.0f, 237.0f).y;
-    const float bottom_y = ShellPoint(0.0f, 669.0f).y;
-    const float split_x = ShellPoint(314.0f, 0.0f).x;
+    const float top_y = ShellPoint(0.0f, kInstallerContainerY - 1.0f).y;
+    const float bottom_y = ShellPoint(0.0f, kInstallerContainerY + kInstallerContainerHeight).y;
+    const float split_x = ShellPoint(kInstallerContainerX + kInstallerContainerWidth, 0.0f).x;
     DrawInstallerHorizontalBorder(full_left, full_right, top_y, false);
     DrawInstallerHorizontalBorder(full_left, full_right, bottom_y, true);
     DrawInstallerVerticalBorder(full_left, top_y, bottom_y, false);
@@ -1872,18 +1936,32 @@ bool DrawInstallerNavButton(const char* id, const std::string& label, ImVec2 siz
     return pressed && enabled;
 }
 
+void DrawInstallerLeftImage(const ShellState& state) {
+    const size_t index = InstallerTextureIndexForState(state);
+    if (index >= g_shell_assets.install_images.size() || !HasTexture(g_shell_assets.install_images[index])) {
+        return;
+    }
+
+    ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
+    const float alpha = static_cast<float>(ComputeMotionFrames(25.0, 15.0));
+    const ImVec2 min = ShellPoint(kInstallerImageX, kInstallerImageY);
+    const ImVec2 max = ImVec2(min.x + ShellUi(kInstallerImageWidth), min.y + ShellUi(kInstallerImageHeight));
+    draw_list->AddImage(
+        ToTextureId(g_shell_assets.install_images[index]),
+        min,
+        max,
+        ImVec2(0.0f, 0.0f),
+        ImVec2(1.0f, 1.0f),
+        IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha))
+    );
+}
+
 void DrawBackdropChrome(const ShellState& state) {
     ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
     const ImVec2 display_size = ImGui::GetIO().DisplaySize;
     draw_list->AddRectFilled(ImVec2(0.0f, 0.0f), display_size, IM_COL32(0, 0, 0, 255));
-    draw_list->AddRectFilledMultiColor(
-        ImVec2(0.0f, 0.0f),
-        ImVec2(display_size.x, display_size.y * 0.35f),
-        IM_COL32(4, 13, 15, 255),
-        IM_COL32(4, 13, 15, 255),
-        IM_COL32(0, 0, 0, 0),
-        IM_COL32(0, 0, 0, 0)
-    );
+
+    DrawInstallerLeftImage(state);
 
     const double scanline_alpha = ComputeMotionFrames(0.0, 15.0);
     const float bar_height = ShellUi(105.0f) * static_cast<float>(scanline_alpha);
@@ -1925,69 +2003,51 @@ void DrawBackdropChrome(const ShellState& state) {
     draw_bar_line(true);
     draw_bar_line(false);
 
-    const float overlay_alpha = static_cast<float>(ComputeMotionFrames(kContainerInnerTime, kContainerInnerDuration));
-    for (int band = 0; band < 7; ++band) {
-        const float y = ShellUi(140.0f + band * 72.0f);
-        draw_list->AddLine(
-            ImVec2(ShellUi(26.0f), y),
-            ImVec2(display_size.x - ShellUi(26.0f), y),
-            IM_COL32(32, 92, 96, static_cast<int>((band < 2 ? 18.0f : 10.0f) * overlay_alpha)),
-            1.0f
+    const float title_alpha = static_cast<float>(ComputeMotionFrames(15.0, 30.0));
+    const char* header_text = ShouldShowInstallerLoadingChrome(state) ? "INSTALLING" : "INSTALLER";
+    if (HasTexture(g_shell_assets.miles_electric_icon)) {
+        const float scale = 62.0f * (2.0f - title_alpha);
+        const ImVec2 center = ShellPoint(256.0f, 80.0f);
+        const ImVec2 min(center.x - ShellUi(scale) * 0.5f, center.y - ShellUi(scale) * 0.5f);
+        const ImVec2 max(center.x + ShellUi(scale) * 0.5f, center.y + ShellUi(scale) * 0.5f);
+        draw_list->AddImage(
+            ToTextureId(g_shell_assets.miles_electric_icon),
+            min,
+            max,
+            ImVec2(0.0f, 0.0f),
+            ImVec2(1.0f, 1.0f),
+            IM_COL32(255, 255, 255, static_cast<int>(255.0f * title_alpha))
         );
     }
 
-    const float title_alpha = static_cast<float>(ComputeMotionFrames(15.0, 30.0));
-    const float breathe = (state.current_screen == ShellScreen::Run && IsActionStillRunning(state))
-        ? (0.55f + 0.45f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 1.5f)))
-        : 1.0f;
-    const char* header_text = state.current_screen == ShellScreen::Run ? "LOCAL QA RUNNING" : "INSTALLER";
     if (g_title_font != nullptr) {
         const float size = ShellUi(42.0f);
-        const ImVec2 pos = ShellPoint(188.0f, 52.0f);
-        const float alpha = title_alpha * breathe;
-        draw_list->AddText(g_title_font, size, ImVec2(pos.x + ShellUi(3.0f), pos.y + ShellUi(3.0f)), IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha)), header_text);
-        draw_list->AddText(g_title_font, size, pos, IM_COL32(255, 195, 0, static_cast<int>(255.0f * alpha)), header_text);
+        const ImVec2 pos = ShellPoint(288.0f, 54.0f);
+        draw_list->AddText(g_title_font, size, ImVec2(pos.x + ShellUi(3.0f), pos.y + ShellUi(3.0f)), IM_COL32(0, 0, 0, static_cast<int>(255.0f * title_alpha)), header_text);
+        draw_list->AddText(g_title_font, size, pos, IM_COL32(255, 195, 0, static_cast<int>(255.0f * title_alpha)), header_text);
     }
 
-    const ImVec2 icon_center = ShellPoint(118.0f, 76.0f);
-    if (HasTexture(g_shell_assets.arrow_circle)) {
+    if (ShouldShowInstallerLoadingChrome(state) && HasTexture(g_shell_assets.arrow_circle)) {
+        const ImVec2 center = ShellPoint(256.0f, 80.0f);
         DrawRotatedTexture(
             draw_list,
             g_shell_assets.arrow_circle,
-            icon_center,
-            ImVec2(ShellUi(30.0f), ShellUi(30.0f)),
-            static_cast<float>(ImGui::GetTime()) * -1.15f,
+            center,
+            ImVec2(ShellUi(62.0f), ShellUi(62.0f)),
+            static_cast<float>(ImGui::GetTime()) * -2.0f,
             IM_COL32(255, 255, 255, static_cast<int>(96.0 * title_alpha))
         );
-    }
-    if (HasTexture(g_shell_assets.pulse_install)) {
-        const float pulse = 0.7f + 0.3f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.6f));
-        DrawTexturedRectRounded(
-            draw_list,
-            g_shell_assets.pulse_install,
-            ImVec2(icon_center.x - ShellUi(34.0f) * pulse, icon_center.y - ShellUi(34.0f) * pulse),
-            ImVec2(icon_center.x + ShellUi(34.0f) * pulse, icon_center.y + ShellUi(34.0f) * pulse),
-            IM_COL32(255, 255, 255, static_cast<int>(40.0 * pulse * title_alpha)),
-            ShellUi(20.0f)
-        );
-    }
-    if (g_small_font != nullptr) {
-        const std::string subtitle = "SG PREFLIGHT - QA INSTALLER SHELL";
-        const std::string workspace = "workspace: " + sg_preflight::native_shell::ToUtf8(state.backend.workspace_root);
-        draw_list->AddText(
-            g_small_font,
-            ShellUi(14.0f),
-            ShellPoint(188.0f, 95.0f),
-            IM_COL32(124, 214, 196, 220),
-            subtitle.c_str()
-        );
-        draw_list->AddText(
-            g_small_font,
-            ShellUi(13.0f),
-            ShellPoint(860.0f, 95.0f),
-            IM_COL32(164, 182, 178, 168),
-            workspace.c_str()
-        );
+        if (HasTexture(g_shell_assets.pulse_install)) {
+            const float pulse = 0.65f + 0.35f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.6f));
+            DrawTexturedRectRounded(
+                draw_list,
+                g_shell_assets.pulse_install,
+                ImVec2(center.x - ShellUi(34.0f) * pulse, center.y - ShellUi(34.0f) * pulse),
+                ImVec2(center.x + ShellUi(34.0f) * pulse, center.y + ShellUi(34.0f) * pulse),
+                IM_COL32(255, 255, 255, static_cast<int>(40.0 * pulse * title_alpha)),
+                ShellUi(20.0f)
+            );
+        }
     }
 }
 
@@ -2096,7 +2156,7 @@ void EndDecoratedPanel() {
 }
 
 ImVec2 ShellSize(float width, float height) {
-    return ImVec2(width * ShellScaleX(), height * ShellScaleY());
+    return ImVec2(width * ShellScale(), height * ShellScale());
 }
 
 bool BeginShellPanelAt(
@@ -2794,9 +2854,6 @@ void RenderWizardFlow(ShellState& state) {
 
 void RenderIntroductionScreen(ShellState& state) {
     BeginScreenTransition(state);
-    const ImVec2 hero_pos = ImGui::GetCursorScreenPos();
-    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(88.0f)), 0.74f, true);
-    ImGui::Dummy(ImVec2(0.0f, ShellUi(94.0f)));
     InlineSectionLabel("Step 1 / 7");
     ImGui::TextWrapped("This shell follows a real wizard flow now: choose the SG slice, review the local readiness state, run the action, then move through evidence, files, and blocked/manual stages in order.");
     ImGui::Spacing();
@@ -2915,9 +2972,6 @@ void RenderReviewScreen(ShellState& state) {
 
 void RenderRunScreen(ShellState& state) {
     BeginScreenTransition(state);
-    const ImVec2 hero_pos = ImGui::GetCursorScreenPos();
-    DrawInstallerHero(hero_pos, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(68.0f)), 0.76f, true);
-    ImGui::Dummy(ImVec2(0.0f, ShellUi(74.0f)));
     InlineSectionLabel("Step 4 / 7");
     ImGui::TextWrapped("Stay here while the local action runs. Once the result is completed, move forward to evidence first instead of reading every file or report at once.");
     ImGui::Spacing();
@@ -3579,8 +3633,8 @@ void RenderShell(ShellState& state) {
     DrawBackdropChrome(state);
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
     ImGui::SetNextWindowViewport(viewport->ID);
 
     constexpr ImGuiWindowFlags flags =
@@ -3596,21 +3650,21 @@ void RenderShell(ShellState& state) {
 
     HandleShellHotkeys(state);
 
-    if (BeginShellPanelAt("wizard-flow-panel", "INSTALLER FLOW", 10.0f, 117.0f, 1260.0f, 112.0f)) {
-        ImGui::TextDisabled("%s", ScreenTitle(state.current_screen));
-        RenderWizardFlow(state);
-    }
-    EndDecoratedPanel();
-
     switch (state.current_screen) {
     case ShellScreen::Introduction:
+        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), kInstallerContainerX, kInstallerContainerY, 757.0f, 432.0f, false)) {
+            RenderCurrentScreen(state);
+            RenderWizardNavigation(state);
+        }
+        EndDecoratedPanel();
+        break;
     case ShellScreen::Select:
     case ShellScreen::Review:
-        if (BeginShellPanelAt("profiles-panel", "PROFILE SOURCE", 10.0f, 237.0f, 304.0f, 432.0f)) {
+        if (BeginShellPanelAt("profiles-panel", "PROFILE SOURCE", 22.0f, 402.0f, 282.0f, 266.0f)) {
             RenderProfilesPanel(state);
         }
         EndDecoratedPanel();
-        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 324.0f, 237.0f, 946.0f, 432.0f, false)) {
+        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), kInstallerContainerX, kInstallerContainerY, 757.0f, 432.0f, false)) {
             RenderCurrentScreen(state);
             RenderWizardNavigation(state);
         }
@@ -3620,15 +3674,15 @@ void RenderShell(ShellState& state) {
     case ShellScreen::Evidence:
     case ShellScreen::Files:
     case ShellScreen::Stages:
-        if (BeginShellPanelAt("recent-actions-panel", "RECENT ACTIONS", 10.0f, 237.0f, 304.0f, 206.0f)) {
+        if (BeginShellPanelAt("recent-actions-panel", "RECENT ACTIONS", 22.0f, 402.0f, 282.0f, 124.0f)) {
             RenderRecentActionsPanel(state);
         }
         EndDecoratedPanel();
-        if (BeginShellPanelAt("recent-runs-panel", "RECENT RESULTS", 10.0f, 454.0f, 304.0f, 215.0f)) {
+        if (BeginShellPanelAt("recent-runs-panel", "RECENT RESULTS", 22.0f, 537.0f, 282.0f, 131.0f)) {
             RenderRecentResultsPanel(state);
         }
         EndDecoratedPanel();
-        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), 324.0f, 237.0f, 946.0f, 432.0f, false)) {
+        if (BeginShellPanelAt("screen-panel", ScreenTitle(state.current_screen), kInstallerContainerX, kInstallerContainerY, 757.0f, 432.0f, false)) {
             RenderCurrentScreen(state);
             RenderWizardNavigation(state);
         }
