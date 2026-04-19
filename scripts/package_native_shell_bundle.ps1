@@ -125,6 +125,7 @@ $workspaceItems = @(
     "LICENSE",
     "NOTICE.md",
     "SECURITY.md",
+    "imgui.ini",
     "debug_icon.png",
     "exe_ico.png",
     "framework_icon.png",
@@ -132,7 +133,9 @@ $workspaceItems = @(
     "kb_key_F1.png",
     "kb_key_F2.png",
     "kb_key_F3.png",
-    "kb_key_F4.png"
+    "kb_key_F4.png",
+    "SERGFX.mp3",
+    "BAChefPeePee.mp3"
 )
 foreach ($item in $workspaceItems) {
     $source = Join-Path $repoRoot $item
@@ -140,6 +143,29 @@ foreach ($item in $workspaceItems) {
         Copy-Tree -Source $source -Destination (Join-Path $workspaceDir $item)
     }
 }
+
+$workspaceIniPath = Join-Path $workspaceDir "imgui.ini"
+$workspaceIniContent = if (Test-Path $workspaceIniPath) { Get-Content -LiteralPath $workspaceIniPath -Raw } else { "" }
+if ($workspaceIniContent -match "\[sg_preflight_native_shell\]") {
+    if ($workspaceIniContent -match "(?ms)(\[sg_preflight_native_shell\].*?^music_enabled=)(0|1)") {
+        $workspaceIniContent = [regex]::Replace(
+            $workspaceIniContent,
+            "(?ms)(\[sg_preflight_native_shell\].*?^music_enabled=)(0|1)",
+            '${1}1',
+            1
+        )
+    } else {
+        $workspaceIniContent = [regex]::Replace(
+            $workspaceIniContent,
+            "(?ms)(\[sg_preflight_native_shell\]\s*)",
+            '${1}music_enabled=1`r`n',
+            1
+        )
+    }
+} else {
+    $workspaceIniContent = $workspaceIniContent.TrimEnd() + "`r`n`r`n[sg_preflight_native_shell]`r`nmusic_enabled=1`r`n"
+}
+Set-Content -Path $workspaceIniPath -Value $workspaceIniContent -Encoding UTF8
 
 $resourceCandidates = @(
     (Join-Path $repoRoot "UnleashedRecompResources-main\UnleashedRecompResources-main"),
@@ -210,7 +236,25 @@ if ($Zip) {
     if (Test-Path $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
     }
-    Compress-Archive -Path (Join-Path $resolvedBundleDir "*") -DestinationPath $zipPath
+    @"
+from pathlib import Path
+import os
+import zipfile
+
+bundle_dir = Path(r"$resolvedBundleDir")
+zip_path = Path(r"$zipPath")
+
+def nt_long_path(path: Path) -> str:
+    resolved = str(path.resolve())
+    if os.name == "nt" and not resolved.startswith("\\\\?\\"):
+        return "\\\\?\\" + resolved
+    return resolved
+
+with zipfile.ZipFile(nt_long_path(zip_path), "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as archive:
+    for file_path in bundle_dir.rglob("*"):
+        if file_path.is_file():
+            archive.write(nt_long_path(file_path), file_path.relative_to(bundle_dir).as_posix())
+"@ | python -
     Write-Host "Portable bundle archive:" $zipPath
 }
 

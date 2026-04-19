@@ -8,6 +8,8 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sourceDir = Join-Path $repoRoot "desktop_native"
 $resolvedBuildDir = Join-Path $repoRoot $BuildDir
+$iconPngPath = Join-Path $repoRoot "exe_ico.png"
+$iconIcoPath = Join-Path $sourceDir "resources\exe_ico.ico"
 
 $cmakeCommand = Get-Command cmake -ErrorAction SilentlyContinue
 if (-not $cmakeCommand) {
@@ -19,6 +21,22 @@ if (-not $cmakeCommand) {
 
 if (-not $cmakeCommand) {
     throw "CMake is required to build the native shell. Install CMake 3.24+ and Visual Studio C++ build tools first."
+}
+
+if (Test-Path $iconPngPath) {
+    @"
+from pathlib import Path
+from PIL import Image
+
+png_path = Path(r"$iconPngPath")
+ico_path = Path(r"$iconIcoPath")
+image = Image.open(png_path).convert("RGBA")
+image.save(
+    ico_path,
+    format="ICO",
+    sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+)
+"@ | python -
 }
 
 $cmakePath = if ($cmakeCommand.PSObject.Properties.Name -contains "Source") {
