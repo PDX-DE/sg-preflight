@@ -156,8 +156,8 @@ constexpr float kInstallerContainerY = 226.0f;
 constexpr float kInstallerContainerWidth = 526.5f;
 constexpr float kInstallerContainerHeight = 246.0f;
 constexpr bool kRenderPlaceholderInstallerCharacters = false;
-constexpr double kRunAutoPollDelaySeconds = 0.75;
-constexpr double kRunInitialPollDelaySeconds = 0.25;
+constexpr double kRunAutoPollDelaySeconds = 1.0;
+constexpr double kRunInitialPollDelaySeconds = 0.35;
 constexpr double kExitTransitionDurationFrames = 180.0;
 
 struct ShellAssets {
@@ -175,6 +175,7 @@ struct ShellAssets {
     DdsTextureHandle options_static_flash;
     DdsTextureHandle installer_panel;
     DdsTextureHandle miles_electric_icon;
+    DdsTextureHandle debug_icon;
     DdsTextureHandle arrow_circle;
     DdsTextureHandle pulse_install;
     DdsTextureHandle framework_icon;
@@ -1050,6 +1051,7 @@ void ReleaseShellAssets() {
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static_flash);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.installer_panel);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.miles_electric_icon);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.debug_icon);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.arrow_circle);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.pulse_install);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.framework_icon);
@@ -1128,6 +1130,7 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         load_optional_workspace_texture("kb_key_F2.png", g_shell_assets.help_key_f2);
         load_optional_workspace_texture("kb_key_F3.png", g_shell_assets.help_key_f3);
         load_optional_workspace_texture("kb_key_F4.png", g_shell_assets.help_key_f4);
+        load_optional_workspace_texture("debug_icon.png", g_shell_assets.debug_icon);
         load_optional_workspace_texture("framework_icon.png", g_shell_assets.framework_icon);
         load_optional_workspace_texture("game_icon.png", g_shell_assets.game_icon);
         load_optional_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", g_shell_assets.arrow_circle);
@@ -1390,6 +1393,78 @@ size_t InstallerTextureIndexForState(const ShellState& state) {
         break;
     }
     return index % g_shell_assets.install_images.size();
+}
+
+const DdsTextureHandle* ChooseHeaderDebugIcon() {
+    if (HasTexture(g_shell_assets.debug_icon)) {
+        return &g_shell_assets.debug_icon;
+    }
+    if (HasTexture(g_shell_assets.miles_electric_icon)) {
+        return &g_shell_assets.miles_electric_icon;
+    }
+    return nullptr;
+}
+
+const DdsTextureHandle* ChooseScreenPrimaryLogo(const ShellState& state) {
+    const bool prefers_game =
+        state.current_screen == ShellScreen::Run
+        || state.current_screen == ShellScreen::Evidence
+        || state.current_screen == ShellScreen::Files
+        || state.current_screen == ShellScreen::Stages;
+    if (prefers_game && HasTexture(g_shell_assets.game_icon)) {
+        return &g_shell_assets.game_icon;
+    }
+    if (HasTexture(g_shell_assets.framework_icon)) {
+        return &g_shell_assets.framework_icon;
+    }
+    if (HasTexture(g_shell_assets.game_icon)) {
+        return &g_shell_assets.game_icon;
+    }
+    return nullptr;
+}
+
+const DdsTextureHandle* ChooseScreenSecondaryLogo(const ShellState& state) {
+    const DdsTextureHandle* primary = ChooseScreenPrimaryLogo(state);
+    if (primary == &g_shell_assets.framework_icon && HasTexture(g_shell_assets.game_icon)) {
+        return &g_shell_assets.game_icon;
+    }
+    if (primary == &g_shell_assets.game_icon && HasTexture(g_shell_assets.framework_icon)) {
+        return &g_shell_assets.framework_icon;
+    }
+    if (primary != &g_shell_assets.debug_icon && HasTexture(g_shell_assets.debug_icon)) {
+        return &g_shell_assets.debug_icon;
+    }
+    return nullptr;
+}
+
+std::string MakeVisibleLogTail(const std::string& log_tail, bool running) {
+    if (!running || log_tail.size() <= 14000U) {
+        return log_tail;
+    }
+
+    constexpr size_t kMaxChars = 14000U;
+    constexpr size_t kMaxLines = 140U;
+    size_t start = log_tail.size() - kMaxChars;
+    const size_t line_start = log_tail.find_first_of("\r\n", start);
+    if (line_start != std::string::npos) {
+        start = line_start + 1U;
+    }
+
+    std::string trimmed = log_tail.substr(start);
+    size_t line_count = 0U;
+    size_t cursor = trimmed.size();
+    while (cursor > 0U) {
+        --cursor;
+        if (trimmed[cursor] == '\n') {
+            ++line_count;
+            if (line_count >= kMaxLines) {
+                trimmed.erase(0U, cursor + 1U);
+                break;
+            }
+        }
+    }
+
+    return trimmed;
 }
 
 std::string PrimaryActionId(const ShellState& state) {
@@ -2524,9 +2599,9 @@ std::string FriendlyActionDescription(std::string_view action_id) {
 std::string BuildHelpPromptMessage(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Introduction:
-        return "SERGFX: Project HMI & SDET is the local desktop framework for reviewing car slices, local checks, reports, and handoff material.\n\nUse it from left to right: choose the slice, choose the check, review what will run, start it, open the first files that need attention, then review reports, exports, and follow-up work.";
+        return "SERGFX Project HMI & SDET is the local operator shell for automotive 3D visualisation QA.\n\nProject HMI refers to the Human-Machine Interface side of the work: car slices, scenes, and realtime display content.\nSDET refers to the Software Development Engineer in Test side: checks, automation, evidence capture, and pipeline tooling.\n\nUse the workflow from left to right: choose a slice, choose a check, review it, run it, open the first files that need attention, then review reports, exports, and follow-up work.";
     case ShellScreen::Select:
-        return "Choose one slice on the right, then choose the check to run for that slice.\n\nDAILY: runs the recommended local check flow across every ready slice.\nSTACK: runs the standard per-slice QA stack.\nREPO: runs the broader repository checker pass.\nSCENE: runs the scene-specific local check.\nUNUSED: scans the selected slice for unused resources.\nDELIVERY: shows delivery-readiness follow-up for the selected slice.";
+        return "Choose one slice on the right, then choose the local check to run for that slice.\n\nDAILY: runs the recommended local check flow across every ready slice.\nSTACK: runs the standard per-slice QA stack.\nREPO: runs the broader repository checker pass.\nSCENE: runs the scene-specific local check.\nUNUSED: scans the selected slice for unused resources.\nDELIVERY: shows delivery-readiness follow-up for the selected slice.";
     case ShellScreen::Review:
         return "Review confirms what is about to run.\n\nCheck that the selected slice and the selected check are correct before you start the run.";
     case ShellScreen::Run:
@@ -2806,7 +2881,7 @@ RunRefreshResult BuildRunRefresh(
             || !has_cached_result_snapshot
             || linked_result_changed
             || !result.still_running
-            || (token % 8U) == 1U
+            || (token % 12U) == 1U
         );
 
     if (should_refresh_result_snapshot) {
@@ -3626,54 +3701,160 @@ void DrawInstallerLeftImage(const ShellState& state) {
         draw_list->AddRect(inner_min, inner_max, IM_COL32(74, 140, 118, static_cast<int>(48.0f * alpha)), 0.0f, 0, 1.0f);
 
         const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
-        const bool has_framework_icon = HasTexture(g_shell_assets.framework_icon);
-        const bool has_game_icon = HasTexture(g_shell_assets.game_icon);
-        if (has_framework_icon || has_game_icon) {
-            const float art_phase = static_cast<float>(ImGui::GetTime()) * 0.18f;
-            const float crossfade = 0.5f + 0.5f * std::sin(art_phase);
-            const float framework_alpha = has_framework_icon ? (has_game_icon ? (1.0f - crossfade) : 1.0f) : 0.0f;
-            const float game_alpha = has_game_icon ? (has_framework_icon ? crossfade : 1.0f) : 0.0f;
-            const float framework_scale = 0.90f + 0.02f * std::sin(art_phase * 2.0f);
-            const float game_scale = 0.90f + 0.02f * std::sin((art_phase * 2.0f) + 1.8f);
+        const DdsTextureHandle* primary_logo = ChooseScreenPrimaryLogo(state);
+        const DdsTextureHandle* secondary_logo = ChooseScreenSecondaryLogo(state);
+        const bool has_primary_logo = primary_logo != nullptr && HasTexture(*primary_logo);
+        const bool has_secondary_logo = secondary_logo != nullptr && HasTexture(*secondary_logo);
+        if (has_primary_logo || has_secondary_logo) {
+            const float art_phase = static_cast<float>(ImGui::GetTime());
+            const bool run_phase = ShouldShowInstallerLoadingChrome(state);
+            float primary_scale = run_phase ? 0.86f : 0.80f;
+            float secondary_scale = run_phase ? 0.44f : 0.35f;
+            ImVec2 primary_offset(0.0f, 0.0f);
+            ImVec2 secondary_offset(ShellUi(108.0f), ShellUi(90.0f));
+            switch (state.current_screen) {
+            case ShellScreen::Language:
+                primary_scale = 0.78f;
+                primary_offset = ImVec2(ShellUi(-6.0f), ShellUi(0.0f));
+                secondary_offset = ImVec2(ShellUi(124.0f), ShellUi(108.0f));
+                break;
+            case ShellScreen::Introduction:
+                primary_scale = 0.82f;
+                primary_offset = ImVec2(ShellUi(10.0f), ShellUi(6.0f));
+                secondary_offset = ImVec2(ShellUi(126.0f), ShellUi(108.0f));
+                break;
+            case ShellScreen::Select:
+                primary_scale = 0.84f;
+                primary_offset = ImVec2(ShellUi(8.0f), ShellUi(14.0f));
+                secondary_offset = ImVec2(ShellUi(116.0f), ShellUi(102.0f));
+                break;
+            case ShellScreen::Review:
+                primary_scale = 0.83f;
+                primary_offset = ImVec2(ShellUi(6.0f), ShellUi(10.0f));
+                secondary_offset = ImVec2(ShellUi(122.0f), ShellUi(104.0f));
+                break;
+            case ShellScreen::Run:
+                primary_scale = 0.88f;
+                primary_offset = ImVec2(ShellUi(12.0f), ShellUi(12.0f));
+                secondary_scale = 0.38f;
+                secondary_offset = ImVec2(ShellUi(116.0f), ShellUi(98.0f));
+                break;
+            case ShellScreen::Evidence:
+                primary_scale = 0.86f;
+                primary_offset = ImVec2(ShellUi(10.0f), ShellUi(14.0f));
+                secondary_offset = ImVec2(ShellUi(122.0f), ShellUi(100.0f));
+                break;
+            case ShellScreen::Files:
+                primary_scale = 0.85f;
+                primary_offset = ImVec2(ShellUi(12.0f), ShellUi(12.0f));
+                secondary_offset = ImVec2(ShellUi(114.0f), ShellUi(98.0f));
+                break;
+            case ShellScreen::Stages:
+                primary_scale = 0.84f;
+                primary_offset = ImVec2(ShellUi(8.0f), ShellUi(8.0f));
+                secondary_offset = ImVec2(ShellUi(118.0f), ShellUi(102.0f));
+                break;
+            }
+
+            if (has_secondary_logo) {
+                const float ghost_phase = art_phase * 0.92f;
+                DrawContainedTexture(
+                    draw_list,
+                    *secondary_logo,
+                    inner_min,
+                    inner_max,
+                    IM_COL32(255, 255, 255, static_cast<int>((run_phase ? 78.0f : 58.0f) * alpha)),
+                    secondary_scale + 0.02f * std::sin((ghost_phase * 1.4f) + 0.8f),
+                    ImVec2(
+                        secondary_offset.x + ShellUi(14.0f * std::sin((ghost_phase * 1.3f) + 0.4f)),
+                        secondary_offset.y + ShellUi(10.0f * std::sin((ghost_phase * 1.8f) + 1.2f))
+                    )
+                );
+            }
+
+            const float primary_phase = art_phase * (run_phase ? 1.24f : 0.84f);
             DrawContainedTexture(
                 draw_list,
-                g_shell_assets.framework_icon,
+                *primary_logo,
                 inner_min,
                 inner_max,
-                IM_COL32(255, 255, 255, static_cast<int>(225.0f * alpha * framework_alpha)),
-                framework_scale,
-                ImVec2(0.0f, ShellUi(-8.0f + 4.0f * std::sin(art_phase * 2.6f)))
+                IM_COL32(255, 255, 255, static_cast<int>(235.0f * alpha)),
+                primary_scale + 0.02f * std::sin((primary_phase * 1.6f) + 0.3f),
+                ImVec2(
+                    primary_offset.x + ShellUi(8.0f * std::sin(primary_phase)),
+                    primary_offset.y + ShellUi(10.0f * std::sin((primary_phase * 1.4f) + 0.8f))
+                )
             );
+
             DrawContainedTexture(
                 draw_list,
-                g_shell_assets.game_icon,
+                *primary_logo,
                 inner_min,
                 inner_max,
-                IM_COL32(255, 255, 255, static_cast<int>(205.0f * alpha * game_alpha)),
-                game_scale,
-                ImVec2(0.0f, ShellUi(8.0f + 4.0f * std::sin((art_phase * 2.4f) + 2.0f)))
+                IM_COL32(255, 170, 58, static_cast<int>((run_phase ? 34.0f : 22.0f) * alpha)),
+                primary_scale,
+                ImVec2(
+                    primary_offset.x + ShellUi(26.0f + 6.0f * std::sin(primary_phase * 0.8f)),
+                    primary_offset.y + ShellUi(-18.0f + 4.0f * std::sin((primary_phase * 1.1f) + 1.4f))
+                )
             );
         }
 
         if (HasTexture(g_shell_assets.arrow_circle)) {
+            const bool emphasise_motion = ShouldShowInstallerLoadingChrome(state);
             DrawRotatedTexture(
                 draw_list,
                 g_shell_assets.arrow_circle,
                 center,
-                ImVec2(ShellUi(132.0f), ShellUi(132.0f)),
-                static_cast<float>(ImGui::GetTime()) * -0.6f,
-                IM_COL32(255, 255, 255, static_cast<int>((has_framework_icon || has_game_icon ? 24.0f : 42.0f) * alpha))
+                ImVec2(ShellUi(emphasise_motion ? 136.0f : 126.0f), ShellUi(emphasise_motion ? 136.0f : 126.0f)),
+                static_cast<float>(ImGui::GetTime()) * (emphasise_motion ? -1.15f : -0.55f),
+                IM_COL32(255, 255, 255, static_cast<int>((has_primary_logo || has_secondary_logo ? 22.0f : 42.0f) * alpha))
             );
         }
         if (HasTexture(g_shell_assets.pulse_install)) {
-            const float pulse = 0.85f + 0.12f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.0f));
+            const float pulse_speed = ShouldShowInstallerLoadingChrome(state) ? 2.6f : 1.6f;
+            const float pulse = 0.82f + 0.18f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * pulse_speed));
             DrawTexturedRectRounded(
                 draw_list,
                 g_shell_assets.pulse_install,
                 ImVec2(center.x - ShellUi(88.0f) * pulse, center.y - ShellUi(88.0f) * pulse),
                 ImVec2(center.x + ShellUi(88.0f) * pulse, center.y + ShellUi(88.0f) * pulse),
-                IM_COL32(255, 255, 255, static_cast<int>((has_framework_icon || has_game_icon ? 16.0f : 24.0f) * alpha)),
+                IM_COL32(255, 255, 255, static_cast<int>((has_primary_logo || has_secondary_logo ? 18.0f : 24.0f) * alpha)),
                 ShellUi(18.0f)
+            );
+        }
+
+        if (HasTexture(g_shell_assets.debug_icon)) {
+            const float badge_pulse = 0.92f + 0.06f * std::sin(static_cast<float>(ImGui::GetTime()) * 1.8f);
+            const ImVec2 badge_center(inner_min.x + ShellUi(84.0f), inner_max.y - ShellUi(84.0f));
+            const ImVec2 badge_size(ShellUi(78.0f) * badge_pulse, ShellUi(78.0f) * badge_pulse);
+            if (HasTexture(g_shell_assets.arrow_circle)) {
+                DrawRotatedTexture(
+                    draw_list,
+                    g_shell_assets.arrow_circle,
+                    badge_center,
+                    ImVec2(ShellUi(56.0f), ShellUi(56.0f)),
+                    static_cast<float>(ImGui::GetTime()) * -0.95f,
+                    IM_COL32(255, 255, 255, static_cast<int>(74.0f * alpha))
+                );
+            }
+            if (HasTexture(g_shell_assets.pulse_install)) {
+                DrawTexturedRectRounded(
+                    draw_list,
+                    g_shell_assets.pulse_install,
+                    ImVec2(badge_center.x - ShellUi(30.0f), badge_center.y - ShellUi(30.0f)),
+                    ImVec2(badge_center.x + ShellUi(30.0f), badge_center.y + ShellUi(30.0f)),
+                    IM_COL32(255, 255, 255, static_cast<int>(28.0f * alpha)),
+                    ShellUi(18.0f)
+                );
+            }
+            draw_list->AddImage(
+                ToTextureId(g_shell_assets.debug_icon),
+                ImVec2(badge_center.x - badge_size.x * 0.5f, badge_center.y - badge_size.y * 0.5f),
+                ImVec2(badge_center.x + badge_size.x * 0.5f, badge_center.y + badge_size.y * 0.5f),
+                ImVec2(0.0f, 0.0f),
+                ImVec2(1.0f, 1.0f),
+                IM_COL32(255, 255, 255, static_cast<int>(225.0f * alpha))
             );
         }
 
@@ -3704,51 +3885,42 @@ void DrawBackdropChrome(const ShellState& state) {
 
     const double scanline_alpha = ComputeMotionFrames(0.0, 15.0);
     const float bar_height = ShellUi(105.0f) * static_cast<float>(scanline_alpha);
-    const ImU32 color0 = IM_COL32(203, 255, 0, 0);
-    const ImU32 color1 = IM_COL32(203, 255, 0, static_cast<int>(55.0 * scanline_alpha));
     if (bar_height > 1.0f) {
-        draw_list->AddRectFilledMultiColor(ImVec2(0.0f, 0.0f), ImVec2(display_size.x, bar_height), color0, color0, color1, color1);
-        draw_list->AddRectFilledMultiColor(ImVec2(0.0f, display_size.y - bar_height), ImVec2(display_size.x, display_size.y), color1, color1, color0, color0);
-        if (HasTexture(g_shell_assets.options_static)) {
-            DrawTexturedRect(
-                draw_list,
-                g_shell_assets.options_static,
-                ImVec2(0.0f, 0.0f),
-                ImVec2(display_size.x, bar_height),
-                IM_COL32(142, 218, 112, static_cast<int>(18.0f * scanline_alpha)),
-                ImVec2(0.0f, 0.0f),
-                ImVec2(display_size.x / std::max(1U, g_shell_assets.options_static.width), bar_height / std::max(1U, g_shell_assets.options_static.height))
+        const auto draw_scanline_band = [&](float min_y, float max_y, bool top_band) {
+            draw_list->AddRectFilledMultiColor(
+                ImVec2(0.0f, min_y),
+                ImVec2(display_size.x, max_y),
+                IM_COL32(164, 204, 0, top_band ? static_cast<int>(26.0 * scanline_alpha) : static_cast<int>(84.0 * scanline_alpha)),
+                IM_COL32(164, 204, 0, top_band ? static_cast<int>(26.0 * scanline_alpha) : static_cast<int>(84.0 * scanline_alpha)),
+                IM_COL32(164, 204, 0, top_band ? static_cast<int>(84.0 * scanline_alpha) : static_cast<int>(26.0 * scanline_alpha)),
+                IM_COL32(164, 204, 0, top_band ? static_cast<int>(84.0 * scanline_alpha) : static_cast<int>(26.0 * scanline_alpha))
             );
-            DrawTexturedRect(
-                draw_list,
-                g_shell_assets.options_static,
-                ImVec2(0.0f, display_size.y - bar_height),
-                display_size,
-                IM_COL32(142, 218, 112, static_cast<int>(18.0f * scanline_alpha)),
-                ImVec2(0.0f, 0.0f),
-                ImVec2(display_size.x / std::max(1U, g_shell_assets.options_static.width), bar_height / std::max(1U, g_shell_assets.options_static.height))
-            );
-        }
-        if (HasTexture(g_shell_assets.options_static_flash)) {
-            DrawTexturedRect(
-                draw_list,
-                g_shell_assets.options_static_flash,
-                ImVec2(0.0f, 0.0f),
-                ImVec2(display_size.x, bar_height),
-                IM_COL32(188, 255, 132, static_cast<int>(8.0f * scanline_alpha)),
-                ImVec2(0.0f, 0.0f),
-                ImVec2(display_size.x / std::max(1U, g_shell_assets.options_static_flash.width), bar_height / std::max(1U, g_shell_assets.options_static_flash.height))
-            );
-            DrawTexturedRect(
-                draw_list,
-                g_shell_assets.options_static_flash,
-                ImVec2(0.0f, display_size.y - bar_height),
-                display_size,
-                IM_COL32(188, 255, 132, static_cast<int>(8.0f * scanline_alpha)),
-                ImVec2(0.0f, 0.0f),
-                ImVec2(display_size.x / std::max(1U, g_shell_assets.options_static_flash.width), bar_height / std::max(1U, g_shell_assets.options_static_flash.height))
-            );
-        }
+
+            const float line_step = std::max(1.0f, ShellUi(3.0f));
+            for (float y = min_y; y < max_y; y += line_step) {
+                const float normalized = (y - min_y) / std::max(1.0f, max_y - min_y);
+                const float emphasis = top_band ? normalized : (1.0f - normalized);
+                const int line_alpha = static_cast<int>((12.0f + (22.0f * emphasis)) * scanline_alpha);
+                draw_list->AddRectFilled(
+                    ImVec2(0.0f, y),
+                    ImVec2(display_size.x, y + ShellUi(1.0f)),
+                    IM_COL32(132, 172, 82, line_alpha)
+                );
+            }
+
+            const float column_step = std::max(6.0f, ShellUi(24.0f));
+            for (float x = 0.0f; x < display_size.x; x += column_step) {
+                const int column_alpha = static_cast<int>((5.0f + (4.0f * std::sin((x / column_step) * 0.65f))) * scanline_alpha);
+                draw_list->AddRectFilled(
+                    ImVec2(x, min_y),
+                    ImVec2(x + ShellUi(1.0f), max_y),
+                    IM_COL32(173, 255, 156, std::max(0, column_alpha))
+                );
+            }
+        };
+
+        draw_scanline_band(0.0f, bar_height, true);
+        draw_scanline_band(display_size.y - bar_height, display_size.y, false);
     }
 
     const auto draw_bar_line = [&](bool top) {
@@ -3795,19 +3967,43 @@ void DrawBackdropChrome(const ShellState& state) {
     const float chrome_title_alpha = static_cast<float>(ComputeMotionFrames(15.0, 30.0)) * ShellExitTextVisibility(state);
     const float header_text_alpha = ShellHeaderTextLifecycleMotion() * ShellExitTextVisibility(state);
     const char* header_text = ShouldShowInstallerLoadingChrome(state) ? Tr(state, UiText::HeaderChecking) : Tr(state, UiText::HeaderPreflight);
-    if (HasTexture(g_shell_assets.miles_electric_icon)) {
+    const DdsTextureHandle* header_icon = ChooseHeaderDebugIcon();
+    if (header_icon != nullptr) {
         const float scale = 62.0f * (2.0f - chrome_title_alpha);
         const ImVec2 center = ShellPoint(256.0f, 80.0f);
         const ImVec2 min(center.x - ShellUi(scale) * 0.5f, center.y - ShellUi(scale) * 0.5f);
         const ImVec2 max(center.x + ShellUi(scale) * 0.5f, center.y + ShellUi(scale) * 0.5f);
         draw_list->AddImage(
-            ToTextureId(g_shell_assets.miles_electric_icon),
+            ToTextureId(*header_icon),
             min,
             max,
             ImVec2(0.0f, 0.0f),
             ImVec2(1.0f, 1.0f),
             IM_COL32(255, 255, 255, static_cast<int>(255.0f * chrome_title_alpha))
         );
+
+        if (HasTexture(g_shell_assets.arrow_circle)) {
+            const float rotation_speed = ShouldShowInstallerLoadingChrome(state) ? -2.1f : -1.0f;
+            DrawRotatedTexture(
+                draw_list,
+                g_shell_assets.arrow_circle,
+                center,
+                ImVec2(ShellUi(62.0f), ShellUi(62.0f)),
+                static_cast<float>(ImGui::GetTime()) * rotation_speed,
+                IM_COL32(255, 255, 255, static_cast<int>(82.0 * chrome_title_alpha))
+            );
+        }
+        if (HasTexture(g_shell_assets.pulse_install)) {
+            const float pulse = 0.68f + 0.30f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * (ShouldShowInstallerLoadingChrome(state) ? 2.8f : 1.6f)));
+            DrawTexturedRectRounded(
+                draw_list,
+                g_shell_assets.pulse_install,
+                ImVec2(center.x - ShellUi(34.0f) * pulse, center.y - ShellUi(34.0f) * pulse),
+                ImVec2(center.x + ShellUi(34.0f) * pulse, center.y + ShellUi(34.0f) * pulse),
+                IM_COL32(255, 255, 255, static_cast<int>(36.0 * pulse * chrome_title_alpha)),
+                ShellUi(20.0f)
+            );
+        }
     }
 
     if (g_title_font != nullptr) {
@@ -3820,46 +4016,24 @@ void DrawBackdropChrome(const ShellState& state) {
     if (g_body_font != nullptr && kShellVersionLabel[0] != '\0') {
         const std::string version_label = std::string("v") + kShellVersionLabel;
         const float version_alpha = ShellChromeLifecycleMotion() * ShellExitTextVisibility(state);
-        const float font_size = ShellUi(14.0f);
-        const ImVec2 text_size = g_body_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, version_label.c_str());
+        ImFont* version_font = g_small_font != nullptr ? g_small_font : g_body_font;
+        const float font_size = version_font == g_small_font ? g_small_font->LegacySize : ShellUi(14.0f);
+        const ImVec2 text_size = version_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, version_label.c_str());
         const ImVec2 pos(display_size.x - text_size.x - ShellUi(10.0f), display_size.y - text_size.y - ShellUi(6.0f));
         draw_list->AddText(
-            g_body_font,
+            version_font,
             font_size,
             ImVec2(pos.x + ShellUi(1.0f), pos.y + ShellUi(1.0f)),
             IM_COL32(0, 0, 0, static_cast<int>(230.0f * version_alpha)),
             version_label.c_str()
         );
         draw_list->AddText(
-            g_body_font,
+            version_font,
             font_size,
             pos,
             IM_COL32(173, 255, 156, static_cast<int>(255.0f * version_alpha)),
             version_label.c_str()
         );
-    }
-
-    if (ShouldShowInstallerLoadingChrome(state) && HasTexture(g_shell_assets.arrow_circle)) {
-        const ImVec2 center = ShellPoint(256.0f, 80.0f);
-        DrawRotatedTexture(
-            draw_list,
-            g_shell_assets.arrow_circle,
-            center,
-            ImVec2(ShellUi(62.0f), ShellUi(62.0f)),
-            static_cast<float>(ImGui::GetTime()) * -2.0f,
-            IM_COL32(255, 255, 255, static_cast<int>(96.0 * chrome_title_alpha))
-        );
-        if (HasTexture(g_shell_assets.pulse_install)) {
-            const float pulse = 0.65f + 0.35f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.6f));
-            DrawTexturedRectRounded(
-                draw_list,
-                g_shell_assets.pulse_install,
-                ImVec2(center.x - ShellUi(34.0f) * pulse, center.y - ShellUi(34.0f) * pulse),
-                ImVec2(center.x + ShellUi(34.0f) * pulse, center.y + ShellUi(34.0f) * pulse),
-                IM_COL32(255, 255, 255, static_cast<int>(40.0 * pulse * chrome_title_alpha)),
-                ShellUi(20.0f)
-            );
-        }
     }
 }
 
@@ -5019,7 +5193,15 @@ void RenderRunSignalLogContent(ShellState& state) {
     if (snapshot.log_tail.empty()) {
         ImGui::TextDisabled("%s", Tr(state, UiText::NoActionLog));
     } else {
-        ImGui::TextWrapped("%s", snapshot.log_tail.c_str());
+        const bool running = snapshot.status == "queued" || snapshot.status == "running";
+        const std::string visible_tail = MakeVisibleLogTail(snapshot.log_tail, running);
+        if (running && visible_tail.size() < snapshot.log_tail.size()) {
+            ImGui::TextDisabled("%s", "Showing the latest live log tail while the check is still running.");
+            ImGui::Spacing();
+        }
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ShellUi(8.0f));
+        ImGui::TextUnformatted(visible_tail.c_str());
+        ImGui::PopTextWrapPos();
     }
     ImGui::EndChild();
 }
@@ -6359,7 +6541,7 @@ void RenderButtonGuide(ShellState& state) {
             return GuideAtlasIcon::Escape;
         }
         if (item.primary) {
-            return g_guide_input_mode == GuideInputMode::Mouse ? GuideAtlasIcon::Lmb : GuideAtlasIcon::Enter;
+            return GuideAtlasIcon::Enter;
         }
         return GuideAtlasIcon::None;
     };
@@ -6382,27 +6564,19 @@ void RenderButtonGuide(ShellState& state) {
             break;
         case GuideAtlasIcon::F1:
             texture = &g_shell_assets.help_key_f1;
-            uv_min = ImVec2(197.0f / 1024.0f, 173.0f / 1024.0f);
-            uv_max = ImVec2(827.0f / 1024.0f, 825.0f / 1024.0f);
-            size = ImVec2(ShellUi(38.0f), ShellUi(38.0f));
+            size = ImVec2(ShellUi(40.0f), ShellUi(40.0f));
             break;
         case GuideAtlasIcon::F2:
             texture = &g_shell_assets.help_key_f2;
-            uv_min = ImVec2(197.0f / 1024.0f, 173.0f / 1024.0f);
-            uv_max = ImVec2(827.0f / 1024.0f, 825.0f / 1024.0f);
-            size = ImVec2(ShellUi(38.0f), ShellUi(38.0f));
+            size = ImVec2(ShellUi(40.0f), ShellUi(40.0f));
             break;
         case GuideAtlasIcon::F3:
             texture = &g_shell_assets.help_key_f3;
-            uv_min = ImVec2(197.0f / 1024.0f, 173.0f / 1024.0f);
-            uv_max = ImVec2(827.0f / 1024.0f, 825.0f / 1024.0f);
-            size = ImVec2(ShellUi(38.0f), ShellUi(38.0f));
+            size = ImVec2(ShellUi(40.0f), ShellUi(40.0f));
             break;
         case GuideAtlasIcon::F4:
             texture = &g_shell_assets.help_key_f4;
-            uv_min = ImVec2(197.0f / 1024.0f, 173.0f / 1024.0f);
-            uv_max = ImVec2(827.0f / 1024.0f, 825.0f / 1024.0f);
-            size = ImVec2(ShellUi(38.0f), ShellUi(38.0f));
+            size = ImVec2(ShellUi(40.0f), ShellUi(40.0f));
             break;
         case GuideAtlasIcon::Lmb:
             texture = &g_shell_assets.kbm_icons;
@@ -7240,7 +7414,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     HWND window_handle = CreateWindowW(
         window_class.lpszClassName,
-        L"SERGFX - Project HMI & SDET",
+        L"SERGFX: Project HMI & SDET",
         window_style,
         window_x,
         window_y,

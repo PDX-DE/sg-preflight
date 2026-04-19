@@ -125,6 +125,8 @@ $workspaceItems = @(
     "LICENSE",
     "NOTICE.md",
     "SECURITY.md",
+    "debug_icon.png",
+    "exe_ico.png",
     "framework_icon.png",
     "game_icon.png",
     "kb_key_F1.png",
