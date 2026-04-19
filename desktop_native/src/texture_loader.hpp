@@ -46,4 +46,11 @@ bool LoadDdsTexture(
     std::string* error = nullptr
 );
 
+bool LoadWicTexture(
+    const D3d12TextureUploadContext& context,
+    const std::filesystem::path& path,
+    DdsTextureHandle& texture,
+    std::string* error = nullptr
+);
+
 }  // namespace sg_preflight::native_shell

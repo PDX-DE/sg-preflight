@@ -1,5 +1,8 @@
 #include "texture_loader.hpp"
 
+#include <wincodec.h>
+#include <wrl/client.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -10,6 +13,8 @@
 
 namespace sg_preflight::native_shell {
 namespace {
+
+using Microsoft::WRL::ComPtr;
 
 constexpr uint32_t MakeFourCc(char a, char b, char c, char d) {
     return static_cast<uint32_t>(static_cast<uint8_t>(a))
@@ -240,6 +245,182 @@ bool CreateBufferResource(
         nullptr,
         IID_PPV_ARGS(resource)
     ));
+}
+
+bool UploadBgraPixelsToTexture(
+    const D3d12TextureUploadContext& context,
+    UINT width,
+    UINT height,
+    const uint8_t* pixels,
+    UINT source_row_pitch,
+    DdsTextureHandle& texture,
+    std::string* error
+) {
+    D3D12_RESOURCE_DESC description{};
+    description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    description.Alignment = 0;
+    description.Width = width;
+    description.Height = height;
+    description.DepthOrArraySize = 1;
+    description.MipLevels = 1;
+    description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    description.SampleDesc.Count = 1;
+    description.SampleDesc.Quality = 0;
+    description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    description.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* texture_resource = nullptr;
+    if (FAILED(context.device->CreateCommittedResource(
+        &default_heap,
+        D3D12_HEAP_FLAG_NONE,
+        &description,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&texture_resource)
+    )) || texture_resource == nullptr) {
+        if (error != nullptr) {
+            *error = "D3D12 failed to create a texture resource for the WIC image.";
+        }
+        return false;
+    }
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT row_count = 0;
+    UINT64 row_size = 0;
+    UINT64 upload_buffer_size = 0;
+    context.device->GetCopyableFootprints(
+        &description,
+        0,
+        1,
+        0,
+        &footprint,
+        &row_count,
+        &row_size,
+        &upload_buffer_size
+    );
+
+    ID3D12Resource* upload_buffer = nullptr;
+    if (!CreateBufferResource(context.device, upload_buffer_size, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, &upload_buffer) || upload_buffer == nullptr) {
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to create an upload buffer for the WIC image.";
+        }
+        return false;
+    }
+
+    std::byte* mapped = nullptr;
+    if (FAILED(upload_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) || mapped == nullptr) {
+        upload_buffer->Release();
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to map the WIC upload buffer.";
+        }
+        return false;
+    }
+
+    for (UINT row = 0; row < row_count; ++row) {
+        std::memcpy(
+            mapped + footprint.Offset + (static_cast<size_t>(row) * footprint.Footprint.RowPitch),
+            pixels + (static_cast<size_t>(row) * source_row_pitch),
+            source_row_pitch
+        );
+    }
+    upload_buffer->Unmap(0, nullptr);
+
+    if (FAILED(context.command_allocator->Reset()) || FAILED(context.command_list->Reset(context.command_allocator, nullptr))) {
+        upload_buffer->Release();
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to reset the WIC upload command list.";
+        }
+        return false;
+    }
+
+    D3D12_TEXTURE_COPY_LOCATION destination{};
+    destination.pResource = texture_resource;
+    destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    destination.SubresourceIndex = 0;
+
+    D3D12_TEXTURE_COPY_LOCATION source{};
+    source.pResource = upload_buffer;
+    source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    source.PlacedFootprint = footprint;
+
+    context.command_list->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+
+    D3D12_RESOURCE_BARRIER barrier{};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = texture_resource;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    context.command_list->ResourceBarrier(1, &barrier);
+
+    if (FAILED(context.command_list->Close())) {
+        upload_buffer->Release();
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to close the WIC upload command list.";
+        }
+        return false;
+    }
+
+    ID3D12CommandList* lists[] = { context.command_list };
+    context.command_queue->ExecuteCommandLists(1, lists);
+
+    const UINT64 fence_value = ++(*context.next_fence_value);
+    if (FAILED(context.command_queue->Signal(context.fence, fence_value))) {
+        upload_buffer->Release();
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to signal the WIC upload fence.";
+        }
+        return false;
+    }
+    if (context.fence->GetCompletedValue() < fence_value) {
+        if (FAILED(context.fence->SetEventOnCompletion(fence_value, context.fence_event))) {
+            upload_buffer->Release();
+            texture_resource->Release();
+            if (error != nullptr) {
+                *error = "D3D12 failed to wait for the WIC upload fence.";
+            }
+            return false;
+        }
+        WaitForSingleObject(context.fence_event, INFINITE);
+    }
+
+    upload_buffer->Release();
+
+    DdsTextureHandle candidate{};
+    candidate.resource = texture_resource;
+    candidate.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    candidate.width = width;
+    candidate.height = height;
+    candidate.descriptor_user_data = context.descriptors.user_data;
+    candidate.descriptor_free_fn = context.descriptors.free;
+
+    context.descriptors.alloc(context.descriptors.user_data, &candidate.cpu_descriptor, &candidate.gpu_descriptor);
+    if (candidate.gpu_descriptor.ptr == 0) {
+        texture_resource->Release();
+        if (error != nullptr) {
+            *error = "D3D12 failed to allocate an SRV descriptor for the WIC image.";
+        }
+        return false;
+    }
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC view_description{};
+    view_description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    view_description.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    view_description.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    view_description.Texture2D.MipLevels = 1;
+    context.device->CreateShaderResourceView(texture_resource, &view_description, candidate.cpu_descriptor);
+
+    ReleaseTexture(texture);
+    texture = candidate;
+    return true;
 }
 
 }  // namespace
@@ -509,6 +690,112 @@ bool LoadDdsTexture(
     ReleaseTexture(texture);
     texture = candidate;
     return true;
+}
+
+bool LoadWicTexture(
+    const D3d12TextureUploadContext& context,
+    const std::filesystem::path& path,
+    DdsTextureHandle& texture,
+    std::string* error
+) {
+    if (
+        context.device == nullptr
+        || context.command_queue == nullptr
+        || context.command_allocator == nullptr
+        || context.command_list == nullptr
+        || context.fence == nullptr
+        || context.fence_event == nullptr
+        || context.next_fence_value == nullptr
+        || context.descriptors.alloc == nullptr
+    ) {
+        if (error != nullptr) {
+            *error = "D3D12 texture upload context is not initialized.";
+        }
+        return false;
+    }
+
+    const HRESULT init_result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool should_uninitialize = SUCCEEDED(init_result);
+    if (FAILED(init_result) && init_result != RPC_E_CHANGED_MODE) {
+        if (error != nullptr) {
+            *error = "CoInitializeEx failed for WIC texture loading.";
+        }
+        return false;
+    }
+
+    bool loaded = false;
+    do {
+        ComPtr<IWICImagingFactory> factory;
+        if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) || factory == nullptr) {
+            if (error != nullptr) {
+                *error = "Failed to create WIC imaging factory.";
+            }
+            break;
+        }
+
+        ComPtr<IWICBitmapDecoder> decoder;
+        const std::wstring wide_path = path.wstring();
+        if (FAILED(factory->CreateDecoderFromFilename(wide_path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder)) || decoder == nullptr) {
+            if (error != nullptr) {
+                *error = "Failed to open WIC texture file: " + path.string();
+            }
+            break;
+        }
+
+        ComPtr<IWICBitmapFrameDecode> frame;
+        if (FAILED(decoder->GetFrame(0, &frame)) || frame == nullptr) {
+            if (error != nullptr) {
+                *error = "Failed to read the first WIC texture frame.";
+            }
+            break;
+        }
+
+        UINT width = 0;
+        UINT height = 0;
+        if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0) {
+            if (error != nullptr) {
+                *error = "WIC texture size is invalid.";
+            }
+            break;
+        }
+
+        ComPtr<IWICFormatConverter> converter;
+        if (FAILED(factory->CreateFormatConverter(&converter)) || converter == nullptr) {
+            if (error != nullptr) {
+                *error = "Failed to create a WIC format converter.";
+            }
+            break;
+        }
+
+        if (FAILED(converter->Initialize(
+                frame.Get(),
+                GUID_WICPixelFormat32bppBGRA,
+                WICBitmapDitherTypeNone,
+                nullptr,
+                0.0,
+                WICBitmapPaletteTypeCustom))) {
+            if (error != nullptr) {
+                *error = "Failed to convert the WIC texture to BGRA.";
+            }
+            break;
+        }
+
+        const UINT row_pitch = width * 4U;
+        std::vector<uint8_t> pixels(static_cast<size_t>(row_pitch) * static_cast<size_t>(height));
+        if (FAILED(converter->CopyPixels(nullptr, row_pitch, static_cast<UINT>(pixels.size()), pixels.data()))) {
+            if (error != nullptr) {
+                *error = "Failed to copy the WIC texture pixels.";
+            }
+            break;
+        }
+
+        loaded = UploadBgraPixelsToTexture(context, width, height, pixels.data(), row_pitch, texture, error);
+    } while (false);
+
+    if (should_uninitialize) {
+        CoUninitialize();
+    }
+    return loaded;
 }
 
 }  // namespace sg_preflight::native_shell

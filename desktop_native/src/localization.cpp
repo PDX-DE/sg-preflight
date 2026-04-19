@@ -89,11 +89,11 @@ const char* TranslateEnglish(UiText text) {
     case LanguageScreenBody: return "Choose the language used by the shell interface.";
     case LanguageScreenHint: return "This only changes the shell text. Project data and generated results stay the same.";
     case IntroWelcome: return "Welcome to SG Preflight.";
-    case IntroBodyPrimary: return "SG Preflight is a local checking tool for car slices, scenes, reports, and handoff material. It helps you choose the right check, run it once, and open the first result that needs attention.";
-    case IntroBodySecondary: return "Work from left to right: choose the slice, choose the check, review what will run, start it, open the first files to inspect, then review reports, exports, and any blocked or manual follow-up.";
+    case IntroBodyPrimary: return "SG Preflight is the local desktop tool for checking a car slice before review. It runs the selected local checks, gathers the result files, and points you to the first items that need attention.";
+    case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the check, review what will run, start the run, then inspect the first files, reports, exports, and follow-up material the shell collects for you.";
     case SelectLoadingTitle: return "Loading local project data.";
     case SelectLoadingBody: return "The shell is loading the available slices, checks, and recent local results so you can choose what to run.";
-    case SelectTitle: return "Choose the slice and check for this run.";
+    case SelectTitle: return "Choose the slice and check.";
     case SelectDailyMatrixBody: return "Run the recommended check flow across all ready slices and collect one shared review surface.";
     case NoActionMetadata: return "No action metadata is available for the current selection.";
     case ReviewLoadingTitle: return "Loading the selected slice and check.";

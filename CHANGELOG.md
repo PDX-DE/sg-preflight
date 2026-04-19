@@ -10,6 +10,7 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 #### 2026-04-19
 
+- working tree: the native C++ shell now keeps active-run polling strictly on run-oriented pages instead of waking the Python/backend side while operators are still on intro/select/review, the installer footer uses the cropped real `F1` key art plus the fixed `v1.0.3` version label from the OG installer path, and the verification harness now proves that behavior over a full 10-minute observed run with fresh screenshots and a clean automated quit
 - working tree: the native C++ shell now proves a clean automated quit path through the verifier trace instead of needing a forced shutdown, and the quit lifecycle traces `prompt open -> prompt controls -> exit begin -> exit complete` while page text disappears on an earlier path than the remaining installer chrome
 - working tree: desktop evidence loading now falls back from missing child `run-record` snapshots to linked action records, so parent SG desktop views stop throwing failed `run-snapshot` lookups for nested child runs after QA-stack style launches
 - working tree: the native C++ shell now fades the header text on an earlier disappear path than the remaining chrome, rewrites the intro/select English copy into clearer operator-facing language, adds an `F1` / footer `Help` prompt that explains each page and the `DAILY` / `STACK` / `REPO` / `SCENE` / `UNUSED` / `DELIVERY` checks, and stops slice changes from reloading the heavier recent-result panes when only the per-slice check metadata needs to change

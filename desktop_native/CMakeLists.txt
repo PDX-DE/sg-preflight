@@ -8,20 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
-find_package(Git QUIET)
-
-set(SG_NATIVE_SHELL_VERSION "dev")
-if(GIT_FOUND)
-  execute_process(
-    COMMAND ${GIT_EXECUTABLE} -C ${CMAKE_SOURCE_DIR}/.. rev-parse --short=7 HEAD
-    OUTPUT_VARIABLE SG_NATIVE_SHELL_GIT_SHORT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-  )
-  if(SG_NATIVE_SHELL_GIT_SHORT)
-    set(SG_NATIVE_SHELL_VERSION "dev-${SG_NATIVE_SHELL_GIT_SHORT}")
-  endif()
-endif()
+set(SG_NATIVE_SHELL_VERSION "1.0.3")
 
 FetchContent_Declare(
   imgui
@@ -80,6 +67,7 @@ add_executable(
   src/backend_bridge.cpp
   src/localization.cpp
   src/main.cpp
+  src/screenshot_capture.cpp
   src/texture_loader.cpp
 )
 
@@ -101,6 +89,7 @@ target_link_libraries(
     sg_preflight_imgui
     nlohmann_json::nlohmann_json
     ole32
+    windowscodecs
     xaudio2
     winmm
 )

@@ -124,7 +124,8 @@ $workspaceItems = @(
     "CHANGELOG.md",
     "LICENSE",
     "NOTICE.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "kb_key_F1.png"
 )
 foreach ($item in $workspaceItems) {
     $source = Join-Path $repoRoot $item

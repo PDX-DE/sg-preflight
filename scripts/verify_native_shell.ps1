@@ -3,7 +3,9 @@ param(
     [string]$OutputRoot = "",
     [int]$InitialSettleMs = 8000,
     [int]$ScreenSettleMs = 2200,
-    [int]$PromptSettleMs = 1000
+    [int]$PromptSettleMs = 1000,
+    [int]$RunObserveSeconds = 600,
+    [int]$CaptureTimeoutSeconds = 20
 )
 
 Set-StrictMode -Version Latest
@@ -85,7 +87,9 @@ $shell = New-Object -ComObject WScript.Shell
 $launchArgs = @("--windowed", "--width", "1280", "--height", "720")
 $process = $null
 $previousTraceEnv = $env:SG_PREFLIGHT_NATIVE_TRACE_FILE
+$previousCaptureEnv = $env:SG_PREFLIGHT_NATIVE_CAPTURE_DIR
 $env:SG_PREFLIGHT_NATIVE_TRACE_FILE = $tracePath
+$env:SG_PREFLIGHT_NATIVE_CAPTURE_DIR = $OutputRoot
 
 function Write-VerificationLog {
     Set-Content -Path (Join-Path $OutputRoot "verification.log") -Encoding UTF8 -Value $log
@@ -139,67 +143,32 @@ function Capture-Stage {
     )
 
     Activate-Window -TargetProcess $TargetProcess
-    $rect = Get-WindowRect -TargetProcess $TargetProcess
-    $width = [Math]::Max(1, $rect.Right - $rect.Left)
-    $height = [Math]::Max(1, $rect.Bottom - $rect.Top)
     $targetPath = Join-Path $OutputRoot "$Name.png"
+    $requestPath = Join-Path $OutputRoot "capture-request.txt"
 
-    function Save-CaptureBitmap {
-        param(
-            [IntPtr]$WindowHandle,
-            [int]$CaptureLeft,
-            [int]$CaptureTop,
-            [int]$CaptureWidth,
-            [int]$CaptureHeight
-        )
+    if (Test-Path $targetPath) {
+        Remove-Item -LiteralPath $targetPath -Force
+    }
+    if (Test-Path $requestPath) {
+        Remove-Item -LiteralPath $requestPath -Force
+    }
 
-        $bitmap = New-Object System.Drawing.Bitmap $CaptureWidth, $CaptureHeight
-        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-        try {
-            try {
-                $hdc = $graphics.GetHdc()
-                try {
-                    if (-not [NativeShellVerify]::PrintWindow($WindowHandle, $hdc, 0)) {
-                        throw "PrintWindow failed"
-                    }
-                }
-                finally {
-                    $graphics.ReleaseHdc($hdc)
-                }
+    Set-Content -Path $requestPath -Value $Name -Encoding ASCII -NoNewline
+    $deadline = (Get-Date).AddSeconds($CaptureTimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Path $targetPath) {
+            $targetItem = Get-Item -LiteralPath $targetPath
+            if ($targetItem.Length -gt 0) {
+                $log.Add("[$Name] screenshot: $targetPath")
+                $log.Add("[$Name] bytes: $($targetItem.Length)")
+                $log.Add("")
+                return
             }
-            catch {
-                $graphics.CopyFromScreen($CaptureLeft, $CaptureTop, 0, 0, $bitmap.Size)
-            }
-            $bitmap.Save($targetPath, [System.Drawing.Imaging.ImageFormat]::Png)
         }
-        finally {
-            $graphics.Dispose()
-            $bitmap.Dispose()
-        }
+        Start-Sleep -Milliseconds 120
     }
 
-    try {
-        Save-CaptureBitmap -WindowHandle $TargetProcess.MainWindowHandle -CaptureLeft $rect.Left -CaptureTop $rect.Top -CaptureWidth $width -CaptureHeight $height
-        $log.Add("[$Name] screenshot: $targetPath")
-        $log.Add("[$Name] bounds: left=$($rect.Left) top=$($rect.Top) width=$width height=$height")
-        $log.Add("")
-    }
-    catch {
-        Start-Sleep -Milliseconds 300
-        try {
-            Save-CaptureBitmap -WindowHandle $TargetProcess.MainWindowHandle -CaptureLeft $rect.Left -CaptureTop $rect.Top -CaptureWidth $width -CaptureHeight $height
-            $log.Add("[$Name] screenshot: $targetPath")
-            $log.Add("[$Name] bounds: left=$($rect.Left) top=$($rect.Top) width=$width height=$height (retry)")
-            $log.Add("")
-        }
-        catch {
-            $screenBounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-            Save-CaptureBitmap -WindowHandle $TargetProcess.MainWindowHandle -CaptureLeft $screenBounds.Left -CaptureTop $screenBounds.Top -CaptureWidth $screenBounds.Width -CaptureHeight $screenBounds.Height
-            $log.Add("[$Name] screenshot fallback: $targetPath")
-            $log.Add("[$Name] requested bounds failed; used primary screen fallback")
-            $log.Add("")
-        }
-    }
+    throw "Timed out waiting for native screenshot $targetPath"
 }
 
 function Send-Key {
@@ -306,6 +275,9 @@ try {
     $process = Start-Process -FilePath $ExePath -ArgumentList $launchArgs -WorkingDirectory $repoRoot -PassThru
     Wait-ForMainWindow -TargetProcess $process
     Start-Sleep -Milliseconds $InitialSettleMs
+    if (-not (Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_complete" -TimeoutSeconds 25)) {
+        [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_failed" -TimeoutSeconds 2)
+    }
 
     Capture-Stage -TargetProcess $process -Name "intro"
     Wait-ForTraceIdle -Path $tracePath
@@ -324,8 +296,17 @@ try {
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs 2600
     Capture-Stage -TargetProcess $process -Name "run"
 
-    Start-Sleep -Milliseconds 3200
-    Capture-Stage -TargetProcess $process -Name "run_after_3s"
+    if ($RunObserveSeconds -gt 0) {
+        $observeDeadline = (Get-Date).AddSeconds($RunObserveSeconds)
+        while ((Get-Date) -lt $observeDeadline) {
+            Start-Sleep -Seconds 10
+            $process.Refresh()
+            if ($process.HasExited) {
+                break
+            }
+        }
+    }
+    Capture-Stage -TargetProcess $process -Name "run_after_observe"
 
     if (-not $process.HasExited) {
         Stop-Process -Id $process.Id -Force
@@ -335,6 +316,9 @@ try {
     $process = Start-Process -FilePath $ExePath -ArgumentList $launchArgs -WorkingDirectory $repoRoot -PassThru
     Wait-ForMainWindow -TargetProcess $process
     Start-Sleep -Milliseconds $InitialSettleMs
+    if (-not (Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_complete" -TimeoutSeconds 25)) {
+        [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_failed" -TimeoutSeconds 2)
+    }
     Wait-ForTraceIdle -Path $tracePath
 
     Capture-Stage -TargetProcess $process -Name "prompt_intro"
@@ -374,6 +358,11 @@ finally {
         Remove-Item Env:SG_PREFLIGHT_NATIVE_TRACE_FILE -ErrorAction SilentlyContinue
     } else {
         $env:SG_PREFLIGHT_NATIVE_TRACE_FILE = $previousTraceEnv
+    }
+    if ($null -eq $previousCaptureEnv) {
+        Remove-Item Env:SG_PREFLIGHT_NATIVE_CAPTURE_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:SG_PREFLIGHT_NATIVE_CAPTURE_DIR = $previousCaptureEnv
     }
     if (Test-Path $tracePath) {
         $traceSize = (Get-Item $tracePath).Length
