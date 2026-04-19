@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(sg_preflight_native_shell LANGUAGES CXX)
+project(SERGFXProject3DCarQA LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

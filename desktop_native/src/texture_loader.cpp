@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -423,6 +424,155 @@ bool UploadBgraPixelsToTexture(
     return true;
 }
 
+bool TrimBgraPixelsByAlpha(
+    std::vector<uint8_t>& pixels,
+    UINT& width,
+    UINT& height,
+    uint8_t alpha_trim_threshold
+) {
+    if (alpha_trim_threshold == 0 || width == 0 || height == 0 || pixels.empty()) {
+        return false;
+    }
+
+    UINT min_x = width;
+    UINT min_y = height;
+    UINT max_x = 0;
+    UINT max_y = 0;
+    bool found = false;
+    const UINT row_pitch = width * 4U;
+    for (UINT y = 0; y < height; ++y) {
+        for (UINT x = 0; x < width; ++x) {
+            const size_t pixel_offset = static_cast<size_t>(y) * row_pitch + static_cast<size_t>(x) * 4U;
+            if (pixels[pixel_offset + 3U] < alpha_trim_threshold) {
+                continue;
+            }
+            min_x = std::min(min_x, x);
+            min_y = std::min(min_y, y);
+            max_x = std::max(max_x, x);
+            max_y = std::max(max_y, y);
+            found = true;
+        }
+    }
+
+    if (!found) {
+        return false;
+    }
+
+    const UINT trimmed_width = (max_x - min_x) + 1U;
+    const UINT trimmed_height = (max_y - min_y) + 1U;
+    if (trimmed_width == width && trimmed_height == height && min_x == 0 && min_y == 0) {
+        return false;
+    }
+
+    std::vector<uint8_t> trimmed(static_cast<size_t>(trimmed_width) * static_cast<size_t>(trimmed_height) * 4U);
+    const UINT trimmed_row_pitch = trimmed_width * 4U;
+    for (UINT y = 0; y < trimmed_height; ++y) {
+        const size_t source_offset =
+            (static_cast<size_t>(min_y + y) * row_pitch) +
+            (static_cast<size_t>(min_x) * 4U);
+        const size_t destination_offset = static_cast<size_t>(y) * trimmed_row_pitch;
+        std::memcpy(
+            trimmed.data() + destination_offset,
+            pixels.data() + source_offset,
+            static_cast<size_t>(trimmed_row_pitch)
+        );
+    }
+
+    pixels = std::move(trimmed);
+    width = trimmed_width;
+    height = trimmed_height;
+    return true;
+}
+
+std::vector<uint8_t> ResizeBgraPixelsBilinear(
+    const std::vector<uint8_t>& source_pixels,
+    UINT source_width,
+    UINT source_height,
+    UINT target_width,
+    UINT target_height
+) {
+    std::vector<uint8_t> target_pixels(static_cast<size_t>(target_width) * static_cast<size_t>(target_height) * 4U, 0U);
+    if (source_width == 0 || source_height == 0 || target_width == 0 || target_height == 0) {
+        return target_pixels;
+    }
+
+    for (UINT y = 0; y < target_height; ++y) {
+        const float source_y = (static_cast<float>(y) + 0.5f) * static_cast<float>(source_height) / static_cast<float>(target_height) - 0.5f;
+        const UINT y0 = static_cast<UINT>(std::clamp(static_cast<int>(std::floor(source_y)), 0, static_cast<int>(source_height - 1U)));
+        const UINT y1 = std::min(y0 + 1U, source_height - 1U);
+        const float fy = std::clamp(source_y - static_cast<float>(y0), 0.0f, 1.0f);
+
+        for (UINT x = 0; x < target_width; ++x) {
+            const float source_x = (static_cast<float>(x) + 0.5f) * static_cast<float>(source_width) / static_cast<float>(target_width) - 0.5f;
+            const UINT x0 = static_cast<UINT>(std::clamp(static_cast<int>(std::floor(source_x)), 0, static_cast<int>(source_width - 1U)));
+            const UINT x1 = std::min(x0 + 1U, source_width - 1U);
+            const float fx = std::clamp(source_x - static_cast<float>(x0), 0.0f, 1.0f);
+
+            const size_t offset00 = (static_cast<size_t>(y0) * source_width + x0) * 4U;
+            const size_t offset10 = (static_cast<size_t>(y0) * source_width + x1) * 4U;
+            const size_t offset01 = (static_cast<size_t>(y1) * source_width + x0) * 4U;
+            const size_t offset11 = (static_cast<size_t>(y1) * source_width + x1) * 4U;
+            const size_t destination_offset = (static_cast<size_t>(y) * target_width + x) * 4U;
+
+            for (size_t channel = 0; channel < 4U; ++channel) {
+                const float top = static_cast<float>(source_pixels[offset00 + channel]) * (1.0f - fx)
+                    + static_cast<float>(source_pixels[offset10 + channel]) * fx;
+                const float bottom = static_cast<float>(source_pixels[offset01 + channel]) * (1.0f - fx)
+                    + static_cast<float>(source_pixels[offset11 + channel]) * fx;
+                const float value = top * (1.0f - fy) + bottom * fy;
+                target_pixels[destination_offset + channel] = static_cast<uint8_t>(std::clamp(std::lround(value), 0l, 255l));
+            }
+        }
+    }
+
+    return target_pixels;
+}
+
+bool FitBgraPixelsIntoSquareCanvas(
+    std::vector<uint8_t>& pixels,
+    UINT& width,
+    UINT& height,
+    UINT fit_square_canvas_size
+) {
+    if (fit_square_canvas_size == 0 || width == 0 || height == 0 || pixels.empty()) {
+        return false;
+    }
+
+    const float scale = std::min(
+        static_cast<float>(fit_square_canvas_size) / static_cast<float>(width),
+        static_cast<float>(fit_square_canvas_size) / static_cast<float>(height)
+    );
+    const UINT resized_width = std::max(1U, static_cast<UINT>(std::lround(static_cast<float>(width) * scale)));
+    const UINT resized_height = std::max(1U, static_cast<UINT>(std::lround(static_cast<float>(height) * scale)));
+
+    std::vector<uint8_t> resized = ResizeBgraPixelsBilinear(pixels, width, height, resized_width, resized_height);
+    std::vector<uint8_t> canvas(
+        static_cast<size_t>(fit_square_canvas_size) * static_cast<size_t>(fit_square_canvas_size) * 4U,
+        0U
+    );
+
+    const UINT x_offset = (fit_square_canvas_size - resized_width) / 2U;
+    const UINT y_offset = (fit_square_canvas_size - resized_height) / 2U;
+    const UINT resized_row_pitch = resized_width * 4U;
+    const UINT canvas_row_pitch = fit_square_canvas_size * 4U;
+    for (UINT row = 0; row < resized_height; ++row) {
+        const size_t source_offset = static_cast<size_t>(row) * resized_row_pitch;
+        const size_t destination_offset =
+            (static_cast<size_t>(y_offset + row) * canvas_row_pitch) +
+            (static_cast<size_t>(x_offset) * 4U);
+        std::memcpy(
+            canvas.data() + destination_offset,
+            resized.data() + source_offset,
+            static_cast<size_t>(resized_row_pitch)
+        );
+    }
+
+    pixels = std::move(canvas);
+    width = fit_square_canvas_size;
+    height = fit_square_canvas_size;
+    return true;
+}
+
 }  // namespace
 
 void ReleaseTexture(DdsTextureHandle& texture) {
@@ -696,6 +846,8 @@ bool LoadWicTexture(
     const D3d12TextureUploadContext& context,
     const std::filesystem::path& path,
     DdsTextureHandle& texture,
+    uint8_t alpha_trim_threshold,
+    uint32_t fit_square_canvas_size,
     std::string* error
 ) {
     if (
@@ -780,13 +932,20 @@ bool LoadWicTexture(
             break;
         }
 
-        const UINT row_pitch = width * 4U;
+        UINT row_pitch = width * 4U;
         std::vector<uint8_t> pixels(static_cast<size_t>(row_pitch) * static_cast<size_t>(height));
         if (FAILED(converter->CopyPixels(nullptr, row_pitch, static_cast<UINT>(pixels.size()), pixels.data()))) {
             if (error != nullptr) {
                 *error = "Failed to copy the WIC texture pixels.";
             }
             break;
+        }
+
+        if (TrimBgraPixelsByAlpha(pixels, width, height, alpha_trim_threshold)) {
+            row_pitch = width * 4U;
+        }
+        if (FitBgraPixelsIntoSquareCanvas(pixels, width, height, fit_square_canvas_size)) {
+            row_pitch = width * 4U;
         }
 
         loaded = UploadBgraPixelsToTexture(context, width, height, pixels.data(), row_pitch, texture, error);

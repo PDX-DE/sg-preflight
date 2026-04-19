@@ -1,5 +1,5 @@
 param(
-    [string]$BuildDir = "build/native",
+    [string]$BuildDir = "build/sergfx-final-1.0.0",
     [string]$Configuration = "Release"
 )
 

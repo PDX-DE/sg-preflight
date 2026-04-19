@@ -17,8 +17,8 @@ constexpr std::array<LanguageOption, 4> kSupportedLanguages = {{
 
 const char* TranslateEnglish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX";
-    case HeaderChecking: return "SERGFX CHECKING";
+    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
+    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
     case ImageSlotReserved: return "";
     case Continue: return "Continue";
     case Review: return "Review";
@@ -89,8 +89,8 @@ const char* TranslateEnglish(UiText text) {
     case LanguageScreenBody: return "Choose the language used by the shell interface.";
     case LanguageScreenHint: return "This only changes the shell text. Project data and generated results stay the same.";
     case IntroWelcome: return "Welcome to SERGFX.";
-    case IntroBodyPrimary: return "SERGFX Project HMI & SDET is the local desktop shell for automotive 3D visualisation QA.\n\nProject HMI covers the Human-Machine Interface side of car scenes and realtime display content. SDET covers the engineering side: checks, automation, logging, and pipeline tooling.";
-    case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the check, review what will run, start the run, then open the first files, reports, exports, and follow-up material collected for you.";
+    case IntroBodyPrimary: return "SERGFX: Project 3D Car QA Review is the local desktop review shell for automotive 3D car QA.\n\nIt brings slice selection, check execution, evidence capture, reports, exports, and follow-up material into one operator flow.";
+    case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the local check, review what will run, start the run, then open the first files, reports, exports, and follow-up material collected for you.";
     case SelectLoadingTitle: return "Loading local project data.";
     case SelectLoadingBody: return "The shell is loading the available slices, checks, and recent local results so you can choose what to run.";
     case SelectTitle: return "Choose the slice and local check for this run.";
@@ -135,8 +135,8 @@ const char* TranslateRomanian(UiText text);
 
 const char* TranslateSpanish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX";
-    case HeaderChecking: return "SERGFX CHECKING";
+    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
+    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
     case ImageSlotReserved: return "ESPACIO DE IMAGEN RESERVADO";
     case Continue: return "CONTINUAR";
     case Review: return "REVISAR";
@@ -249,8 +249,8 @@ const char* TranslateSpanish(UiText text) {
 
 const char* TranslateGerman(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX";
-    case HeaderChecking: return "SERGFX CHECKING";
+    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
+    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
     case ImageSlotReserved: return "BILDPLATZ RESERVIERT";
     case Continue: return "WEITER";
     case Review: return "PRUEFEN";
@@ -363,8 +363,8 @@ const char* TranslateGerman(UiText text) {
 
 const char* TranslateRomanian(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX";
-    case HeaderChecking: return "SERGFX CHECKING";
+    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
+    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
     case ImageSlotReserved: return "SPATIU IMAGINE REZERVAT";
     case Continue: return "CONTINUA";
     case Review: return "REVIZUIRE";

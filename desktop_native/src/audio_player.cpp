@@ -1,6 +1,7 @@
 #include "audio_player.hpp"
 
 #include <windows.h>
+#include <mmsystem.h>
 #include <mmreg.h>
 #include <objbase.h>
 #include <xaudio2.h>
@@ -35,6 +36,8 @@ struct AudioEngine {
     IXAudio2* xaudio = nullptr;
     IXAudio2MasteringVoice* mastering_voice = nullptr;
     IXAudio2SourceVoice* music_voice = nullptr;
+    bool mci_music_open = false;
+    std::wstring mci_music_alias = L"sergfx_shell_music";
     std::shared_ptr<LoadedWave> music_wave;
     std::unordered_map<std::wstring, std::shared_ptr<LoadedWave>> wave_cache;
     std::vector<OneShotVoice> one_shots;
@@ -67,6 +70,63 @@ std::string FormatHr(const char* context, HRESULT hr) {
     std::ostringstream stream;
     stream << context << " failed (0x" << std::hex << std::uppercase << static_cast<unsigned long>(hr) << ").";
     return stream.str();
+}
+
+std::string NarrowUtf8(const std::wstring& text) {
+    if (text.empty()) {
+        return {};
+    }
+
+    const int required_bytes = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        text.c_str(),
+        static_cast<int>(text.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr
+    );
+    if (required_bytes <= 0) {
+        return {};
+    }
+
+    std::string result(static_cast<size_t>(required_bytes), '\0');
+    WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        text.c_str(),
+        static_cast<int>(text.size()),
+        result.data(),
+        required_bytes,
+        nullptr,
+        nullptr
+    );
+    return result;
+}
+
+std::wstring EscapeMciPath(const std::wstring& path) {
+    std::wstring escaped;
+    escaped.reserve(path.size());
+    for (const wchar_t character : path) {
+        if (character == L'"') {
+            escaped.push_back(L'"');
+        }
+        escaped.push_back(character);
+    }
+    return escaped;
+}
+
+std::string FormatMciError(const wchar_t* context, MCIERROR error_code) {
+    wchar_t error_text[256] = {};
+    if (!mciGetErrorStringW(error_code, error_text, static_cast<UINT>(std::size(error_text)))) {
+        swprintf_s(error_text, L"MCI error %u", static_cast<unsigned>(error_code));
+    }
+
+    std::wstring message(context);
+    message.append(L" failed: ");
+    message.append(error_text);
+    return NarrowUtf8(message);
 }
 
 float ClampSample(float value) {
@@ -244,6 +304,65 @@ void DestroyMusicVoiceLocked() {
         g_audio.music_voice = nullptr;
     }
     g_audio.music_wave.reset();
+}
+
+void StopMciMusicLocked() {
+    if (!g_audio.mci_music_open) {
+        return;
+    }
+
+    const std::wstring stop_command = L"stop " + g_audio.mci_music_alias;
+    mciSendStringW(stop_command.c_str(), nullptr, 0U, nullptr);
+
+    const std::wstring close_command = L"close " + g_audio.mci_music_alias;
+    mciSendStringW(close_command.c_str(), nullptr, 0U, nullptr);
+
+    g_audio.mci_music_open = false;
+}
+
+bool StartLoopingMciMusicLocked(const std::filesystem::path& path, unsigned volume_percent, std::string* error) {
+    StopMciMusicLocked();
+
+    const std::wstring open_command =
+        L"open \"" + EscapeMciPath(path.wstring()) + L"\" type mpegvideo alias " + g_audio.mci_music_alias;
+    MCIERROR mci_error = mciSendStringW(open_command.c_str(), nullptr, 0U, nullptr);
+    if (mci_error != 0U) {
+        const std::string message = FormatMciError(L"mci open", mci_error);
+        SetLastErrorLocked(message);
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    }
+
+    g_audio.mci_music_open = true;
+
+    wchar_t volume_command[128] = {};
+    swprintf_s(
+        volume_command,
+        L"setaudio %ls volume to %u",
+        g_audio.mci_music_alias.c_str(),
+        static_cast<unsigned>(std::clamp(volume_percent, 0U, 100U) * 10U)
+    );
+    mciSendStringW(volume_command, nullptr, 0U, nullptr);
+
+    const std::wstring play_command = L"play " + g_audio.mci_music_alias + L" repeat";
+    mci_error = mciSendStringW(play_command.c_str(), nullptr, 0U, nullptr);
+    if (mci_error != 0U) {
+        const std::string message = FormatMciError(L"mci play", mci_error);
+        StopMciMusicLocked();
+        SetLastErrorLocked(message);
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    }
+
+    ClearLastErrorLocked();
+    if (error != nullptr) {
+        error->clear();
+    }
+    return true;
 }
 
 void CleanupStoppedOneShotsLocked() {
@@ -547,6 +666,12 @@ bool StartLoopingWaveMusic(const std::filesystem::path& path, unsigned volume_pe
 
     CleanupStoppedOneShotsLocked();
     DestroyMusicVoiceLocked();
+    StopMciMusicLocked();
+
+    const std::wstring extension = path.extension().wstring();
+    if (_wcsicmp(extension.c_str(), L".mp3") == 0) {
+        return StartLoopingMciMusicLocked(path, volume_percent, &error);
+    }
 
     const std::shared_ptr<LoadedWave> wave = GetOrLoadWaveLocked(path, &error);
     if (!wave) {
@@ -583,6 +708,7 @@ bool StartLoopingWaveMusic(const std::filesystem::path& path, unsigned volume_pe
 void StopLoopingWaveMusic() {
     std::lock_guard<std::mutex> lock(g_audio.mutex);
     DestroyMusicVoiceLocked();
+    StopMciMusicLocked();
     CleanupStoppedOneShotsLocked();
 }
 
@@ -595,6 +721,7 @@ void ShutdownAudio() {
     std::lock_guard<std::mutex> lock(g_audio.mutex);
 
     DestroyMusicVoiceLocked();
+    StopMciMusicLocked();
     for (OneShotVoice& one_shot : g_audio.one_shots) {
         if (one_shot.voice != nullptr) {
             one_shot.voice->Stop(0U);

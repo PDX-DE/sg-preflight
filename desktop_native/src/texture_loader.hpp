@@ -50,6 +50,8 @@ bool LoadWicTexture(
     const D3d12TextureUploadContext& context,
     const std::filesystem::path& path,
     DdsTextureHandle& texture,
+    uint8_t alpha_trim_threshold = 0,
+    uint32_t fit_square_canvas_size = 0,
     std::string* error = nullptr
 );
 
