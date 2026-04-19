@@ -17,6 +17,7 @@ from sg_preflight.adapters.materialize import (
     resolve_materialize_inputs,
 )
 from sg_preflight.bundle import load_bundle
+from sg_preflight.checker_catalog import list_checker_catalog
 from sg_preflight.config_loader import load_config, load_json
 from sg_preflight.models import Report
 from sg_preflight.profiles import RunProfile, list_run_profiles
@@ -739,10 +740,15 @@ def _bmw_models_repo_path(root: Path) -> Path:
     return path
 
 
+def _delivery_checklist_root(root: Path) -> Path:
+    return root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist"
+
+
 def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
     root = workspace_root(repo_root)
     mirror_root = root / "repositories" / "trunk"
     bmw_models_repo = _bmw_models_repo_path(root)
+    delivery_checklist_root = _delivery_checklist_root(root)
     raco_headless = _raco_headless_path(root)
     checks = [
         ("workspace_root", root),
@@ -757,6 +763,12 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
         ("raco_headless", raco_headless),
         ("carmodel_data", mirror_root / ".pdx" / "python" / "carmodel_data.json"),
         ("resource_mappings", mirror_root / ".pdx" / "python" / "resource_mappings.json"),
+        ("delivery_checklist_tool", delivery_checklist_root / "deliveryChecklist.exe"),
+        ("delivery_checklist_helper", delivery_checklist_root / "deliveryChecklist.py"),
+        ("delivery_checklist_readme", delivery_checklist_root / "README.md"),
+        ("delivery_checklist_camera_crane", delivery_checklist_root / "cameraCrane.lua"),
+        ("bmw_car_manager_script", bmw_models_repo / "ci" / "scripts" / "car_manager.py"),
+        ("bmw_test_main_script", bmw_models_repo / "ci" / "scripts" / "test" / "main.py"),
     ]
 
     payload = []
@@ -814,6 +826,16 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
     return payload
 
 
+def sg_checker_catalog(
+    repo_root: Path | None = None,
+    *,
+    profiles: list[RunProfile] | None = None,
+) -> list[dict[str, Any]]:
+    root = workspace_root(repo_root)
+    live_profiles = profiles if profiles is not None else list_run_profiles(root)
+    return [item.to_dict() for item in list_checker_catalog(root, profiles=live_profiles)]
+
+
 def qa_workflow_status(
     repo_root: Path | None = None,
     profiles: list[RunProfile] | None = None,
@@ -821,18 +843,42 @@ def qa_workflow_status(
     root = workspace_root(repo_root)
     readiness = {item["key"]: item for item in prerequisite_status(root)}
     live_profiles = profiles if profiles is not None else list_run_profiles(root)
+    checker_map = {
+        item["key"]: item
+        for item in sg_checker_catalog(
+            root,
+            profiles=live_profiles,
+        )
+    }
     ready_profiles = [
         profile
         for profile in live_profiles
         if profile.project_root.exists() and profile.config_path.exists()
     ]
 
-    scene_checker_ready = readiness.get("scene_checker", {}).get("status") == "available"
-    raco_headless_ready = readiness.get("raco_headless", {}).get("status") == "available"
     bmw_models_ready = readiness.get("bmw_models_repo", {}).get("status") == "available"
     bmw_scripts_ready = readiness.get("bmw_screenshot_scripts", {}).get("status") == "available"
+    bmw_car_manager_ready = readiness.get("bmw_car_manager_script", {}).get("status") == "available"
+    bmw_test_main_ready = readiness.get("bmw_test_main_script", {}).get("status") == "available"
     adb_ready = readiness.get("adb", {}).get("status") == "available"
     bmw_targets_ready = any(profile.bmw_smoke_target.strip() for profile in live_profiles)
+    delivery_checklist_ready = all(
+        readiness.get(key, {}).get("status") == "available"
+        for key in (
+            "delivery_checklist_tool",
+            "delivery_checklist_helper",
+            "delivery_checklist_readme",
+            "delivery_checklist_camera_crane",
+        )
+    )
+    checker_stack_ready = (
+        checker_map.get("style_checker", {}).get("state") == "ready"
+        and checker_map.get("execute_checks", {}).get("state") == "ready"
+    )
+    unused_resources_state = checker_map.get("print_not_used_resources", {}).get("state", "blocked")
+    scene_checker_state = checker_map.get("check_scenes", {}).get("state", "blocked")
+    delivery_state = checker_map.get("delivery_checklist", {}).get("state", "blocked")
+    bmw_catalog_state = checker_map.get("bmw_smoke", {}).get("state", "blocked")
 
     return [
         {
@@ -853,25 +899,60 @@ def qa_workflow_status(
         },
         {
             "key": "repo_scene_checks",
-            "label": "Repo checker and scene-checker path",
-            "state": "covered" if scene_checker_ready and raco_headless_ready else "partial" if scene_checker_ready else "blocked",
+            "label": "SG checker stack and scene-check path",
+            "state": (
+                "covered"
+                if checker_stack_ready and unused_resources_state == "ready" and scene_checker_state == "ready"
+                else "partial"
+                if checker_stack_ready or unused_resources_state != "blocked" or scene_checker_state != "blocked"
+                else "blocked"
+            ),
             "summary": (
-                "SG-side repo checker and scene-check actions can run from the same operator surface on this machine."
-                if scene_checker_ready and raco_headless_ready
-                else "SG-side helper scripts are visible, but direct RaCo scene execution is still blocked on the local runtime setup."
-                if scene_checker_ready
-                else "Scene-checker helper discovery is not ready on this machine."
+                "The operator UI can run the SG checker stack (`check_all_styles.py` + `executeChecks.py`), unused-resource scan, and scene-check path from the same local surface."
+                if checker_stack_ready and unused_resources_state == "ready" and scene_checker_state == "ready"
+                else "The operator UI can run the SG checker stack here, and it also knows about unused-resource or scene-check coverage, but at least one SG-side checker path is still only partial."
+                if checker_stack_ready or unused_resources_state != "blocked" or scene_checker_state != "blocked"
+                else "SG checker discovery is not ready on this machine."
             ),
             "sg_preflight_role": (
-                "The framework now wraps SG repo-checker and scene-check steps as one-click actions alongside the standard preflight flow."
+                "The framework now catalogs the real SG checker stack and exposes the usable parts as one-click actions alongside the standard preflight flow."
             ),
             "blockers": [
                 blocker
                 for blocker in (
-                    None if scene_checker_ready else "The mirrored `check_scenes.py` helper is missing.",
+                    None if checker_stack_ready else "The mirrored repo-checker Python stack is incomplete locally.",
+                    None if unused_resources_state != "blocked" else "The unused-resource checker is not ready for the current live profiles.",
+                    None if scene_checker_state != "blocked" else "The scene-check helper is not ready for the current machine setup.",
+                )
+                if blocker
+            ],
+        },
+        {
+            "key": "delivery_checklist",
+            "label": "BMW delivery checklist bridge",
+            "state": "partial" if delivery_state != "blocked" else "blocked",
+            "summary": (
+                "The mirrored SG delivery-checklist assets are present locally, so the operator surface can show the checklist bridge and its BMW-side prerequisites honestly."
+                if delivery_state != "blocked" and not (bmw_models_ready and (bmw_car_manager_ready or bmw_test_main_ready))
+                else "The mirrored SG delivery-checklist assets and BMW-side helpers are both present locally, but the checklist flow still remains an externally owned step."
+                if delivery_state != "blocked"
+                else "The mirrored `.pdx/checkers/deliveryChecklist` assets are not complete on this machine."
+            ),
+            "sg_preflight_role": (
+                "SG Preflight now exposes the real delivery-checklist bridge as part of the operator workflow instead of pretending BMW-side delivery steps do not exist."
+            ),
+            "blockers": [
+                blocker
+                for blocker in (
                     None
-                    if raco_headless_ready
-                    else "A local `RaCoHeadless.exe` is not configured, so direct scene execution remains blocked.",
+                    if delivery_checklist_ready
+                    else "The mirrored `.pdx/checkers/deliveryChecklist` assets are incomplete locally.",
+                    None
+                    if bmw_models_ready
+                    else "Blocked on BMW Git access or a local `digital-3d-car-models` clone.",
+                    None
+                    if bmw_car_manager_ready or bmw_test_main_ready
+                    else "The BMW-side `ci/scripts/car_manager.py` or `ci/scripts/test/main.py` helpers are not available locally.",
                 )
                 if blocker
             ],
@@ -879,7 +960,7 @@ def qa_workflow_status(
         {
             "key": "bmw_screenshot_smoke",
             "label": "BMW screenshot / export / interface smoke",
-            "state": "partial" if bmw_models_ready and bmw_scripts_ready else "blocked",
+            "state": "partial" if bmw_catalog_state != "blocked" else "blocked",
             "summary": (
                 "The BMW-side smoke stage is exposed as a one-click action, but it still depends on BMW repo access and per-car target mapping."
                 if bmw_models_ready and bmw_scripts_ready and not bmw_targets_ready

@@ -66,11 +66,20 @@ class TestServices(unittest.TestCase):
 
         step_map = {step["key"]: step for step in steps}
         self.assertEqual(step_map["deterministic_preflight"]["state"], "covered")
+        self.assertEqual(step_map["delivery_checklist"]["state"], "partial")
         self.assertEqual(step_map["bmw_screenshot_smoke"]["state"], "blocked")
         self.assertEqual(step_map["rack_review"]["state"], "blocked")
         self.assertIn(
+            "mirrored SG delivery-checklist assets are present locally",
+            step_map["delivery_checklist"]["summary"],
+        )
+        self.assertIn(
             "BMW Git access or a local `digital-3d-car-models` clone",
             " ".join(step_map["bmw_screenshot_smoke"]["blockers"]),
+        )
+        self.assertIn(
+            "BMW Git access or a local `digital-3d-car-models` clone",
+            " ".join(step_map["delivery_checklist"]["blockers"]),
         )
 
 

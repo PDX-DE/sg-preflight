@@ -1,0 +1,5 @@
+﻿Checking scene: C:\repo\out\tmp-checker-fixtures\broken_scene.rca
+[I] [04/17/26 14:25:12:711376] [LOGGING] [log.cpp:177] [raco::log_system::init] log_system initialized logFileName: C:\Users\Operator\AppData\Roaming\RamsesComposer\logs\RaCoHeadless-104412.log
+GetConsoleMode failed: color output might be broken
+[1;37m20260417-14:25:12.724[0m | [1;32mInfo [0m | [1;36mRFRA[0m | R.main: RamsesLogger::setLogHandler: adding a user logger
+[E] [04/17/26 14:25:12:727541] [COMMON] [main.cpp:60] [Worker::run] File Load Error: Loading JSON file resulted in a null document object

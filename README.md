@@ -1,8 +1,8 @@
 # SG Preflight
 
-A Python-first internal framework for deterministic 3D Car QA preflight checks, with a local operator UI over the same validation engine.
+A local SG-side QA / preflight / evidence tool for Seriengrafik / 3D Car, built around one shared Python validation engine.
 
-This project turns several current manual SG checks into repeatable validation with machine-readable and human-readable reports.
+This project helps operators run deterministic checks, inspect real source-of-truth files, generate reusable evidence, and prepare Jira / QA Hero / handoff notes before review, delivery, or integration.
 
 See [LICENSE](LICENSE) for the internal proprietary license terms.
 
@@ -67,6 +67,21 @@ This tool is intentionally aimed at pain that is both:
 - repeatedly mentioned in current 3D / SG onboarding and QA docs
 - realistic to catch deterministically before manual visual review, rack time, or integration
 
+## Current Surfaces
+
+- Python core engine
+- CLI over the same engine
+- local web UI as the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos
+- experimental desktop operator shell over the same engine for faster local file opening, blocker visibility, and checker-evidence triage without replacing the browser UI
+  - current desktop v0 now translates the local UnleashedRecomp menu language into Qt chrome: scanline header bars, category-tab action strip, grid-framed panels, TV-static-style evidence framing, and a bottom button-guide band
+- experimental native desktop shell in `desktop_native/`, using C++ + Dear ImGui over the same Python action/evidence backend rather than a second validation engine
+  - the native shell now auto-discovers the repo root from the built executable path, resolves a local workspace Python when present, and translates more of the Unleashed-style interaction systems into custom chrome: animated scanline bars, amber title choreography, framed containers, animated action tabs, selection cards, cue hooks, and a bottom button guide
+  - when `UnleashedRecompResources` is available locally, the native shell now loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures at runtime instead of only drawing hand-made approximations; fonts still use direct OTF loading for now instead of the upstream prebuilt atlas snapshot
+  - the native shell now starts borderless fullscreen by default, uses a direct installer-style wizard flow (`Introduction`, `Select`, `Review`, `Run`, `Evidence`, `Files`, `Stages`) instead of the older dashboard-screen model, and adds local WAV-based UI cues plus an optional installer-music toggle in `Stages`
+  - the native shell now keeps the Unleashed-derived visual language abstract: no character/cast art in the operator flow, lighter chrome/static overlays, and screen-specific layouts so the shell reads more like step-by-step QA pages than one noisy control wall
+  - the native shell now ports more of the actual `installer_wizard.cpp` draw layer directly: top and bottom scanline-bar treatment, installer-style borders, bottom navigation button containers, page-specific button-guide behavior, and message-prompt/modal rhythm
+  - `scripts\build_native_shell.ps1` writes `build\latest_native_shell_path.txt`, and `scripts\package_native_shell_bundle.ps1` stages a copyable bundled shell for another-PC testing instead of assuming the raw `.exe` is enough by itself
+
 ## Quick start
 
 From the project root:
@@ -117,10 +132,49 @@ Start the local operator UI:
 python -m sg_preflight ui --reload
 ```
 
+Start the experimental desktop operator shell:
+
+```bash
+python -m pip install -e .[desktop]
+python -m sg_preflight desktop --profile G65
+```
+
+Inspect the native-shell backend contract directly:
+
+```bash
+python -m sg_preflight desktop-state profiles --json
+python -m sg_preflight desktop-state actions G65 --json
+python -m sg_preflight launch-action qa_stack__g65 --json
+```
+
+Configure and build the native shell scaffold:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_native_shell.ps1
+```
+
+Stage a portable native-shell bundle for another PC:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package_native_shell_bundle.ps1 -BuildDir build/native-installer-layer -BundleDir build/native-installer-layer-bundle
+```
+
+Check the latest built native-shell path:
+
+```powershell
+Get-Content build\latest_native_shell_path.txt
+```
+
 List the one-click SG QA actions:
 
 ```bash
 python -m sg_preflight list-actions --json
+```
+
+List the current SG checker coverage layer:
+
+```bash
+python -m sg_preflight list-checkers --json
 ```
 
 Run the full daily live preflight matrix as one action:
@@ -149,13 +203,17 @@ It provides:
 - Guided checks: show one recommended car first, then keep the other cars in a separate secondary section; the selected workflow stage stays attached when you start from the stage launcher
 - Run: one primary button only, plus a visible `Files this check will use` block; quick-check and alternate actions stay behind foldouts, and workflow-stage context now persists into quick checks too
 - Result: a primary `First Thing To Do` panel, direct source-file link for the first problem, a stage-aware handoff copy action, a `Stage Readiness` panel, and a `Changed Since Last Check` comparison against the previous completed run for the same profile
+- Result and action pages: repo-checker, scene-check, unused-resource, and delivery-checklist runs now surface structured checker-derived evidence, including `Open these files first` guidance, concrete affected paths, and copy-ready SG checker references instead of only raw logs
 - Live progress: long-running runs and actions now show a `NOW LOADING...` overlay with estimated progress, coarse ETA, full step visibility, persisted framework events, live action-log tail, and clickable per-step drilldown with nested child-status detail where available
 - Guidance: Home, Run, and Result pages now include explicit "if you are unsure, do this" blocks so teammate pilots can stay on the main path without exploring every foldout
 - Result and Files And Proof: evidence-completeness scoring, explicit proof/manual/blocked grouping, richer stage-specific exports for Jira / QA Hero / pre-delivery use, and a manual-review companion with screenshot-slot and Blender-vs-RaCo copy blocks
-- Files And Proof: grouped `Reports`, `Source-of-truth files`, and `Run metadata`, with the first relevant SG file pinned when a finding exists plus the same stage-readiness summary for evidence completeness
+- Files And Proof: grouped `Reports`, `Source-of-truth files`, `Run metadata`, and checker-derived evidence links, with the first relevant SG file pinned when a finding exists plus the same stage-readiness summary for evidence completeness
 - One-click actions for the wider SG QA flow:
   - daily live matrix
-  - repo checker on workspace or per-car scope
+  - full mirrored repo checker coverage for `checkall.bat` scope, exposed as `repo_checker_all` without calling the batch wrapper directly
+  - repo checker on workspace or per-car scope, now wrapping the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
+  - per-car unused-resource scan through `.pdx\checkers\printNotUsedResources.py`, now parsed into file-backed resource evidence
+  - per-car delivery-checklist readiness bridge through `.pdx\checkers\deliveryChecklist`, now parsed into openable local checklist assets plus explicit BMW-side blocked follow-ups
   - per-car recommended QA stack
   - scene check when `RaCoHeadless.exe` is configured
   - BMW screenshot smoke as an explicit blocked stage until BMW-side access and target mapping exist
@@ -167,6 +225,10 @@ One-click action records persist under `out\operator-ui\actions`.
 Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-workflow.md).
 Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate-pilot-playbook.md).
 QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-alignment.md).
+SG checker coverage lives in [docs/sg-checker-coverage-matrix.md](docs/sg-checker-coverage-matrix.md).
+Future desktop-shell research and visual-direction notes live under [docs/research](docs/research), while the experimental shell itself still wraps the same Python actions, reports, and evidence model.
+The native C++ shell scaffold lives under [desktop_native](desktop_native/README.md) and uses the same `launch-action` / `desktop-state` backend contract rather than forking the QA logic.
+It now also supports direct recent-run browsing, linked run/result drilldown beside action state, richer run-output and source-file panels, broader copy/export surfaces from the same persisted SG evidence model, automatic repo-root discovery when launched from `build\...\Release`, and a more faithful translated Unleashed-style shell around the same Python backend.
 
 Run the full smoke-test flow:
 

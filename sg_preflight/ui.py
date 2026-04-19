@@ -46,6 +46,7 @@ from sg_preflight.services import (
     qa_workflow_status,
     run_notes,
     save_run_record,
+    sg_checker_catalog,
     workspace_root,
 )
 
@@ -389,12 +390,12 @@ def _workflow_stage_specs() -> tuple[dict[str, Any], ...]:
             "hero_steps": (
                 "Run the widest useful deterministic check.",
                 "Open files and proof and make sure the evidence exists.",
-                "Treat performance tests, delivery docs, and BMW-side steps as explicit follow-up work.",
+                "Treat delivery-checklist, performance-test, delivery-doc, and BMW-side steps as explicit follow-up work.",
             ),
             "checklist": (
                 "Ticket completion is not delivery completion.",
-                "Performance test and delivery documentation expectations stay visible here.",
-                "Blocked BMW-side or rack steps should be shown honestly, not hidden.",
+                "Performance-test, delivery-checklist, and delivery-documentation expectations stay visible here.",
+                "Blocked BMW-side, delivery-checklist, or rack steps should be shown honestly, not hidden.",
             ),
             "quick_copy_label": "Copy pre-delivery summary",
             "full_copy_label": "Copy delivery handoff",
@@ -550,6 +551,7 @@ def _stage_scope_items(root: Path, stage: dict[str, Any], profiles: list[RunProf
     workflow = _workflow_step_map(root, profiles)
     deterministic = workflow.get("deterministic_preflight", {})
     handoff = workflow.get("handoff_evidence", {})
+    delivery = workflow.get("delivery_checklist", {})
     bmw = workflow.get("bmw_screenshot_smoke", {})
     rack = workflow.get("rack_review", {})
 
@@ -607,6 +609,11 @@ def _stage_scope_items(root: Path, stage: dict[str, Any], profiles: list[RunProf
                 "label": "Performance tests and delivery documentation",
                 "state": "manual",
                 "summary": "Required by the deck, but still manual and external to this local SG-side surface.",
+            },
+            {
+                "label": str(delivery.get("label", "BMW delivery checklist bridge")),
+                "state": str(delivery.get("state", "blocked")),
+                "summary": str(delivery.get("summary", "Delivery-checklist bridge status is not available.")),
             },
             {
                 "label": str(bmw.get("label", "BMW screenshot smoke")),
@@ -756,6 +763,7 @@ def _action_cards(root: Path, profiles: list[RunProfile], *, scope: str, profile
         cards.append(
             {
                 "action_id": action.action_id,
+                "kind": action.kind,
                 "label": action.label,
                 "description": action.description,
                 "ready": action.ready,
@@ -806,7 +814,7 @@ def _launch_checklist(selected_job: dict[str, Any] | None, selected_stage: dict[
         ],
         "pre_delivery": [
             "Open files and proof and make sure the SG-side evidence is ready.",
-            "Treat performance tests, delivery documentation, and BMW-side checks as explicit follow-up work.",
+            "Treat delivery-checklist, performance-test, delivery-documentation, and BMW-side checks as explicit follow-up work.",
         ],
         "post_integration": [
             "Use the result to separate local deterministic drift from later-stage external blockers.",
@@ -876,7 +884,7 @@ def _primary_launch(
         "checklist": [
             "Run the normal preflight for anchors, constants, carpaints, and project sanity.",
             "Run the SG repo checker for this car when it is available here.",
-            "Run scene check or BMW smoke only when the local machine is ready for them.",
+            "Use scene check, delivery-checklist, or BMW smoke only when the local machine is actually ready for those later stages.",
         ],
     }
 
@@ -1235,8 +1243,10 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
     report_ready = record.status == "completed" and Path(record.paths.get("html_report", "")).exists()
     markdown_ready = Path(record.paths.get("markdown_report", "")).exists()
     workflow = _workflow_step_map(root, list_run_profiles(root))
+    delivery = workflow.get("delivery_checklist", {})
     bmw = workflow.get("bmw_screenshot_smoke", {})
     rack = workflow.get("rack_review", {})
+    checker_item = _checker_stage_item(record, root)
 
     if stage["key"] == "before_commit":
         return [
@@ -1256,6 +1266,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
                 if markdown_ready
                 else "The markdown handoff is not ready yet.",
             },
+            checker_item,
             {
                 "label": "Update SVN and review in RaCo / Blender",
                 "state": "manual",
@@ -1282,6 +1293,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
                 if markdown_ready
                 else "The note output is not ready yet.",
             },
+            checker_item,
             {
                 "label": "Internal peer review",
                 "state": "manual",
@@ -1308,11 +1320,18 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
                 if markdown_ready
                 else "Finish the report outputs before treating the evidence as ready.",
             },
+            checker_item,
             {
                 "label": "Performance tests and delivery documentation",
                 "state": "manual",
                 "kind": "manual",
                 "summary": "Still manual and required by the delivery chain in the deck.",
+            },
+            {
+                "label": str(delivery.get("label", "BMW delivery checklist bridge")),
+                "state": str(delivery.get("state", "blocked")),
+                "kind": "external",
+                "summary": str(delivery.get("summary", "Delivery-checklist bridge status is not available.")),
             },
             {
                 "label": str(bmw.get("label", "BMW screenshot smoke")),
@@ -1346,6 +1365,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
                 if markdown_ready
                 else "The handoff output is not ready yet.",
             },
+            checker_item,
             {
                 "label": str(bmw.get("label", "BMW screenshot smoke")),
                 "state": str(bmw.get("state", "blocked")),
@@ -1377,6 +1397,7 @@ def _record_stage_checklist(record: Any, root: Path) -> list[dict[str, str]]:
             if markdown_ready
             else "The note output is not ready yet.",
         },
+        checker_item,
         {
             "label": "Attach the result in the real ticket",
             "state": "manual",
@@ -1455,6 +1476,7 @@ def _documentation_exports(
     stage_items: list[dict[str, Any]],
     quick_update_text: str,
     full_handoff_text: str,
+    root: Path,
 ) -> list[dict[str, str]]:
     stage = _record_workflow_stage(record)
     stage_label = stage["short_label"] if stage is not None else "Current stage"
@@ -1483,6 +1505,7 @@ def _documentation_exports(
         f"- Files and proof: {files_and_proof_url}",
         f"- Markdown report: {record.paths.get('markdown_report', '')}",
     ]
+    implementation_lines.extend(_checker_export_lines(record, root))
 
     positive_lines = [
         f"Jira positive test note - {record.profile_id}",
@@ -1498,6 +1521,7 @@ def _documentation_exports(
         f"- HTML report: {record.paths.get('html_report', '')}",
         f"- Files and proof: {files_and_proof_url}",
     ]
+    positive_lines.extend(_checker_export_lines(record, root))
 
     negative_lines = [
         f"Jira negative test note - {record.profile_id}",
@@ -1512,6 +1536,7 @@ def _documentation_exports(
         f"- HTML report: {record.paths.get('html_report', '')}",
         f"- Files and proof: {files_and_proof_url}",
     ]
+    negative_lines.extend(_checker_export_lines(record, root))
 
     qa_hero_lines = [
         f"QA Hero note - {record.profile_id}",
@@ -1524,6 +1549,7 @@ def _documentation_exports(
         f"- Markdown report: {record.paths.get('markdown_report', '')}",
         f"- Files and proof: {files_and_proof_url}",
     ]
+    qa_hero_lines.extend(_checker_export_lines(record, root))
 
     pre_delivery_lines = [
         f"Pre-delivery summary - {record.profile_id}",
@@ -1549,6 +1575,7 @@ def _documentation_exports(
             )
         ],
     ]
+    pre_delivery_lines.extend(_checker_export_lines(record, root))
 
     delivery_doc_lines = [
         f"Delivery-doc snippet - {record.profile_id}",
@@ -1559,6 +1586,7 @@ def _documentation_exports(
         f"- Evidence: {record.paths.get('html_report', '')}",
         f"- Files and proof: {files_and_proof_url}",
     ]
+    delivery_doc_lines.extend(_checker_export_lines(record, root))
 
     exports = [
         ("Copy Jira implementation update", "\n".join(implementation_lines).strip()),
@@ -1950,7 +1978,215 @@ def _finding_evidence(finding: Finding, record: Any) -> list[dict[str, str]]:
     return evidence
 
 
-def _evidence_sections(record: Any, first_problem: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def _record_checker_evidence(record: Any) -> dict[str, Any] | None:
+    summary = getattr(record, "summary", None)
+    if not isinstance(summary, dict):
+        return None
+    evidence = summary.get("checker_evidence")
+    return evidence if isinstance(evidence, dict) else None
+
+
+def _checker_top_path_links(evidence: dict[str, Any], *, limit: int = 3) -> list[dict[str, str]]:
+    links: list[dict[str, str]] = []
+    for item in evidence.get("top_paths", [])[:limit]:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "")).strip()
+        if not path:
+            continue
+        checker = str(item.get("checker", "")).strip()
+        link = _path_evidence(
+            f"{Path(path).name}{f' [{checker}]' if checker else ''}",
+            path,
+        )
+        message = str(item.get("message", "")).strip()
+        line = item.get("line")
+        if message:
+            link["detail"] = message + (f" (line {line})" if line not in (None, "") else "")
+        links.append(link)
+    return links
+
+
+def _recent_profile_checker_records(root: Path, profile_id: str, *, limit: int = 40) -> list[Any]:
+    latest_by_kind: dict[str, Any] = {}
+    for item in list_recent_action_records(root, limit=limit):
+        if str(getattr(item, "status", "")).strip().lower() != "completed":
+            continue
+        if str(getattr(item, "profile_id", "")).strip().lower() != profile_id.strip().lower():
+            continue
+        if str(getattr(item, "kind", "")).strip() not in {
+            "repo_checker",
+            "scene_check",
+            "unused_resources",
+            "delivery_checklist",
+        }:
+            continue
+        if _record_checker_evidence(item) is None:
+            continue
+        latest_by_kind.setdefault(str(item.kind), item)
+    records = list(latest_by_kind.values())
+    records.sort(key=lambda item: str(getattr(item, "created_at_utc", "")), reverse=True)
+    return records
+
+
+def _profile_checker_evidence_bundle(root: Path, profile_id: str) -> dict[str, Any] | None:
+    action_views: list[dict[str, Any]] = []
+    top_paths: list[dict[str, Any]] = []
+    for action in _recent_profile_checker_records(root, profile_id):
+        evidence = _record_checker_evidence(action)
+        if evidence is None:
+            continue
+        top_links = _checker_top_path_links(evidence, limit=2)
+        top_paths.extend(
+            item
+            for item in evidence.get("top_paths", [])[:2]
+            if isinstance(item, dict)
+        )
+        action_views.append(
+            {
+                "record": action,
+                "evidence": evidence,
+                "top_links": top_links,
+                "result_link": {
+                    "label": f"{action.label} result",
+                    "value": f"/ui/actions/{action.run_id}",
+                    "href": f"/ui/actions/{action.run_id}",
+                },
+                "log_link": _path_evidence(f"{action.label} log", action.paths.get("log")),
+                "workbook_link": _path_evidence(f"{action.label} workbook", action.paths.get("xlsx_report")),
+            }
+        )
+    if not action_views:
+        return None
+    return {
+        "actions": action_views,
+        "top_paths": top_paths[:3],
+        "file_backed": bool(top_paths),
+    }
+
+
+def _checker_stage_item(record: Any, root: Path) -> dict[str, str]:
+    bundle = _profile_checker_evidence_bundle(root, record.profile_id)
+    if bundle is None:
+        return {
+            "label": "Latest SG checker evidence",
+            "state": "pending",
+            "kind": "tool",
+            "summary": "No recent SG checker or checker-adjacent evidence is attached to this profile yet.",
+        }
+    if bundle["file_backed"]:
+        first = bundle["top_paths"][0]
+        line = first.get("line")
+        suffix = f" line {line}" if line not in (None, "") else ""
+        return {
+            "label": "Latest SG checker evidence",
+            "state": "ready",
+            "kind": "tool",
+            "summary": f"File-backed SG checker evidence is available here; open {first['path']}{suffix} first.",
+        }
+    labels = ", ".join(view["record"].label for view in bundle["actions"])
+    return {
+        "label": "Latest SG checker evidence",
+        "state": "ready",
+        "kind": "tool",
+        "summary": f"The latest SG checker actions are summary-only or clean right now: {labels}.",
+    }
+
+
+def _checker_export_lines(record: Any, root: Path) -> list[str]:
+    bundle = _profile_checker_evidence_bundle(root, record.profile_id)
+    if bundle is None:
+        return []
+    lines = ["", "Latest SG checker evidence:"]
+    if bundle["file_backed"]:
+        for item in bundle["top_paths"][:3]:
+            path = str(item.get("path", "")).strip()
+            if not path:
+                continue
+            checker = str(item.get("checker", "")).strip() or "checker"
+            message = str(item.get("message", "")).strip()
+            line = item.get("line")
+            detail = f"{path}{f' (line {line})' if line not in (None, '') else ''} - {checker}"
+            if message:
+                detail += f": {message}"
+            lines.append(f"- {detail}")
+    else:
+        labels = ", ".join(view["record"].label for view in bundle["actions"])
+        lines.append(f"- Summary-only: the latest SG checker action(s) were clean or did not resolve to file-backed hits ({labels}).")
+    return lines
+
+
+def _checker_evidence_section(record: Any, root: Path) -> dict[str, Any] | None:
+    bundle = _profile_checker_evidence_bundle(root, record.profile_id)
+    if bundle is None:
+        return None
+    links: list[dict[str, str]] = []
+    for view in bundle["actions"]:
+        links.extend(view["top_links"])
+        if not view["top_links"]:
+            links.append(view["result_link"])
+        if view["workbook_link"].get("href") or view["workbook_link"].get("value"):
+            links.append(view["workbook_link"])
+        if view["log_link"].get("href") or view["log_link"].get("value"):
+            links.append(view["log_link"])
+        links.append(view["result_link"])
+    return {
+        "key": "checker_evidence",
+        "title": "Checker evidence",
+        "description": "Latest completed SG checker and checker-adjacent outputs for this profile. Open the file-backed hits first when they exist.",
+        "links": _dedupe_links(links),
+    }
+
+
+def _action_checker_evidence_view(record: Any) -> dict[str, Any] | None:
+    evidence = _record_checker_evidence(record)
+    if evidence is None:
+        return None
+    items: list[dict[str, Any]] = []
+    for item in evidence.get("affected_files", [])[:6]:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "")).strip()
+        if not path:
+            continue
+        checker = str(item.get("checker", "")).strip()
+        label = Path(path).name + (f" [{checker}]" if checker else "")
+        link = _path_evidence(
+            label,
+            path,
+        )
+        workbook_ref = ""
+        if item.get("workbook_sheet"):
+            workbook_ref = f"{item.get('workbook_sheet')} row {item.get('workbook_row')}"
+        items.append(
+            {
+                "label": link["label"],
+                "path": link["value"],
+                "href": link["href"],
+                "message": str(item.get("message", "")).strip(),
+                "line": item.get("line"),
+                "severity": str(item.get("severity", "warning")).lower(),
+                "workbook_ref": workbook_ref,
+            }
+        )
+    if evidence.get("summary_only"):
+        summary = "The checker action completed, but the latest output is summary-only rather than file-backed."
+    else:
+        summary = f"{len(evidence.get('affected_files', []))} file-backed checker evidence item(s) were extracted from the raw output."
+    return {
+        "summary": summary,
+        "summary_only": bool(evidence.get("summary_only")),
+        "items": items,
+        "open_now": _checker_top_path_links(evidence, limit=3),
+        "followups": [str(item) for item in evidence.get("manual_followups", [])[:3]],
+    }
+
+
+def _evidence_sections(
+    record: Any,
+    first_problem: dict[str, Any] | None = None,
+    root: Path | None = None,
+) -> list[dict[str, Any]]:
     report_links = _dedupe_links(
         [
             _path_evidence("HTML report", record.paths.get("html_report")),
@@ -1978,7 +2214,7 @@ def _evidence_sections(record: Any, first_problem: dict[str, Any] | None = None)
             _path_evidence("Project root", record.project_root),
         ]
     )
-    return [
+    sections = [
         {
             "key": "reports",
             "title": "Reports",
@@ -1998,6 +2234,11 @@ def _evidence_sections(record: Any, first_problem: dict[str, Any] | None = None)
             "links": metadata_links,
         },
     ]
+    if root is not None:
+        checker_section = _checker_evidence_section(record, root)
+        if checker_section is not None:
+            sections.append(checker_section)
+    return sections
 
 
 def _action_links(record: Any) -> list[dict[str, str]]:
@@ -2016,15 +2257,24 @@ def _action_links(record: Any) -> list[dict[str, str]]:
 
 def _action_result_view(record: Any) -> dict[str, Any]:
     links = _action_links(record)
-    open_now = [link for link in links if link.get("href")][:3]
+    checker_view = _action_checker_evidence_view(record)
+    open_now = checker_view["open_now"] if checker_view and checker_view.get("open_now") else [link for link in links if link.get("href")][:3]
     summary_lines = list(record.summary.get("lines", [])) if isinstance(record.summary, dict) else []
 
     if record.status == "completed":
         return {
             "title": "This automation finished",
-            "body": summary_lines[0] if summary_lines else "The SG-side action completed.",
+            "body": (
+                checker_view["summary"]
+                if checker_view is not None
+                else summary_lines[0] if summary_lines else "The SG-side action completed."
+            ),
             "what_ran": record.command_preview or "Internal SG QA action",
-            "next_steps": summary_lines[1:4] or ["Open the summary markdown if you need to hand this off."],
+            "next_steps": (
+                checker_view["followups"]
+                if checker_view is not None and checker_view.get("followups")
+                else summary_lines[1:4] or ["Open the summary markdown if you need to hand this off."]
+            ),
             "open_now": open_now,
         }
     if record.status == "blocked":
@@ -2155,7 +2405,15 @@ def create_app(
                     app.state.workspace_root,
                     "docs/qa-workflow-alignment.md",
                 ),
+                "checker_coverage_doc": _doc_file_link(
+                    app.state.workspace_root,
+                    "docs/sg-checker-coverage-matrix.md",
+                ),
                 "workflow_steps": qa_workflow_status(
+                    app.state.workspace_root,
+                    profiles=list(app.state.profiles.values()),
+                ),
+                "checker_catalog": sg_checker_catalog(
                     app.state.workspace_root,
                     profiles=list(app.state.profiles.values()),
                 ),
@@ -2314,7 +2572,7 @@ def create_app(
             else None
         )
         evidence_sections = (
-            _evidence_sections(record, first_problem)
+            _evidence_sections(record, first_problem, app.state.workspace_root)
             if first_problem is not None
             else []
         )
@@ -2359,6 +2617,7 @@ def create_app(
                         stage_items,
                         quick_update_text,
                         full_handoff_text,
+                        app.state.workspace_root,
                     )
                     if report is not None and decision_summary is not None and first_problem is not None
                     else []
@@ -2418,6 +2677,7 @@ def create_app(
                         stage_items,
                         quick_update_text,
                         full_handoff_text,
+                        app.state.workspace_root,
                     )
                     if report is not None and decision_summary is not None and first_problem is not None
                     else []
@@ -2427,7 +2687,7 @@ def create_app(
                     if report is not None and first_problem is not None
                     else None
                 ),
-                "evidence_sections": _evidence_sections(record, first_problem),
+                "evidence_sections": _evidence_sections(record, first_problem, app.state.workspace_root),
             },
         )
 
@@ -2442,6 +2702,7 @@ def create_app(
                 "record": record,
                 "links": links,
                 "action_result": _action_result_view(record),
+                "checker_evidence_view": _action_checker_evidence_view(record),
                 "log_text": _load_text_file(record.paths.get("log", "")),
             },
         )

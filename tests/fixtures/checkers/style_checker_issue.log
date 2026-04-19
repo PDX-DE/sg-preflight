@@ -1,0 +1,10 @@
+﻿Checking C:\repo\repositories\trunk\Cars_IDCevo\RollsRoyce\PINT_RR
+check_no_spacing_line_end C:/repo/repositories/trunk/Cars_IDCevo/RollsRoyce/PINT_RR/_Placeholders/scripts/Logic_Placeholder_Hood.lua 16
+unneeded space(s) at end of line 16
+check_no_spacing_line_end C:/repo/repositories/trunk/Cars_IDCevo/RollsRoyce/PINT_RR/_Placeholders/scripts/Logic_Placeholder_Hood.lua 16
+unneeded space(s) at end of line 16
+checked 130 files (src: 130; fmt: 130; license: 130)
+detected 1 style guide issues
+
+C:/repo/repositories/trunk/Cars_IDCevo/RollsRoyce/PINT_RR/_Placeholders/scripts/Logic_Placeholder_Hood.lua(16): warning PRJ9999: number of spaces at beginning of line must be divisible by 4 (or conform to smart indent) [check_correct_space_count]
+

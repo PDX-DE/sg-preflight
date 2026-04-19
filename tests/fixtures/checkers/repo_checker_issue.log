@@ -1,0 +1,57 @@
+﻿=== check_all_styles.py ===
+Checking C:\repo\repositories\trunk\Cars_IDCevo\RollsRoyce\PINT_RR
+check_no_spacing_line_end C:/repo/repositories/trunk/Cars_IDCevo/RollsRoyce/PINT_RR/_Placeholders/scripts/Logic_Placeholder_Hood.lua 16
+unneeded space(s) at end of line 16
+check_no_spacing_line_end C:/repo/repositories/trunk/Cars_IDCevo/RollsRoyce/PINT_RR/_Placeholders/scripts/Logic_Placeholder_Hood.lua 16
+unneeded space(s) at end of line 16
+checked 130 files (src: 130; fmt: 130; license: 130)
+detected 1 style guide issues
+
+C:/repo/repositories/trunk/Cars_IDCevo/RollsRoyce/PINT_RR/_Placeholders/scripts/Logic_Placeholder_Hood.lua(16): warning PRJ9999: number of spaces at beginning of line must be divisible by 4 (or conform to smart indent) [check_correct_space_count]
+
+
+
+=== executeChecks.py ===
+
+
+############################################
+starting  luacheck on  124  files
+############################################ 
+
+b"C:\\repo\\repositories\\trunk\\Cars_IDCevo\\RollsRoyce\\PINT_RR\\logic\\LOG_G70_Hood\\scripts\\Logic_Hood.lua:32:11: unused variable 'hoodOpen'"
+
+
+b'C:\\repo\\repositories\\trunk\\Cars_IDCevo\\RollsRoyce\\PINT_RR\\_Placeholders\\scripts\\Logic_Placeholder_Hood.lua:16:1: line contains only whitespace'
+
+
+2  errors found
+############################################
+
+
+
+
+############################################
+starting  tabbingcheck on  129  files
+############################################ 
+
+check_no_spacing_line_end C:\repo\repositories\trunk\Cars_IDCevo\RollsRoyce\PINT_RR\_Placeholders\scripts\Logic_Placeholder_Hood.lua 16
+unneeded space(s) at end of line 16
+
+
+############################################
+starting  newlinecheck on  129  files
+############################################ 
+
+
+
+############################################
+starting  shadercheck on  5  files
+############################################ 
+
+0  errors found
+############################################
+
+
+
+C:\repo\repositories\trunk\Cars_IDCevo\RollsRoyce\PINT_RR\_Placeholders\scripts\Logic_Placeholder_Hood.lua(16): warning PRJ9999: number of spaces at beginning of line must be divisible by 4 (or conform to smart indent) [check_correct_space_count]
+

@@ -18,9 +18,15 @@ It is the deterministic front end of that workflow:
 - before rack
 - before BMW screenshot smoke
 - before delivery handoff
-- while making the current SG-side repo and scene checks runnable from the same local surface
+- while making the current SG-side repo, delivery-checklist, and scene checks visible from the same local surface
 
 See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflow fit, manual stages, and BMW-side blockers.
+See [sg-checker-coverage-matrix.md](sg-checker-coverage-matrix.md) for the real SG checker inventory and current integration coverage.
+
+The browser UI is the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos.
+An experimental desktop operator shell now exists for the same workflow when local file opening, blocker visibility, or checker-evidence triage is easier outside the browser.
+It still wraps the same Python core, actions, reports, and evidence model rather than introducing a second engine.
+Future desktop-shell notes belong under `docs/research/` so the main workflow docs stay focused on SG QA reality, `.pdx/checkers`, evidence, readiness, and BMW blocker visibility.
 
 ## Start
 
@@ -28,6 +34,13 @@ From the repository root:
 
 ```bash
 python -m sg_preflight ui --reload
+```
+
+Experimental desktop shell:
+
+```bash
+python -m pip install -e .[desktop]
+python -m sg_preflight desktop --profile G65
 ```
 
 PowerShell launcher:
@@ -41,6 +54,10 @@ Default address:
 ```text
 http://127.0.0.1:8765/ui
 ```
+
+The desktop shell does not replace this browser flow.
+It is a local wrapper over the same action/run records for cases where `Open file`, `Reveal in Explorer`, and blocker-heavy QA triage are better outside `localhost`.
+A second experimental native shell scaffold now exists under `desktop_native/`; it uses the same `launch-action` and `desktop-state` backend contract over the Python core.
 
 Shared shell:
 
@@ -122,6 +139,7 @@ Shows:
 - a `Stage Readiness` panel that shows what this run already covers, what is still manual, and what remains blocked on the current machine
 - an `Evidence Completeness` panel that separates local SG proof from full-stage readiness and makes proof/manual/blocked gaps explicit
 - a `Stage-Specific Exports` panel with copy-ready Jira implementation updates, Jira positive and negative test notes, QA Hero notes, pre-delivery summaries, and delivery-doc snippets
+- when recent repo-checker or scene-check actions exist for the same profile, stage exports now also cite concrete SG checker paths automatically instead of only generic checker-summary text
 - a `Manual Review Companion` panel with Blender-vs-RaCo checklist text, screenshot evidence slots, and a copy-ready manual verification record
 - sentence-case labels and section titles throughout the UI so the first read feels less like an internal debug surface
 - grouped findings behind a foldout
@@ -149,6 +167,7 @@ Shows grouped direct links to:
 - the same `Stage Readiness` summary so a teammate can see what evidence is still missing before the next workflow step
 - the same `Evidence Completeness` panel so the proof/manual/blocked split stays visible on the evidence page
 - the same stage-specific copy exports for ticket, QA Hero, pre-delivery, and delivery-doc work
+- a `Checker evidence` section that pulls the latest completed repo-checker and scene-check outputs for the same profile, with direct `Open` links for the top file-backed hits when they exist
 - the same manual-review companion so still-manual checks stay attached to the run evidence instead of living in chat memory
 
 ### Live Loading
@@ -164,6 +183,7 @@ That overlay shows:
 - a selectable per-step detail panel so clicking a step shows exact step events, current target path or command metadata, and nested child-status detail for wrapped automations
 - persisted framework-event history so operators can see every recorded phase transition in order
 - live action-log tail for long-running wrapped automations such as repo checker or scene check
+- completed action pages for repo checker, scene check, unused-resource, and delivery-checklist actions now prefer `Open these files first` plus structured checker evidence before dropping the operator into the raw log
 
 ## Persistence
 
@@ -246,7 +266,15 @@ Current expectation:
 - use the UI to catch deterministic issues and produce evidence before manual review
 - use the "what changed?" launcher first when you already know what kind of file or workflow step you touched
 - use the workflow-stage launcher when the phase matters more than the file type, especially before commit, pre-delivery, after integration, or when you only need Jira / QA Hero evidence
-- use the one-click QA actions when you want repo checker, scene check, or the recommended per-car QA stack without touching terminals
+- use the one-click QA actions when you want repo checker, delivery-checklist readiness, scene check, or the recommended per-car QA stack without touching terminals
+- use `Show SG checker coverage` on Home when someone asks what real SG checker/tooling layer is available on this machine
+- the repo-checker action now wraps the real SG checker stack more truthfully by running `check_all_styles.py` before `executeChecks.py`, so style/license plus Lua/shader/formatting coverage live under one operator action
+- repo-checker and scene-check actions now parse their raw outputs into structured file-backed evidence, so action results, Files And Proof, stage readiness, and copy exports can point to concrete SG files instead of only saying that a checker ran
+- unused-resource and delivery-checklist actions now feed the same checker-evidence flow, so the operator can open unused resource files directly or jump into mirrored delivery-checklist assets while BMW-side blockers stay explicit in the follow-up text
+- the workspace action list now also exposes a full mirrored repo-checker path for `checkall.bat` scope as `repo_checker_all`
+- the per-car action list now also exposes `printNotUsedResources.py` as an unused-resource scan, so leftover SG resource files can be checked from the same operator surface
+- the per-car action list now also exposes the mirrored `deliveryChecklist` files as a readiness bridge, so SG-side delivery expectations and BMW-side blockers stay visible before smoke or handoff
+- the native desktop shell now reads the same persisted records for recent actions and recent runs, so operators can drill from one SG action into the linked report outputs, source-of-truth files, and copy/export blocks without changing the underlying evidence model
 - default to the full-check button when you just want the safest useful path for one car
 - if the surface still feels noisy, ignore the secondary foldouts until after you have one result page
 - do not claim that the UI replaces Blender visual checks

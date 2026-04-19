@@ -31,6 +31,7 @@ def create_temp_g65_profile(temp_root: Path) -> RunProfile:
     repo_root = temp_root / "repositories" / "trunk"
     project_root = repo_root / "Cars_IDCevo" / "BMW" / "G65"
     carpaint_path = repo_root / "Cars" / "BMW" / "CarPaint.json"
+    delivery_checklist_root = repo_root / ".pdx" / "checkers" / "deliveryChecklist"
 
     (project_root / "logic").mkdir(parents=True)
     (project_root / "resources" / "RES_G65_AnchorPoints").mkdir(parents=True)
@@ -205,6 +206,10 @@ return constants
         "logic=logic/car_logic.lua\nconstants=_Common/constants/scripts/Module_constants_G65.lua\n",
     )
     write_text(project_root / "logic" / "car_logic.lua", "-- referenced\n")
+    write_text(delivery_checklist_root / "README.md", "delivery checklist fixture\n")
+    write_text(delivery_checklist_root / "deliveryChecklist.py", "print('delivery checklist fixture')\n")
+    write_text(delivery_checklist_root / "deliveryChecklist.exe", "fixture exe placeholder\n")
+    write_text(delivery_checklist_root / "cameraCrane.lua", "-- fixture camera crane\n")
 
     return RunProfile(
         profile_id="G65",
