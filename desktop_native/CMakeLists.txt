@@ -8,6 +8,21 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
+find_package(Git QUIET)
+
+set(SG_NATIVE_SHELL_VERSION "dev")
+if(GIT_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} -C ${CMAKE_SOURCE_DIR}/.. rev-parse --short=7 HEAD
+    OUTPUT_VARIABLE SG_NATIVE_SHELL_GIT_SHORT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  if(SG_NATIVE_SHELL_GIT_SHORT)
+    set(SG_NATIVE_SHELL_VERSION "dev-${SG_NATIVE_SHELL_GIT_SHORT}")
+  endif()
+endif()
+
 FetchContent_Declare(
   imgui
   URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.7-docking.zip
@@ -72,6 +87,12 @@ target_include_directories(
   sg_preflight_native_shell
   PRIVATE
     src
+)
+
+target_compile_definitions(
+  sg_preflight_native_shell
+  PRIVATE
+    SG_NATIVE_SHELL_VERSION="${SG_NATIVE_SHELL_VERSION}"
 )
 
 target_link_libraries(

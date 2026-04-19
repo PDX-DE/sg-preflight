@@ -33,13 +33,13 @@ const char* TranslateEnglish(UiText text) {
     case Quit: return "Quit";
     case Help: return "Help";
     case Select: return "Select";
-    case RawLog: return "RAW LOG";
-    case Report: return "REPORT";
-    case OpenFile: return "OPEN FILE";
-    case Reveal: return "REVEAL";
-    case CopyJira: return "COPY JIRA";
-    case CopyQaHero: return "COPY QA HERO";
-    case CopyHandoff: return "COPY HANDOFF";
+    case RawLog: return "Raw Log";
+    case Report: return "Report";
+    case OpenFile: return "Open File";
+    case Reveal: return "Reveal";
+    case CopyJira: return "Copy Jira";
+    case CopyQaHero: return "Copy QA Hero";
+    case CopyHandoff: return "Copy Handoff";
     case Yes: return "Yes";
     case No: return "No";
     case Ok: return "OK";
@@ -87,18 +87,18 @@ const char* TranslateEnglish(UiText text) {
     case AvailableLanguages: return "AVAILABLE LANGUAGES";
     case LanguageScreenTitle: return "Please select a language.";
     case LanguageScreenBody: return "Choose the language used by the shell interface.";
-    case LanguageScreenHint: return "This changes only the shell text. Project data and generated results stay the same.";
+    case LanguageScreenHint: return "This only changes the shell text. Project data and generated results stay the same.";
     case IntroWelcome: return "Welcome to SG Preflight.";
-    case IntroBodyPrimary: return "SG Preflight is a local tool for checking car slices before review or handoff. It brings the main local checks, results, files, and follow-up steps into one place so you can see what to run next.";
-    case IntroBodySecondary: return "Work from left to right: choose a slice, choose the check, review what will run, start it, open the first files that need attention, then review reports, exports, and any manual follow-up.";
+    case IntroBodyPrimary: return "SG Preflight is a local checking tool for car slices, scenes, reports, and handoff material. It helps you choose the right check, run it once, and open the first result that needs attention.";
+    case IntroBodySecondary: return "Work from left to right: choose the slice, choose the check, review what will run, start it, open the first files to inspect, then review reports, exports, and any blocked or manual follow-up.";
     case SelectLoadingTitle: return "Loading local project data.";
-    case SelectLoadingBody: return "The shell is loading the available slices, checks, and recent results so you can choose what to run.";
-    case SelectTitle: return "Pick one slice on the right, then choose the check for this run.";
+    case SelectLoadingBody: return "The shell is loading the available slices, checks, and recent local results so you can choose what to run.";
+    case SelectTitle: return "Choose the slice and check for this run.";
     case SelectDailyMatrixBody: return "Run the recommended check flow across all ready slices and collect one shared review surface.";
     case NoActionMetadata: return "No action metadata is available for the current selection.";
     case ReviewLoadingTitle: return "Loading the selected slice and check.";
     case ReviewLoadingBody: return "This step is preparing the selected slice, the chosen check, and the most recent local results.";
-    case ReviewTitle: return "Review what will run before you start.";
+    case ReviewTitle: return "Review the selected check before you start it.";
     case NoCommandPreview: return "No extra run details are available for this check yet.";
     case RunTitle: return "Run the selected check and watch its status.";
     case EvidenceTitle: return "Open the first result that needs attention.";
@@ -657,7 +657,7 @@ std::string FormatMusicStatus(ShellLanguage language, bool enabled) {
 
 std::string FormatLoadedChromeStatus(ShellLanguage language) {
     switch (language) {
-    case English: return "Preparing the local workspace.";
+    case English: return "Loading local project data.";
     case Spanish: return "Se cargaron los recursos visuales del shell.";
     case German: return "Die Oberflaechenressourcen des Shells wurden geladen.";
     case Romanian: return "Au fost incarcate resursele vizuale ale shell-ului.";

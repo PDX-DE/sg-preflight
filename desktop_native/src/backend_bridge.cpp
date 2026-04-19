@@ -288,6 +288,10 @@ std::string ToUtf8(const std::wstring& text) {
     return std::string(buffer.data());
 }
 
+void AppendNativeTrace(std::string_view line) {
+    AppendNativeTraceLine(line);
+}
+
 void from_json(const json& payload, ProfileItem& item) {
     item.profile_id = ValueString(payload, "profile_id");
     item.label = ValueString(payload, "label");

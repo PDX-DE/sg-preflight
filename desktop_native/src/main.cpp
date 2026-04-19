@@ -47,6 +47,12 @@ using sg_preflight::native_shell::UiText;
 
 namespace {
 
+#ifndef SG_NATIVE_SHELL_VERSION
+#define SG_NATIVE_SHELL_VERSION "dev"
+#endif
+
+constexpr const char* kShellVersionLabel = SG_NATIVE_SHELL_VERSION;
+
 constexpr UINT kFrameCount = 3U;
 constexpr UINT kSrvHeapSize = 128U;
 
@@ -136,6 +142,7 @@ bool g_tab_highlight_ready = false;
 bool g_using_warp = false;
 bool g_request_close_prompt = false;
 ImGuiID g_last_hovered_control = 0;
+float g_shell_text_visibility = 1.0f;
 
 constexpr float kInstallerImageX = 161.5f;
 constexpr float kInstallerImageY = 103.5f;
@@ -252,8 +259,20 @@ struct ShellState {
     double prompt_selection_changed_at = -1.0;
     bool request_exit = false;
     bool initial_state_loading = true;
+    bool profile_panel_loading = false;
+    std::string profile_panel_loading_id;
+    uint64_t profile_panel_load_token = 0;
     bool exit_transition_active = false;
     double exit_transition_started_at = -1.0;
+};
+
+struct ProfilePanelLoadResult {
+    uint64_t token = 0;
+    std::string profile_id;
+    std::vector<ActionItem> actions;
+    std::vector<BlockerItem> blockers;
+    std::vector<ManualCard> manual_cards;
+    std::string error;
 };
 
 ShellState* g_live_shell_state = nullptr;
@@ -295,6 +314,11 @@ std::optional<InitialShellLoadResult> g_initial_load_result;
 std::jthread g_initial_load_thread;
 bool g_initial_load_started = false;
 
+std::mutex g_profile_panel_load_mutex;
+std::optional<ProfilePanelLoadResult> g_profile_panel_load_result;
+std::jthread g_profile_panel_load_thread;
+uint64_t g_profile_panel_load_next_token = 0;
+
 struct ArtifactChoice {
     std::string section;
     std::string label;
@@ -318,32 +342,32 @@ const char* Tr(const ShellState& state, UiText text) {
 
 const char* RefreshShortLabel(ShellLanguage language) {
     switch (language) {
-    case ShellLanguage::English: return "REFRESH";
+    case ShellLanguage::English: return "Refresh";
     case ShellLanguage::Spanish: return "REFRESCAR";
     case ShellLanguage::German: return "AKTUALISIEREN";
-    case ShellLanguage::Romanian: return "REFRESH";
+    case ShellLanguage::Romanian: return "Refresh";
     }
-    return "REFRESH";
+    return "Refresh";
 }
 
 const char* RefreshActiveRunLabel(ShellLanguage language) {
     switch (language) {
-    case ShellLanguage::English: return "REFRESH ACTIVE RUN";
+    case ShellLanguage::English: return "Refresh Active Run";
     case ShellLanguage::Spanish: return "REFRESCAR EJECUCION";
     case ShellLanguage::German: return "AKTIVEN LAUF AKTUALISIEREN";
     case ShellLanguage::Romanian: return "REFRESH RULARE";
     }
-    return "REFRESH ACTIVE RUN";
+    return "Refresh Active Run";
 }
 
 const char* RunSelectedActionLabel(ShellLanguage language) {
     switch (language) {
-    case ShellLanguage::English: return "RUN SELECTED ACTION";
+    case ShellLanguage::English: return "Run Selected Check";
     case ShellLanguage::Spanish: return "EJECUTAR ACCION";
     case ShellLanguage::German: return "AKTION STARTEN";
     case ShellLanguage::Romanian: return "RULEAZA ACTIUNEA";
     }
-    return "RUN SELECTED ACTION";
+    return "Run Selected Check";
 }
 
 void SetShellLanguage(ShellState& state, ShellLanguage language, bool announce = true) {
@@ -386,9 +410,15 @@ void RefreshProfilePanels(ShellState& state, bool refresh_results = true);
 void RenderLocalStatePanel(ShellState& state, const char* id, const char* title, float height, const std::string& loading_copy);
 void StartInitialShellLoad(ShellState& state);
 void PollInitialShellLoad(ShellState& state);
+void CancelInitialShellLoad();
+void StartProfilePanelLoad(ShellState& state, const std::string& profile_id);
+void PollProfilePanelLoad(ShellState& state);
+void TraceUi(std::string message);
+const char* ScreenLabel(ShellScreen screen);
 float ShellTextLifecycleMotion();
 float ShellChromeLifecycleMotion();
 float ShellHeaderTextLifecycleMotion();
+float ShellExitTextVisibility(const ShellState& state);
 
 constexpr float kPanelGrid = 9.0f;
 constexpr float kPanelHeaderHeight = 34.0f;
@@ -1113,6 +1143,7 @@ void SetScreen(ShellState& state, ShellScreen screen, bool play_cursor = true) {
     if (state.current_screen == screen) {
         return;
     }
+    TraceUi(std::string("screen_change from=") + ScreenLabel(state.current_screen) + " to=" + ScreenLabel(screen));
     state.previous_screen = state.current_screen;
     state.current_screen = screen;
     state.screen_transition_started_at = ImGui::GetTime();
@@ -1292,7 +1323,7 @@ bool CanAdvanceFromPage(const ShellState& state, ShellScreen screen) {
     case ShellScreen::Introduction:
         return true;
     case ShellScreen::Select:
-        return !state.profiles.empty() && !PrimaryActionId(state).empty();
+        return !state.profile_panel_loading && !state.profiles.empty() && !PrimaryActionId(state).empty();
     case ShellScreen::Review:
         return SelectedActionReady(state);
     case ShellScreen::Run:
@@ -1422,8 +1453,6 @@ void RefreshActiveRunState(ShellState& state, bool refresh_recent_lists) {
 
     if (refresh_recent_lists || result_changed || !still_running) {
         RefreshResultPanels(state);
-    } else {
-        RefreshRunSnapshot(state);
     }
 
     UpdateRunPollingDeadline(state);
@@ -1455,6 +1484,12 @@ void OpenPrompt(
     state.prompt_controls_visible = false;
     state.prompt_controls_opened_at = -1.0;
     state.prompt_selection_changed_at = state.prompt_opened_at;
+    TraceUi(
+        "prompt_open title=\"" + title
+        + "\" confirmation=" + std::string(confirmation ? "true" : "false")
+        + " accepts_exit=" + std::string(accepts_exit ? "true" : "false")
+        + " accepts_leave_run=" + std::string(accepts_leave_run ? "true" : "false")
+    );
     PlayCue(UiCue::Window);
 }
 
@@ -1504,6 +1539,7 @@ void OpenPromptControls(ShellState& state) {
     state.prompt_previous_selected_index = 0;
     state.prompt_selected_index = 0;
     state.prompt_selection_changed_at = state.prompt_controls_opened_at;
+    TraceUi("prompt_controls_open title=\"" + state.prompt_title + "\"");
     PlayCue(UiCue::Window);
 }
 
@@ -1511,9 +1547,12 @@ void BeginExitTransition(ShellState& state) {
     if (state.exit_transition_active) {
         return;
     }
+    CancelInitialShellLoad();
+    state.initial_state_loading = false;
     state.exit_transition_active = true;
     state.exit_transition_started_at = ImGui::GetTime();
     g_shell_disappear_time = state.exit_transition_started_at;
+    TraceUi("exit_begin");
 }
 
 void BeginPromptClose(ShellState& state, bool accepted) {
@@ -1524,6 +1563,15 @@ void BeginPromptClose(ShellState& state, bool accepted) {
     state.prompt_accept_pending = accepted;
     state.prompt_cancel_pending = !accepted;
     state.prompt_closing_started_at = ImGui::GetTime();
+    TraceUi(
+        "prompt_close_begin title=\"" + state.prompt_title
+        + "\" accepted=" + std::string(accepted ? "true" : "false")
+        + " accepts_exit=" + std::string(state.prompt_accepts_exit ? "true" : "false")
+        + " accepts_leave_run=" + std::string(state.prompt_accepts_leave_run ? "true" : "false")
+    );
+    if (accepted && state.prompt_accepts_exit) {
+        BeginExitTransition(state);
+    }
     PlayCue(accepted ? UiCue::Page : UiCue::Error);
     PlayCue(UiCue::WindowClose);
 }
@@ -1566,6 +1614,11 @@ void FinalizePromptIfReady(ShellState& state) {
     const bool accepted = state.prompt_accept_pending;
     const bool accepts_exit = state.prompt_accepts_exit;
     const bool accepts_leave_run = state.prompt_accepts_leave_run;
+    TraceUi(
+        "prompt_close_complete accepted=" + std::string(accepted ? "true" : "false")
+        + " accepts_exit=" + std::string(accepts_exit ? "true" : "false")
+        + " accepts_leave_run=" + std::string(accepts_leave_run ? "true" : "false")
+    );
     ClosePrompt(state);
 
     if (!accepted) {
@@ -1573,7 +1626,6 @@ void FinalizePromptIfReady(ShellState& state) {
     }
 
     if (accepts_exit) {
-        BeginExitTransition(state);
         return;
     }
 
@@ -2142,6 +2194,19 @@ std::string ShortActionLabel(const std::string& action_id) {
     return "ACTION";
 }
 
+std::string SanitiseTraceText(std::string text) {
+    for (char& ch : text) {
+        if (ch == '\r' || ch == '\n' || ch == '\t') {
+            ch = ' ';
+        }
+    }
+    return text;
+}
+
+void TraceUi(std::string message) {
+    sg_preflight::native_shell::AppendNativeTrace("UI " + SanitiseTraceText(std::move(message)));
+}
+
 void StoreProfileSelectionCache(
     const std::string& profile_id,
     const std::vector<ActionItem>& actions,
@@ -2198,13 +2263,13 @@ std::string FriendlyActionDescription(std::string_view action_id) {
 std::string BuildHelpPromptMessage(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Introduction:
-        return "SG Preflight is the local checking shell for car slices.\n\nUse it to choose a slice, choose the right local check, run it once, open the first files that need attention, and then review reports, exports, and follow-up work.";
+        return "SG Preflight is the local checking tool for SG car slices, scenes, reports, and handoff material.\n\nUse it from left to right: choose the slice, choose the check, review what will run, start it, open the first files that need attention, then review reports, exports, and follow-up work.";
     case ShellScreen::Select:
-        return "Choose one slice on the right, then choose one check below.\n\nDAILY: Runs the recommended local checks across every ready slice.\nSTACK: Runs the standard preflight stack for the selected slice.\nREPO: Runs the wider SG repository checker pass.\nSCENE: Runs the scene-specific check for the selected slice.\nUNUSED: Scans for unused resources linked to the selected slice.\nDELIVERY: Shows delivery-readiness follow-up for the selected slice.";
+        return "Choose one slice on the right, then choose the check to run for that slice.\n\nDAILY: runs the recommended local check flow across every ready slice.\nSTACK: runs the standard per-slice preflight stack.\nREPO: runs the broader repository checker pass.\nSCENE: runs the scene-specific local check.\nUNUSED: scans the selected slice for unused resources.\nDELIVERY: shows delivery-readiness follow-up for the selected slice.";
     case ShellScreen::Review:
-        return "Review confirms what is about to run.\n\nCheck that the selected slice and the selected check match what you want before starting the run.";
+        return "Review confirms what is about to run.\n\nCheck that the selected slice and the selected check are correct before you start the run.";
     case ShellScreen::Run:
-        return "Run shows live status while the selected check is queued or running.\n\nStay here to watch progress, refresh the state, and open the raw log or report when they are available.";
+        return "Run shows live status while the selected check is queued or running.\n\nStay here to watch progress, refresh the state, and open the raw log or linked result when they are available.";
     case ShellScreen::Evidence:
         return "Open First points to the first files that need attention.\n\nUse this page when you want the most important evidence first instead of searching through every output manually.";
     case ShellScreen::Files:
@@ -2316,12 +2381,131 @@ void PollInitialShellLoad(ShellState& state) {
     if (!state.last_error.empty()) {
         state.status_line = sg_preflight::native_shell::FormatInitialLoadFailedStatus(state.language);
         PlayCue(UiCue::Error);
+        TraceUi("initial_load_failed error=" + state.last_error);
     } else if (state.profiles.empty()) {
         state.status_line = sg_preflight::native_shell::FormatNoProfilesDiscoveredStatus(state.language);
+        TraceUi("initial_load_complete profiles=0");
     } else {
         state.status_line = sg_preflight::native_shell::FormatLoadedDesktopStateStatus(state.language, CurrentProfileId(state));
+        TraceUi(
+            "initial_load_complete profiles=" + std::to_string(state.profiles.size())
+            + " current_profile=" + CurrentProfileId(state)
+        );
     }
     UpdateRunPollingDeadline(state);
+}
+
+void CancelInitialShellLoad() {
+    if (!g_initial_load_thread.joinable()) {
+        g_initial_load_started = false;
+        return;
+    }
+    g_initial_load_thread.request_stop();
+    g_initial_load_thread.detach();
+    {
+        std::lock_guard<std::mutex> lock(g_initial_load_mutex);
+        g_initial_load_result.reset();
+    }
+    g_initial_load_started = false;
+}
+
+void StartProfilePanelLoad(ShellState& state, const std::string& profile_id) {
+    if (profile_id.empty()) {
+        state.profile_panel_loading = false;
+        state.profile_panel_loading_id.clear();
+        state.profile_panel_load_token = 0;
+        return;
+    }
+
+    if (g_profile_panel_load_thread.joinable()) {
+        g_profile_panel_load_thread.request_stop();
+        g_profile_panel_load_thread.detach();
+    }
+
+    const uint64_t token = ++g_profile_panel_load_next_token;
+    state.profile_panel_loading = true;
+    state.profile_panel_loading_id = profile_id;
+    state.profile_panel_load_token = token;
+    state.actions.clear();
+    state.blockers.clear();
+    state.manual_cards.clear();
+    state.selected_action_id = "daily_live_matrix";
+    state.last_error.clear();
+    state.status_line = "Loading checks for " + profile_id + ".";
+    TraceUi("profile_load_start token=" + std::to_string(token) + " profile=" + profile_id);
+
+    g_profile_panel_load_thread = std::jthread([backend = state.backend, profile_id, token](std::stop_token stop_token) {
+        ProfilePanelLoadResult result;
+        result.token = token;
+        result.profile_id = profile_id;
+        try {
+            result.actions = sg_preflight::native_shell::LoadActions(backend, profile_id);
+            result.blockers = sg_preflight::native_shell::LoadBlockers(backend, profile_id);
+            result.manual_cards = sg_preflight::native_shell::LoadManualCards(backend, profile_id);
+        } catch (const std::exception& error) {
+            result.error = error.what();
+        }
+
+        if (stop_token.stop_requested()) {
+            TraceUi("profile_load_cancelled token=" + std::to_string(token) + " profile=" + profile_id);
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(g_profile_panel_load_mutex);
+        g_profile_panel_load_result = std::move(result);
+    });
+}
+
+void PollProfilePanelLoad(ShellState& state) {
+    std::optional<ProfilePanelLoadResult> pending;
+    {
+        std::lock_guard<std::mutex> lock(g_profile_panel_load_mutex);
+        if (!g_profile_panel_load_result.has_value()) {
+            return;
+        }
+        pending = std::move(g_profile_panel_load_result);
+        g_profile_panel_load_result.reset();
+    }
+    if (g_profile_panel_load_thread.joinable()) {
+        g_profile_panel_load_thread.join();
+    }
+
+    if (!pending.has_value() || pending->token != state.profile_panel_load_token || pending->profile_id != CurrentProfileId(state)) {
+        if (pending.has_value()) {
+            TraceUi("profile_load_ignored token=" + std::to_string(pending->token) + " profile=" + pending->profile_id);
+        }
+        return;
+    }
+
+    state.profile_panel_loading = false;
+    state.profile_panel_loading_id.clear();
+    if (!pending->error.empty()) {
+        state.last_error = pending->error;
+        state.status_line = "Loading checks failed for " + pending->profile_id + ".";
+        TraceUi("profile_load_failed token=" + std::to_string(pending->token) + " profile=" + pending->profile_id + " error=" + pending->error);
+        PlayCue(UiCue::Error);
+        return;
+    }
+
+    state.actions = std::move(pending->actions);
+    state.blockers = std::move(pending->blockers);
+    state.manual_cards = std::move(pending->manual_cards);
+    StoreProfileSelectionCache(CurrentProfileId(state), state.actions, state.blockers, state.manual_cards);
+    state.selected_action_id = state.actions.empty()
+        ? std::string("daily_live_matrix")
+        : state.profiles[static_cast<size_t>(state.selected_profile_index)].recommended_action_id;
+    if (state.selected_action_id != "daily_live_matrix" && FindSelectedAction(state) == nullptr) {
+        state.selected_action_id = state.actions.empty() ? "daily_live_matrix" : state.actions.front().action_id;
+    }
+    state.status_line = sg_preflight::native_shell::FormatLoadedDesktopStateStatus(state.language, CurrentProfileId(state));
+    state.last_error.clear();
+    TraceUi(
+        "profile_load_complete token=" + std::to_string(pending->token)
+        + " profile=" + CurrentProfileId(state)
+        + " actions=" + std::to_string(state.actions.size())
+        + " blockers=" + std::to_string(state.blockers.size())
+        + " manual=" + std::to_string(state.manual_cards.size())
+    );
 }
 
 void ClampSelections(ShellState& state) {
@@ -2549,20 +2733,33 @@ void SelectProfileById(ShellState& state, const std::string& profile_id) {
     if (match == state.profiles.end()) {
         return;
     }
+    if (CurrentProfileId(state) == profile_id && !state.profile_panel_loading) {
+        return;
+    }
     state.selected_profile_index = static_cast<int>(std::distance(state.profiles.begin(), match));
     state.selected_action_id = match->recommended_action_id;
-    RefreshProfilePanels(state, false);
+    TraceUi("profile_select profile=" + profile_id);
+    if (!TryLoadProfileSelectionCache(profile_id, state.actions, state.blockers, state.manual_cards)) {
+        StartProfilePanelLoad(state, profile_id);
+    } else {
+        state.profile_panel_loading = false;
+        state.profile_panel_loading_id.clear();
+        RefreshProfilePanels(state, false);
+    }
     SetScreen(state, ShellScreen::Select, false);
 }
 
 void StartAction(ShellState& state, const std::string& action_id) {
     try {
+        TraceUi("action_launch id=" + action_id + " profile=" + CurrentProfileId(state));
         state.current_run_id = sg_preflight::native_shell::LaunchAction(state.backend, action_id);
         state.status_line = sg_preflight::native_shell::FormatQueuedActionStatus(state.language, ShortActionLabel(action_id));
         state.last_error.clear();
-        RefreshResultPanels(state);
         RefreshSnapshot(state);
-        RefreshRunSnapshot(state);
+        if (state.snapshot.has_value() && !state.snapshot->linked_run_id.empty()) {
+            state.current_result_run_id = state.snapshot->linked_run_id;
+            RefreshRunSnapshot(state);
+        }
         UpdateRunPollingDeadline(state, kRunInitialPollDelaySeconds);
         SetScreen(state, ShellScreen::Run);
     } catch (const std::exception& error) {
@@ -2899,6 +3096,7 @@ bool IsBackgroundInteractionBlocked() {
 bool DrawInstallerNavButton(const char* id, const std::string& label, ImVec2 size, bool accent = false, bool enabled = true) {
     const bool interaction_enabled = enabled && !IsBackgroundInteractionBlocked();
     const float lifecycle_alpha = ShellChromeLifecycleMotion();
+    const float text_alpha = (enabled ? 1.0f : 0.5f) * lifecycle_alpha * g_shell_text_visibility;
     if (!interaction_enabled) {
         ImGui::BeginDisabled();
     }
@@ -2924,8 +3122,8 @@ bool DrawInstallerNavButton(const char* id, const std::string& label, ImVec2 siz
         min.x + ((max.x - min.x) - text_size.x) * 0.5f,
         min.y + ((max.y - min.y) - text_size.y) * 0.5f - ShellUi(1.0f)
     );
-    draw->AddText(font, font_size, ImVec2(text_pos.x + ShellUi(1.0f), text_pos.y + ShellUi(1.0f)), IM_COL32(base_r, base_g, 0, static_cast<int>(255.0f * alpha)), label.c_str());
-    draw->AddText(font, font_size, text_pos, IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha)), label.c_str());
+    draw->AddText(font, font_size, ImVec2(text_pos.x + ShellUi(1.0f), text_pos.y + ShellUi(1.0f)), IM_COL32(base_r, base_g, 0, static_cast<int>(255.0f * text_alpha)), label.c_str());
+    draw->AddText(font, font_size, text_pos, IM_COL32(255, 255, 255, static_cast<int>(255.0f * text_alpha)), label.c_str());
 
     if (pressed && interaction_enabled) {
         PlayCue(UiCue::Confirm);
@@ -3029,6 +3227,26 @@ void DrawBackdropChrome(const ShellState& state) {
     if (bar_height > 1.0f) {
         draw_list->AddRectFilledMultiColor(ImVec2(0.0f, 0.0f), ImVec2(display_size.x, bar_height), color0, color0, color1, color1);
         draw_list->AddRectFilledMultiColor(ImVec2(0.0f, display_size.y - bar_height), ImVec2(display_size.x, display_size.y), color1, color1, color0, color0);
+        if (HasTexture(g_shell_assets.options_static)) {
+            DrawTexturedRect(
+                draw_list,
+                g_shell_assets.options_static,
+                ImVec2(0.0f, 0.0f),
+                ImVec2(display_size.x, bar_height),
+                IM_COL32(142, 218, 112, static_cast<int>(11.0f * scanline_alpha)),
+                ImVec2(0.0f, 0.0f),
+                ImVec2(display_size.x / std::max(1U, g_shell_assets.options_static.width), bar_height / std::max(1U, g_shell_assets.options_static.height))
+            );
+            DrawTexturedRect(
+                draw_list,
+                g_shell_assets.options_static,
+                ImVec2(0.0f, display_size.y - bar_height),
+                display_size,
+                IM_COL32(142, 218, 112, static_cast<int>(11.0f * scanline_alpha)),
+                ImVec2(0.0f, 0.0f),
+                ImVec2(display_size.x / std::max(1U, g_shell_assets.options_static.width), bar_height / std::max(1U, g_shell_assets.options_static.height))
+            );
+        }
     }
 
     const auto draw_bar_line = [&](bool top) {
@@ -3058,12 +3276,22 @@ void DrawBackdropChrome(const ShellState& state) {
             ImVec2(display_size.x, y + ShellUi(1.0f)),
             IM_COL32(115, 178, 104, static_cast<int>(255.0 * scanline_alpha))
         );
+        for (int index = 1; index <= 4; ++index) {
+            const float offset = ShellUi(static_cast<float>(index) * 3.0f);
+            const float line_y = top ? (y + offset) : (y - offset);
+            const int line_alpha = std::max(0, static_cast<int>((38.0f - static_cast<float>(index) * 7.0f) * scanline_alpha));
+            draw_list->AddRectFilled(
+                ImVec2(0.0f, line_y),
+                ImVec2(display_size.x, line_y + ShellUi(1.0f)),
+                IM_COL32(103, 164, 94, line_alpha)
+            );
+        }
     };
     draw_bar_line(true);
     draw_bar_line(false);
 
-    const float chrome_title_alpha = static_cast<float>(ComputeMotionFrames(15.0, 30.0));
-    const float header_text_alpha = ShellHeaderTextLifecycleMotion();
+    const float chrome_title_alpha = static_cast<float>(ComputeMotionFrames(15.0, 30.0)) * ShellExitTextVisibility(state);
+    const float header_text_alpha = ShellHeaderTextLifecycleMotion() * ShellExitTextVisibility(state);
     const char* header_text = ShouldShowInstallerLoadingChrome(state) ? Tr(state, UiText::HeaderChecking) : Tr(state, UiText::HeaderPreflight);
     if (HasTexture(g_shell_assets.miles_electric_icon)) {
         const float scale = 62.0f * (2.0f - chrome_title_alpha);
@@ -3085,6 +3313,28 @@ void DrawBackdropChrome(const ShellState& state) {
         const ImVec2 pos = ShellPoint(288.0f, 54.0f);
         draw_list->AddText(g_title_font, size, ImVec2(pos.x + ShellUi(3.0f), pos.y + ShellUi(3.0f)), IM_COL32(0, 0, 0, static_cast<int>(255.0f * header_text_alpha)), header_text);
         draw_list->AddText(g_title_font, size, pos, IM_COL32(255, 195, 0, static_cast<int>(255.0f * header_text_alpha)), header_text);
+    }
+
+    if (g_small_font != nullptr && kShellVersionLabel[0] != '\0') {
+        const std::string version_label = std::string("v") + kShellVersionLabel;
+        const float version_alpha = ShellChromeLifecycleMotion() * ShellExitTextVisibility(state);
+        const float font_size = g_small_font->LegacySize;
+        const ImVec2 text_size = g_small_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, version_label.c_str());
+        const ImVec2 pos(display_size.x - text_size.x - ShellUi(16.0f), display_size.y - text_size.y - ShellUi(10.0f));
+        draw_list->AddText(
+            g_small_font,
+            font_size,
+            ImVec2(pos.x + ShellUi(1.0f), pos.y + ShellUi(1.0f)),
+            IM_COL32(0, 0, 0, static_cast<int>(255.0f * version_alpha)),
+            version_label.c_str()
+        );
+        draw_list->AddText(
+            g_small_font,
+            font_size,
+            pos,
+            IM_COL32(173, 255, 156, static_cast<int>(225.0f * version_alpha)),
+            version_label.c_str()
+        );
     }
 
     if (ShouldShowInstallerLoadingChrome(state) && HasTexture(g_shell_assets.arrow_circle)) {
@@ -3261,7 +3511,14 @@ struct InstallerCanvasLayout {
     ImVec2 side_content_max;
 };
 
-InstallerCanvasLayout GetInstallerCanvasLayout(float description_width = kInstallerContainerWidth) {
+InstallerCanvasLayout GetInstallerCanvasLayout(
+    float description_width = kInstallerContainerWidth,
+    float description_pad_x = 26.0f,
+    float side_pad_x = 26.0f,
+    float top_pad = 18.0f,
+    float side_bottom_pad = 18.0f,
+    float description_bottom_reserve = 38.0f
+) {
     InstallerCanvasLayout layout{};
     layout.description_min = ShellPoint(kInstallerContainerX + 0.5f, kInstallerContainerY + 0.5f);
     layout.description_max = ShellPoint(
@@ -3271,15 +3528,38 @@ InstallerCanvasLayout GetInstallerCanvasLayout(float description_width = kInstal
     layout.side_min = ImVec2(layout.description_max.x, layout.description_min.y);
     layout.side_max = ShellPoint(1270.0f, kInstallerContainerY + kInstallerContainerHeight + 0.5f);
 
-    const float horizontal_pad = ShellUi(26.0f);
-    const float top_pad = ShellUi(18.0f);
-    const float bottom_pad = ShellUi(18.0f);
-    const float nav_reserve = ShellUi(38.0f);
-    layout.description_content_min = ImVec2(layout.description_min.x + horizontal_pad, layout.description_min.y + top_pad);
-    layout.description_content_max = ImVec2(layout.description_max.x - horizontal_pad, layout.description_max.y - nav_reserve);
-    layout.side_content_min = ImVec2(layout.side_min.x + horizontal_pad, layout.side_min.y + top_pad);
-    layout.side_content_max = ImVec2(layout.side_max.x - horizontal_pad, layout.side_max.y - bottom_pad);
+    const float description_horizontal_pad = ShellUi(description_pad_x);
+    const float side_horizontal_pad = ShellUi(side_pad_x);
+    const float resolved_top_pad = ShellUi(top_pad);
+    const float resolved_side_bottom_pad = ShellUi(side_bottom_pad);
+    const float resolved_description_bottom_reserve = ShellUi(description_bottom_reserve);
+    layout.description_content_min = ImVec2(layout.description_min.x + description_horizontal_pad, layout.description_min.y + resolved_top_pad);
+    layout.description_content_max = ImVec2(layout.description_max.x - description_horizontal_pad, layout.description_max.y - resolved_description_bottom_reserve);
+    layout.side_content_min = ImVec2(layout.side_min.x + side_horizontal_pad, layout.side_min.y + resolved_top_pad);
+    layout.side_content_max = ImVec2(layout.side_max.x - side_horizontal_pad, layout.side_max.y - resolved_side_bottom_pad);
     return layout;
+}
+
+InstallerCanvasLayout GetScreenCanvasLayout(ShellScreen screen) {
+    switch (screen) {
+    case ShellScreen::Introduction:
+        return GetInstallerCanvasLayout(404.0f, 24.0f, 18.0f, 18.0f, 18.0f, 48.0f);
+    case ShellScreen::Select:
+        return GetInstallerCanvasLayout(372.0f, 22.0f, 16.0f, 18.0f, 10.0f, 54.0f);
+    case ShellScreen::Review:
+        return GetInstallerCanvasLayout(394.0f, 24.0f, 18.0f, 18.0f, 16.0f, 48.0f);
+    case ShellScreen::Run:
+        return GetInstallerCanvasLayout(398.0f, 22.0f, 16.0f, 18.0f, 12.0f, 18.0f);
+    case ShellScreen::Evidence:
+        return GetInstallerCanvasLayout(402.0f, 22.0f, 16.0f, 18.0f, 12.0f, 18.0f);
+    case ShellScreen::Files:
+        return GetInstallerCanvasLayout(398.0f, 22.0f, 16.0f, 18.0f, 12.0f, 18.0f);
+    case ShellScreen::Stages:
+        return GetInstallerCanvasLayout(404.0f, 22.0f, 16.0f, 18.0f, 12.0f, 18.0f);
+    case ShellScreen::Language:
+    default:
+        return GetInstallerCanvasLayout();
+    }
 }
 
 void DrawInstallerCanvasSurface(const ImVec2& min, const ImVec2& max, bool text_area) {
@@ -3319,6 +3599,18 @@ void DrawInstallerCanvasSurface(const ImVec2& min, const ImVec2& max, bool text_
             uv_min,
             uv_max
         );
+    }
+
+    const float grid_step = ShellUi(12.0f);
+    const ImU32 grid_major = IM_COL32(96, 180, 94, static_cast<int>((text_area ? 34.0f : 28.0f) * inner_alpha));
+    const ImU32 grid_minor = IM_COL32(76, 138, 74, static_cast<int>((text_area ? 18.0f : 14.0f) * inner_alpha));
+    for (float x = min.x; x <= max.x; x += grid_step) {
+        const int index = static_cast<int>((x - min.x) / grid_step);
+        draw_list->AddLine(ImVec2(x, min.y), ImVec2(x, max.y), (index % 4) == 0 ? grid_major : grid_minor, 1.0f);
+    }
+    for (float y = min.y; y <= max.y; y += grid_step) {
+        const int index = static_cast<int>((y - min.y) / grid_step);
+        draw_list->AddLine(ImVec2(min.x, y), ImVec2(max.x, y), (index % 4) == 0 ? grid_major : grid_minor, 1.0f);
     }
 }
 
@@ -3372,31 +3664,15 @@ bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
-    const ImU32 bg = accent
-        ? ApplyAlpha(hovered ? IM_COL32(24, 82, 74, 228) : IM_COL32(16, 58, 54, 228), lifecycle_alpha)
-        : ApplyAlpha(hovered ? IM_COL32(14, 32, 36, 226) : IM_COL32(9, 20, 24, 226), lifecycle_alpha);
+    const ImU32 bg = ApplyAlpha(hovered ? IM_COL32(14, 32, 36, 226) : IM_COL32(9, 20, 24, 226), lifecycle_alpha);
     const ImU32 border = ApplyAlpha(accent ? IM_COL32(120, 228, 204, 188) : IM_COL32(60, 114, 118, 178), lifecycle_alpha);
     const ImU32 text = ApplyAlpha(interaction_enabled ? IM_COL32(236, 246, 239, 255) : IM_COL32(114, 134, 127, 255), lifecycle_alpha);
     PlayHoverCueIfNeeded(hovered, interaction_enabled);
 
-    draw->AddRectFilled(min, max, bg, ShellUi(4.0f));
     if (accent) {
-        DrawTexturedRectRounded(
-            draw,
-            g_shell_assets.select,
-            min,
-            max,
-            ApplyAlpha(IM_COL32(108, 226, 170, hovered ? 42 : 30), lifecycle_alpha),
-            ShellUi(4.0f)
-        );
-        DrawTexturedRectRounded(
-            draw,
-            g_shell_assets.light,
-            ImVec2(min.x, min.y - ShellUi(2.0f)),
-            ImVec2(max.x, min.y + (max.y - min.y) * 0.56f),
-            ApplyAlpha(IM_COL32(240, 225, 146, hovered ? 32 : 24), lifecycle_alpha),
-            ShellUi(4.0f)
-        );
+        DrawInstallerButtonContainer(min, max, hovered ? 48 : 0, hovered ? 32 : 0, lifecycle_alpha);
+    } else {
+        draw->AddRectFilled(min, max, bg, ShellUi(4.0f));
     }
     draw->AddRect(min, max, border, ShellUi(4.0f), 0, 1.2f);
     draw->AddLine(ImVec2(min.x + 8.0f, max.y - 5.0f), ImVec2(max.x - 8.0f, max.y - 5.0f), border, 2.0f);
@@ -3407,7 +3683,7 @@ bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool
             min.x + ((max.x - min.x) - text_size.x) * 0.5f,
             min.y + ((max.y - min.y) - text_size.y) * 0.5f
         );
-        draw->AddText(g_small_font, g_small_font->LegacySize, text_pos, text, label.c_str());
+        draw->AddText(g_small_font, g_small_font->LegacySize, text_pos, ApplyAlpha(text, g_shell_text_visibility), label.c_str());
     }
 
     if (pressed && interaction_enabled) {
@@ -3458,6 +3734,7 @@ bool DrawSelectableCard(
     const ImVec2 size(ImGui::GetContentRegionAvail().x, height);
     const bool interaction_enabled = !IsBackgroundInteractionBlocked();
     const float lifecycle_alpha = ShellChromeLifecycleMotion();
+    const float text_alpha = lifecycle_alpha * g_shell_text_visibility;
     if (!interaction_enabled) {
         ImGui::BeginDisabled();
     }
@@ -3530,18 +3807,18 @@ bool DrawSelectableCard(
 
     const float text_x = min.x + ShellUi(32.0f);
     if (g_body_font != nullptr) {
-        draw->AddText(g_body_font, g_body_font->LegacySize, ImVec2(text_x, min.y + ShellUi(9.0f)), ApplyAlpha(IM_COL32(240, 247, 243, 255), lifecycle_alpha), display_title.c_str());
+        draw->AddText(g_body_font, g_body_font->LegacySize, ImVec2(text_x, min.y + ShellUi(9.0f)), ApplyAlpha(IM_COL32(240, 247, 243, 255), text_alpha), display_title.c_str());
     }
     if (!subtitle.empty() && g_small_font != nullptr) {
-        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(text_x, min.y + ShellUi(30.0f)), ApplyAlpha(IM_COL32(255, 188, 0, 220), lifecycle_alpha), display_subtitle.c_str());
+        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(text_x, min.y + ShellUi(30.0f)), ApplyAlpha(IM_COL32(255, 188, 0, 220), text_alpha), display_subtitle.c_str());
     }
     if (!detail.empty() && g_small_font != nullptr) {
         draw->AddText(
             g_small_font,
             g_small_font->LegacySize,
             ImVec2(text_x, min.y + ShellUi(47.0f)),
-            ApplyAlpha(IM_COL32(169, 190, 180, 220), lifecycle_alpha),
-            Ellipsize(detail, 120U).c_str()
+            ApplyAlpha(IM_COL32(169, 190, 180, 220), text_alpha),
+            Ellipsize(detail, 96U).c_str()
         );
     }
 
@@ -3554,6 +3831,7 @@ bool DrawSelectableCard(
 bool DrawLanguageOptionButton(const char* id, const char* label, bool selected, ImVec2 size) {
     const bool interaction_enabled = !IsBackgroundInteractionBlocked();
     const float lifecycle_alpha = ShellChromeLifecycleMotion();
+    const float text_alpha = lifecycle_alpha * g_shell_text_visibility;
     if (!interaction_enabled) {
         ImGui::BeginDisabled();
     }
@@ -3595,7 +3873,7 @@ bool DrawLanguageOptionButton(const char* id, const char* label, bool selected, 
         min.x + ((max.x - min.x) - text_size.x) * 0.5f + ShellUi(6.0f),
         min.y + ((max.y - min.y) - text_size.y) * 0.5f - ShellUi(1.0f)
     );
-    draw->AddText(font, font_size, text_pos, ApplyAlpha(IM_COL32(245, 245, 235, 255), lifecycle_alpha), label);
+    draw->AddText(font, font_size, text_pos, ApplyAlpha(IM_COL32(245, 245, 235, 255), text_alpha), label);
 
     if (pressed && interaction_enabled) {
         PlayCue(UiCue::Confirm);
@@ -3612,6 +3890,7 @@ void DrawProgressMeter(float progress, const std::string& label) {
     const ImVec2 max = ImGui::GetItemRectMax();
     const float width = (max.x - min.x) * Saturate(progress);
     const float lifecycle_alpha = ShellChromeLifecycleMotion();
+    const float text_alpha = lifecycle_alpha * g_shell_text_visibility;
     draw->AddRectFilled(min, max, ApplyAlpha(IM_COL32(8, 18, 20, 255), lifecycle_alpha), 3.0f);
     DrawTexturedRectRounded(
         draw,
@@ -3652,7 +3931,7 @@ void DrawProgressMeter(float progress, const std::string& label) {
         draw->AddLine(ImVec2(x, min.y + 1.0f), ImVec2(x + 8.0f, max.y - 1.0f), ApplyAlpha(IM_COL32(255, 255, 255, 25), lifecycle_alpha), 1.0f);
     }
     if (g_small_font != nullptr) {
-        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(min.x + 10.0f, min.y + 3.0f), ApplyAlpha(IM_COL32(8, 13, 11, 240), lifecycle_alpha), label.c_str());
+        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(min.x + 10.0f, min.y + 3.0f), ApplyAlpha(IM_COL32(8, 13, 11, 240), text_alpha), label.c_str());
     }
     ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + size.y + 6.0f));
 }
@@ -3677,7 +3956,12 @@ float ScreenTransitionMotion(const ShellState& state) {
 }
 
 float ShellTextLifecycleMotion() {
-    return static_cast<float>(ComputeMotionFrames(kContainerInnerTime, kContainerInnerDuration));
+    return static_cast<float>(ComputeMotionFramesAsymmetric(
+        kContainerInnerTime,
+        kContainerInnerDuration,
+        0.0,
+        8.0
+    ));
 }
 
 float ShellChromeLifecycleMotion() {
@@ -3699,6 +3983,14 @@ float ShellHeaderTextLifecycleMotion() {
     ));
 }
 
+float ShellExitTextVisibility(const ShellState& state) {
+    if (!state.exit_transition_active || state.exit_transition_started_at < 0.0) {
+        return 1.0f;
+    }
+    const double elapsed_frames = (ImGui::GetTime() - state.exit_transition_started_at) * 60.0;
+    return 1.0f - SmoothStep(static_cast<float>(std::clamp(elapsed_frames / 8.0, 0.0, 1.0)));
+}
+
 float ShellTransitionAlpha(float motion) {
     return 0.18f + 0.82f * motion;
 }
@@ -3718,7 +4010,9 @@ void BeginScreenTextTransition(const ShellState& state) {
     const float screen_motion = ScreenTransitionMotion(state);
     const float chrome_alpha = ShellTransitionAlpha(screen_motion * ShellChromeLifecycleMotion());
     const float text_alpha = ShellTransitionAlpha(screen_motion * ShellTextLifecycleMotion());
-    const float relative_alpha = chrome_alpha > 0.001f ? std::clamp(text_alpha / chrome_alpha, 0.0f, 1.0f) : 0.0f;
+    const float relative_alpha = chrome_alpha > 0.001f
+        ? std::clamp((text_alpha / chrome_alpha) * ShellExitTextVisibility(state), 0.0f, 1.0f)
+        : 0.0f;
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, relative_alpha);
 }
 
@@ -3736,6 +4030,7 @@ bool DrawSettingToggle(
     const ImVec2 size(ImGui::GetContentRegionAvail().x, height);
     const bool interaction_enabled = !IsBackgroundInteractionBlocked();
     const float lifecycle_alpha = ShellChromeLifecycleMotion();
+    const float text_alpha = lifecycle_alpha * g_shell_text_visibility;
     if (!interaction_enabled) {
         ImGui::BeginDisabled();
     }
@@ -3788,11 +4083,11 @@ bool DrawSettingToggle(
     draw->AddCircleFilled(ImVec2(knob_x, (toggle_min.y + toggle_max.y) * 0.5f), knob_radius, ApplyAlpha(IM_COL32(235, 243, 239, 255), lifecycle_alpha), 24);
 
     if (g_body_font != nullptr) {
-        draw->AddText(g_body_font, g_body_font->LegacySize, ImVec2(min.x + ShellUi(18.0f), min.y + ShellUi(14.0f)), ApplyAlpha(IM_COL32(237, 245, 241, 255), lifecycle_alpha), label.c_str());
+        draw->AddText(g_body_font, g_body_font->LegacySize, ImVec2(min.x + ShellUi(18.0f), min.y + ShellUi(14.0f)), ApplyAlpha(IM_COL32(237, 245, 241, 255), text_alpha), label.c_str());
     }
     if (g_small_font != nullptr) {
-        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(min.x + ShellUi(18.0f), min.y + ShellUi(40.0f)), ApplyAlpha(IM_COL32(167, 189, 180, 220), lifecycle_alpha), summary.c_str());
-        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(toggle_min.x, min.y + ShellUi(58.0f)), ApplyAlpha(value ? IM_COL32(255, 188, 0, 240) : IM_COL32(136, 152, 148, 220), lifecycle_alpha), value ? "ON" : "OFF");
+        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(min.x + ShellUi(18.0f), min.y + ShellUi(40.0f)), ApplyAlpha(IM_COL32(167, 189, 180, 220), text_alpha), summary.c_str());
+        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(toggle_min.x, min.y + ShellUi(58.0f)), ApplyAlpha(value ? IM_COL32(255, 188, 0, 240) : IM_COL32(136, 152, 148, 220), text_alpha), value ? "ON" : "OFF");
     }
 
     if (pressed && interaction_enabled) {
@@ -3897,14 +4192,14 @@ void RenderProfilesPanel(ShellState& state) {
         ImGui::TextDisabled("%s", Tr(state, UiText::NoProfilesDiscovered));
         return;
     }
-    const float card_height = state.current_screen == ShellScreen::Select ? ShellUi(72.0f) : ShellUi(82.0f);
+    const float card_height = state.current_screen == ShellScreen::Select ? ShellUi(84.0f) : ShellUi(82.0f);
     for (size_t index = 0; index < state.profiles.size(); ++index) {
         const ProfileItem& profile = state.profiles[index];
         const bool selected = static_cast<int>(index) == state.selected_profile_index;
         const std::string row_id = "profile-" + profile.profile_id;
-        const std::string title = profile.profile_id;
-        const std::string subtitle = Ellipsize(profile.label, 24U);
-        const std::string detail = "Recommended check: " + ShortActionLabel(profile.recommended_action_id);
+        const std::string title = profile.profile_id + "  " + Ellipsize(profile.label, state.current_screen == ShellScreen::Select ? 14U : 22U);
+        const std::string subtitle = "Suggested check: " + ShortActionLabel(profile.recommended_action_id);
+        const std::string detail = profile.summary;
         if (DrawSelectableCard(row_id.c_str(), title, subtitle, detail, selected, card_height)) {
             SelectProfileById(state, profile.profile_id);
         }
@@ -3991,11 +4286,13 @@ void RenderActionTabs(ShellState& state) {
         return;
     }
 
-    const int columns = tabs.size() >= 6U ? 3 : (tabs.size() > 1 ? 2 : 1);
     const float gap_x = ShellUi(8.0f);
     const float gap_y = ShellUi(8.0f);
     const float button_height = ShellUi(34.0f);
     const float clip_width = ImGui::GetContentRegionAvail().x;
+    const int columns = tabs.size() >= 6U
+        ? (clip_width < ShellUi(420.0f) ? 2 : 3)
+        : (tabs.size() > 1 ? 2 : 1);
     const float button_width = std::max(ShellUi(76.0f), (clip_width - gap_x * static_cast<float>(columns - 1)) / static_cast<float>(columns));
 
     g_tab_highlight_ready = false;
@@ -4071,7 +4368,14 @@ void RenderRunStatusContent(ShellState& state) {
 
     if (!state.last_error.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", state.last_error.c_str());
+        InlineSectionLabel("Last Error");
+        const float error_height = std::min(ShellUi(132.0f), std::max(ShellUi(88.0f), ImGui::GetContentRegionAvail().y * 0.42f));
+        if (ImGui::BeginChild("run-last-error", ImVec2(0.0f, error_height), false, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ShellUi(10.0f));
+            ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", state.last_error.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndChild();
     }
 
     ImGui::Spacing();
@@ -4129,8 +4433,8 @@ void RenderRunLinkedResultContent(ShellState& state) {
     }
 
     const RunSnapshot& run_snapshot = *state.run_snapshot;
-    ImGui::Text("%s", run_snapshot.profile_label.c_str());
-    ImGui::SameLine();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+    ImGui::TextWrapped("%s", run_snapshot.profile_label.c_str());
     ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "[%s]", run_snapshot.status.c_str());
     if (!run_snapshot.workflow_stage_label.empty()) {
         ImGui::TextDisabled("%s", run_snapshot.workflow_stage_label.c_str());
@@ -4138,25 +4442,32 @@ void RenderRunLinkedResultContent(ShellState& state) {
     if (!run_snapshot.created_at_utc.empty()) {
         ImGui::TextDisabled("%s", run_snapshot.created_at_utc.c_str());
     }
+    ImGui::PopTextWrapPos();
 
     if (!run_snapshot.summary_lines.empty()) {
         ImGui::Spacing();
         InlineSectionLabel(Tr(state, UiText::Snapshot));
         for (const std::string& line : run_snapshot.summary_lines) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
             ImGui::BulletText("%s", line.c_str());
+            ImGui::PopTextWrapPos();
         }
     }
 
     if (!run_snapshot.grouped_lines.empty()) {
         ImGui::Spacing();
         InlineSectionLabel(Tr(state, UiText::GroupedFindings));
-        const size_t limit = std::min<size_t>(run_snapshot.grouped_lines.size(), 8U);
-        for (size_t index = 0; index < limit; ++index) {
-            ImGui::TextWrapped("%s", run_snapshot.grouped_lines[index].c_str());
+        const float findings_height = std::max(ShellUi(84.0f), ImGui::GetContentRegionAvail().y * 0.48f);
+        if (ImGui::BeginChild("run-linked-findings", ImVec2(0.0f, findings_height), false, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+            const size_t limit = std::min<size_t>(run_snapshot.grouped_lines.size(), 12U);
+            for (size_t index = 0; index < limit; ++index) {
+                ImGui::TextWrapped("%s", run_snapshot.grouped_lines[index].c_str());
+            }
+            if (run_snapshot.grouped_lines.size() > limit) {
+                ImGui::TextDisabled("%s", Tr(state, UiText::FilesTitle));
+            }
         }
-        if (run_snapshot.grouped_lines.size() > limit) {
-            ImGui::TextDisabled("%s", Tr(state, UiText::FilesTitle));
-        }
+        ImGui::EndChild();
     }
 
     if (!run_snapshot.notes.empty()) {
@@ -4466,7 +4777,7 @@ void RenderWizardFlow(ShellState& state) {
 void RenderLanguageScreen(ShellState& state) {
     BeginScreenTransition(state);
     DrawInstallerCanvasBackground();
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Language);
 
     if (BeginCanvasOverlayRegion("language-description", layout.description_content_min, layout.description_content_max)) {
         BeginScreenTextTransition(state);
@@ -4538,8 +4849,8 @@ void RenderLanguageScreen(ShellState& state) {
 
 void RenderIntroductionScreen(ShellState& state) {
     BeginScreenTransition(state);
-    DrawInstallerCanvasBackground();
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Introduction);
+    DrawInstallerCanvasBackground(layout);
 
     if (BeginCanvasOverlayRegion("intro-description", layout.description_content_min, layout.description_content_max)) {
         BeginScreenTextTransition(state);
@@ -4596,7 +4907,7 @@ void RenderIntroductionScreen(ShellState& state) {
 
 void RenderSelectScreen(ShellState& state) {
     BeginScreenTransition(state);
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout(452.0f);
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Select);
     DrawInstallerCanvasBackground(layout);
 
     if (state.initial_state_loading) {
@@ -4624,9 +4935,9 @@ void RenderSelectScreen(ShellState& state) {
 
         ImGui::Dummy(ImVec2(0.0f, ShellUi(6.0f)));
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("Choose one slice on the right. Then choose the local check you want to run for that slice. Review opens the next page so you can confirm the selection before anything starts.");
+        ImGui::TextWrapped("Pick one slice from the right-hand list, then pick the check you want to run for that slice.");
         ImGui::PopTextWrapPos();
-        ImGui::Dummy(ImVec2(0.0f, ShellUi(10.0f)));
+        ImGui::Dummy(ImVec2(0.0f, ShellUi(8.0f)));
 
         if (!state.profiles.empty()) {
             const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
@@ -4644,12 +4955,11 @@ void RenderSelectScreen(ShellState& state) {
             if (g_body_font != nullptr) {
                 ImGui::PopFont();
             }
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", Ellipsize(profile.label, 28U).c_str());
             ImGui::PushTextWrapPos(wrap_x);
+            ImGui::TextDisabled("%s", profile.label.c_str());
             ImGui::TextWrapped("%s", profile.summary.c_str());
             ImGui::PopTextWrapPos();
-            ImGui::Dummy(ImVec2(0.0f, ShellUi(8.0f)));
+            ImGui::Dummy(ImVec2(0.0f, ShellUi(6.0f)));
         }
 
         if (g_small_font != nullptr) {
@@ -4659,8 +4969,16 @@ void RenderSelectScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
-        EndScreenTextTransition();
-        RenderActionTabs(state);
+        if (state.profile_panel_loading) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", "Loading the available checks for this slice.");
+            EndScreenTextTransition();
+            const float pulse = 0.28f + 0.20f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.2f));
+            DrawProgressMeter(pulse, "LOADING CHECKS");
+        } else {
+            EndScreenTextTransition();
+            RenderActionTabs(state);
+        }
     }
     EndCanvasOverlayRegion();
 
@@ -4674,11 +4992,11 @@ void RenderSelectScreen(ShellState& state) {
             ImGui::PopFont();
         }
         ImGui::Dummy(ImVec2(0.0f, ShellUi(4.0f)));
-        ImGui::TextDisabled("%s", "Pick one slice. Scroll only if the full list does not fit.");
+        ImGui::TextDisabled("%s", "Pick one slice from this list.");
         EndScreenTextTransition();
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-        if (ImGui::BeginChild("select-live-slices-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false)) {
+        if (ImGui::BeginChild("select-live-slices-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
             RenderProfilesPanel(state);
         }
         ImGui::EndChild();
@@ -4690,8 +5008,8 @@ void RenderSelectScreen(ShellState& state) {
 
 void RenderReviewScreen(ShellState& state) {
     BeginScreenTransition(state);
-    DrawInstallerCanvasBackground();
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Review);
+    DrawInstallerCanvasBackground(layout);
 
     if (state.initial_state_loading) {
         if (BeginCanvasOverlayRegion("review-loading-description", layout.description_content_min, layout.description_content_max)) {
@@ -4776,73 +5094,79 @@ void RenderReviewScreen(ShellState& state) {
 
 void RenderRunScreen(ShellState& state) {
     BeginScreenTransition(state);
-    DrawInstallerCanvasBackground();
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Run);
+    DrawInstallerCanvasBackground(layout);
 
     if (BeginCanvasOverlayRegion("run-description", layout.description_content_min, layout.description_content_max)) {
-        BeginScreenTextTransition(state);
-        const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-        if (g_title_font != nullptr) {
-            ImGui::PushFont(g_title_font);
-        }
-        ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("%s", Tr(state, UiText::RunTitle));
-        ImGui::PopTextWrapPos();
-        if (g_title_font != nullptr) {
-            ImGui::PopFont();
-        }
+        if (ImGui::BeginChild("run-description-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+            BeginScreenTextTransition(state);
+            const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+            if (g_title_font != nullptr) {
+                ImGui::PushFont(g_title_font);
+            }
+            ImGui::PushTextWrapPos(wrap_x);
+            ImGui::TextWrapped("%s", Tr(state, UiText::RunTitle));
+            ImGui::PopTextWrapPos();
+            if (g_title_font != nullptr) {
+                ImGui::PopFont();
+            }
 
-        ImGui::Spacing();
-        if (g_small_font != nullptr) {
-            ImGui::PushFont(g_small_font);
-        }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::CurrentExecution));
-        if (g_small_font != nullptr) {
-            ImGui::PopFont();
-        }
-        EndScreenTextTransition();
-        RenderRunStatusContent(state);
+            ImGui::Spacing();
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::CurrentExecution));
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+            RenderRunStatusContent(state);
 
-        ImGui::Spacing();
-        BeginScreenTextTransition(state);
-        if (g_small_font != nullptr) {
-            ImGui::PushFont(g_small_font);
+            ImGui::Spacing();
+            BeginScreenTextTransition(state);
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionSignalLog));
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+            ImGui::BeginChild("run-log-inline", ImVec2(0.0f, std::max(ShellUi(134.0f), ImGui::GetContentRegionAvail().y)), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            RenderRunSignalLogContent(state);
+            ImGui::EndChild();
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionSignalLog));
-        if (g_small_font != nullptr) {
-            ImGui::PopFont();
-        }
-        EndScreenTextTransition();
-        ImGui::BeginChild("run-log-inline", ImVec2(0.0f, std::max(ShellUi(92.0f), ImGui::GetContentRegionAvail().y)), false);
-        RenderRunSignalLogContent(state);
         ImGui::EndChild();
     }
     EndCanvasOverlayRegion();
 
     if (BeginCanvasOverlayRegion("run-side", layout.side_content_min, layout.side_content_max)) {
-        BeginScreenTextTransition(state);
-        if (g_small_font != nullptr) {
-            ImGui::PushFont(g_small_font);
-        }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::LinkedResult));
-        if (g_small_font != nullptr) {
-            ImGui::PopFont();
-        }
-        EndScreenTextTransition();
-        RenderRunLinkedResultContent(state);
+        if (ImGui::BeginChild("run-side-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+            BeginScreenTextTransition(state);
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::LinkedResult));
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+            RenderRunLinkedResultContent(state);
 
-        ImGui::Spacing();
-        BeginScreenTextTransition(state);
-        if (g_small_font != nullptr) {
-            ImGui::PushFont(g_small_font);
+            ImGui::Spacing();
+            BeginScreenTextTransition(state);
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::RecentLocalHistory));
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+            ImGui::BeginChild("run-history-inline", ImVec2(0.0f, std::max(ShellUi(106.0f), ImGui::GetContentRegionAvail().y)), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            RenderRunHistoryContent(state);
+            ImGui::EndChild();
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::RecentLocalHistory));
-        if (g_small_font != nullptr) {
-            ImGui::PopFont();
-        }
-        EndScreenTextTransition();
-        ImGui::BeginChild("run-history-inline", ImVec2(0.0f, std::max(ShellUi(86.0f), ImGui::GetContentRegionAvail().y)), false);
-        RenderRunHistoryContent(state);
         ImGui::EndChild();
     }
     EndCanvasOverlayRegion();
@@ -4851,8 +5175,8 @@ void RenderRunScreen(ShellState& state) {
 
 void RenderEvidenceScreen(ShellState& state) {
     BeginScreenTransition(state);
-    DrawInstallerCanvasBackground();
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Evidence);
+    DrawInstallerCanvasBackground(layout);
 
     if (BeginCanvasOverlayRegion("evidence-description", layout.description_content_min, layout.description_content_max)) {
         BeginScreenTextTransition(state);
@@ -4912,8 +5236,8 @@ void RenderEvidenceScreen(ShellState& state) {
 
 void RenderFilesScreen(ShellState& state) {
     BeginScreenTransition(state);
-    DrawInstallerCanvasBackground();
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Files);
+    DrawInstallerCanvasBackground(layout);
 
     if (BeginCanvasOverlayRegion("files-description", layout.description_content_min, layout.description_content_max)) {
         BeginScreenTextTransition(state);
@@ -4973,8 +5297,8 @@ void RenderFilesScreen(ShellState& state) {
 
 void RenderStagesScreen(ShellState& state) {
     BeginScreenTransition(state);
-    DrawInstallerCanvasBackground();
-    const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Stages);
+    DrawInstallerCanvasBackground(layout);
 
     if (BeginCanvasOverlayRegion("stages-description", layout.description_content_min, layout.description_content_max)) {
         BeginScreenTextTransition(state);
@@ -5092,7 +5416,7 @@ void RenderWizardNavigation(ShellState& state) {
         if (lifecycle_motion <= 0.02f) {
             return;
         }
-        const InstallerCanvasLayout layout = GetInstallerCanvasLayout();
+        const InstallerCanvasLayout layout = GetScreenCanvasLayout(state.current_screen);
         ImFont* font = g_small_font != nullptr ? g_small_font : ImGui::GetFont();
         const float font_size = font == g_small_font ? g_small_font->LegacySize : ImGui::GetFontSize();
         const float max_text_width = ShellUi(90.0f);
@@ -5101,14 +5425,15 @@ void RenderWizardNavigation(ShellState& state) {
         if (text_size.x > max_text_width && text_size.x > 0.0f) {
             squash_ratio = max_text_width / text_size.x;
         }
-        const float button_width = std::max(ShellUi(104.0f), text_size.x * squash_ratio + ShellUi(28.0f));
+        const float button_width = std::max(ShellUi(112.0f), text_size.x * squash_ratio + ShellUi(30.0f));
+        const float button_height = ShellUi(32.0f);
         const ImVec2 min(
-            layout.description_content_max.x - button_width + (1.0f - lifecycle_motion) * ShellUi(32.0f),
-            layout.description_max.y + ShellUi(5.0f) + (1.0f - lifecycle_motion) * ShellUi(4.0f)
+            layout.description_max.x - button_width - ShellUi(14.0f) + (1.0f - lifecycle_motion) * ShellUi(24.0f),
+            layout.description_max.y - button_height - ShellUi(14.0f) + (1.0f - lifecycle_motion) * ShellUi(4.0f)
         );
 
         ImGui::SetCursorScreenPos(min);
-        if (DrawInstallerNavButton("wizard-next-source", next_label.c_str(), ImVec2(button_width, ShellUi(22.0f)), true, can_go_next)) {
+        if (DrawInstallerNavButton("wizard-next-source", next_label.c_str(), ImVec2(button_width, button_height), true, can_go_next)) {
             if (state.current_screen == ShellScreen::Review) {
                 StartAction(state, CurrentActionId(state));
             } else {
@@ -5464,7 +5789,7 @@ void RenderButtonGuide(ShellState& state) {
         };
         break;
     }
-    guide_items.push_back({"guide-help", "F1", Tr(state, UiText::Help), true, false, false});
+    guide_items.push_back({"guide-help", "F1", Tr(state, UiText::Help), true, false, true});
     }
 
     enum class GuideAtlasIcon {
@@ -5534,6 +5859,9 @@ void RenderButtonGuide(ShellState& state) {
         const bool back_item =
             std::strcmp(item.id, "guide-back") == 0 ||
             std::strcmp(item.id, "guide-prompt-back") == 0;
+        if (std::strcmp(item.id, "guide-help") == 0) {
+            return GuideAtlasIcon::None;
+        }
         if (back_item) {
             return GuideAtlasIcon::Escape;
         }
@@ -5580,12 +5908,12 @@ void RenderButtonGuide(ShellState& state) {
         return texture != nullptr && HasTexture(*texture);
     };
 
-    const ImVec2 primary_region_min = ShellPoint(379.0f, 618.0f);
-    const ImVec2 primary_region_max = ShellPoint(901.0f, 720.0f);
-    const ImVec2 secondary_left_region_min = ShellPoint(82.0f, 680.0f);
-    const ImVec2 secondary_left_region_max = ShellPoint(368.0f, 720.0f);
-    const ImVec2 secondary_right_region_min = ShellPoint(934.0f, 680.0f);
-    const ImVec2 secondary_right_region_max = ShellPoint(1196.0f, 720.0f);
+    const ImVec2 primary_region_min = ShellPoint(76.0f, 618.0f);
+    const ImVec2 primary_region_max = ShellPoint(1204.0f, 720.0f);
+    const ImVec2 secondary_left_region_min = ShellPoint(42.0f, 680.0f);
+    const ImVec2 secondary_left_region_max = ShellPoint(420.0f, 720.0f);
+    const ImVec2 secondary_right_region_min = ShellPoint(862.0f, 680.0f);
+    const ImVec2 secondary_right_region_max = ShellPoint(1220.0f, 720.0f);
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     ImFont* primary_font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
     const float primary_font_size = primary_font == g_title_font ? ShellUi(21.8f) : ImGui::GetFontSize();
@@ -5649,6 +5977,7 @@ void RenderButtonGuide(ShellState& state) {
             draw->AddImage(ToTextureId(*texture), icon_min, icon_max, uv_min, uv_max, ApplyAlpha(IM_COL32(255, 255, 255, item.enabled ? (hovered ? 255 : 238) : 110), guide_alpha));
             text_pos = ImVec2(icon_max.x + ShellUi(4.0f), primary_region_min.y + ShellUi(9.0f));
         } else {
+            const float key_text_alpha = guide_alpha * g_shell_text_visibility;
             const ImU32 key_border = ApplyAlpha(hovered ? IM_COL32(255, 211, 88, 240) : IM_COL32(255, 188, 0, 210), guide_alpha);
             const ImU32 key_fill = ApplyAlpha(hovered ? IM_COL32(32, 43, 25, 255) : IM_COL32(18, 20, 16, 245), guide_alpha);
             const ImVec2 key_min(min.x, min.y + ShellUi(6.0f));
@@ -5659,14 +5988,14 @@ void RenderButtonGuide(ShellState& state) {
                 secondary_font,
                 secondary_font_size,
                 ImVec2(key_min.x + ((key_width - key_size.x) * 0.5f), key_min.y + ((key_max.y - key_min.y) - key_size.y) * 0.5f),
-                ApplyAlpha(IM_COL32(255, 188, 0, item.enabled ? 255 : 170), guide_alpha),
+                ApplyAlpha(IM_COL32(255, 188, 0, item.enabled ? 255 : 170), key_text_alpha),
                 item.key
             );
             text_pos = ImVec2(key_max.x + ShellUi(10.0f), primary_region_min.y + ShellUi(9.0f));
         }
-        const int text_alpha = item.enabled ? 255 : 148;
-        draw->AddText(primary_font, primary_font_size, ImVec2(text_pos.x + ShellUi(2.0f), text_pos.y + ShellUi(2.0f)), ApplyAlpha(IM_COL32(0, 0, 0, text_alpha), guide_alpha), item.label.c_str());
-        draw->AddText(primary_font, primary_font_size, text_pos, ApplyAlpha(IM_COL32(255, 255, 255, text_alpha), guide_alpha), item.label.c_str());
+        const int label_alpha = item.enabled ? 255 : 148;
+        draw->AddText(primary_font, primary_font_size, ImVec2(text_pos.x + ShellUi(2.0f), text_pos.y + ShellUi(2.0f)), ApplyAlpha(IM_COL32(0, 0, 0, label_alpha), guide_alpha * g_shell_text_visibility), item.label.c_str());
+        draw->AddText(primary_font, primary_font_size, text_pos, ApplyAlpha(IM_COL32(255, 255, 255, label_alpha), guide_alpha * g_shell_text_visibility), item.label.c_str());
 
         if (pressed && item.enabled && std::strncmp(item.id, "guide-prompt", 12) != 0) {
             PlayCue(UiCue::Confirm);
@@ -5697,14 +6026,15 @@ void RenderButtonGuide(ShellState& state) {
         }
         PlayHoverCueIfNeeded(hovered, item.enabled);
 
+        const float text_alpha = guide_alpha * g_shell_text_visibility;
         const ImU32 key_border = ApplyAlpha(hovered ? IM_COL32(255, 211, 88, 218) : IM_COL32(255, 188, 0, 180), guide_alpha);
         const ImU32 key_fill = ApplyAlpha(hovered ? IM_COL32(38, 48, 28, 225) : IM_COL32(20, 24, 20, 214), guide_alpha);
-        const ImU32 label_color = ApplyAlpha(item.enabled ? IM_COL32(226, 237, 231, hovered ? 255 : 222) : IM_COL32(122, 132, 126, 180), guide_alpha);
+        const ImU32 label_color = ApplyAlpha(item.enabled ? IM_COL32(226, 237, 231, hovered ? 255 : 222) : IM_COL32(122, 132, 126, 180), text_alpha);
         const ImVec2 key_min(min.x, min.y + ShellUi(1.0f));
         const ImVec2 key_max(min.x + key_width, max.y - ShellUi(1.0f));
         draw->AddRectFilled(key_min, key_max, key_fill, ShellUi(3.0f));
         draw->AddRect(key_min, key_max, key_border, ShellUi(3.0f), 0, 1.0f);
-        draw->AddText(secondary_font, secondary_font_size, ImVec2(key_min.x + ((key_width - key_size.x) * 0.5f), key_min.y + ((key_max.y - key_min.y) - key_size.y) * 0.5f), ApplyAlpha(IM_COL32(255, 188, 0, item.enabled ? 255 : 170), guide_alpha), item.key);
+        draw->AddText(secondary_font, secondary_font_size, ImVec2(key_min.x + ((key_width - key_size.x) * 0.5f), key_min.y + ((key_max.y - key_min.y) - key_size.y) * 0.5f), ApplyAlpha(IM_COL32(255, 188, 0, item.enabled ? 255 : 170), text_alpha), item.key);
         draw->AddText(secondary_font, secondary_font_size, ImVec2(key_max.x + ShellUi(7.0f), key_min.y + ((key_max.y - key_min.y) - label_size.y) * 0.5f), label_color, item.label.c_str());
 
         if (pressed && item.enabled) {
@@ -5716,9 +6046,14 @@ void RenderButtonGuide(ShellState& state) {
 
     std::vector<GuideItem> primary_items;
     std::vector<GuideItem> secondary_items;
+    std::optional<GuideItem> centered_primary_item;
     primary_items.reserve(guide_items.size());
     secondary_items.reserve(guide_items.size());
     for (const GuideItem& item : guide_items) {
+        if (std::strcmp(item.id, "guide-help") == 0) {
+            centered_primary_item = item;
+            continue;
+        }
         if (item.primary) {
             primary_items.push_back(item);
         } else {
@@ -5744,6 +6079,11 @@ void RenderButtonGuide(ShellState& state) {
         const float width = primary_item_width(*it);
         draw_primary_item(*it, primary_region_max.x - primary_right_offset - width);
         primary_right_offset += width + primary_gap;
+    }
+
+    if (centered_primary_item.has_value()) {
+        const float width = primary_item_width(*centered_primary_item);
+        draw_primary_item(*centered_primary_item, primary_region_min.x + ((primary_region_max.x - primary_region_min.x) - width) * 0.5f);
     }
 
     float secondary_left_offset = 0.0f;
@@ -6234,6 +6574,7 @@ void RenderExitFade(const ShellState& state) {
 }
 
 void RenderShell(ShellState& state) {
+    g_shell_text_visibility = ShellExitTextVisibility(state);
     DrawBackdropChrome(state);
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -6395,22 +6736,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     ShellState state;
     g_live_shell_state = &state;
     state.backend = backend;
-    if (g_shell_assets.loaded) {
-        state.status_line = sg_preflight::native_shell::FormatLoadedChromeStatus(state.language);
-    } else if (g_shell_assets.attempted && !g_shell_assets.error.empty()) {
+    state.status_line = sg_preflight::native_shell::FormatLoadedChromeStatus(state.language);
+    if (!g_shell_assets.loaded && g_shell_assets.attempted && !g_shell_assets.error.empty()) {
         state.status_line = sg_preflight::native_shell::FormatFallbackChromeStatus(state.language, g_shell_assets.error);
     }
     if (g_using_warp) {
-        state.status_line += " Renderer fallback active.";
+        state.status_line += " Graphics fallback active.";
     }
-    if (g_shell_audio.available) {
-        state.status_line += music_enabled_preference
-            ? " Background music starts enabled."
-            : " Background music stays off unless you enable it.";
-    } else if (g_shell_audio.attempted && !g_shell_audio.last_error.empty()) {
-        state.status_line += " Audio fallback active: " + g_shell_audio.last_error;
-    }
-    state.status_line += " Loading local project data.";
     StartInitialShellLoad(state);
 
     bool done = false;
@@ -6442,11 +6774,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         }
 
         if (state.exit_transition_active && state.exit_transition_started_at >= 0.0 && ((ImGui::GetTime() - state.exit_transition_started_at) * 60.0) >= kExitTransitionDurationFrames) {
+            TraceUi("exit_complete");
             done = true;
             break;
         }
 
         PollInitialShellLoad(state);
+        PollProfilePanelLoad(state);
 
         if (!state.exit_transition_active && !state.current_run_id.empty() && IsActionStillRunning(state) && ImGui::GetTime() >= state.next_poll_at) {
             RefreshActiveRunState(state, false);

@@ -61,6 +61,15 @@ public static class NativeShellVerify {
 
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, int nFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostMessage(IntPtr hWnd, uint Msg, UIntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte bVk, byte bScan, int dwFlags, int dwExtraInfo);
 }
 "@
 
@@ -133,19 +142,63 @@ function Capture-Stage {
     $rect = Get-WindowRect -TargetProcess $TargetProcess
     $width = [Math]::Max(1, $rect.Right - $rect.Left)
     $height = [Math]::Max(1, $rect.Bottom - $rect.Top)
-    $bitmap = New-Object System.Drawing.Bitmap $width, $height
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $targetPath = Join-Path $OutputRoot "$Name.png"
+
+    function Save-CaptureBitmap {
+        param(
+            [IntPtr]$WindowHandle,
+            [int]$CaptureLeft,
+            [int]$CaptureTop,
+            [int]$CaptureWidth,
+            [int]$CaptureHeight
+        )
+
+        $bitmap = New-Object System.Drawing.Bitmap $CaptureWidth, $CaptureHeight
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try {
+            try {
+                $hdc = $graphics.GetHdc()
+                try {
+                    if (-not [NativeShellVerify]::PrintWindow($WindowHandle, $hdc, 0)) {
+                        throw "PrintWindow failed"
+                    }
+                }
+                finally {
+                    $graphics.ReleaseHdc($hdc)
+                }
+            }
+            catch {
+                $graphics.CopyFromScreen($CaptureLeft, $CaptureTop, 0, 0, $bitmap.Size)
+            }
+            $bitmap.Save($targetPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        }
+        finally {
+            $graphics.Dispose()
+            $bitmap.Dispose()
+        }
+    }
+
     try {
-        $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
-        $targetPath = Join-Path $OutputRoot "$Name.png"
-        $bitmap.Save($targetPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        Save-CaptureBitmap -WindowHandle $TargetProcess.MainWindowHandle -CaptureLeft $rect.Left -CaptureTop $rect.Top -CaptureWidth $width -CaptureHeight $height
         $log.Add("[$Name] screenshot: $targetPath")
         $log.Add("[$Name] bounds: left=$($rect.Left) top=$($rect.Top) width=$width height=$height")
         $log.Add("")
     }
-    finally {
-        $graphics.Dispose()
-        $bitmap.Dispose()
+    catch {
+        Start-Sleep -Milliseconds 300
+        try {
+            Save-CaptureBitmap -WindowHandle $TargetProcess.MainWindowHandle -CaptureLeft $rect.Left -CaptureTop $rect.Top -CaptureWidth $width -CaptureHeight $height
+            $log.Add("[$Name] screenshot: $targetPath")
+            $log.Add("[$Name] bounds: left=$($rect.Left) top=$($rect.Top) width=$width height=$height (retry)")
+            $log.Add("")
+        }
+        catch {
+            $screenBounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            Save-CaptureBitmap -WindowHandle $TargetProcess.MainWindowHandle -CaptureLeft $screenBounds.Left -CaptureTop $screenBounds.Top -CaptureWidth $screenBounds.Width -CaptureHeight $screenBounds.Height
+            $log.Add("[$Name] screenshot fallback: $targetPath")
+            $log.Add("[$Name] requested bounds failed; used primary screen fallback")
+            $log.Add("")
+        }
     }
 }
 
@@ -158,7 +211,27 @@ function Send-Key {
 
     Activate-Window -TargetProcess $TargetProcess
     $log.Add("[input] $Keys")
-    $shell.SendKeys($Keys)
+    $virtualKey = switch ($Keys) {
+        "{ENTER}" { 0x0D; break }
+        "{ESC}" { 0x1B; break }
+        "{F1}" { 0x70; break }
+        "L" { 0x4C; break }
+        "P" { 0x50; break }
+        default { $null }
+    }
+    if ($null -ne $virtualKey) {
+        $keyParam = [UIntPtr]::new([uint32]$virtualKey)
+        $postedDown = [NativeShellVerify]::PostMessage($TargetProcess.MainWindowHandle, 0x0100, $keyParam, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 40
+        $postedUp = [NativeShellVerify]::PostMessage($TargetProcess.MainWindowHandle, 0x0101, $keyParam, [IntPtr]::Zero)
+        if (-not ($postedDown -and $postedUp)) {
+            [NativeShellVerify]::keybd_event([byte]$virtualKey, 0, 0, 0)
+            Start-Sleep -Milliseconds 40
+            [NativeShellVerify]::keybd_event([byte]$virtualKey, 0, 2, 0)
+        }
+    } else {
+        $shell.SendKeys($Keys)
+    }
     Start-Sleep -Milliseconds $SettleMs
 }
 
@@ -193,6 +266,42 @@ function Wait-ForTraceIdle {
     $log.Add("[trace] idle wait timed out")
 }
 
+function Get-TraceText {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return ""
+    }
+
+    try {
+        return Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+    }
+    catch {
+        return ""
+    }
+}
+
+function Wait-ForTracePattern {
+    param(
+        [string]$Path,
+        [string]$Pattern,
+        [int]$TimeoutSeconds = 12
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $text = Get-TraceText -Path $Path
+        if ($text -match [regex]::Escape($Pattern)) {
+            $log.Add("[trace] matched: $Pattern")
+            return $true
+        }
+        Start-Sleep -Milliseconds 150
+    }
+
+    $log.Add("[trace] missing: $Pattern")
+    return $false
+}
+
 try {
     $process = Start-Process -FilePath $ExePath -ArgumentList $launchArgs -WorkingDirectory $repoRoot -PassThru
     Wait-ForMainWindow -TargetProcess $process
@@ -205,6 +314,7 @@ try {
     Capture-Stage -TargetProcess $process -Name "select"
 
     Send-Key -TargetProcess $process -Keys "{F1}" -SettleMs $PromptSettleMs
+    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_open title="Help"' -TimeoutSeconds 6)
     Capture-Stage -TargetProcess $process -Name "help_select"
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $PromptSettleMs
 
@@ -230,15 +340,18 @@ try {
     Capture-Stage -TargetProcess $process -Name "prompt_intro"
 
     Send-Key -TargetProcess $process -Keys "{ESC}" -SettleMs $PromptSettleMs
+    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_open title="QUIT SG PREFLIGHT"' -TimeoutSeconds 6)
     Capture-Stage -TargetProcess $process -Name "prompt_banner"
 
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $PromptSettleMs
+    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_controls_open title="QUIT SG PREFLIGHT"' -TimeoutSeconds 6)
     Capture-Stage -TargetProcess $process -Name "prompt_choices"
 
     $quitStart = Get-Date
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs 100
+    [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI exit_begin" -TimeoutSeconds 8)
 
-    $waitDeadline = (Get-Date).AddSeconds(10)
+    $waitDeadline = (Get-Date).AddSeconds(12)
     while (-not $process.HasExited -and (Get-Date) -lt $waitDeadline) {
         Start-Sleep -Milliseconds 100
         $process.Refresh()
@@ -246,6 +359,7 @@ try {
 
     $quitMs = [int]((Get-Date) - $quitStart).TotalMilliseconds
     if (-not $process.HasExited) {
+        [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI exit_complete" -TimeoutSeconds 2)
         $log.Add("[close] process did not exit within timeout; forcing shutdown")
         Stop-Process -Id $process.Id -Force
     } else {

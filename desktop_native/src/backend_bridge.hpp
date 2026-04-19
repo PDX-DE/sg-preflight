@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json_fwd.hpp>
@@ -136,6 +137,7 @@ struct RunSnapshot {
 
 std::wstring ToWide(const std::string& text);
 std::string ToUtf8(const std::wstring& text);
+void AppendNativeTrace(std::string_view line);
 
 std::vector<ProfileItem> LoadProfiles(const BackendConfig& config);
 std::vector<ActionItem> LoadActions(const BackendConfig& config, const std::string& profile_id);

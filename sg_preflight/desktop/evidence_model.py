@@ -843,12 +843,111 @@ def _copy_items(
     )
 
 
+def _action_grouped_lines(
+    record: ActionRecord,
+    summary: dict[str, Any],
+    evidence_items: tuple[DesktopEvidenceItem, ...],
+) -> tuple[str, ...]:
+    lines: list[str] = []
+    for item in evidence_items[:4]:
+        checker = f" [{item.checker}]" if item.checker else ""
+        message = f": {item.message}" if item.message else ""
+        lines.append(f"[{item.severity.upper()}]{checker} {item.path}{message}".strip())
+
+    for line in _summary_lines(summary):
+        cleaned = str(line).strip()
+        if not cleaned:
+            continue
+        if cleaned in lines:
+            continue
+        lines.append(cleaned)
+        if len(lines) >= 6:
+            break
+
+    if record.error_message.strip():
+        lines.append(record.error_message.strip())
+    return tuple(lines[:6])
+
+
+def _action_source_items(items: tuple[DesktopEvidenceItem, ...]) -> tuple[DesktopArtifactItem, ...]:
+    artifacts = [
+        DesktopArtifactItem(
+            label=item.checker or f"Source {index + 1}",
+            path=item.path,
+        )
+        for index, item in enumerate(items)
+        if item.path.strip()
+    ]
+    return _dedupe_artifact_items(artifacts)
+
+
+def _desktop_run_snapshot_from_action_record(
+    record: ActionRecord,
+    root: Path,
+) -> DesktopRunSnapshot:
+    summary = record.summary if isinstance(record.summary, dict) else {}
+    evidence = _checker_evidence(summary)
+    evidence_items = _desktop_evidence_items(evidence)
+    latest_run = _latest_run_record(record.profile_id, root) if record.profile_id else None
+    progress = record.progress if isinstance(record.progress, dict) else {}
+    progress_label = str(progress.get("label", "")).strip()
+    progress_detail = str(progress.get("detail", "")).strip()
+
+    summary_title = str(summary.get("title", record.label)).strip() or record.label
+    summary_lines: list[str] = []
+    if progress_label:
+        summary_lines.append(progress_label)
+    if progress_detail:
+        summary_lines.append(progress_detail)
+    if not summary_lines:
+        summary_lines.append(f"Status: {record.status}")
+    for line in _summary_lines(summary):
+        cleaned = str(line).strip()
+        if cleaned and cleaned not in summary_lines:
+            summary_lines.append(cleaned)
+        if len(summary_lines) >= 6:
+            break
+
+    notes = [str(note).strip() for note in record.notes if str(note).strip()]
+    if record.error_message.strip():
+        notes.append(record.error_message.strip())
+
+    profile_label = record.profile_id or summary_title
+    if latest_run is not None and latest_run.profile_label.strip():
+        profile_label = latest_run.profile_label
+
+    return DesktopRunSnapshot(
+        run_id=record.run_id,
+        profile_id=record.profile_id,
+        profile_label=profile_label,
+        status=record.status,
+        created_at_utc=record.created_at_utc,
+        workflow_stage_label=progress_label,
+        summary_title=summary_title,
+        summary_lines=tuple(summary_lines[:6]),
+        grouped_lines=_action_grouped_lines(record, summary, evidence_items),
+        notes=tuple(notes[:8]),
+        packs=tuple(str(item).strip() for item in summary.get("packs", []) if str(item).strip()),
+        artifacts=_artifact_items(record),
+        source_files=_action_source_items(evidence_items),
+        copy_items=_copy_items(record, evidence_items, None),
+    )
+
+
 def desktop_run_snapshot(
     run_id_or_path: str | Path,
     workspace: Path | None = None,
 ) -> DesktopRunSnapshot:
     root = workspace_root(workspace)
-    run_record = load_run_record(run_id_or_path, root)
+    try:
+        run_record = load_run_record(run_id_or_path, root)
+    except (FileNotFoundError, OSError, ValueError) as run_error:
+        try:
+            action_record = load_action_record(run_id_or_path, root)
+        except (FileNotFoundError, OSError, ValueError):
+            raise run_error
+        return _desktop_run_snapshot_from_action_record(action_record, root)
+
     grouped_items = _report_grouped_items(run_record)
     grouped_lines = _grouped_finding_lines(grouped_items, limit=4)
     summary_title = _decision_title(run_record.summary)

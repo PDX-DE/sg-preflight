@@ -10,6 +10,8 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 #### 2026-04-19
 
+- working tree: the native C++ shell now proves a clean automated quit path through the verifier trace instead of needing a forced shutdown, and the quit lifecycle traces `prompt open -> prompt controls -> exit begin -> exit complete` while page text disappears on an earlier path than the remaining installer chrome
+- working tree: desktop evidence loading now falls back from missing child `run-record` snapshots to linked action records, so parent SG desktop views stop throwing failed `run-snapshot` lookups for nested child runs after QA-stack style launches
 - working tree: the native C++ shell now fades the header text on an earlier disappear path than the remaining chrome, rewrites the intro/select English copy into clearer operator-facing language, adds an `F1` / footer `Help` prompt that explains each page and the `DAILY` / `STACK` / `REPO` / `SCENE` / `UNUSED` / `DELIVERY` checks, and stops slice changes from reloading the heavier recent-result panes when only the per-slice check metadata needs to change
 - working tree: the Select page now uses a wider real installer side rail for available slices instead of cramming slice cards into the main text panel, the slice cards are shortened toward clearer `profile -> label -> recommended check` reading, and the native verification script now captures the new Select-page Help popup alongside the existing intro/select/review/run/prompt evidence set
 
