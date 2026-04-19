@@ -17,8 +17,8 @@ constexpr std::array<LanguageOption, 4> kSupportedLanguages = {{
 
 const char* TranslateEnglish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SG PREFLIGHT";
-    case HeaderChecking: return "SG CHECKING";
+    case HeaderPreflight: return "SERGFX";
+    case HeaderChecking: return "SERGFX CHECKING";
     case ImageSlotReserved: return "";
     case Continue: return "Continue";
     case Review: return "Review";
@@ -61,7 +61,7 @@ const char* TranslateEnglish(UiText text) {
     case DisplayMode: return "DISPLAY MODE";
     case ShellAudio: return "SHELL AUDIO";
     case UiSoundEffects: return "UI sound effects";
-    case UiSoundEffectsSummary: return "Menu sounds stay on so selection, confirm, cancel, and prompt feedback are always audible.";
+    case UiSoundEffectsSummary: return "Menu sounds stay on so navigation, confirm, cancel, and prompt feedback are always audible.";
     case InstallerBackgroundMusic: return "Installer background music";
     case InstallerBackgroundMusicSummary: return "Plays background music while the shell is open. It stays off by default unless enabled in imgui.ini or here.";
     case Summary: return "SUMMARY";
@@ -88,12 +88,12 @@ const char* TranslateEnglish(UiText text) {
     case LanguageScreenTitle: return "Please select a language.";
     case LanguageScreenBody: return "Choose the language used by the shell interface.";
     case LanguageScreenHint: return "This only changes the shell text. Project data and generated results stay the same.";
-    case IntroWelcome: return "Welcome to SG Preflight.";
-    case IntroBodyPrimary: return "SG Preflight is the local desktop tool for checking a car slice before review. It runs the selected local checks, gathers the result files, and points you to the first items that need attention.";
-    case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the check, review what will run, start the run, then inspect the first files, reports, exports, and follow-up material the shell collects for you.";
+    case IntroWelcome: return "Welcome to SERGFX.";
+    case IntroBodyPrimary: return "SERGFX: Project HMI & SDET is the local desktop framework for checking car slices, scenes, reports, and handoff material before review.";
+    case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the check, review what will run, start the run, then inspect the first files, reports, exports, and follow-up material collected for you.";
     case SelectLoadingTitle: return "Loading local project data.";
     case SelectLoadingBody: return "The shell is loading the available slices, checks, and recent local results so you can choose what to run.";
-    case SelectTitle: return "Choose the slice and check.";
+    case SelectTitle: return "Choose the slice and check for this run.";
     case SelectDailyMatrixBody: return "Run the recommended check flow across all ready slices and collect one shared review surface.";
     case NoActionMetadata: return "No action metadata is available for the current selection.";
     case ReviewLoadingTitle: return "Loading the selected slice and check.";
@@ -120,7 +120,7 @@ const char* TranslateEnglish(UiText text) {
     case NoRecentRuns: return "No recent run records yet for this profile.";
     case NoRecentResults: return "No recent run records yet for this profile.";
     case NoManualFollowUp: return "No additional manual follow-up is attached to the current evidence selection.";
-    case PromptQuitTitle: return "QUIT SG PREFLIGHT";
+    case PromptQuitTitle: return "QUIT SERGFX";
     case PromptQuitMessage: return "Are you sure you want to quit?";
     case PromptQuitRunningMessage: return "Are you sure you want to quit? The current check will keep running in the background.";
     case PromptLeaveRunTitle: return "LEAVE RUN SCREEN";
@@ -135,8 +135,8 @@ const char* TranslateRomanian(UiText text);
 
 const char* TranslateSpanish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SG PREFLIGHT";
-    case HeaderChecking: return "SG CHECKING";
+    case HeaderPreflight: return "SERGFX";
+    case HeaderChecking: return "SERGFX CHECKING";
     case ImageSlotReserved: return "ESPACIO DE IMAGEN RESERVADO";
     case Continue: return "CONTINUAR";
     case Review: return "REVISAR";
@@ -179,7 +179,7 @@ const char* TranslateSpanish(UiText text) {
     case DisplayMode: return "MODO DE PANTALLA";
     case ShellAudio: return "AUDIO DEL SHELL";
     case UiSoundEffects: return "Efectos de sonido";
-    case UiSoundEffectsSummary: return "Cursor, confirmar, cancelar y sonidos de ventana del paquete local de Unleashed.";
+    case UiSoundEffectsSummary: return "Los sonidos de menu siguen activos para que navegar, confirmar, cancelar y responder a ventanas siempre se escuche.";
     case InstallerBackgroundMusic: return "Musica del instalador";
     case InstallerBackgroundMusicSummary: return "Reproduce en bucle la musica WAV local del instalador mientras el shell esta abierto.";
     case Summary: return "RESUMEN";
@@ -206,7 +206,7 @@ const char* TranslateSpanish(UiText text) {
     case LanguageScreenTitle: return "Seleccione un idioma.";
     case LanguageScreenBody: return "Elija primero el idioma del shell y luego continue al flujo SG.";
     case LanguageScreenHint: return "Solo se traduce el texto del shell. Los datos reales de SG y la salida de checkers siguen tal cual.";
-    case IntroWelcome: return "Bienvenido a SG Preflight.";
+    case IntroWelcome: return "Bienvenido a SERGFX.";
     case IntroBodyPrimary: return "Seleccione la slice SG, confirme la preparacion local, ejecute una vez la accion real con checkers SG y luego siga Open First, Archivos y el seguimiento bloqueado/manual en orden.";
     case IntroBodySecondary: return "Este shell nativo sigue siendo solo una capa sobre el backend de Python. El flujo web, los packs deterministas, la evidencia SG y la honestidad sobre bloqueos BMW siguen intactos.";
     case SelectLoadingTitle: return "Cargando el estado SG.";
@@ -238,8 +238,8 @@ const char* TranslateSpanish(UiText text) {
     case NoRecentRuns: return "Todavia no hay registros recientes para este perfil.";
     case NoRecentResults: return "Todavia no hay resultados recientes para este perfil.";
     case NoManualFollowUp: return "No hay seguimiento manual adicional para la evidencia actual.";
-    case PromptQuitTitle: return "SALIR DE SG PREFLIGHT";
-    case PromptQuitMessage: return "Cerrar SG Preflight ahora?";
+    case PromptQuitTitle: return "SALIR DE SERGFX";
+    case PromptQuitMessage: return "Cerrar SERGFX ahora?";
     case PromptQuitRunningMessage: return "Cerrar el shell ahora? La accion SG actual seguira ejecutandose en segundo plano.";
     case PromptLeaveRunTitle: return "SALIR DE LA PANTALLA";
     case PromptLeaveRunMessage: return "La accion SG actual sigue ejecutandose. Salir de esta pagina de todos modos? La accion seguira en segundo plano.";
@@ -249,8 +249,8 @@ const char* TranslateSpanish(UiText text) {
 
 const char* TranslateGerman(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SG PREFLIGHT";
-    case HeaderChecking: return "SG CHECKING";
+    case HeaderPreflight: return "SERGFX";
+    case HeaderChecking: return "SERGFX CHECKING";
     case ImageSlotReserved: return "BILDPLATZ RESERVIERT";
     case Continue: return "WEITER";
     case Review: return "PRUEFEN";
@@ -293,7 +293,7 @@ const char* TranslateGerman(UiText text) {
     case DisplayMode: return "ANZEIGEMODUS";
     case ShellAudio: return "SHELL-AUDIO";
     case UiSoundEffects: return "UI-Soundeffekte";
-    case UiSoundEffectsSummary: return "Cursor-, Bestaetigungs-, Abbruch- und Fensterklang aus dem lokalen Unleashed-Paket.";
+    case UiSoundEffectsSummary: return "Menuklaenge bleiben aktiv, damit Navigation, Bestaetigung, Abbruch und Dialoge immer hoerbar sind.";
     case InstallerBackgroundMusic: return "Installer-Hintergrundmusik";
     case InstallerBackgroundMusicSummary: return "Spielt die lokale Installer-WAV in Schleife, waehrend das Shell offen ist.";
     case Summary: return "ZUSAMMENFASSUNG";
@@ -320,7 +320,7 @@ const char* TranslateGerman(UiText text) {
     case LanguageScreenTitle: return "Bitte waehlen Sie eine Sprache.";
     case LanguageScreenBody: return "Waehlen Sie zuerst die Shell-Sprache und gehen Sie dann in den SG-Operatorfluss.";
     case LanguageScreenHint: return "Nur Shell-eigener Text wird uebersetzt. Echte SG-Daten und Checker-Ausgaben bleiben original.";
-    case IntroWelcome: return "Willkommen bei SG Preflight.";
+    case IntroWelcome: return "Willkommen bei SERGFX.";
     case IntroBodyPrimary: return "Waehlen Sie die SG-Slice, bestaetigen Sie die lokale Bereitschaft, starten Sie die echte SG-Checker-Aktion einmal und gehen Sie dann durch Open First, Dateien und blockierte/manuelle Nacharbeit.";
     case IntroBodySecondary: return "Dieses native Shell bleibt nur eine Huelle ueber dem Python-Backend. Browserfluss, deterministische Packs, SG-Evidence und BMW-Blocker-Ehrlichkeit bleiben erhalten.";
     case SelectLoadingTitle: return "SG-Status wird geladen.";
@@ -352,8 +352,8 @@ const char* TranslateGerman(UiText text) {
     case NoRecentRuns: return "Noch keine letzten Laufdaten fuer dieses Profil.";
     case NoRecentResults: return "Noch keine letzten Ergebnisse fuer dieses Profil.";
     case NoManualFollowUp: return "Keine zusaetzliche manuelle Nacharbeit an diese Evidence angehaengt.";
-    case PromptQuitTitle: return "SG PREFLIGHT BEENDEN";
-    case PromptQuitMessage: return "SG Preflight jetzt schliessen?";
+    case PromptQuitTitle: return "SERGFX BEENDEN";
+    case PromptQuitMessage: return "SERGFX jetzt schliessen?";
     case PromptQuitRunningMessage: return "Shell jetzt schliessen? Die aktuelle SG-Aktion laeuft im Hintergrund weiter.";
     case PromptLeaveRunTitle: return "LAUFSEITE VERLASSEN";
     case PromptLeaveRunMessage: return "Die aktuelle SG-Aktion laeuft noch. Diese Seite trotzdem verlassen? Die Aktion laeuft im Hintergrund weiter.";
@@ -363,8 +363,8 @@ const char* TranslateGerman(UiText text) {
 
 const char* TranslateRomanian(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SG PREFLIGHT";
-    case HeaderChecking: return "SG CHECKING";
+    case HeaderPreflight: return "SERGFX";
+    case HeaderChecking: return "SERGFX CHECKING";
     case ImageSlotReserved: return "SPATIU IMAGINE REZERVAT";
     case Continue: return "CONTINUA";
     case Review: return "REVIZUIRE";
@@ -407,7 +407,7 @@ const char* TranslateRomanian(UiText text) {
     case DisplayMode: return "MOD AFISARE";
     case ShellAudio: return "AUDIO SHELL";
     case UiSoundEffects: return "Efecte sonore UI";
-    case UiSoundEffectsSummary: return "Sunete de cursor, confirmare, anulare si fereastra din pachetul local Unleashed.";
+    case UiSoundEffectsSummary: return "Sunetele de meniu raman active, astfel incat navigarea, confirmarea, anularea si ferestrele sa fie mereu audibile.";
     case InstallerBackgroundMusic: return "Muzica instalatorului";
     case InstallerBackgroundMusicSummary: return "Ruleaza in bucla muzica WAV a instalatorului cat timp shell-ul este deschis.";
     case Summary: return "REZUMAT";
@@ -434,7 +434,7 @@ const char* TranslateRomanian(UiText text) {
     case LanguageScreenTitle: return "Selectati o limba.";
     case LanguageScreenBody: return "Alegeti mai intai limba shell-ului, apoi continuati in fluxul operator SG.";
     case LanguageScreenHint: return "Se traduce doar textul shell-ului. Datele SG reale si iesirea checkerelor raman in forma originala.";
-    case IntroWelcome: return "Bine ati venit la SG Preflight.";
+    case IntroWelcome: return "Bine ati venit la SERGFX.";
     case IntroBodyPrimary: return "Alegeti slice-ul SG, confirmati pregatirea locala, rulati o singura data actiunea reala cu checkere SG, apoi treceti prin Open First, Fisiere si urmarirea blocata/manuala.";
     case IntroBodySecondary: return "Acest shell nativ ramane doar o interfata peste backend-ul Python. Fluxul din browser, pachetele deterministe, evidenta SG si onestitatea fata de blocajele BMW raman intacte.";
     case SelectLoadingTitle: return "Se incarca starea SG.";
@@ -466,8 +466,8 @@ const char* TranslateRomanian(UiText text) {
     case NoRecentRuns: return "Nu exista inca inregistrari recente pentru acest profil.";
     case NoRecentResults: return "Nu exista inca rezultate recente pentru acest profil.";
     case NoManualFollowUp: return "Nu exista urmarire manuala suplimentara atasata selectiei curente.";
-    case PromptQuitTitle: return "IESIRE DIN SG PREFLIGHT";
-    case PromptQuitMessage: return "Inchideti SG Preflight acum?";
+    case PromptQuitTitle: return "IESIRE DIN SERGFX";
+    case PromptQuitMessage: return "Inchideti SERGFX acum?";
     case PromptQuitRunningMessage: return "Inchideti shell-ul acum? Actiunea SG curenta va continua in fundal.";
     case PromptLeaveRunTitle: return "PARASIRE ECRAN RULARE";
     case PromptLeaveRunMessage: return "Actiunea SG curenta ruleaza inca. Parasiti totusi aceasta pagina? Actiunea va continua in fundal.";

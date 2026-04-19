@@ -168,12 +168,17 @@ struct ShellAssets {
     DdsTextureHandle controller_icons;
     DdsTextureHandle kbm_icons;
     DdsTextureHandle help_key_f1;
+    DdsTextureHandle help_key_f2;
+    DdsTextureHandle help_key_f3;
+    DdsTextureHandle help_key_f4;
     DdsTextureHandle options_static;
     DdsTextureHandle options_static_flash;
     DdsTextureHandle installer_panel;
     DdsTextureHandle miles_electric_icon;
     DdsTextureHandle arrow_circle;
     DdsTextureHandle pulse_install;
+    DdsTextureHandle framework_icon;
+    DdsTextureHandle game_icon;
     std::array<DdsTextureHandle, 8> install_images;
     bool attempted = false;
     bool loaded = false;
@@ -1002,6 +1007,35 @@ void DrawRotatedTexture(
     );
 }
 
+void DrawContainedTexture(
+    ImDrawList* draw,
+    const DdsTextureHandle& texture,
+    ImVec2 min,
+    ImVec2 max,
+    ImU32 tint,
+    float scale = 1.0f,
+    ImVec2 center_offset = ImVec2(0.0f, 0.0f)
+) {
+    if (!HasTexture(texture) || texture.width == 0 || texture.height == 0) {
+        return;
+    }
+
+    const float box_width = max.x - min.x;
+    const float box_height = max.y - min.y;
+    if (box_width <= 0.0f || box_height <= 0.0f) {
+        return;
+    }
+
+    const float texture_width = static_cast<float>(texture.width);
+    const float texture_height = static_cast<float>(texture.height);
+    const float contain_scale = std::min(box_width / texture_width, box_height / texture_height) * scale;
+    const ImVec2 draw_size(texture_width * contain_scale, texture_height * contain_scale);
+    const ImVec2 center((min.x + max.x) * 0.5f + center_offset.x, (min.y + max.y) * 0.5f + center_offset.y);
+    const ImVec2 draw_min(center.x - draw_size.x * 0.5f, center.y - draw_size.y * 0.5f);
+    const ImVec2 draw_max(center.x + draw_size.x * 0.5f, center.y + draw_size.y * 0.5f);
+    draw->AddImage(ToTextureId(texture), draw_min, draw_max, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), tint);
+}
+
 void ReleaseShellAssets() {
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.general_window);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.select);
@@ -1009,12 +1043,17 @@ void ReleaseShellAssets() {
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.controller_icons);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.kbm_icons);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f1);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f2);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f3);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f4);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static_flash);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.installer_panel);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.miles_electric_icon);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.arrow_circle);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.pulse_install);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.framework_icon);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.game_icon);
     for (auto& texture : g_shell_assets.install_images) {
         sg_preflight::native_shell::ReleaseTexture(texture);
     }
@@ -1086,6 +1125,11 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         load_optional_texture(std::filesystem::path("images") / "common" / "controller.dds", g_shell_assets.controller_icons);
         load_optional_texture(std::filesystem::path("images") / "common" / "kbm.dds", g_shell_assets.kbm_icons);
         load_optional_workspace_texture("kb_key_F1.png", g_shell_assets.help_key_f1);
+        load_optional_workspace_texture("kb_key_F2.png", g_shell_assets.help_key_f2);
+        load_optional_workspace_texture("kb_key_F3.png", g_shell_assets.help_key_f3);
+        load_optional_workspace_texture("kb_key_F4.png", g_shell_assets.help_key_f4);
+        load_optional_workspace_texture("framework_icon.png", g_shell_assets.framework_icon);
+        load_optional_workspace_texture("game_icon.png", g_shell_assets.game_icon);
         load_optional_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", g_shell_assets.arrow_circle);
         load_optional_texture(std::filesystem::path("images") / "installer" / "pulse_install.dds", g_shell_assets.pulse_install);
         for (size_t index = 0; index < g_shell_assets.install_images.size(); ++index) {
@@ -1494,13 +1538,13 @@ bool ShouldAutoRefreshRunInCurrentScreen(const ShellState& state) {
 double AutoRunPollDelaySeconds(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Run:
-        return 2.0;
+        return 5.0;
     case ShellScreen::Evidence:
     case ShellScreen::Files:
     case ShellScreen::Stages:
-        return 2.5;
+        return 6.0;
     case ShellScreen::Review:
-        return 2.5;
+        return 3.5;
     case ShellScreen::Language:
     case ShellScreen::Introduction:
     case ShellScreen::Select:
@@ -2480,9 +2524,9 @@ std::string FriendlyActionDescription(std::string_view action_id) {
 std::string BuildHelpPromptMessage(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Introduction:
-        return "SG Preflight is the local checking tool for SG car slices, scenes, reports, and handoff material.\n\nUse it from left to right: choose the slice, choose the check, review what will run, start it, open the first files that need attention, then review reports, exports, and follow-up work.";
+        return "SERGFX: Project HMI & SDET is the local desktop framework for reviewing car slices, local checks, reports, and handoff material.\n\nUse it from left to right: choose the slice, choose the check, review what will run, start it, open the first files that need attention, then review reports, exports, and follow-up work.";
     case ShellScreen::Select:
-        return "Choose one slice on the right, then choose the check to run for that slice.\n\nDAILY: runs the recommended local check flow across every ready slice.\nSTACK: runs the standard per-slice preflight stack.\nREPO: runs the broader repository checker pass.\nSCENE: runs the scene-specific local check.\nUNUSED: scans the selected slice for unused resources.\nDELIVERY: shows delivery-readiness follow-up for the selected slice.";
+        return "Choose one slice on the right, then choose the check to run for that slice.\n\nDAILY: runs the recommended local check flow across every ready slice.\nSTACK: runs the standard per-slice QA stack.\nREPO: runs the broader repository checker pass.\nSCENE: runs the scene-specific local check.\nUNUSED: scans the selected slice for unused resources.\nDELIVERY: shows delivery-readiness follow-up for the selected slice.";
     case ShellScreen::Review:
         return "Review confirms what is about to run.\n\nCheck that the selected slice and the selected check are correct before you start the run.";
     case ShellScreen::Run:
@@ -2496,7 +2540,7 @@ std::string BuildHelpPromptMessage(const ShellState& state) {
     case ShellScreen::Language:
         return "Choose the language used by the shell interface.\n\nProject data, checker output, and generated files stay the same.";
     default:
-        return "Use SG Preflight from left to right: choose a slice, choose the check, review it, run it, open the first results, then review files and follow-up.";
+        return "Use SERGFX from left to right: choose a slice, choose the check, review it, run it, open the first results, then review files and follow-up.";
     }
 }
 
@@ -2762,7 +2806,7 @@ RunRefreshResult BuildRunRefresh(
             || !has_cached_result_snapshot
             || linked_result_changed
             || !result.still_running
-            || (token % 3U) == 1U
+            || (token % 8U) == 1U
         );
 
     if (should_refresh_result_snapshot) {
@@ -3452,6 +3496,10 @@ void UpdateGuideInputMode() {
         ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
         ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
         ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_F1, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_F2, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_F3, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_F4, false) ||
         ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) ||
         ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) ||
         ImGui::IsKeyPressed(ImGuiKey_UpArrow, false) ||
@@ -3578,6 +3626,35 @@ void DrawInstallerLeftImage(const ShellState& state) {
         draw_list->AddRect(inner_min, inner_max, IM_COL32(74, 140, 118, static_cast<int>(48.0f * alpha)), 0.0f, 0, 1.0f);
 
         const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+        const bool has_framework_icon = HasTexture(g_shell_assets.framework_icon);
+        const bool has_game_icon = HasTexture(g_shell_assets.game_icon);
+        if (has_framework_icon || has_game_icon) {
+            const float art_phase = static_cast<float>(ImGui::GetTime()) * 0.18f;
+            const float crossfade = 0.5f + 0.5f * std::sin(art_phase);
+            const float framework_alpha = has_framework_icon ? (has_game_icon ? (1.0f - crossfade) : 1.0f) : 0.0f;
+            const float game_alpha = has_game_icon ? (has_framework_icon ? crossfade : 1.0f) : 0.0f;
+            const float framework_scale = 0.90f + 0.02f * std::sin(art_phase * 2.0f);
+            const float game_scale = 0.90f + 0.02f * std::sin((art_phase * 2.0f) + 1.8f);
+            DrawContainedTexture(
+                draw_list,
+                g_shell_assets.framework_icon,
+                inner_min,
+                inner_max,
+                IM_COL32(255, 255, 255, static_cast<int>(225.0f * alpha * framework_alpha)),
+                framework_scale,
+                ImVec2(0.0f, ShellUi(-8.0f + 4.0f * std::sin(art_phase * 2.6f)))
+            );
+            DrawContainedTexture(
+                draw_list,
+                g_shell_assets.game_icon,
+                inner_min,
+                inner_max,
+                IM_COL32(255, 255, 255, static_cast<int>(205.0f * alpha * game_alpha)),
+                game_scale,
+                ImVec2(0.0f, ShellUi(8.0f + 4.0f * std::sin((art_phase * 2.4f) + 2.0f)))
+            );
+        }
+
         if (HasTexture(g_shell_assets.arrow_circle)) {
             DrawRotatedTexture(
                 draw_list,
@@ -3585,7 +3662,7 @@ void DrawInstallerLeftImage(const ShellState& state) {
                 center,
                 ImVec2(ShellUi(132.0f), ShellUi(132.0f)),
                 static_cast<float>(ImGui::GetTime()) * -0.6f,
-                IM_COL32(255, 255, 255, static_cast<int>(42.0f * alpha))
+                IM_COL32(255, 255, 255, static_cast<int>((has_framework_icon || has_game_icon ? 24.0f : 42.0f) * alpha))
             );
         }
         if (HasTexture(g_shell_assets.pulse_install)) {
@@ -3595,7 +3672,7 @@ void DrawInstallerLeftImage(const ShellState& state) {
                 g_shell_assets.pulse_install,
                 ImVec2(center.x - ShellUi(88.0f) * pulse, center.y - ShellUi(88.0f) * pulse),
                 ImVec2(center.x + ShellUi(88.0f) * pulse, center.y + ShellUi(88.0f) * pulse),
-                IM_COL32(255, 255, 255, static_cast<int>(24.0f * alpha)),
+                IM_COL32(255, 255, 255, static_cast<int>((has_framework_icon || has_game_icon ? 16.0f : 24.0f) * alpha)),
                 ShellUi(18.0f)
             );
         }
@@ -3740,21 +3817,21 @@ void DrawBackdropChrome(const ShellState& state) {
         draw_list->AddText(g_title_font, size, pos, IM_COL32(255, 195, 0, static_cast<int>(255.0f * header_text_alpha)), header_text);
     }
 
-    if (g_small_font != nullptr && kShellVersionLabel[0] != '\0') {
+    if (g_body_font != nullptr && kShellVersionLabel[0] != '\0') {
         const std::string version_label = std::string("v") + kShellVersionLabel;
         const float version_alpha = ShellChromeLifecycleMotion() * ShellExitTextVisibility(state);
-        const float font_size = ShellUi(12.0f);
-        const ImVec2 text_size = g_small_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, version_label.c_str());
-        const ImVec2 pos(display_size.x - text_size.x - ShellUi(2.0f), display_size.y - text_size.y - ShellUi(2.0f));
+        const float font_size = ShellUi(14.0f);
+        const ImVec2 text_size = g_body_font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, version_label.c_str());
+        const ImVec2 pos(display_size.x - text_size.x - ShellUi(10.0f), display_size.y - text_size.y - ShellUi(6.0f));
         draw_list->AddText(
-            g_small_font,
+            g_body_font,
             font_size,
             ImVec2(pos.x + ShellUi(1.0f), pos.y + ShellUi(1.0f)),
             IM_COL32(0, 0, 0, static_cast<int>(230.0f * version_alpha)),
             version_label.c_str()
         );
         draw_list->AddText(
-            g_small_font,
+            g_body_font,
             font_size,
             pos,
             IM_COL32(173, 255, 156, static_cast<int>(255.0f * version_alpha)),
@@ -3970,7 +4047,7 @@ InstallerCanvasLayout GetScreenCanvasLayout(ShellScreen screen) {
     case ShellScreen::Introduction:
         return GetInstallerCanvasLayout(404.0f, 24.0f, 18.0f, 18.0f, 18.0f, 48.0f);
     case ShellScreen::Select:
-        return GetInstallerCanvasLayout(296.0f, 18.0f, 12.0f, 18.0f, 10.0f, 46.0f);
+        return GetInstallerCanvasLayout(276.0f, 16.0f, 10.0f, 16.0f, 10.0f, 46.0f);
     case ShellScreen::Review:
         return GetInstallerCanvasLayout(394.0f, 24.0f, 18.0f, 18.0f, 16.0f, 48.0f);
     case ShellScreen::Run:
@@ -4222,8 +4299,9 @@ bool DrawSelectableCard(
     const ImVec2 light_min(min.x + ShellUi(9.0f), min.y + ShellUi(10.0f));
     const ImVec2 light_max(min.x + ShellUi(22.0f), max.y - ShellUi(10.0f));
     const float card_width = max.x - min.x;
-    const size_t title_budget = static_cast<size_t>(std::clamp((card_width - ShellUi(44.0f)) / ShellUi(8.6f), 18.0f, 44.0f));
-    const size_t subtitle_budget = static_cast<size_t>(std::clamp((card_width - ShellUi(44.0f)) / ShellUi(9.2f), 16.0f, 40.0f));
+    const size_t title_budget = static_cast<size_t>(std::clamp((card_width - ShellUi(44.0f)) / ShellUi(8.1f), 18.0f, 60.0f));
+    const size_t subtitle_budget = static_cast<size_t>(std::clamp((card_width - ShellUi(44.0f)) / ShellUi(8.8f), 16.0f, 54.0f));
+    const size_t detail_budget = static_cast<size_t>(std::clamp((card_width - ShellUi(44.0f)) / ShellUi(8.4f), 24.0f, 78.0f));
     const std::string display_title = Ellipsize(title, title_budget);
     const std::string display_subtitle = Ellipsize(subtitle, subtitle_budget);
     draw->AddRectFilled(
@@ -4254,7 +4332,7 @@ bool DrawSelectableCard(
             g_small_font->LegacySize,
             ImVec2(text_x, min.y + ShellUi(47.0f)),
             ApplyAlpha(IM_COL32(169, 190, 180, 220), text_alpha),
-            Ellipsize(detail, 96U).c_str()
+            Ellipsize(detail, detail_budget).c_str()
         );
     }
 
@@ -4628,7 +4706,7 @@ void RenderProfilesPanel(ShellState& state) {
         ImGui::TextDisabled("%s", Tr(state, UiText::NoProfilesDiscovered));
         return;
     }
-    const float card_height = state.current_screen == ShellScreen::Select ? ShellUi(84.0f) : ShellUi(82.0f);
+    const float card_height = state.current_screen == ShellScreen::Select ? ShellUi(96.0f) : ShellUi(82.0f);
     for (size_t index = 0; index < state.profiles.size(); ++index) {
         const ProfileItem& profile = state.profiles[index];
         const bool selected = static_cast<int>(index) == state.selected_profile_index;
@@ -4723,14 +4801,14 @@ void RenderActionTabs(ShellState& state) {
     }
 
     const bool compact_select_tabs = state.current_screen == ShellScreen::Select;
-    const float gap_x = ShellUi(compact_select_tabs ? 8.0f : 8.0f);
-    const float gap_y = ShellUi(compact_select_tabs ? 8.0f : 8.0f);
-    const float button_height = ShellUi(compact_select_tabs ? 40.0f : 34.0f);
+    const float gap_x = ShellUi(compact_select_tabs ? 6.0f : 8.0f);
+    const float gap_y = ShellUi(compact_select_tabs ? 6.0f : 8.0f);
+    const float button_height = ShellUi(compact_select_tabs ? 32.0f : 34.0f);
     const float clip_width = ImGui::GetContentRegionAvail().x;
-    const int columns = tabs.size() >= 6U
-        ? (clip_width < ShellUi(430.0f) ? 2 : 3)
-        : (tabs.size() > 1 ? 2 : 1);
-    const float button_width = std::max(ShellUi(compact_select_tabs ? 104.0f : 76.0f), (clip_width - gap_x * static_cast<float>(columns - 1)) / static_cast<float>(columns));
+    const int columns = compact_select_tabs
+        ? (tabs.size() >= 5U ? 3 : (tabs.size() > 1 ? 2 : 1))
+        : (tabs.size() >= 6U ? (clip_width < ShellUi(430.0f) ? 2 : 3) : (tabs.size() > 1 ? 2 : 1));
+    const float button_width = std::max(ShellUi(compact_select_tabs ? 72.0f : 76.0f), (clip_width - gap_x * static_cast<float>(columns - 1)) / static_cast<float>(columns));
 
     g_tab_highlight_ready = false;
 
@@ -4741,7 +4819,9 @@ void RenderActionTabs(ShellState& state) {
         }
 
         const bool selected = state.selected_action_id == tab.action_id;
-        const size_t label_budget = compact_select_tabs ? 12U : (button_width < ShellUi(78.0f) ? 7U : 10U);
+        const size_t label_budget = compact_select_tabs
+            ? (button_width < ShellUi(84.0f) ? 8U : 10U)
+            : (button_width < ShellUi(78.0f) ? 7U : 10U);
         const std::string label = Ellipsize(tab.label, label_budget);
         if (DrawLanguageOptionButton(("tab-" + tab.action_id).c_str(), label.c_str(), selected, ImVec2(button_width, button_height))) {
             if (state.selected_action_id != tab.action_id) {
@@ -5378,51 +5458,29 @@ void RenderSelectScreen(ShellState& state) {
     }
 
     if (BeginCanvasOverlayRegion("select-description", layout.description_content_min, layout.description_content_max)) {
-        if (ImGui::BeginChild("select-description-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false)) {
-            BeginScreenTextTransition(state);
-            const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-            DrawCanvasPageTitle(Tr(state, UiText::SelectTitle), wrap_x);
+        BeginScreenTextTransition(state);
+        const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        DrawCanvasPageTitle(Tr(state, UiText::SelectTitle), wrap_x);
+        ImGui::Dummy(ImVec2(0.0f, ShellUi(4.0f)));
 
-            ImGui::Dummy(ImVec2(0.0f, ShellUi(6.0f)));
-            ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextWrapped("Pick one slice on the right, then choose the local check to run.");
-            ImGui::PopTextWrapPos();
-            ImGui::Dummy(ImVec2(0.0f, ShellUi(4.0f)));
-
-            if (!state.profiles.empty()) {
-                const ProfileItem& profile = state.profiles[static_cast<size_t>(state.selected_profile_index)];
-                if (g_small_font != nullptr) {
-                    ImGui::PushFont(g_small_font);
-                }
-                ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::SelectedSlice));
-                if (g_small_font != nullptr) {
-                    ImGui::PopFont();
-                }
-                ImGui::PushTextWrapPos(wrap_x);
-                ImGui::Text("%s", (profile.profile_id + "  " + profile.label).c_str());
-                ImGui::PopTextWrapPos();
-                ImGui::Dummy(ImVec2(0.0f, ShellUi(2.0f)));
-            }
-
-            if (g_small_font != nullptr) {
-                ImGui::PushFont(g_small_font);
-            }
-            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionPath));
-            if (g_small_font != nullptr) {
-                ImGui::PopFont();
-            }
-            if (state.profile_panel_loading) {
-                ImGui::Spacing();
-                ImGui::TextDisabled("%s", "Loading the available checks for this slice.");
-                EndScreenTextTransition();
-                const float pulse = 0.28f + 0.20f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.2f));
-                DrawProgressMeter(pulse, "LOADING CHECKS");
-            } else {
-                EndScreenTextTransition();
-                RenderActionTabs(state);
-            }
+        if (g_small_font != nullptr) {
+            ImGui::PushFont(g_small_font);
         }
-        ImGui::EndChild();
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ActionPath));
+        if (g_small_font != nullptr) {
+            ImGui::PopFont();
+        }
+        EndScreenTextTransition();
+
+        if (state.profile_panel_loading) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", "Loading the available checks for this slice.");
+            const float pulse = 0.28f + 0.20f * (0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.2f));
+            DrawProgressMeter(pulse, "LOADING CHECKS");
+        } else {
+            ImGui::Dummy(ImVec2(0.0f, ShellUi(2.0f)));
+            RenderActionTabs(state);
+        }
     }
     EndCanvasOverlayRegion();
 
@@ -5435,8 +5493,6 @@ void RenderSelectScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
-        ImGui::Dummy(ImVec2(0.0f, ShellUi(2.0f)));
-        ImGui::TextDisabled("%s", "Pick one slice.");
         EndScreenTextTransition();
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -6181,9 +6237,9 @@ void RenderButtonGuide(ShellState& state) {
     case ShellScreen::Run:
         guide_items = {
             {"guide-next", "Enter", run_primary_label, IsActionStillRunning(state) || CanAdvanceFromPage(state, state.current_screen), false, true},
-            {"guide-log", "L", Tr(state, UiText::RawLog), state.snapshot.has_value(), false, true},
+            {"guide-log", "F2", Tr(state, UiText::RawLog), state.snapshot.has_value(), false, true},
+            {"guide-report", "F3", Tr(state, UiText::Report), has_report, false, true},
             {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
-            {"guide-report", "P", Tr(state, UiText::Report), has_report, true, true},
         };
         break;
     case ShellScreen::Evidence:
@@ -6225,6 +6281,9 @@ void RenderButtonGuide(ShellState& state) {
         A,
         B,
         F1,
+        F2,
+        F3,
+        F4,
         Lmb,
         Enter,
         Escape,
@@ -6290,6 +6349,12 @@ void RenderButtonGuide(ShellState& state) {
         if (std::strcmp(item.id, "guide-help") == 0 && HasTexture(g_shell_assets.help_key_f1)) {
             return GuideAtlasIcon::F1;
         }
+        if (std::strcmp(item.id, "guide-log") == 0 && HasTexture(g_shell_assets.help_key_f2)) {
+            return GuideAtlasIcon::F2;
+        }
+        if (std::strcmp(item.id, "guide-report") == 0 && HasTexture(g_shell_assets.help_key_f3)) {
+            return GuideAtlasIcon::F3;
+        }
         if (back_item) {
             return GuideAtlasIcon::Escape;
         }
@@ -6317,9 +6382,27 @@ void RenderButtonGuide(ShellState& state) {
             break;
         case GuideAtlasIcon::F1:
             texture = &g_shell_assets.help_key_f1;
-            uv_min = ImVec2(206.0f / 1024.0f, 182.0f / 1024.0f);
-            uv_max = ImVec2(817.0f / 1024.0f, 816.0f / 1024.0f);
-            size = ImVec2(ShellUi(48.0f), ShellUi(48.0f));
+            uv_min = ImVec2(197.0f / 1024.0f, 173.0f / 1024.0f);
+            uv_max = ImVec2(827.0f / 1024.0f, 825.0f / 1024.0f);
+            size = ImVec2(ShellUi(38.0f), ShellUi(38.0f));
+            break;
+        case GuideAtlasIcon::F2:
+            texture = &g_shell_assets.help_key_f2;
+            uv_min = ImVec2(197.0f / 1024.0f, 173.0f / 1024.0f);
+            uv_max = ImVec2(827.0f / 1024.0f, 825.0f / 1024.0f);
+            size = ImVec2(ShellUi(38.0f), ShellUi(38.0f));
+            break;
+        case GuideAtlasIcon::F3:
+            texture = &g_shell_assets.help_key_f3;
+            uv_min = ImVec2(197.0f / 1024.0f, 173.0f / 1024.0f);
+            uv_max = ImVec2(827.0f / 1024.0f, 825.0f / 1024.0f);
+            size = ImVec2(ShellUi(38.0f), ShellUi(38.0f));
+            break;
+        case GuideAtlasIcon::F4:
+            texture = &g_shell_assets.help_key_f4;
+            uv_min = ImVec2(197.0f / 1024.0f, 173.0f / 1024.0f);
+            uv_max = ImVec2(827.0f / 1024.0f, 825.0f / 1024.0f);
+            size = ImVec2(ShellUi(38.0f), ShellUi(38.0f));
             break;
         case GuideAtlasIcon::Lmb:
             texture = &g_shell_assets.kbm_icons;
@@ -6623,6 +6706,26 @@ void HandleShellHotkeys(ShellState& state) {
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
         OpenPrompt(state, Tr(state, UiText::Help), BuildHelpPromptMessage(state), false, false, false);
         return;
+    }
+
+    if (state.current_screen == ShellScreen::Run) {
+        if (ImGui::IsKeyPressed(ImGuiKey_F2, false) && state.snapshot.has_value()) {
+            OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->log_path));
+            return;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) {
+            if (state.run_snapshot.has_value()) {
+                for (const auto& artifact : state.run_snapshot->artifacts) {
+                    if (artifact.label == "HTML report") {
+                        OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
+                        return;
+                    }
+                }
+            } else if (state.snapshot.has_value() && !state.snapshot->latest_run_links.html_report.empty()) {
+                OpenPath(sg_preflight::native_shell::ToWide(state.snapshot->latest_run_links.html_report));
+                return;
+            }
+        }
     }
 
     if (!ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
@@ -7137,7 +7240,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     HWND window_handle = CreateWindowW(
         window_class.lpszClassName,
-        L"SG Preflight - Native Operator Shell",
+        L"SERGFX - Project HMI & SDET",
         window_style,
         window_x,
         window_y,
@@ -7247,6 +7350,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
         if (
             !state.exit_transition_active
+            && !state.prompt_visible
             && !state.run_refresh_loading
             && !state.current_run_id.empty()
             && IsActionStillRunning(state)

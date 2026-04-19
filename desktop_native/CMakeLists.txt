@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
-set(SG_NATIVE_SHELL_VERSION "1.0.3")
+set(SG_NATIVE_SHELL_VERSION "1.0.0")
 
 FetchContent_Declare(
   imgui
@@ -67,6 +67,7 @@ add_executable(
   src/backend_bridge.cpp
   src/localization.cpp
   src/main.cpp
+  src/native_shell.rc
   src/screenshot_capture.cpp
   src/texture_loader.cpp
 )

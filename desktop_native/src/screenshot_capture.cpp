@@ -93,6 +93,11 @@ bool SaveMappedTextureAsPng(
         return false;
     }
 
+    const std::filesystem::path temp_output_path = output_path;
+    const std::filesystem::path temp_png_path = temp_output_path.string() + ".tmp";
+    std::error_code path_error;
+    std::filesystem::remove(temp_png_path, path_error);
+
     bool saved = false;
     do {
         std::error_code create_error;
@@ -110,7 +115,7 @@ bool SaveMappedTextureAsPng(
             break;
         }
 
-        const std::wstring wide_path = output_path.wstring();
+        const std::wstring wide_path = temp_png_path.wstring();
         if (FAILED(stream->InitializeFromFilename(wide_path.c_str(), GENERIC_WRITE))) {
             SetError(error, "Failed to open PNG output path \"" + WideToUtf8(wide_path) + "\".");
             break;
@@ -193,12 +198,31 @@ bool SaveMappedTextureAsPng(
             SetError(error, "Failed to commit PNG encoder.");
             break;
         }
+        if (FAILED(stream->Commit(STGC_DEFAULT))) {
+            SetError(error, "Failed to flush PNG stream.");
+            break;
+        }
 
         saved = true;
     } while (false);
 
     if (should_uninitialize) {
         CoUninitialize();
+    }
+
+    if (saved) {
+        std::error_code replace_error;
+        std::filesystem::remove(output_path, replace_error);
+        replace_error.clear();
+        std::filesystem::rename(temp_png_path, output_path, replace_error);
+        if (replace_error) {
+            SetError(error, "Failed to finalize PNG capture output \"" + output_path.string() + "\".");
+            std::filesystem::remove(temp_png_path, replace_error);
+            return false;
+        }
+    } else {
+        std::error_code cleanup_error;
+        std::filesystem::remove(temp_png_path, cleanup_error);
     }
     return saved;
 }

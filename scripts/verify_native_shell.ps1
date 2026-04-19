@@ -324,11 +324,11 @@ try {
     Capture-Stage -TargetProcess $process -Name "prompt_intro"
 
     Send-Key -TargetProcess $process -Keys "{ESC}" -SettleMs $PromptSettleMs
-    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_open title="QUIT SG PREFLIGHT"' -TimeoutSeconds 6)
+    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_open title="QUIT SERGFX"' -TimeoutSeconds 6)
     Capture-Stage -TargetProcess $process -Name "prompt_banner"
 
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $PromptSettleMs
-    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_controls_open title="QUIT SG PREFLIGHT"' -TimeoutSeconds 6)
+    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_controls_open title="QUIT SERGFX"' -TimeoutSeconds 6)
     Capture-Stage -TargetProcess $process -Name "prompt_choices"
 
     $quitStart = Get-Date
