@@ -88,6 +88,7 @@ target_link_libraries(
   PRIVATE
     sg_preflight_imgui
     nlohmann_json::nlohmann_json
+    comdlg32
     ole32
     windowscodecs
     xaudio2

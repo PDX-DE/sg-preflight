@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import uuid
@@ -188,8 +189,10 @@ class ActionRecord:
     command_preview: str = ""
     blocker_message: str = ""
     error_message: str = ""
+    exit_code: int | None = None
     paths: dict[str, str] = field(default_factory=dict)
     artifacts: list[dict[str, str]] = field(default_factory=list)
+    manual_evidence: list[dict[str, str]] = field(default_factory=list)
     summary: dict[str, Any] | None = None
     notes: list[str] = field(default_factory=list)
     progress: dict[str, Any] | None = None
@@ -212,8 +215,10 @@ class ActionRecord:
             "command_preview": self.command_preview,
             "blocker_message": self.blocker_message,
             "error_message": self.error_message,
+            "exit_code": self.exit_code,
             "paths": dict(self.paths),
             "artifacts": [dict(item) for item in self.artifacts],
+            "manual_evidence": [dict(item) for item in self.manual_evidence],
             "summary": self.summary,
             "notes": list(self.notes),
             "progress": dict(self.progress) if isinstance(self.progress, dict) else None,
@@ -238,10 +243,12 @@ class ActionRecord:
             command_preview=str(payload.get("command_preview", "")),
             blocker_message=str(payload.get("blocker_message", "")),
             error_message=str(payload.get("error_message", "")),
+            exit_code=payload.get("exit_code"),
             paths=dict(payload.get("paths", {}))
             if isinstance(payload.get("paths"), dict)
             else {},
             artifacts=[dict(item) for item in artifacts if isinstance(item, dict)],
+            manual_evidence=[dict(item) for item in payload.get("manual_evidence", []) if isinstance(item, dict)],
             summary=payload.get("summary") if isinstance(payload.get("summary"), dict) else None,
             notes=[str(item) for item in payload.get("notes", []) if item],
             progress=dict(payload.get("progress", {}))
@@ -564,16 +571,147 @@ def build_action_record(action: OperatorAction, workspace: Path | None = None) -
         paths={
             "output_root": str(output_root),
             "run_record": str(output_root / "action.json"),
+            "action_record": str(output_root / "action.json"),
             "log": str(output_root / "action.log"),
             "summary_json": str(output_root / "summary.json"),
             "summary_md": str(output_root / "summary.md"),
             "xlsx_report": str(output_root / "scene-check.xlsx"),
+            "manual_evidence_root": str(output_root / "manual-evidence"),
+            "manual_evidence_index": str(output_root / "manual-evidence" / "attachments.json"),
         },
     )
 
 
 def save_action_record(record: ActionRecord) -> None:
     write_json_file(Path(record.paths["run_record"]), record.to_dict())
+
+
+def _manual_evidence_root(record: ActionRecord) -> Path:
+    configured = str(record.paths.get("manual_evidence_root", "")).strip()
+    if configured:
+        return Path(configured)
+    return Path(record.paths["output_root"]) / "manual-evidence"
+
+
+def _manual_evidence_index_path(record: ActionRecord) -> Path:
+    configured = str(record.paths.get("manual_evidence_index", "")).strip()
+    if configured:
+        return Path(configured)
+    return _manual_evidence_root(record) / "attachments.json"
+
+
+def _manual_evidence_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9._-]+", "-", value.strip().lower())
+    slug = slug.strip("-._")
+    return slug or "manual-evidence"
+
+
+def _manual_evidence_default_label(kind: str, source_path: Path | None = None) -> str:
+    if kind == "screenshot":
+        return "Local manual screenshot evidence"
+    if kind == "blender_note":
+        return "Blender review note"
+    if kind == "raco_note":
+        return "RaCo review note"
+    if kind == "verification_note":
+        return "Manual verification note"
+    if kind == "external_file" and source_path is not None:
+        return source_path.name
+    return "Manual evidence"
+
+
+def _manual_evidence_default_note(kind: str, label: str) -> str:
+    templates = {
+        "blender_note": (
+            f"{label}\n\n"
+            "- Area checked:\n"
+            "- What matched in Blender:\n"
+            "- What still needs SG / RaCo follow-up:\n"
+        ),
+        "raco_note": (
+            f"{label}\n\n"
+            "- Scene checked:\n"
+            "- What matched in RaCo:\n"
+            "- What still needs SG follow-up:\n"
+        ),
+        "verification_note": (
+            f"{label}\n\n"
+            "- What was verified:\n"
+            "- Result:\n"
+            "- Remaining blocker or follow-up:\n"
+        ),
+    }
+    return templates.get(kind, f"{label}\n")
+
+
+def _manual_evidence_target_path(record: ActionRecord, kind: str, label: str, source_path: Path | None = None) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    suffix = source_path.suffix if source_path is not None and source_path.suffix else ".md"
+    basename = f"{stamp}-{_manual_evidence_slug(kind)}-{_manual_evidence_slug(label)}-{uuid.uuid4().hex[:6]}{suffix}"
+    return _manual_evidence_root(record) / basename
+
+
+def _write_manual_evidence_index(record: ActionRecord) -> None:
+    write_json_file(
+        _manual_evidence_index_path(record),
+        {
+            "schema_version": 1,
+            "run_id": record.run_id,
+            "items": [dict(item) for item in record.manual_evidence],
+        },
+    )
+
+
+def attach_manual_evidence(
+    run_id_or_path: str | Path,
+    workspace: Path | None = None,
+    *,
+    kind: str,
+    label: str = "",
+    source_path: str = "",
+    note: str = "",
+) -> dict[str, str]:
+    root = workspace_root(workspace)
+    record = load_action_record(run_id_or_path, root)
+    source = Path(source_path).expanduser() if source_path.strip() else None
+    if source is not None and not source.exists():
+        raise FileNotFoundError(f"Manual evidence source was not found: {source}")
+
+    manual_root = _manual_evidence_root(record)
+    manual_root.mkdir(parents=True, exist_ok=True)
+
+    resolved_label = label.strip() or _manual_evidence_default_label(kind, source)
+    resolved_note = note.strip()
+    target_path = _manual_evidence_target_path(record, kind, resolved_label, source)
+
+    if kind in {"blender_note", "raco_note", "verification_note"}:
+        text = resolved_note or _manual_evidence_default_note(kind, resolved_label)
+        target_path.write_text(text.strip() + "\n", encoding="utf-8")
+        resolved_note = text.strip()
+    elif source is not None:
+        source_resolved = source.resolve()
+        target_resolved = target_path.resolve()
+        if source_resolved != target_resolved:
+            shutil.copy2(source_resolved, target_resolved)
+        else:
+            target_path = source_resolved
+    else:
+        raise ValueError("Manual evidence attachment requires a source file or a note-based kind.")
+
+    entry = {
+        "id": uuid.uuid4().hex,
+        "kind": kind.strip(),
+        "label": resolved_label,
+        "path": str(target_path),
+        "note": resolved_note,
+        "source_path": str(source.resolve()) if source is not None else "",
+        "created_at_utc": utc_now(),
+    }
+    record.manual_evidence.append(entry)
+    record.artifacts.append(_artifact(resolved_label, target_path))
+    _write_manual_evidence_index(record)
+    save_action_record(record)
+    return entry
 
 
 def _progress_event(
@@ -731,10 +869,13 @@ def _nested_action_record(parent: ActionRecord, action: OperatorAction, slug: st
         paths={
             "output_root": str(output_root),
             "run_record": str(output_root / "action.json"),
+            "action_record": str(output_root / "action.json"),
             "log": str(output_root / "action.log"),
             "summary_json": str(output_root / "summary.json"),
             "summary_md": str(output_root / "summary.md"),
             "xlsx_report": str(output_root / "scene-check.xlsx"),
+            "manual_evidence_root": str(output_root / "manual-evidence"),
+            "manual_evidence_index": str(output_root / "manual-evidence" / "attachments.json"),
         },
     )
 
@@ -750,6 +891,7 @@ def _complete_nested_action_record(
     record.notes = notes
     record.status = "completed"
     record.completed_at_utc = utc_now()
+    record.exit_code = 0
     record.progress = build_progress_payload(
         ACTION_PROGRESS_PLANS.get(record.kind, (("queued", "Queued"), ("finalize", "Finalize action record"))),
         step_key="finalize",
@@ -1845,6 +1987,7 @@ def execute_operator_action(
     if not action.ready:
         record.status = "blocked"
         record.completed_at_utc = utc_now()
+        record.exit_code = 0
         record.summary = {
             "title": action.label,
             "lines": [action.blocker_message or "This action is blocked on the current machine."],
@@ -1902,6 +2045,7 @@ def execute_operator_action(
         record.notes = notes
         record.status = "completed"
         record.completed_at_utc = utc_now()
+        record.exit_code = 0
         record.progress = build_progress_payload(
             ACTION_PROGRESS_PLANS.get(action.kind, (("queued", "Queued"),)),
             step_key="finalize",
@@ -1921,6 +2065,7 @@ def execute_operator_action(
     except Exception as exc:
         record.status = "failed"
         record.error_message = str(exc)
+        record.exit_code = 1
         record.completed_at_utc = utc_now()
         existing_progress = dict(record.progress or {})
         failure_step = str(existing_progress.get("step_key", "finalize")).strip() or "finalize"

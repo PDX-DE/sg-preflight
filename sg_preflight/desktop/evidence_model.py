@@ -136,6 +136,11 @@ class DesktopActionSnapshot:
     current_command: str
     child_run_id: str
     linked_run_id: str
+    workspace_root: str
+    project_root: str
+    output_root: str
+    error_message: str
+    exit_code: int
     summary_lines: tuple[str, ...]
     top_paths: tuple[DesktopEvidenceItem, ...]
     manual_followups: tuple[str, ...]
@@ -416,6 +421,19 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             ),
             path=str(readiness.get("raco_headless", {}).get("path", "")),
             next_action="Set SG_RACO_HEADLESS or install the approved Ramses Composer build on this machine.",
+        ),
+        _item(
+            key="raco_gui",
+            category="Local tools",
+            label="Ramses Composer / RaCo GUI",
+            state="ready" if _ready_from_prereq("raco_gui") else "missing",
+            summary=(
+                "A Ramses Composer GUI executable is available for first-pass open-in-RaCo adapters."
+                if _ready_from_prereq("raco_gui")
+                else "No Ramses Composer GUI executable is configured locally yet."
+            ),
+            path=str(readiness.get("raco_gui", {}).get("path", "")),
+            next_action="Set SG_RACO_GUI or install the approved Ramses Composer GUI build before exposing open-in-RaCo adapters.",
         ),
         _item(
             key="blender_executable",
@@ -773,6 +791,19 @@ def _artifact_items(record: ActionRecord) -> tuple[DesktopArtifactItem, ...]:
     return _dedupe_artifact_items(items)
 
 
+def _manual_evidence_copy_lines(record: ActionRecord) -> tuple[str, ...]:
+    lines: list[str] = []
+    for raw in record.manual_evidence[:6]:
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("label", "Manual evidence")).strip() or "Manual evidence"
+        path = str(raw.get("path", "")).strip()
+        if not path:
+            continue
+        lines.append(f"- {label}: {path}")
+    return tuple(lines)
+
+
 def _tail_text(path: str, limit: int = 30) -> str:
     if not path:
         return ""
@@ -918,6 +949,7 @@ def _quick_update_text(
     primary_line: str,
     html_report: str,
     project_root: str,
+    manual_evidence_lines: tuple[str, ...] = (),
 ) -> str:
     lines = [
         f"{heading} - {profile_id}",
@@ -930,6 +962,8 @@ def _quick_update_text(
         lines.extend(["", f"Open first: {primary_line}"])
     if grouped_lines:
         lines.extend(["", "Top findings:", *grouped_lines[:4]])
+    if manual_evidence_lines:
+        lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
     lines.extend(["", "Open if needed:"])
     if html_report:
         lines.append(f"HTML report: {html_report}")
@@ -950,6 +984,7 @@ def _export_copy_items(
     markdown_report: str,
     project_root: str,
     output_root: str,
+    manual_evidence_lines: tuple[str, ...] = (),
 ) -> tuple[DesktopCopyItem, ...]:
     primary_problem = primary_line or (grouped_lines[0] if grouped_lines else "No deterministic finding is currently blocking the run.")
     quick_update = _quick_update_text(
@@ -962,6 +997,7 @@ def _export_copy_items(
         primary_line=primary_line,
         html_report=html_report,
         project_root=project_root,
+        manual_evidence_lines=manual_evidence_lines,
     )
     implementation_lines = [
         f"Jira implementation update - {profile_id}",
@@ -1023,6 +1059,13 @@ def _export_copy_items(
         f"- Primary issue: {primary_problem}",
         f"- Evidence: {html_report}",
     ]
+    if manual_evidence_lines:
+        implementation_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        positive_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        negative_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        qa_hero_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        pre_delivery_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        delivery_doc_lines.extend(["- Manual evidence:", *manual_evidence_lines[:4]])
     if workflow_stage_label:
         implementation_lines.insert(1, f"Workflow stage: {workflow_stage_label}")
         positive_lines.insert(1, f"Workflow stage: {workflow_stage_label}")
@@ -1061,6 +1104,7 @@ def _copy_items(
 ) -> tuple[DesktopCopyItem, ...]:
     title = str(record.summary.get("title", record.label)) if isinstance(record.summary, dict) else record.label
     primary_line = _primary_evidence_line(items)
+    manual_evidence_lines = _manual_evidence_copy_lines(record)
     if run_record is not None:
         grouped_items = _report_grouped_items(run_record)
         grouped_lines = _grouped_finding_lines(grouped_items)
@@ -1075,6 +1119,7 @@ def _copy_items(
             markdown_report=str(run_record.paths.get("markdown_report", "")).strip(),
             project_root=str(run_record.project_root).strip(),
             output_root=str(run_record.paths.get("output_root", "")).strip(),
+            manual_evidence_lines=manual_evidence_lines,
         )
 
     summary_lines = _summary_lines(record.summary)
@@ -1088,6 +1133,7 @@ def _copy_items(
         primary_line=primary_line,
         html_report="",
         project_root=record.project_root,
+        manual_evidence_lines=manual_evidence_lines,
     )
     return tuple(
         item
@@ -1167,6 +1213,7 @@ def _desktop_run_snapshot_from_action_record(
             break
 
     notes = [str(note).strip() for note in record.notes if str(note).strip()]
+    notes.extend(_manual_evidence_copy_lines(record))
     if record.error_message.strip():
         notes.append(record.error_message.strip())
 
@@ -1277,9 +1324,14 @@ def desktop_action_snapshot(
         progress_percent=int(progress.get("percent", 0) or 0),
         progress_label=str(progress.get("label", record.status.title())).strip(),
         progress_detail=current_detail,
-        current_command=str(current_meta.get("command", "")).strip(),
+        current_command=str(current_meta.get("command", record.command_preview)).strip(),
         child_run_id=str(current_meta.get("child_run_id", "")).strip(),
         linked_run_id=(str(current_meta.get("child_run_id", "")).strip() or (run_record.run_id if run_record is not None else "")),
+        workspace_root=str(record.workspace_root).strip(),
+        project_root=str(record.project_root).strip(),
+        output_root=str(record.paths.get("output_root", "")).strip(),
+        error_message=str(record.error_message).strip(),
+        exit_code=int(record.exit_code or 0),
         summary_lines=_summary_lines(summary),
         top_paths=evidence_items,
         manual_followups=tuple(str(item).strip() for item in evidence.get("manual_followups", []) if str(item).strip()),

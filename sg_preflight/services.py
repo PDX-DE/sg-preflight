@@ -728,6 +728,24 @@ def _raco_headless_path(root: Path) -> Path:
     return path
 
 
+def _raco_gui_path(root: Path) -> Path:
+    path, from_env = _env_or_default_path(
+        ("SG_RACO_GUI", "SG_RACO_EDITOR", "RACO_GUI_EXE"),
+        (
+            root / "external" / "ramses" / "RamsesComposer.exe",
+            root.parent / "RamsesComposerWindows" / "bin" / "RelWithDebInfo" / "RamsesComposer.exe",
+            Path(r"C:\RamsesComposerWindows\bin\RelWithDebInfo\RamsesComposer.exe"),
+        ),
+    )
+    if from_env:
+        return path
+
+    command_path = shutil.which("RamsesComposer.exe")
+    if command_path:
+        return Path(command_path)
+    return path
+
+
 def _blender_executable_path(root: Path) -> Path:
     path, from_env = _env_or_default_path(
         ("SG_BLENDER_EXE", "BLENDER_EXE"),
@@ -772,6 +790,7 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
     bmw_models_repo = _bmw_models_repo_path(root)
     delivery_checklist_root = _delivery_checklist_root(root)
     raco_headless = _raco_headless_path(root)
+    raco_gui = _raco_gui_path(root)
     blender_executable = _blender_executable_path(root)
     checks = [
         ("workspace_root", root),
@@ -787,6 +806,7 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
         ),
         ("scene_checker", mirror_root / "check_scenes.py"),
         ("raco_headless", raco_headless),
+        ("raco_gui", raco_gui),
         ("blender_executable", blender_executable),
         ("carmodel_data", mirror_root / ".pdx" / "python" / "carmodel_data.json"),
         ("resource_mappings", mirror_root / ".pdx" / "python" / "resource_mappings.json"),

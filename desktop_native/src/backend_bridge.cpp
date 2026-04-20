@@ -324,6 +324,16 @@ void from_json(const json& payload, ArtifactItem& item) {
     item.path = ValueString(payload, "path");
 }
 
+void from_json(const json& payload, ManualEvidenceItem& item) {
+    item.id = ValueString(payload, "id");
+    item.kind = ValueString(payload, "kind");
+    item.label = ValueString(payload, "label");
+    item.path = ValueString(payload, "path");
+    item.note = ValueString(payload, "note");
+    item.source_path = ValueString(payload, "source_path");
+    item.created_at_utc = ValueString(payload, "created_at_utc");
+}
+
 void from_json(const json& payload, CopyItem& item) {
     item.key = ValueString(payload, "key");
     item.label = ValueString(payload, "label");
@@ -389,6 +399,11 @@ void from_json(const json& payload, ActionSnapshot& item) {
     item.current_command = ValueString(payload, "current_command");
     item.child_run_id = ValueString(payload, "child_run_id");
     item.linked_run_id = ValueString(payload, "linked_run_id");
+    item.workspace_root = ValueString(payload, "workspace_root");
+    item.project_root = ValueString(payload, "project_root");
+    item.output_root = ValueString(payload, "output_root");
+    item.error_message = ValueString(payload, "error_message");
+    item.exit_code = ValueInt(payload, "exit_code", 0);
     if (payload.contains("summary_lines") && payload.at("summary_lines").is_array()) {
         item.summary_lines = payload.at("summary_lines").get<std::vector<std::string>>();
     }
@@ -540,6 +555,38 @@ std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& co
     };
     AppendWorkspace(args, config);
     return ParseArray<EnvironmentDoctorItem>(RunJsonCommand(config, args));
+}
+
+ManualEvidenceItem AttachManualEvidence(
+    const BackendConfig& config,
+    const std::string& run_id_or_path,
+    const std::string& kind,
+    const std::string& label,
+    const std::wstring& source_path,
+    const std::wstring& note_text
+) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"attach-manual-evidence",
+        ToWide(run_id_or_path),
+        L"--kind",
+        ToWide(kind),
+        L"--json",
+    };
+    if (!label.empty()) {
+        args.push_back(L"--label");
+        args.push_back(ToWide(label));
+    }
+    if (!source_path.empty()) {
+        args.push_back(L"--source");
+        args.push_back(source_path);
+    }
+    if (!note_text.empty()) {
+        args.push_back(L"--note");
+        args.push_back(note_text);
+    }
+    AppendWorkspace(args, config);
+    return RunJsonCommand(config, args).get<ManualEvidenceItem>();
 }
 
 ActionSnapshot LoadSnapshot(const BackendConfig& config, const std::string& run_id_or_path) {

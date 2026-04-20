@@ -23,6 +23,7 @@ from sg_preflight.desktop.evidence_model import (
 )
 from sg_preflight.profiles import get_run_profile, list_run_profiles
 from sg_preflight.qa_actions import (
+    attach_manual_evidence,
     build_action_record,
     execute_operator_action,
     get_operator_action,
@@ -410,6 +411,18 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_environment_parser.add_argument("--workspace", help="Workspace root override")
     desktop_environment_parser.add_argument("--json", action="store_true", help="Print environment payload as JSON")
 
+    desktop_attach_manual_parser = desktop_state_sub.add_parser(
+        "attach-manual-evidence",
+        help="Attach manual evidence into one action bundle",
+    )
+    desktop_attach_manual_parser.add_argument("run_id_or_path", help="Action run id or action.json path")
+    desktop_attach_manual_parser.add_argument("--kind", required=True, help="Evidence kind such as screenshot or blender_note")
+    desktop_attach_manual_parser.add_argument("--label", default="", help="Optional evidence label override")
+    desktop_attach_manual_parser.add_argument("--source", default="", help="Optional source file to copy into the action bundle")
+    desktop_attach_manual_parser.add_argument("--note", default="", help="Optional note text for note-based evidence")
+    desktop_attach_manual_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_attach_manual_parser.add_argument("--json", action="store_true", help="Print attachment payload as JSON")
+
     demo_good = sub.add_parser("demo-good", help="Run the good demo bundle")
     demo_good.add_argument("--fail-on", default="error", choices=["error", "warning", "never"])
 
@@ -648,6 +661,15 @@ def main(argv: list[str] | None = None) -> int:
             payload = desktop_run_snapshot(args.run_id_or_path, state_root)
         elif args.desktop_state_command == "environment":
             payload = desktop_environment_doctor(state_root)
+        elif args.desktop_state_command == "attach-manual-evidence":
+            payload = attach_manual_evidence(
+                args.run_id_or_path,
+                state_root,
+                kind=args.kind,
+                label=args.label,
+                source_path=args.source,
+                note=args.note,
+            )
         else:
             parser.error(f"Unhandled desktop-state command: {args.desktop_state_command}")
             return 1

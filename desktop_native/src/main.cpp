@@ -5,6 +5,7 @@
 #include "texture_loader.hpp"
 
 #include <d3d12.h>
+#include <commdlg.h>
 #include <dxgi1_5.h>
 #include <shellapi.h>
 #include <windows.h>
@@ -43,6 +44,7 @@ using sg_preflight::native_shell::DdsTextureHandle;
 using sg_preflight::native_shell::EvidenceItem;
 using sg_preflight::native_shell::EnvironmentDoctorItem;
 using sg_preflight::native_shell::ManualCard;
+using sg_preflight::native_shell::ManualEvidenceItem;
 using sg_preflight::native_shell::ProfileItem;
 using sg_preflight::native_shell::RecentActionItem;
 using sg_preflight::native_shell::RecentRunItem;
@@ -214,6 +216,13 @@ struct ShellAudio {
 
 ShellAudio g_shell_audio;
 
+struct PendingManualEvidenceCapture {
+    bool active = false;
+    std::string run_id;
+    std::wstring note;
+    std::filesystem::path output_path;
+};
+
 struct ShellWindowOptions {
     bool fullscreen = true;
     int width = 0;
@@ -224,7 +233,9 @@ ShellWindowOptions g_window_options;
 std::filesystem::path g_capture_dir;
 std::filesystem::path g_capture_request_path;
 std::filesystem::path g_shell_ini_override_path;
+std::filesystem::path g_pending_capture_output_path;
 std::string g_pending_capture_name;
+PendingManualEvidenceCapture g_pending_manual_capture;
 
 enum class ShellScreen {
     Language,
@@ -243,7 +254,7 @@ enum class ShellDisplayMode {
     Cinematic,
 };
 
-ShellDisplayMode g_shell_display_mode = ShellDisplayMode::Work;
+ShellDisplayMode g_shell_display_mode = ShellDisplayMode::Cinematic;
 
 struct ShellState {
     BackendConfig backend;
@@ -298,6 +309,7 @@ struct ShellState {
     uint64_t run_refresh_token = 0;
     bool exit_transition_active = false;
     double exit_transition_started_at = -1.0;
+    std::array<char, 4096> manual_evidence_note{};
 };
 
 struct ProfilePanelLoadResult {
@@ -481,6 +493,8 @@ float ShellHeaderTextLifecycleMotion();
 float ShellExitTextVisibility(const ShellState& state);
 std::string SanitiseTraceText(std::string text);
 void DrawSelectionContainerChrome(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float alpha, bool fade_top);
+bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool accent, bool enabled);
+void ClearManualEvidenceNote(ShellState& state);
 
 constexpr float kPanelGrid = 9.0f;
 constexpr float kPanelHeaderHeight = 34.0f;
@@ -725,10 +739,8 @@ ShellDisplayMode LoadDisplayModePreferenceFromIni() {
         value.begin(),
         [](wchar_t character) { return static_cast<wchar_t>(towlower(character)); }
     );
-    ShellDisplayMode mode = value == L"cinematic"
-        ? ShellDisplayMode::Cinematic
-        : ShellDisplayMode::Work;
-    if (value.empty()) {
+    const ShellDisplayMode mode = ShellDisplayMode::Cinematic;
+    if (value != L"cinematic") {
         SaveDisplayModePreferenceToIni(mode);
     }
     return mode;
@@ -1327,9 +1339,6 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
 }
 
 void SetMusicEnabled(bool enabled) {
-    if (enabled && IsWorkDisplayMode()) {
-        enabled = false;
-    }
     g_shell_audio.music_enabled = enabled;
     SaveMusicPreferenceToIni(enabled);
     if (!enabled) {
@@ -1357,28 +1366,25 @@ void SetSfxEnabled(bool enabled) {
 void SetDisplayMode(ShellDisplayMode mode) {
     g_shell_display_mode = mode;
     SaveDisplayModePreferenceToIni(mode);
-    if (mode == ShellDisplayMode::Work && g_shell_audio.music_enabled) {
-        SetMusicEnabled(false);
-    }
     TraceUi(std::string("display_mode=") + (mode == ShellDisplayMode::Work ? "work" : "cinematic"));
 }
 
 ImFont* CurrentBodyFont() {
-    if (IsWorkDisplayMode() && g_readable_body_font != nullptr) {
-        return g_readable_body_font;
-    }
     if (g_body_font != nullptr) {
         return g_body_font;
+    }
+    if (g_readable_body_font != nullptr) {
+        return g_readable_body_font;
     }
     return ImGui::GetFont();
 }
 
 ImFont* CurrentSmallFont() {
-    if (IsWorkDisplayMode() && g_readable_small_font != nullptr) {
-        return g_readable_small_font;
-    }
     if (g_small_font != nullptr) {
         return g_small_font;
+    }
+    if (g_readable_small_font != nullptr) {
+        return g_readable_small_font;
     }
     return ImGui::GetFont();
 }
@@ -1500,7 +1506,7 @@ const char* ScreenSummary(ShellScreen screen) {
     case ShellScreen::Environment:
         return "Check what this machine can actually run before pretending Blender, RaCo, or BMW stages are ready.";
     case ShellScreen::Stages:
-        return "Check blocked BMW/manual steps, follow-up, display mode, and audio settings.";
+        return "Check blocked BMW/manual steps, attach manual evidence, and keep the shell settings honest.";
     default:
         return "Screen flow";
     }
@@ -2172,11 +2178,17 @@ void CleanupRenderTarget() {
 }
 
 void CapturePendingFrameIfRequested(UINT back_buffer_index) {
-    if (g_pending_capture_name.empty() || g_capture_dir.empty()) {
+    const bool queued_verifier_capture = !g_pending_capture_name.empty() && !g_capture_dir.empty();
+    const bool queued_manual_capture = !g_pending_capture_output_path.empty();
+    if (!queued_verifier_capture && !queued_manual_capture) {
         return;
     }
 
-    const std::filesystem::path output_path = g_capture_dir / (g_pending_capture_name + ".png");
+    const std::filesystem::path output_path = queued_manual_capture
+        ? g_pending_capture_output_path
+        : (g_capture_dir / (g_pending_capture_name + ".png"));
+    std::error_code directory_error;
+    std::filesystem::create_directories(output_path.parent_path(), directory_error);
     TraceUi(
         "capture_begin stage=\"" + g_pending_capture_name
         + "\" path=\"" + sg_preflight::native_shell::ToUtf8(output_path.wstring()) + "\""
@@ -2200,11 +2212,42 @@ void CapturePendingFrameIfRequested(UINT back_buffer_index) {
 
     if (!captured) {
         TraceUi("capture_failed stage=\"" + g_pending_capture_name + "\" error=\"" + SanitiseTraceText(capture_error) + "\"");
+        if (g_live_shell_state != nullptr) {
+            g_live_shell_state->last_error = capture_error.empty()
+                ? "Screenshot capture failed."
+                : capture_error;
+        }
     } else {
         TraceUi("capture_complete stage=\"" + g_pending_capture_name + "\"");
+        if (g_pending_manual_capture.active) {
+            try {
+                const ManualEvidenceItem item = sg_preflight::native_shell::AttachManualEvidence(
+                    g_live_shell_state != nullptr ? g_live_shell_state->backend : BackendConfig{},
+                    g_pending_manual_capture.run_id,
+                    "screenshot",
+                    std::string(),
+                    output_path.wstring(),
+                    g_pending_manual_capture.note
+                );
+                if (g_live_shell_state != nullptr) {
+                    g_live_shell_state->last_error.clear();
+                    g_live_shell_state->status_line = item.label.empty()
+                        ? "Manual screenshot evidence attached."
+                        : ("Manual screenshot evidence attached: " + item.label);
+                    ClearManualEvidenceNote(*g_live_shell_state);
+                    StartRunRefresh(*g_live_shell_state, true);
+                }
+            } catch (const std::exception& ex) {
+                if (g_live_shell_state != nullptr) {
+                    g_live_shell_state->last_error = ex.what();
+                }
+            }
+        }
     }
 
+    g_pending_capture_output_path.clear();
     g_pending_capture_name.clear();
+    g_pending_manual_capture = PendingManualEvidenceCapture{};
 }
 
 RECT PrimaryMonitorRect() {
@@ -2517,7 +2560,9 @@ std::wstring EnvironmentVariableValue(const wchar_t* name) {
 void ConfigureCaptureRequestDirectory() {
     g_capture_dir.clear();
     g_capture_request_path.clear();
+    g_pending_capture_output_path.clear();
     g_pending_capture_name.clear();
+    g_pending_manual_capture = PendingManualEvidenceCapture{};
 
     const std::wstring capture_dir = EnvironmentVariableValue(L"SG_PREFLIGHT_NATIVE_CAPTURE_DIR");
     if (capture_dir.empty()) {
@@ -2800,7 +2845,7 @@ std::string BuildHelpPromptMessage(const ShellState& state) {
     case ShellScreen::Environment:
         return "Environment Doctor shows what this machine can actually do right now.\n\nUse it to confirm Python/backend readiness, mirrored SG checker coverage, local RaCo or Blender adapters, BMW blockers, and output write access before you overclaim later stages.";
     case ShellScreen::Stages:
-        return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked BMW/manual items, work mode, and audio settings before you loop back to the next slice.";
+        return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked BMW/manual items, attach manual evidence into the active action bundle, and keep audio/settings honest before you loop back to the next slice.";
     case ShellScreen::Language:
         return "Choose the language used by the shell interface.\n\nProject data, checker output, and generated files stay the same.";
     default:
@@ -3504,6 +3549,70 @@ bool RevealPath(const std::wstring& path) {
     return reinterpret_cast<INT_PTR>(result) > 32;
 }
 
+std::wstring QuoteLaunchArgument(const std::wstring& value) {
+    std::wstring quoted = L"\"";
+    for (wchar_t character : value) {
+        if (character == L'"') {
+            quoted += L"\\\"";
+        } else {
+            quoted.push_back(character);
+        }
+    }
+    quoted.push_back(L'"');
+    return quoted;
+}
+
+bool OpenFolderPath(const std::wstring& path) {
+    if (path.empty()) {
+        return false;
+    }
+    std::filesystem::path target(path);
+    std::error_code error;
+    if (!std::filesystem::is_directory(target, error)) {
+        if (target.has_parent_path()) {
+            target = target.parent_path();
+        }
+    }
+    if (target.empty()) {
+        return false;
+    }
+    const HINSTANCE result = ShellExecuteW(nullptr, L"open", target.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(result) > 32;
+}
+
+bool LaunchExternalProgram(
+    const std::wstring& executable_path,
+    const std::wstring& arguments = L"",
+    const std::wstring& working_directory = L""
+) {
+    if (executable_path.empty()) {
+        return false;
+    }
+    const HINSTANCE result = ShellExecuteW(
+        nullptr,
+        L"open",
+        executable_path.c_str(),
+        arguments.empty() ? nullptr : arguments.c_str(),
+        working_directory.empty() ? nullptr : working_directory.c_str(),
+        SW_SHOWNORMAL
+    );
+    return reinterpret_cast<INT_PTR>(result) > 32;
+}
+
+std::wstring PromptForSingleFile() {
+    std::array<wchar_t, 32768> buffer{};
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.lpstrFilter = L"All Files\0*.*\0";
+    dialog.lpstrFile = buffer.data();
+    dialog.nMaxFile = static_cast<DWORD>(buffer.size());
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+    if (!GetOpenFileNameW(&dialog)) {
+        return {};
+    }
+    return std::wstring(buffer.data());
+}
+
 bool CopyText(const std::wstring& text) {
     if (!OpenClipboard(nullptr)) {
         return false;
@@ -3538,6 +3647,202 @@ std::wstring SelectedArtifactPath(const ShellState& state) {
     }
     const int clamped_index = std::clamp(state.selected_artifact_index, 0, static_cast<int>(artifacts.size()) - 1);
     return sg_preflight::native_shell::ToWide(artifacts[static_cast<size_t>(clamped_index)].path);
+}
+
+std::wstring EnvironmentDoctorPath(const ShellState& state, const std::string& key) {
+    const auto match = std::find_if(
+        state.environment_items.begin(),
+        state.environment_items.end(),
+        [&](const EnvironmentDoctorItem& item) { return item.key == key; }
+    );
+    if (match == state.environment_items.end() || match->path.empty()) {
+        return {};
+    }
+    return sg_preflight::native_shell::ToWide(match->path);
+}
+
+std::filesystem::path CurrentActionOutputRoot(const ShellState& state) {
+    if (state.snapshot.has_value() && !state.snapshot->output_root.empty()) {
+        return std::filesystem::path(sg_preflight::native_shell::ToWide(state.snapshot->output_root));
+    }
+    if (state.snapshot.has_value() && !state.snapshot->log_path.empty()) {
+        return std::filesystem::path(sg_preflight::native_shell::ToWide(state.snapshot->log_path)).parent_path();
+    }
+    if (!state.current_run_id.empty()) {
+        return std::filesystem::path(state.backend.workspace_root) / "out" / "operator-ui" / "actions" / sg_preflight::native_shell::ToWide(state.current_run_id);
+    }
+    return {};
+}
+
+std::wstring CurrentProjectRoot(const ShellState& state) {
+    if (state.snapshot.has_value() && !state.snapshot->project_root.empty()) {
+        return sg_preflight::native_shell::ToWide(state.snapshot->project_root);
+    }
+    return {};
+}
+
+bool PathHasExtension(const std::wstring& path, const std::wstring& expected_extension) {
+    if (path.empty()) {
+        return false;
+    }
+    const std::filesystem::path file_path(path);
+    return Lowercase(file_path.extension().wstring()) == Lowercase(expected_extension);
+}
+
+std::string ActiveManualEvidenceNote(const ShellState& state) {
+    return std::string(state.manual_evidence_note.data());
+}
+
+void ClearManualEvidenceNote(ShellState& state) {
+    state.manual_evidence_note.fill('\0');
+}
+
+bool AttachManualEvidenceToCurrentRun(
+    ShellState& state,
+    const std::string& kind,
+    const std::wstring& source_path = L"",
+    const std::wstring& note_text = L""
+) {
+    if (state.current_run_id.empty()) {
+        state.last_error = "Load or run one action first so manual evidence has a real action bundle.";
+        return false;
+    }
+    try {
+        const ManualEvidenceItem item = sg_preflight::native_shell::AttachManualEvidence(
+            state.backend,
+            state.current_run_id,
+            kind,
+            std::string(),
+            source_path,
+            note_text
+        );
+        state.last_error.clear();
+        state.status_line = item.label.empty()
+            ? "Manual evidence attached."
+            : ("Manual evidence attached: " + item.label);
+        StartRunRefresh(state, true);
+        return true;
+    } catch (const std::exception& ex) {
+        state.last_error = ex.what();
+        return false;
+    }
+}
+
+std::wstring TimestampedScreenshotFileName() {
+    SYSTEMTIME utc_now{};
+    GetSystemTime(&utc_now);
+    wchar_t buffer[128] = {};
+    swprintf_s(
+        buffer,
+        L"%04u%02u%02uT%02u%02u%02uZ-native-screenshot-%04x.png",
+        utc_now.wYear,
+        utc_now.wMonth,
+        utc_now.wDay,
+        utc_now.wHour,
+        utc_now.wMinute,
+        utc_now.wSecond,
+        GetTickCount() & 0xffffU
+    );
+    return std::wstring(buffer);
+}
+
+bool QueueManualScreenshotCapture(ShellState& state, const std::wstring& note_text) {
+    if (state.current_run_id.empty()) {
+        state.last_error = "Load or run one action first so screenshot evidence has a real action bundle.";
+        return false;
+    }
+    const std::filesystem::path action_root = CurrentActionOutputRoot(state);
+    if (action_root.empty()) {
+        state.last_error = "The active action bundle path is not available yet.";
+        return false;
+    }
+    const std::filesystem::path manual_root = action_root / "manual-evidence";
+    std::error_code error;
+    std::filesystem::create_directories(manual_root, error);
+    if (error) {
+        state.last_error = "Could not create the manual-evidence folder for the active action bundle.";
+        return false;
+    }
+    g_pending_capture_name = "manual-evidence";
+    g_pending_capture_output_path = manual_root / TimestampedScreenshotFileName();
+    g_pending_manual_capture.active = true;
+    g_pending_manual_capture.run_id = state.current_run_id;
+    g_pending_manual_capture.note = note_text;
+    g_pending_manual_capture.output_path = g_pending_capture_output_path;
+    state.last_error.clear();
+    state.status_line = "Manual screenshot capture queued for the current action bundle.";
+    TraceUi(
+        "manual_capture_queue run_id=\"" + state.current_run_id
+        + "\" path=\"" + sg_preflight::native_shell::ToUtf8(g_pending_capture_output_path.wstring()) + "\""
+    );
+    return true;
+}
+
+std::string BuildActionDiagnosticsText(const ActionSnapshot& snapshot) {
+    std::string text;
+    text += "Command:\n";
+    text += snapshot.current_command.empty() ? "(not reported)\n\n" : (snapshot.current_command + "\n\n");
+    text += "Exit code:\n";
+    text += std::to_string(snapshot.exit_code);
+    text += "\n\nWorking directory:\n";
+    text += snapshot.workspace_root.empty() ? "(not reported)\n" : snapshot.workspace_root + "\n";
+    if (!snapshot.project_root.empty()) {
+        text += "\nProject root:\n";
+        text += snapshot.project_root + "\n";
+    }
+    if (!snapshot.output_root.empty()) {
+        text += "\nAction folder:\n";
+        text += snapshot.output_root + "\n";
+    }
+    if (!snapshot.error_message.empty()) {
+        text += "\nError:\n";
+        text += snapshot.error_message + "\n";
+    }
+    return text;
+}
+
+void RenderPathAdapterButtons(ShellState& state, const char* prefix, const std::wstring& target_path) {
+    if (target_path.empty()) {
+        return;
+    }
+
+    const std::wstring blender_executable = EnvironmentDoctorPath(state, "blender_executable");
+    const std::wstring raco_gui_executable = EnvironmentDoctorPath(state, "raco_gui");
+    const std::wstring project_root = CurrentProjectRoot(state);
+    const bool is_blend = PathHasExtension(target_path, L".blend");
+    const bool is_rca = PathHasExtension(target_path, L".rca");
+
+    if (DrawPanelButton((std::string(prefix) + "-open-folder").c_str(), "OPEN FOLDER", ImVec2(ShellUi(170.0f), ShellUi(30.0f)), false, true)) {
+        OpenFolderPath(target_path);
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton((std::string(prefix) + "-open-project-root").c_str(), "OPEN PROJECT ROOT", ImVec2(ShellUi(210.0f), ShellUi(30.0f)), false, !project_root.empty())) {
+        OpenFolderPath(project_root);
+    }
+    ImGui::Spacing();
+
+    if (DrawPanelButton((std::string(prefix) + "-open-in-raco").c_str(), "OPEN IN RACO", ImVec2(ShellUi(170.0f), ShellUi(30.0f)), false, is_rca && !raco_gui_executable.empty())) {
+        LaunchExternalProgram(
+            raco_gui_executable,
+            L"--project " + QuoteLaunchArgument(target_path),
+            std::filesystem::path(raco_gui_executable).parent_path().wstring()
+        );
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton((std::string(prefix) + "-open-in-blender").c_str(), "OPEN IN BLENDER", ImVec2(ShellUi(190.0f), ShellUi(30.0f)), false, is_blend && !blender_executable.empty())) {
+        LaunchExternalProgram(
+            blender_executable,
+            QuoteLaunchArgument(target_path),
+            std::filesystem::path(blender_executable).parent_path().wstring()
+        );
+    }
+
+    if (is_rca && raco_gui_executable.empty()) {
+        ImGui::TextDisabled("%s", "RaCo path not configured.");
+    }
+    if (is_blend && blender_executable.empty()) {
+        ImGui::TextDisabled("%s", "Blender path not configured.");
+    }
 }
 
 std::string Ellipsize(const std::string& text, size_t limit = 180U) {
@@ -3645,7 +3950,7 @@ void LoadShellFonts(ImGuiIO& io, const std::filesystem::path& workspace_root) {
     if (g_mono_font == nullptr) {
         g_mono_font = g_readable_small_font;
     }
-    io.FontDefault = IsWorkDisplayMode() ? CurrentBodyFont() : g_body_font;
+    io.FontDefault = CurrentBodyFont();
 }
 
 void ApplyStyle() {
@@ -5365,6 +5670,34 @@ void RenderRunStatusContent(ShellState& state) {
                 ImGui::BulletText("%s", line.c_str());
             }
         }
+
+        const bool show_diagnostics =
+            snapshot.status == "failed"
+            || snapshot.exit_code != 0
+            || !snapshot.error_message.empty();
+        if (show_diagnostics) {
+            ImGui::Spacing();
+            InlineSectionLabel("DIAGNOSTICS");
+            DrawReadonlyTextBox("run-diagnostics-summary", BuildActionDiagnosticsText(snapshot), true, ShellUi(138.0f));
+            ImGui::Spacing();
+            if (DrawPanelButton("copy-run-diagnostics", "COPY DIAGNOSTICS", ImVec2(ShellUi(190.0f), ShellUi(30.0f)), false, true)) {
+                if (CopyText(sg_preflight::native_shell::ToWide(BuildActionDiagnosticsText(snapshot)))) {
+                    state.status_line = sg_preflight::native_shell::FormatCopiedItemStatus(state.language, "diagnostics");
+                }
+            }
+            ImGui::SameLine();
+            if (DrawPanelButton("open-run-trace", "OPEN TRACE", ImVec2(ShellUi(160.0f), ShellUi(30.0f)), false, !snapshot.log_path.empty())) {
+                OpenPath(sg_preflight::native_shell::ToWide(snapshot.log_path));
+            }
+            ImGui::SameLine();
+            if (DrawPanelButton("reveal-run-action-folder", "REVEAL ACTION FOLDER", ImVec2(ShellUi(220.0f), ShellUi(30.0f)), false, !snapshot.output_root.empty())) {
+                OpenFolderPath(sg_preflight::native_shell::ToWide(snapshot.output_root));
+            }
+            ImGui::Spacing();
+            if (DrawPanelButton("retry-selected-action", "RETRY", ImVec2(ShellUi(120.0f), ShellUi(30.0f)), true, !running && action_ready)) {
+                StartAction(state, selected_action);
+            }
+        }
         return;
     }
 
@@ -5545,6 +5878,8 @@ void RenderSelectedEvidenceContent(ShellState& state) {
         if (DrawPanelButton("reveal-evidence-file", Tr(state, UiText::Reveal), ImVec2(ShellUi(220.0f), ShellUi(30.0f)), false, true)) {
             RevealPath(evidence_path);
         }
+        ImGui::Spacing();
+        RenderPathAdapterButtons(state, "evidence-adapters", evidence_path);
     }
 }
 
@@ -5641,6 +5976,10 @@ void RenderSelectedArtifactContent(ShellState& state) {
                 break;
             }
         }
+    }
+    if (!selected_artifact_path.empty()) {
+        ImGui::Spacing();
+        RenderPathAdapterButtons(state, "artifact-adapters", selected_artifact_path);
     }
 }
 
@@ -5755,6 +6094,73 @@ void RenderManualReviewOnly(ShellState& state) {
     }
 }
 
+void RenderManualEvidenceContent(ShellState& state) {
+    const bool has_active_run = !state.current_run_id.empty();
+    const std::filesystem::path action_root = CurrentActionOutputRoot(state);
+    const auto full_width_button = [&]() {
+        return ImVec2(std::max(ShellUi(210.0f), ImGui::GetContentRegionAvail().x), ShellUi(30.0f));
+    };
+
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+    ImGui::TextUnformatted(
+        "Attach local proof into the active action bundle so screenshots and review notes stay next to the deterministic SG evidence."
+    );
+    ImGui::PopTextWrapPos();
+
+    if (!action_root.empty()) {
+        ImGui::Spacing();
+        InlineSectionLabel("ACTIVE ACTION BUNDLE");
+        DrawReadonlyTextBox("manual-evidence-output-root", sg_preflight::native_shell::ToUtf8(action_root.wstring()), true, ShellUi(46.0f));
+    }
+
+    ImGui::Spacing();
+    InlineSectionLabel("MANUAL NOTE");
+    ImGui::InputTextMultiline(
+        "manual-evidence-note",
+        state.manual_evidence_note.data(),
+        state.manual_evidence_note.size(),
+        ImVec2(0.0f, ShellUi(110.0f))
+    );
+
+    const std::wstring note_text = sg_preflight::native_shell::ToWide(ActiveManualEvidenceNote(state));
+    const auto attach_note = [&](const std::string& kind) {
+        if (AttachManualEvidenceToCurrentRun(state, kind, L"", note_text)) {
+            ClearManualEvidenceNote(state);
+        }
+    };
+
+    ImGui::Spacing();
+    if (DrawPanelButton("attach-manual-screenshot", "ATTACH SCREENSHOT", full_width_button(), true, has_active_run)) {
+        if (QueueManualScreenshotCapture(state, note_text)) {
+            ClearManualEvidenceNote(state);
+        }
+    }
+    ImGui::Spacing();
+    if (DrawPanelButton("attach-blender-note", "ATTACH BLENDER NOTE", full_width_button(), false, has_active_run)) {
+        attach_note("blender_note");
+    }
+    ImGui::Spacing();
+    if (DrawPanelButton("attach-raco-note", "ATTACH RACO NOTE", full_width_button(), false, has_active_run)) {
+        attach_note("raco_note");
+    }
+    ImGui::Spacing();
+    if (DrawPanelButton("attach-verification-note", "ATTACH VERIFICATION NOTE", full_width_button(), false, has_active_run)) {
+        attach_note("verification_note");
+    }
+    ImGui::Spacing();
+    if (DrawPanelButton("attach-external-file", "ATTACH EXTERNAL FILE", full_width_button(), false, has_active_run)) {
+        const std::wstring selected_file = PromptForSingleFile();
+        if (!selected_file.empty() && AttachManualEvidenceToCurrentRun(state, "external_file", selected_file, note_text)) {
+            ClearManualEvidenceNote(state);
+        }
+    }
+
+    if (!has_active_run) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", "Load or run one action first so manual evidence lands in a real action bundle.");
+    }
+}
+
 void RenderDisplayModeContent(ShellState& state) {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const std::string display_line = sg_preflight::native_shell::FormatDisplayModeLine(state.language, display.x, display.y, g_using_warp);
@@ -5792,20 +6198,9 @@ void RenderAudioSettingsContent(ShellState& state) {
     DrawSettingToggle("toggle-sfx", Tr(state, UiText::UiSoundEffects), Tr(state, UiText::UiSoundEffectsSummary), true);
     ImGui::EndDisabled();
     ImGui::Spacing();
-    if (IsWorkDisplayMode()) {
-        ImGui::BeginDisabled();
-        DrawSettingToggle(
-            "toggle-bgm-work-disabled",
-            Tr(state, UiText::InstallerBackgroundMusic),
-            "Work mode keeps background music off so the shell stays readable during real operator use.",
-            false
-        );
-        ImGui::EndDisabled();
-    } else {
-        if (DrawSettingToggle("toggle-bgm", Tr(state, UiText::InstallerBackgroundMusic), Tr(state, UiText::InstallerBackgroundMusicSummary), g_shell_audio.music_enabled)) {
-            SetMusicEnabled(!g_shell_audio.music_enabled);
-            state.status_line = sg_preflight::native_shell::FormatMusicStatus(state.language, g_shell_audio.music_enabled);
-        }
+    if (DrawSettingToggle("toggle-bgm", Tr(state, UiText::InstallerBackgroundMusic), Tr(state, UiText::InstallerBackgroundMusicSummary), g_shell_audio.music_enabled)) {
+        SetMusicEnabled(!g_shell_audio.music_enabled);
+        state.status_line = sg_preflight::native_shell::FormatMusicStatus(state.language, g_shell_audio.music_enabled);
     }
     if (!g_shell_audio.last_error.empty()) {
         ImGui::Spacing();
@@ -6498,12 +6893,12 @@ void RenderStagesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::DisplayMode));
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "MANUAL EVIDENCE");
         if (g_small_font != nullptr) {
             ImGui::PopFont();
         }
         EndScreenTextTransition();
-        RenderDisplayModeContent(state);
+        RenderManualEvidenceContent(state);
 
         ImGui::Spacing();
         BeginScreenTextTransition(state);
@@ -7959,14 +8354,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     ImGui_ImplDX12_Init(&init_info);
 
     g_shell_ini_override_path = std::filesystem::path(backend.workspace_root) / "imgui.ini";
-    g_shell_display_mode = LoadDisplayModePreferenceFromIni();
+    g_shell_display_mode = ShellDisplayMode::Cinematic;
     const bool music_enabled_preference = LoadMusicPreferenceFromIni();
     LoadShellAssets(std::filesystem::path(backend.workspace_root));
     LoadShellAudio(std::filesystem::path(backend.workspace_root));
-    g_shell_audio.music_enabled = music_enabled_preference && !IsWorkDisplayMode();
-    if (music_enabled_preference && IsWorkDisplayMode()) {
-        SaveMusicPreferenceToIni(false);
-    }
+    g_shell_audio.music_enabled = music_enabled_preference;
     if (g_shell_audio.music_enabled) {
         SetMusicEnabled(true);
     }

@@ -139,8 +139,16 @@ function Activate-Window {
     param([System.Diagnostics.Process]$TargetProcess)
 
     $TargetProcess.Refresh()
-    [void][NativeShellVerify]::ShowWindow($TargetProcess.MainWindowHandle, 9)
-    [void][NativeShellVerify]::SetForegroundWindow($TargetProcess.MainWindowHandle)
+    if ($TargetProcess.MainWindowHandle -eq 0) {
+        Wait-ForMainWindow -TargetProcess $TargetProcess -TimeoutSeconds 20
+        $TargetProcess.Refresh()
+    }
+    $windowHandle = [IntPtr]$TargetProcess.MainWindowHandle
+    if ($windowHandle -eq [IntPtr]::Zero) {
+        throw "Native shell window handle is still not available."
+    }
+    [void][NativeShellVerify]::ShowWindow($windowHandle, 9)
+    [void][NativeShellVerify]::SetForegroundWindow($windowHandle)
     [void]$shell.AppActivate($TargetProcess.Id)
     Start-Sleep -Milliseconds 250
 }

@@ -46,6 +46,16 @@ struct ArtifactItem {
     std::string path;
 };
 
+struct ManualEvidenceItem {
+    std::string id;
+    std::string kind;
+    std::string label;
+    std::string path;
+    std::string note;
+    std::string source_path;
+    std::string created_at_utc;
+};
+
 struct CopyItem {
     std::string key;
     std::string label;
@@ -109,6 +119,11 @@ struct ActionSnapshot {
     std::string current_command;
     std::string child_run_id;
     std::string linked_run_id;
+    std::string workspace_root;
+    std::string project_root;
+    std::string output_root;
+    std::string error_message;
+    int exit_code = 0;
     std::vector<std::string> summary_lines;
     std::vector<EvidenceItem> top_paths;
     std::vector<std::string> manual_followups;
@@ -166,6 +181,14 @@ std::vector<RecentRunItem> LoadRecentRuns(
     int limit
 );
 std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& config);
+ManualEvidenceItem AttachManualEvidence(
+    const BackendConfig& config,
+    const std::string& run_id_or_path,
+    const std::string& kind,
+    const std::string& label,
+    const std::wstring& source_path,
+    const std::wstring& note_text
+);
 ActionSnapshot LoadSnapshot(const BackendConfig& config, const std::string& run_id_or_path);
 RunSnapshot LoadRunSnapshot(const BackendConfig& config, const std::string& run_id_or_path);
 std::string LaunchAction(const BackendConfig& config, const std::string& action_id);
