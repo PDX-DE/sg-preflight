@@ -20,11 +20,11 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "CompanyName", "Paradox Cat GmbH\0"
-            VALUE "FileDescription", "SERGFX: Project 3D Car QA Review\0"
+            VALUE "FileDescription", "SGFX Project Quality-Hero\0"
             VALUE "FileVersion", "0.1.0-alpha\0"
-            VALUE "InternalName", "SERGFXProject3DCarQA\0"
+            VALUE "InternalName", "SGFXProjectQualityHero\0"
             VALUE "OriginalFilename", "sg_preflight_native_shell.exe\0"
-            VALUE "ProductName", "SERGFXProject3DCarQA\0"
+            VALUE "ProductName", "SGFX Project Quality-Hero\0"
             VALUE "ProductVersion", "0.1.0-alpha\0"
         END
     END

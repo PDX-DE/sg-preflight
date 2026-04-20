@@ -1443,6 +1443,36 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         }
         load_optional_workspace_texture(workspace_relative, target, alpha_trim_threshold, fit_square_canvas_size);
     };
+    auto load_optional_workspace_or_resource_texture = [&](
+        const std::filesystem::path& workspace_relative,
+        const std::filesystem::path& resource_relative,
+        DdsTextureHandle& target,
+        uint8_t alpha_trim_threshold = 0,
+        uint32_t fit_square_canvas_size = 0
+    ) {
+        load_optional_workspace_texture(workspace_relative, target, alpha_trim_threshold, fit_square_canvas_size);
+        if (HasTexture(target)) {
+            return;
+        }
+        std::string optional_error;
+        const std::filesystem::path resource_absolute = *resource_root / resource_relative;
+        if (PathExists(resource_absolute)) {
+            sg_preflight::native_shell::LoadWicTexture(upload_context, resource_absolute, target, alpha_trim_threshold, fit_square_canvas_size, &optional_error);
+        }
+    };
+    auto load_optional_workspace_texture_candidates = [&](
+        std::initializer_list<std::filesystem::path> candidates,
+        DdsTextureHandle& target,
+        uint8_t alpha_trim_threshold = 0,
+        uint32_t fit_square_canvas_size = 0
+    ) {
+        for (const auto& candidate : candidates) {
+            load_optional_workspace_texture(candidate, target, alpha_trim_threshold, fit_square_canvas_size);
+            if (HasTexture(target)) {
+                return;
+            }
+        }
+    };
 
     if (
         load_required_preferred_texture(std::filesystem::path("images") / "common" / "general_window.dds", std::filesystem::path("images") / "common" / "raw" / "general_window.png", g_shell_assets.general_window)
@@ -1466,9 +1496,9 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F10.png", "kb_key_F10.png", g_shell_assets.help_key_f10, 32U, 128U);
         load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F11.png", "kb_key_F11.png", g_shell_assets.help_key_f11, 32U, 128U);
         load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F12.png", "kb_key_F12.png", g_shell_assets.help_key_f12, 32U, 128U);
-        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "pdx-dev.png", "debug_icon.png", g_shell_assets.debug_icon);
-        load_optional_workspace_texture("framework_icon.png", g_shell_assets.framework_icon);
-        load_optional_workspace_texture("game_icon.png", g_shell_assets.game_icon);
+        load_optional_workspace_or_resource_texture("debug_icon.png", std::filesystem::path("images") / "common" / "raw" / "pdx-dev.png", g_shell_assets.debug_icon, 0U, 512U);
+        load_optional_workspace_texture_candidates({"framework_sgfx_logo.png", "framework_icon.png"}, g_shell_assets.framework_icon);
+        load_optional_workspace_texture_candidates({"logo_sgfx.png", "game_icon.png"}, g_shell_assets.game_icon);
         load_optional_preferred_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", std::filesystem::path("images") / "common" / "raw" / "arrow_circle.png", g_shell_assets.arrow_circle);
         load_optional_preferred_texture(std::filesystem::path("images") / "installer" / "pulse_install.dds", std::filesystem::path("images") / "common" / "raw" / "pulse_install.png", g_shell_assets.pulse_install);
         for (size_t index = 0; index < g_shell_assets.install_images.size(); ++index) {
@@ -1848,7 +1878,12 @@ const DdsTextureHandle* ChooseScreenPrimaryLogo(const ShellState& state) {
 }
 
 const DdsTextureHandle* ChooseScreenSecondaryLogo(const ShellState& state) {
-    (void)state;
+    if (UsesFrameworkBrandingScreen(state.current_screen) && HasTexture(g_shell_assets.game_icon)) {
+        return &g_shell_assets.game_icon;
+    }
+    if (!UsesFrameworkBrandingScreen(state.current_screen) && HasTexture(g_shell_assets.framework_icon)) {
+        return &g_shell_assets.framework_icon;
+    }
     return nullptr;
 }
 
@@ -3079,7 +3114,7 @@ std::string FriendlyActionDescription(std::string_view action_id) {
 std::string BuildHelpPromptMessage(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Introduction:
-        return "GFX Quality-Hero is the local desktop operator shell for SG-side 3D Car QA review.\n\nUse the workflow from left to right: choose a slice, choose a check, review it, run it, open the first files that need attention, then review reports, exports, and follow-up work.\n\nIt does not replace Blender visual review, RaCo / RaCoHeadless, rack sessions, or BMW screenshot smoke. Use it to get deterministic SG-side evidence first, keep blocked/manual work visible, and hand off a cleaner bug report surface.";
+        return "SGFX Project Quality-Hero is the local desktop operator shell for SG-side 3D Car QA review.\n\nUse the workflow from left to right: choose a slice, choose a check, review it, run it, open the first files that need attention, then review reports, exports, and follow-up work.\n\nIt does not replace Blender visual review, RaCo / RaCoHeadless, rack sessions, or BMW screenshot smoke. Use it to get deterministic SG-side evidence first, keep blocked/manual work visible, and hand off a cleaner bug report surface.";
     case ShellScreen::Select:
         return "Choose one slice on the right, then choose the local check to run for that slice.\n\nDAILY: runs the recommended local check flow across every ready slice.\nSTACK: runs the standard per-slice QA stack.\nREPO: runs the broader repository checker pass.\nSCENE: runs the scene-specific local check.\nUNUSED: scans the selected slice for unused resources.\nDELIVERY: shows delivery-readiness follow-up for the selected slice.";
     case ShellScreen::Review:
@@ -3097,7 +3132,7 @@ std::string BuildHelpPromptMessage(const ShellState& state) {
     case ShellScreen::Language:
         return "Choose the language used by the shell interface.\n\nProject data, checker output, and generated files stay the same.";
     default:
-        return "Use GFX Quality-Hero from left to right: choose a slice, choose the check, review it, run it, open the first results, then review files and follow-up.";
+        return "Use SGFX Project Quality-Hero from left to right: choose a slice, choose the check, review it, run it, open the first results, then review files and follow-up.";
     }
 }
 
@@ -4608,7 +4643,9 @@ void DrawInstallerLeftImage(const ShellState& state) {
 
         const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
         const DdsTextureHandle* primary_logo = ChooseScreenPrimaryLogo(state);
+        const DdsTextureHandle* secondary_logo = ChooseScreenSecondaryLogo(state);
         const bool has_primary_logo = primary_logo != nullptr && HasTexture(*primary_logo);
+        const bool has_secondary_logo = secondary_logo != nullptr && HasTexture(*secondary_logo) && secondary_logo != primary_logo;
         if (has_primary_logo) {
             const float art_phase = static_cast<float>(ImGui::GetTime());
             const bool framework_phase = UsesFrameworkBrandingScreen(state.current_screen);
@@ -4620,20 +4657,52 @@ void DrawInstallerLeftImage(const ShellState& state) {
             const bool art_pressed = art_hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left);
             const float hover_boost = art_hovered ? 0.04f : 0.0f;
             const float click_boost = art_pressed ? 0.05f : 0.0f;
-            const float logo_scale = framework_phase ? 0.78f : (run_phase ? 0.84f : 0.80f);
-            const float pulse_scale = logo_scale + hover_boost + click_boost + 0.018f * std::sin((art_phase * 1.2f) + 0.4f);
+            const float logo_scale = framework_phase ? 0.66f : (run_phase ? 0.72f : 0.70f);
+            const float pulse_scale = logo_scale + hover_boost + click_boost + 0.016f * std::sin((art_phase * 1.2f) + 0.4f);
+            const float pointer_x = art_hovered ? std::clamp((io.MousePos.x - center.x) / std::max(ShellUi(90.0f), (max.x - min.x) * 0.5f), -1.0f, 1.0f) : 0.0f;
+            const float pointer_y = art_hovered ? std::clamp((io.MousePos.y - center.y) / std::max(ShellUi(90.0f), (max.y - min.y) * 0.5f), -1.0f, 1.0f) : 0.0f;
             const ImVec2 base_offset =
                 framework_phase
-                    ? ImVec2(ShellUi(-138.0f), ShellUi(8.0f))
-                    : ImVec2(ShellUi(-118.0f), ShellUi(12.0f));
-            const ImVec2 motion_offset(
-                base_offset.x + ShellUi((framework_phase ? 12.0f : 16.0f) * std::sin(art_phase * 0.84f)),
-                base_offset.y + ShellUi((framework_phase ? 8.0f : 10.0f) * std::sin((art_phase * 1.18f) + 0.7f))
+                    ? ImVec2(ShellUi(-66.0f), ShellUi(6.0f))
+                    : ImVec2(ShellUi(-52.0f), ShellUi(10.0f));
+            const ImVec2 float_offset(
+                ShellUi((framework_phase ? 10.0f : 14.0f) * std::sin(art_phase * 0.84f)),
+                ShellUi((framework_phase ? 7.0f : 9.0f) * std::sin((art_phase * 1.18f) + 0.7f))
+            );
+            const ImVec2 parallax_offset(
+                ShellUi(pointer_x * (framework_phase ? 12.0f : 16.0f)),
+                ShellUi(pointer_y * (framework_phase ? 8.0f : 10.0f))
+            );
+            const ImVec2 motion_offset(base_offset.x + float_offset.x + parallax_offset.x, base_offset.y + float_offset.y + parallax_offset.y);
+            const ImVec2 depth_offset(
+                base_offset.x + ShellUi(framework_phase ? 22.0f : 26.0f) - (parallax_offset.x * 0.7f),
+                base_offset.y + ShellUi(framework_phase ? -10.0f : -14.0f) - (parallax_offset.y * 0.5f)
             );
             const ImVec2 glow_offset(
-                motion_offset.x + ShellUi(framework_phase ? 28.0f : 34.0f),
-                motion_offset.y + ShellUi(framework_phase ? -12.0f : -18.0f)
+                motion_offset.x + ShellUi(framework_phase ? 18.0f : 22.0f),
+                motion_offset.y + ShellUi(framework_phase ? -8.0f : -12.0f)
             );
+
+            if (has_secondary_logo) {
+                DrawContainedTexture(
+                    draw_list,
+                    *secondary_logo,
+                    inner_min,
+                    inner_max,
+                    IM_COL32(0, 0, 0, static_cast<int>(44.0f * alpha)),
+                    pulse_scale * (framework_phase ? 0.98f : 1.02f),
+                    ImVec2(depth_offset.x + ShellUi(8.0f), depth_offset.y + ShellUi(8.0f))
+                );
+                DrawContainedTexture(
+                    draw_list,
+                    *secondary_logo,
+                    inner_min,
+                    inner_max,
+                    IM_COL32(62, 214, 255, static_cast<int>((framework_phase ? 30.0f : 22.0f) * alpha)),
+                    pulse_scale * (framework_phase ? 0.97f : 1.01f),
+                    depth_offset
+                );
+            }
 
             if (has_primary_logo) {
                 DrawContainedTexture(
@@ -4644,6 +4713,15 @@ void DrawInstallerLeftImage(const ShellState& state) {
                     IM_COL32(255, 164, 48, static_cast<int>((framework_phase ? 38.0f : 26.0f) * alpha)),
                     pulse_scale,
                     glow_offset
+                );
+                DrawContainedTexture(
+                    draw_list,
+                    *primary_logo,
+                    inner_min,
+                    inner_max,
+                    IM_COL32(0, 0, 0, static_cast<int>(58.0f * alpha)),
+                    pulse_scale * 0.995f,
+                    ImVec2(motion_offset.x + ShellUi(10.0f), motion_offset.y + ShellUi(10.0f))
                 );
                 DrawContainedTexture(
                     draw_list,
@@ -6579,7 +6657,7 @@ void RenderDisplayModeContent(ShellState& state) {
     ImGui::TextUnformatted(
         work_mode
             ? "Work mode keeps the shell sharp: smaller left art on work screens, lower scanlines, stronger contrast, readable body text, and no background music."
-            : "Cinematic mode keeps the full SERGFX chrome: larger artwork, heavier motion/static treatment, and optional background music."
+            : "Cinematic mode keeps the full SGFX Project Quality-Hero chrome: larger artwork, heavier motion/static treatment, and optional background music."
     );
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
@@ -9195,7 +9273,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     HWND window_handle = CreateWindowW(
         window_class.lpszClassName,
-        L"SERGFX: Quality-Hero Bug Report",
+        L"SGFX Project Quality-Hero",
         window_style,
         window_x,
         window_y,

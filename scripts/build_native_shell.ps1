@@ -8,9 +8,13 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sourceDir = Join-Path $repoRoot "desktop_native"
 $resolvedBuildDir = Join-Path $repoRoot $BuildDir
-$iconPngPath = Join-Path $repoRoot "exe_ico.png"
+$iconPngPath = Join-Path $repoRoot "sgfx_icon.png"
 $iconIcoPath = Join-Path $sourceDir "resources\exe_ico.ico"
 $imguiTemplatePath = Join-Path $repoRoot "imgui.ini"
+
+if (-not (Test-Path $iconPngPath)) {
+    $iconPngPath = Join-Path $repoRoot "exe_ico.png"
+}
 
 $cmakeCommand = Get-Command cmake -ErrorAction SilentlyContinue
 if (-not $cmakeCommand) {

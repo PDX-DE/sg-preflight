@@ -841,19 +841,28 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
         )
 
     raco_probe_scene = representative_raco_scene(root)
-    for key, executable, gui in (
-        ("raco_headless", raco_headless, False),
-        ("raco_gui", raco_gui, True),
-    ):
-        record = next((item for item in payload if item["key"] == key), None)
-        if record is None or record["status"] != "available":
-            continue
-        probe = probe_raco_runtime(executable, raco_probe_scene, gui=gui)
-        record["status"] = probe["status"]
-        if probe["detail"]:
-            record["detail"] = probe["detail"]
-        if probe["probe_path"]:
-            record["probe_path"] = probe["probe_path"]
+    raco_headless_record = next((item for item in payload if item["key"] == "raco_headless"), None)
+    raco_headless_probe: dict[str, str] | None = None
+    if raco_headless_record is not None and raco_headless_record["status"] == "available":
+        raco_headless_probe = probe_raco_runtime(raco_headless, raco_probe_scene, gui=False)
+        raco_headless_record["status"] = raco_headless_probe["status"]
+        if raco_headless_probe["detail"]:
+            raco_headless_record["detail"] = raco_headless_probe["detail"]
+        if raco_headless_probe["probe_path"]:
+            raco_headless_record["probe_path"] = raco_headless_probe["probe_path"]
+
+    raco_gui_record = next((item for item in payload if item["key"] == "raco_gui"), None)
+    if raco_gui_record is not None and raco_gui_record["status"] == "available":
+        raco_gui_record["detail"] = (
+            "GUI launch availability is path-based here so the shell does not force Ramses Composer windows open during startup or review refresh."
+        )
+        if raco_probe_scene.exists():
+            raco_gui_record["probe_path"] = str(raco_probe_scene)
+        if raco_headless_probe is not None and raco_headless_probe["status"] == "incompatible":
+            raco_gui_record["detail"] += (
+                " Representative scene compatibility is still tracked through RaCoHeadless and is not green yet. "
+                + raco_headless_probe["detail"]
+            )
 
     screenshot_readme = bmw_models_repo / "ci" / "scripts" / "README.md"
     payload.append(

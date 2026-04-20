@@ -46,7 +46,7 @@ Current native-shell milestone:
   - `ENV`
   - `STAGES`
 - presentation:
-  - the shell keeps the heavier Unleashed-inspired SERGFX chrome by default
+  - the shell keeps the heavier Unleashed-inspired SGFX Project Quality-Hero chrome by default
   - readability tuning should happen inside that same presentation layer instead of splitting the product into separate work/cinematic modes
 - translated Unleashed-style shell systems in native code instead of stock ImGui widgets:
   - animated scanline header bars
@@ -108,7 +108,7 @@ The CMake file fetches:
 - This shell is Windows-first because the current operator environment is Windows.
 - It is intentionally separate from the PySide shell so the native track can move toward a closer Unleashed-style interaction feel without cloning the Python engine.
 - Package staging now defaults to a safer private-alpha bundle: repo mirrors, generated evidence, reference DDS bundles, optional fonts, and music are excluded unless explicitly requested.
-- the current runtime default is the heavier cinematic-style SERGFX presentation, with readability and spacing tuned inside that same shell instead of switching to a separate work mode.
+- the current runtime default is the heavier cinematic-style SGFX Project Quality-Hero presentation, with readability and spacing tuned inside that same shell instead of switching to a separate work mode.
 - Local UnleashedRecomp resource folders should be treated as reference-only inputs unless there is a cleared internal redistribution path for those assets.
 - BMW stages remain blocker/readiness surfaces until BMW-side access and scripts exist locally.
 - The current font path intentionally prefers direct local OTF files when available, because the upstream `im_font_atlas.bin` is a prebuilt snapshot generated for Unleashed's custom font-loading path rather than a drop-in ImGui runtime asset here.

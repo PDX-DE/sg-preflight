@@ -459,27 +459,27 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             label="Ramses Composer / RaCo GUI",
             state=(
                 "ready"
-                if raco_gui_status == "available"
+                if raco_gui_status == "available" and raco_headless_status != "incompatible"
                 else "partial"
-                if raco_gui_status == "incompatible"
+                if raco_gui_status == "available"
                 else "missing"
             ),
             summary=(
                 "A Ramses Composer GUI executable is available for first-pass open-in-RaCo adapters."
-                if raco_gui_status == "available"
+                if raco_gui_status == "available" and raco_headless_status != "incompatible"
                 else (
-                    "A Ramses Composer GUI executable exists locally, but it cannot open the representative SG scene here."
-                    + (f" {raco_gui_detail}" if raco_gui_detail else "")
+                    "A Ramses Composer GUI executable is available for manual open-in-RaCo adapters, but representative scene compatibility is still only partial because RaCoHeadless is not green yet."
+                    + (f" {raco_headless_detail}" if raco_headless_detail else "")
                 )
-                if raco_gui_status == "incompatible"
+                if raco_gui_status == "available"
                 else "No Ramses Composer GUI executable is configured locally yet."
             ),
             path=str(readiness.get("raco_gui", {}).get("path", "")),
             next_action=(
-                "Point SG_RACO_GUI at a Ramses Composer build that matches the current SG scene feature level."
-                + (f" Probe scene: {raco_gui_probe}" if raco_gui_probe else "")
+                "Point SG_RACO_HEADLESS at a Ramses Composer build that can open the current SG scene feature level, then keep the GUI adapter for manual review."
+                + (f" Probe scene: {raco_headless_probe or raco_gui_probe}" if (raco_headless_probe or raco_gui_probe) else "")
             )
-            if raco_gui_status == "incompatible"
+            if raco_gui_status == "available" and raco_headless_status == "incompatible"
             else "Set SG_RACO_GUI or install the approved Ramses Composer GUI build before exposing open-in-RaCo adapters.",
         ),
         _item(

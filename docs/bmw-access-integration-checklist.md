@@ -4,7 +4,7 @@ Use this when BMW-side access finally lands so the first day is spent wiring the
 
 ## Scope
 
-This checklist is for the blocked BMW-side portion of SERGFX / SG Preflight:
+This checklist is for the blocked BMW-side portion of SGFX Project Quality-Hero / SG Preflight:
 
 - BMW repo detection
 - BMW smoke-script discovery
@@ -136,7 +136,7 @@ Evidence to retain:
 - exact repo path used
 - exact failure or success summary
 
-## SERGFX Integration Notes
+## SGFX Project Quality-Hero Integration Notes
 
 When the checklist starts passing, wire the native shell in this order:
 
