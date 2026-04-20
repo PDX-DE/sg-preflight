@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from sg_preflight.profiles import RunProfile, list_run_profiles
+from sg_preflight.tool_readiness import probe_raco_runtime, representative_raco_scene
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,12 @@ def list_checker_catalog(
     delivery_paths = _delivery_checklist_paths(root)
     bmw_repo = _bmw_models_repo_path(root)
     raco_headless = _raco_headless_path(root)
+    raco_probe_scene = representative_raco_scene(root)
+    raco_headless_probe = probe_raco_runtime(raco_headless, raco_probe_scene, gui=False) if raco_headless.exists() else {
+        "status": "missing",
+        "detail": "A local `RaCoHeadless.exe` is not configured.",
+        "probe_path": str(raco_probe_scene) if raco_probe_scene else "",
+    }
 
     style_script = checkers_root / "code_style_checker" / "check_all_styles.py"
     execute_checks = checkers_root / "executeChecks.py"
@@ -405,12 +412,22 @@ def list_checker_catalog(
             path=str(scene_checker),
             kind="python",
             scope="profile",
-            state="ready" if scene_checker.exists() and raco_headless.exists() and ready_profiles else "partial" if scene_checker.exists() else "blocked",
+            state=(
+                "ready"
+                if scene_checker.exists() and raco_headless_probe["status"] == "available" and ready_profiles
+                else "partial"
+                if scene_checker.exists()
+                else "blocked"
+            ),
             coverage="direct",
             summary=(
-                "SG Preflight invokes `check_scenes.py` directly when a local `RaCoHeadless.exe` is configured."
-                if scene_checker.exists() and raco_headless.exists() and ready_profiles
-                else "The script is present, but direct scene execution is still gated by local RaCo runtime setup."
+                "SG Preflight invokes `check_scenes.py` directly when a locally compatible `RaCoHeadless.exe` can open representative SG scenes."
+                if scene_checker.exists() and raco_headless_probe["status"] == "available" and ready_profiles
+                else (
+                    "The script is present, but the configured `RaCoHeadless.exe` cannot open the representative SG scene on this machine yet."
+                    if scene_checker.exists() and raco_headless_probe["status"] == "incompatible"
+                    else "The script is present, but direct scene execution is still gated by local RaCo runtime setup."
+                )
                 if scene_checker.exists()
                 else "The mirrored `check_scenes.py` helper is missing."
             ),
@@ -421,14 +438,25 @@ def list_checker_catalog(
                 blocker
                 for blocker in (
                     None if scene_checker.exists() else "The mirrored `check_scenes.py` helper is missing.",
-                    None if raco_headless.exists() else "A local `RaCoHeadless.exe` is not configured.",
+                    None
+                    if raco_headless_probe["status"] == "available"
+                    else (
+                        "A local `RaCoHeadless.exe` is not configured."
+                        if raco_headless_probe["status"] == "missing"
+                        else raco_headless_probe["detail"]
+                    ),
                     None if ready_profiles else "No current live profile is ready for scene-check execution.",
                 )
                 if blocker
             ),
             prerequisites=(
                 _prereq("scene_checker", "check_scenes.py", scene_checker),
-                _prereq("raco_headless", "RaCoHeadless.exe", raco_headless),
+                CheckerPrerequisite(
+                    key="raco_headless",
+                    label="RaCoHeadless.exe",
+                    path=str(raco_headless),
+                    status=raco_headless_probe["status"],
+                ),
             ),
         ),
         CheckerCatalogEntry(

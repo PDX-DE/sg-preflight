@@ -266,6 +266,23 @@ def _path_from_status(status_map: dict[str, dict[str, str]], key: str) -> Path:
     return Path(raw) if raw else Path()
 
 
+def _status_value(status_map: dict[str, dict[str, str]], key: str) -> str:
+    return str(status_map.get(key, {}).get("status", "")).strip().lower()
+
+
+def _status_detail(status_map: dict[str, dict[str, str]], key: str) -> str:
+    return str(status_map.get(key, {}).get("detail", "")).strip()
+
+
+def _scene_runtime_blocker_message(status_map: dict[str, dict[str, str]]) -> str:
+    raco_status = _status_value(status_map, "raco_headless")
+    raco_detail = _status_detail(status_map, "raco_headless")
+    if raco_status == "incompatible":
+        detail = f" {raco_detail}" if raco_detail else ""
+        return "Scene check is blocked because the configured `RaCoHeadless.exe` cannot open the representative SG scene." + detail
+    return "Scene check needs both the mirrored `check_scenes.py` helper and a locally compatible `RaCoHeadless.exe`."
+
+
 def _bmw_smoke_script_path(status_map: dict[str, dict[str, str]], profile: RunProfile) -> Path:
     bmw_repo = _path_from_status(status_map, "bmw_models_repo")
     if not bmw_repo:
@@ -300,7 +317,7 @@ def list_operator_actions(
     scene_checker = mirror_root / "check_scenes.py"
     raco_headless = _path_from_status(status_map, "raco_headless")
     checker_ready = style_script.exists() and checker_script.exists()
-    scene_ready = scene_checker.exists() and raco_headless.exists()
+    scene_ready = scene_checker.exists() and raco_headless.exists() and _status_value(status_map, "raco_headless") == "available"
 
     actions = [
         OperatorAction(
@@ -495,7 +512,11 @@ def list_operator_actions(
                 blocker_message=(
                     ""
                     if scene_ready and profile.project_root.exists()
-                    else "Scene check needs both the mirrored `check_scenes.py` helper and a local `RaCoHeadless.exe`."
+                    else (
+                        "The mirrored `check_scenes.py` helper is missing."
+                        if not scene_checker.exists()
+                        else _scene_runtime_blocker_message(status_map)
+                    )
                 ),
                 profile_id=profile.profile_id,
                 project_root=str(profile.project_root),
@@ -1862,6 +1883,8 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
     status_map = _status_map(root)
     raco_exe = _path_from_status(status_map, "raco_headless")
     scene_checker = root / "repositories" / "trunk" / "check_scenes.py"
+    if _status_value(status_map, "raco_headless") != "available":
+        raise RuntimeError(_scene_runtime_blocker_message(status_map))
     project_root = Path(record.project_root)
     scenes = sorted(project_root.rglob("*.rca"))
     total_scenes = max(len(scenes), 1)

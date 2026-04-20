@@ -22,6 +22,7 @@ from sg_preflight.config_loader import load_config, load_json
 from sg_preflight.models import Report
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.reporting import write_html_report, write_json_report, write_markdown_report
+from sg_preflight.tool_readiness import probe_raco_runtime, representative_raco_scene
 from sg_preflight.utils import ensure_parent
 from sg_preflight.validators.anchors import validate_anchors
 from sg_preflight.validators.carpaints import validate_carpaints
@@ -828,6 +829,21 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
                 "status": "available" if path.exists() else "missing",
             }
         )
+
+    raco_probe_scene = representative_raco_scene(root)
+    for key, executable, gui in (
+        ("raco_headless", raco_headless, False),
+        ("raco_gui", raco_gui, True),
+    ):
+        record = next((item for item in payload if item["key"] == key), None)
+        if record is None or record["status"] != "available":
+            continue
+        probe = probe_raco_runtime(executable, raco_probe_scene, gui=gui)
+        record["status"] = probe["status"]
+        if probe["detail"]:
+            record["detail"] = probe["detail"]
+        if probe["probe_path"]:
+            record["probe_path"] = probe["probe_path"]
 
     screenshot_readme = bmw_models_repo / "ci" / "scripts" / "README.md"
     payload.append(

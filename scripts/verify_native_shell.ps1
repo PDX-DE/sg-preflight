@@ -360,17 +360,21 @@ try {
         if ($runAdvancePattern -eq "UI screen_change from=RUN to=EVIDENCE") {
             Capture-Stage -TargetProcess $process -Name "evidence"
             Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
-            [void](Wait-ForAnyTracePattern -Path $tracePath -Patterns @(
+            $nextPattern = Wait-ForAnyTracePattern -Path $tracePath -Patterns @(
                 "UI screen_change from=EVIDENCE to=FILES",
                 "UI screen_change from=EVIDENCE to=ENV"
-            ) -TimeoutSeconds 6)
+            ) -TimeoutSeconds 6
+            if ($nextPattern) {
+                $runAdvancePattern = $nextPattern
+            }
         }
 
         if ($runAdvancePattern -in @("UI screen_change from=RUN to=FILES", "UI screen_change from=EVIDENCE to=FILES")) {
             Capture-Stage -TargetProcess $process -Name "files"
             Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
-            [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI screen_change from=FILES to=ENV" -TimeoutSeconds 6)
-            $runAdvancePattern = "UI screen_change from=FILES to=ENV"
+            if (Wait-ForTracePattern -Path $tracePath -Pattern "UI screen_change from=FILES to=ENV" -TimeoutSeconds 6) {
+                $runAdvancePattern = "UI screen_change from=FILES to=ENV"
+            }
         }
 
         if ($runAdvancePattern -in @("UI screen_change from=RUN to=ENV", "UI screen_change from=EVIDENCE to=ENV", "UI screen_change from=FILES to=ENV")) {

@@ -154,8 +154,10 @@ if ($IncludeEvidence) {
     $workspaceItems += "out"
 }
 if ($IncludeMusic) {
+    $workspaceItems += "SERGFX.wav"
     $workspaceItems += "SERGFX.mp3"
     if ($IncludeDevEasterEggs) {
+        $workspaceItems += "BAChefPeePee.wav"
         $workspaceItems += "BAChefPeePee.mp3"
     }
 }

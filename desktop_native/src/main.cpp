@@ -495,6 +495,27 @@ std::string SanitiseTraceText(std::string text);
 void DrawSelectionContainerChrome(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float alpha, bool fade_top);
 bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool accent, bool enabled);
 void ClearManualEvidenceNote(ShellState& state);
+void DrawPromptTextStyled(
+    ImDrawList* draw,
+    ImFont* font,
+    float font_size,
+    const ImVec2& position,
+    ImU32 text_color,
+    float alpha,
+    const char* text,
+    float wrap_width
+);
+float DrawLeftAlignedPromptParagraphStyled(
+    ImDrawList* draw,
+    ImFont* font,
+    float font_size,
+    float max_width,
+    const ImVec2& min,
+    float line_margin,
+    ImU32 text_color,
+    float alpha,
+    const std::string& text
+);
 
 constexpr float kPanelGrid = 9.0f;
 constexpr float kPanelHeaderHeight = 34.0f;
@@ -1387,11 +1408,17 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
     g_shell_audio.window = *resource_root / "sounds" / "raw" / "sys_actstg_pausewinopen.wav";
     g_shell_audio.page = *resource_root / "sounds" / "raw" / "sys_actstg_pausedecide.wav";
     g_shell_audio.window_close = *resource_root / "sounds" / "raw" / "sys_actstg_pausewinclose.wav";
-    g_shell_audio.music_default = workspace_root / "SERGFX.mp3";
+    g_shell_audio.music_default = workspace_root / "SERGFX.wav";
+    if (!PathExists(g_shell_audio.music_default)) {
+        g_shell_audio.music_default = workspace_root / "SERGFX.mp3";
+    }
     if (!PathExists(g_shell_audio.music_default)) {
         g_shell_audio.music_default = *resource_root / "music" / "raw" / "installer.wav";
     }
-    g_shell_audio.music_easter_egg = workspace_root / "BAChefPeePee.mp3";
+    g_shell_audio.music_easter_egg = workspace_root / "BAChefPeePee.wav";
+    if (!PathExists(g_shell_audio.music_easter_egg)) {
+        g_shell_audio.music_easter_egg = workspace_root / "BAChefPeePee.mp3";
+    }
     g_shell_audio.music = g_shell_audio.music_default;
     g_shell_audio.music_easter_egg_selected = false;
 
@@ -4945,6 +4972,31 @@ void EndCanvasOverlayRegion() {
     ImGui::PopStyleVar();
 }
 
+bool BeginCanvasOverlayWindow(const char* id, const ImVec2& min, const ImVec2& max) {
+    ImGui::SetNextWindowPos(min);
+    ImGui::SetNextWindowSize(ImVec2(max.x - min.x, max.y - min.y));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    return ImGui::Begin(
+        id,
+        nullptr,
+        ImGuiWindowFlags_NoDecoration
+        | ImGuiWindowFlags_NoMove
+        | ImGuiWindowFlags_NoSavedSettings
+        | ImGuiWindowFlags_NoBackground
+        | ImGuiWindowFlags_NoScrollbar
+        | ImGuiWindowFlags_NoScrollWithMouse
+        | ImGuiWindowFlags_NoFocusOnAppearing
+    );
+}
+
+void EndCanvasOverlayWindow() {
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
+
 void DrawCanvasPageTitle(const char* text, float wrap_x) {
     if (g_body_font != nullptr) {
         ImGui::PushFont(g_body_font);
@@ -6901,57 +6953,254 @@ void RenderEnvironmentScreen(ShellState& state) {
     BeginScreenTransition(state);
     const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Environment);
     DrawInstallerCanvasBackground(layout);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImFont* title_font = g_title_font != nullptr ? g_title_font : CurrentBodyFont();
+    ImFont* body_font = CurrentBodyFont() != nullptr ? CurrentBodyFont() : ImGui::GetFont();
+    ImFont* small_font = CurrentSmallFont() != nullptr ? CurrentSmallFont() : body_font;
+    const float chrome_alpha = std::clamp(ShellChromeLifecycleMotion() * ShellExitTextVisibility(state), 0.0f, 1.0f);
+    const float text_alpha = std::clamp(ShellTextLifecycleMotion() * ShellExitTextVisibility(state), 0.0f, 1.0f);
+    const ImVec2 desc_min = layout.description_content_min;
+    const ImVec2 desc_max = layout.description_content_max;
+    const ImVec2 side_min = layout.side_content_min;
+    const ImVec2 side_max = layout.side_content_max;
+    const float desc_width = std::max(1.0f, desc_max.x - desc_min.x);
+    draw->AddRectFilled(desc_min, desc_max, ApplyAlpha(IM_COL32(4, 18, 8, 208), chrome_alpha), ShellUi(4.0f));
+    draw->AddRect(desc_min, desc_max, ApplyAlpha(IM_COL32(108, 176, 116, 164), chrome_alpha), ShellUi(4.0f), 0, 1.0f);
+    draw->AddRectFilled(side_min, side_max, ApplyAlpha(IM_COL32(4, 18, 8, 192), chrome_alpha), ShellUi(4.0f));
+    draw->AddRect(side_min, side_max, ApplyAlpha(IM_COL32(98, 166, 108, 148), chrome_alpha), ShellUi(4.0f), 0, 1.0f);
 
-    if (BeginCanvasOverlayRegion("environment-description", layout.description_content_min, layout.description_content_max)) {
-        BeginScreenTextTransition(state);
-        const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
-        if (g_title_font != nullptr) {
-            ImGui::PushFont(g_title_font);
-        }
-        ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextWrapped("%s", "Environment Doctor");
-        ImGui::PopTextWrapPos();
-        if (g_title_font != nullptr) {
-            ImGui::PopFont();
-        }
+    float y = desc_min.y + ShellUi(18.0f);
+    draw->PushClipRect(desc_min, desc_max, true);
+    DrawPromptTextStyled(
+        draw,
+        title_font,
+        title_font == g_title_font ? ShellUi(28.0f) : body_font->LegacySize,
+        ImVec2(desc_min.x + ShellUi(12.0f), y),
+        IM_COL32(236, 244, 238, 255),
+        text_alpha,
+        "Environment Doctor",
+        0.0f
+    );
+    y += ShellUi(40.0f);
+    DrawPromptTextStyled(
+        draw,
+        small_font,
+        small_font->LegacySize,
+        ImVec2(desc_min.x + ShellUi(12.0f), y),
+        IM_COL32(255, 188, 0, 255),
+        text_alpha,
+        "SELECTED READINESS CHECK",
+        0.0f
+    );
+    y += ShellUi(26.0f);
 
-        ImGui::Spacing();
-        if (CurrentSmallFont() != nullptr) {
-            ImGui::PushFont(CurrentSmallFont());
-        }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "SELECTED READINESS CHECK");
-        if (CurrentSmallFont() != nullptr) {
-            ImGui::PopFont();
-        }
-        EndScreenTextTransition();
-
-        RenderSelectedEnvironmentDoctorContent(state);
-
-        ImGui::Spacing();
-        InlineSectionLabel("DOCTOR ROLE");
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-        ImGui::TextUnformatted(
-            "This page is here to keep the shell honest. It shows what this machine can really do now: shared Python backend, mirrored SG checker surface, local RaCo/Blender adapters, BMW blockers, and output writeability."
+    if (state.environment_items.empty()) {
+        y = DrawLeftAlignedPromptParagraphStyled(
+            draw,
+            body_font,
+            body_font->LegacySize,
+            desc_width - ShellUi(24.0f),
+            ImVec2(desc_min.x + ShellUi(12.0f), y),
+            5.0f,
+            IM_COL32(228, 236, 230, 255),
+            text_alpha,
+            "No environment doctor items are available."
         );
-        ImGui::PopTextWrapPos();
+    } else {
+        const int selected_index = std::clamp(state.selected_environment_index, 0, static_cast<int>(state.environment_items.size()) - 1);
+        const EnvironmentDoctorItem& item = state.environment_items[static_cast<size_t>(selected_index)];
+        const std::string selected_title = item.label + " [" + item.state + "]";
+        DrawPromptTextStyled(
+            draw,
+            body_font,
+            body_font->LegacySize,
+            ImVec2(desc_min.x + ShellUi(12.0f), y),
+            ImGui::ColorConvertFloat4ToU32(EnvironmentStateColor(item.state)),
+            text_alpha,
+            selected_title.c_str(),
+            0.0f
+        );
+        y += ShellUi(28.0f);
+        y = DrawLeftAlignedPromptParagraphStyled(
+            draw,
+            body_font,
+            body_font->LegacySize,
+            desc_width - ShellUi(24.0f),
+            ImVec2(desc_min.x + ShellUi(12.0f), y),
+            6.0f,
+            IM_COL32(232, 239, 234, 255),
+            text_alpha,
+            item.summary
+        );
+        y += ShellUi(16.0f);
+        if (!item.path.empty()) {
+            DrawPromptTextStyled(
+                draw,
+                small_font,
+                small_font->LegacySize,
+                ImVec2(desc_min.x + ShellUi(12.0f), y),
+                IM_COL32(255, 188, 0, 255),
+                text_alpha,
+                "PATH",
+                0.0f
+            );
+            y += ShellUi(22.0f);
+            y = DrawLeftAlignedPromptParagraphStyled(
+                draw,
+                small_font,
+                small_font->LegacySize,
+                desc_width - ShellUi(24.0f),
+                ImVec2(desc_min.x + ShellUi(12.0f), y),
+                4.0f,
+                IM_COL32(204, 214, 208, 255),
+                text_alpha,
+                item.path
+            );
+            y += ShellUi(14.0f);
+        }
+        if (!item.next_action.empty()) {
+            DrawPromptTextStyled(
+                draw,
+                small_font,
+                small_font->LegacySize,
+                ImVec2(desc_min.x + ShellUi(12.0f), y),
+                IM_COL32(255, 188, 0, 255),
+                text_alpha,
+                "NEXT ACTION",
+                0.0f
+            );
+            y += ShellUi(22.0f);
+            y = DrawLeftAlignedPromptParagraphStyled(
+                draw,
+                small_font,
+                small_font->LegacySize,
+                desc_width - ShellUi(24.0f),
+                ImVec2(desc_min.x + ShellUi(12.0f), y),
+                4.0f,
+                IM_COL32(214, 224, 218, 255),
+                text_alpha,
+                item.next_action
+            );
+        }
     }
-    EndCanvasOverlayRegion();
+    y += ShellUi(16.0f);
+    DrawPromptTextStyled(
+        draw,
+        small_font,
+        small_font->LegacySize,
+        ImVec2(desc_min.x + ShellUi(12.0f), y),
+        IM_COL32(255, 188, 0, 255),
+        text_alpha,
+        "DOCTOR ROLE",
+        0.0f
+    );
+    y += ShellUi(22.0f);
+    DrawLeftAlignedPromptParagraphStyled(
+        draw,
+        small_font,
+        small_font->LegacySize,
+        desc_width - ShellUi(24.0f),
+        ImVec2(desc_min.x + ShellUi(12.0f), y),
+        4.0f,
+        IM_COL32(214, 224, 218, 255),
+        text_alpha,
+        "This page keeps the shell honest. It shows what this machine can really do now: shared Python backend, mirrored SG checker coverage, local RaCo and Blender adapters, BMW blockers, and output writeability."
+    );
+    draw->PopClipRect();
 
-    if (BeginCanvasOverlayRegion("environment-side", layout.side_content_min, layout.side_content_max)) {
-        BeginScreenTextTransition(state);
-        if (CurrentSmallFont() != nullptr) {
-            ImGui::PushFont(CurrentSmallFont());
+    float side_y = side_min.y + ShellUi(18.0f);
+    draw->PushClipRect(side_min, side_max, true);
+    DrawPromptTextStyled(
+        draw,
+        small_font,
+        small_font->LegacySize,
+        ImVec2(side_min.x + ShellUi(12.0f), side_y),
+        IM_COL32(255, 188, 0, 255),
+        text_alpha,
+        "LOCAL TOOL READINESS",
+        0.0f
+    );
+    draw->PopClipRect();
+    side_y += ShellUi(30.0f);
+
+    for (size_t index = 0; index < state.environment_items.size(); ++index) {
+        const EnvironmentDoctorItem& row = state.environment_items[index];
+        const float row_height = ShellUi(74.0f);
+        const ImVec2 row_min(side_min.x + ShellUi(8.0f), side_y);
+        const ImVec2 row_max(side_max.x - ShellUi(8.0f), side_y + row_height);
+        if (row_max.y > side_max.y - ShellUi(8.0f)) {
+            break;
         }
-        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "LOCAL TOOL READINESS");
-        if (CurrentSmallFont() != nullptr) {
-            ImGui::PopFont();
+
+        ImGui::SetCursorScreenPos(row_min);
+        const bool interaction_enabled = !IsBackgroundInteractionBlocked();
+        if (!interaction_enabled) {
+            ImGui::BeginDisabled();
         }
-        EndScreenTextTransition();
-        ImGui::BeginChild("environment-list-inline", ImVec2(0.0f, std::max(ShellUi(110.0f), ImGui::GetContentRegionAvail().y)), false);
-        RenderEnvironmentDoctorListOnly(state);
-        ImGui::EndChild();
+        const std::string row_id = "environment-row-" + std::to_string(index);
+        const bool pressed = ImGui::InvisibleButton(row_id.c_str(), ImVec2(row_max.x - row_min.x, row_max.y - row_min.y));
+        const bool hovered = interaction_enabled && ImGui::IsItemHovered();
+        if (!interaction_enabled) {
+            ImGui::EndDisabled();
+        }
+        const bool selected = static_cast<int>(index) == state.selected_environment_index;
+        PlayHoverCueIfNeeded(hovered, interaction_enabled);
+        if (pressed && interaction_enabled) {
+            state.selected_environment_index = static_cast<int>(index);
+            PlayCue(UiCue::Confirm);
+        }
+
+        draw->AddRectFilled(
+            row_min,
+            row_max,
+            ApplyAlpha(
+                selected
+                    ? IM_COL32(18, 88, 30, 224)
+                    : (hovered ? IM_COL32(12, 34, 16, 228) : IM_COL32(8, 20, 10, 212)),
+                chrome_alpha
+            ),
+            ShellUi(4.0f)
+        );
+        draw->AddRect(
+            row_min,
+            row_max,
+            ApplyAlpha(
+                selected
+                    ? IM_COL32(128, 255, 160, 224)
+                    : IM_COL32(74, 132, 84, hovered ? 188 : 148),
+                chrome_alpha
+            ),
+            ShellUi(4.0f),
+            0,
+            1.0f
+        );
+
+        draw->PushClipRect(row_min, row_max, true);
+        DrawPromptTextStyled(
+            draw,
+            small_font,
+            small_font->LegacySize,
+            ImVec2(row_min.x + ShellUi(12.0f), row_min.y + ShellUi(10.0f)),
+            ImGui::ColorConvertFloat4ToU32(EnvironmentStateColor(row.state)),
+            text_alpha,
+            row.label.c_str(),
+            0.0f
+        );
+        const std::string summary_line = "[" + row.state + "] " + Ellipsize(row.summary, 110U);
+        DrawLeftAlignedPromptParagraphStyled(
+            draw,
+            small_font,
+            small_font->LegacySize,
+            row_max.x - row_min.x - ShellUi(24.0f),
+            ImVec2(row_min.x + ShellUi(12.0f), row_min.y + ShellUi(32.0f)),
+            3.0f,
+            IM_COL32(212, 220, 216, 255),
+            text_alpha,
+            summary_line
+        );
+        draw->PopClipRect();
+        side_y += row_height + ShellUi(8.0f);
     }
-    EndCanvasOverlayRegion();
     EndScreenTransition();
 }
 
@@ -8062,32 +8311,11 @@ void DrawPromptTextStyled(
 
     const ImVec2 snapped_position(std::round(position.x), std::round(position.y));
     const float shadow_offset = ShellUi(2.0f);
-    const float shadow_radius = ShellUi(0.75f);
     const ImVec2 shadow_pos(
         std::round(snapped_position.x + shadow_offset),
         std::round(snapped_position.y + shadow_offset)
     );
-    const ImU32 outline_color = IM_COL32(0, 0, 0, static_cast<int>(176.0f * alpha));
-    const ImU32 shadow_color = IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha));
-    const std::array<ImVec2, 4> outline_offsets = {{
-        ImVec2(-shadow_radius, 0.0f),
-        ImVec2(shadow_radius, 0.0f),
-        ImVec2(0.0f, -shadow_radius),
-        ImVec2(0.0f, shadow_radius),
-    }};
-
-    for (const ImVec2& offset : outline_offsets) {
-        draw->AddText(
-            font,
-            font_size,
-            ImVec2(shadow_pos.x + offset.x, shadow_pos.y + offset.y),
-            outline_color,
-            text,
-            nullptr,
-            wrap_width
-        );
-    }
-    draw->AddText(font, font_size, shadow_pos, shadow_color, text, nullptr, wrap_width);
+    draw->AddText(font, font_size, shadow_pos, IM_COL32(0, 0, 0, static_cast<int>(180.0f * alpha)), text, nullptr, wrap_width);
     draw->AddText(font, font_size, snapped_position, text_color, text, nullptr, wrap_width);
 }
 
@@ -8189,6 +8417,38 @@ void DrawPromptParagraphStyled(
     }
 }
 
+float DrawLeftAlignedPromptParagraphStyled(
+    ImDrawList* draw,
+    ImFont* font,
+    float font_size,
+    float max_width,
+    const ImVec2& min,
+    float line_margin,
+    ImU32 text_color,
+    float alpha,
+    const std::string& text
+) {
+    const std::vector<std::string> lines = SplitPromptParagraph(font, font_size, max_width, text);
+    float y = std::round(min.y);
+    for (size_t index = 0; index < lines.size(); ++index) {
+        DrawPromptTextStyled(
+            draw,
+            font,
+            font_size,
+            ImVec2(std::round(min.x), y),
+            text_color,
+            alpha,
+            lines[index].c_str()
+        );
+        const ImVec2 line_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, lines[index].c_str());
+        y += line_size.y;
+        if (index + 1U < lines.size()) {
+            y += ShellUi(line_margin);
+        }
+    }
+    return y;
+}
+
 void DrawPauseContainerChrome(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float alpha) {
     if (!HasTexture(g_shell_assets.general_window)) {
         DrawPromptPlate(draw, min, max, alpha);
@@ -8273,7 +8533,7 @@ void RenderPromptModal(ShellState& state) {
     }
 
     ImFont* prompt_banner_font = CurrentBodyFont();
-    const float prompt_banner_font_size = information_prompt ? ShellUi(21.0f) : ShellUi(28.0f);
+    const float prompt_banner_font_size = information_prompt ? ShellUi(19.0f) : ShellUi(28.0f);
     const float prompt_banner_wrap_width = information_prompt
         ? std::min(ShellUi(640.0f), display.x - ShellUi(220.0f))
         : std::min(ShellUi(820.0f), display.x - ShellUi(110.0f));
@@ -8483,6 +8743,7 @@ void RenderShell(ShellState& state) {
     case ShellScreen::Run:
     case ShellScreen::Evidence:
     case ShellScreen::Files:
+    case ShellScreen::Environment:
     case ShellScreen::Stages:
         if (BeginLayoutRegionAt("screen-region", 0.0f, 0.0f, 1280.0f, 720.0f)) {
             RenderCurrentScreen(state);

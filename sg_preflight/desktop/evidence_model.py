@@ -243,6 +243,15 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
     def _ready_from_prereq(key: str) -> bool:
         return str(readiness.get(key, {}).get("status", "")).strip().lower() == "available"
 
+    def _status_from_prereq(key: str) -> str:
+        return str(readiness.get(key, {}).get("status", "")).strip().lower()
+
+    def _detail_from_prereq(key: str) -> str:
+        return str(readiness.get(key, {}).get("detail", "")).strip()
+
+    def _probe_path_from_prereq(key: str) -> str:
+        return str(readiness.get(key, {}).get("probe_path", "")).strip()
+
     def _item(
         *,
         key: str,
@@ -320,6 +329,12 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
 
     python_path = str(Path(sys.executable).resolve())
     python_ready = Path(python_path).exists()
+    raco_headless_status = _status_from_prereq("raco_headless")
+    raco_headless_detail = _detail_from_prereq("raco_headless")
+    raco_headless_probe = _probe_path_from_prereq("raco_headless")
+    raco_gui_status = _status_from_prereq("raco_gui")
+    raco_gui_detail = _detail_from_prereq("raco_gui")
+    raco_gui_probe = _probe_path_from_prereq("raco_gui")
 
     items = [
         _item(
@@ -413,27 +428,59 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             key="raco_headless",
             category="Local tools",
             label="RaCoHeadless",
-            state="ready" if _ready_from_prereq("raco_headless") else "missing",
+            state=(
+                "ready"
+                if raco_headless_status == "available"
+                else "partial"
+                if raco_headless_status == "incompatible"
+                else "missing"
+            ),
             summary=(
                 "RaCoHeadless is available for local scene-side readiness checks."
-                if _ready_from_prereq("raco_headless")
+                if raco_headless_status == "available"
+                else (
+                    "RaCoHeadless exists locally, but the configured build cannot open the representative SG scene here."
+                    + (f" {raco_headless_detail}" if raco_headless_detail else "")
+                )
+                if raco_headless_status == "incompatible"
                 else "RaCoHeadless is not configured on this machine yet."
             ),
             path=str(readiness.get("raco_headless", {}).get("path", "")),
-            next_action="Set SG_RACO_HEADLESS or install the approved Ramses Composer build on this machine.",
+            next_action=(
+                "Point SG_RACO_HEADLESS at a Ramses Composer build that can open the current SG scene feature level."
+                + (f" Probe scene: {raco_headless_probe}" if raco_headless_probe else "")
+            )
+            if raco_headless_status == "incompatible"
+            else "Set SG_RACO_HEADLESS or install the approved Ramses Composer build on this machine.",
         ),
         _item(
             key="raco_gui",
             category="Local tools",
             label="Ramses Composer / RaCo GUI",
-            state="ready" if _ready_from_prereq("raco_gui") else "missing",
+            state=(
+                "ready"
+                if raco_gui_status == "available"
+                else "partial"
+                if raco_gui_status == "incompatible"
+                else "missing"
+            ),
             summary=(
                 "A Ramses Composer GUI executable is available for first-pass open-in-RaCo adapters."
-                if _ready_from_prereq("raco_gui")
+                if raco_gui_status == "available"
+                else (
+                    "A Ramses Composer GUI executable exists locally, but it cannot open the representative SG scene here."
+                    + (f" {raco_gui_detail}" if raco_gui_detail else "")
+                )
+                if raco_gui_status == "incompatible"
                 else "No Ramses Composer GUI executable is configured locally yet."
             ),
             path=str(readiness.get("raco_gui", {}).get("path", "")),
-            next_action="Set SG_RACO_GUI or install the approved Ramses Composer GUI build before exposing open-in-RaCo adapters.",
+            next_action=(
+                "Point SG_RACO_GUI at a Ramses Composer build that matches the current SG scene feature level."
+                + (f" Probe scene: {raco_gui_probe}" if raco_gui_probe else "")
+            )
+            if raco_gui_status == "incompatible"
+            else "Set SG_RACO_GUI or install the approved Ramses Composer GUI build before exposing open-in-RaCo adapters.",
         ),
         _item(
             key="blender_executable",
