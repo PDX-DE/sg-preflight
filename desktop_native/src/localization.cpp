@@ -64,7 +64,7 @@ const char* TranslateEnglish(UiText text) {
     case UiSoundEffects: return "UI sound effects";
     case UiSoundEffectsSummary: return "Menu sounds stay on so navigation, confirm, cancel, and prompt feedback are always audible.";
     case InstallerBackgroundMusic: return "Installer background music";
-    case InstallerBackgroundMusicSummary: return "Plays background music while the shell is open. It stays off by default unless enabled in imgui.ini or here.";
+    case InstallerBackgroundMusicSummary: return "Plays background music while the shell is open. The executable-local imgui.ini keeps the last choice for music and shell mode.";
     case Summary: return "SUMMARY";
     case Snapshot: return "SNAPSHOT";
     case GroupedFindings: return "GROUPED FINDINGS";

@@ -138,7 +138,6 @@ $workspaceItems = @(
     "LICENSE",
     "NOTICE.md",
     "SECURITY.md",
-    "imgui.ini",
     "debug_icon.png",
     "exe_ico.png",
     "framework_icon.png",
@@ -167,29 +166,41 @@ foreach ($item in $workspaceItems) {
     }
 }
 
-$workspaceIniPath = Join-Path $workspaceDir "imgui.ini"
-$workspaceIniContent = if (Test-Path $workspaceIniPath) { Get-Content -LiteralPath $workspaceIniPath -Raw } else { "" }
 $musicEnabledValue = if ($IncludeMusic) { "1" } else { "0" }
-if ($workspaceIniContent -match "\[sg_preflight_native_shell\]") {
-    if ($workspaceIniContent -match "(?ms)(\[sg_preflight_native_shell\].*?^music_enabled=)(0|1)") {
-        $workspaceIniContent = [regex]::Replace(
-            $workspaceIniContent,
-            "(?ms)(\[sg_preflight_native_shell\].*?^music_enabled=)(0|1)",
-            ([string]::Concat('${1}', $musicEnabledValue)),
+
+function Set-ShellIniDefaults {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$IniPath,
+        [Parameter(Mandatory = $true)]
+        [string]$MusicEnabledValue
+    )
+
+    $iniContent = if (Test-Path $IniPath) { Get-Content -LiteralPath $IniPath -Raw } else { "" }
+    $shellSection = "[sg_preflight_native_shell]`r`ndisplay_mode=cinematic`r`nmusic_enabled=$MusicEnabledValue`r`nsfx_enabled=1`r`n"
+
+    if ($iniContent -match "(?ms)^\[sg_preflight_native_shell\].*?(?=^\[|\z)") {
+        $iniContent = [regex]::Replace(
+            $iniContent,
+            "(?ms)^\[sg_preflight_native_shell\].*?(?=^\[|\z)",
+            $shellSection,
             1
         )
+    } elseif ([string]::IsNullOrWhiteSpace($iniContent)) {
+        $iniContent = $shellSection
     } else {
-        $workspaceIniContent = [regex]::Replace(
-            $workspaceIniContent,
-            "(?ms)(\[sg_preflight_native_shell\]\s*)",
-            ([string]::Concat('${1}music_enabled=', $musicEnabledValue, "`r`n")),
-            1
-        )
+        $iniContent = $iniContent.TrimEnd() + "`r`n`r`n" + $shellSection
     }
-} else {
-    $workspaceIniContent = $workspaceIniContent.TrimEnd() + "`r`n`r`n[sg_preflight_native_shell]`r`nmusic_enabled=$musicEnabledValue`r`n"
+
+    Set-Content -Path $IniPath -Value $iniContent -Encoding UTF8
 }
-Set-Content -Path $workspaceIniPath -Value $workspaceIniContent -Encoding UTF8
+
+$bundleIniTemplatePath = Join-Path $repoRoot "imgui.ini"
+$bundleIniPath = Join-Path $resolvedBundleDir "imgui.ini"
+if (Test-Path $bundleIniTemplatePath) {
+    Copy-Tree -Source $bundleIniTemplatePath -Destination $bundleIniPath
+}
+Set-ShellIniDefaults -IniPath $bundleIniPath -MusicEnabledValue $musicEnabledValue
 
 $resourceCandidates = @(
     (Join-Path $repoRoot "UnleashedRecompResources-main\UnleashedRecompResources-main"),
@@ -267,7 +278,7 @@ $manifest = [ordered]@{
         if (-not $IncludeEvidence) { "Generated evidence was omitted by default." }
         if (-not $IncludeReferenceResources) { "Reference Unleashed-style DDS resources were omitted by default." }
         if (-not $IncludeFonts) { "Optional shell fonts were omitted by default; runtime will fall back to bundled/system fonts when needed." }
-        if (-not $IncludeMusic) { "Optional music tracks were omitted by default and workspace imgui.ini was set to music_enabled=0." }
+        if (-not $IncludeMusic) { "Optional music tracks were omitted by default and bundle-root imgui.ini was set to music_enabled=0." }
     ) | Where-Object { $_ }
 }
 $manifest | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $resolvedBundleDir "bundle_manifest.json") -Encoding UTF8

@@ -697,8 +697,90 @@ std::filesystem::path ResolveShellIniPath() {
     return std::filesystem::current_path() / path;
 }
 
+void EnsureShellIniDefaults(const std::filesystem::path& ini_path) {
+    std::error_code error;
+    if (ini_path.has_parent_path()) {
+        std::filesystem::create_directories(ini_path.parent_path(), error);
+    }
+
+    const auto ensure_value = [&](const wchar_t* key, const wchar_t* default_value) {
+        wchar_t value_buffer[64] = {};
+        GetPrivateProfileStringW(
+            L"sg_preflight_native_shell",
+            key,
+            L"",
+            value_buffer,
+            static_cast<DWORD>(std::size(value_buffer)),
+            ini_path.wstring().c_str()
+        );
+        if (value_buffer[0] == L'\0') {
+            WritePrivateProfileStringW(
+                L"sg_preflight_native_shell",
+                key,
+                default_value,
+                ini_path.wstring().c_str()
+            );
+        }
+    };
+
+    ensure_value(L"display_mode", L"cinematic");
+    ensure_value(L"music_enabled", L"1");
+    ensure_value(L"sfx_enabled", L"1");
+}
+
+void BindShellIniFile(ImGuiIO& io, const std::filesystem::path& ini_path) {
+    g_shell_ini_override_path = ini_path;
+    EnsureShellIniDefaults(ini_path);
+    io.IniFilename = nullptr;
+
+    std::ifstream stream(ini_path, std::ios::binary);
+    if (!stream) {
+        return;
+    }
+
+    const std::string content((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    if (!content.empty()) {
+        ImGui::LoadIniSettingsFromMemory(content.c_str(), content.size());
+    }
+}
+
+void SaveShellIniFile() {
+    const std::filesystem::path ini_path = ResolveShellIniPath();
+    std::error_code error;
+    if (ini_path.has_parent_path()) {
+        std::filesystem::create_directories(ini_path.parent_path(), error);
+    }
+
+    size_t imgui_settings_size = 0U;
+    const char* imgui_settings = ImGui::SaveIniSettingsToMemory(&imgui_settings_size);
+
+    std::string content;
+    if (imgui_settings != nullptr && imgui_settings_size > 0U) {
+        content.assign(imgui_settings, imgui_settings_size);
+    }
+    if (!content.empty() && content.back() != '\n') {
+        content += "\r\n";
+    }
+    if (!content.empty()) {
+        content += "\r\n";
+    }
+
+    content += "[sg_preflight_native_shell]\r\n";
+    content += std::string("display_mode=") + (g_shell_display_mode == ShellDisplayMode::Cinematic ? "cinematic" : "work") + "\r\n";
+    content += std::string("music_enabled=") + (g_shell_audio.music_enabled ? "1" : "0") + "\r\n";
+    content += std::string("sfx_enabled=") + (g_shell_audio.sfx_enabled ? "1" : "0") + "\r\n";
+
+    std::ofstream stream(ini_path, std::ios::binary | std::ios::trunc);
+    if (!stream) {
+        return;
+    }
+    stream.write(content.data(), static_cast<std::streamsize>(content.size()));
+}
+
 void SaveMusicPreferenceToIni(bool enabled);
 void SaveDisplayModePreferenceToIni(ShellDisplayMode mode);
+bool LoadSfxPreferenceFromIni();
+void SaveSfxPreferenceToIni(bool enabled);
 
 bool IsWorkDisplayMode() {
     return g_shell_display_mode == ShellDisplayMode::Work;
@@ -770,7 +852,7 @@ bool LoadMusicPreferenceFromIni() {
     const bool enabled = GetPrivateProfileIntW(
         L"sg_preflight_native_shell",
         L"music_enabled",
-        0,
+        1,
         ini_path.wstring().c_str()
     ) != 0;
     if (value_buffer[0] == L'\0') {
@@ -784,6 +866,39 @@ void SaveMusicPreferenceToIni(bool enabled) {
     WritePrivateProfileStringW(
         L"sg_preflight_native_shell",
         L"music_enabled",
+        enabled ? L"1" : L"0",
+        ini_path.wstring().c_str()
+    );
+}
+
+bool LoadSfxPreferenceFromIni() {
+    const std::filesystem::path ini_path = ResolveShellIniPath();
+    wchar_t value_buffer[16] = {};
+    GetPrivateProfileStringW(
+        L"sg_preflight_native_shell",
+        L"sfx_enabled",
+        L"",
+        value_buffer,
+        static_cast<DWORD>(std::size(value_buffer)),
+        ini_path.wstring().c_str()
+    );
+    const bool enabled = GetPrivateProfileIntW(
+        L"sg_preflight_native_shell",
+        L"sfx_enabled",
+        1,
+        ini_path.wstring().c_str()
+    ) != 0;
+    if (value_buffer[0] == L'\0') {
+        SaveSfxPreferenceToIni(enabled);
+    }
+    return enabled;
+}
+
+void SaveSfxPreferenceToIni(bool enabled) {
+    const std::filesystem::path ini_path = ResolveShellIniPath();
+    WritePrivateProfileStringW(
+        L"sg_preflight_native_shell",
+        L"sfx_enabled",
         enabled ? L"1" : L"0",
         ini_path.wstring().c_str()
     );
@@ -1361,6 +1476,7 @@ void SetMusicEnabled(bool enabled) {
 
 void SetSfxEnabled(bool enabled) {
     g_shell_audio.sfx_enabled = enabled;
+    SaveSfxPreferenceToIni(enabled);
 }
 
 void SetDisplayMode(ShellDisplayMode mode) {
@@ -7930,6 +8046,149 @@ void DrawPromptTextureSlice(
     draw->AddImage(ToTextureId(texture), min, max, uv_min, uv_max, tint);
 }
 
+void DrawPromptTextStyled(
+    ImDrawList* draw,
+    ImFont* font,
+    float font_size,
+    const ImVec2& position,
+    ImU32 text_color,
+    float alpha,
+    const char* text,
+    float wrap_width = 0.0f
+) {
+    if (font == nullptr || text == nullptr || *text == '\0') {
+        return;
+    }
+
+    const ImVec2 snapped_position(std::round(position.x), std::round(position.y));
+    const float shadow_offset = ShellUi(2.0f);
+    const float shadow_radius = ShellUi(0.75f);
+    const ImVec2 shadow_pos(
+        std::round(snapped_position.x + shadow_offset),
+        std::round(snapped_position.y + shadow_offset)
+    );
+    const ImU32 outline_color = IM_COL32(0, 0, 0, static_cast<int>(176.0f * alpha));
+    const ImU32 shadow_color = IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha));
+    const std::array<ImVec2, 4> outline_offsets = {{
+        ImVec2(-shadow_radius, 0.0f),
+        ImVec2(shadow_radius, 0.0f),
+        ImVec2(0.0f, -shadow_radius),
+        ImVec2(0.0f, shadow_radius),
+    }};
+
+    for (const ImVec2& offset : outline_offsets) {
+        draw->AddText(
+            font,
+            font_size,
+            ImVec2(shadow_pos.x + offset.x, shadow_pos.y + offset.y),
+            outline_color,
+            text,
+            nullptr,
+            wrap_width
+        );
+    }
+    draw->AddText(font, font_size, shadow_pos, shadow_color, text, nullptr, wrap_width);
+    draw->AddText(font, font_size, snapped_position, text_color, text, nullptr, wrap_width);
+}
+
+std::vector<std::string> SplitPromptParagraph(ImFont* font, float font_size, float max_width, const std::string& text) {
+    std::vector<std::string> lines;
+    if (font == nullptr || text.empty()) {
+        return lines;
+    }
+
+    const float scale = font_size / font->LegacySize;
+    const char* text_start = text.c_str();
+    const char* text_end = text_start + text.size();
+    const char* cursor = text_start;
+
+    while (cursor < text_end) {
+        while (cursor < text_end && (*cursor == '\r' || *cursor == '\n')) {
+            ++cursor;
+        }
+        if (cursor >= text_end) {
+            break;
+        }
+
+        const char* line_end = max_width > 0.0f
+            ? font->CalcWordWrapPositionA(scale, cursor, text_end, max_width)
+            : text_end;
+        if (line_end == cursor) {
+            line_end = cursor + 1;
+        }
+
+        const char* newline = static_cast<const char*>(memchr(cursor, '\n', static_cast<size_t>(text_end - cursor)));
+        if (newline != nullptr && newline < line_end) {
+            line_end = newline;
+        }
+
+        const char* trimmed_end = line_end;
+        while (trimmed_end > cursor && (trimmed_end[-1] == ' ' || trimmed_end[-1] == '\t' || trimmed_end[-1] == '\r')) {
+            --trimmed_end;
+        }
+        lines.emplace_back(cursor, trimmed_end);
+
+        cursor = line_end;
+        while (cursor < text_end && (*cursor == ' ' || *cursor == '\t')) {
+            ++cursor;
+        }
+        if (cursor < text_end && *cursor == '\r') {
+            ++cursor;
+        }
+        if (cursor < text_end && *cursor == '\n') {
+            ++cursor;
+        }
+    }
+
+    if (lines.empty()) {
+        lines.emplace_back();
+    }
+    return lines;
+}
+
+ImVec2 MeasurePromptParagraph(ImFont* font, float font_size, float line_margin, const std::vector<std::string>& lines) {
+    float width = 0.0f;
+    float height = 0.0f;
+    for (size_t index = 0; index < lines.size(); ++index) {
+        const ImVec2 line_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, lines[index].c_str());
+        width = std::max(width, line_size.x);
+        height += line_size.y;
+        if (index + 1U < lines.size()) {
+            height += ShellUi(line_margin);
+        }
+    }
+    return ImVec2(width, height);
+}
+
+void DrawPromptParagraphStyled(
+    ImDrawList* draw,
+    ImFont* font,
+    float font_size,
+    float max_width,
+    const ImVec2& center,
+    float line_margin,
+    ImU32 text_color,
+    float alpha,
+    const std::string& text
+) {
+    const std::vector<std::string> lines = SplitPromptParagraph(font, font_size, max_width, text);
+    const ImVec2 paragraph_size = MeasurePromptParagraph(font, font_size, line_margin, lines);
+    float y = std::round(center.y - paragraph_size.y * 0.5f);
+
+    for (size_t index = 0; index < lines.size(); ++index) {
+        const ImVec2 line_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, lines[index].c_str());
+        const ImVec2 line_pos(
+            std::round(center.x - line_size.x * 0.5f),
+            y
+        );
+        DrawPromptTextStyled(draw, font, font_size, line_pos, text_color, alpha, lines[index].c_str());
+        y += line_size.y;
+        if (index + 1U < lines.size()) {
+            y += ShellUi(line_margin);
+        }
+    }
+}
+
 void DrawPauseContainerChrome(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float alpha) {
     if (!HasTexture(g_shell_assets.general_window)) {
         DrawPromptPlate(draw, min, max, alpha);
@@ -8022,11 +8281,17 @@ void RenderPromptModal(ShellState& state) {
         display.x * 0.5f,
         information_prompt ? (display.y * 0.47f) : (display.y * 0.5f + ShellUi(3.0f))
     );
-    const ImVec2 prompt_text_size = prompt_banner_font->CalcTextSizeA(
+    const std::vector<std::string> prompt_lines = SplitPromptParagraph(
+        prompt_banner_font,
         prompt_banner_font_size,
         prompt_banner_wrap_width,
-        prompt_banner_wrap_width,
-        state.prompt_message.c_str()
+        state.prompt_message
+    );
+    const ImVec2 prompt_text_size = MeasurePromptParagraph(
+        prompt_banner_font,
+        prompt_banner_font_size,
+        5.0f,
+        prompt_lines
     );
     const ImVec2 banner_half(
         std::max(information_prompt ? ShellUi(220.0f) : ShellUi(190.0f), prompt_text_size.x * 0.5f + ShellUi(37.0f)),
@@ -8040,29 +8305,17 @@ void RenderPromptModal(ShellState& state) {
     DrawPauseContainerChrome(draw, banner_min, banner_max, banner_alpha);
 
     if (banner_open > 0.0f) {
-        const ImVec2 prompt_banner_text_pos(prompt_center.x - prompt_text_size.x * 0.5f, prompt_center.y - prompt_text_size.y * 0.5f);
         draw->PushClipRect(banner_min, banner_max, true);
-        draw->AddText(
+        DrawPromptParagraphStyled(
+            draw,
             prompt_banner_font,
             prompt_banner_font_size,
-            ImVec2(prompt_banner_text_pos.x + ShellUi(1.0f), prompt_banner_text_pos.y + ShellUi(1.0f)),
-            IsWorkDisplayMode()
-                ? IM_COL32(255, 255, 255, static_cast<int>(54.0f * banner_alpha))
-                : IM_COL32(0, 0, 0, static_cast<int>(255.0f * banner_alpha)),
-            state.prompt_message.c_str(),
-            nullptr,
-            prompt_banner_wrap_width
-        );
-        draw->AddText(
-            prompt_banner_font,
-            prompt_banner_font_size,
-            prompt_banner_text_pos,
-            IsWorkDisplayMode()
-                ? IM_COL32(22, 28, 30, static_cast<int>(255.0f * banner_alpha))
-                : IM_COL32(255, 255, 255, static_cast<int>(255.0f * banner_alpha)),
-            state.prompt_message.c_str(),
-            nullptr,
-            prompt_banner_wrap_width
+            prompt_banner_wrap_width,
+            prompt_center,
+            5.0f,
+            IM_COL32(255, 255, 255, static_cast<int>(255.0f * banner_alpha)),
+            banner_alpha,
+            state.prompt_message
         );
         draw->PopClipRect();
     }
@@ -8164,22 +8417,13 @@ void RenderPromptModal(ShellState& state) {
             row_mins[index].x + ((row_maxs[index].x - row_mins[index].x) - text_size.x) * 0.5f,
             row_mins[index].y + ((row_maxs[index].y - row_mins[index].y) - text_size.y) * 0.5f - ShellUi(1.0f)
         );
-        draw->AddText(
-            font,
-            font_size,
-            ImVec2(text_pos.x + ShellUi(1.0f), text_pos.y + ShellUi(1.0f)),
-            IsWorkDisplayMode()
-                ? IM_COL32(255, 255, 255, static_cast<int>(42.0f * alpha))
-                : IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha)),
-            labels[index].c_str()
-        );
-        draw->AddText(
+        DrawPromptTextStyled(
+            draw,
             font,
             font_size,
             text_pos,
-            IsWorkDisplayMode()
-                ? (selected ? IM_COL32(158, 88, 0, static_cast<int>(255.0f * alpha)) : IM_COL32(24, 30, 32, static_cast<int>(255.0f * alpha)))
-                : (selected ? IM_COL32(255, 128, 0, static_cast<int>(255.0f * alpha)) : IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha))),
+            selected ? IM_COL32(255, 128, 0, static_cast<int>(255.0f * alpha)) : IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha)),
+            alpha,
             labels[index].c_str()
         );
     }
@@ -8331,6 +8575,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    BindShellIniFile(io, GetExecutableDirectory() / "imgui.ini");
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigWindowsMoveFromTitleBarOnly = true;
     LoadShellFonts(io, std::filesystem::path(backend.workspace_root));
@@ -8353,11 +8598,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     };
     ImGui_ImplDX12_Init(&init_info);
 
-    g_shell_ini_override_path = std::filesystem::path(backend.workspace_root) / "imgui.ini";
     g_shell_display_mode = ShellDisplayMode::Cinematic;
     const bool music_enabled_preference = LoadMusicPreferenceFromIni();
+    const bool sfx_enabled_preference = LoadSfxPreferenceFromIni();
     LoadShellAssets(std::filesystem::path(backend.workspace_root));
     LoadShellAudio(std::filesystem::path(backend.workspace_root));
+    g_shell_audio.sfx_enabled = sfx_enabled_preference;
     g_shell_audio.music_enabled = music_enabled_preference;
     if (g_shell_audio.music_enabled) {
         SetMusicEnabled(true);
@@ -8471,6 +8717,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     g_live_shell_state = nullptr;
 
     WaitForPendingOperations();
+    SaveShellIniFile();
     sg_preflight::native_shell::ShutdownAudio();
     ImGui_ImplDX12_Shutdown();
     ImGui_ImplWin32_Shutdown();
