@@ -16,6 +16,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $resolvedBundleDir = Join-Path $repoRoot $BundleDir
 $latestPathFile = Join-Path (Join-Path $repoRoot "build") "latest_native_shell_path.txt"
+$latestBundlePathFile = Join-Path (Join-Path $repoRoot "build") "latest_native_shell_bundle_path.txt"
 
 if ($BuildDir) {
     $resolvedBuildDir = Join-Path $repoRoot $BuildDir
@@ -118,7 +119,7 @@ foreach ($item in $directxItems) {
     }
 }
 
-Set-Content -Path $latestPathFile -Value (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe") -Encoding UTF8
+Set-Content -Path $latestBundlePathFile -Value (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe") -Encoding UTF8
 
 $pythonExe = (& python -c "import sys; print(sys.executable)").Trim()
 if (-not $pythonExe) {
@@ -317,3 +318,4 @@ with zipfile.ZipFile(nt_long_path(zip_path), "w", compression=zipfile.ZIP_DEFLAT
 
 Write-Host "Portable bundle:" $resolvedBundleDir
 Write-Host "Bundle exe:" (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe")
+Write-Host "Latest bundle pointer:" $latestBundlePathFile

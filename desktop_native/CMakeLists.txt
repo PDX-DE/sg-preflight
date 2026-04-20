@@ -67,6 +67,7 @@ add_executable(
   src/localization.cpp
   src/main.cpp
   src/native_shell.rc
+  src/prompt.cpp
   src/screenshot_capture.cpp
   src/texture_loader.cpp
 )

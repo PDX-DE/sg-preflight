@@ -46,7 +46,7 @@ Current native-shell milestone:
   - `ENV`
   - `STAGES`
 - presentation:
-  - the shell keeps the heavier Unleashed-inspired SGFX Project Quality-Hero chrome by default
+  - the shell keeps the heavier Unleashed-inspired SGFX: Project Quality-Hero chrome by default
   - readability tuning should happen inside that same presentation layer instead of splitting the product into separate work/cinematic modes
 - translated Unleashed-style shell systems in native code instead of stock ImGui widgets:
   - animated scanline header bars
@@ -98,6 +98,12 @@ Optional native-shell startup overrides:
 build\native\Release\sg_preflight_native_shell.exe --profile F70 --action repo_checker_profile__f70
 ```
 
+Verify the default safe bundle:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify_native_shell_bundle.ps1
+```
+
 The CMake file fetches:
 
 - Dear ImGui `v1.92.7-docking`
@@ -108,7 +114,8 @@ The CMake file fetches:
 - This shell is Windows-first because the current operator environment is Windows.
 - It is intentionally separate from the PySide shell so the native track can move toward a closer Unleashed-style interaction feel without cloning the Python engine.
 - Package staging now defaults to a safer private-alpha bundle: repo mirrors, generated evidence, reference DDS bundles, optional fonts, and music are excluded unless explicitly requested.
-- the current runtime default is the heavier cinematic-style SGFX Project Quality-Hero presentation, with readability and spacing tuned inside that same shell instead of switching to a separate work mode.
+- `scripts/package_native_shell_bundle.ps1` now keeps the build pointer and writes a separate bundle pointer under `build/latest_native_shell_bundle_path.txt`.
+- the current runtime default is the heavier cinematic-style SGFX: Project Quality-Hero presentation, with readability and spacing tuned inside that same shell instead of switching to a separate work mode.
 - Local UnleashedRecomp resource folders should be treated as reference-only inputs unless there is a cleared internal redistribution path for those assets.
 - BMW stages remain blocker/readiness surfaces until BMW-side access and scripts exist locally.
 - The current font path intentionally prefers direct local OTF files when available, because the upstream `im_font_atlas.bin` is a prebuilt snapshot generated for Unleashed's custom font-loading path rather than a drop-in ImGui runtime asset here.

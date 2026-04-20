@@ -17,8 +17,8 @@ constexpr std::array<LanguageOption, 4> kSupportedLanguages = {{
 
 const char* TranslateEnglish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SGFX Project Quality-Hero";
-    case HeaderChecking: return "SGFX Project Quality-Hero";
+    case HeaderPreflight: return "SGFX: Project Quality-Hero";
+    case HeaderChecking: return "SGFX: Project Quality-Hero";
     case ImageSlotReserved: return "";
     case Continue: return "Continue";
     case Review: return "Review";
@@ -89,8 +89,8 @@ const char* TranslateEnglish(UiText text) {
     case LanguageScreenTitle: return "Please select a language.";
     case LanguageScreenBody: return "Choose the language used by the shell interface.";
     case LanguageScreenHint: return "This only changes the shell text. Project data and generated results stay the same.";
-    case IntroWelcome: return "Welcome to SGFX Project Quality-Hero.";
-    case IntroBodyPrimary: return "SGFX Project Quality-Hero is the local desktop operator shell for SG-side 3D Car QA review.\n\nIt brings slice selection, SG checker execution, evidence capture, reports, exports, and follow-up material into one operator flow.";
+    case IntroWelcome: return "Welcome to SGFX: Project Quality-Hero.";
+    case IntroBodyPrimary: return "SGFX: Project Quality-Hero is the local desktop operator shell for SG-side 3D Car QA review.\n\nIt brings slice selection, SG checker execution, evidence capture, reports, exports, and follow-up material into one operator flow.";
     case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the local check, review what will run, start the run, then open the first files, reports, exports, and blocked/manual follow-up collected for you.\n\nIt does not replace Blender visual review, RaCo / RaCoHeadless, rack sessions, or BMW screenshot smoke. Use it to turn deterministic SG evidence into a cleaner bug-report handoff.";
     case SelectLoadingTitle: return "Loading local project data.";
     case SelectLoadingBody: return "The shell is loading the available slices, checks, and recent local results so you can choose what to run.";
@@ -136,8 +136,8 @@ const char* TranslateRomanian(UiText text);
 
 const char* TranslateSpanish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SGFX Project Quality-Hero";
-    case HeaderChecking: return "SGFX Project Quality-Hero";
+    case HeaderPreflight: return "SGFX: Project Quality-Hero";
+    case HeaderChecking: return "SGFX: Project Quality-Hero";
     case ImageSlotReserved: return "ESPACIO DE IMAGEN RESERVADO";
     case Continue: return "CONTINUAR";
     case Review: return "REVISAR";
@@ -208,7 +208,7 @@ const char* TranslateSpanish(UiText text) {
     case LanguageScreenTitle: return "Seleccione un idioma.";
     case LanguageScreenBody: return "Elija primero el idioma del shell y luego continue al flujo SG.";
     case LanguageScreenHint: return "Solo se traduce el texto del shell. Los datos reales de SG y la salida de checkers siguen tal cual.";
-    case IntroWelcome: return "Bienvenido a SGFX Project Quality-Hero.";
+    case IntroWelcome: return "Bienvenido a SGFX: Project Quality-Hero.";
     case IntroBodyPrimary: return "Seleccione la slice SG, confirme la preparacion local, ejecute una vez la accion real con checkers SG y luego siga Open First, Archivos y el seguimiento bloqueado/manual en orden.";
     case IntroBodySecondary: return "Este shell nativo sigue siendo solo una capa sobre el backend de Python. El flujo web, los packs deterministas, la evidencia SG y la honestidad sobre bloqueos BMW siguen intactos.";
     case SelectLoadingTitle: return "Cargando el estado SG.";
@@ -241,7 +241,7 @@ const char* TranslateSpanish(UiText text) {
     case NoRecentResults: return "Todavia no hay resultados recientes para este perfil.";
     case NoManualFollowUp: return "No hay seguimiento manual adicional para la evidencia actual.";
     case PromptQuitTitle: return "SALIR DE QUALITY-HERO";
-    case PromptQuitMessage: return "Cerrar SGFX Project Quality-Hero ahora?";
+    case PromptQuitMessage: return "Cerrar SGFX: Project Quality-Hero ahora?";
     case PromptQuitRunningMessage: return "Cerrar el shell ahora? La accion SG actual seguira ejecutandose en segundo plano.";
     case PromptLeaveRunTitle: return "SALIR DE LA PANTALLA";
     case PromptLeaveRunMessage: return "La accion SG actual sigue ejecutandose. Salir de esta pagina de todos modos? La accion seguira en segundo plano.";
@@ -251,8 +251,8 @@ const char* TranslateSpanish(UiText text) {
 
 const char* TranslateGerman(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SGFX Project Quality-Hero";
-    case HeaderChecking: return "SGFX Project Quality-Hero";
+    case HeaderPreflight: return "SGFX: Project Quality-Hero";
+    case HeaderChecking: return "SGFX: Project Quality-Hero";
     case ImageSlotReserved: return "BILDPLATZ RESERVIERT";
     case Continue: return "WEITER";
     case Review: return "PRUEFEN";
@@ -323,7 +323,7 @@ const char* TranslateGerman(UiText text) {
     case LanguageScreenTitle: return "Bitte waehlen Sie eine Sprache.";
     case LanguageScreenBody: return "Waehlen Sie zuerst die Shell-Sprache und gehen Sie dann in den SG-Operatorfluss.";
     case LanguageScreenHint: return "Nur Shell-eigener Text wird uebersetzt. Echte SG-Daten und Checker-Ausgaben bleiben original.";
-    case IntroWelcome: return "Willkommen bei SGFX Project Quality-Hero.";
+    case IntroWelcome: return "Willkommen bei SGFX: Project Quality-Hero.";
     case IntroBodyPrimary: return "Waehlen Sie die SG-Slice, bestaetigen Sie die lokale Bereitschaft, starten Sie die echte SG-Checker-Aktion einmal und gehen Sie dann durch Open First, Dateien und blockierte/manuelle Nacharbeit.";
     case IntroBodySecondary: return "Dieses native Shell bleibt nur eine Huelle ueber dem Python-Backend. Browserfluss, deterministische Packs, SG-Evidence und BMW-Blocker-Ehrlichkeit bleiben erhalten.";
     case SelectLoadingTitle: return "SG-Status wird geladen.";
@@ -356,7 +356,7 @@ const char* TranslateGerman(UiText text) {
     case NoRecentResults: return "Noch keine letzten Ergebnisse fuer dieses Profil.";
     case NoManualFollowUp: return "Keine zusaetzliche manuelle Nacharbeit an diese Evidence angehaengt.";
     case PromptQuitTitle: return "QUALITY-HERO BEENDEN";
-    case PromptQuitMessage: return "SGFX Project Quality-Hero jetzt schliessen?";
+    case PromptQuitMessage: return "SGFX: Project Quality-Hero jetzt schliessen?";
     case PromptQuitRunningMessage: return "Shell jetzt schliessen? Die aktuelle SG-Aktion laeuft im Hintergrund weiter.";
     case PromptLeaveRunTitle: return "LAUFSEITE VERLASSEN";
     case PromptLeaveRunMessage: return "Die aktuelle SG-Aktion laeuft noch. Diese Seite trotzdem verlassen? Die Aktion laeuft im Hintergrund weiter.";
@@ -366,8 +366,8 @@ const char* TranslateGerman(UiText text) {
 
 const char* TranslateRomanian(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SGFX Project Quality-Hero";
-    case HeaderChecking: return "SGFX Project Quality-Hero";
+    case HeaderPreflight: return "SGFX: Project Quality-Hero";
+    case HeaderChecking: return "SGFX: Project Quality-Hero";
     case ImageSlotReserved: return "SPATIU IMAGINE REZERVAT";
     case Continue: return "CONTINUA";
     case Review: return "REVIZUIRE";
@@ -438,7 +438,7 @@ const char* TranslateRomanian(UiText text) {
     case LanguageScreenTitle: return "Selectati o limba.";
     case LanguageScreenBody: return "Alegeti mai intai limba shell-ului, apoi continuati in fluxul operator SG.";
     case LanguageScreenHint: return "Se traduce doar textul shell-ului. Datele SG reale si iesirea checkerelor raman in forma originala.";
-    case IntroWelcome: return "Bine ati venit la SGFX Project Quality-Hero.";
+    case IntroWelcome: return "Bine ati venit la SGFX: Project Quality-Hero.";
     case IntroBodyPrimary: return "Alegeti slice-ul SG, confirmati pregatirea locala, rulati o singura data actiunea reala cu checkere SG, apoi treceti prin Open First, Fisiere si urmarirea blocata/manuala.";
     case IntroBodySecondary: return "Acest shell nativ ramane doar o interfata peste backend-ul Python. Fluxul din browser, pachetele deterministe, evidenta SG si onestitatea fata de blocajele BMW raman intacte.";
     case SelectLoadingTitle: return "Se incarca starea SG.";
@@ -471,7 +471,7 @@ const char* TranslateRomanian(UiText text) {
     case NoRecentResults: return "Nu exista inca rezultate recente pentru acest profil.";
     case NoManualFollowUp: return "Nu exista urmarire manuala suplimentara atasata selectiei curente.";
     case PromptQuitTitle: return "IESIRE DIN QUALITY-HERO";
-    case PromptQuitMessage: return "Inchideti SGFX Project Quality-Hero acum?";
+    case PromptQuitMessage: return "Inchideti SGFX: Project Quality-Hero acum?";
     case PromptQuitRunningMessage: return "Inchideti shell-ul acum? Actiunea SG curenta va continua in fundal.";
     case PromptLeaveRunTitle: return "PARASIRE ECRAN RULARE";
     case PromptLeaveRunMessage: return "Actiunea SG curenta ruleaza inca. Parasiti totusi aceasta pagina? Actiunea va continua in fundal.";
