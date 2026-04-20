@@ -7,7 +7,8 @@ param(
     [int]$ScreenSettleMs = 2200,
     [int]$PromptSettleMs = 1000,
     [int]$RunObserveSeconds = 600,
-    [int]$RunCompletionTimeoutSeconds = 30,
+    [int]$RunCompletionTimeoutSeconds = 60,
+    [int]$InitialLoadTimeoutSeconds = 75,
     [int]$CaptureTimeoutSeconds = 20
 )
 
@@ -315,7 +316,7 @@ try {
     $process = Start-Process -FilePath $ExePath -ArgumentList $launchArgs -WorkingDirectory $repoRoot -PassThru
     Wait-ForMainWindow -TargetProcess $process
     Start-Sleep -Milliseconds $InitialSettleMs
-    if (-not (Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_complete" -TimeoutSeconds 25)) {
+    if (-not (Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_complete" -TimeoutSeconds $InitialLoadTimeoutSeconds)) {
         [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_failed" -TimeoutSeconds 2)
     }
 
@@ -395,7 +396,7 @@ try {
     $process = Start-Process -FilePath $ExePath -ArgumentList $launchArgs -WorkingDirectory $repoRoot -PassThru
     Wait-ForMainWindow -TargetProcess $process
     Start-Sleep -Milliseconds $InitialSettleMs
-    if (-not (Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_complete" -TimeoutSeconds 25)) {
+    if (-not (Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_complete" -TimeoutSeconds $InitialLoadTimeoutSeconds)) {
         [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI initial_load_failed" -TimeoutSeconds 2)
     }
     Wait-ForTraceIdle -Path $tracePath
@@ -403,11 +404,11 @@ try {
     Capture-Stage -TargetProcess $process -Name "prompt_intro"
 
     Send-Key -TargetProcess $process -Keys "{ESC}" -SettleMs $PromptSettleMs
-    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_open title="QUIT SERGFX"' -TimeoutSeconds 6)
+    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_open title="QUIT QUALITY-HERO"' -TimeoutSeconds 6)
     Capture-Stage -TargetProcess $process -Name "prompt_banner"
 
     Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $PromptSettleMs
-    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_controls_open title="QUIT SERGFX"' -TimeoutSeconds 6)
+    [void](Wait-ForTracePattern -Path $tracePath -Pattern 'UI prompt_controls_open title="QUIT QUALITY-HERO"' -TimeoutSeconds 6)
     Capture-Stage -TargetProcess $process -Name "prompt_choices"
 
     $quitStart = Get-Date

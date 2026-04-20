@@ -11,6 +11,8 @@ dist/
 .ruff_cache/
 imgui.ini
 /out/
+/external/
+/blender-*.zip
 
 # Local source drops and archive snapshots
 /3D Car Delivery Retro/

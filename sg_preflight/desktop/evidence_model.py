@@ -661,21 +661,31 @@ def desktop_manual_cards(
     live_profiles = _ready_profiles(root, profiles)
     readiness = {item["key"]: item for item in prerequisite_status(root)}
     workflow = {item["key"]: item for item in qa_workflow_status(root, live_profiles)}
-    raco_ready = readiness.get("raco_headless", {}).get("status") == "available"
+    raco_status = str(readiness.get("raco_gui", {}).get("status", "missing"))
+    raco_ready = raco_status == "available"
+    blender_ready = str(readiness.get("blender_executable", {}).get("status", "missing")) == "available"
     delivery = workflow.get("delivery_checklist", {})
     bmw = workflow.get("bmw_screenshot_smoke", {})
+    bmw_checklist_path = root / "docs" / "bmw-access-integration-checklist.md"
+    bmw_checklist_note = (
+        f"Keep the intake steps in {bmw_checklist_path} so BMW access, repo setup, helper discovery, and first dry run are ready the moment access lands."
+        if bmw_checklist_path.exists()
+        else "Add docs/bmw-access-integration-checklist.md so BMW access and smoke setup can be tracked inside the shell flow."
+    )
 
     return [
         DesktopManualCard(
-            key="blender_raco_compare",
-            label="Blender vs RaCo review",
-            state="manual" if raco_ready else "blocked",
+            key="visual_review_session",
+            label="Visual review session",
+            state="manual" if (blender_ready or raco_ready) else "blocked",
             summary=(
-                "Compare the changed area in Blender and RaCo before treating the slice as visually safe."
-                if raco_ready
-                else "RaCoHeadless is missing locally, so only the manual Blender side is currently available."
+                "Open the changed area in Blender and RaCo, compare both views, then record the result as first-class manual evidence."
+                if blender_ready and raco_ready
+                else "At least one visual-review tool is still missing or incompatible locally, so keep the checklist explicit instead of assuming the visual pass happened."
             ),
-            note="Keep the deterministic evidence open while doing the visual compare.",
+            note=(
+                "Use ATTACH VISUAL REVIEW CHECKLIST to save: Blender scene opened, RaCo scene opened, Blender vs RaCo compared, key camera checked, screenshot captured, and finding documented."
+            ),
         ),
         DesktopManualCard(
             key="screenshot_slots",
@@ -683,6 +693,15 @@ def desktop_manual_cards(
             state="manual",
             summary="Capture the important proof shots early instead of waiting for delivery pressure.",
             note=f"Attach the screenshot path next to the {profile_id} evidence bundle once you have it.",
+        ),
+        DesktopManualCard(
+            key="bmw_access_intake",
+            label="BMW access intake checklist",
+            state="blocked" if str(bmw.get("state", "blocked")) == "blocked" else "manual",
+            summary=(
+                "BMW-side smoke is still blocked locally, so the intake checklist has to stay visible in the shell instead of living in chat memory."
+            ),
+            note=bmw_checklist_note,
         ),
         DesktopManualCard(
             key="delivery_note",

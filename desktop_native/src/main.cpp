@@ -165,7 +165,7 @@ constexpr float kInstallerContainerHeight = 246.0f;
 constexpr bool kRenderPlaceholderInstallerCharacters = false;
 constexpr double kRunAutoPollDelaySeconds = 1.0;
 constexpr double kRunInitialPollDelaySeconds = 0.35;
-constexpr double kExitTransitionDurationFrames = 180.0;
+constexpr double kExitTransitionDurationFrames = 121.0;
 
 struct ShellAssets {
     std::filesystem::path resource_root;
@@ -178,6 +178,14 @@ struct ShellAssets {
     DdsTextureHandle help_key_f2;
     DdsTextureHandle help_key_f3;
     DdsTextureHandle help_key_f4;
+    DdsTextureHandle help_key_f5;
+    DdsTextureHandle help_key_f6;
+    DdsTextureHandle help_key_f7;
+    DdsTextureHandle help_key_f8;
+    DdsTextureHandle help_key_f9;
+    DdsTextureHandle help_key_f10;
+    DdsTextureHandle help_key_f11;
+    DdsTextureHandle help_key_f12;
     DdsTextureHandle options_static;
     DdsTextureHandle options_static_flash;
     DdsTextureHandle installer_panel;
@@ -522,13 +530,13 @@ constexpr float kPanelHeaderHeight = 34.0f;
 constexpr float kRailFooterReserve = 62.0f;
 constexpr float kDesignWidth = 1280.0f;
 constexpr float kDesignHeight = 720.0f;
-constexpr double kContainerLineAnimationDuration = 8.0;
-constexpr double kContainerOuterTime = kContainerLineAnimationDuration + 8.0;
-constexpr double kContainerOuterDuration = 8.0;
-constexpr double kContainerInnerTime = kContainerOuterTime + kContainerOuterDuration + 8.0;
-constexpr double kContainerInnerDuration = 8.0;
-constexpr double kContainerBackgroundTime = kContainerInnerTime + kContainerInnerDuration + 8.0;
-constexpr double kContainerBackgroundDuration = 12.0;
+constexpr double kContainerLineAnimationDuration = 23.0;
+constexpr double kContainerOuterTime = 15.0 + kContainerLineAnimationDuration;
+constexpr double kContainerOuterDuration = 23.0;
+constexpr double kContainerInnerTime = 15.0 + kContainerLineAnimationDuration + 8.0;
+constexpr double kContainerInnerDuration = 15.0;
+constexpr double kContainerBackgroundTime = kContainerInnerTime;
+constexpr double kContainerBackgroundDuration = 15.0;
 constexpr double kContainerCategoryTime = (kContainerInnerTime + kContainerBackgroundTime) / 2.0;
 constexpr double kContainerCategoryDuration = 12.0;
 constexpr double kShellDisappearDurationFrames = kContainerInnerTime + kContainerInnerDuration;
@@ -765,6 +773,36 @@ void BindShellIniFile(ImGuiIO& io, const std::filesystem::path& ini_path) {
     }
 }
 
+std::string StripIniSection(std::string content, std::string_view header) {
+    if (content.empty()) {
+        return content;
+    }
+
+    std::string output;
+    std::istringstream stream(content);
+    std::string line;
+    bool skipping = false;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+
+        if (!line.empty() && line.front() == '[') {
+            if (line == header) {
+                skipping = true;
+                continue;
+            }
+            skipping = false;
+        }
+
+        if (!skipping) {
+            output += line;
+            output += "\r\n";
+        }
+    }
+    return output;
+}
+
 void SaveShellIniFile() {
     const std::filesystem::path ini_path = ResolveShellIniPath();
     std::error_code error;
@@ -778,6 +816,8 @@ void SaveShellIniFile() {
     std::string content;
     if (imgui_settings != nullptr && imgui_settings_size > 0U) {
         content.assign(imgui_settings, imgui_settings_size);
+        content = StripIniSection(std::move(content), "[Window][Debug##Default]");
+        content = StripIniSection(std::move(content), "[sg_preflight_native_shell]");
     }
     if (!content.empty() && content.back() != '\n') {
         content += "\r\n";
@@ -1293,6 +1333,14 @@ void ReleaseShellAssets() {
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f2);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f3);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f4);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f5);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f6);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f7);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f8);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f9);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f10);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f11);
+    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.help_key_f12);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static_flash);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.installer_panel);
@@ -1350,9 +1398,29 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         }
         return true;
     };
+    auto load_required_preferred_texture = [&](const std::filesystem::path& dds_relative, const std::filesystem::path& png_relative, DdsTextureHandle& target) {
+        std::string local_error;
+        const std::filesystem::path png_path = *resource_root / png_relative;
+        if (PathExists(png_path) && sg_preflight::native_shell::LoadWicTexture(upload_context, png_path, target, 0U, 0U, &local_error)) {
+            return true;
+        }
+        if (!sg_preflight::native_shell::LoadDdsTexture(upload_context, *resource_root / dds_relative, target, &local_error)) {
+            g_shell_assets.error = local_error;
+            return false;
+        }
+        return true;
+    };
     auto load_optional_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target) {
         std::string optional_error;
         sg_preflight::native_shell::LoadDdsTexture(upload_context, *resource_root / relative, target, &optional_error);
+    };
+    auto load_optional_preferred_texture = [&](const std::filesystem::path& dds_relative, const std::filesystem::path& png_relative, DdsTextureHandle& target) {
+        std::string optional_error;
+        const std::filesystem::path png_path = *resource_root / png_relative;
+        if (PathExists(png_path) && sg_preflight::native_shell::LoadWicTexture(upload_context, png_path, target, 0U, 0U, &optional_error)) {
+            return;
+        }
+        sg_preflight::native_shell::LoadDdsTexture(upload_context, *resource_root / dds_relative, target, &optional_error);
     };
     auto load_optional_workspace_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target, uint8_t alpha_trim_threshold = 0, uint32_t fit_square_canvas_size = 0) {
         std::string optional_error;
@@ -1361,26 +1429,48 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
             sg_preflight::native_shell::LoadWicTexture(upload_context, absolute, target, alpha_trim_threshold, fit_square_canvas_size, &optional_error);
         }
     };
+    auto load_optional_resource_or_workspace_texture = [&](
+        const std::filesystem::path& resource_relative,
+        const std::filesystem::path& workspace_relative,
+        DdsTextureHandle& target,
+        uint8_t alpha_trim_threshold = 0,
+        uint32_t fit_square_canvas_size = 0
+    ) {
+        std::string optional_error;
+        const std::filesystem::path resource_absolute = *resource_root / resource_relative;
+        if (PathExists(resource_absolute) && sg_preflight::native_shell::LoadWicTexture(upload_context, resource_absolute, target, alpha_trim_threshold, fit_square_canvas_size, &optional_error)) {
+            return;
+        }
+        load_optional_workspace_texture(workspace_relative, target, alpha_trim_threshold, fit_square_canvas_size);
+    };
 
     if (
-        load_required_texture(std::filesystem::path("images") / "common" / "general_window.dds", g_shell_assets.general_window)
-        && load_required_texture(std::filesystem::path("images") / "common" / "select.dds", g_shell_assets.select)
-        && load_required_texture(std::filesystem::path("images") / "common" / "light.dds", g_shell_assets.light)
-        && load_required_texture(std::filesystem::path("images") / "options_menu" / "options_static.dds", g_shell_assets.options_static)
-        && load_required_texture(std::filesystem::path("images") / "options_menu" / "options_static_flash.dds", g_shell_assets.options_static_flash)
+        load_required_preferred_texture(std::filesystem::path("images") / "common" / "general_window.dds", std::filesystem::path("images") / "common" / "raw" / "general_window.png", g_shell_assets.general_window)
+        && load_required_preferred_texture(std::filesystem::path("images") / "common" / "select.dds", std::filesystem::path("images") / "common" / "raw" / "select.png", g_shell_assets.select)
+        && load_required_preferred_texture(std::filesystem::path("images") / "common" / "light.dds", std::filesystem::path("images") / "common" / "raw" / "light.png", g_shell_assets.light)
+        && load_required_preferred_texture(std::filesystem::path("images") / "options_menu" / "options_static.dds", std::filesystem::path("images") / "common" / "raw" / "options_static.png", g_shell_assets.options_static)
+        && load_required_preferred_texture(std::filesystem::path("images") / "options_menu" / "options_static_flash.dds", std::filesystem::path("images") / "common" / "raw" / "options_static_flash.png", g_shell_assets.options_static_flash)
         && load_required_texture(std::filesystem::path("images") / "installer" / "miles_electric_icon.dds", g_shell_assets.miles_electric_icon)
     ) {
-        load_optional_texture(std::filesystem::path("images") / "common" / "controller.dds", g_shell_assets.controller_icons);
+        load_optional_preferred_texture(std::filesystem::path("images") / "common" / "controller.dds", std::filesystem::path("images") / "common" / "raw" / "controller.png", g_shell_assets.controller_icons);
         load_optional_texture(std::filesystem::path("images") / "common" / "kbm.dds", g_shell_assets.kbm_icons);
-        load_optional_workspace_texture("kb_key_F1.png", g_shell_assets.help_key_f1, 32U, 128U);
-        load_optional_workspace_texture("kb_key_F2.png", g_shell_assets.help_key_f2, 32U, 128U);
-        load_optional_workspace_texture("kb_key_F3.png", g_shell_assets.help_key_f3, 32U, 128U);
-        load_optional_workspace_texture("kb_key_F4.png", g_shell_assets.help_key_f4, 32U, 128U);
-        load_optional_workspace_texture("debug_icon.png", g_shell_assets.debug_icon);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F1.png", "kb_key_F1.png", g_shell_assets.help_key_f1, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F2.png", "kb_key_F2.png", g_shell_assets.help_key_f2, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F3.png", "kb_key_F3.png", g_shell_assets.help_key_f3, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F4.png", "kb_key_F4.png", g_shell_assets.help_key_f4, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F5.png", "kb_key_F5.png", g_shell_assets.help_key_f5, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F6.png", "kb_key_F6.png", g_shell_assets.help_key_f6, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F7.png", "kb_key_F7.png", g_shell_assets.help_key_f7, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F8.png", "kb_key_F8.png", g_shell_assets.help_key_f8, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F9.png", "kb_key_F9.png", g_shell_assets.help_key_f9, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F10.png", "kb_key_F10.png", g_shell_assets.help_key_f10, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F11.png", "kb_key_F11.png", g_shell_assets.help_key_f11, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F12.png", "kb_key_F12.png", g_shell_assets.help_key_f12, 32U, 128U);
+        load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "pdx-dev.png", "debug_icon.png", g_shell_assets.debug_icon);
         load_optional_workspace_texture("framework_icon.png", g_shell_assets.framework_icon);
         load_optional_workspace_texture("game_icon.png", g_shell_assets.game_icon);
-        load_optional_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", g_shell_assets.arrow_circle);
-        load_optional_texture(std::filesystem::path("images") / "installer" / "pulse_install.dds", g_shell_assets.pulse_install);
+        load_optional_preferred_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", std::filesystem::path("images") / "common" / "raw" / "arrow_circle.png", g_shell_assets.arrow_circle);
+        load_optional_preferred_texture(std::filesystem::path("images") / "installer" / "pulse_install.dds", std::filesystem::path("images") / "common" / "raw" / "pulse_install.png", g_shell_assets.pulse_install);
         for (size_t index = 0; index < g_shell_assets.install_images.size(); ++index) {
             const std::string filename = "install_00" + std::to_string(index + 1U) + ".dds";
             load_optional_texture(std::filesystem::path("images") / "installer" / filename, g_shell_assets.install_images[index]);
@@ -1489,7 +1579,7 @@ void SetMusicEnabled(bool enabled) {
         g_shell_audio.last_error.clear();
         return;
     }
-    if (PathExists(g_shell_audio.music) && sg_preflight::native_shell::StartLoopingWaveMusic(g_shell_audio.music, 45U)) {
+    if (PathExists(g_shell_audio.music) && sg_preflight::native_shell::StartLoopingWaveMusic(g_shell_audio.music, 0U)) {
         g_shell_audio.music_playing = true;
         g_shell_audio.last_error.clear();
     } else {
@@ -1510,6 +1600,21 @@ void SetDisplayMode(ShellDisplayMode mode) {
     g_shell_display_mode = mode;
     SaveDisplayModePreferenceToIni(mode);
     TraceUi(std::string("display_mode=") + (mode == ShellDisplayMode::Work ? "work" : "cinematic"));
+}
+
+void UpdateMusicEnvelope(const ShellState& state) {
+    if (!g_shell_audio.music_enabled || !g_shell_audio.music_playing) {
+        return;
+    }
+
+    constexpr float kBaseMusicVolume = 0.45f;
+    const float appear_motion = static_cast<float>(std::clamp(ComputeLinearMotionFrames(0.0, 30.0), 0.0, 1.0));
+    float envelope = appear_motion;
+    if (state.exit_transition_active && state.exit_transition_started_at >= 0.0) {
+        const double elapsed_frames = (ImGui::GetTime() - state.exit_transition_started_at) * 60.0;
+        envelope *= 1.0f - SmoothStep(static_cast<float>(std::clamp(elapsed_frames / kExitTransitionDurationFrames, 0.0, 1.0)));
+    }
+    sg_preflight::native_shell::SetLoopingMusicVolume(kBaseMusicVolume * std::clamp(envelope, 0.0f, 1.0f));
 }
 
 ImFont* CurrentBodyFont() {
@@ -2974,7 +3079,7 @@ std::string FriendlyActionDescription(std::string_view action_id) {
 std::string BuildHelpPromptMessage(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Introduction:
-        return "SERGFX is the local desktop operator shell for SG-side 3D Car QA review.\n\nUse the workflow from left to right: choose a slice, choose a check, review it, run it, open the first files that need attention, then review reports, exports, and follow-up work.\n\nIt does not replace Blender visual review, RaCo / RaCoHeadless, rack sessions, or BMW screenshot smoke. Use it to get deterministic SG-side evidence first and keep blocked/manual steps visible.";
+        return "GFX Quality-Hero is the local desktop operator shell for SG-side 3D Car QA review.\n\nUse the workflow from left to right: choose a slice, choose a check, review it, run it, open the first files that need attention, then review reports, exports, and follow-up work.\n\nIt does not replace Blender visual review, RaCo / RaCoHeadless, rack sessions, or BMW screenshot smoke. Use it to get deterministic SG-side evidence first, keep blocked/manual work visible, and hand off a cleaner bug report surface.";
     case ShellScreen::Select:
         return "Choose one slice on the right, then choose the local check to run for that slice.\n\nDAILY: runs the recommended local check flow across every ready slice.\nSTACK: runs the standard per-slice QA stack.\nREPO: runs the broader repository checker pass.\nSCENE: runs the scene-specific local check.\nUNUSED: scans the selected slice for unused resources.\nDELIVERY: shows delivery-readiness follow-up for the selected slice.";
     case ShellScreen::Review:
@@ -2988,11 +3093,11 @@ std::string BuildHelpPromptMessage(const ShellState& state) {
     case ShellScreen::Environment:
         return "Environment Doctor shows what this machine can actually do right now.\n\nUse it to confirm Python/backend readiness, mirrored SG checker coverage, local RaCo or Blender adapters, BMW blockers, and output write access before you overclaim later stages.";
     case ShellScreen::Stages:
-        return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked BMW/manual items, attach manual evidence into the active action bundle, and keep audio/settings honest before you loop back to the next slice.";
+        return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked BMW/manual items, open the BMW intake checklist, attach manual evidence into the active action bundle, and keep audio/settings honest before you loop back to the next slice.";
     case ShellScreen::Language:
         return "Choose the language used by the shell interface.\n\nProject data, checker output, and generated files stay the same.";
     default:
-        return "Use SERGFX from left to right: choose a slice, choose the check, review it, run it, open the first results, then review files and follow-up.";
+        return "Use GFX Quality-Hero from left to right: choose a slice, choose the check, review it, run it, open the first results, then review files and follow-up.";
     }
 }
 
@@ -3804,6 +3909,20 @@ std::wstring EnvironmentDoctorPath(const ShellState& state, const std::string& k
     return sg_preflight::native_shell::ToWide(match->path);
 }
 
+std::wstring SelectedEnvironmentDoctorPath(const ShellState& state) {
+    if (state.environment_items.empty()) {
+        return {};
+    }
+    const int clamped_index = std::clamp(state.selected_environment_index, 0, static_cast<int>(state.environment_items.size()) - 1);
+    const std::string& path = state.environment_items[static_cast<size_t>(clamped_index)].path;
+    return path.empty() ? std::wstring{} : sg_preflight::native_shell::ToWide(path);
+}
+
+std::wstring CurrentBmwChecklistPath(const ShellState& state) {
+    const std::filesystem::path candidate = std::filesystem::path(state.backend.workspace_root) / "docs" / "bmw-access-integration-checklist.md";
+    return PathExists(candidate) ? candidate.wstring() : std::wstring{};
+}
+
 std::filesystem::path CurrentActionOutputRoot(const ShellState& state) {
     if (state.snapshot.has_value() && !state.snapshot->output_root.empty()) {
         return std::filesystem::path(sg_preflight::native_shell::ToWide(state.snapshot->output_root));
@@ -3954,17 +4073,19 @@ void RenderPathAdapterButtons(ShellState& state, const char* prefix, const std::
     const std::wstring project_root = CurrentProjectRoot(state);
     const bool is_blend = PathHasExtension(target_path, L".blend");
     const bool is_rca = PathHasExtension(target_path, L".rca");
+    const float button_gap = ShellUi(10.0f);
+    const float button_width = std::max(ShellUi(156.0f), (ImGui::GetContentRegionAvail().x - button_gap) * 0.5f);
 
-    if (DrawPanelButton((std::string(prefix) + "-open-folder").c_str(), "OPEN FOLDER", ImVec2(ShellUi(170.0f), ShellUi(30.0f)), false, true)) {
+    if (DrawPanelButton((std::string(prefix) + "-open-folder").c_str(), "OPEN FOLDER", ImVec2(button_width, ShellUi(30.0f)), false, true)) {
         OpenFolderPath(target_path);
     }
     ImGui::SameLine();
-    if (DrawPanelButton((std::string(prefix) + "-open-project-root").c_str(), "OPEN PROJECT ROOT", ImVec2(ShellUi(210.0f), ShellUi(30.0f)), false, !project_root.empty())) {
+    if (DrawPanelButton((std::string(prefix) + "-open-project-root").c_str(), "OPEN PROJECT ROOT", ImVec2(button_width, ShellUi(30.0f)), false, !project_root.empty())) {
         OpenFolderPath(project_root);
     }
     ImGui::Spacing();
 
-    if (DrawPanelButton((std::string(prefix) + "-open-in-raco").c_str(), "OPEN IN RACO", ImVec2(ShellUi(170.0f), ShellUi(30.0f)), false, is_rca && !raco_gui_executable.empty())) {
+    if (DrawPanelButton((std::string(prefix) + "-open-in-raco").c_str(), "OPEN IN RACO", ImVec2(button_width, ShellUi(30.0f)), false, is_rca && !raco_gui_executable.empty())) {
         LaunchExternalProgram(
             raco_gui_executable,
             L"--project " + QuoteLaunchArgument(target_path),
@@ -3972,7 +4093,7 @@ void RenderPathAdapterButtons(ShellState& state, const char* prefix, const std::
         );
     }
     ImGui::SameLine();
-    if (DrawPanelButton((std::string(prefix) + "-open-in-blender").c_str(), "OPEN IN BLENDER", ImVec2(ShellUi(190.0f), ShellUi(30.0f)), false, is_blend && !blender_executable.empty())) {
+    if (DrawPanelButton((std::string(prefix) + "-open-in-blender").c_str(), "OPEN IN BLENDER", ImVec2(button_width, ShellUi(30.0f)), false, is_blend && !blender_executable.empty())) {
         LaunchExternalProgram(
             blender_executable,
             QuoteLaunchArgument(target_path),
@@ -3993,6 +4114,80 @@ std::string Ellipsize(const std::string& text, size_t limit = 180U) {
         return text;
     }
     return text.substr(0, limit > 3U ? limit - 3U : limit) + "...";
+}
+
+std::string EllipsizeMiddle(const std::string& text, size_t limit = 180U) {
+    if (text.size() <= limit || limit <= 3U) {
+        return text;
+    }
+
+    const size_t payload = limit - 3U;
+    const size_t keep_left = payload / 2U;
+    const size_t keep_right = payload - keep_left;
+    if (keep_left + keep_right >= text.size()) {
+        return text;
+    }
+    return text.substr(0, keep_left) + "..." + text.substr(text.size() - keep_right);
+}
+
+std::string EllipsizeMiddleForWidth(ImFont* font, float font_size, const std::string& text, float max_width) {
+    if (font == nullptr || text.empty() || max_width <= 0.0f) {
+        return text;
+    }
+
+    if (font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text.c_str()).x <= max_width) {
+        return text;
+    }
+
+    std::string best = "...";
+    for (size_t limit = text.size(); limit > 3U; --limit) {
+        const std::string candidate = EllipsizeMiddle(text, limit);
+        if (font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, candidate.c_str()).x <= max_width) {
+            best = candidate;
+            break;
+        }
+    }
+    return best;
+}
+
+void DrawReadonlyPathLine(const char* id, const std::string& text, bool monospace = true) {
+    if (monospace) {
+        if (ImFont* font = CurrentMonoFont(); font != nullptr) {
+            ImGui::PushFont(font);
+        }
+    }
+    ImGui::PushStyleColor(
+        ImGuiCol_FrameBg,
+        IsWorkDisplayMode() ? ImVec4(0.05f, 0.08f, 0.10f, 0.92f) : ImVec4(0.04f, 0.07f, 0.08f, 0.88f)
+    );
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ShellUi(8.0f), ShellUi(6.0f)));
+    const std::string display_text = EllipsizeMiddleForWidth(ImGui::GetFont(), ImGui::GetFontSize(), text, std::max(24.0f, ImGui::GetContentRegionAvail().x - ShellUi(12.0f)));
+    std::vector<char> buffer(display_text.begin(), display_text.end());
+    buffer.push_back('\0');
+    ImGui::InputText(id, buffer.data(), buffer.size(), ImGuiInputTextFlags_ReadOnly);
+    const bool show_tooltip = display_text != text && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    if (monospace && CurrentMonoFont() != nullptr) {
+        ImGui::PopFont();
+    }
+    if (show_tooltip) {
+        ImGui::SetTooltip("%s", text.c_str());
+    }
+}
+
+void DrawWrappedBulletLine(const std::string& text, size_t compact_limit = 200U) {
+    const std::string display = (text.find('\\') != std::string::npos || text.find('/') != std::string::npos)
+        ? EllipsizeMiddle(text, compact_limit)
+        : Ellipsize(text, compact_limit);
+    ImGui::Bullet();
+    ImGui::SameLine();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+    ImGui::TextUnformatted(display.c_str());
+    ImGui::PopTextWrapPos();
+    if (display != text && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+        ImGui::SetTooltip("%s", text.c_str());
+    }
 }
 
 bool EnvFlagEnabled(const wchar_t* name) {
@@ -4863,23 +5058,23 @@ InstallerCanvasLayout GetScreenCanvasLayout(ShellScreen screen) {
     case ShellScreen::Run:
         return work_mode
             ? GetInstallerCanvasLayout(440.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
-            : GetInstallerCanvasLayout(376.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+            : GetInstallerCanvasLayout(352.0f, 18.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Evidence:
         return work_mode
             ? GetInstallerCanvasLayout(432.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
-            : GetInstallerCanvasLayout(386.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+            : GetInstallerCanvasLayout(338.0f, 18.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Files:
         return work_mode
             ? GetInstallerCanvasLayout(424.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
-            : GetInstallerCanvasLayout(376.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+            : GetInstallerCanvasLayout(344.0f, 18.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Environment:
         return work_mode
             ? GetInstallerCanvasLayout(420.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
-            : GetInstallerCanvasLayout(382.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+            : GetInstallerCanvasLayout(350.0f, 18.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Stages:
         return work_mode
             ? GetInstallerCanvasLayout(414.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
-            : GetInstallerCanvasLayout(390.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+            : GetInstallerCanvasLayout(352.0f, 18.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Language:
     default:
         return GetInstallerCanvasLayout();
@@ -5361,7 +5556,7 @@ void DrawReadonlyTextBox(const char* id, const std::string& text, bool monospace
     const ImVec2 size = height > 0.0f
         ? ImVec2(0.0f, height)
         : ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * (monospace ? 5.0f : 1.8f));
-    ImGui::InputTextMultiline(id, buffer.data(), buffer.size(), size, ImGuiInputTextFlags_ReadOnly);
+    ImGui::InputTextMultiline(id, buffer.data(), buffer.size(), size, ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll);
     ImGui::PopStyleColor();
     if (monospace) {
         if (CurrentMonoFont() != nullptr) {
@@ -5411,7 +5606,7 @@ float ShellExitTextVisibility(const ShellState& state) {
         return 1.0f;
     }
     const double elapsed_frames = (ImGui::GetTime() - state.exit_transition_started_at) * 60.0;
-    return 1.0f - SmoothStep(static_cast<float>(std::clamp(elapsed_frames / 1.0, 0.0, 1.0)));
+    return 1.0f - SmoothStep(static_cast<float>(std::clamp(elapsed_frames / kContainerInnerDuration, 0.0, 1.0)));
 }
 
 float ShellTransitionAlpha(float motion) {
@@ -5950,7 +6145,7 @@ void RenderRunSignalLogContent(ShellState& state) {
     const ActionSnapshot& snapshot = *state.snapshot;
     if (!snapshot.log_path.empty()) {
         InlineSectionLabel("LOG PATH");
-        DrawReadonlyTextBox("run-log-path", snapshot.log_path, true, ShellUi(44.0f));
+        DrawReadonlyPathLine("run-log-path", snapshot.log_path, true);
         ImGui::Spacing();
     }
 
@@ -6010,7 +6205,7 @@ void RenderSelectedEvidenceContent(ShellState& state) {
 
     const int selected_index = std::clamp(state.selected_evidence_index, 0, static_cast<int>(state.snapshot->top_paths.size()) - 1);
     const EvidenceItem& item = state.snapshot->top_paths[static_cast<size_t>(selected_index)];
-    DrawReadonlyTextBox("selected-evidence-path", item.path, true, ShellUi(46.0f));
+    DrawReadonlyPathLine("selected-evidence-path", item.path, true);
     ImGui::Spacing();
     if (!item.checker.empty()) {
         ImGui::Text("%s", sg_preflight::native_shell::FormatCheckerLabel(state.language, item.checker).c_str());
@@ -6032,18 +6227,20 @@ void RenderSelectedEvidenceContent(ShellState& state) {
 
     const std::wstring evidence_path = SelectedEvidencePath(state);
     if (!evidence_path.empty()) {
+        const float button_gap = ShellUi(10.0f);
+        const float button_width = std::max(ShellUi(150.0f), (ImGui::GetContentRegionAvail().x - button_gap) * 0.5f);
         ImGui::Spacing();
-        if (DrawPanelButton("copy-evidence-path", "COPY PATH", ImVec2(ShellUi(152.0f), ShellUi(30.0f)), false, true)) {
+        if (DrawPanelButton("copy-evidence-path", "COPY PATH", ImVec2(button_width, ShellUi(30.0f)), false, true)) {
             if (CopyText(evidence_path)) {
                 state.status_line = sg_preflight::native_shell::FormatCopiedItemStatus(state.language, "path");
             }
         }
         ImGui::SameLine();
-        if (DrawPanelButton("open-evidence-file", Tr(state, UiText::OpenFile), ImVec2(ShellUi(180.0f), ShellUi(30.0f)), true, true)) {
+        if (DrawPanelButton("open-evidence-file", Tr(state, UiText::OpenFile), ImVec2(button_width, ShellUi(30.0f)), true, true)) {
             OpenPath(evidence_path);
         }
-        ImGui::SameLine();
-        if (DrawPanelButton("reveal-evidence-file", Tr(state, UiText::Reveal), ImVec2(ShellUi(220.0f), ShellUi(30.0f)), false, true)) {
+        ImGui::Spacing();
+        if (DrawPanelButton("reveal-evidence-file", Tr(state, UiText::Reveal), ImVec2(button_width, ShellUi(30.0f)), false, true)) {
             RevealPath(evidence_path);
         }
         ImGui::Spacing();
@@ -6055,7 +6252,7 @@ void RenderFollowupContent(ShellState& state) {
     if (state.snapshot.has_value() && !state.snapshot->manual_followups.empty()) {
         InlineSectionLabel(Tr(state, UiText::FollowUp));
         for (const std::string& followup : state.snapshot->manual_followups) {
-            ImGui::BulletText("%s", followup.c_str());
+            DrawWrappedBulletLine(followup);
         }
         return;
     }
@@ -6063,7 +6260,7 @@ void RenderFollowupContent(ShellState& state) {
     if (state.snapshot.has_value() && !state.snapshot->summary_lines.empty()) {
         InlineSectionLabel(Tr(state, UiText::Snapshot));
         for (const std::string& line : state.snapshot->summary_lines) {
-            ImGui::BulletText("%s", line.c_str());
+            DrawWrappedBulletLine(line);
         }
         return;
     }
@@ -6071,7 +6268,7 @@ void RenderFollowupContent(ShellState& state) {
     if (state.run_snapshot.has_value() && !state.run_snapshot->notes.empty()) {
         InlineSectionLabel(Tr(state, UiText::RunNotes));
         for (const std::string& note : state.run_snapshot->notes) {
-            ImGui::BulletText("%s", note.c_str());
+            DrawWrappedBulletLine(note);
         }
         return;
     }
@@ -6120,24 +6317,26 @@ void RenderSelectedArtifactContent(ShellState& state) {
     ImGui::SameLine();
     ImGui::TextDisabled("%s", artifact.section.c_str());
     ImGui::Spacing();
-    DrawReadonlyTextBox("selected-artifact-path", artifact.path, true, ShellUi(46.0f));
+    DrawReadonlyPathLine("selected-artifact-path", artifact.path, true);
 
     ImGui::Spacing();
-    if (DrawPanelButton("copy-selected-artifact-path", "COPY PATH", ImVec2(ShellUi(152.0f), ShellUi(30.0f)), false, !selected_artifact_path.empty())) {
+    const float button_gap = ShellUi(10.0f);
+    const float button_width = std::max(ShellUi(150.0f), (ImGui::GetContentRegionAvail().x - button_gap) * 0.5f);
+    if (DrawPanelButton("copy-selected-artifact-path", "COPY PATH", ImVec2(button_width, ShellUi(30.0f)), false, !selected_artifact_path.empty())) {
         if (CopyText(selected_artifact_path)) {
             state.status_line = sg_preflight::native_shell::FormatCopiedItemStatus(state.language, "path");
         }
     }
     ImGui::SameLine();
-    if (DrawPanelButton("open-selected-artifact", Tr(state, UiText::OpenSelected), ImVec2(ShellUi(180.0f), ShellUi(30.0f)), true, !selected_artifact_path.empty())) {
+    if (DrawPanelButton("open-selected-artifact", Tr(state, UiText::OpenSelected), ImVec2(button_width, ShellUi(30.0f)), true, !selected_artifact_path.empty())) {
         OpenPath(selected_artifact_path);
     }
-    ImGui::SameLine();
-    if (DrawPanelButton("reveal-selected-artifact", Tr(state, UiText::RevealSelected), ImVec2(ShellUi(180.0f), ShellUi(30.0f)), false, !selected_artifact_path.empty())) {
+    ImGui::Spacing();
+    if (DrawPanelButton("reveal-selected-artifact", Tr(state, UiText::RevealSelected), ImVec2(button_width, ShellUi(30.0f)), false, !selected_artifact_path.empty())) {
         RevealPath(selected_artifact_path);
     }
-    ImGui::Spacing();
-    if (DrawPanelButton("open-html-report", Tr(state, UiText::OpenHtmlReport), ImVec2(ShellUi(190.0f), ShellUi(30.0f)), false, state.run_snapshot.has_value())) {
+    ImGui::SameLine();
+    if (DrawPanelButton("open-html-report", Tr(state, UiText::OpenHtmlReport), ImVec2(button_width, ShellUi(30.0f)), false, state.run_snapshot.has_value())) {
         for (const auto& run_artifact : state.run_snapshot->artifacts) {
             if (run_artifact.label == "HTML report") {
                 OpenPath(sg_preflight::native_shell::ToWide(run_artifact.path));
@@ -6197,7 +6396,7 @@ void RenderSelectedEnvironmentDoctorContent(ShellState& state) {
     if (!item.path.empty()) {
         ImGui::Spacing();
         InlineSectionLabel("PATH");
-        DrawReadonlyTextBox("environment-item-path", item.path, true, ShellUi(46.0f));
+        DrawReadonlyPathLine("environment-item-path", item.path, true);
     }
 
     if (!item.next_action.empty()) {
@@ -6239,7 +6438,7 @@ void RenderBlockedStagesOnly(ShellState& state) {
         ImGui::Indent(ShellUi(12.0f));
         ImGui::TextWrapped("%s", item.summary.c_str());
         for (const std::string& blocker : item.blockers) {
-            ImGui::BulletText("%s", blocker.c_str());
+            DrawWrappedBulletLine(blocker);
         }
         ImGui::Unindent(ShellUi(12.0f));
         ImGui::Spacing();
@@ -6256,7 +6455,11 @@ void RenderManualReviewOnly(ShellState& state) {
         ImGui::Text("%s [%s]", card.label.c_str(), card.state.c_str());
         ImGui::Indent(ShellUi(12.0f));
         ImGui::TextWrapped("%s", card.summary.c_str());
-        ImGui::TextDisabled("%s", card.note.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+        ImGui::TextUnformatted(card.note.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
         ImGui::Unindent(ShellUi(12.0f));
         ImGui::Spacing();
     }
@@ -6278,7 +6481,7 @@ void RenderManualEvidenceContent(ShellState& state) {
     if (!action_root.empty()) {
         ImGui::Spacing();
         InlineSectionLabel("ACTIVE ACTION BUNDLE");
-        DrawReadonlyTextBox("manual-evidence-output-root", sg_preflight::native_shell::ToUtf8(action_root.wstring()), true, ShellUi(46.0f));
+        DrawReadonlyPathLine("manual-evidence-output-root", sg_preflight::native_shell::ToUtf8(action_root.wstring()), true);
     }
 
     ImGui::Spacing();
@@ -6312,6 +6515,10 @@ void RenderManualEvidenceContent(ShellState& state) {
         attach_note("raco_note");
     }
     ImGui::Spacing();
+    if (DrawPanelButton("attach-visual-review-checklist", "ATTACH VISUAL REVIEW CHECKLIST", full_width_button(), false, has_active_run)) {
+        attach_note("visual_review_checklist");
+    }
+    ImGui::Spacing();
     if (DrawPanelButton("attach-verification-note", "ATTACH VERIFICATION NOTE", full_width_button(), false, has_active_run)) {
         attach_note("verification_note");
     }
@@ -6326,6 +6533,29 @@ void RenderManualEvidenceContent(ShellState& state) {
     if (!has_active_run) {
         ImGui::Spacing();
         ImGui::TextDisabled("%s", "Load or run one action first so manual evidence lands in a real action bundle.");
+    }
+}
+
+void RenderBmwChecklistContent(ShellState& state) {
+    const std::wstring checklist_path = CurrentBmwChecklistPath(state);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+    ImGui::TextUnformatted(
+        "Keep the BMW intake checklist in the shell flow so blocked access, repo setup, smoke-script discovery, and first dry-run prep do not disappear between chats."
+    );
+    ImGui::PopTextWrapPos();
+
+    if (checklist_path.empty()) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", "BMW intake checklist file is not available in docs/ yet.");
+        return;
+    }
+
+    ImGui::Spacing();
+    InlineSectionLabel("CHECKLIST PATH");
+    DrawReadonlyPathLine("bmw-checklist-path", sg_preflight::native_shell::ToUtf8(checklist_path), true);
+    ImGui::Spacing();
+    if (DrawPanelButton("open-bmw-checklist", "OPEN BMW CHECKLIST", ImVec2(std::max(ShellUi(210.0f), ImGui::GetContentRegionAvail().x), ShellUi(30.0f)), false, true)) {
+        OpenPath(checklist_path);
     }
 }
 
@@ -6882,7 +7112,9 @@ void RenderEvidenceScreen(ShellState& state) {
             ImGui::PopFont();
         }
         EndScreenTextTransition();
+        ImGui::BeginChild("evidence-followup-inline", ImVec2(0.0f, std::max(ShellUi(110.0f), ImGui::GetContentRegionAvail().y)), false);
         RenderFollowupContent(state);
+        ImGui::EndChild();
     }
     EndCanvasOverlayRegion();
     EndScreenTransition();
@@ -6974,7 +7206,7 @@ void RenderEnvironmentScreen(ShellState& state) {
     DrawPromptTextStyled(
         draw,
         title_font,
-        title_font == g_title_font ? ShellUi(28.0f) : body_font->LegacySize,
+        title_font == g_title_font ? ShellUi(24.0f) : body_font->LegacySize,
         ImVec2(desc_min.x + ShellUi(12.0f), y),
         IM_COL32(236, 244, 238, 255),
         text_alpha,
@@ -7264,6 +7496,18 @@ void RenderStagesScreen(ShellState& state) {
         }
         EndScreenTextTransition();
         RenderManualEvidenceContent(state);
+
+        ImGui::Spacing();
+        BeginScreenTextTransition(state);
+        if (g_small_font != nullptr) {
+            ImGui::PushFont(g_small_font);
+        }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "BMW INTAKE");
+        if (g_small_font != nullptr) {
+            ImGui::PopFont();
+        }
+        EndScreenTextTransition();
+        RenderBmwChecklistContent(state);
 
         ImGui::Spacing();
         BeginScreenTextTransition(state);
@@ -7602,6 +7846,8 @@ void RenderButtonGuide(ShellState& state) {
 
     const std::wstring evidence_path = SelectedEvidencePath(state);
     const std::wstring artifact_path = SelectedArtifactPath(state);
+    const std::wstring environment_path = SelectedEnvironmentDoctorPath(state);
+    const std::wstring bmw_checklist_path = CurrentBmwChecklistPath(state);
     const bool has_report = state.run_snapshot.has_value() || (state.snapshot.has_value() && !state.snapshot->latest_run_links.html_report.empty());
     const std::string run_primary_label = IsActionStillRunning(state) ? RefreshShortLabel(state.language) : NextButtonLabel(state);
     std::vector<GuideItem> guide_items;
@@ -7657,40 +7903,43 @@ void RenderButtonGuide(ShellState& state) {
     case ShellScreen::Evidence:
         guide_items = {
             {"guide-next", "Enter", Tr(state, UiText::Files), HasArtifactsReady(state), false, true},
+            {"guide-open", "F5", Tr(state, UiText::OpenFile), !evidence_path.empty(), false, true},
+            {"guide-reveal", "F6", Tr(state, UiText::Reveal), !evidence_path.empty(), false, true},
+            {"guide-jira", "F7", Tr(state, UiText::CopyJira), true, true, true},
             {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
-            {"guide-open", "O", Tr(state, UiText::OpenFile), !evidence_path.empty(), false, false},
-            {"guide-reveal", "R", Tr(state, UiText::Reveal), !evidence_path.empty(), false, false},
-            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true, false},
         };
         break;
     case ShellScreen::Files:
         guide_items = {
             {"guide-next", "Enter", Tr(state, UiText::Environment), true, false, true},
+            {"guide-open", "F5", Tr(state, UiText::OpenFile), !artifact_path.empty(), false, true},
+            {"guide-reveal", "F6", Tr(state, UiText::Reveal), !artifact_path.empty(), false, true},
+            {"guide-report", "F8", Tr(state, UiText::Report), has_report, false, true},
+            {"guide-jira", "F7", Tr(state, UiText::CopyJira), true, true, false},
+            {"guide-hero", "F9", Tr(state, UiText::CopyQaHero), true, true, false},
+            {"guide-handoff", "F10", Tr(state, UiText::CopyHandoff), true, true, false},
             {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
-            {"guide-open", "O", Tr(state, UiText::OpenFile), !artifact_path.empty(), false, false},
-            {"guide-reveal", "R", Tr(state, UiText::Reveal), !artifact_path.empty(), false, false},
-            {"guide-report", "P", Tr(state, UiText::Report), has_report, false, false},
-            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true, false},
-            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true, false},
-            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true, false},
         };
         break;
     case ShellScreen::Environment:
         guide_items = {
             {"guide-next", "Enter", Tr(state, UiText::Stages), true, false, true},
+            {"guide-open", "F5", Tr(state, UiText::OpenFile), !environment_path.empty(), false, true},
+            {"guide-reveal", "F6", Tr(state, UiText::Reveal), !environment_path.empty(), false, true},
+            {"guide-jira", "F7", Tr(state, UiText::CopyJira), true, true, false},
+            {"guide-hero", "F9", Tr(state, UiText::CopyQaHero), true, true, false},
+            {"guide-handoff", "F10", Tr(state, UiText::CopyHandoff), true, true, false},
             {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
-            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true, false},
-            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true, false},
-            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true, false},
         };
         break;
     case ShellScreen::Stages:
         guide_items = {
             {"guide-next", "Enter", Tr(state, UiText::Return), true, false, true},
+            {"guide-bmw-intake", "F8", "BMW Intake", !bmw_checklist_path.empty(), false, true},
+            {"guide-jira", "F7", Tr(state, UiText::CopyJira), true, true, false},
+            {"guide-hero", "F9", Tr(state, UiText::CopyQaHero), true, true, false},
+            {"guide-handoff", "F10", Tr(state, UiText::CopyHandoff), true, true, false},
             {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
-            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true, false},
-            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true, false},
-            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true, false},
         };
         break;
     }
@@ -7705,6 +7954,14 @@ void RenderButtonGuide(ShellState& state) {
         F2,
         F3,
         F4,
+        F5,
+        F6,
+        F7,
+        F8,
+        F9,
+        F10,
+        F11,
+        F12,
         Lmb,
         Enter,
         Escape,
@@ -7758,6 +8015,8 @@ void RenderButtonGuide(ShellState& state) {
             copy_by_key("qa_hero", sg_preflight::native_shell::FormatCopiedQaHeroStatus(state.language));
         } else if (std::strcmp(item.id, "guide-handoff") == 0) {
             copy_by_key("handoff", sg_preflight::native_shell::FormatCopiedHandoffStatus(state.language));
+        } else if (std::strcmp(item.id, "guide-bmw-intake") == 0 && !bmw_checklist_path.empty()) {
+            OpenPath(bmw_checklist_path);
         } else if (std::strcmp(item.id, "guide-help") == 0) {
             OpenPrompt(state, Tr(state, UiText::Help), BuildHelpPromptMessage(state), false, false, false);
         }
@@ -7775,6 +8034,42 @@ void RenderButtonGuide(ShellState& state) {
         }
         if (std::strcmp(item.id, "guide-report") == 0 && HasTexture(g_shell_assets.help_key_f3)) {
             return GuideAtlasIcon::F3;
+        }
+        if (std::strcmp(item.key, "F1") == 0 && HasTexture(g_shell_assets.help_key_f1)) {
+            return GuideAtlasIcon::F1;
+        }
+        if (std::strcmp(item.key, "F2") == 0 && HasTexture(g_shell_assets.help_key_f2)) {
+            return GuideAtlasIcon::F2;
+        }
+        if (std::strcmp(item.key, "F3") == 0 && HasTexture(g_shell_assets.help_key_f3)) {
+            return GuideAtlasIcon::F3;
+        }
+        if (std::strcmp(item.key, "F4") == 0 && HasTexture(g_shell_assets.help_key_f4)) {
+            return GuideAtlasIcon::F4;
+        }
+        if (std::strcmp(item.key, "F5") == 0 && HasTexture(g_shell_assets.help_key_f5)) {
+            return GuideAtlasIcon::F5;
+        }
+        if (std::strcmp(item.key, "F6") == 0 && HasTexture(g_shell_assets.help_key_f6)) {
+            return GuideAtlasIcon::F6;
+        }
+        if (std::strcmp(item.key, "F7") == 0 && HasTexture(g_shell_assets.help_key_f7)) {
+            return GuideAtlasIcon::F7;
+        }
+        if (std::strcmp(item.key, "F8") == 0 && HasTexture(g_shell_assets.help_key_f8)) {
+            return GuideAtlasIcon::F8;
+        }
+        if (std::strcmp(item.key, "F9") == 0 && HasTexture(g_shell_assets.help_key_f9)) {
+            return GuideAtlasIcon::F9;
+        }
+        if (std::strcmp(item.key, "F10") == 0 && HasTexture(g_shell_assets.help_key_f10)) {
+            return GuideAtlasIcon::F10;
+        }
+        if (std::strcmp(item.key, "F11") == 0 && HasTexture(g_shell_assets.help_key_f11)) {
+            return GuideAtlasIcon::F11;
+        }
+        if (std::strcmp(item.key, "F12") == 0 && HasTexture(g_shell_assets.help_key_f12)) {
+            return GuideAtlasIcon::F12;
         }
         if (back_item) {
             return GuideAtlasIcon::Escape;
@@ -7812,6 +8107,30 @@ void RenderButtonGuide(ShellState& state) {
             break;
         case GuideAtlasIcon::F4:
             texture = &g_shell_assets.help_key_f4;
+            break;
+        case GuideAtlasIcon::F5:
+            texture = &g_shell_assets.help_key_f5;
+            break;
+        case GuideAtlasIcon::F6:
+            texture = &g_shell_assets.help_key_f6;
+            break;
+        case GuideAtlasIcon::F7:
+            texture = &g_shell_assets.help_key_f7;
+            break;
+        case GuideAtlasIcon::F8:
+            texture = &g_shell_assets.help_key_f8;
+            break;
+        case GuideAtlasIcon::F9:
+            texture = &g_shell_assets.help_key_f9;
+            break;
+        case GuideAtlasIcon::F10:
+            texture = &g_shell_assets.help_key_f10;
+            break;
+        case GuideAtlasIcon::F11:
+            texture = &g_shell_assets.help_key_f11;
+            break;
+        case GuideAtlasIcon::F12:
+            texture = &g_shell_assets.help_key_f12;
             break;
         case GuideAtlasIcon::Lmb:
             texture = &g_shell_assets.kbm_icons;
@@ -7863,7 +8182,15 @@ void RenderButtonGuide(ShellState& state) {
     };
 
     const auto secondary_item_width = [&](const GuideItem& item) {
+        DdsTextureHandle* texture = nullptr;
+        ImVec2 uv_min;
+        ImVec2 uv_max;
+        ImVec2 icon_size;
         const ImVec2 label_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.label.c_str());
+        if (try_get_atlas(resolve_atlas_icon(item), texture, uv_min, uv_max, icon_size)) {
+            const float scaled_icon_width = std::round(icon_size.x * 0.8f);
+            return scaled_icon_width + ShellUi(8.0f) + label_size.x + ShellUi(10.0f);
+        }
         const ImVec2 key_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.key);
         const float key_width = std::max(ShellUi(24.0f), key_size.x + ShellUi(12.0f));
         return key_width + ShellUi(7.0f) + label_size.x + ShellUi(10.0f);
@@ -7958,6 +8285,11 @@ void RenderButtonGuide(ShellState& state) {
     };
 
     const auto draw_secondary_item = [&](const GuideItem& item, float x) {
+        DdsTextureHandle* texture = nullptr;
+        ImVec2 uv_min;
+        ImVec2 uv_max;
+        ImVec2 icon_size;
+        const bool has_atlas = try_get_atlas(resolve_atlas_icon(item), texture, uv_min, uv_max, icon_size);
         const ImVec2 label_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.label.c_str());
         const ImVec2 key_size = secondary_font->CalcTextSizeA(secondary_font_size, FLT_MAX, 0.0f, item.key);
         const float key_width = std::max(ShellUi(24.0f), key_size.x + ShellUi(12.0f));
@@ -7978,15 +8310,28 @@ void RenderButtonGuide(ShellState& state) {
         PlayHoverCueIfNeeded(hovered, item.enabled);
 
         const float text_alpha = guide_alpha * g_shell_text_visibility;
-        const ImU32 key_border = ApplyAlpha(hovered ? IM_COL32(255, 211, 88, 218) : IM_COL32(255, 188, 0, 180), guide_alpha);
-        const ImU32 key_fill = ApplyAlpha(hovered ? IM_COL32(38, 48, 28, 225) : IM_COL32(20, 24, 20, 214), guide_alpha);
         const ImU32 label_color = ApplyAlpha(item.enabled ? IM_COL32(226, 237, 231, hovered ? 255 : 222) : IM_COL32(122, 132, 126, 180), text_alpha);
-        const ImVec2 key_min(min.x, min.y + ShellUi(1.0f));
-        const ImVec2 key_max(min.x + key_width, max.y - ShellUi(1.0f));
-        draw->AddRectFilled(key_min, key_max, key_fill, ShellUi(3.0f));
-        draw->AddRect(key_min, key_max, key_border, ShellUi(3.0f), 0, 1.0f);
-        draw->AddText(secondary_font, secondary_font_size, ImVec2(key_min.x + ((key_width - key_size.x) * 0.5f), key_min.y + ((key_max.y - key_min.y) - key_size.y) * 0.5f), ApplyAlpha(IM_COL32(255, 188, 0, item.enabled ? 255 : 170), text_alpha), item.key);
-        draw->AddText(secondary_font, secondary_font_size, ImVec2(key_max.x + ShellUi(7.0f), key_min.y + ((key_max.y - key_min.y) - label_size.y) * 0.5f), label_color, item.label.c_str());
+        ImVec2 text_pos;
+        if (has_atlas) {
+            const ImVec2 scaled_icon_size(std::round(icon_size.x * 0.8f), std::round(icon_size.y * 0.8f));
+            const ImVec2 icon_min(min.x, min.y + ((max.y - min.y) - scaled_icon_size.y) * 0.5f);
+            const ImVec2 icon_max(icon_min.x + scaled_icon_size.x, icon_min.y + scaled_icon_size.y);
+            const ImU32 icon_tint = ApplyAlpha(IM_COL32(255, 255, 255, item.enabled ? (hovered ? 255 : 236) : 154), guide_alpha);
+            if (texture != nullptr) {
+                DrawTexturedRect(draw, *texture, icon_min, icon_max, icon_tint, uv_min, uv_max);
+            }
+            text_pos = ImVec2(icon_max.x + ShellUi(8.0f), min.y + ((max.y - min.y) - label_size.y) * 0.5f);
+        } else {
+            const ImU32 key_border = ApplyAlpha(hovered ? IM_COL32(255, 211, 88, 218) : IM_COL32(255, 188, 0, 180), guide_alpha);
+            const ImU32 key_fill = ApplyAlpha(hovered ? IM_COL32(38, 48, 28, 225) : IM_COL32(20, 24, 20, 214), guide_alpha);
+            const ImVec2 key_min(min.x, min.y + ShellUi(1.0f));
+            const ImVec2 key_max(min.x + key_width, max.y - ShellUi(1.0f));
+            draw->AddRectFilled(key_min, key_max, key_fill, ShellUi(3.0f));
+            draw->AddRect(key_min, key_max, key_border, ShellUi(3.0f), 0, 1.0f);
+            draw->AddText(secondary_font, secondary_font_size, ImVec2(key_min.x + ((key_width - key_size.x) * 0.5f), key_min.y + ((key_max.y - key_min.y) - key_size.y) * 0.5f), ApplyAlpha(IM_COL32(255, 188, 0, item.enabled ? 255 : 170), text_alpha), item.key);
+            text_pos = ImVec2(key_max.x + ShellUi(7.0f), key_min.y + ((key_max.y - key_min.y) - label_size.y) * 0.5f);
+        }
+        draw->AddText(secondary_font, secondary_font_size, text_pos, label_color, item.label.c_str());
 
         if (pressed && item.enabled) {
             PlayCue(UiCue::Confirm);
@@ -8013,7 +8358,7 @@ void RenderButtonGuide(ShellState& state) {
     }
 
     float primary_left_offset = 0.0f;
-    const float primary_gap = ShellUi(28.0f);
+    const float primary_gap = ShellUi(compact_guide ? 22.0f : 28.0f);
     for (const GuideItem& item : primary_items) {
         if (item.right_aligned) {
             continue;
@@ -8034,7 +8379,11 @@ void RenderButtonGuide(ShellState& state) {
 
     if (centered_primary_item.has_value()) {
         const float width = primary_item_width(*centered_primary_item);
-        draw_primary_item(*centered_primary_item, primary_region_min.x + ((primary_region_max.x - primary_region_min.x) - width) * 0.5f);
+        const float centered_x = primary_region_min.x + ((primary_region_max.x - primary_region_min.x) - width) * 0.5f;
+        const float min_x = primary_region_min.x + primary_left_offset;
+        const float max_x = primary_region_max.x - primary_right_offset - width;
+        const float clamped_x = std::clamp(centered_x, min_x, std::max(min_x, max_x));
+        draw_primary_item(*centered_primary_item, clamped_x);
     }
 
     float secondary_left_offset = 0.0f;
@@ -8169,19 +8518,19 @@ void HandleShellHotkeys(ShellState& state) {
             }
             break;
         case ShellScreen::Evidence:
-            if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F5, false) || ImGui::IsKeyPressed(ImGuiKey_O, false)) {
                 const std::wstring path = SelectedEvidencePath(state);
                 if (!path.empty()) {
                     OpenPath(path);
                 }
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F6, false) || ImGui::IsKeyPressed(ImGuiKey_R, false)) {
                 const std::wstring path = SelectedEvidencePath(state);
                 if (!path.empty()) {
                     RevealPath(path);
                 }
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_J, false)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F7, false) || ImGui::IsKeyPressed(ImGuiKey_J, false)) {
                 for (const CopyItem& item : CombinedCopyItems(state)) {
                     if (item.key == "jira" && !item.text.empty() && CopyText(sg_preflight::native_shell::ToWide(item.text))) {
                         state.status_line = sg_preflight::native_shell::FormatCopiedJiraStatus(state.language);
@@ -8191,19 +8540,19 @@ void HandleShellHotkeys(ShellState& state) {
             }
             break;
         case ShellScreen::Files:
-            if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F5, false) || ImGui::IsKeyPressed(ImGuiKey_O, false)) {
                 const std::wstring path = SelectedArtifactPath(state);
                 if (!path.empty()) {
                     OpenPath(path);
                 }
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+            if (ImGui::IsKeyPressed(ImGuiKey_F6, false) || ImGui::IsKeyPressed(ImGuiKey_R, false)) {
                 const std::wstring path = SelectedArtifactPath(state);
                 if (!path.empty()) {
                     RevealPath(path);
                 }
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_P, false) && state.run_snapshot.has_value()) {
+            if ((ImGui::IsKeyPressed(ImGuiKey_F8, false) || ImGui::IsKeyPressed(ImGuiKey_P, false)) && state.run_snapshot.has_value()) {
                 for (const auto& artifact : state.run_snapshot->artifacts) {
                     if (artifact.label == "HTML report") {
                         OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
@@ -8212,11 +8561,34 @@ void HandleShellHotkeys(ShellState& state) {
                 }
             }
             [[fallthrough]];
+        case ShellScreen::Environment:
+            if (state.current_screen == ShellScreen::Environment) {
+                if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+                    const std::wstring path = SelectedEnvironmentDoctorPath(state);
+                    if (!path.empty()) {
+                        OpenPath(path);
+                    }
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) {
+                    const std::wstring path = SelectedEnvironmentDoctorPath(state);
+                    if (!path.empty()) {
+                        RevealPath(path);
+                    }
+                }
+            }
+            [[fallthrough]];
         case ShellScreen::Stages:
         {
-            const bool copy_jira = ImGui::IsKeyPressed(ImGuiKey_J, false);
-            const bool copy_hero = ImGui::IsKeyPressed(ImGuiKey_Q, false);
-            const bool copy_handoff = ImGui::IsKeyPressed(ImGuiKey_H, false);
+            if (state.current_screen == ShellScreen::Stages && (ImGui::IsKeyPressed(ImGuiKey_F8, false))) {
+                const std::wstring checklist_path = CurrentBmwChecklistPath(state);
+                if (!checklist_path.empty()) {
+                    OpenPath(checklist_path);
+                }
+            }
+
+            const bool copy_jira = ImGui::IsKeyPressed(ImGuiKey_F7, false) || ImGui::IsKeyPressed(ImGuiKey_J, false);
+            const bool copy_hero = ImGui::IsKeyPressed(ImGuiKey_F9, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false);
+            const bool copy_handoff = ImGui::IsKeyPressed(ImGuiKey_F10, false) || ImGui::IsKeyPressed(ImGuiKey_H, false);
             if (copy_jira || copy_hero || copy_handoff) {
                 const std::string wanted_key =
                     copy_jira ? "jira" :
@@ -8719,6 +9091,7 @@ void RenderExitFade(const ShellState& state) {
 void RenderShell(ShellState& state) {
     g_shell_text_visibility = ShellExitTextVisibility(state);
     ImGui::GetIO().FontDefault = CurrentBodyFont();
+    UpdateMusicEnvelope(state);
     DrawBackdropChrome(state);
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -8822,7 +9195,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     HWND window_handle = CreateWindowW(
         window_class.lpszClassName,
-        L"SERGFX QA Review",
+        L"SERGFX: Quality-Hero Bug Report",
         window_style,
         window_x,
         window_y,

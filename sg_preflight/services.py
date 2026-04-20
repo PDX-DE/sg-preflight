@@ -715,6 +715,7 @@ def _raco_headless_path(root: Path) -> Path:
     path, from_env = _env_or_default_path(
         ("SG_RACO_HEADLESS", "RACO_HEADLESS_EXE"),
         (
+            root / "external" / "ramses" / "bin" / "RelWithDebInfo" / "RaCoHeadless.exe",
             root / "external" / "ramses" / "RaCoHeadless.exe",
             root.parent / "RamsesComposerWindows" / "bin" / "RelWithDebInfo" / "RaCoHeadless.exe",
             Path(r"C:\RamsesComposerWindows\bin\RelWithDebInfo\RaCoHeadless.exe"),
@@ -733,6 +734,7 @@ def _raco_gui_path(root: Path) -> Path:
     path, from_env = _env_or_default_path(
         ("SG_RACO_GUI", "SG_RACO_EDITOR", "RACO_GUI_EXE"),
         (
+            root / "external" / "ramses" / "bin" / "RelWithDebInfo" / "RamsesComposer.exe",
             root / "external" / "ramses" / "RamsesComposer.exe",
             root.parent / "RamsesComposerWindows" / "bin" / "RelWithDebInfo" / "RamsesComposer.exe",
             Path(r"C:\RamsesComposerWindows\bin\RelWithDebInfo\RamsesComposer.exe"),
@@ -748,16 +750,24 @@ def _raco_gui_path(root: Path) -> Path:
 
 
 def _blender_executable_path(root: Path) -> Path:
+    external_root = root / "external"
+    external_candidates = tuple(
+        child / "blender.exe"
+        for child in sorted(external_root.glob("blender*"))
+        if child.is_dir()
+    )
     path, from_env = _env_or_default_path(
         ("SG_BLENDER_EXE", "BLENDER_EXE"),
         (
             root / "external" / "blender" / "blender.exe",
             root.parent / "Blender" / "blender.exe",
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"),
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.4\blender.exe"),
             Path(r"C:\Program Files\Blender Foundation\Blender 4.2\blender.exe"),
             Path(r"C:\Program Files\Blender Foundation\Blender 4.1\blender.exe"),
             Path(r"C:\Program Files\Blender Foundation\Blender 4.0\blender.exe"),
             Path(r"C:\Program Files\Blender Foundation\Blender 3.6\blender.exe"),
-        ),
+        ) + external_candidates,
     )
     if from_env:
         return path

@@ -634,6 +634,8 @@ def _manual_evidence_default_label(kind: str, source_path: Path | None = None) -
         return "Blender review note"
     if kind == "raco_note":
         return "RaCo review note"
+    if kind == "visual_review_checklist":
+        return "Visual review checklist"
     if kind == "verification_note":
         return "Manual verification note"
     if kind == "external_file" and source_path is not None:
@@ -654,6 +656,16 @@ def _manual_evidence_default_note(kind: str, label: str) -> str:
             "- Scene checked:\n"
             "- What matched in RaCo:\n"
             "- What still needs SG follow-up:\n"
+        ),
+        "visual_review_checklist": (
+            f"{label}\n\n"
+            "- Blender scene opened: [ ]\n"
+            "- RaCo scene opened: [ ]\n"
+            "- Blender vs RaCo compared: [ ]\n"
+            "- Key camera / perspective checked: [ ]\n"
+            "- Screenshot captured: [ ]\n"
+            "- Finding documented: [ ]\n"
+            "- Notes:\n"
         ),
         "verification_note": (
             f"{label}\n\n"
@@ -705,7 +717,7 @@ def attach_manual_evidence(
     resolved_note = note.strip()
     target_path = _manual_evidence_target_path(record, kind, resolved_label, source)
 
-    if kind in {"blender_note", "raco_note", "verification_note"}:
+    if kind in {"blender_note", "raco_note", "visual_review_checklist", "verification_note"}:
         text = resolved_note or _manual_evidence_default_note(kind, resolved_label)
         target_path.write_text(text.strip() + "\n", encoding="utf-8")
         resolved_note = text.strip()

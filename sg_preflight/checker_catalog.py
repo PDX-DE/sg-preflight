@@ -85,6 +85,7 @@ def _raco_headless_path(root: Path) -> Path:
     path = _env_or_default_path(
         ("SG_RACO_HEADLESS", "RACO_HEADLESS_EXE"),
         (
+            root / "external" / "ramses" / "bin" / "RelWithDebInfo" / "RaCoHeadless.exe",
             root / "external" / "ramses" / "RaCoHeadless.exe",
             root.parent / "RamsesComposerWindows" / "bin" / "RelWithDebInfo" / "RaCoHeadless.exe",
             Path(r"C:\RamsesComposerWindows\bin\RelWithDebInfo\RaCoHeadless.exe"),
