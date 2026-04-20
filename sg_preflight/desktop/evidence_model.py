@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import sys
@@ -21,6 +22,7 @@ from sg_preflight.services import (
     qa_workflow_status,
     workspace_root,
 )
+from sg_preflight.visual_review import build_visual_review_prep
 
 
 PRIMARY_ACTION_TEMPLATE = (
@@ -659,6 +661,11 @@ def desktop_manual_cards(
 ) -> list[DesktopManualCard]:
     root = workspace_root(workspace)
     live_profiles = _ready_profiles(root, profiles)
+    normalized_profile = profile_id.strip().lower()
+    selected_profile = next(
+        (profile for profile in live_profiles if profile.profile_id.strip().lower() == normalized_profile),
+        None,
+    )
     readiness = {item["key"]: item for item in prerequisite_status(root)}
     workflow = {item["key"]: item for item in qa_workflow_status(root, live_profiles)}
     raco_status = str(readiness.get("raco_gui", {}).get("status", "missing"))
@@ -672,21 +679,90 @@ def desktop_manual_cards(
         if bmw_checklist_path.exists()
         else "Add docs/bmw-access-integration-checklist.md so BMW access and smoke setup can be tracked inside the shell flow."
     )
+    review_prep = (
+        build_visual_review_prep(selected_profile.profile_id, selected_profile.project_root)
+        if selected_profile is not None and selected_profile.project_root.exists()
+        else None
+    )
 
-    return [
+    visual_review_summary = (
+        "Open the changed area in Blender and RaCo, compare both views, then record the result as first-class manual evidence."
+        if blender_ready and raco_ready
+        else "At least one visual-review tool is still missing or incompatible locally, so keep the checklist explicit instead of assuming the visual pass happened."
+    )
+    if review_prep is not None and review_prep.screenshot_count:
+        visual_review_summary = (
+            f"Compare the changed area in Blender and RaCo, then cross-check it against "
+            f"{review_prep.screenshot_count} mirrored screenshot baselines."
+        )
+
+    visual_review_note = (
+        "Use ATTACH VISUAL REVIEW CHECKLIST to save: project changelog reviewed, screenshot baseline reviewed, Blender scene opened, "
+        "RaCo scene opened, Blender vs RaCo compared, key camera checked, screenshot captured, and finding documented."
+    )
+    if review_prep is not None and review_prep.priority_screenshots:
+        visual_review_note += " After running a profile action, open the generated Visual review gallery from Files and start with: " + ", ".join(review_prep.priority_screenshots[:6]) + "."
+
+    cards = [
         DesktopManualCard(
             key="visual_review_session",
             label="Visual review session",
             state="manual" if (blender_ready or raco_ready) else "blocked",
-            summary=(
-                "Open the changed area in Blender and RaCo, compare both views, then record the result as first-class manual evidence."
-                if blender_ready and raco_ready
-                else "At least one visual-review tool is still missing or incompatible locally, so keep the checklist explicit instead of assuming the visual pass happened."
-            ),
-            note=(
-                "Use ATTACH VISUAL REVIEW CHECKLIST to save: Blender scene opened, RaCo scene opened, Blender vs RaCo compared, key camera checked, screenshot captured, and finding documented."
-            ),
+            summary=visual_review_summary,
+            note=visual_review_note,
         ),
+    ]
+
+    if review_prep is not None:
+        cards.append(
+            DesktopManualCard(
+                key="project_changelog_review",
+                label="Project changelog review",
+                state="manual" if review_prep.changelog_path else "blocked",
+                summary=review_prep.changelog_heading or "Project changelog is not available locally.",
+                note=(
+                    "Focus lines: " + " | ".join(review_prep.changelog_focus_lines[:4])
+                    if review_prep.changelog_focus_lines
+                    else "Review the latest car changelog before trusting the visual baseline."
+                ),
+            )
+        )
+        cards.append(
+            DesktopManualCard(
+                key="screenshot_baseline_review",
+                label="Screenshot baseline review",
+                state="manual" if review_prep.screenshot_count else "blocked",
+                summary=(
+                    f"{review_prep.screenshot_count} mirrored screenshot baselines are available for local reference."
+                    if review_prep.screenshot_count
+                    else "No mirrored screenshot baselines were detected under export/tests/expected."
+                ),
+                note=(
+                    "Priority shortlist: " + ", ".join(review_prep.priority_screenshots[:6])
+                    if review_prep.priority_screenshots
+                    else "Run a profile action first, then open the generated Visual review gallery from Files."
+                ),
+            )
+        )
+        cards.append(
+            DesktopManualCard(
+                key="tool_entrypoints",
+                label="Tool entry points",
+                state="manual" if (review_prep.raco_scene_path or review_prep.blender_workfile_path) else "blocked",
+                summary="Representative local files are ready for first-pass open-in-RaCo / open-in-Blender checks.",
+                note=" | ".join(
+                    part
+                    for part in (
+                        f"RaCo: {Path(review_prep.raco_scene_path).name}" if review_prep.raco_scene_path else "",
+                        f"Blender: {Path(review_prep.blender_workfile_path).name}" if review_prep.blender_workfile_path else "",
+                        f"Constants README: {Path(review_prep.constants_readme_path).name}" if review_prep.constants_readme_path else "",
+                    )
+                    if part
+                ) or "Representative RaCo or Blender files were not detected for this profile.",
+            )
+        )
+
+    cards.extend([
         DesktopManualCard(
             key="screenshot_slots",
             label="Screenshot evidence slot",
@@ -721,7 +797,8 @@ def desktop_manual_cards(
             ),
             note="Use the SG-side report links first, then append the BMW-side outcome once access exists.",
         ),
-    ]
+    ])
+    return cards
 
 
 def desktop_recent_actions(
@@ -1163,6 +1240,72 @@ def _load_text_path(path_value: str) -> str:
     return candidate.read_text(encoding="utf-8", errors="replace").strip()
 
 
+def _load_visual_review_payload(record: ActionRecord) -> dict[str, Any]:
+    candidate = Path(str(record.paths.get("visual_review_prep_json", "")).strip())
+    if not candidate.exists() or not candidate.is_file():
+        return {}
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _visual_review_copy_item(record: ActionRecord) -> DesktopCopyItem | None:
+    payload = _load_visual_review_payload(record)
+    if not payload:
+        return None
+
+    profile_id = str(payload.get("profile_id", record.profile_id or record.action_id)).strip()
+    changelog_heading = str(payload.get("changelog_heading", "")).strip()
+    changelog_focus = [str(item).strip() for item in payload.get("changelog_focus_lines", []) if str(item).strip()]
+    priority_screenshots = [str(item).strip() for item in payload.get("priority_screenshots", []) if str(item).strip()]
+    raco_scene_path = str(payload.get("raco_scene_path", "")).strip()
+    blender_workfile_path = str(payload.get("blender_workfile_path", "")).strip()
+    screenshot_root = str(payload.get("screenshot_root", "")).strip()
+
+    lines = [f"Visual review note - {profile_id}"]
+    if changelog_heading:
+        lines.append(f"Changelog focus: {changelog_heading}")
+    lines.append("")
+    lines.append("Manual review prep:")
+    if changelog_focus:
+        lines.extend(f"- {line}" for line in changelog_focus[:6])
+    else:
+        lines.append("- No changelog focus lines were detected.")
+    if priority_screenshots:
+        lines.append("")
+        lines.append("Priority screenshot baselines:")
+        lines.extend(f"- {name}" for name in priority_screenshots[:8])
+    if screenshot_root:
+        lines.append(f"- Screenshot baseline root: {screenshot_root}")
+    if raco_scene_path or blender_workfile_path:
+        lines.append("")
+        lines.append("Tool entry points:")
+        if raco_scene_path:
+            lines.append(f"- RaCo scene: {raco_scene_path}")
+        if blender_workfile_path:
+            lines.append(f"- Blender workfile: {blender_workfile_path}")
+    lines.extend(
+        [
+            "",
+            "Checklist:",
+            "- Project changelog reviewed: [ ]",
+            "- Screenshot baseline set reviewed: [ ]",
+            "- Representative RaCo scene opened: [ ]",
+            "- Representative Blender workfile opened: [ ]",
+            "- Findings documented with evidence: [ ]",
+            "- Notes:",
+            "- ",
+        ]
+    )
+    return DesktopCopyItem(
+        key="visual_review",
+        label="Copy visual review note",
+        text="\n".join(lines).strip(),
+    )
+
+
 def _copy_items(
     record: ActionRecord,
     items: tuple[DesktopEvidenceItem, ...],
@@ -1174,7 +1317,7 @@ def _copy_items(
     if run_record is not None:
         grouped_items = _report_grouped_items(run_record)
         grouped_lines = _grouped_finding_lines(grouped_items)
-        return _export_copy_items(
+        export_items = list(_export_copy_items(
             profile_id=record.profile_id or record.action_id,
             workflow_stage_label=_workflow_stage_label(run_record.context),
             title=title,
@@ -1186,7 +1329,11 @@ def _copy_items(
             project_root=str(run_record.project_root).strip(),
             output_root=str(run_record.paths.get("output_root", "")).strip(),
             manual_evidence_lines=manual_evidence_lines,
-        )
+        ))
+        visual_review_item = _visual_review_copy_item(record)
+        if visual_review_item is not None:
+            export_items.append(visual_review_item)
+        return tuple(item for item in export_items if item.text.strip())
 
     summary_lines = _summary_lines(record.summary)
     quick_update = _quick_update_text(
@@ -1201,7 +1348,7 @@ def _copy_items(
         project_root=record.project_root,
         manual_evidence_lines=manual_evidence_lines,
     )
-    return tuple(
+    fallback_items = [
         item
         for item in (
             DesktopCopyItem(key="jira", label="Copy Jira note", text=quick_update),
@@ -1210,7 +1357,11 @@ def _copy_items(
             DesktopCopyItem(key="handoff", label="Copy full handoff", text=quick_update),
         )
         if item.text.strip()
-    )
+    ]
+    visual_review_item = _visual_review_copy_item(record)
+    if visual_review_item is not None:
+        fallback_items.append(visual_review_item)
+    return tuple(fallback_items)
 
 
 def _action_grouped_lines(

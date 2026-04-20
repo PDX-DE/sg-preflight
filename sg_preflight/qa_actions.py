@@ -32,6 +32,7 @@ from sg_preflight.services import (
     workspace_root,
     write_json_file,
 )
+from sg_preflight.visual_review import materialize_visual_review_prep
 
 
 ACTION_PROGRESS_PLANS: dict[str, tuple[tuple[str, str], ...]] = {
@@ -659,11 +660,14 @@ def _manual_evidence_default_note(kind: str, label: str) -> str:
         ),
         "visual_review_checklist": (
             f"{label}\n\n"
+            "- Project changelog reviewed: [ ]\n"
+            "- Screenshot baseline set reviewed: [ ]\n"
             "- Blender scene opened: [ ]\n"
             "- RaCo scene opened: [ ]\n"
             "- Blender vs RaCo compared: [ ]\n"
             "- Key camera / perspective checked: [ ]\n"
             "- Screenshot captured: [ ]\n"
+            "- Constants / README notes checked: [ ]\n"
             "- Finding documented: [ ]\n"
             "- Notes:\n"
         ),
@@ -854,6 +858,51 @@ def _write_text(path: Path, text: str) -> None:
 
 def _artifact(label: str, path: Path) -> dict[str, str]:
     return {"label": label, "path": str(path)}
+
+
+def _visual_review_prep_entries(record: ActionRecord, root: Path) -> tuple[list[dict[str, str]], list[str]]:
+    project_root = Path(record.project_root)
+    if not project_root.exists():
+        return [], []
+
+    output_root = Path(record.paths.get("output_root", "")).resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    bundle = materialize_visual_review_prep(record.profile_id or project_root.name, project_root, output_root)
+    record.paths["visual_review_prep_json"] = str(bundle.json_path)
+    record.paths["visual_review_prep_md"] = str(bundle.markdown_path)
+    record.paths["visual_review_gallery_html"] = str(bundle.html_path)
+
+    prep = bundle.prep
+    artifacts = [
+        _artifact("Visual review prep", bundle.markdown_path),
+        _artifact("Visual review gallery", bundle.html_path),
+        _artifact("Visual review prep JSON", bundle.json_path),
+    ]
+    if prep.changelog_path:
+        artifacts.append(_artifact("Project changelog", Path(prep.changelog_path)))
+    if prep.screenshot_root:
+        artifacts.append(_artifact("Screenshot baselines", Path(prep.screenshot_root)))
+    if prep.screenshot_test_config_path:
+        artifacts.append(_artifact("Screenshot test config", Path(prep.screenshot_test_config_path)))
+    if prep.constants_readme_path:
+        artifacts.append(_artifact("Constants README", Path(prep.constants_readme_path)))
+    if prep.raco_scene_path:
+        artifacts.append(_artifact("Representative RaCo scene", Path(prep.raco_scene_path)))
+    if prep.blender_workfile_path:
+        artifacts.append(_artifact("Representative Blender workfile", Path(prep.blender_workfile_path)))
+
+    notes: list[str] = []
+    if prep.changelog_heading:
+        notes.append(f"Visual review focus: {prep.changelog_heading}")
+    if prep.priority_screenshots:
+        notes.append("Priority screenshot baselines: " + ", ".join(prep.priority_screenshots[:6]))
+    if prep.raco_scene_path:
+        notes.append(f"Representative RaCo scene ready to open: {prep.raco_scene_path}")
+    if prep.blender_workfile_path:
+        notes.append(f"Representative Blender workfile ready to open: {prep.blender_workfile_path}")
+    notes.append("Open the visual review gallery and review-prep note before closing the manual visual-review step.")
+    return artifacts, notes
 
 
 def _summary_checker_evidence(summary: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -2074,6 +2123,12 @@ def execute_operator_action(
             summary, artifacts, notes = _execute_scene_check(record, root)
         else:
             raise ValueError(f"Unsupported action kind: {action.kind}")
+
+        review_artifacts, review_notes = _visual_review_prep_entries(record, root)
+        if review_artifacts:
+            artifacts.extend(review_artifacts)
+        if review_notes:
+            notes.extend(review_notes)
 
         record.summary = summary
         record.artifacts = artifacts

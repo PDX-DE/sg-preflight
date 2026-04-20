@@ -69,6 +69,7 @@ add_executable(
   src/native_shell.rc
   src/prompt.cpp
   src/screenshot_capture.cpp
+  src/shell_state.cpp
   src/texture_loader.cpp
 )
 

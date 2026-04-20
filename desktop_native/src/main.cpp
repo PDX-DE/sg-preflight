@@ -3,6 +3,7 @@
 #include "localization.hpp"
 #include "prompt.hpp"
 #include "screenshot_capture.hpp"
+#include "shell_state.hpp"
 #include "shell_types.hpp"
 #include "texture_loader.hpp"
 
@@ -258,94 +259,7 @@ enum class ShellDisplayMode {
 
 ShellDisplayMode g_shell_display_mode = ShellDisplayMode::Cinematic;
 
-struct ShellState {
-    BackendConfig backend;
-    ShellLanguage language = ShellLanguage::English;
-    std::vector<ProfileItem> profiles;
-    std::vector<ActionItem> actions;
-    std::vector<BlockerItem> blockers;
-    std::vector<ManualCard> manual_cards;
-    std::vector<EnvironmentDoctorItem> environment_items;
-    std::vector<RecentActionItem> recent_actions;
-    std::vector<RecentRunItem> recent_runs;
-    std::optional<ActionSnapshot> snapshot;
-    std::optional<RunSnapshot> run_snapshot;
-    int selected_profile_index = 0;
-    int selected_evidence_index = 0;
-    int selected_artifact_index = 0;
-    int selected_environment_index = 0;
-    std::string selected_action_id;
-    std::string current_run_id;
-    std::string current_result_run_id;
-    std::string status_line = sg_preflight::native_shell::FormatReadyForNextActionStatus(ShellLanguage::English);
-    std::string last_error;
-    double next_poll_at = DBL_MAX;
-    ShellScreen current_screen = ShellScreen::Introduction;
-    ShellScreen previous_screen = ShellScreen::Introduction;
-    int selected_language_index = 0;
-    double screen_transition_started_at = -1.0;
-    bool prompt_visible = false;
-    bool prompt_confirmation = false;
-    bool prompt_accepts_exit = false;
-    bool prompt_accepts_leave_run = false;
-    std::string prompt_title;
-    std::string prompt_message;
-    std::string prompt_accept_label = "YES";
-    std::string prompt_cancel_label = "NO";
-    bool prompt_closing = false;
-    bool prompt_accept_pending = false;
-    bool prompt_cancel_pending = false;
-    double prompt_opened_at = -1.0;
-    double prompt_closing_started_at = -1.0;
-    int prompt_selected_index = 0;
-    int prompt_previous_selected_index = 0;
-    bool prompt_controls_visible = false;
-    double prompt_controls_opened_at = -1.0;
-    double prompt_selection_changed_at = -1.0;
-    bool request_exit = false;
-    bool initial_state_loading = true;
-    bool profile_panel_loading = false;
-    std::string profile_panel_loading_id;
-    uint64_t profile_panel_load_token = 0;
-    bool run_refresh_loading = false;
-    uint64_t run_refresh_token = 0;
-    bool exit_transition_active = false;
-    double exit_transition_started_at = -1.0;
-    std::array<char, 4096> manual_evidence_note{};
-};
-
-struct ProfilePanelLoadResult {
-    uint64_t token = 0;
-    std::string profile_id;
-    std::vector<ActionItem> actions;
-    std::vector<BlockerItem> blockers;
-    std::vector<ManualCard> manual_cards;
-    std::string error;
-};
-
-struct RunRefreshResult {
-    uint64_t token = 0;
-    std::string run_id;
-    std::string requested_result_run_id;
-    std::string current_result_run_id;
-    std::string profile_id;
-    std::string action_id;
-    bool refresh_recent_lists = false;
-    bool still_running = false;
-    std::vector<RecentActionItem> recent_actions;
-    std::vector<RecentRunItem> recent_runs;
-    std::optional<ActionSnapshot> snapshot;
-    std::optional<RunSnapshot> run_snapshot;
-    std::string error;
-};
-
 ShellState* g_live_shell_state = nullptr;
-
-struct ProfileSelectionCacheEntry {
-    std::vector<ActionItem> actions;
-    std::vector<BlockerItem> blockers;
-    std::vector<ManualCard> manual_cards;
-};
 
 std::mutex g_profile_selection_cache_mutex;
 std::unordered_map<std::string, ProfileSelectionCacheEntry> g_profile_selection_cache;
@@ -356,23 +270,6 @@ enum class GuideInputMode {
 };
 
 GuideInputMode g_guide_input_mode = GuideInputMode::Keyboard;
-
-struct InitialShellLoadResult {
-    std::vector<ProfileItem> profiles;
-    std::vector<ActionItem> actions;
-    std::vector<BlockerItem> blockers;
-    std::vector<ManualCard> manual_cards;
-    std::vector<EnvironmentDoctorItem> environment_items;
-    std::vector<RecentActionItem> recent_actions;
-    std::vector<RecentRunItem> recent_runs;
-    std::optional<ActionSnapshot> snapshot;
-    std::optional<RunSnapshot> run_snapshot;
-    int selected_profile_index = 0;
-    std::string selected_action_id;
-    std::string current_run_id;
-    std::string current_result_run_id;
-    std::string error;
-};
 
 std::mutex g_initial_load_mutex;
 std::optional<InitialShellLoadResult> g_initial_load_result;
@@ -388,12 +285,6 @@ std::mutex g_run_refresh_mutex;
 std::optional<RunRefreshResult> g_run_refresh_result;
 std::jthread g_run_refresh_thread;
 uint64_t g_run_refresh_next_token = 0;
-
-struct ArtifactChoice {
-    std::string section;
-    std::string label;
-    std::string path;
-};
 
 enum class UiCue {
     Cursor,
@@ -463,16 +354,12 @@ void MoveLanguageSelection(ShellState& state, int delta_x, int delta_y) {
     PlayCue(UiCue::Cursor);
 }
 
-std::string CurrentActionId(const ShellState& state);
-const ActionItem* FindSelectedAction(const ShellState& state);
-ShellScreen PreviousScreen(const ShellState& state, ShellScreen screen);
 void OpenPrompt(ShellState& state, const std::string& title, const std::string& message, bool confirmation = true, bool accepts_exit = false, bool accepts_leave_run = false);
 void RequestBackAction(ShellState& state);
 void RenderSummaryPanel(ShellState& state);
 void RenderEvidencePanel(ShellState& state);
 void RenderArtifactsPanel(ShellState& state);
 void RenderBlockersPanel(ShellState& state);
-void ClampSelections(ShellState& state);
 void RefreshSnapshot(ShellState& state);
 void RefreshRunSnapshot(ShellState& state);
 void RefreshResultPanels(ShellState& state);
@@ -487,7 +374,6 @@ void StartRunRefresh(ShellState& state, bool refresh_recent_lists = false);
 void PollRunRefresh(ShellState& state);
 void UpdateRunPollingDeadline(ShellState& state, double delay_seconds = -1.0);
 void TraceUi(std::string message);
-const char* ScreenLabel(ShellScreen screen);
 bool EnvFlagEnabled(const wchar_t* name);
 float ShellTextLifecycleMotion();
 float ShellChromeLifecycleMotion();
@@ -496,7 +382,6 @@ float ShellExitTextVisibility(const ShellState& state);
 std::string SanitiseTraceText(std::string text);
 void DrawSelectionContainerChrome(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float alpha, bool fade_top);
 bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool accent, bool enabled);
-void ClearManualEvidenceNote(ShellState& state);
 void DrawPromptTextStyled(
     ImDrawList* draw,
     ImFont* font,
@@ -1709,31 +1594,6 @@ int ScreenStepNumber(ShellScreen screen) {
 
 constexpr int kWizardStepCount = 8;
 
-const char* ScreenLabel(ShellScreen screen) {
-    switch (screen) {
-    case ShellScreen::Language:
-        return "LANG";
-    case ShellScreen::Introduction:
-        return "INTRO";
-    case ShellScreen::Select:
-        return "SELECT";
-    case ShellScreen::Review:
-        return "REVIEW";
-    case ShellScreen::Run:
-        return "RUN";
-    case ShellScreen::Evidence:
-        return "EVIDENCE";
-    case ShellScreen::Files:
-        return "FILES";
-    case ShellScreen::Environment:
-        return "ENV";
-    case ShellScreen::Stages:
-        return "STAGES";
-    default:
-        return "SCREEN";
-    }
-}
-
 const char* ScreenTitle(ShellScreen screen) {
     switch (screen) {
     case ShellScreen::Language:
@@ -1782,22 +1642,6 @@ const char* ScreenSummary(ShellScreen screen) {
     default:
         return "Screen flow";
     }
-}
-
-ShellScreen FirstOperationalScreen() {
-    return ShellScreen::Introduction;
-}
-
-bool HasEvidenceReady(const ShellState& state) {
-    return state.snapshot.has_value() && !state.snapshot->top_paths.empty();
-}
-
-bool HasArtifactsReady(const ShellState& state) {
-    return state.snapshot.has_value() || state.run_snapshot.has_value();
-}
-
-bool HasCompletedRun(const ShellState& state) {
-    return state.snapshot.has_value() && state.snapshot->status == "completed";
 }
 
 bool ShouldShowInstallerLoadingChrome(const ShellState& state) {
@@ -1911,100 +1755,6 @@ std::string MakeVisibleLogTail(const std::string& log_tail, bool running) {
     return trimmed;
 }
 
-std::string PrimaryActionId(const ShellState& state) {
-    return CurrentActionId(state);
-}
-
-bool SelectedActionReady(const ShellState& state) {
-    const std::string action_id = PrimaryActionId(state);
-    if (action_id == "daily_live_matrix") {
-        return true;
-    }
-    const ActionItem* action = FindSelectedAction(state);
-    return action != nullptr && action->ready;
-}
-
-bool CanAdvanceFromPage(const ShellState& state, ShellScreen screen) {
-    switch (screen) {
-    case ShellScreen::Language:
-        return true;
-    case ShellScreen::Introduction:
-        return true;
-    case ShellScreen::Select:
-        return !state.profile_panel_loading && !state.profiles.empty() && !PrimaryActionId(state).empty();
-    case ShellScreen::Review:
-        return SelectedActionReady(state);
-    case ShellScreen::Run:
-        return HasCompletedRun(state);
-    case ShellScreen::Evidence:
-        return HasArtifactsReady(state);
-    case ShellScreen::Files:
-        return true;
-    case ShellScreen::Environment:
-        return true;
-    case ShellScreen::Stages:
-        return true;
-    default:
-        return false;
-    }
-}
-
-ShellScreen NextScreen(const ShellState& state, ShellScreen screen) {
-    switch (screen) {
-    case ShellScreen::Language:
-        return ShellScreen::Introduction;
-    case ShellScreen::Introduction:
-        return ShellScreen::Select;
-    case ShellScreen::Select:
-        return ShellScreen::Review;
-    case ShellScreen::Review:
-        return ShellScreen::Run;
-    case ShellScreen::Run:
-        if (HasEvidenceReady(state)) {
-            return ShellScreen::Evidence;
-        }
-        if (HasArtifactsReady(state)) {
-            return ShellScreen::Files;
-        }
-        return ShellScreen::Environment;
-    case ShellScreen::Evidence:
-        return ShellScreen::Files;
-    case ShellScreen::Files:
-        return ShellScreen::Environment;
-    case ShellScreen::Environment:
-        return ShellScreen::Stages;
-    case ShellScreen::Stages:
-        return ShellScreen::Select;
-    default:
-        return ShellScreen::Select;
-    }
-}
-
-ShellScreen PreviousScreen(const ShellState& state, ShellScreen screen) {
-    switch (screen) {
-    case ShellScreen::Language:
-        return ShellScreen::Language;
-    case ShellScreen::Introduction:
-        return ShellScreen::Language;
-    case ShellScreen::Select:
-        return ShellScreen::Introduction;
-    case ShellScreen::Review:
-        return ShellScreen::Select;
-    case ShellScreen::Run:
-        return ShellScreen::Review;
-    case ShellScreen::Evidence:
-        return ShellScreen::Run;
-    case ShellScreen::Files:
-        return HasEvidenceReady(state) ? ShellScreen::Evidence : ShellScreen::Run;
-    case ShellScreen::Environment:
-        return HasArtifactsReady(state) ? ShellScreen::Files : ShellScreen::Run;
-    case ShellScreen::Stages:
-        return ShellScreen::Environment;
-    default:
-        return ShellScreen::Introduction;
-    }
-}
-
 std::string NextButtonLabel(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Language:
@@ -2036,30 +1786,6 @@ std::string NextButtonLabel(const ShellState& state) {
         return Tr(state, UiText::Return);
     default:
         return Tr(state, UiText::Next);
-    }
-}
-
-bool IsActionStillRunning(const ShellState& state) {
-    if (!state.snapshot.has_value()) {
-        return false;
-    }
-    return state.snapshot->status == "queued" || state.snapshot->status == "running";
-}
-
-bool ShouldAutoRefreshRunInCurrentScreen(const ShellState& state) {
-    switch (state.current_screen) {
-    case ShellScreen::Run:
-    case ShellScreen::Evidence:
-    case ShellScreen::Files:
-    case ShellScreen::Environment:
-    case ShellScreen::Stages:
-        return true;
-    case ShellScreen::Language:
-    case ShellScreen::Introduction:
-    case ShellScreen::Select:
-    case ShellScreen::Review:
-    default:
-        return false;
     }
 }
 
@@ -2996,27 +2722,6 @@ BackendConfig ParseArguments() {
     return config;
 }
 
-std::string CurrentProfileId(const ShellState& state) {
-    if (state.profiles.empty()) {
-        return {};
-    }
-    const int clamped_index = std::clamp(state.selected_profile_index, 0, static_cast<int>(state.profiles.size()) - 1);
-    return state.profiles[static_cast<size_t>(clamped_index)].profile_id;
-}
-
-std::string CurrentActionId(const ShellState& state) {
-    return state.selected_action_id.empty() ? std::string("daily_live_matrix") : state.selected_action_id;
-}
-
-const ActionItem* FindSelectedAction(const ShellState& state) {
-    for (const ActionItem& action : state.actions) {
-        if (action.action_id == state.selected_action_id) {
-            return &action;
-        }
-    }
-    return nullptr;
-}
-
 std::string SanitiseTraceText(std::string text) {
     for (char& ch : text) {
         if (ch == '\r' || ch == '\n' || ch == '\t') {
@@ -3475,71 +3180,6 @@ void PollRunRefresh(ShellState& state) {
     UpdateRunPollingDeadline(state, AutoRunPollDelaySeconds(state));
 }
 
-void ClampSelections(ShellState& state) {
-    const size_t top_paths = state.snapshot.has_value() ? state.snapshot->top_paths.size() : 0U;
-    const size_t environment_items = state.environment_items.size();
-    size_t artifacts = 0U;
-    if (state.snapshot.has_value()) {
-        artifacts += state.snapshot->artifacts.size();
-    }
-    if (state.run_snapshot.has_value()) {
-        artifacts += state.run_snapshot->artifacts.size();
-        artifacts += state.run_snapshot->source_files.size();
-    }
-    state.selected_evidence_index = top_paths == 0
-        ? 0
-        : std::clamp(state.selected_evidence_index, 0, static_cast<int>(top_paths) - 1);
-    state.selected_artifact_index = artifacts == 0
-        ? 0
-        : std::clamp(state.selected_artifact_index, 0, static_cast<int>(artifacts) - 1);
-    state.selected_environment_index = environment_items == 0
-        ? 0
-        : std::clamp(state.selected_environment_index, 0, static_cast<int>(environment_items) - 1);
-}
-
-std::vector<ArtifactChoice> CombinedArtifacts(const ShellState& state) {
-    std::vector<ArtifactChoice> items;
-    if (state.snapshot.has_value()) {
-        for (const auto& artifact : state.snapshot->artifacts) {
-            items.push_back({"Action files", artifact.label, artifact.path});
-        }
-    }
-    if (state.run_snapshot.has_value()) {
-        for (const auto& artifact : state.run_snapshot->artifacts) {
-            items.push_back({"Run outputs", artifact.label, artifact.path});
-        }
-        for (const auto& source : state.run_snapshot->source_files) {
-            items.push_back({"Source-of-truth files", source.label, source.path});
-        }
-    }
-    return items;
-}
-
-std::vector<CopyItem> CombinedCopyItems(const ShellState& state) {
-    std::vector<CopyItem> items;
-    std::vector<std::string> seen_keys;
-    const auto append_items = [&](const std::vector<CopyItem>& source) {
-        for (const CopyItem& item : source) {
-            if (item.text.empty()) {
-                continue;
-            }
-            const bool duplicate = std::find(seen_keys.begin(), seen_keys.end(), item.key) != seen_keys.end();
-            if (duplicate) {
-                continue;
-            }
-            seen_keys.push_back(item.key);
-            items.push_back(item);
-        }
-    };
-    if (state.snapshot.has_value()) {
-        append_items(state.snapshot->copy_items);
-    }
-    if (state.run_snapshot.has_value()) {
-        append_items(state.run_snapshot->copy_items);
-    }
-    return items;
-}
-
 void RefreshSnapshot(ShellState& state) {
     if (state.current_run_id.empty()) {
         state.snapshot.reset();
@@ -3845,77 +3485,6 @@ std::wstring SelectedEvidencePath(const ShellState& state) {
     }
     const EvidenceItem& item = state.snapshot->top_paths[static_cast<size_t>(state.selected_evidence_index)];
     return sg_preflight::native_shell::ToWide(item.path);
-}
-
-std::wstring SelectedArtifactPath(const ShellState& state) {
-    const std::vector<ArtifactChoice> artifacts = CombinedArtifacts(state);
-    if (artifacts.empty()) {
-        return {};
-    }
-    const int clamped_index = std::clamp(state.selected_artifact_index, 0, static_cast<int>(artifacts.size()) - 1);
-    return sg_preflight::native_shell::ToWide(artifacts[static_cast<size_t>(clamped_index)].path);
-}
-
-std::wstring EnvironmentDoctorPath(const ShellState& state, const std::string& key) {
-    const auto match = std::find_if(
-        state.environment_items.begin(),
-        state.environment_items.end(),
-        [&](const EnvironmentDoctorItem& item) { return item.key == key; }
-    );
-    if (match == state.environment_items.end() || match->path.empty()) {
-        return {};
-    }
-    return sg_preflight::native_shell::ToWide(match->path);
-}
-
-std::wstring SelectedEnvironmentDoctorPath(const ShellState& state) {
-    if (state.environment_items.empty()) {
-        return {};
-    }
-    const int clamped_index = std::clamp(state.selected_environment_index, 0, static_cast<int>(state.environment_items.size()) - 1);
-    const std::string& path = state.environment_items[static_cast<size_t>(clamped_index)].path;
-    return path.empty() ? std::wstring{} : sg_preflight::native_shell::ToWide(path);
-}
-
-std::wstring CurrentBmwChecklistPath(const ShellState& state) {
-    const std::filesystem::path candidate = std::filesystem::path(state.backend.workspace_root) / "docs" / "bmw-access-integration-checklist.md";
-    return PathExists(candidate) ? candidate.wstring() : std::wstring{};
-}
-
-std::filesystem::path CurrentActionOutputRoot(const ShellState& state) {
-    if (state.snapshot.has_value() && !state.snapshot->output_root.empty()) {
-        return std::filesystem::path(sg_preflight::native_shell::ToWide(state.snapshot->output_root));
-    }
-    if (state.snapshot.has_value() && !state.snapshot->log_path.empty()) {
-        return std::filesystem::path(sg_preflight::native_shell::ToWide(state.snapshot->log_path)).parent_path();
-    }
-    if (!state.current_run_id.empty()) {
-        return std::filesystem::path(state.backend.workspace_root) / "out" / "operator-ui" / "actions" / sg_preflight::native_shell::ToWide(state.current_run_id);
-    }
-    return {};
-}
-
-std::wstring CurrentProjectRoot(const ShellState& state) {
-    if (state.snapshot.has_value() && !state.snapshot->project_root.empty()) {
-        return sg_preflight::native_shell::ToWide(state.snapshot->project_root);
-    }
-    return {};
-}
-
-bool PathHasExtension(const std::wstring& path, const std::wstring& expected_extension) {
-    if (path.empty()) {
-        return false;
-    }
-    const std::filesystem::path file_path(path);
-    return Lowercase(file_path.extension().wstring()) == Lowercase(expected_extension);
-}
-
-std::string ActiveManualEvidenceNote(const ShellState& state) {
-    return std::string(state.manual_evidence_note.data());
-}
-
-void ClearManualEvidenceNote(ShellState& state) {
-    state.manual_evidence_note.fill('\0');
 }
 
 bool AttachManualEvidenceToCurrentRun(
