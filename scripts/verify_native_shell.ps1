@@ -1,10 +1,13 @@
 param(
     [string]$ExePath = "",
     [string]$OutputRoot = "",
+    [string]$ProfileId = "",
+    [string]$ActionId = "",
     [int]$InitialSettleMs = 8000,
     [int]$ScreenSettleMs = 2200,
     [int]$PromptSettleMs = 1000,
     [int]$RunObserveSeconds = 600,
+    [int]$RunCompletionTimeoutSeconds = 30,
     [int]$CaptureTimeoutSeconds = 20
 )
 
@@ -85,6 +88,12 @@ $log.Add("")
 
 $shell = New-Object -ComObject WScript.Shell
 $launchArgs = @("--windowed", "--width", "1280", "--height", "720")
+if ($ProfileId) {
+    $launchArgs += @("--profile", $ProfileId)
+}
+if ($ActionId) {
+    $launchArgs += @("--action", $ActionId)
+}
 $process = $null
 $previousTraceEnv = $env:SG_PREFLIGHT_NATIVE_TRACE_FILE
 $previousCaptureEnv = $env:SG_PREFLIGHT_NATIVE_CAPTURE_DIR
@@ -271,6 +280,29 @@ function Wait-ForTracePattern {
     return $false
 }
 
+function Wait-ForAnyTracePattern {
+    param(
+        [string]$Path,
+        [string[]]$Patterns,
+        [int]$TimeoutSeconds = 12
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $text = Get-TraceText -Path $Path
+        foreach ($pattern in $Patterns) {
+            if ($text -match [regex]::Escape($pattern)) {
+                $log.Add("[trace] matched: $pattern")
+                return $pattern
+            }
+        }
+        Start-Sleep -Milliseconds 150
+    }
+
+    $log.Add("[trace] missing any: $($Patterns -join ' | ')")
+    return ""
+}
+
 try {
     $process = Start-Process -FilePath $ExePath -ArgumentList $launchArgs -WorkingDirectory $repoRoot -PassThru
     Wait-ForMainWindow -TargetProcess $process
@@ -307,6 +339,41 @@ try {
         }
     }
     Capture-Stage -TargetProcess $process -Name "run_after_observe"
+
+    $runCompleted = Wait-ForTracePattern -Path $tracePath -Pattern "still_running=false" -TimeoutSeconds $RunCompletionTimeoutSeconds
+    if ($runCompleted) {
+        Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
+        $runAdvancePattern = Wait-ForAnyTracePattern -Path $tracePath -Patterns @(
+            "UI screen_change from=RUN to=EVIDENCE",
+            "UI screen_change from=RUN to=FILES",
+            "UI screen_change from=RUN to=ENV"
+        ) -TimeoutSeconds 6
+
+        if ($runAdvancePattern -eq "UI screen_change from=RUN to=EVIDENCE") {
+            Capture-Stage -TargetProcess $process -Name "evidence"
+            Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
+            [void](Wait-ForAnyTracePattern -Path $tracePath -Patterns @(
+                "UI screen_change from=EVIDENCE to=FILES",
+                "UI screen_change from=EVIDENCE to=ENV"
+            ) -TimeoutSeconds 6)
+        }
+
+        if ($runAdvancePattern -in @("UI screen_change from=RUN to=FILES", "UI screen_change from=EVIDENCE to=FILES")) {
+            Capture-Stage -TargetProcess $process -Name "files"
+            Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
+            [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI screen_change from=FILES to=ENV" -TimeoutSeconds 6)
+            $runAdvancePattern = "UI screen_change from=FILES to=ENV"
+        }
+
+        if ($runAdvancePattern -in @("UI screen_change from=RUN to=ENV", "UI screen_change from=EVIDENCE to=ENV", "UI screen_change from=FILES to=ENV")) {
+            Capture-Stage -TargetProcess $process -Name "environment"
+            Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
+            [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI screen_change from=ENV to=STAGES" -TimeoutSeconds 6)
+            Capture-Stage -TargetProcess $process -Name "stages"
+        }
+    } else {
+        $log.Add("[flow] run did not complete within $RunCompletionTimeoutSeconds seconds; skipped deeper screen capture")
+    }
 
     if (-not $process.HasExited) {
         Stop-Process -Id $process.Id -Force

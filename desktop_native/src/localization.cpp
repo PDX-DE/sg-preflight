@@ -17,8 +17,8 @@ constexpr std::array<LanguageOption, 4> kSupportedLanguages = {{
 
 const char* TranslateEnglish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
-    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
+    case HeaderPreflight: return "SERGFX QA Review";
+    case HeaderChecking: return "SERGFX QA Review";
     case ImageSlotReserved: return "";
     case Continue: return "Continue";
     case Review: return "Review";
@@ -27,6 +27,7 @@ const char* TranslateEnglish(UiText text) {
     case OpenFirst: return "Open First";
     case Files: return "Files";
     case Stages: return "Stages";
+    case Environment: return "Environment";
     case Return: return "Return";
     case Next: return "Next";
     case Back: return "Back";
@@ -135,8 +136,8 @@ const char* TranslateRomanian(UiText text);
 
 const char* TranslateSpanish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
-    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
+    case HeaderPreflight: return "SERGFX QA Review";
+    case HeaderChecking: return "SERGFX QA Review";
     case ImageSlotReserved: return "ESPACIO DE IMAGEN RESERVADO";
     case Continue: return "CONTINUAR";
     case Review: return "REVISAR";
@@ -145,6 +146,7 @@ const char* TranslateSpanish(UiText text) {
     case OpenFirst: return "ABRIR PRIMERO";
     case Files: return "ARCHIVOS";
     case Stages: return "ETAPAS";
+    case Environment: return "ENTORNO";
     case Return: return "VOLVER";
     case Next: return "SIGUIENTE";
     case Back: return "ATRAS";
@@ -249,8 +251,8 @@ const char* TranslateSpanish(UiText text) {
 
 const char* TranslateGerman(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
-    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
+    case HeaderPreflight: return "SERGFX QA Review";
+    case HeaderChecking: return "SERGFX QA Review";
     case ImageSlotReserved: return "BILDPLATZ RESERVIERT";
     case Continue: return "WEITER";
     case Review: return "PRUEFEN";
@@ -259,6 +261,7 @@ const char* TranslateGerman(UiText text) {
     case OpenFirst: return "ZUERST OEFFNEN";
     case Files: return "DATEIEN";
     case Stages: return "STUFEN";
+    case Environment: return "UMGEBUNG";
     case Return: return "ZURUECK";
     case Next: return "WEITER";
     case Back: return "ZURUECK";
@@ -363,8 +366,8 @@ const char* TranslateGerman(UiText text) {
 
 const char* TranslateRomanian(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
-    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
+    case HeaderPreflight: return "SERGFX QA Review";
+    case HeaderChecking: return "SERGFX QA Review";
     case ImageSlotReserved: return "SPATIU IMAGINE REZERVAT";
     case Continue: return "CONTINUA";
     case Review: return "REVIZUIRE";
@@ -373,6 +376,7 @@ const char* TranslateRomanian(UiText text) {
     case OpenFirst: return "DESCHIDE INTII";
     case Files: return "FISIERE";
     case Stages: return "ETAPE";
+    case Environment: return "MEDIU";
     case Return: return "INAPOI";
     case Next: return "URMATORUL";
     case Back: return "INAPOI";
@@ -653,6 +657,20 @@ std::string FormatMusicStatus(ShellLanguage language, bool enabled) {
     case Romanian: return std::string("Muzica instalatorului este ") + (enabled ? "activata." : "dezactivata.");
     }
     return std::string("Installer background music ") + (enabled ? "enabled." : "disabled.");
+}
+
+std::string FormatDisplayModeStatus(ShellLanguage language, bool work_mode) {
+    switch (language) {
+    case English:
+        return work_mode ? "Display mode set to Work. Background music stays off." : "Display mode set to Cinematic.";
+    case Spanish:
+        return work_mode ? "Modo de pantalla cambiado a Trabajo. La musica queda desactivada." : "Modo de pantalla cambiado a Cinematico.";
+    case German:
+        return work_mode ? "Anzeigemodus auf Arbeit gesetzt. Hintergrundmusik bleibt aus." : "Anzeigemodus auf Cinematic gesetzt.";
+    case Romanian:
+        return work_mode ? "Modul de afisare a fost setat pe Work. Muzica de fundal ramane oprita." : "Modul de afisare a fost setat pe Cinematic.";
+    }
+    return work_mode ? "Display mode set to Work. Background music stays off." : "Display mode set to Cinematic.";
 }
 
 std::string FormatLoadedChromeStatus(ShellLanguage language) {

@@ -14,6 +14,7 @@ It calls the same action system and evidence model through the shared CLI/JSON c
 - `python -m sg_preflight desktop-state snapshot ...`
 - `python -m sg_preflight desktop-state recent-runs ...`
 - `python -m sg_preflight desktop-state run-snapshot ...`
+- `python -m sg_preflight desktop-state environment ...`
 
 ## Scope
 
@@ -32,14 +33,21 @@ Current native-shell milestone:
 - blocker/manual stage visibility
 - local open / reveal actions
 - broader copy/export surfaces for Jira, QA Hero, pre-delivery, delivery-doc, quick-update, and full handoff text
+- Environment Doctor readiness page for backend, mirrored SG checker coverage, RaCo/Blender readiness, BMW blockers, and output write access
 - bottom button-guide band
 - borderless fullscreen startup by default, so the shell reads like a dedicated operator surface instead of a floating tool window
-- calmer installer-style screen flow instead of one dense dashboard:
+- calmer installer-style wizard flow instead of one dense dashboard:
+  - `INTRO`
   - `SELECT`
+  - `REVIEW`
   - `RUN`
   - `EVIDENCE`
   - `FILES`
+  - `ENV`
   - `STAGES`
+- display modes:
+  - `WORK` is the default operator mode and prioritizes sharper text, lighter scanlines, smaller left-side art on dense pages, quieter prompts, larger run-log focus, and no background music
+  - `CINEMATIC` keeps the heavier SERGFX presentation treatment for private/demo sessions
 - translated Unleashed-style shell systems in native code instead of stock ImGui widgets:
   - animated scanline header bars
   - amber title + activity-square choreography
@@ -84,6 +92,12 @@ build\native\Release\sg_preflight_native_shell.exe
 
 Manual `--workspace-root` and `--python` overrides still work when needed.
 
+Optional native-shell startup overrides:
+
+```powershell
+build\native\Release\sg_preflight_native_shell.exe --profile F70 --action repo_checker_profile__f70
+```
+
 The CMake file fetches:
 
 - Dear ImGui `v1.92.7-docking`
@@ -94,6 +108,7 @@ The CMake file fetches:
 - This shell is Windows-first because the current operator environment is Windows.
 - It is intentionally separate from the PySide shell so the native track can move toward a closer Unleashed-style interaction feel without cloning the Python engine.
 - Package staging now defaults to a safer private-alpha bundle: repo mirrors, generated evidence, reference DDS bundles, optional fonts, and music are excluded unless explicitly requested.
+- `WORK` mode is the default runtime profile because this shell is supposed to help real SG QA work first; `CINEMATIC` remains available when the heavier presentation layer is useful.
 - Local UnleashedRecomp resource folders should be treated as reference-only inputs unless there is a cleared internal redistribution path for those assets.
 - BMW stages remain blocker/readiness surfaces until BMW-side access and scripts exist locally.
 - The current font path intentionally prefers direct local OTF files when available, because the upstream `im_font_atlas.bin` is a prebuilt snapshot generated for Unleashed's custom font-loading path rather than a drop-in ImGui runtime asset here.

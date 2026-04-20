@@ -24,6 +24,7 @@ enum class UiText {
     OpenFirst,
     Files,
     Stages,
+    Environment,
     Return,
     Next,
     Back,
@@ -148,6 +149,7 @@ std::string FormatCopiedQaHeroStatus(ShellLanguage language);
 std::string FormatCopiedHandoffStatus(ShellLanguage language);
 std::string FormatSfxStatus(ShellLanguage language, bool enabled);
 std::string FormatMusicStatus(ShellLanguage language, bool enabled);
+std::string FormatDisplayModeStatus(ShellLanguage language, bool work_mode);
 std::string FormatLoadedChromeStatus(ShellLanguage language);
 std::string FormatFallbackChromeStatus(ShellLanguage language, std::string_view error);
 std::string FormatDisplayModeLine(ShellLanguage language, float width, float height, bool using_warp);

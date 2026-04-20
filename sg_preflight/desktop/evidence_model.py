@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import importlib.util
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import sys
 from typing import Any
+import uuid
 
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.qa_actions import ActionRecord, list_operator_actions, list_recent_action_records, load_action_record
@@ -161,6 +165,17 @@ class DesktopRunSnapshot:
     copy_items: tuple[DesktopCopyItem, ...]
 
 
+@dataclass(frozen=True)
+class DesktopEnvironmentItem:
+    key: str
+    category: str
+    label: str
+    state: str
+    summary: str
+    path: str
+    next_action: str
+
+
 def _ready_profiles(root: Path, profiles: list[RunProfile] | None = None) -> list[RunProfile]:
     live_profiles = profiles if profiles is not None else list_run_profiles(root)
     return [
@@ -214,6 +229,249 @@ def latest_run_links(profile_id: str, workspace: Path | None = None) -> DesktopL
         markdown_report=str(record.paths.get("markdown_report", "")),
         json_report=str(record.paths.get("json_report", "")),
     )
+
+
+def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnvironmentItem]:
+    root = workspace_root(workspace)
+    readiness = {item["key"]: item for item in prerequisite_status(root)}
+
+    def _ready_from_prereq(key: str) -> bool:
+        return str(readiness.get(key, {}).get("status", "")).strip().lower() == "available"
+
+    def _item(
+        *,
+        key: str,
+        category: str,
+        label: str,
+        state: str,
+        summary: str,
+        path: str,
+        next_action: str,
+    ) -> DesktopEnvironmentItem:
+        return DesktopEnvironmentItem(
+            key=key,
+            category=category,
+            label=label,
+            state=state,
+            summary=summary,
+            path=path,
+            next_action=next_action,
+        )
+
+    sg_module_spec = importlib.util.find_spec("sg_preflight")
+    sg_module_path = ""
+    if sg_module_spec is not None:
+        if sg_module_spec.origin:
+            sg_module_path = str(Path(sg_module_spec.origin))
+        elif sg_module_spec.submodule_search_locations:
+            sg_module_path = str(next(iter(sg_module_spec.submodule_search_locations), ""))
+
+    delivery_keys = (
+        "delivery_checklist_tool",
+        "delivery_checklist_helper",
+        "delivery_checklist_readme",
+        "delivery_checklist_camera_crane",
+    )
+    delivery_ready = sum(1 for key in delivery_keys if _ready_from_prereq(key))
+    if delivery_ready == len(delivery_keys):
+        delivery_state = "ready"
+        delivery_summary = "The mirrored delivery-checklist bridge assets are present locally. This remains SG-side readiness, not BMW execution."
+    elif delivery_ready > 0:
+        delivery_state = "partial"
+        delivery_summary = "Some delivery-checklist bridge assets exist locally, but the mirrored set is incomplete."
+    else:
+        delivery_state = "blocked"
+        delivery_summary = "The mirrored delivery-checklist bridge assets are not ready locally yet."
+
+    bmw_script_keys = (
+        "bmw_screenshot_scripts",
+        "bmw_car_manager_script",
+        "bmw_test_main_script",
+    )
+    bmw_script_ready = sum(1 for key in bmw_script_keys if _ready_from_prereq(key))
+    if bmw_script_ready == len(bmw_script_keys):
+        bmw_scripts_state = "ready"
+        bmw_scripts_summary = "The BMW smoke helper script surface is present locally."
+    elif bmw_script_ready > 0:
+        bmw_scripts_state = "partial"
+        bmw_scripts_summary = "Some BMW smoke helper files were found locally, but the full helper surface is incomplete."
+    else:
+        bmw_scripts_state = "blocked"
+        bmw_scripts_summary = "BMW smoke helper scripts are still blocked on repo access and local checkout."
+
+    output_root = root / "out" / "operator-ui"
+    output_state = "ready"
+    output_summary = "The operator output root is writable for local evidence, actions, and screenshots."
+    output_path = str(output_root)
+    try:
+        output_root.mkdir(parents=True, exist_ok=True)
+        probe_path = output_root / f".env-doctor-write-{uuid.uuid4().hex}.tmp"
+        with probe_path.open("w", encoding="utf-8") as handle:
+            handle.write("ok")
+        probe_path.unlink()
+    except OSError as exc:
+        output_state = "blocked"
+        output_summary = f"The operator output root is not writable on this machine: {exc}"
+
+    python_path = str(Path(sys.executable).resolve())
+    python_ready = Path(python_path).exists()
+
+    items = [
+        _item(
+            key="python_backend",
+            category="Python backend",
+            label="Python backend",
+            state="ready" if python_ready else "missing",
+            summary=(
+                "The shell has a concrete Python executable available for backend commands."
+                if python_ready
+                else "The shell does not have a working Python executable path for backend commands."
+            ),
+            path=python_path,
+            next_action="Use the bundled environment or launch the shell with --python pointing at a working interpreter.",
+        ),
+        _item(
+            key="sg_preflight_import",
+            category="Python backend",
+            label="sg_preflight import",
+            state="ready" if sg_module_spec is not None else "blocked",
+            summary=(
+                "The shared SG Preflight backend module can be imported by the active interpreter."
+                if sg_module_spec is not None
+                else "The active interpreter cannot import the shared SG Preflight backend module."
+            ),
+            path=sg_module_path or "sg_preflight",
+            next_action="Install the workspace package into the active interpreter or switch the shell to the bundled environment.",
+        ),
+        _item(
+            key="mirror_root",
+            category="SG mirror",
+            label="repositories/trunk mirror",
+            state="ready" if _ready_from_prereq("mirror_root") else "missing",
+            summary=(
+                "The mirrored Seriengrafik working tree is available locally."
+                if _ready_from_prereq("mirror_root")
+                else "The mirrored Seriengrafik working tree is missing locally."
+            ),
+            path=str(readiness.get("mirror_root", {}).get("path", "")),
+            next_action="Sync the working mirror into repositories\\trunk before relying on SG-side checker coverage.",
+        ),
+        _item(
+            key="checker_root",
+            category="SG mirror",
+            label=".pdx/checkers",
+            state="ready" if _ready_from_prereq("checker_root") else "missing",
+            summary=(
+                "The mirrored SG checker root is available."
+                if _ready_from_prereq("checker_root")
+                else "The mirrored SG checker root is missing."
+            ),
+            path=str(readiness.get("checker_root", {}).get("path", "")),
+            next_action="Mirror the .pdx/checkers folder from Seriengrafik into the local workspace.",
+        ),
+        _item(
+            key="execute_checks",
+            category="SG mirror",
+            label="executeChecks.py",
+            state="ready" if _ready_from_prereq("execute_checks") else "missing",
+            summary=(
+                "The main SG checker dispatcher is available locally."
+                if _ready_from_prereq("execute_checks")
+                else "The main SG checker dispatcher is missing locally."
+            ),
+            path=str(readiness.get("execute_checks", {}).get("path", "")),
+            next_action="Mirror executeChecks.py into .pdx/checkers so repo and stack actions can stay truthful.",
+        ),
+        _item(
+            key="unused_resource_checker",
+            category="SG mirror",
+            label="printNotUsedResources.py",
+            state="ready" if _ready_from_prereq("unused_resource_checker") else "missing",
+            summary=(
+                "The SG unused-resource checker is available locally."
+                if _ready_from_prereq("unused_resource_checker")
+                else "The SG unused-resource checker is missing locally."
+            ),
+            path=str(readiness.get("unused_resource_checker", {}).get("path", "")),
+            next_action="Mirror printNotUsedResources.py into .pdx/checkers so unused-resource scans stay wired.",
+        ),
+        _item(
+            key="delivery_checklist_assets",
+            category="SG mirror",
+            label="deliveryChecklist assets",
+            state=delivery_state,
+            summary=delivery_summary,
+            path=str(readiness.get("delivery_checklist_tool", {}).get("path", "")),
+            next_action="Keep this surface as a readiness bridge until the BMW-owned delivery execution path is actually available.",
+        ),
+        _item(
+            key="raco_headless",
+            category="Local tools",
+            label="RaCoHeadless",
+            state="ready" if _ready_from_prereq("raco_headless") else "missing",
+            summary=(
+                "RaCoHeadless is available for local scene-side readiness checks."
+                if _ready_from_prereq("raco_headless")
+                else "RaCoHeadless is not configured on this machine yet."
+            ),
+            path=str(readiness.get("raco_headless", {}).get("path", "")),
+            next_action="Set SG_RACO_HEADLESS or install the approved Ramses Composer build on this machine.",
+        ),
+        _item(
+            key="blender_executable",
+            category="Local tools",
+            label="Blender executable",
+            state="ready" if _ready_from_prereq("blender_executable") else "missing",
+            summary=(
+                "A Blender executable path is available for local opening/adapter flows."
+                if _ready_from_prereq("blender_executable")
+                else "No Blender executable path is configured locally yet."
+            ),
+            path=str(readiness.get("blender_executable", {}).get("path", "")),
+            next_action="Set SG_BLENDER_EXE or install the approved Blender build before adding Blender-open adapters.",
+        ),
+        _item(
+            key="bmw_models_repo",
+            category="BMW / External",
+            label="BMW digital-3d-car repo",
+            state="ready" if _ready_from_prereq("bmw_models_repo") else "blocked",
+            summary=(
+                "The BMW models repository is available locally."
+                if _ready_from_prereq("bmw_models_repo")
+                else "The BMW models repository is still blocked on access or local checkout."
+            ),
+            path=str(readiness.get("bmw_models_repo", {}).get("path", "")),
+            next_action="Set SG_CARMODELS_REPO once access exists and the BMW repository is cloned locally.",
+        ),
+        _item(
+            key="bmw_helper_scripts",
+            category="BMW / External",
+            label="BMW helper scripts",
+            state=bmw_scripts_state,
+            summary=bmw_scripts_summary,
+            path=str(readiness.get("bmw_test_main_script", {}).get("path", "")),
+            next_action="Treat BMW smoke as blocked until the repo, helper scripts, and target mapping are all present locally.",
+        ),
+        _item(
+            key="jira_qa_hero",
+            category="BMW / External",
+            label="Jira / QA Hero",
+            state="blocked",
+            summary="Direct Jira or QA Hero integration is not connected here yet. The current product surface is copy-ready export, not API automation.",
+            path="copy exports only",
+            next_action="Keep using the SG-side copy exports until the real ticket integration path is agreed and available.",
+        ),
+        _item(
+            key="output_write_access",
+            category="Operator output",
+            label="out/operator-ui write access",
+            state=output_state,
+            summary=output_summary,
+            path=output_path,
+            next_action="Ensure the workspace output folder stays writable so evidence, screenshots, and action records can be persisted.",
+        ),
+    ]
+    return items
 
 
 def desktop_profiles(

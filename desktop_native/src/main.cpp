@@ -41,6 +41,7 @@ using sg_preflight::native_shell::BlockerItem;
 using sg_preflight::native_shell::CopyItem;
 using sg_preflight::native_shell::DdsTextureHandle;
 using sg_preflight::native_shell::EvidenceItem;
+using sg_preflight::native_shell::EnvironmentDoctorItem;
 using sg_preflight::native_shell::ManualCard;
 using sg_preflight::native_shell::ProfileItem;
 using sg_preflight::native_shell::RecentActionItem;
@@ -138,6 +139,9 @@ D3D12_CPU_DESCRIPTOR_HANDLE g_main_render_target_descriptors[kFrameCount]{};
 ImFont* g_title_font = nullptr;
 ImFont* g_body_font = nullptr;
 ImFont* g_small_font = nullptr;
+ImFont* g_readable_body_font = nullptr;
+ImFont* g_readable_small_font = nullptr;
+ImFont* g_mono_font = nullptr;
 double g_shell_appear_time = -1.0;
 double g_shell_disappear_time = -1.0;
 ImVec2 g_tab_highlight_min{};
@@ -230,8 +234,16 @@ enum class ShellScreen {
     Run,
     Evidence,
     Files,
+    Environment,
     Stages,
 };
+
+enum class ShellDisplayMode {
+    Work,
+    Cinematic,
+};
+
+ShellDisplayMode g_shell_display_mode = ShellDisplayMode::Work;
 
 struct ShellState {
     BackendConfig backend;
@@ -240,6 +252,7 @@ struct ShellState {
     std::vector<ActionItem> actions;
     std::vector<BlockerItem> blockers;
     std::vector<ManualCard> manual_cards;
+    std::vector<EnvironmentDoctorItem> environment_items;
     std::vector<RecentActionItem> recent_actions;
     std::vector<RecentRunItem> recent_runs;
     std::optional<ActionSnapshot> snapshot;
@@ -247,6 +260,7 @@ struct ShellState {
     int selected_profile_index = 0;
     int selected_evidence_index = 0;
     int selected_artifact_index = 0;
+    int selected_environment_index = 0;
     std::string selected_action_id;
     std::string current_run_id;
     std::string current_result_run_id;
@@ -334,6 +348,7 @@ struct InitialShellLoadResult {
     std::vector<ActionItem> actions;
     std::vector<BlockerItem> blockers;
     std::vector<ManualCard> manual_cards;
+    std::vector<EnvironmentDoctorItem> environment_items;
     std::vector<RecentActionItem> recent_actions;
     std::vector<RecentRunItem> recent_runs;
     std::optional<ActionSnapshot> snapshot;
@@ -669,6 +684,65 @@ std::filesystem::path ResolveShellIniPath() {
 }
 
 void SaveMusicPreferenceToIni(bool enabled);
+void SaveDisplayModePreferenceToIni(ShellDisplayMode mode);
+
+bool IsWorkDisplayMode() {
+    return g_shell_display_mode == ShellDisplayMode::Work;
+}
+
+bool IsDenseWorkScreen(ShellScreen screen) {
+    switch (screen) {
+    case ShellScreen::Run:
+    case ShellScreen::Evidence:
+    case ShellScreen::Files:
+    case ShellScreen::Environment:
+    case ShellScreen::Stages:
+        return true;
+    case ShellScreen::Language:
+    case ShellScreen::Introduction:
+    case ShellScreen::Select:
+    case ShellScreen::Review:
+    default:
+        return false;
+    }
+}
+
+ShellDisplayMode LoadDisplayModePreferenceFromIni() {
+    const std::filesystem::path ini_path = ResolveShellIniPath();
+    wchar_t value_buffer[32] = {};
+    GetPrivateProfileStringW(
+        L"sg_preflight_native_shell",
+        L"display_mode",
+        L"",
+        value_buffer,
+        static_cast<DWORD>(std::size(value_buffer)),
+        ini_path.wstring().c_str()
+    );
+    std::wstring value(value_buffer);
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](wchar_t character) { return static_cast<wchar_t>(towlower(character)); }
+    );
+    ShellDisplayMode mode = value == L"cinematic"
+        ? ShellDisplayMode::Cinematic
+        : ShellDisplayMode::Work;
+    if (value.empty()) {
+        SaveDisplayModePreferenceToIni(mode);
+    }
+    return mode;
+}
+
+void SaveDisplayModePreferenceToIni(ShellDisplayMode mode) {
+    const std::filesystem::path ini_path = ResolveShellIniPath();
+    WritePrivateProfileStringW(
+        L"sg_preflight_native_shell",
+        L"display_mode",
+        mode == ShellDisplayMode::Cinematic ? L"cinematic" : L"work",
+        ini_path.wstring().c_str()
+    );
+}
 
 bool LoadMusicPreferenceFromIni() {
     const std::filesystem::path ini_path = ResolveShellIniPath();
@@ -1253,6 +1327,9 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
 }
 
 void SetMusicEnabled(bool enabled) {
+    if (enabled && IsWorkDisplayMode()) {
+        enabled = false;
+    }
     g_shell_audio.music_enabled = enabled;
     SaveMusicPreferenceToIni(enabled);
     if (!enabled) {
@@ -1275,6 +1352,42 @@ void SetMusicEnabled(bool enabled) {
 
 void SetSfxEnabled(bool enabled) {
     g_shell_audio.sfx_enabled = enabled;
+}
+
+void SetDisplayMode(ShellDisplayMode mode) {
+    g_shell_display_mode = mode;
+    SaveDisplayModePreferenceToIni(mode);
+    if (mode == ShellDisplayMode::Work && g_shell_audio.music_enabled) {
+        SetMusicEnabled(false);
+    }
+    TraceUi(std::string("display_mode=") + (mode == ShellDisplayMode::Work ? "work" : "cinematic"));
+}
+
+ImFont* CurrentBodyFont() {
+    if (IsWorkDisplayMode() && g_readable_body_font != nullptr) {
+        return g_readable_body_font;
+    }
+    if (g_body_font != nullptr) {
+        return g_body_font;
+    }
+    return ImGui::GetFont();
+}
+
+ImFont* CurrentSmallFont() {
+    if (IsWorkDisplayMode() && g_readable_small_font != nullptr) {
+        return g_readable_small_font;
+    }
+    if (g_small_font != nullptr) {
+        return g_small_font;
+    }
+    return ImGui::GetFont();
+}
+
+ImFont* CurrentMonoFont() {
+    if (g_mono_font != nullptr) {
+        return g_mono_font;
+    }
+    return CurrentSmallFont();
 }
 
 void SetScreen(ShellState& state, ShellScreen screen, bool play_cursor = true) {
@@ -1307,14 +1420,16 @@ int ScreenStepNumber(ShellScreen screen) {
         return 5;
     case ShellScreen::Files:
         return 6;
-    case ShellScreen::Stages:
+    case ShellScreen::Environment:
         return 7;
+    case ShellScreen::Stages:
+        return 8;
     default:
         return 1;
     }
 }
 
-constexpr int kWizardStepCount = 7;
+constexpr int kWizardStepCount = 8;
 
 const char* ScreenLabel(ShellScreen screen) {
     switch (screen) {
@@ -1332,6 +1447,8 @@ const char* ScreenLabel(ShellScreen screen) {
         return "EVIDENCE";
     case ShellScreen::Files:
         return "FILES";
+    case ShellScreen::Environment:
+        return "ENV";
     case ShellScreen::Stages:
         return "STAGES";
     default:
@@ -1355,6 +1472,8 @@ const char* ScreenTitle(ShellScreen screen) {
         return "OPEN FIRST";
     case ShellScreen::Files:
         return "FILES / EXPORTS";
+    case ShellScreen::Environment:
+        return "ENVIRONMENT DOCTOR";
     case ShellScreen::Stages:
         return "BLOCKERS / SETTINGS";
     default:
@@ -1378,6 +1497,8 @@ const char* ScreenSummary(ShellScreen screen) {
         return "Open the first files that need attention.";
     case ShellScreen::Files:
         return "Open reports, generated files, and ready-to-copy exports.";
+    case ShellScreen::Environment:
+        return "Check what this machine can actually run before pretending Blender, RaCo, or BMW stages are ready.";
     case ShellScreen::Stages:
         return "Check blocked BMW/manual steps, follow-up, display mode, and audio settings.";
     default:
@@ -1434,6 +1555,9 @@ size_t InstallerTextureIndexForState(const ShellState& state) {
         break;
     case ShellScreen::Files:
         index = 3U;
+        break;
+    case ShellScreen::Environment:
+        index = 6U;
         break;
     case ShellScreen::Stages:
         index = 5U;
@@ -1533,6 +1657,8 @@ bool CanAdvanceFromPage(const ShellState& state, ShellScreen screen) {
         return HasArtifactsReady(state);
     case ShellScreen::Files:
         return true;
+    case ShellScreen::Environment:
+        return true;
     case ShellScreen::Stages:
         return true;
     default:
@@ -1557,10 +1683,12 @@ ShellScreen NextScreen(const ShellState& state, ShellScreen screen) {
         if (HasArtifactsReady(state)) {
             return ShellScreen::Files;
         }
-        return ShellScreen::Stages;
+        return ShellScreen::Environment;
     case ShellScreen::Evidence:
         return ShellScreen::Files;
     case ShellScreen::Files:
+        return ShellScreen::Environment;
+    case ShellScreen::Environment:
         return ShellScreen::Stages;
     case ShellScreen::Stages:
         return ShellScreen::Select;
@@ -1585,8 +1713,10 @@ ShellScreen PreviousScreen(const ShellState& state, ShellScreen screen) {
         return ShellScreen::Run;
     case ShellScreen::Files:
         return HasEvidenceReady(state) ? ShellScreen::Evidence : ShellScreen::Run;
-    case ShellScreen::Stages:
+    case ShellScreen::Environment:
         return HasArtifactsReady(state) ? ShellScreen::Files : ShellScreen::Run;
+    case ShellScreen::Stages:
+        return ShellScreen::Environment;
     default:
         return ShellScreen::Introduction;
     }
@@ -1612,10 +1742,12 @@ std::string NextButtonLabel(const ShellState& state) {
         if (HasArtifactsReady(state)) {
             return Tr(state, UiText::Files);
         }
-        return Tr(state, UiText::Stages);
+        return Tr(state, UiText::Environment);
     case ShellScreen::Evidence:
         return Tr(state, UiText::Files);
     case ShellScreen::Files:
+        return Tr(state, UiText::Environment);
+    case ShellScreen::Environment:
         return Tr(state, UiText::Stages);
     case ShellScreen::Stages:
         return Tr(state, UiText::Return);
@@ -1636,6 +1768,7 @@ bool ShouldAutoRefreshRunInCurrentScreen(const ShellState& state) {
     case ShellScreen::Run:
     case ShellScreen::Evidence:
     case ShellScreen::Files:
+    case ShellScreen::Environment:
     case ShellScreen::Stages:
         return true;
     case ShellScreen::Language:
@@ -1653,6 +1786,7 @@ double AutoRunPollDelaySeconds(const ShellState& state) {
         return 5.0;
     case ShellScreen::Evidence:
     case ShellScreen::Files:
+    case ShellScreen::Environment:
     case ShellScreen::Stages:
         return 6.0;
     case ShellScreen::Review:
@@ -2489,6 +2623,22 @@ BackendConfig ParseArguments() {
             python_override = true;
             continue;
         }
+        if (arg == L"--profile" && index + 1 < __argc) {
+            config.initial_profile_id = sg_preflight::native_shell::ToUtf8(__wargv[++index]);
+            continue;
+        }
+        if (StartsWithInsensitive(std::wstring(arg), L"--profile=")) {
+            config.initial_profile_id = sg_preflight::native_shell::ToUtf8(std::wstring(arg.substr(10)));
+            continue;
+        }
+        if (arg == L"--action" && index + 1 < __argc) {
+            config.initial_action_id = sg_preflight::native_shell::ToUtf8(__wargv[++index]);
+            continue;
+        }
+        if (StartsWithInsensitive(std::wstring(arg), L"--action=")) {
+            config.initial_action_id = sg_preflight::native_shell::ToUtf8(std::wstring(arg.substr(9)));
+            continue;
+        }
         if (arg == L"--windowed") {
             g_window_options.fullscreen = false;
             continue;
@@ -2647,8 +2797,10 @@ std::string BuildHelpPromptMessage(const ShellState& state) {
         return "Open First points to the first files that need attention.\n\nUse this page when you want the most important evidence first instead of searching through every output manually.";
     case ShellScreen::Files:
         return "Files collects generated outputs, reports, source files, and copy-ready exports.\n\nUse it when you need to open deliverables or copy material into Jira, QA Hero, or handoff notes.";
+    case ShellScreen::Environment:
+        return "Environment Doctor shows what this machine can actually do right now.\n\nUse it to confirm Python/backend readiness, mirrored SG checker coverage, local RaCo or Blender adapters, BMW blockers, and output write access before you overclaim later stages.";
     case ShellScreen::Stages:
-        return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked BMW/manual items, display settings, and audio settings before you loop back to the next slice.";
+        return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked BMW/manual items, work mode, and audio settings before you loop back to the next slice.";
     case ShellScreen::Language:
         return "Choose the language used by the shell interface.\n\nProject data, checker output, and generated files stay the same.";
     default:
@@ -2658,18 +2810,37 @@ std::string BuildHelpPromptMessage(const ShellState& state) {
 
 InitialShellLoadResult BuildInitialShellLoad(const BackendConfig& backend) {
     InitialShellLoadResult result;
+    result.environment_items = sg_preflight::native_shell::LoadEnvironmentDoctor(backend);
     result.profiles = sg_preflight::native_shell::LoadProfiles(backend);
     if (result.profiles.empty()) {
         return result;
     }
 
     result.selected_profile_index = 0;
-    const ProfileItem& profile = result.profiles[0];
+    if (!backend.initial_profile_id.empty()) {
+        const auto match = std::find_if(
+            result.profiles.begin(),
+            result.profiles.end(),
+            [&](const ProfileItem& item) { return item.profile_id == backend.initial_profile_id; });
+        if (match != result.profiles.end()) {
+            result.selected_profile_index = static_cast<int>(std::distance(result.profiles.begin(), match));
+        }
+    }
+    const ProfileItem& profile = result.profiles[static_cast<size_t>(result.selected_profile_index)];
     result.selected_action_id = profile.recommended_action_id;
     result.actions = sg_preflight::native_shell::LoadActions(backend, profile.profile_id);
     result.blockers = sg_preflight::native_shell::LoadBlockers(backend, profile.profile_id);
     result.manual_cards = sg_preflight::native_shell::LoadManualCards(backend, profile.profile_id);
     StoreProfileSelectionCache(profile.profile_id, result.actions, result.blockers, result.manual_cards);
+    if (!backend.initial_action_id.empty()) {
+        const auto action_match = std::find_if(
+            result.actions.begin(),
+            result.actions.end(),
+            [&](const ActionItem& item) { return item.action_id == backend.initial_action_id; });
+        if (action_match != result.actions.end()) {
+            result.selected_action_id = action_match->action_id;
+        }
+    }
     if (result.selected_action_id.empty()) {
         result.selected_action_id = result.actions.empty() ? "daily_live_matrix" : result.actions.front().action_id;
     }
@@ -2737,6 +2908,7 @@ void PollInitialShellLoad(ShellState& state) {
     state.actions = std::move(pending->actions);
     state.blockers = std::move(pending->blockers);
     state.manual_cards = std::move(pending->manual_cards);
+    state.environment_items = std::move(pending->environment_items);
     state.recent_actions = std::move(pending->recent_actions);
     state.recent_runs = std::move(pending->recent_runs);
     state.snapshot = std::move(pending->snapshot);
@@ -3053,6 +3225,7 @@ void PollRunRefresh(ShellState& state) {
 
 void ClampSelections(ShellState& state) {
     const size_t top_paths = state.snapshot.has_value() ? state.snapshot->top_paths.size() : 0U;
+    const size_t environment_items = state.environment_items.size();
     size_t artifacts = 0U;
     if (state.snapshot.has_value()) {
         artifacts += state.snapshot->artifacts.size();
@@ -3067,6 +3240,9 @@ void ClampSelections(ShellState& state) {
     state.selected_artifact_index = artifacts == 0
         ? 0
         : std::clamp(state.selected_artifact_index, 0, static_cast<int>(artifacts) - 1);
+    state.selected_environment_index = environment_items == 0
+        ? 0
+        : std::clamp(state.selected_environment_index, 0, static_cast<int>(environment_items) - 1);
 }
 
 std::vector<ArtifactChoice> CombinedArtifacts(const ShellState& state) {
@@ -3421,6 +3597,9 @@ void LoadShellFonts(ImGuiIO& io, const std::filesystem::path& workspace_root) {
     g_title_font = new_rodin_font.has_value() ? TryLoadFont(io, *new_rodin_font, 31.0f) : nullptr;
     g_body_font = seurat_font.has_value() ? TryLoadFont(io, *seurat_font, 18.0f) : nullptr;
     g_small_font = dfs_font.has_value() ? TryLoadFont(io, *dfs_font, 15.0f) : nullptr;
+    g_readable_body_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeui.ttf)", 18.0f);
+    g_readable_small_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeui.ttf)", 15.0f);
+    g_mono_font = TryLoadFont(io, R"(C:\Windows\Fonts\consola.ttf)", 15.0f);
 
     if (g_title_font == nullptr) {
         g_title_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeuib.ttf)", 31.0f);
@@ -3438,6 +3617,15 @@ void LoadShellFonts(ImGuiIO& io, const std::filesystem::path& workspace_root) {
     if (g_title_font == nullptr) {
         g_title_font = TryLoadFont(io, R"(C:\Windows\Fonts\bahnschrift.ttf)", 31.0f);
     }
+    if (g_readable_body_font == nullptr) {
+        g_readable_body_font = g_body_font;
+    }
+    if (g_readable_small_font == nullptr) {
+        g_readable_small_font = g_small_font;
+    }
+    if (g_mono_font == nullptr) {
+        g_mono_font = g_readable_small_font;
+    }
 
     if (g_body_font == nullptr) {
         g_body_font = io.Fonts->AddFontDefault();
@@ -3448,7 +3636,16 @@ void LoadShellFonts(ImGuiIO& io, const std::filesystem::path& workspace_root) {
     if (g_title_font == nullptr) {
         g_title_font = g_body_font;
     }
-    io.FontDefault = g_body_font;
+    if (g_readable_body_font == nullptr) {
+        g_readable_body_font = g_body_font;
+    }
+    if (g_readable_small_font == nullptr) {
+        g_readable_small_font = g_small_font;
+    }
+    if (g_mono_font == nullptr) {
+        g_mono_font = g_readable_small_font;
+    }
+    io.FontDefault = IsWorkDisplayMode() ? CurrentBodyFont() : g_body_font;
 }
 
 void ApplyStyle() {
@@ -3722,11 +3919,17 @@ bool DrawInstallerNavButton(const char* id, const std::string& label, ImVec2 siz
 void DrawInstallerLeftImage(const ShellState& state) {
     ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
     const float alpha = static_cast<float>(ComputeMotionFrames(25.0, 15.0));
-    const ImVec2 min = ShellPoint(kInstallerImageX, kInstallerImageY);
-    const ImVec2 max = ImVec2(min.x + ShellUi(kInstallerImageWidth), min.y + ShellUi(kInstallerImageHeight));
+    const bool compact_work_surface = IsWorkDisplayMode() && IsDenseWorkScreen(state.current_screen);
+    const float art_scale = compact_work_surface ? 0.68f : 1.0f;
+    const ImVec2 base_min = ShellPoint(kInstallerImageX, kInstallerImageY);
+    const ImVec2 base_max = ImVec2(base_min.x + ShellUi(kInstallerImageWidth), base_min.y + ShellUi(kInstallerImageHeight));
+    const ImVec2 base_center((base_min.x + base_max.x) * 0.5f, (base_min.y + base_max.y) * 0.5f);
+    const ImVec2 half_size((base_max.x - base_min.x) * 0.5f * art_scale, (base_max.y - base_min.y) * 0.5f * art_scale);
+    const ImVec2 min(base_center.x - half_size.x, base_center.y - half_size.y);
+    const ImVec2 max(base_center.x + half_size.x, base_center.y + half_size.y);
 
     if (!kRenderPlaceholderInstallerCharacters) {
-        draw_list->AddRectFilled(min, max, IM_COL32(0, 20, 0, static_cast<int>(46.0f * alpha)));
+        draw_list->AddRectFilled(min, max, IM_COL32(0, 20, 0, static_cast<int>((compact_work_surface ? 28.0f : 46.0f) * alpha)));
 
         if (HasTexture(g_shell_assets.general_window)) {
             DrawTexturedRect(
@@ -3734,7 +3937,7 @@ void DrawInstallerLeftImage(const ShellState& state) {
                 g_shell_assets.general_window,
                 min,
                 max,
-                IM_COL32(86, 182, 172, static_cast<int>(10.0f * alpha))
+                IM_COL32(86, 182, 172, static_cast<int>((compact_work_surface ? 5.0f : 10.0f) * alpha))
             );
         }
         if (HasTexture(g_shell_assets.options_static)) {
@@ -3749,7 +3952,7 @@ void DrawInstallerLeftImage(const ShellState& state) {
                 g_shell_assets.options_static,
                 min,
                 max,
-                IM_COL32(112, 214, 188, static_cast<int>(7.0f * alpha)),
+                IM_COL32(112, 214, 188, static_cast<int>((compact_work_surface ? 2.0f : 7.0f) * alpha)),
                 uv_min,
                 uv_max
             );
@@ -3860,8 +4063,9 @@ void DrawBackdropChrome(const ShellState& state) {
 
     DrawInstallerLeftImage(state);
 
-    const double scanline_alpha = ComputeMotionFrames(0.0, 15.0);
-    const float bar_height = ShellUi(105.0f) * static_cast<float>(scanline_alpha);
+    const bool work_mode = IsWorkDisplayMode();
+    const double scanline_alpha = ComputeMotionFrames(0.0, 15.0) * (work_mode ? 0.34 : 1.0);
+    const float bar_height = ShellUi(work_mode ? 68.0f : 105.0f) * static_cast<float>(scanline_alpha);
     if (bar_height > 1.0f) {
         const auto draw_scanline_band = [&](float min_y, float max_y, bool top_band) {
             draw_list->AddRectFilledMultiColor(
@@ -4200,6 +4404,7 @@ InstallerCanvasLayout GetInstallerCanvasLayout(
 }
 
 InstallerCanvasLayout GetScreenCanvasLayout(ShellScreen screen) {
+    const bool work_mode = IsWorkDisplayMode();
     switch (screen) {
     case ShellScreen::Introduction:
         return GetInstallerCanvasLayout(404.0f, 24.0f, 18.0f, 18.0f, 18.0f, 48.0f);
@@ -4208,13 +4413,25 @@ InstallerCanvasLayout GetScreenCanvasLayout(ShellScreen screen) {
     case ShellScreen::Review:
         return GetInstallerCanvasLayout(394.0f, 24.0f, 18.0f, 18.0f, 16.0f, 48.0f);
     case ShellScreen::Run:
-        return GetInstallerCanvasLayout(376.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+        return work_mode
+            ? GetInstallerCanvasLayout(440.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
+            : GetInstallerCanvasLayout(376.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Evidence:
-        return GetInstallerCanvasLayout(386.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+        return work_mode
+            ? GetInstallerCanvasLayout(432.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
+            : GetInstallerCanvasLayout(386.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Files:
-        return GetInstallerCanvasLayout(376.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+        return work_mode
+            ? GetInstallerCanvasLayout(424.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
+            : GetInstallerCanvasLayout(376.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+    case ShellScreen::Environment:
+        return work_mode
+            ? GetInstallerCanvasLayout(420.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
+            : GetInstallerCanvasLayout(382.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Stages:
-        return GetInstallerCanvasLayout(390.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+        return work_mode
+            ? GetInstallerCanvasLayout(414.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
+            : GetInstallerCanvasLayout(390.0f, 20.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Language:
     default:
         return GetInstallerCanvasLayout();
@@ -4226,8 +4443,19 @@ void DrawInstallerCanvasSurface(const ImVec2& min, const ImVec2& max, bool text_
     const float outer_alpha = static_cast<float>(ComputeMotionFrames(kContainerOuterTime, kContainerOuterDuration));
     const float inner_alpha = static_cast<float>(ComputeMotionFrames(kContainerInnerTime, kContainerInnerDuration));
     const float background_alpha = static_cast<float>(ComputeMotionFrames(kContainerBackgroundTime, kContainerBackgroundDuration));
-    const ImU32 background = IM_COL32(0, 33, 0, static_cast<int>((text_area ? 223.0f : 255.0f) * background_alpha));
-    const ImU32 overlay = IM_COL32(0, 32, 0, static_cast<int>((text_area ? 128.0f : 82.0f) * inner_alpha));
+    const bool work_mode = IsWorkDisplayMode();
+    const ImU32 background = IM_COL32(
+        0,
+        work_mode ? 26 : 33,
+        0,
+        static_cast<int>(((text_area ? (work_mode ? 242.0f : 223.0f) : (work_mode ? 255.0f : 255.0f))) * background_alpha)
+    );
+    const ImU32 overlay = IM_COL32(
+        0,
+        work_mode ? 24 : 32,
+        0,
+        static_cast<int>(((text_area ? (work_mode ? 76.0f : 128.0f) : (work_mode ? 48.0f : 82.0f))) * inner_alpha)
+    );
 
     draw_list->AddRectFilled(min, max, background);
     draw_list->AddRectFilled(min, max, overlay);
@@ -4238,7 +4466,7 @@ void DrawInstallerCanvasSurface(const ImVec2& min, const ImVec2& max, bool text_
             g_shell_assets.general_window,
             min,
             max,
-            IM_COL32(86, 182, 172, static_cast<int>(14.0f * outer_alpha))
+            IM_COL32(86, 182, 172, static_cast<int>(((work_mode ? 6.0f : 14.0f)) * outer_alpha))
         );
     }
 
@@ -4254,15 +4482,15 @@ void DrawInstallerCanvasSurface(const ImVec2& min, const ImVec2& max, bool text_
             g_shell_assets.options_static,
             min,
             max,
-            IM_COL32(112, 214, 188, static_cast<int>((text_area ? 12.0f : 8.0f) * background_alpha)),
+            IM_COL32(112, 214, 188, static_cast<int>(((text_area ? (work_mode ? 3.0f : 12.0f) : (work_mode ? 2.0f : 8.0f))) * background_alpha)),
             uv_min,
             uv_max
         );
     }
 
     const float grid_step = ShellUi(12.0f);
-    const ImU32 grid_major = IM_COL32(96, 180, 94, static_cast<int>((text_area ? 34.0f : 28.0f) * inner_alpha));
-    const ImU32 grid_minor = IM_COL32(76, 138, 74, static_cast<int>((text_area ? 18.0f : 14.0f) * inner_alpha));
+    const ImU32 grid_major = IM_COL32(96, 180, 94, static_cast<int>(((text_area ? (work_mode ? 18.0f : 34.0f) : (work_mode ? 14.0f : 28.0f))) * inner_alpha));
+    const ImU32 grid_minor = IM_COL32(76, 138, 74, static_cast<int>(((text_area ? (work_mode ? 8.0f : 18.0f) : (work_mode ? 6.0f : 14.0f))) * inner_alpha));
     for (float x = min.x; x <= max.x; x += grid_step) {
         const int index = static_cast<int>((x - min.x) / grid_step);
         draw_list->AddLine(ImVec2(x, min.y), ImVec2(x, max.y), (index % 4) == 0 ? grid_major : grid_minor, 1.0f);
@@ -4416,6 +4644,7 @@ bool DrawSelectableCard(
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
+    const bool work_mode = IsWorkDisplayMode();
 
     const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 3.2f);
     const int base_r = selected || hovered ? 48 : 0;
@@ -4426,7 +4655,11 @@ bool DrawSelectableCard(
         min,
         max,
         ApplyAlpha(
-            selected ? IM_COL32(140, 236, 204, static_cast<int>(210.0f + 22.0f * pulse)) : IM_COL32(120, 174, 150, hovered ? 178 : 132),
+            selected
+                ? (work_mode
+                    ? IM_COL32(162, 214, 188, static_cast<int>(188.0f + 14.0f * pulse))
+                    : IM_COL32(140, 236, 204, static_cast<int>(210.0f + 22.0f * pulse)))
+                : IM_COL32(120, 174, 150, hovered ? 178 : 132),
             lifecycle_alpha
         ),
         ShellUi(4.0f),
@@ -4440,7 +4673,7 @@ bool DrawSelectableCard(
             g_shell_assets.select,
             min,
             max,
-            ApplyAlpha(IM_COL32(102, 222, 168, static_cast<int>(52.0f + 16.0f * pulse)), lifecycle_alpha),
+            ApplyAlpha(IM_COL32(102, 222, 168, static_cast<int>(((work_mode ? 26.0f : 52.0f) + 12.0f * pulse))), lifecycle_alpha),
             ShellUi(4.0f)
         );
         DrawTexturedRectRounded(
@@ -4477,18 +4710,19 @@ bool DrawSelectableCard(
     );
 
     const float text_x = min.x + ShellUi(32.0f);
-    if (g_body_font != nullptr) {
-        draw->AddText(g_body_font, g_body_font->LegacySize, ImVec2(text_x, min.y + ShellUi(9.0f)), ApplyAlpha(IM_COL32(240, 247, 243, 255), text_alpha), display_title.c_str());
+    if (ImFont* body_font = CurrentBodyFont(); body_font != nullptr) {
+        const float body_font_size = body_font == g_body_font ? g_body_font->LegacySize : body_font->LegacySize;
+        draw->AddText(body_font, body_font_size, ImVec2(text_x, min.y + ShellUi(9.0f)), ApplyAlpha(IM_COL32(240, 247, 243, 255), text_alpha), display_title.c_str());
     }
-    if (!subtitle.empty() && g_small_font != nullptr) {
-        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(text_x, min.y + ShellUi(30.0f)), ApplyAlpha(IM_COL32(255, 188, 0, 220), text_alpha), display_subtitle.c_str());
+    if (!subtitle.empty() && CurrentSmallFont() != nullptr) {
+        draw->AddText(CurrentSmallFont(), CurrentSmallFont()->LegacySize, ImVec2(text_x, min.y + ShellUi(30.0f)), ApplyAlpha(IM_COL32(255, 188, 0, work_mode ? 245 : 220), text_alpha), display_subtitle.c_str());
     }
-    if (!detail.empty() && g_small_font != nullptr) {
+    if (!detail.empty() && CurrentSmallFont() != nullptr) {
         draw->AddText(
-            g_small_font,
-            g_small_font->LegacySize,
+            CurrentSmallFont(),
+            CurrentSmallFont()->LegacySize,
             ImVec2(text_x, min.y + ShellUi(47.0f)),
-            ApplyAlpha(IM_COL32(169, 190, 180, 220), text_alpha),
+            ApplyAlpha(work_mode ? IM_COL32(208, 224, 214, 232) : IM_COL32(169, 190, 180, 220), text_alpha),
             Ellipsize(detail, detail_budget).c_str()
         );
     }
@@ -4608,14 +4842,59 @@ void DrawProgressMeter(float progress, const std::string& label) {
 }
 
 void InlineSectionLabel(const char* text) {
-    if (g_small_font != nullptr) {
-        ImGui::PushFont(g_small_font);
+    ImFont* font = CurrentSmallFont();
+    if (font != nullptr) {
+        ImGui::PushFont(font);
     }
     ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", text);
-    if (g_small_font != nullptr) {
+    if (font != nullptr) {
         ImGui::PopFont();
     }
     ImGui::Separator();
+}
+
+ImVec4 EnvironmentStateColor(std::string_view state) {
+    std::string lowered(state);
+    std::transform(
+        lowered.begin(),
+        lowered.end(),
+        lowered.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); }
+    );
+    if (lowered == "ready" || lowered == "covered") {
+        return ImVec4(0.52f, 0.92f, 0.63f, 1.0f);
+    }
+    if (lowered == "partial" || lowered == "manual") {
+        return ImVec4(0.95f, 0.78f, 0.25f, 1.0f);
+    }
+    if (lowered == "missing" || lowered == "blocked") {
+        return ImVec4(0.95f, 0.46f, 0.34f, 1.0f);
+    }
+    return ImVec4(0.78f, 0.84f, 0.88f, 1.0f);
+}
+
+void DrawReadonlyTextBox(const char* id, const std::string& text, bool monospace = false, float height = 0.0f) {
+    std::vector<char> buffer(text.begin(), text.end());
+    buffer.push_back('\0');
+    if (monospace) {
+        if (ImFont* font = CurrentMonoFont(); font != nullptr) {
+            ImGui::PushFont(font);
+        }
+    }
+    ImGui::PushStyleColor(
+        ImGuiCol_FrameBg,
+        IsWorkDisplayMode() ? ImVec4(0.05f, 0.08f, 0.10f, 0.92f) : ImVec4(0.04f, 0.07f, 0.08f, 0.88f)
+    );
+    const ImVec2 size = height > 0.0f
+        ? ImVec2(0.0f, height)
+        : ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * (monospace ? 5.0f : 1.8f));
+    ImGui::InputTextMultiline(id, buffer.data(), buffer.size(), size, ImGuiInputTextFlags_ReadOnly);
+    ImGui::PopStyleColor();
+    if (monospace) {
+        if (CurrentMonoFont() != nullptr) {
+            ImGui::PopFont();
+        }
+    }
 }
 
 float ScreenTransitionMotion(const ShellState& state) {
@@ -4702,6 +4981,7 @@ bool DrawSettingToggle(
     const bool interaction_enabled = !IsBackgroundInteractionBlocked();
     const float lifecycle_alpha = ShellChromeLifecycleMotion();
     const float text_alpha = lifecycle_alpha * g_shell_text_visibility;
+    const bool work_mode = IsWorkDisplayMode();
     if (!interaction_enabled) {
         ImGui::BeginDisabled();
     }
@@ -4722,7 +5002,7 @@ bool DrawSettingToggle(
         g_shell_assets.general_window,
         min,
         max,
-        ApplyAlpha(value ? IM_COL32(102, 226, 168, 92) : IM_COL32(72, 160, 120, 42), lifecycle_alpha),
+        ApplyAlpha(value ? IM_COL32(102, 226, 168, work_mode ? 42 : 92) : IM_COL32(72, 160, 120, work_mode ? 20 : 42), lifecycle_alpha),
         ShellUi(4.0f)
     );
     draw->AddRect(min, max, border, ShellUi(4.0f), 0, 1.1f);
@@ -4753,12 +5033,12 @@ bool DrawSettingToggle(
     const float knob_x = value ? toggle_max.x - ShellUi(20.0f) : toggle_min.x + ShellUi(20.0f);
     draw->AddCircleFilled(ImVec2(knob_x, (toggle_min.y + toggle_max.y) * 0.5f), knob_radius, ApplyAlpha(IM_COL32(235, 243, 239, 255), lifecycle_alpha), 24);
 
-    if (g_body_font != nullptr) {
-        draw->AddText(g_body_font, g_body_font->LegacySize, ImVec2(min.x + ShellUi(18.0f), min.y + ShellUi(14.0f)), ApplyAlpha(IM_COL32(237, 245, 241, 255), text_alpha), label.c_str());
+    if (ImFont* body_font = CurrentBodyFont(); body_font != nullptr) {
+        draw->AddText(body_font, body_font->LegacySize, ImVec2(min.x + ShellUi(18.0f), min.y + ShellUi(14.0f)), ApplyAlpha(IM_COL32(237, 245, 241, 255), text_alpha), label.c_str());
     }
-    if (g_small_font != nullptr) {
-        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(min.x + ShellUi(18.0f), min.y + ShellUi(40.0f)), ApplyAlpha(IM_COL32(167, 189, 180, 220), text_alpha), summary.c_str());
-        draw->AddText(g_small_font, g_small_font->LegacySize, ImVec2(toggle_min.x, min.y + ShellUi(58.0f)), ApplyAlpha(value ? IM_COL32(255, 188, 0, 240) : IM_COL32(136, 152, 148, 220), text_alpha), value ? "ON" : "OFF");
+    if (ImFont* small_font = CurrentSmallFont(); small_font != nullptr) {
+        draw->AddText(small_font, small_font->LegacySize, ImVec2(min.x + ShellUi(18.0f), min.y + ShellUi(40.0f)), ApplyAlpha(work_mode ? IM_COL32(198, 216, 208, 236) : IM_COL32(167, 189, 180, 220), text_alpha), summary.c_str());
+        draw->AddText(small_font, small_font->LegacySize, ImVec2(toggle_min.x, min.y + ShellUi(58.0f)), ApplyAlpha(value ? IM_COL32(255, 188, 0, 240) : IM_COL32(136, 152, 148, 220), text_alpha), value ? "ON" : "OFF");
     }
 
     if (pressed && interaction_enabled) {
@@ -5168,11 +5448,17 @@ void RenderRunSignalLogContent(ShellState& state) {
 
     const ActionSnapshot& snapshot = *state.snapshot;
     if (!snapshot.log_path.empty()) {
-        ImGui::TextDisabled("%s", snapshot.log_path.c_str());
+        InlineSectionLabel("LOG PATH");
+        DrawReadonlyTextBox("run-log-path", snapshot.log_path, true, ShellUi(44.0f));
         ImGui::Spacing();
     }
 
-    ImGui::BeginChild("log-tail", ImVec2(0.0f, std::max(ShellUi(96.0f), ImGui::GetContentRegionAvail().y)), true);
+    ImGui::BeginChild(
+        "log-tail",
+        ImVec2(0.0f, std::max(ShellUi(96.0f), ImGui::GetContentRegionAvail().y)),
+        true,
+        ImGuiWindowFlags_HorizontalScrollbar
+    );
     if (snapshot.log_tail.empty()) {
         ImGui::TextDisabled("%s", Tr(state, UiText::NoActionLog));
     } else {
@@ -5182,9 +5468,13 @@ void RenderRunSignalLogContent(ShellState& state) {
             ImGui::TextDisabled("%s", "Showing the latest live log tail while the check is still running.");
             ImGui::Spacing();
         }
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ShellUi(8.0f));
+        if (ImFont* mono_font = CurrentMonoFont(); mono_font != nullptr) {
+            ImGui::PushFont(mono_font);
+        }
         ImGui::TextUnformatted(visible_tail.c_str());
-        ImGui::PopTextWrapPos();
+        if (CurrentMonoFont() != nullptr) {
+            ImGui::PopFont();
+        }
     }
     ImGui::EndChild();
 }
@@ -5219,7 +5509,7 @@ void RenderSelectedEvidenceContent(ShellState& state) {
 
     const int selected_index = std::clamp(state.selected_evidence_index, 0, static_cast<int>(state.snapshot->top_paths.size()) - 1);
     const EvidenceItem& item = state.snapshot->top_paths[static_cast<size_t>(selected_index)];
-    ImGui::TextWrapped("%s", item.path.c_str());
+    DrawReadonlyTextBox("selected-evidence-path", item.path, true, ShellUi(46.0f));
     ImGui::Spacing();
     if (!item.checker.empty()) {
         ImGui::Text("%s", sg_preflight::native_shell::FormatCheckerLabel(state.language, item.checker).c_str());
@@ -5242,6 +5532,12 @@ void RenderSelectedEvidenceContent(ShellState& state) {
     const std::wstring evidence_path = SelectedEvidencePath(state);
     if (!evidence_path.empty()) {
         ImGui::Spacing();
+        if (DrawPanelButton("copy-evidence-path", "COPY PATH", ImVec2(ShellUi(152.0f), ShellUi(30.0f)), false, true)) {
+            if (CopyText(evidence_path)) {
+                state.status_line = sg_preflight::native_shell::FormatCopiedItemStatus(state.language, "path");
+            }
+        }
+        ImGui::SameLine();
         if (DrawPanelButton("open-evidence-file", Tr(state, UiText::OpenFile), ImVec2(ShellUi(180.0f), ShellUi(30.0f)), true, true)) {
             OpenPath(evidence_path);
         }
@@ -5321,9 +5617,15 @@ void RenderSelectedArtifactContent(ShellState& state) {
     ImGui::SameLine();
     ImGui::TextDisabled("%s", artifact.section.c_str());
     ImGui::Spacing();
-    ImGui::TextWrapped("%s", artifact.path.c_str());
+    DrawReadonlyTextBox("selected-artifact-path", artifact.path, true, ShellUi(46.0f));
 
     ImGui::Spacing();
+    if (DrawPanelButton("copy-selected-artifact-path", "COPY PATH", ImVec2(ShellUi(152.0f), ShellUi(30.0f)), false, !selected_artifact_path.empty())) {
+        if (CopyText(selected_artifact_path)) {
+            state.status_line = sg_preflight::native_shell::FormatCopiedItemStatus(state.language, "path");
+        }
+    }
+    ImGui::SameLine();
     if (DrawPanelButton("open-selected-artifact", Tr(state, UiText::OpenSelected), ImVec2(ShellUi(180.0f), ShellUi(30.0f)), true, !selected_artifact_path.empty())) {
         OpenPath(selected_artifact_path);
     }
@@ -5339,6 +5641,64 @@ void RenderSelectedArtifactContent(ShellState& state) {
                 break;
             }
         }
+    }
+}
+
+void RenderEnvironmentDoctorListOnly(ShellState& state) {
+    if (state.environment_items.empty()) {
+        ImGui::TextDisabled("%s", "No environment doctor items are available.");
+        return;
+    }
+
+    std::string current_category;
+    for (size_t index = 0; index < state.environment_items.size(); ++index) {
+        const EnvironmentDoctorItem& item = state.environment_items[index];
+        if (item.category != current_category) {
+            current_category = item.category;
+            if (index > 0) {
+                ImGui::Spacing();
+            }
+            ImGui::TextColored(ImVec4(0.40f, 0.88f, 0.64f, 1.0f), "%s", current_category.c_str());
+        }
+
+        std::string subtitle = item.category + " | " + item.state;
+        const bool selected = static_cast<int>(index) == state.selected_environment_index;
+        const std::string row_id = "environment-item-" + std::to_string(index);
+        if (DrawSelectableCard(row_id.c_str(), item.label, subtitle, item.summary, selected, ShellUi(76.0f))) {
+            state.selected_environment_index = static_cast<int>(index);
+        }
+    }
+}
+
+void RenderSelectedEnvironmentDoctorContent(ShellState& state) {
+    if (state.environment_items.empty()) {
+        ImGui::TextDisabled("%s", "No environment doctor items are available.");
+        return;
+    }
+
+    const int selected_index = std::clamp(state.selected_environment_index, 0, static_cast<int>(state.environment_items.size()) - 1);
+    const EnvironmentDoctorItem& item = state.environment_items[static_cast<size_t>(selected_index)];
+
+    ImGui::Text("%s", item.label.c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(EnvironmentStateColor(item.state), "[%s]", item.state.c_str());
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+    ImGui::TextUnformatted(item.summary.c_str());
+    ImGui::PopTextWrapPos();
+
+    if (!item.path.empty()) {
+        ImGui::Spacing();
+        InlineSectionLabel("PATH");
+        DrawReadonlyTextBox("environment-item-path", item.path, true, ShellUi(46.0f));
+    }
+
+    if (!item.next_action.empty()) {
+        ImGui::Spacing();
+        InlineSectionLabel("NEXT ACTION");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+        ImGui::TextUnformatted(item.next_action.c_str());
+        ImGui::PopTextWrapPos();
     }
 }
 
@@ -5398,7 +5758,26 @@ void RenderManualReviewOnly(ShellState& state) {
 void RenderDisplayModeContent(ShellState& state) {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const std::string display_line = sg_preflight::native_shell::FormatDisplayModeLine(state.language, display.x, display.y, g_using_warp);
+    const bool work_mode = IsWorkDisplayMode();
+    if (DrawLanguageOptionButton("display-mode-work", "WORK", work_mode, ImVec2(ImGui::GetContentRegionAvail().x * 0.48f, ShellUi(34.0f)))) {
+        SetDisplayMode(ShellDisplayMode::Work);
+        state.status_line = sg_preflight::native_shell::FormatDisplayModeStatus(state.language, true);
+    }
+    ImGui::SameLine();
+    if (DrawLanguageOptionButton("display-mode-cinematic", "CINEMATIC", !work_mode, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(34.0f)))) {
+        SetDisplayMode(ShellDisplayMode::Cinematic);
+        state.status_line = sg_preflight::native_shell::FormatDisplayModeStatus(state.language, false);
+    }
+    ImGui::Spacing();
     ImGui::TextWrapped("%s", display_line.c_str());
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+    ImGui::TextUnformatted(
+        work_mode
+            ? "Work mode keeps the shell sharp: smaller left art on work screens, lower scanlines, stronger contrast, readable body text, and no background music."
+            : "Cinematic mode keeps the full SERGFX chrome: larger artwork, heavier motion/static treatment, and optional background music."
+    );
+    ImGui::PopTextWrapPos();
     ImGui::Spacing();
     ImGui::TextWrapped("%s", Tr(state, UiText::CurrentOutputHelp));
     ImGui::Spacing();
@@ -5413,9 +5792,20 @@ void RenderAudioSettingsContent(ShellState& state) {
     DrawSettingToggle("toggle-sfx", Tr(state, UiText::UiSoundEffects), Tr(state, UiText::UiSoundEffectsSummary), true);
     ImGui::EndDisabled();
     ImGui::Spacing();
-    if (DrawSettingToggle("toggle-bgm", Tr(state, UiText::InstallerBackgroundMusic), Tr(state, UiText::InstallerBackgroundMusicSummary), g_shell_audio.music_enabled)) {
-        SetMusicEnabled(!g_shell_audio.music_enabled);
-        state.status_line = sg_preflight::native_shell::FormatMusicStatus(state.language, g_shell_audio.music_enabled);
+    if (IsWorkDisplayMode()) {
+        ImGui::BeginDisabled();
+        DrawSettingToggle(
+            "toggle-bgm-work-disabled",
+            Tr(state, UiText::InstallerBackgroundMusic),
+            "Work mode keeps background music off so the shell stays readable during real operator use.",
+            false
+        );
+        ImGui::EndDisabled();
+    } else {
+        if (DrawSettingToggle("toggle-bgm", Tr(state, UiText::InstallerBackgroundMusic), Tr(state, UiText::InstallerBackgroundMusicSummary), g_shell_audio.music_enabled)) {
+            SetMusicEnabled(!g_shell_audio.music_enabled);
+            state.status_line = sg_preflight::native_shell::FormatMusicStatus(state.language, g_shell_audio.music_enabled);
+        }
     }
     if (!g_shell_audio.last_error.empty()) {
         ImGui::Spacing();
@@ -5428,13 +5818,14 @@ void RenderWizardFlow(ShellState& state) {
         ShellScreen screen;
         const char* label;
     };
-    const std::array<StepItem, 7> steps = {{
+    const std::array<StepItem, 8> steps = {{
         {ShellScreen::Introduction, "INTRO"},
         {ShellScreen::Select, "SELECT"},
         {ShellScreen::Review, "REVIEW"},
         {ShellScreen::Run, "RUN"},
         {ShellScreen::Evidence, "EVIDENCE"},
         {ShellScreen::Files, "FILES"},
+        {ShellScreen::Environment, "ENV"},
         {ShellScreen::Stages, "STAGES"},
     }};
 
@@ -5806,7 +6197,15 @@ void RenderRunScreen(ShellState& state) {
             EndScreenTextTransition();
             ImGui::BeginChild(
                 "run-log-inline",
-                ImVec2(0.0f, std::max(live_console_mode ? ShellUi(220.0f) : ShellUi(134.0f), ImGui::GetContentRegionAvail().y)),
+                ImVec2(
+                    0.0f,
+                    std::max(
+                        live_console_mode
+                            ? ShellUi(IsWorkDisplayMode() ? 262.0f : 220.0f)
+                            : ShellUi(IsWorkDisplayMode() ? 156.0f : 134.0f),
+                        ImGui::GetContentRegionAvail().y
+                    )
+                ),
                 false,
                 ImGuiWindowFlags_AlwaysVerticalScrollbar
             );
@@ -5987,6 +6386,64 @@ void RenderFilesScreen(ShellState& state) {
     EndScreenTransition();
 }
 
+void RenderEnvironmentScreen(ShellState& state) {
+    BeginScreenTransition(state);
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Environment);
+    DrawInstallerCanvasBackground(layout);
+
+    if (BeginCanvasOverlayRegion("environment-description", layout.description_content_min, layout.description_content_max)) {
+        BeginScreenTextTransition(state);
+        const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        if (g_title_font != nullptr) {
+            ImGui::PushFont(g_title_font);
+        }
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextWrapped("%s", "Environment Doctor");
+        ImGui::PopTextWrapPos();
+        if (g_title_font != nullptr) {
+            ImGui::PopFont();
+        }
+
+        ImGui::Spacing();
+        if (CurrentSmallFont() != nullptr) {
+            ImGui::PushFont(CurrentSmallFont());
+        }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "SELECTED READINESS CHECK");
+        if (CurrentSmallFont() != nullptr) {
+            ImGui::PopFont();
+        }
+        EndScreenTextTransition();
+
+        RenderSelectedEnvironmentDoctorContent(state);
+
+        ImGui::Spacing();
+        InlineSectionLabel("DOCTOR ROLE");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+        ImGui::TextUnformatted(
+            "This page is here to keep the shell honest. It shows what this machine can really do now: shared Python backend, mirrored SG checker surface, local RaCo/Blender adapters, BMW blockers, and output writeability."
+        );
+        ImGui::PopTextWrapPos();
+    }
+    EndCanvasOverlayRegion();
+
+    if (BeginCanvasOverlayRegion("environment-side", layout.side_content_min, layout.side_content_max)) {
+        BeginScreenTextTransition(state);
+        if (CurrentSmallFont() != nullptr) {
+            ImGui::PushFont(CurrentSmallFont());
+        }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "LOCAL TOOL READINESS");
+        if (CurrentSmallFont() != nullptr) {
+            ImGui::PopFont();
+        }
+        EndScreenTextTransition();
+        ImGui::BeginChild("environment-list-inline", ImVec2(0.0f, std::max(ShellUi(110.0f), ImGui::GetContentRegionAvail().y)), false);
+        RenderEnvironmentDoctorListOnly(state);
+        ImGui::EndChild();
+    }
+    EndCanvasOverlayRegion();
+    EndScreenTransition();
+}
+
 void RenderStagesScreen(ShellState& state) {
     BeginScreenTransition(state);
     const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::Stages);
@@ -6086,6 +6543,9 @@ void RenderCurrentScreen(ShellState& state) {
         break;
     case ShellScreen::Files:
         RenderFilesScreen(state);
+        break;
+    case ShellScreen::Environment:
+        RenderEnvironmentScreen(state);
         break;
     case ShellScreen::Stages:
         RenderStagesScreen(state);
@@ -6445,11 +6905,20 @@ void RenderButtonGuide(ShellState& state) {
         break;
     case ShellScreen::Files:
         guide_items = {
-            {"guide-next", "Enter", Tr(state, UiText::Stages), true, false, true},
+            {"guide-next", "Enter", Tr(state, UiText::Environment), true, false, true},
             {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
             {"guide-open", "O", Tr(state, UiText::OpenFile), !artifact_path.empty(), false, false},
             {"guide-reveal", "R", Tr(state, UiText::Reveal), !artifact_path.empty(), false, false},
             {"guide-report", "P", Tr(state, UiText::Report), has_report, false, false},
+            {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true, false},
+            {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true, false},
+            {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true, false},
+        };
+        break;
+    case ShellScreen::Environment:
+        guide_items = {
+            {"guide-next", "Enter", Tr(state, UiText::Stages), true, false, true},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
             {"guide-jira", "J", Tr(state, UiText::CopyJira), true, true, false},
             {"guide-hero", "Q", Tr(state, UiText::CopyQaHero), true, true, false},
             {"guide-handoff", "H", Tr(state, UiText::CopyHandoff), true, true, false},
@@ -6605,17 +7074,18 @@ void RenderButtonGuide(ShellState& state) {
         return texture != nullptr && HasTexture(*texture);
     };
 
-    const ImVec2 primary_region_min = ShellPoint(76.0f, 618.0f);
+    const bool compact_guide = IsWorkDisplayMode() && IsDenseWorkScreen(state.current_screen);
+    const ImVec2 primary_region_min = ShellPoint(76.0f, compact_guide ? 628.0f : 618.0f);
     const ImVec2 primary_region_max = ShellPoint(1204.0f, 720.0f);
-    const ImVec2 secondary_left_region_min = ShellPoint(42.0f, 680.0f);
+    const ImVec2 secondary_left_region_min = ShellPoint(42.0f, compact_guide ? 688.0f : 680.0f);
     const ImVec2 secondary_left_region_max = ShellPoint(420.0f, 720.0f);
-    const ImVec2 secondary_right_region_min = ShellPoint(862.0f, 680.0f);
+    const ImVec2 secondary_right_region_min = ShellPoint(862.0f, compact_guide ? 688.0f : 680.0f);
     const ImVec2 secondary_right_region_max = ShellPoint(1220.0f, 720.0f);
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     ImFont* primary_font = g_title_font != nullptr ? g_title_font : ImGui::GetFont();
-    const float primary_font_size = primary_font == g_title_font ? ShellUi(21.8f) : ImGui::GetFontSize();
-    ImFont* secondary_font = g_small_font != nullptr ? g_small_font : ImGui::GetFont();
-    const float secondary_font_size = secondary_font == g_small_font ? g_small_font->LegacySize : ImGui::GetFontSize();
+    const float primary_font_size = primary_font == g_title_font ? ShellUi(compact_guide ? 18.8f : 21.8f) : ImGui::GetFontSize();
+    ImFont* secondary_font = CurrentSmallFont();
+    const float secondary_font_size = secondary_font != nullptr ? (compact_guide ? secondary_font->LegacySize * 0.92f : secondary_font->LegacySize) : ImGui::GetFontSize();
 
     const auto primary_item_width = [&](const GuideItem& item) {
         DdsTextureHandle* texture = nullptr;
@@ -7043,9 +7513,10 @@ void DrawPromptPlate(ImDrawList* draw, const ImVec2& min, const ImVec2& max, flo
         point.y += ShellUi(4.0f);
     }
 
-    draw->AddConvexPolyFilled(shadow_points.data(), static_cast<int>(shadow_points.size()), IM_COL32(0, 0, 0, static_cast<int>(92.0f * alpha)));
-    draw->AddConvexPolyFilled(points.data(), static_cast<int>(points.size()), IM_COL32(224, 228, 226, static_cast<int>(232.0f * alpha)));
-    draw->AddConvexPolyFilled(points.data(), static_cast<int>(points.size()), selected ? IM_COL32(255, 214, 92, static_cast<int>(118.0f * alpha)) : IM_COL32(130, 134, 136, static_cast<int>(42.0f * alpha)));
+    const bool work_mode = IsWorkDisplayMode();
+    draw->AddConvexPolyFilled(shadow_points.data(), static_cast<int>(shadow_points.size()), IM_COL32(0, 0, 0, static_cast<int>((work_mode ? 42.0f : 92.0f) * alpha)));
+    draw->AddConvexPolyFilled(points.data(), static_cast<int>(points.size()), IM_COL32(224, 228, 226, static_cast<int>((work_mode ? 244.0f : 232.0f) * alpha)));
+    draw->AddConvexPolyFilled(points.data(), static_cast<int>(points.size()), selected ? IM_COL32(255, 214, 92, static_cast<int>((work_mode ? 84.0f : 118.0f) * alpha)) : IM_COL32(130, 134, 136, static_cast<int>((work_mode ? 18.0f : 42.0f) * alpha)));
     draw->AddPolyline(points.data(), static_cast<int>(points.size()), IM_COL32(250, 250, 245, static_cast<int>(255.0f * alpha)), ImDrawFlags_Closed, 1.3f);
 }
 
@@ -7147,7 +7618,7 @@ void RenderPromptModal(ShellState& state) {
         EndCanvasOverlayRegion();
     }
 
-    ImFont* prompt_banner_font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
+    ImFont* prompt_banner_font = CurrentBodyFont();
     const float prompt_banner_font_size = information_prompt ? ShellUi(21.0f) : ShellUi(28.0f);
     const float prompt_banner_wrap_width = information_prompt
         ? std::min(ShellUi(640.0f), display.x - ShellUi(220.0f))
@@ -7179,8 +7650,10 @@ void RenderPromptModal(ShellState& state) {
         draw->AddText(
             prompt_banner_font,
             prompt_banner_font_size,
-            ImVec2(prompt_banner_text_pos.x + ShellUi(2.0f), prompt_banner_text_pos.y + ShellUi(2.0f)),
-            IM_COL32(0, 0, 0, static_cast<int>(255.0f * banner_alpha)),
+            ImVec2(prompt_banner_text_pos.x + ShellUi(1.0f), prompt_banner_text_pos.y + ShellUi(1.0f)),
+            IsWorkDisplayMode()
+                ? IM_COL32(255, 255, 255, static_cast<int>(54.0f * banner_alpha))
+                : IM_COL32(0, 0, 0, static_cast<int>(255.0f * banner_alpha)),
             state.prompt_message.c_str(),
             nullptr,
             prompt_banner_wrap_width
@@ -7189,7 +7662,9 @@ void RenderPromptModal(ShellState& state) {
             prompt_banner_font,
             prompt_banner_font_size,
             prompt_banner_text_pos,
-            IM_COL32(255, 255, 255, static_cast<int>(255.0f * banner_alpha)),
+            IsWorkDisplayMode()
+                ? IM_COL32(22, 28, 30, static_cast<int>(255.0f * banner_alpha))
+                : IM_COL32(255, 255, 255, static_cast<int>(255.0f * banner_alpha)),
             state.prompt_message.c_str(),
             nullptr,
             prompt_banner_wrap_width
@@ -7206,7 +7681,7 @@ void RenderPromptModal(ShellState& state) {
     const std::vector<std::string> labels = confirmation
         ? std::vector<std::string>{state.prompt_accept_label, state.prompt_cancel_label}
         : std::vector<std::string>{state.prompt_accept_label};
-    ImFont* font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
+    ImFont* font = CurrentBodyFont();
     const float font_size = ShellUi(28.0f);
     float widest_label = 0.0f;
     for (const std::string& label : labels) {
@@ -7294,8 +7769,24 @@ void RenderPromptModal(ShellState& state) {
             row_mins[index].x + ((row_maxs[index].x - row_mins[index].x) - text_size.x) * 0.5f,
             row_mins[index].y + ((row_maxs[index].y - row_mins[index].y) - text_size.y) * 0.5f - ShellUi(1.0f)
         );
-        draw->AddText(font, font_size, ImVec2(text_pos.x + ShellUi(2.0f), text_pos.y + ShellUi(2.0f)), IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha)), labels[index].c_str());
-        draw->AddText(font, font_size, text_pos, selected ? IM_COL32(255, 128, 0, static_cast<int>(255.0f * alpha)) : IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha)), labels[index].c_str());
+        draw->AddText(
+            font,
+            font_size,
+            ImVec2(text_pos.x + ShellUi(1.0f), text_pos.y + ShellUi(1.0f)),
+            IsWorkDisplayMode()
+                ? IM_COL32(255, 255, 255, static_cast<int>(42.0f * alpha))
+                : IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha)),
+            labels[index].c_str()
+        );
+        draw->AddText(
+            font,
+            font_size,
+            text_pos,
+            IsWorkDisplayMode()
+                ? (selected ? IM_COL32(158, 88, 0, static_cast<int>(255.0f * alpha)) : IM_COL32(24, 30, 32, static_cast<int>(255.0f * alpha)))
+                : (selected ? IM_COL32(255, 128, 0, static_cast<int>(255.0f * alpha)) : IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha))),
+            labels[index].c_str()
+        );
     }
 
     EndCanvasOverlayRegion();
@@ -7318,6 +7809,7 @@ void RenderExitFade(const ShellState& state) {
 
 void RenderShell(ShellState& state) {
     g_shell_text_visibility = ShellExitTextVisibility(state);
+    ImGui::GetIO().FontDefault = CurrentBodyFont();
     DrawBackdropChrome(state);
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -7420,7 +7912,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     HWND window_handle = CreateWindowW(
         window_class.lpszClassName,
-        L"SERGFX: Project 3D Car QA Review",
+        L"SERGFX QA Review",
         window_style,
         window_x,
         window_y,
@@ -7467,11 +7959,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     ImGui_ImplDX12_Init(&init_info);
 
     g_shell_ini_override_path = std::filesystem::path(backend.workspace_root) / "imgui.ini";
+    g_shell_display_mode = LoadDisplayModePreferenceFromIni();
     const bool music_enabled_preference = LoadMusicPreferenceFromIni();
     LoadShellAssets(std::filesystem::path(backend.workspace_root));
     LoadShellAudio(std::filesystem::path(backend.workspace_root));
-    g_shell_audio.music_enabled = music_enabled_preference;
-    if (music_enabled_preference) {
+    g_shell_audio.music_enabled = music_enabled_preference && !IsWorkDisplayMode();
+    if (music_enabled_preference && IsWorkDisplayMode()) {
+        SaveMusicPreferenceToIni(false);
+    }
+    if (g_shell_audio.music_enabled) {
         SetMusicEnabled(true);
     }
     g_shell_appear_time = ImGui::GetTime();

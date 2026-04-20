@@ -12,6 +12,8 @@ namespace sg_preflight::native_shell {
 struct BackendConfig {
     std::wstring workspace_root;
     std::wstring python_executable = L"python";
+    std::string initial_profile_id;
+    std::string initial_action_id;
 };
 
 struct ProfileItem {
@@ -135,6 +137,16 @@ struct RunSnapshot {
     std::vector<CopyItem> copy_items;
 };
 
+struct EnvironmentDoctorItem {
+    std::string key;
+    std::string category;
+    std::string label;
+    std::string state;
+    std::string summary;
+    std::string path;
+    std::string next_action;
+};
+
 std::wstring ToWide(const std::string& text);
 std::string ToUtf8(const std::wstring& text);
 void AppendNativeTrace(std::string_view line);
@@ -153,6 +165,7 @@ std::vector<RecentRunItem> LoadRecentRuns(
     const std::string& profile_id,
     int limit
 );
+std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& config);
 ActionSnapshot LoadSnapshot(const BackendConfig& config, const std::string& run_id_or_path);
 RunSnapshot LoadRunSnapshot(const BackendConfig& config, const std::string& run_id_or_path);
 std::string LaunchAction(const BackendConfig& config, const std::string& action_id);

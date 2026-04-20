@@ -443,6 +443,16 @@ void from_json(const json& payload, RunSnapshot& item) {
     }
 }
 
+void from_json(const json& payload, EnvironmentDoctorItem& item) {
+    item.key = ValueString(payload, "key");
+    item.category = ValueString(payload, "category");
+    item.label = ValueString(payload, "label");
+    item.state = ValueString(payload, "state");
+    item.summary = ValueString(payload, "summary");
+    item.path = ValueString(payload, "path");
+    item.next_action = ValueString(payload, "next_action");
+}
+
 std::vector<ProfileItem> LoadProfiles(const BackendConfig& config) {
     std::vector<std::wstring> args = {L"desktop-state", L"profiles", L"--json"};
     AppendWorkspace(args, config);
@@ -520,6 +530,16 @@ std::vector<RecentRunItem> LoadRecentRuns(
     }
     AppendWorkspace(args, config);
     return ParseArray<RecentRunItem>(RunJsonCommand(config, args));
+}
+
+std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& config) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"environment",
+        L"--json",
+    };
+    AppendWorkspace(args, config);
+    return ParseArray<EnvironmentDoctorItem>(RunJsonCommand(config, args));
 }
 
 ActionSnapshot LoadSnapshot(const BackendConfig& config, const std::string& run_id_or_path) {

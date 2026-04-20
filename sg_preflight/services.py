@@ -728,6 +728,27 @@ def _raco_headless_path(root: Path) -> Path:
     return path
 
 
+def _blender_executable_path(root: Path) -> Path:
+    path, from_env = _env_or_default_path(
+        ("SG_BLENDER_EXE", "BLENDER_EXE"),
+        (
+            root / "external" / "blender" / "blender.exe",
+            root.parent / "Blender" / "blender.exe",
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.2\blender.exe"),
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.1\blender.exe"),
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.0\blender.exe"),
+            Path(r"C:\Program Files\Blender Foundation\Blender 3.6\blender.exe"),
+        ),
+    )
+    if from_env:
+        return path
+
+    command_path = shutil.which("blender.exe")
+    if command_path:
+        return Path(command_path)
+    return path
+
+
 def _bmw_models_repo_path(root: Path) -> Path:
     path, _ = _env_or_default_path(
         ("SG_CARMODELS_REPO",),
@@ -747,20 +768,26 @@ def _delivery_checklist_root(root: Path) -> Path:
 def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
     root = workspace_root(repo_root)
     mirror_root = root / "repositories" / "trunk"
+    checker_root = mirror_root / ".pdx" / "checkers"
     bmw_models_repo = _bmw_models_repo_path(root)
     delivery_checklist_root = _delivery_checklist_root(root)
     raco_headless = _raco_headless_path(root)
+    blender_executable = _blender_executable_path(root)
     checks = [
         ("workspace_root", root),
         ("mirror_root", mirror_root),
+        ("checker_root", checker_root),
         ("reference_root", Path(r"C:\repositories\trunk")),
         ("bmw_models_repo", bmw_models_repo),
+        ("execute_checks", checker_root / "executeChecks.py"),
+        ("unused_resource_checker", checker_root / "printNotUsedResources.py"),
         (
             "carpaint_helper",
             mirror_root / ".pdx" / "raco" / "scripts" / "testing" / "read_json_carpaints.py",
         ),
         ("scene_checker", mirror_root / "check_scenes.py"),
         ("raco_headless", raco_headless),
+        ("blender_executable", blender_executable),
         ("carmodel_data", mirror_root / ".pdx" / "python" / "carmodel_data.json"),
         ("resource_mappings", mirror_root / ".pdx" / "python" / "resource_mappings.json"),
         ("delivery_checklist_tool", delivery_checklist_root / "deliveryChecklist.exe"),

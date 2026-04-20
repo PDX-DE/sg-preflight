@@ -14,6 +14,7 @@ from sg_preflight.desktop.evidence_model import (
     desktop_action_snapshot,
     desktop_actions_for_profile,
     desktop_blocker_items,
+    desktop_environment_doctor,
     desktop_manual_cards,
     desktop_profiles,
     desktop_recent_actions,
@@ -402,6 +403,13 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_run_snapshot_parser.add_argument("--workspace", help="Workspace root override")
     desktop_run_snapshot_parser.add_argument("--json", action="store_true", help="Print run snapshot payload as JSON")
 
+    desktop_environment_parser = desktop_state_sub.add_parser(
+        "environment",
+        help="Load the native environment-doctor readiness surface",
+    )
+    desktop_environment_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_environment_parser.add_argument("--json", action="store_true", help="Print environment payload as JSON")
+
     demo_good = sub.add_parser("demo-good", help="Run the good demo bundle")
     demo_good.add_argument("--fail-on", default="error", choices=["error", "warning", "never"])
 
@@ -638,6 +646,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.desktop_state_command == "run-snapshot":
             payload = desktop_run_snapshot(args.run_id_or_path, state_root)
+        elif args.desktop_state_command == "environment":
+            payload = desktop_environment_doctor(state_root)
         else:
             parser.error(f"Unhandled desktop-state command: {args.desktop_state_command}")
             return 1
