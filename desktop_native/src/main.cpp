@@ -8532,8 +8532,8 @@ void RenderPromptModal(ShellState& state) {
         EndCanvasOverlayRegion();
     }
 
-    ImFont* prompt_banner_font = CurrentBodyFont();
-    const float prompt_banner_font_size = information_prompt ? ShellUi(19.0f) : ShellUi(28.0f);
+    ImFont* prompt_banner_font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
+    const float prompt_banner_font_size = information_prompt ? ShellUi(21.0f) : ShellUi(28.0f);
     const float prompt_banner_wrap_width = information_prompt
         ? std::min(ShellUi(640.0f), display.x - ShellUi(220.0f))
         : std::min(ShellUi(820.0f), display.x - ShellUi(110.0f));
@@ -8541,17 +8541,11 @@ void RenderPromptModal(ShellState& state) {
         display.x * 0.5f,
         information_prompt ? (display.y * 0.47f) : (display.y * 0.5f + ShellUi(3.0f))
     );
-    const std::vector<std::string> prompt_lines = SplitPromptParagraph(
-        prompt_banner_font,
+    const ImVec2 prompt_text_size = prompt_banner_font->CalcTextSizeA(
         prompt_banner_font_size,
         prompt_banner_wrap_width,
-        state.prompt_message
-    );
-    const ImVec2 prompt_text_size = MeasurePromptParagraph(
-        prompt_banner_font,
-        prompt_banner_font_size,
-        5.0f,
-        prompt_lines
+        prompt_banner_wrap_width,
+        state.prompt_message.c_str()
     );
     const ImVec2 banner_half(
         std::max(information_prompt ? ShellUi(220.0f) : ShellUi(190.0f), prompt_text_size.x * 0.5f + ShellUi(37.0f)),
@@ -8565,17 +8559,28 @@ void RenderPromptModal(ShellState& state) {
     DrawPauseContainerChrome(draw, banner_min, banner_max, banner_alpha);
 
     if (banner_open > 0.0f) {
+        const ImVec2 prompt_banner_text_pos(
+            prompt_center.x - prompt_text_size.x * 0.5f,
+            prompt_center.y - prompt_text_size.y * 0.5f
+        );
         draw->PushClipRect(banner_min, banner_max, true);
-        DrawPromptParagraphStyled(
-            draw,
+        draw->AddText(
             prompt_banner_font,
             prompt_banner_font_size,
-            prompt_banner_wrap_width,
-            prompt_center,
-            5.0f,
+            ImVec2(prompt_banner_text_pos.x + ShellUi(2.0f), prompt_banner_text_pos.y + ShellUi(2.0f)),
+            IM_COL32(0, 0, 0, static_cast<int>(255.0f * banner_alpha)),
+            state.prompt_message.c_str(),
+            nullptr,
+            prompt_banner_wrap_width
+        );
+        draw->AddText(
+            prompt_banner_font,
+            prompt_banner_font_size,
+            prompt_banner_text_pos,
             IM_COL32(255, 255, 255, static_cast<int>(255.0f * banner_alpha)),
-            banner_alpha,
-            state.prompt_message
+            state.prompt_message.c_str(),
+            nullptr,
+            prompt_banner_wrap_width
         );
         draw->PopClipRect();
     }
@@ -8589,7 +8594,7 @@ void RenderPromptModal(ShellState& state) {
     const std::vector<std::string> labels = confirmation
         ? std::vector<std::string>{state.prompt_accept_label, state.prompt_cancel_label}
         : std::vector<std::string>{state.prompt_accept_label};
-    ImFont* font = CurrentBodyFont();
+    ImFont* font = g_body_font != nullptr ? g_body_font : ImGui::GetFont();
     const float font_size = ShellUi(28.0f);
     float widest_label = 0.0f;
     for (const std::string& label : labels) {
@@ -8677,13 +8682,18 @@ void RenderPromptModal(ShellState& state) {
             row_mins[index].x + ((row_maxs[index].x - row_mins[index].x) - text_size.x) * 0.5f,
             row_mins[index].y + ((row_maxs[index].y - row_mins[index].y) - text_size.y) * 0.5f - ShellUi(1.0f)
         );
-        DrawPromptTextStyled(
-            draw,
+        draw->AddText(
+            font,
+            font_size,
+            ImVec2(text_pos.x + ShellUi(2.0f), text_pos.y + ShellUi(2.0f)),
+            IM_COL32(0, 0, 0, static_cast<int>(255.0f * alpha)),
+            labels[index].c_str()
+        );
+        draw->AddText(
             font,
             font_size,
             text_pos,
             selected ? IM_COL32(255, 128, 0, static_cast<int>(255.0f * alpha)) : IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha)),
-            alpha,
             labels[index].c_str()
         );
     }
