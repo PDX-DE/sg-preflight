@@ -459,6 +459,7 @@ void PollRunRefresh(ShellState& state);
 void UpdateRunPollingDeadline(ShellState& state, double delay_seconds = -1.0);
 void TraceUi(std::string message);
 const char* ScreenLabel(ShellScreen screen);
+bool EnvFlagEnabled(const wchar_t* name);
 float ShellTextLifecycleMotion();
 float ShellChromeLifecycleMotion();
 float ShellHeaderTextLifecycleMotion();
@@ -1193,7 +1194,8 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
     g_shell_audio.music = g_shell_audio.music_default;
     g_shell_audio.music_easter_egg_selected = false;
 
-    if (PathExists(g_shell_audio.music_default) && PathExists(g_shell_audio.music_easter_egg)) {
+    const bool allow_dev_easter_eggs = EnvFlagEnabled(L"SERGFX_DEV_EASTER_EGGS");
+    if (allow_dev_easter_eggs && PathExists(g_shell_audio.music_default) && PathExists(g_shell_audio.music_easter_egg)) {
         std::random_device random_device;
         std::mt19937 generator(random_device());
         std::uniform_int_distribution<int> distribution(1, 12);
@@ -1201,7 +1203,7 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
             g_shell_audio.music = g_shell_audio.music_easter_egg;
             g_shell_audio.music_easter_egg_selected = true;
         }
-    } else if (!PathExists(g_shell_audio.music_default) && PathExists(g_shell_audio.music_easter_egg)) {
+    } else if (allow_dev_easter_eggs && !PathExists(g_shell_audio.music_default) && PathExists(g_shell_audio.music_easter_egg)) {
         g_shell_audio.music = g_shell_audio.music_easter_egg;
         g_shell_audio.music_easter_egg_selected = true;
     }
@@ -1377,7 +1379,7 @@ const char* ScreenSummary(ShellScreen screen) {
     case ShellScreen::Files:
         return "Open reports, generated files, and ready-to-copy exports.";
     case ShellScreen::Stages:
-        return "Check blocked steps, manual follow-up, display mode, and audio settings.";
+        return "Check blocked BMW/manual steps, follow-up, display mode, and audio settings.";
     default:
         return "Screen flow";
     }
@@ -2634,7 +2636,7 @@ std::string FriendlyActionDescription(std::string_view action_id) {
 std::string BuildHelpPromptMessage(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Introduction:
-        return "SERGFX: Project 3D Car QA Review is the local operator shell for automotive 3D car review.\n\nIt combines HMI-side scene review with SDET-style automation: HMI covers the on-screen vehicle presentation and scene-reading side, while SDET covers local checks, evidence capture, reporting, and tooling.\n\nUse the workflow from left to right: choose a slice, choose a check, review it, run it, open the first files that need attention, then review reports, exports, and follow-up work.";
+        return "SERGFX is the local desktop operator shell for SG-side 3D Car QA review.\n\nUse the workflow from left to right: choose a slice, choose a check, review it, run it, open the first files that need attention, then review reports, exports, and follow-up work.\n\nIt does not replace Blender visual review, RaCo / RaCoHeadless, rack sessions, or BMW screenshot smoke. Use it to get deterministic SG-side evidence first and keep blocked/manual steps visible.";
     case ShellScreen::Select:
         return "Choose one slice on the right, then choose the local check to run for that slice.\n\nDAILY: runs the recommended local check flow across every ready slice.\nSTACK: runs the standard per-slice QA stack.\nREPO: runs the broader repository checker pass.\nSCENE: runs the scene-specific local check.\nUNUSED: scans the selected slice for unused resources.\nDELIVERY: shows delivery-readiness follow-up for the selected slice.";
     case ShellScreen::Review:
@@ -2646,7 +2648,7 @@ std::string BuildHelpPromptMessage(const ShellState& state) {
     case ShellScreen::Files:
         return "Files collects generated outputs, reports, source files, and copy-ready exports.\n\nUse it when you need to open deliverables or copy material into Jira, QA Hero, or handoff notes.";
     case ShellScreen::Stages:
-        return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked items, manual steps, display settings, and audio settings before you loop back to the next slice.";
+        return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked BMW/manual items, display settings, and audio settings before you loop back to the next slice.";
     case ShellScreen::Language:
         return "Choose the language used by the shell interface.\n\nProject data, checker output, and generated files stay the same.";
     default:
@@ -3367,6 +3369,23 @@ std::string Ellipsize(const std::string& text, size_t limit = 180U) {
         return text;
     }
     return text.substr(0, limit > 3U ? limit - 3U : limit) + "...";
+}
+
+bool EnvFlagEnabled(const wchar_t* name) {
+    const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+    if (required == 0) {
+        return false;
+    }
+
+    std::wstring buffer(required, L'\0');
+    const DWORD copied = GetEnvironmentVariableW(name, buffer.data(), required);
+    if (copied == 0 || copied >= required) {
+        return false;
+    }
+    buffer.resize(copied);
+
+    const std::wstring lowered = Lowercase(buffer);
+    return lowered == L"1" || lowered == L"true" || lowered == L"yes" || lowered == L"on";
 }
 
 ImFont* TryLoadFont(ImGuiIO& io, const std::filesystem::path& path, float size) {

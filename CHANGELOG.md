@@ -8,6 +8,15 @@ The format follows Keep a Changelog style and uses a simple pre-release-friendly
 
 ### Timeline
 
+#### 2026-04-20
+
+- working tree: the native shell now reports itself honestly as `v0.1.0-alpha` through CMake/runtime metadata and the Windows version resource instead of the previous `1.0.0` production-looking label
+- working tree: intro/help copy now frames SERGFX as an SG-side operator shell, keeps blocked BMW/manual follow-up explicit, and adds an honest "not a replacement for Blender / RaCo / rack / BMW smoke" message inside the shell text itself
+- working tree: native bundle staging now defaults to a safer private-alpha profile that omits repo mirrors, generated evidence, reference DDS bundles, optional fonts, and music unless explicitly requested, while the bundle manifest records those boundaries and warns when functionality was intentionally excluded
+- working tree: dev-only audio handling is now gated behind `SERGFX_DEV_EASTER_EGGS=1`, so the `BAChefPeePee.mp3` easter egg stops participating in normal work builds and packaging by default
+- working tree: native-shell docs now match the real DX12 renderer path, add safer packaging guidance, and the Python package metadata now documents the `Pillow` dependency used by the native build helper
+- working tree: the native ImGui target no longer compiles `imgui_demo.cpp` into release builds, and `.gitignore` now fences off the local Unleashed/resource/audio/runtime noise that should stay out of normal repo hygiene
+
 #### 2026-04-19
 
 - working tree: the SERGFX shell now trims the user-made `F1` / `F2` / `F3` / `F4` keycaps to their real alpha bounds at load time so they render at the same visible footprint as the installer `Esc` / `Enter` prompts, while the animated header debug badge sits tighter against the title without crowding the chrome

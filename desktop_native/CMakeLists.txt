@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
-set(SG_NATIVE_SHELL_VERSION "1.0.0")
+set(SG_NATIVE_SHELL_VERSION "0.1.0-alpha")
 
 FetchContent_Declare(
   imgui
@@ -25,7 +25,6 @@ FetchContent_MakeAvailable(imgui nlohmann_json)
 add_library(
   sg_preflight_imgui STATIC
   ${imgui_SOURCE_DIR}/imgui.cpp
-  ${imgui_SOURCE_DIR}/imgui_demo.cpp
   ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
   ${imgui_SOURCE_DIR}/imgui_widgets.cpp

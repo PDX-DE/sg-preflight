@@ -89,8 +89,8 @@ const char* TranslateEnglish(UiText text) {
     case LanguageScreenBody: return "Choose the language used by the shell interface.";
     case LanguageScreenHint: return "This only changes the shell text. Project data and generated results stay the same.";
     case IntroWelcome: return "Welcome to SERGFX.";
-    case IntroBodyPrimary: return "SERGFX: Project 3D Car QA Review is the local desktop review shell for automotive 3D car QA.\n\nIt brings slice selection, check execution, evidence capture, reports, exports, and follow-up material into one operator flow.";
-    case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the local check, review what will run, start the run, then open the first files, reports, exports, and follow-up material collected for you.";
+    case IntroBodyPrimary: return "SERGFX is the local desktop operator shell for SG-side 3D Car QA review.\n\nIt brings slice selection, SG checker execution, evidence capture, reports, exports, and follow-up material into one operator flow.";
+    case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the local check, review what will run, start the run, then open the first files, reports, exports, and blocked/manual follow-up collected for you.\n\nIt does not replace Blender visual review, RaCo / RaCoHeadless, rack sessions, or BMW screenshot smoke.";
     case SelectLoadingTitle: return "Loading local project data.";
     case SelectLoadingBody: return "The shell is loading the available slices, checks, and recent local results so you can choose what to run.";
     case SelectTitle: return "Choose the slice and local check for this run.";
@@ -103,7 +103,7 @@ const char* TranslateEnglish(UiText text) {
     case RunTitle: return "Run the selected local check and watch its live status.";
     case EvidenceTitle: return "Open the first result that needs attention.";
     case FilesTitle: return "Open generated files, reports, and exports.";
-    case StagesTitle: return "Review blocked steps, manual follow-up, display mode, and audio settings.";
+    case StagesTitle: return "Review blocked BMW/manual steps, follow-up, display mode, and audio settings.";
     case ReadyToRun: return "This local SG action is ready to run.";
     case ActionNotReady: return "This action is not ready on the current machine.";
     case CurrentOutputHelp: return "Default startup uses the current monitor size. Use --windowed --width <n> --height <n> if you want an override.";

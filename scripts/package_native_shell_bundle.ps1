@@ -1,16 +1,32 @@
 param(
-    [string]$BuildDir = "build/native-pda",
-    [string]$BundleDir = "build/native-bundle",
+    [string]$BuildDir = "",
+    [string]$BundleDir = "build/sergfx-alpha-0.1.0-bundle",
     [string]$Configuration = "Release",
-    [switch]$Zip
+    [switch]$Zip,
+    [switch]$IncludeRepoMirror,
+    [switch]$IncludeEvidence,
+    [switch]$IncludeReferenceResources,
+    [switch]$IncludeFonts,
+    [switch]$IncludeMusic,
+    [switch]$IncludeDevEasterEggs
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$resolvedBuildDir = Join-Path $repoRoot $BuildDir
 $resolvedBundleDir = Join-Path $repoRoot $BundleDir
-$exePath = Join-Path $resolvedBuildDir "$Configuration\sg_preflight_native_shell.exe"
+$latestPathFile = Join-Path (Join-Path $repoRoot "build") "latest_native_shell_path.txt"
+
+if ($BuildDir) {
+    $resolvedBuildDir = Join-Path $repoRoot $BuildDir
+    $exePath = Join-Path $resolvedBuildDir "$Configuration\sg_preflight_native_shell.exe"
+} elseif (Test-Path $latestPathFile) {
+    $exePath = (Get-Content $latestPathFile -Raw).Trim()
+    $resolvedBuildDir = Split-Path -Parent $exePath
+} else {
+    $resolvedBuildDir = Join-Path $repoRoot "build/sergfx-alpha-0.1.0"
+    $exePath = Join-Path $resolvedBuildDir "$Configuration\sg_preflight_native_shell.exe"
+}
 
 function Copy-Tree {
     param(
@@ -102,7 +118,6 @@ foreach ($item in $directxItems) {
     }
 }
 
-$latestPathFile = Join-Path (Join-Path $repoRoot "build") "latest_native_shell_path.txt"
 Set-Content -Path $latestPathFile -Value (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe") -Encoding UTF8
 
 $pythonExe = (& python -c "import sys; print(sys.executable)").Trim()
@@ -115,9 +130,7 @@ Copy-Tree -Source $pythonRoot -Destination $pythonDir
 $workspaceItems = @(
     "sg_preflight",
     "config",
-    "repositories",
     "scripts",
-    "out",
     "demo",
     "pyproject.toml",
     "README.md",
@@ -133,10 +146,20 @@ $workspaceItems = @(
     "kb_key_F1.png",
     "kb_key_F2.png",
     "kb_key_F3.png",
-    "kb_key_F4.png",
-    "SERGFX.mp3",
-    "BAChefPeePee.mp3"
+    "kb_key_F4.png"
 )
+if ($IncludeRepoMirror) {
+    $workspaceItems += "repositories"
+}
+if ($IncludeEvidence) {
+    $workspaceItems += "out"
+}
+if ($IncludeMusic) {
+    $workspaceItems += "SERGFX.mp3"
+    if ($IncludeDevEasterEggs) {
+        $workspaceItems += "BAChefPeePee.mp3"
+    }
+}
 foreach ($item in $workspaceItems) {
     $source = Join-Path $repoRoot $item
     if (Test-Path $source) {
@@ -146,24 +169,25 @@ foreach ($item in $workspaceItems) {
 
 $workspaceIniPath = Join-Path $workspaceDir "imgui.ini"
 $workspaceIniContent = if (Test-Path $workspaceIniPath) { Get-Content -LiteralPath $workspaceIniPath -Raw } else { "" }
+$musicEnabledValue = if ($IncludeMusic) { "1" } else { "0" }
 if ($workspaceIniContent -match "\[sg_preflight_native_shell\]") {
     if ($workspaceIniContent -match "(?ms)(\[sg_preflight_native_shell\].*?^music_enabled=)(0|1)") {
         $workspaceIniContent = [regex]::Replace(
             $workspaceIniContent,
             "(?ms)(\[sg_preflight_native_shell\].*?^music_enabled=)(0|1)",
-            '${1}1',
+            ([string]::Concat('${1}', $musicEnabledValue)),
             1
         )
     } else {
         $workspaceIniContent = [regex]::Replace(
             $workspaceIniContent,
             "(?ms)(\[sg_preflight_native_shell\]\s*)",
-            '${1}music_enabled=1`r`n',
+            ([string]::Concat('${1}music_enabled=', $musicEnabledValue, "`r`n")),
             1
         )
     }
 } else {
-    $workspaceIniContent = $workspaceIniContent.TrimEnd() + "`r`n`r`n[sg_preflight_native_shell]`r`nmusic_enabled=1`r`n"
+    $workspaceIniContent = $workspaceIniContent.TrimEnd() + "`r`n`r`n[sg_preflight_native_shell]`r`nmusic_enabled=$musicEnabledValue`r`n"
 }
 Set-Content -Path $workspaceIniPath -Value $workspaceIniContent -Encoding UTF8
 
@@ -175,10 +199,12 @@ $resourceCandidates = @(
     (Join-Path $repoRoot "Unleashed Recomp - Windows (Complete Installation) 1.0.3\resources")
 )
 $resourceRoot = $null
-foreach ($candidate in $resourceCandidates) {
-    if ((Test-Path $candidate) -and (Test-Path (Join-Path $candidate "images\common\general_window.dds")) -and (Test-Path (Join-Path $candidate "images\options_menu\options_static.dds"))) {
-        $resourceRoot = $candidate
-        break
+if ($IncludeReferenceResources) {
+    foreach ($candidate in $resourceCandidates) {
+        if ((Test-Path $candidate) -and (Test-Path (Join-Path $candidate "images\common\general_window.dds")) -and (Test-Path (Join-Path $candidate "images\options_menu\options_static.dds"))) {
+            $resourceRoot = $candidate
+            break
+        }
     }
 }
 if ($resourceRoot) {
@@ -193,9 +219,11 @@ $fontNeedles = @(
     @{ Pattern = "DFHeiStd-W7.otf"; Target = "DFHeiStd-W7.otf" }
 )
 foreach ($font in $fontNeedles) {
-    $match = Get-ChildItem -Path $downloadsDir -Recurse -File -Filter $font.Pattern -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($match) {
-        Copy-Tree -Source $match.FullName -Destination (Join-Path $fontsDir $font.Target)
+    if ($IncludeFonts) {
+        $match = Get-ChildItem -Path $downloadsDir -Recurse -File -Filter $font.Pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($match) {
+            Copy-Tree -Source $match.FullName -Destination (Join-Path $fontsDir $font.Target)
+        }
     }
 }
 
@@ -223,11 +251,24 @@ $manifest = [ordered]@{
     python = (Join-Path $pythonDir "python.exe")
     workspace = $workspaceDir
     resources = if ($resourceRoot) { $resourcesDir } else { "" }
-    fonts = $fontsDir
+    fonts = if ($IncludeFonts) { $fontsDir } else { "" }
     d3d12 = if (Test-Path (Join-Path $resolvedBundleDir "D3D12")) { (Join-Path $resolvedBundleDir "D3D12") } else { "" }
     dxcompiler = if (Test-Path (Join-Path $resolvedBundleDir "dxcompiler.dll")) { (Join-Path $resolvedBundleDir "dxcompiler.dll") } else { "" }
     dxil = if (Test-Path (Join-Path $resolvedBundleDir "dxil.dll")) { (Join-Path $resolvedBundleDir "dxil.dll") } else { "" }
     built_from = $exePath
+    include_repo_mirror = [bool]$IncludeRepoMirror
+    include_evidence = [bool]$IncludeEvidence
+    include_reference_resources = [bool]$IncludeReferenceResources
+    include_fonts = [bool]$IncludeFonts
+    include_music = [bool]$IncludeMusic
+    include_dev_easter_eggs = [bool]$IncludeDevEasterEggs
+    warnings = @(
+        if (-not $IncludeRepoMirror) { "Repo mirror omitted by default. Live SG slice discovery will stay empty unless an external mirror is provided." }
+        if (-not $IncludeEvidence) { "Generated evidence was omitted by default." }
+        if (-not $IncludeReferenceResources) { "Reference Unleashed-style DDS resources were omitted by default." }
+        if (-not $IncludeFonts) { "Optional shell fonts were omitted by default; runtime will fall back to bundled/system fonts when needed." }
+        if (-not $IncludeMusic) { "Optional music tracks were omitted by default and workspace imgui.ini was set to music_enabled=0." }
+    ) | Where-Object { $_ }
 }
 $manifest | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $resolvedBundleDir "bundle_manifest.json") -Encoding UTF8
 

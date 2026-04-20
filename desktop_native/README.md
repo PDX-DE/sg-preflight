@@ -19,7 +19,7 @@ It calls the same action system and evidence model through the shared CLI/JSON c
 
 Current native-shell milestone:
 
-- Dear ImGui + Win32 + DirectX 11 shell
+- Dear ImGui (Guillermo referencia) + Win32 + DirectX 12 shell
 - repo-root auto-discovery from the built executable path, so the native shell can launch `python -m sg_preflight` from `build\...\Release` without a manual workspace override
 - live profile list
 - action tabs
@@ -50,7 +50,7 @@ Current native-shell milestone:
   - installer-style screen transitions and hero treatment
 - runtime Unleashed resource discovery:
   - auto-detects a local `UnleashedRecompResources` / `UnleashedRecompResources-main` bundle when present beside the repo
-  - loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures into the D3D11 shell
+  - loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures into the DX12 shell when those local reference assets are present
   - keeps direct OTF font loading temporarily instead of consuming `im_font_atlas.bin` because the upstream atlas is tied to the custom `ImFontAtlasSnapshot` path and exact ImGui snapshot format
   - loads local WAV cues and optional installer background music from that same bundle, with shell-side toggles under `STAGES`
   - intentionally does not render Sonic/cast character art in the operator shell; the native track now keeps the reference language abstract and workflow-first
@@ -93,5 +93,7 @@ The CMake file fetches:
 
 - This shell is Windows-first because the current operator environment is Windows.
 - It is intentionally separate from the PySide shell so the native track can move toward a closer Unleashed-style interaction feel without cloning the Python engine.
+- Package staging now defaults to a safer private-alpha bundle: repo mirrors, generated evidence, reference DDS bundles, optional fonts, and music are excluded unless explicitly requested.
+- Local UnleashedRecomp resource folders should be treated as reference-only inputs unless there is a cleared internal redistribution path for those assets.
 - BMW stages remain blocker/readiness surfaces until BMW-side access and scripts exist locally.
 - The current font path intentionally prefers direct local OTF files when available, because the upstream `im_font_atlas.bin` is a prebuilt snapshot generated for Unleashed's custom font-loading path rather than a drop-in ImGui runtime asset here.
