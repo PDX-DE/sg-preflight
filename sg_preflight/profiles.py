@@ -14,6 +14,7 @@ class RunProfile:
     label: str
     repo_root: Path
     project_root: Path
+    project_relative: Path
     config_path: Path
     bmw_smoke_target: str = ""
     bmw_smoke_runner: str = "car_manager.py"
@@ -27,12 +28,30 @@ class RunProfile:
     mirror_audit_targets: tuple[str, ...] = ()
     reference_repo_root: Path = DEFAULT_REFERENCE_REPO_ROOT
 
+    def source_repo_root(self) -> Path:
+        reference_root = self.reference_repo_root.resolve()
+        if reference_root.exists():
+            return reference_root
+        return self.repo_root.resolve()
+
+    def source_project_root(self) -> Path:
+        reference_root = self.reference_repo_root.resolve()
+        if reference_root.exists():
+            candidate = (reference_root / self.project_relative).resolve()
+            if candidate.exists():
+                return candidate
+        return self.project_root.resolve()
+
+    def source_evidence_source(self) -> str:
+        return "real_svn_checkout" if self.source_project_root() != self.project_root.resolve() else "local_svn_mirror"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "profile_id": self.profile_id,
             "label": self.label,
             "repo_root": str(self.repo_root),
             "project_root": str(self.project_root),
+            "project_relative": str(self.project_relative),
             "config_path": str(self.config_path),
             "bmw_smoke_target": self.bmw_smoke_target,
             "bmw_smoke_runner": self.bmw_smoke_runner,
@@ -45,11 +64,29 @@ class RunProfile:
             "focus_points": list(self.focus_points),
             "mirror_audit_targets": list(self.mirror_audit_targets),
             "reference_repo_root": str(self.reference_repo_root),
+            "source_repo_root": str(self.source_repo_root()),
+            "source_project_root": str(self.source_project_root()),
+            "evidence_source": self.source_evidence_source(),
         }
 
 
 def _workspace_root(explicit_root: Path | None = None) -> Path:
     return (explicit_root or Path(__file__).resolve().parents[1]).resolve()
+
+
+def mirror_repo_root(workspace_root: Path | None = None) -> Path:
+    return _workspace_root(workspace_root) / "repositories" / "trunk"
+
+
+def resolve_source_repo_root(
+    workspace_root: Path | None = None,
+    *,
+    reference_repo_root: Path | None = None,
+) -> Path:
+    reference_root = (reference_repo_root or DEFAULT_REFERENCE_REPO_ROOT).resolve()
+    if reference_root.exists():
+        return reference_root
+    return mirror_repo_root(workspace_root)
 
 
 def _generic_idcevo_profile_spec(profile_id: str) -> dict[str, Any]:
@@ -214,21 +251,26 @@ def list_run_profiles(
     reference_repo_root: Path | None = None,
 ) -> list[RunProfile]:
     root = _workspace_root(workspace_root)
-    repo_root = root / "repositories" / "trunk"
+    repo_root = mirror_repo_root(root)
     reference_root = (reference_repo_root or DEFAULT_REFERENCE_REPO_ROOT).resolve()
 
     profiles = []
     for spec in _profile_specs():
+        project_relative = Path(spec["project_relative"])
+        default_context = dict(spec["default_context"])
+        if (reference_root / project_relative).exists():
+            default_context["evidence_source"] = "real_svn_checkout"
         profiles.append(
             RunProfile(
                 profile_id=str(spec["profile_id"]),
                 label=str(spec["label"]),
                 repo_root=repo_root,
-                project_root=repo_root / Path(spec["project_relative"]),
+                project_root=repo_root / project_relative,
+                project_relative=project_relative,
                 config_path=root / Path(spec["config_relative"]),
                 bmw_smoke_target=str(spec.get("bmw_smoke_target", "")),
                 bmw_smoke_runner=str(spec.get("bmw_smoke_runner", "car_manager.py")),
-                default_context=dict(spec["default_context"]),
+                default_context=default_context,
                 description=str(spec.get("description", "")),
                 operator_goal=str(spec.get("operator_goal", "")),
                 workflow_value=str(spec.get("workflow_value", "")),

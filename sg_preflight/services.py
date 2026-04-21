@@ -20,7 +20,7 @@ from sg_preflight.bundle import load_bundle
 from sg_preflight.checker_catalog import list_checker_catalog
 from sg_preflight.config_loader import load_config, load_json
 from sg_preflight.models import Report
-from sg_preflight.profiles import RunProfile, list_run_profiles
+from sg_preflight.profiles import RunProfile, list_run_profiles, mirror_repo_root, resolve_source_repo_root
 from sg_preflight.reporting import write_html_report, write_json_report, write_markdown_report
 from sg_preflight.tool_readiness import probe_raco_runtime, representative_raco_scene
 from sg_preflight.utils import ensure_parent
@@ -250,8 +250,8 @@ class RunRecord:
 
 def preview_profile_sources(profile: RunProfile) -> MaterializePreview:
     inputs = resolve_materialize_inputs(
-        repo_root=profile.repo_root,
-        project_root=profile.project_root,
+        repo_root=profile.source_repo_root(),
+        project_root=profile.source_project_root(),
     )
     return MaterializePreview(source_paths=inputs.source_map(), notes=inputs.notes)
 
@@ -326,6 +326,7 @@ def _default_run_id(profile_id: str) -> str:
 
 def _resolved_context(profile: RunProfile, request: RunRequest) -> dict[str, str]:
     context = dict(profile.default_context)
+    context["evidence_source"] = profile.source_evidence_source()
     context.update(request.context_overrides)
     return context
 
@@ -362,8 +363,8 @@ def build_run_record(
         fail_on=request.fail_on,
         packs=list(request.packs),
         context=_resolved_context(profile, request),
-        repo_root=str(profile.repo_root),
-        project_root=str(profile.project_root),
+        repo_root=str(profile.source_repo_root()),
+        project_root=str(profile.source_project_root()),
         config_path=str(profile.config_path),
         reference_repo_root=str(profile.reference_repo_root),
         paths={
@@ -609,7 +610,7 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
         step_key="scene_hierarchy",
         percent=6,
         label="Preparing SG sources",
-        detail=f"Materializing {profile.profile_id} from the mirrored live slice.",
+        detail=f"Materializing {profile.profile_id} from the live SG source tree.",
     )
 
     try:
@@ -624,11 +625,11 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
 
         materialized = materialize_bundle(
             output_bundle=Path(record.paths["bundle"]),
-            repo_root=profile.repo_root,
-            project_root=profile.project_root,
+            repo_root=profile.source_repo_root(),
+            project_root=profile.source_project_root(),
             env={
-                "SG-Repo": str(profile.repo_root),
-                "SG-CarModels-Repo": str(profile.repo_root),
+                "SG-Repo": str(profile.source_repo_root()),
+                "SG-CarModels-Repo": str(profile.source_repo_root()),
             },
             report_context=record.context,
             progress_callback=progress_callback,
@@ -791,12 +792,13 @@ def _bmw_models_repo_path(root: Path) -> Path:
 
 
 def _delivery_checklist_root(root: Path) -> Path:
-    return root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist"
+    return mirror_repo_root(root) / ".pdx" / "checkers" / "deliveryChecklist"
 
 
 def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
     root = workspace_root(repo_root)
-    mirror_root = root / "repositories" / "trunk"
+    mirror_root = mirror_repo_root(root)
+    source_root = resolve_source_repo_root(root)
     checker_root = mirror_root / ".pdx" / "checkers"
     bmw_models_repo = _bmw_models_repo_path(root)
     delivery_checklist_root = _delivery_checklist_root(root)
@@ -805,6 +807,7 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
     blender_executable = _blender_executable_path(root)
     checks = [
         ("workspace_root", root),
+        ("source_root", source_root),
         ("mirror_root", mirror_root),
         ("checker_root", checker_root),
         ("reference_root", Path(r"C:\repositories\trunk")),
@@ -935,7 +938,7 @@ def qa_workflow_status(
     ready_profiles = [
         profile
         for profile in live_profiles
-        if profile.project_root.exists() and profile.config_path.exists()
+        if profile.source_project_root().exists() and profile.config_path.exists()
     ]
 
     bmw_models_ready = readiness.get("bmw_models_repo", {}).get("status") == "available"
@@ -973,11 +976,11 @@ def qa_workflow_status(
                 else "No canonical live profile is currently ready on this machine."
             ),
             "sg_preflight_role": (
-                "This is the current core scope: catch deterministic issues early on the mirrored SG slices and persist reusable evidence."
+                "This is the current core scope: catch deterministic issues early on the live SG source tree and persist reusable evidence."
             ),
             "blockers": []
             if ready_profiles
-            else ["The mirrored SG live slices or their configs are missing on this machine."],
+            else ["The live SG slices or their configs are missing on this machine."],
         },
         {
             "key": "repo_scene_checks",

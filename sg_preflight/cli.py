@@ -42,6 +42,12 @@ from sg_preflight.services import (
     qa_workflow_status,
     sg_checker_catalog,
 )
+from sg_preflight.screenshot_triage import materialize_screenshot_triage
+from sg_preflight.ticket_review import (
+    default_ticket_review_output_root,
+    materialize_ticket_review_bundle,
+)
+from sg_preflight.visual_review import build_visual_review_prep
 
 
 def _console_safe(text: str) -> str:
@@ -262,6 +268,66 @@ def _console_action_record(record: object, *, as_json: bool = False) -> None:
             print(f"  - {artifact.get('label', 'artifact')}: {artifact.get('path', '')}")
 
 
+def _console_ticket_review(result: object, *, as_json: bool = False) -> None:
+    bundle = result.bundle
+    if as_json:
+        print(json.dumps(bundle.to_dict(), indent=2, ensure_ascii=False))
+        return
+
+    print(f"Ticket: {bundle.ticket_id} ({bundle.title})")
+    print(f"Overall status: {bundle.overall_status}")
+    print(f"Profiles: {', '.join(bundle.profile_ids) if bundle.profile_ids else 'none confirmed'}")
+    print(f"Package root: {result.package_root}")
+    print(f"ZIP: {result.zip_path}")
+    print(f"Review status: {result.review_status_path}")
+    print(f"DoD matrix: {result.dod_matrix_path}")
+    print(f"DoD update draft: {result.dod_update_draft_path}")
+    print(f"Teams update: {result.teams_update_path}")
+    print(f"Stakeholder sync: {result.stakeholder_sync_path}")
+    print(f"Review protocol: {result.review_protocol_path}")
+    print(f"Owner matrix: {result.owner_matrix_path}")
+    print(f"QA capability matrix: {result.qa_capability_matrix_path}")
+    print(f"3D QA playbook: {result.three_d_qa_playbook_path}")
+    print(f"Repo topology reference: {result.repo_topology_reference_path}")
+    print(f"Delivery surface map: {result.delivery_surface_map_path}")
+    print(f"RaCo script catalog: {result.raco_script_catalog_path}")
+    print(f"Delivery target catalog: {result.delivery_target_catalog_path}")
+    print(f"Manual review companion: {result.manual_review_companion_path}")
+    print(f"Manual evidence index: {result.manual_evidence_index_path}")
+    print(f"Manual evidence JSON: {result.manual_evidence_json_path}")
+    if bundle.findings:
+        print("Findings:")
+        for finding in bundle.findings[:5]:
+            location = finding.path
+            if finding.line is not None and location:
+                location = f"{location}:{finding.line}"
+            print(f"  - [{finding.severity}] {finding.summary} :: {location or 'path unavailable'}")
+
+
+def _console_screenshot_triage(bundle: object, *, as_json: bool = False) -> None:
+    report = bundle.report
+    if as_json:
+        print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+        return
+
+    print(f"Screenshot triage: {report.profile_id}")
+    print(f"Project root: {report.project_root}")
+    print(f"Expected root: {report.expected_root or 'not found'}")
+    print(
+        "Summary -> "
+        f"pairs: {report.pair_count} | "
+        f"unchanged: {report.unchanged_count} | "
+        f"near-identical: {report.near_identical_count} | "
+        f"needs review: {report.needs_review_count} | "
+        f"missing candidate: {report.missing_candidate_count} | "
+        f"missing baseline: {report.missing_baseline_count} | "
+        f"dimension mismatch: {report.dimension_mismatch_count}"
+    )
+    print(f"Markdown: {bundle.markdown_path}")
+    print(f"HTML: {bundle.html_path}")
+    print(f"JSON: {bundle.json_path}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sg-preflight")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -295,6 +361,45 @@ def build_parser() -> argparse.ArgumentParser:
 
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
+
+    ticket_review = sub.add_parser(
+        "ticket-review",
+        help="Generate a ticket-centered QA support package from live action records and SVN-backed review prep",
+    )
+    ticket_review.add_argument("ticket_id", help="Ticket id such as IDCEVODEV-960073")
+    ticket_review.add_argument("--title", default="", help="Ticket title override")
+    ticket_review.add_argument(
+        "--profile",
+        action="append",
+        default=[],
+        help="Profile id to ground locally, repeatable (for example: --profile G70)",
+    )
+    ticket_review.add_argument("--workspace", help="Workspace root override")
+    ticket_review.add_argument("--output-root", help="Output directory for the generated package")
+    ticket_review.add_argument("--scope-note", default="", help="Explicit scope caveat or note to include")
+    ticket_review.add_argument(
+        "--candidate-root",
+        action="append",
+        default=[],
+        help="Explicit candidate screenshot root (repeatable)",
+    )
+    ticket_review.add_argument("--json", action="store_true", help="Print bundle payload as JSON")
+
+    screenshot_triage = sub.add_parser(
+        "screenshot-triage",
+        help="Run deterministic screenshot triage over expected baselines and any detected candidate roots",
+    )
+    screenshot_triage.add_argument("--profile", help="Canonical profile id such as G70")
+    screenshot_triage.add_argument("--project-root", help="Explicit project root override")
+    screenshot_triage.add_argument(
+        "--candidate-root",
+        action="append",
+        default=[],
+        help="Explicit candidate screenshot root (repeatable)",
+    )
+    screenshot_triage.add_argument("--workspace", help="Workspace root override")
+    screenshot_triage.add_argument("--output-root", help="Directory to write triage artifacts")
+    screenshot_triage.add_argument("--json", action="store_true", help="Print triage payload as JSON")
 
     run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
     run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
@@ -531,6 +636,61 @@ def main(argv: list[str] | None = None) -> int:
         _console_workflow_status(items, as_json=args.json)
         return 0
 
+    if args.command == "ticket-review":
+        review_root = Path(args.workspace).resolve() if args.workspace else root
+        output_root = (
+            Path(args.output_root).resolve()
+            if args.output_root
+            else default_ticket_review_output_root(args.ticket_id, review_root)
+        )
+        try:
+            result = materialize_ticket_review_bundle(
+                args.ticket_id,
+                title=args.title or args.ticket_id,
+                profile_ids=tuple(str(item).strip() for item in args.profile if str(item).strip()),
+                workspace=review_root,
+                output_root=output_root,
+                scope_note=args.scope_note,
+                candidate_roots=tuple(Path(item).resolve() for item in args.candidate_root if str(item).strip()),
+            )
+        except Exception as exc:
+            print(_console_safe(f"ticket-review failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_ticket_review(result, as_json=args.json)
+        return 0
+
+    if args.command == "screenshot-triage":
+        triage_root = Path(args.workspace).resolve() if args.workspace else root
+        if not args.profile and not args.project_root:
+            parser.error("screenshot-triage needs either --profile or --project-root")
+            return 1
+        try:
+            if args.profile:
+                profile = get_run_profile(args.profile, triage_root)
+                profile_id = profile.profile_id
+                project_root = profile.source_project_root()
+            else:
+                project_root = Path(args.project_root).resolve()
+                profile_id = project_root.name
+            prep = build_visual_review_prep(profile_id, project_root)
+            output_root = (
+                Path(args.output_root).resolve()
+                if args.output_root
+                else triage_root / "out" / f"{profile_id.lower()}-screenshot-triage"
+            )
+            bundle = materialize_screenshot_triage(
+                profile_id,
+                project_root,
+                output_root,
+                candidate_roots=tuple(Path(item).resolve() for item in args.candidate_root if str(item).strip()),
+                priority_names=tuple(str(item) for item in prep.priority_screenshots),
+            )
+        except Exception as exc:
+            print(_console_safe(f"screenshot-triage failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_screenshot_triage(bundle, as_json=args.json)
+        return 0
+
     if args.command == "run-profile":
         try:
             packs = parse_packs(args.packs)
@@ -765,3 +925,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.error(f"Unhandled command: {args.command}")
     return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

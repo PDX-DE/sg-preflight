@@ -190,12 +190,12 @@ def list_checker_catalog(
     ready_profiles = [
         profile
         for profile in live_profiles
-        if profile.project_root.exists() and profile.config_path.exists()
+        if profile.source_project_root().exists() and profile.config_path.exists()
     ]
     unused_ready_profiles = [
         profile
         for profile in ready_profiles
-        if (profile.project_root / "resources").exists() and any(profile.project_root.rglob("*.rca"))
+        if (profile.source_project_root() / "resources").exists() and any(profile.source_project_root().rglob("*.rca"))
     ]
     bmw_targets_ready = any(profile.bmw_smoke_target.strip() for profile in live_profiles)
     delivery_assets_ready = all(

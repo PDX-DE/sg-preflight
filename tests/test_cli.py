@@ -230,6 +230,68 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(run_snapshot_payload["run_id"], run_record.run_id)
         self.assertIn("Counts:", run_snapshot_payload["summary_lines"][1])
 
+    def test_ticket_review_cli_forwards_candidate_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            candidate_root = root / "manual-candidates"
+            candidate_root.mkdir(parents=True, exist_ok=True)
+            fake_result = mock.Mock()
+            fake_result.bundle = mock.Mock()
+
+            with mock.patch("sg_preflight.cli.materialize_ticket_review_bundle", return_value=fake_result) as materialize:
+                with mock.patch("sg_preflight.cli._console_ticket_review") as console:
+                    result = main(
+                        [
+                            "ticket-review",
+                            "IDCEVODEV-960073",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G65",
+                            "--candidate-root",
+                            str(candidate_root),
+                        ]
+                    )
+
+        self.assertEqual(result, 0)
+        console.assert_called_once()
+        self.assertEqual(
+            materialize.call_args.kwargs["candidate_roots"],
+            (candidate_root.resolve(),),
+        )
+
+    def test_screenshot_triage_cli_forwards_candidate_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "G70"
+            project_root.mkdir(parents=True, exist_ok=True)
+            candidate_root = root / "manual-candidates"
+            candidate_root.mkdir(parents=True, exist_ok=True)
+            fake_bundle = mock.Mock()
+            fake_bundle.report = mock.Mock()
+
+            with mock.patch("sg_preflight.cli.build_visual_review_prep", return_value=mock.Mock(priority_screenshots=("focus.png",))):
+                with mock.patch("sg_preflight.cli.materialize_screenshot_triage", return_value=fake_bundle) as materialize:
+                    with mock.patch("sg_preflight.cli._console_screenshot_triage") as console:
+                        result = main(
+                            [
+                                "screenshot-triage",
+                                "--project-root",
+                                str(project_root),
+                                "--workspace",
+                                str(root),
+                                "--candidate-root",
+                                str(candidate_root),
+                            ]
+                        )
+
+        self.assertEqual(result, 0)
+        console.assert_called_once()
+        self.assertEqual(
+            materialize.call_args.kwargs["candidate_roots"],
+            (candidate_root.resolve(),),
+        )
+
     def test_good_demo_passes(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "demo-good"],

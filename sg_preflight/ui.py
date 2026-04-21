@@ -202,10 +202,11 @@ def _doc_file_link(root: Path, relative_path: str) -> dict[str, str]:
 
 def _profile_card(root: Path, profile: RunProfile) -> dict[str, Any]:
     live_signal = _latest_matrix_signal(root, profile)
-    is_ready = profile.project_root.exists() and profile.config_path.exists()
+    source_project_root = profile.source_project_root()
+    is_ready = source_project_root.exists() and profile.config_path.exists()
     return {
         "profile": profile,
-        "project_exists": profile.project_root.exists(),
+        "project_exists": source_project_root.exists(),
         "config_exists": profile.config_path.exists(),
         "is_ready": is_ready,
         "readiness_label": "Ready for a local run" if is_ready else "Needs local setup attention",

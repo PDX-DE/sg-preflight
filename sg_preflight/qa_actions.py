@@ -21,7 +21,7 @@ from sg_preflight.checker_evidence import (
     parse_scene_check_output,
     parse_unused_resources_output,
 )
-from sg_preflight.profiles import RunProfile, list_run_profiles
+from sg_preflight.profiles import RunProfile, list_run_profiles, resolve_source_repo_root
 from sg_preflight.services import (
     RunRequest,
     build_progress_payload,
@@ -311,6 +311,7 @@ def list_operator_actions(
     root = workspace_root(workspace)
     live_profiles = profiles or list_run_profiles(root)
     status_map = _status_map(root)
+    source_root = resolve_source_repo_root(root)
     mirror_root = root / "repositories" / "trunk"
     style_script, checker_script = _repo_checker_paths(mirror_root)
     unused_resources_script = _unused_resources_script_path(mirror_root)
@@ -324,19 +325,19 @@ def list_operator_actions(
         OperatorAction(
             action_id="repo_checker_all",
             label="Run full repo checkers",
-            description="Run the SG checker stack over the full mirrored SG repo root, matching `checkall.bat` scope without calling the batch wrapper directly.",
+            description="Run the SG checker stack over the live SG repo root, matching `checkall.bat` scope without calling the batch wrapper directly.",
             kind="repo_checker",
             scope="workspace",
-            ready=checker_ready and mirror_root.exists(),
+            ready=checker_ready and source_root.exists(),
             blocker_message=(
                 ""
-                if checker_ready and mirror_root.exists()
-                else "The mirrored SG checker stack (`check_all_styles.py` + `executeChecks.py`) or repo root is missing."
+                if checker_ready and source_root.exists()
+                else "The SG checker stack (`check_all_styles.py` + `executeChecks.py`) or live source repo root is missing."
             ),
             command_preview=_repo_checker_command_preview(
                 style_script,
                 checker_script,
-                mirror_root,
+                source_root,
             ),
         ),
         OperatorAction(
@@ -345,10 +346,10 @@ def list_operator_actions(
             description="Run the recommended SG QA stack across the ready live SG slices and write one shared summary.",
             kind="daily_live_matrix",
             scope="workspace",
-            ready=any(profile.project_root.exists() and profile.config_path.exists() for profile in live_profiles),
+            ready=any(profile.source_project_root().exists() and profile.config_path.exists() for profile in live_profiles),
             blocker_message=(
                 ""
-                if any(profile.project_root.exists() and profile.config_path.exists() for profile in live_profiles)
+                if any(profile.source_project_root().exists() and profile.config_path.exists() for profile in live_profiles)
                 else "No ready live SG profiles are configured on this machine."
             ),
             command_preview="internal: run the recommended QA stack across all ready live profiles",
@@ -359,16 +360,16 @@ def list_operator_actions(
             description="Run the SG checker stack over the mirrored `Cars_IDCevo` tree.",
             kind="repo_checker",
             scope="workspace",
-            ready=checker_ready and (mirror_root / "Cars_IDCevo").exists(),
+            ready=checker_ready and (source_root / "Cars_IDCevo").exists(),
             blocker_message=(
                 ""
-                if checker_ready and (mirror_root / "Cars_IDCevo").exists()
-                else "The mirrored SG checker stack (`check_all_styles.py` + `executeChecks.py`) or `Cars_IDCevo` tree is missing."
+                if checker_ready and (source_root / "Cars_IDCevo").exists()
+                else "The SG checker stack (`check_all_styles.py` + `executeChecks.py`) or live `Cars_IDCevo` tree is missing."
             ),
             command_preview=_repo_checker_command_preview(
                 style_script,
                 checker_script,
-                mirror_root / "Cars_IDCevo",
+                source_root / "Cars_IDCevo",
             ),
         ),
         OperatorAction(
@@ -377,21 +378,22 @@ def list_operator_actions(
             description="Run the SG checker stack over the mirrored `Cars` tree.",
             kind="repo_checker",
             scope="workspace",
-            ready=checker_ready and (mirror_root / "Cars").exists(),
+            ready=checker_ready and (source_root / "Cars").exists(),
             blocker_message=(
                 ""
-                if checker_ready and (mirror_root / "Cars").exists()
-                else "The mirrored SG checker stack (`check_all_styles.py` + `executeChecks.py`) or `Cars` tree is missing."
+                if checker_ready and (source_root / "Cars").exists()
+                else "The SG checker stack (`check_all_styles.py` + `executeChecks.py`) or live `Cars` tree is missing."
             ),
             command_preview=_repo_checker_command_preview(
                 style_script,
                 checker_script,
-                mirror_root / "Cars",
+                source_root / "Cars",
             ),
         ),
     ]
 
     for profile in live_profiles:
+        source_project_root = profile.source_project_root()
         actions.append(
             OperatorAction(
                 action_id=f"qa_stack__{profile.profile_id.lower()}",
@@ -401,14 +403,14 @@ def list_operator_actions(
                 ),
                 kind="profile_stack",
                 scope="profile",
-                ready=profile.project_root.exists() and profile.config_path.exists(),
+                ready=source_project_root.exists() and profile.config_path.exists(),
                 blocker_message=(
                     ""
-                    if profile.project_root.exists() and profile.config_path.exists()
+                    if source_project_root.exists() and profile.config_path.exists()
                     else f"The project root or config for {profile.profile_id} is missing, so the recommended stack cannot start."
                 ),
                 profile_id=profile.profile_id,
-                project_root=str(profile.project_root),
+                project_root=str(source_project_root),
                 command_preview=(
                     "internal: standard preflight + repo checker + unused resource scan + scene check + delivery checklist readiness + BMW smoke readiness summary"
                 ),
@@ -421,21 +423,21 @@ def list_operator_actions(
                 description=f"Run the SG checker stack only for the {profile.profile_id} project tree.",
                 kind="repo_checker",
                 scope="profile",
-                ready=checker_ready and profile.project_root.exists(),
+                ready=checker_ready and source_project_root.exists(),
                 blocker_message=(
                     ""
-                    if checker_ready and profile.project_root.exists()
+                    if checker_ready and source_project_root.exists()
                     else (
-                        f"The mirrored SG checker stack (`check_all_styles.py` + `executeChecks.py`) "
+                        f"The SG checker stack (`check_all_styles.py` + `executeChecks.py`) "
                         f"or project root for {profile.profile_id} is missing."
                     )
                 ),
                 profile_id=profile.profile_id,
-                project_root=str(profile.project_root),
+                project_root=str(source_project_root),
                 command_preview=_repo_checker_command_preview(
                     style_script,
                     checker_script,
-                    profile.project_root,
+                    source_project_root,
                 ),
             )
         )
@@ -450,31 +452,31 @@ def list_operator_actions(
                 scope="profile",
                 ready=(
                     unused_resources_script.exists()
-                    and profile.project_root.exists()
-                    and _unused_resources_inputs(profile.project_root)[0].exists()
-                    and any(profile.project_root.rglob("*.rca"))
+                    and source_project_root.exists()
+                    and _unused_resources_inputs(source_project_root)[0].exists()
+                    and any(source_project_root.rglob("*.rca"))
                 ),
                 blocker_message=(
                     ""
                     if (
                         unused_resources_script.exists()
-                        and profile.project_root.exists()
-                        and _unused_resources_inputs(profile.project_root)[0].exists()
-                        and any(profile.project_root.rglob("*.rca"))
+                        and source_project_root.exists()
+                        and _unused_resources_inputs(source_project_root)[0].exists()
+                        and any(source_project_root.rglob("*.rca"))
                     )
                     else (
                         "Unused resource scan needs `printNotUsedResources.py`, a local `resources` tree, and at least one `.rca` scene under the project root."
                     )
                 ),
                 profile_id=profile.profile_id,
-                project_root=str(profile.project_root),
+                project_root=str(source_project_root),
                 command_preview=_unused_resources_command_preview(
                     unused_resources_script,
-                    profile.project_root,
+                    source_project_root,
                 ),
             )
         )
-        delivery_checklist_ready = profile.project_root.exists() and all(
+        delivery_checklist_ready = source_project_root.exists() and all(
             path.exists()
             for key, path in delivery_checklist_paths.items()
             if key != "root"
@@ -484,7 +486,7 @@ def list_operator_actions(
                 action_id=f"delivery_checklist__{profile.profile_id.lower()}",
                 label=f"Check delivery checklist readiness for {profile.profile_id}",
                 description=(
-                    f"Inspect the mirrored SG delivery-checklist assets plus BMW-side prerequisites for {profile.profile_id} without pretending the external BMW flow runs here."
+                    f"Inspect the SG delivery-checklist bridge assets plus BMW-side prerequisites for {profile.profile_id} without pretending the external BMW flow runs here."
                 ),
                 kind="delivery_checklist",
                 scope="profile",
@@ -498,7 +500,7 @@ def list_operator_actions(
                     )
                 ),
                 profile_id=profile.profile_id,
-                project_root=str(profile.project_root),
+                project_root=str(source_project_root),
                 command_preview=_delivery_checklist_command_preview(profile),
             )
         )
@@ -509,10 +511,10 @@ def list_operator_actions(
                 description=f"Run SG scene checking over every `.rca` under the {profile.profile_id} project tree.",
                 kind="scene_check",
                 scope="profile",
-                ready=scene_ready and profile.project_root.exists(),
+                ready=scene_ready and source_project_root.exists(),
                 blocker_message=(
                     ""
-                    if scene_ready and profile.project_root.exists()
+                    if scene_ready and source_project_root.exists()
                     else (
                         "The mirrored `check_scenes.py` helper is missing."
                         if not scene_checker.exists()
@@ -520,8 +522,8 @@ def list_operator_actions(
                     )
                 ),
                 profile_id=profile.profile_id,
-                project_root=str(profile.project_root),
-                command_preview=f"{sys.executable} {scene_checker} --raco {raco_headless} --dir {profile.project_root}",
+                project_root=str(source_project_root),
+                command_preview=f"{sys.executable} {scene_checker} --raco {raco_headless} --dir {source_project_root}",
             )
         )
         bmw_smoke_blocker = _bmw_smoke_blocker_message(status_map, profile)
@@ -539,7 +541,7 @@ def list_operator_actions(
                 ready=not bmw_smoke_blocker,
                 blocker_message=bmw_smoke_blocker,
                 profile_id=profile.profile_id,
-                project_root=str(profile.project_root),
+                project_root=str(source_project_root),
                 command_preview=(
                     f"{sys.executable} {bmw_script} export {target} && "
                     f"{sys.executable} {bmw_script} screenshots --diff {target}"
@@ -868,7 +870,12 @@ def _visual_review_prep_entries(record: ActionRecord, root: Path) -> tuple[list[
     output_root = Path(record.paths.get("output_root", "")).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
-    bundle = materialize_visual_review_prep(record.profile_id or project_root.name, project_root, output_root)
+    bundle = materialize_visual_review_prep(
+        record.profile_id or project_root.name,
+        project_root,
+        output_root,
+        repo_root=resolve_source_repo_root(root),
+    )
     record.paths["visual_review_prep_json"] = str(bundle.json_path)
     record.paths["visual_review_prep_md"] = str(bundle.markdown_path)
     record.paths["visual_review_gallery_html"] = str(bundle.html_path)
@@ -881,6 +888,8 @@ def _visual_review_prep_entries(record: ActionRecord, root: Path) -> tuple[list[
     ]
     if prep.changelog_path:
         artifacts.append(_artifact("Project changelog", Path(prep.changelog_path)))
+    for readme_path in prep.project_readme_paths[:4]:
+        artifacts.append(_artifact("Project README", Path(readme_path)))
     if prep.screenshot_root:
         artifacts.append(_artifact("Screenshot baselines", Path(prep.screenshot_root)))
     if prep.screenshot_test_config_path:
@@ -891,12 +900,20 @@ def _visual_review_prep_entries(record: ActionRecord, root: Path) -> tuple[list[
         artifacts.append(_artifact("Representative RaCo scene", Path(prep.raco_scene_path)))
     if prep.blender_workfile_path:
         artifacts.append(_artifact("Representative Blender workfile", Path(prep.blender_workfile_path)))
+    for shared_doc_path in prep.shared_doc_paths[:6]:
+        artifacts.append(_artifact("Shared BMW doc", Path(shared_doc_path)))
 
     notes: list[str] = []
     if prep.changelog_heading:
         notes.append(f"Visual review focus: {prep.changelog_heading}")
+    if prep.project_svn_log_lines:
+        notes.append("Recent project SVN: " + " | ".join(prep.project_svn_log_lines[:2]))
+    if prep.shared_svn_log_lines:
+        notes.append("Recent shared SVN: " + " | ".join(prep.shared_svn_log_lines[:2]))
     if prep.priority_screenshots:
         notes.append("Priority screenshot baselines: " + ", ".join(prep.priority_screenshots[:6]))
+    if prep.shared_doc_paths:
+        notes.append("Shared BMW docs to review: " + ", ".join(Path(path).name for path in prep.shared_doc_paths[:4]))
     if prep.raco_scene_path:
         notes.append(f"Representative RaCo scene ready to open: {prep.raco_scene_path}")
     if prep.blender_workfile_path:
@@ -1159,7 +1176,7 @@ def _execute_daily_live_matrix(record: ActionRecord, root: Path) -> tuple[dict[s
     profiles = [
         profile
         for profile in list_run_profiles(root)
-        if profile.project_root.exists() and profile.config_path.exists()
+        if profile.source_project_root().exists() and profile.config_path.exists()
     ]
     lines = []
     artifacts: list[dict[str, str]] = []
@@ -1548,10 +1565,11 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
 
 def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     mirror_root = root / "repositories" / "trunk"
+    source_root = resolve_source_repo_root(root)
     style_script, checker_script = _repo_checker_paths(mirror_root)
-    target = _repo_checker_target(record, mirror_root)
+    target = _repo_checker_target(record, source_root)
     env = os.environ.copy()
-    env["SG-Repo"] = str(mirror_root)
+    env["SG-Repo"] = str(source_root)
     _set_action_progress(
         record,
         step_key="style",
@@ -1775,7 +1793,7 @@ def _execute_delivery_checklist(
         step_key="summarize",
         percent=78,
         label="Summarizing delivery checklist readiness",
-        detail="Combining mirrored SG checklist assets with BMW-side dependency discovery.",
+        detail="Combining SG delivery-checklist bridge assets with BMW-side dependency discovery.",
         meta={
             "local_assets_found": local_found,
             "local_assets_total": len(local_assets),

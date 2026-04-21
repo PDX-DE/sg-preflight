@@ -188,7 +188,7 @@ def _ready_profiles(root: Path, profiles: list[RunProfile] | None = None) -> lis
     return [
         profile
         for profile in live_profiles
-        if profile.project_root.exists() and profile.config_path.exists()
+        if profile.source_project_root().exists() and profile.config_path.exists()
     ]
 
 
@@ -680,8 +680,12 @@ def desktop_manual_cards(
         else "Add docs/bmw-access-integration-checklist.md so BMW access and smoke setup can be tracked inside the shell flow."
     )
     review_prep = (
-        build_visual_review_prep(selected_profile.profile_id, selected_profile.project_root)
-        if selected_profile is not None and selected_profile.project_root.exists()
+        build_visual_review_prep(
+            selected_profile.profile_id,
+            selected_profile.source_project_root(),
+            repo_root=selected_profile.source_repo_root(),
+        )
+        if selected_profile is not None and selected_profile.source_project_root().exists()
         else None
     )
 
@@ -693,7 +697,7 @@ def desktop_manual_cards(
     if review_prep is not None and review_prep.screenshot_count:
         visual_review_summary = (
             f"Compare the changed area in Blender and RaCo, then cross-check it against "
-            f"{review_prep.screenshot_count} mirrored screenshot baselines."
+            f"{review_prep.screenshot_count} live screenshot baselines."
         )
 
     visual_review_note = (
@@ -733,9 +737,9 @@ def desktop_manual_cards(
                 label="Screenshot baseline review",
                 state="manual" if review_prep.screenshot_count else "blocked",
                 summary=(
-                    f"{review_prep.screenshot_count} mirrored screenshot baselines are available for local reference."
+                    f"{review_prep.screenshot_count} live screenshot baselines are available for local reference."
                     if review_prep.screenshot_count
-                    else "No mirrored screenshot baselines were detected under export/tests/expected."
+                    else "No live screenshot baselines were detected under export/tests/expected."
                 ),
                 note=(
                     "Priority shortlist: " + ", ".join(review_prep.priority_screenshots[:6])
@@ -759,6 +763,23 @@ def desktop_manual_cards(
                     )
                     if part
                 ) or "Representative RaCo or Blender files were not detected for this profile.",
+            )
+        )
+        cards.append(
+            DesktopManualCard(
+                key="shared_bmw_docs_review",
+                label="Shared BMW docs review",
+                state="manual" if (review_prep.shared_doc_paths or review_prep.shared_svn_log_lines) else "blocked",
+                summary=(
+                    f"{len(review_prep.shared_doc_paths)} shared BMW README / CHANGELOG file(s) were prioritized from the latest shared SVN log."
+                    if review_prep.shared_doc_paths
+                    else "No shared BMW README / CHANGELOG shortlist was generated."
+                ),
+                note=(
+                    "Shared SVN: " + " | ".join(review_prep.shared_svn_log_lines[:2])
+                    if review_prep.shared_svn_log_lines
+                    else "Open the generated Visual review prep from Files to inspect shared BMW SVN and README / CHANGELOG context."
+                ),
             )
         )
 

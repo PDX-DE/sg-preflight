@@ -4,31 +4,41 @@ import re
 import subprocess
 from pathlib import Path
 
+from sg_preflight.profiles import mirror_repo_root, resolve_source_repo_root
 
 RACO_PROBE_SCENE_CANDIDATES = (
-    Path("repositories/trunk/AmbientLayer/BMW_Default/main/Main.rca"),
-    Path("repositories/trunk/BaseScene.rca"),
+    Path("AmbientLayer/BMW_Default/main/Main.rca"),
+    Path("BaseScene.rca"),
 )
 
 
 def representative_raco_scene(root: Path) -> Path:
     resolved_root = root.resolve()
-    for relative_path in RACO_PROBE_SCENE_CANDIDATES:
-        candidate = resolved_root / relative_path
-        if candidate.exists():
-            return candidate
+    source_root = resolve_source_repo_root(resolved_root)
+    fallback_mirror_root = mirror_repo_root(resolved_root)
+    candidate_roots: list[Path] = []
+    for repo_root in (source_root, fallback_mirror_root):
+        resolved_repo_root = repo_root.resolve()
+        if resolved_repo_root in candidate_roots:
+            continue
+        candidate_roots.append(resolved_repo_root)
 
-    ambient_root = resolved_root / "repositories" / "trunk" / "AmbientLayer"
-    if ambient_root.exists():
-        match = next(ambient_root.rglob("Main.rca"), None)
-        if match is not None:
-            return match
+    for repo_root in candidate_roots:
+        for relative_path in RACO_PROBE_SCENE_CANDIDATES:
+            candidate = repo_root / relative_path
+            if candidate.exists():
+                return candidate
 
-    mirror_root = resolved_root / "repositories" / "trunk"
-    if mirror_root.exists():
-        match = next(mirror_root.rglob("*.rca"), None)
-        if match is not None:
-            return match
+        ambient_root = repo_root / "AmbientLayer"
+        if ambient_root.exists():
+            match = next(ambient_root.rglob("Main.rca"), None)
+            if match is not None:
+                return match
+
+        if repo_root.exists():
+            match = next(repo_root.rglob("*.rca"), None)
+            if match is not None:
+                return match
 
     return Path()
 
