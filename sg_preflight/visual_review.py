@@ -181,13 +181,13 @@ def _resolve_repo_root(project_root: Path, repo_root: Path | None) -> Path:
 
 def _find_changelog(project_root: Path) -> Path:
     candidate = project_root / "CHANGELOG.md"
-    if candidate.exists():
+    if candidate.is_file():
         return candidate
     return Path()
 
 
 def _parse_latest_changelog(path: Path) -> tuple[str, tuple[str, ...]]:
-    if not path.exists():
+    if not path.is_file():
         return "", ()
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     heading = ""
@@ -220,17 +220,17 @@ def _find_project_readmes(project_root: Path) -> tuple[str, ...]:
 
 def _find_screenshot_root(project_root: Path) -> Path:
     candidate = project_root / "export" / "tests" / "expected"
-    if candidate.exists():
+    if candidate.is_dir():
         return candidate
     return Path()
 
 
 def _find_constants_readme(profile_id: str, project_root: Path) -> Path:
     candidate = project_root / "_Common" / "constants" / f"README_constants_{profile_id}.md"
-    if candidate.exists():
+    if candidate.is_file():
         return candidate
     constants_root = project_root / "_Common" / "constants"
-    if constants_root.exists():
+    if constants_root.is_dir():
         matches = sorted(constants_root.glob("README*.md"))
         if matches:
             return matches[0]
@@ -239,15 +239,15 @@ def _find_constants_readme(profile_id: str, project_root: Path) -> Path:
 
 def _find_test_config(project_root: Path) -> Path:
     candidate = project_root / "export" / "tests" / "test_config.lua"
-    return candidate if candidate.exists() else Path()
+    return candidate if candidate.is_file() else Path()
 
 
 def _find_representative_scene(profile_id: str, project_root: Path) -> Path:
     preferred = project_root / "main" / f"Main_{profile_id}.rca"
-    if preferred.exists():
+    if preferred.is_file():
         return preferred
     main_root = project_root / "main"
-    if main_root.exists():
+    if main_root.is_dir():
         matches = sorted(main_root.glob("*.rca"))
         if matches:
             return matches[0]
@@ -257,7 +257,7 @@ def _find_representative_scene(profile_id: str, project_root: Path) -> Path:
 
 def _find_representative_blend(project_root: Path) -> Path:
     workfiles_root = project_root / "_Workfiles"
-    matches = sorted(workfiles_root.rglob("*.blend")) if workfiles_root.exists() else []
+    matches = sorted(workfiles_root.rglob("*.blend")) if workfiles_root.is_dir() else []
     if not matches:
         matches = sorted(project_root.rglob("*.blend"))
     if not matches:
@@ -323,13 +323,13 @@ def _priority_screenshots(screenshot_files: tuple[str, ...], keyword_lines: tupl
 
 def _find_shared_root(project_root: Path) -> Path:
     brand_root = project_root.parent
-    if not brand_root.exists():
+    if not brand_root.is_dir():
         return Path()
 
     preferred_names = ("_Shared_IDCevo", "_Shared") if "Cars_IDCevo" in project_root.parts else ("_Shared", "_Shared_IDCevo")
     for name in preferred_names:
         candidate = brand_root / name
-        if candidate.exists():
+        if candidate.is_dir():
             return candidate
 
     matches = sorted(candidate for candidate in brand_root.glob("_Shared*") if candidate.is_dir())
@@ -364,7 +364,7 @@ def _priority_doc_paths(paths: tuple[Path, ...], keyword_lines: tuple[str, ...],
 
 
 def _find_shared_docs(shared_root: Path, keyword_lines: tuple[str, ...]) -> tuple[str, ...]:
-    if not shared_root.exists():
+    if not shared_root.is_dir():
         return ()
 
     matches: list[Path] = []
@@ -387,9 +387,19 @@ def _svn_executable() -> Path | None:
     return None
 
 
+def _looks_like_svn_checkout(target: Path) -> bool:
+    candidate = target if target.is_dir() else target.parent
+    if not candidate.exists():
+        return False
+    for current in (candidate, *candidate.parents):
+        if (current / ".svn").is_dir():
+            return True
+    return False
+
+
 def _run_svn(args: list[str], target: Path) -> str:
     svn_executable = _svn_executable()
-    if svn_executable is None or not target.exists():
+    if svn_executable is None or not target.exists() or not _looks_like_svn_checkout(target):
         return ""
     try:
         completed = subprocess.run(
@@ -401,7 +411,7 @@ def _run_svn(args: list[str], target: Path) -> str:
             timeout=18,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, Exception):
         return ""
     if completed.returncode != 0:
         return ""
@@ -550,7 +560,7 @@ def build_visual_review_prep(
     project_svn_info_lines = _svn_info_lines(resolved_project_root)
     project_svn_log_lines = _svn_log_lines(resolved_project_root)
     shared_root = _find_shared_root(resolved_project_root)
-    shared_svn_log_lines = _svn_log_lines(shared_root) if shared_root.exists() else ()
+    shared_svn_log_lines = _svn_log_lines(shared_root) if shared_root.is_dir() else ()
     keyword_lines = changelog_focus_lines + project_svn_log_lines + shared_svn_log_lines
     project_readme_paths = _find_project_readmes(resolved_project_root)
     screenshot_root = _find_screenshot_root(resolved_project_root)
@@ -560,11 +570,11 @@ def build_visual_review_prep(
             for path in sorted(screenshot_root.iterdir())
             if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
         )
-        if screenshot_root.exists()
+        if screenshot_root.is_dir()
         else ()
     )
     priority = _priority_screenshots(screenshot_files, keyword_lines or changelog_focus_lines)
-    shared_doc_paths = _find_shared_docs(shared_root, keyword_lines) if shared_root.exists() else ()
+    shared_doc_paths = _find_shared_docs(shared_root, keyword_lines) if shared_root.is_dir() else ()
     constants_readme = _find_constants_readme(profile_id, resolved_project_root)
     raco_scene = _find_representative_scene(profile_id, resolved_project_root)
     blender_workfile = _find_representative_blend(resolved_project_root)
@@ -601,19 +611,19 @@ def build_visual_review_prep(
         source_root=str(resolved_repo_root),
         source_mode="real_svn_checkout" if _is_within(resolved_project_root, DEFAULT_REFERENCE_REPO_ROOT) else "local_svn_mirror",
         generated_at_utc=_utc_now(),
-        changelog_path=str(changelog_path) if changelog_path.exists() else "",
+        changelog_path=str(changelog_path) if changelog_path.is_file() else "",
         changelog_heading=changelog_heading,
         changelog_focus_lines=changelog_focus_lines,
         project_readme_paths=project_readme_paths,
-        screenshot_root=str(screenshot_root) if screenshot_root.exists() else "",
+        screenshot_root=str(screenshot_root) if screenshot_root.is_dir() else "",
         screenshot_count=len(screenshot_files),
         screenshot_files=screenshot_files,
         priority_screenshots=priority,
-        constants_readme_path=str(constants_readme) if constants_readme.exists() else "",
-        screenshot_test_config_path=str(test_config) if test_config.exists() else "",
-        raco_scene_path=str(raco_scene) if raco_scene.exists() else "",
-        blender_workfile_path=str(blender_workfile) if blender_workfile.exists() else "",
-        shared_root=str(shared_root) if shared_root.exists() else "",
+        constants_readme_path=str(constants_readme) if constants_readme.is_file() else "",
+        screenshot_test_config_path=str(test_config) if test_config.is_file() else "",
+        raco_scene_path=str(raco_scene) if raco_scene.is_file() else "",
+        blender_workfile_path=str(blender_workfile) if blender_workfile.is_file() else "",
+        shared_root=str(shared_root) if shared_root.is_dir() else "",
         shared_doc_paths=shared_doc_paths,
         project_svn_info_lines=project_svn_info_lines,
         project_svn_log_lines=project_svn_log_lines,

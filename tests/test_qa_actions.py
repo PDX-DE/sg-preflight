@@ -131,25 +131,33 @@ class TestQaActions(unittest.TestCase):
                 },
                 clear=False,
             ):
-                action = get_operator_action("scene_check__g65", root, profiles=[profile])
                 with mock.patch(
-                    "sg_preflight.qa_actions.subprocess.run",
-                    side_effect=[
-                        subprocess.CompletedProcess(
-                            args=[str(raco_exe)],
-                            returncode=1,
-                            stdout=scene_error_output,
-                            stderr="",
-                        ),
-                        subprocess.CompletedProcess(
-                            args=[str(raco_exe)],
-                            returncode=0,
-                            stdout=scene_clean_output,
-                            stderr="",
-                        ),
-                    ],
+                    "sg_preflight.services.probe_raco_runtime",
+                    return_value={
+                        "status": "available",
+                        "detail": "Synthetic runtime accepted for test execution.",
+                        "probe_path": str(profile.project_root / "main.rca"),
+                    },
                 ):
-                    record = execute_operator_action(action, root)
+                    action = get_operator_action("scene_check__g65", root, profiles=[profile])
+                    with mock.patch(
+                        "sg_preflight.qa_actions.subprocess.run",
+                        side_effect=[
+                            subprocess.CompletedProcess(
+                                args=[str(raco_exe)],
+                                returncode=1,
+                                stdout=scene_error_output,
+                                stderr="",
+                            ),
+                            subprocess.CompletedProcess(
+                                args=[str(raco_exe)],
+                                returncode=0,
+                                stdout=scene_clean_output,
+                                stderr="",
+                            ),
+                        ],
+                    ):
+                        record = execute_operator_action(action, root)
 
             self.assertEqual(record.status, "completed")
             self.assertTrue(Path(record.paths["log"]).exists())
@@ -161,8 +169,8 @@ class TestQaActions(unittest.TestCase):
             self.assertEqual(checker_evidence.get("checked_scenes"), 2)
             self.assertEqual(checker_evidence.get("scenes_with_errors"), 1)
             self.assertEqual(
-                checker_evidence.get("top_paths", [{}])[0].get("path"),
-                str(profile.project_root / "main.rca"),
+                Path(checker_evidence.get("top_paths", [{}])[0].get("path", "")).resolve(),
+                (profile.project_root / "main.rca").resolve(),
             )
             affected = checker_evidence.get("affected_files", [{}])[0]
             self.assertIn("File Load Error", affected.get("message", ""))
