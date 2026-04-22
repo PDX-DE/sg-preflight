@@ -12,6 +12,7 @@ enum class ShellScreen {
     Files,
     Environment,
     Stages,
+    ReviewBoard,
 };
 
 }  // namespace sg_preflight::native_shell

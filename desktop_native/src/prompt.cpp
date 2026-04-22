@@ -65,6 +65,8 @@ std::string BuildHelpPromptMessage(ShellScreen screen) {
         return "Environment Doctor shows what this machine can actually do right now.\n\nUse it to confirm Python/backend readiness, mirrored SG checker coverage, local RaCo or Blender adapters, BMW blockers, and output write access before you overclaim later stages.";
     case ShellScreen::Stages:
         return "Stages keeps the remaining follow-up visible.\n\nUse it to review blocked BMW/manual items, open the BMW intake checklist, attach manual evidence into the active action bundle, and keep audio/settings honest before you loop back to the next slice.";
+    case ShellScreen::ReviewBoard:
+        return "Review Board is the operator summary for the latest packaged review state.\n\nUse it to check package verification, the DoD summary, smoke and battery counts, the top review-priority items, owner decisions, and the exact artifact links that should be opened first.";
     case ShellScreen::Language:
         return "Choose the language used by the shell interface.\n\nProject data, checker output, and generated files stay the same.";
     default:

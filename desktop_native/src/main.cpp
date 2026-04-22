@@ -364,6 +364,7 @@ void RefreshSnapshot(ShellState& state);
 void RefreshRunSnapshot(ShellState& state);
 void RefreshResultPanels(ShellState& state);
 void RefreshProfilePanels(ShellState& state, bool refresh_results = true);
+void RefreshReviewBoardState(ShellState& state, bool update_status = true);
 void RenderLocalStatePanel(ShellState& state, const char* id, const char* title, float height, const std::string& loading_copy);
 void StartInitialShellLoad(ShellState& state);
 void PollInitialShellLoad(ShellState& state);
@@ -733,6 +734,7 @@ bool IsDenseWorkScreen(ShellScreen screen) {
     case ShellScreen::Files:
     case ShellScreen::Environment:
     case ShellScreen::Stages:
+    case ShellScreen::ReviewBoard:
         return true;
     case ShellScreen::Language:
     case ShellScreen::Introduction:
@@ -1557,6 +1559,9 @@ void SetScreen(ShellState& state, ShellScreen screen, bool play_cursor = true) {
     if (state.current_screen == screen) {
         return;
     }
+    if (screen == ShellScreen::ReviewBoard) {
+        RefreshReviewBoardState(state, false);
+    }
     TraceUi(std::string("screen_change from=") + ScreenLabel(state.current_screen) + " to=" + ScreenLabel(screen));
     state.previous_screen = state.current_screen;
     state.current_screen = screen;
@@ -1587,12 +1592,14 @@ int ScreenStepNumber(ShellScreen screen) {
         return 7;
     case ShellScreen::Stages:
         return 8;
+    case ShellScreen::ReviewBoard:
+        return 9;
     default:
         return 1;
     }
 }
 
-constexpr int kWizardStepCount = 8;
+constexpr int kWizardStepCount = 9;
 
 const char* ScreenTitle(ShellScreen screen) {
     switch (screen) {
@@ -1614,6 +1621,8 @@ const char* ScreenTitle(ShellScreen screen) {
         return "ENVIRONMENT DOCTOR";
     case ShellScreen::Stages:
         return "BLOCKERS / SETTINGS";
+    case ShellScreen::ReviewBoard:
+        return "REVIEW BOARD";
     default:
         return "SCREEN";
     }
@@ -1639,6 +1648,8 @@ const char* ScreenSummary(ShellScreen screen) {
         return "Check what this machine can actually run before pretending Blender, RaCo, or BMW stages are ready.";
     case ShellScreen::Stages:
         return "Check blocked BMW/manual steps, attach manual evidence, and keep the shell settings honest.";
+    case ShellScreen::ReviewBoard:
+        return "Read the latest packaged ticket state, review the top screenshot priorities, and open the exact artifacts that owners should see first.";
     default:
         return "Screen flow";
     }
@@ -1683,6 +1694,9 @@ size_t InstallerTextureIndexForState(const ShellState& state) {
         break;
     case ShellScreen::Stages:
         index = 5U;
+        break;
+    case ShellScreen::ReviewBoard:
+        index = 3U;
         break;
     }
     return index % g_shell_assets.install_images.size();
@@ -1783,6 +1797,8 @@ std::string NextButtonLabel(const ShellState& state) {
     case ShellScreen::Environment:
         return Tr(state, UiText::Stages);
     case ShellScreen::Stages:
+        return "BOARD";
+    case ShellScreen::ReviewBoard:
         return Tr(state, UiText::Return);
     default:
         return Tr(state, UiText::Next);
@@ -1797,6 +1813,7 @@ double AutoRunPollDelaySeconds(const ShellState& state) {
     case ShellScreen::Files:
     case ShellScreen::Environment:
     case ShellScreen::Stages:
+    case ShellScreen::ReviewBoard:
         return 6.0;
     case ShellScreen::Review:
         return 3.5;
@@ -2893,6 +2910,7 @@ void PollInitialShellLoad(ShellState& state) {
             "initial_load_complete profiles=" + std::to_string(state.profiles.size())
             + " current_profile=" + CurrentProfileId(state)
         );
+        RefreshReviewBoardState(state, false);
     }
     UpdateRunPollingDeadline(state);
 }
@@ -3335,6 +3353,23 @@ void RefreshProfiles(ShellState& state) {
     }
 }
 
+void RefreshReviewBoardState(ShellState& state, bool update_status) {
+    try {
+        state.review_board = sg_preflight::native_shell::LoadReviewBoard(state.backend, std::string());
+        state.last_error.clear();
+        if (update_status && state.review_board.has_value()) {
+            state.status_line = "Loaded review board for " + state.review_board->ticket_id + ".";
+        }
+    } catch (const std::exception& error) {
+        state.review_board.reset();
+        state.last_error = error.what();
+        if (update_status) {
+            state.status_line = "Loading the latest review board failed.";
+        }
+        PlayCue(UiCue::Error);
+    }
+}
+
 void SelectProfileById(ShellState& state, const std::string& profile_id) {
     const auto match = std::find_if(
         state.profiles.begin(),
@@ -3477,6 +3512,82 @@ bool CopyText(const std::wstring& text) {
     SetClipboardData(CF_UNICODETEXT, handle);
     CloseClipboard();
     return true;
+}
+
+const sg_preflight::native_shell::ArtifactItem* FindReviewBoardArtifact(
+    const ShellState& state,
+    std::string_view label
+) {
+    if (!state.review_board.has_value()) {
+        return nullptr;
+    }
+    for (const auto& artifact : state.review_board->artifacts) {
+        if (artifact.label == label && !artifact.path.empty()) {
+            return &artifact;
+        }
+    }
+    return nullptr;
+}
+
+std::wstring ReviewBoardArtifactPath(const ShellState& state, std::string_view label) {
+    const auto* artifact = FindReviewBoardArtifact(state, label);
+    return artifact == nullptr ? std::wstring() : sg_preflight::native_shell::ToWide(artifact->path);
+}
+
+std::wstring ReviewBoardPackageFolderPath(const ShellState& state) {
+    if (!state.review_board.has_value() || state.review_board->package_path.empty()) {
+        return {};
+    }
+    return sg_preflight::native_shell::ToWide(state.review_board->package_path);
+}
+
+std::string ReviewBoardScopeSummary(const sg_preflight::native_shell::ReviewBoardState& board) {
+    if (board.scope.empty()) {
+        return "No scope declared";
+    }
+    std::string joined;
+    for (size_t index = 0; index < board.scope.size(); ++index) {
+        if (index > 0U) {
+            joined += " / ";
+        }
+        joined += board.scope[index];
+    }
+    return joined;
+}
+
+std::string ReviewBoardPrimaryUnresolvedFamily(const sg_preflight::native_shell::ReviewBoardState& board) {
+    if (board.unresolved_families.empty()) {
+        return "none";
+    }
+    return board.unresolved_families.front();
+}
+
+std::string BuildReviewBoardStatusText(const sg_preflight::native_shell::ReviewBoardState& board) {
+    std::string text;
+    text += board.ticket_id.empty() ? "Review package local QA status" : board.ticket_id + " local QA status";
+    text += "\n";
+    text += "Scope: " + ReviewBoardScopeSummary(board) + "\n\n";
+    text += "Representative smoke: " + std::to_string(board.smoke_completed) + "/" + std::to_string(board.smoke_total) + " passed\n";
+    text += "Battery: " + std::to_string(board.exact_candidate_ready + board.proxy_candidate_ready) + "/" + std::to_string(board.battery_total) + " covered\n";
+    text += "Exact: " + std::to_string(board.exact_candidate_ready) + "\n";
+    text += "Proxy: " + std::to_string(board.proxy_candidate_ready) + "\n";
+    text += "Unresolved exact: " + ReviewBoardPrimaryUnresolvedFamily(board);
+    if (board.unresolved_families.size() > 1U) {
+        text += " +" + std::to_string(board.unresolved_families.size() - 1U) + " more";
+    }
+    text += "\n\nNeeds decision:\n";
+    for (const auto& decision : board.decisions) {
+        if (!decision.pending) {
+            continue;
+        }
+        text += "- " + decision.title + "\n";
+    }
+    for (const auto& item : board.open_items) {
+        if (item.find("Jira") != std::string::npos || item.find("jira") != std::string::npos) {
+            text += "- " + item + "\n";
+        }
+    }
+    return text;
 }
 
 std::wstring SelectedEvidencePath(const ShellState& state) {
@@ -4646,6 +4757,10 @@ InstallerCanvasLayout GetScreenCanvasLayout(ShellScreen screen) {
         return work_mode
             ? GetInstallerCanvasLayout(414.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
             : GetInstallerCanvasLayout(352.0f, 18.0f, 14.0f, 18.0f, 12.0f, 18.0f);
+    case ShellScreen::ReviewBoard:
+        return work_mode
+            ? GetInstallerCanvasLayout(428.0f, 22.0f, 14.0f, 16.0f, 12.0f, 18.0f)
+            : GetInstallerCanvasLayout(360.0f, 18.0f, 14.0f, 18.0f, 12.0f, 18.0f);
     case ShellScreen::Language:
     default:
         return GetInstallerCanvasLayout();
@@ -6182,7 +6297,7 @@ void RenderWizardFlow(ShellState& state) {
         ShellScreen screen;
         const char* label;
     };
-    const std::array<StepItem, 8> steps = {{
+    const std::array<StepItem, 9> steps = {{
         {ShellScreen::Introduction, "INTRO"},
         {ShellScreen::Select, "SELECT"},
         {ShellScreen::Review, "REVIEW"},
@@ -6191,6 +6306,7 @@ void RenderWizardFlow(ShellState& state) {
         {ShellScreen::Files, "FILES"},
         {ShellScreen::Environment, "ENV"},
         {ShellScreen::Stages, "STAGES"},
+        {ShellScreen::ReviewBoard, "BOARD"},
     }};
 
     InlineSectionLabel("Wizard Flow");
@@ -7096,6 +7212,205 @@ void RenderStagesScreen(ShellState& state) {
     EndScreenTransition();
 }
 
+void RenderReviewBoardScreen(ShellState& state) {
+    BeginScreenTransition(state);
+    const InstallerCanvasLayout layout = GetScreenCanvasLayout(ShellScreen::ReviewBoard);
+    DrawInstallerCanvasBackground(layout);
+
+    if (BeginCanvasOverlayRegion("review-board-description", layout.description_content_min, layout.description_content_max)) {
+        if (ImGui::BeginChild("review-board-description-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+            BeginScreenTextTransition(state);
+            const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+            if (g_title_font != nullptr) {
+                ImGui::PushFont(g_title_font);
+            }
+            ImGui::PushTextWrapPos(wrap_x);
+            ImGui::TextWrapped("%s", "Review Board");
+            ImGui::PopTextWrapPos();
+            if (g_title_font != nullptr) {
+                ImGui::PopFont();
+            }
+            ImGui::Spacing();
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "LATEST PACKAGED REVIEW STATE");
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+
+            if (!state.review_board.has_value()) {
+                ImGui::Spacing();
+                ImGui::PushTextWrapPos(wrap_x);
+                ImGui::TextWrapped("%s", "The native shell could not load a review-board state yet. Refresh the board to pull the latest package and daily snapshot state from the Python backend.");
+                if (!state.last_error.empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", state.last_error.c_str());
+                }
+                ImGui::PopTextWrapPos();
+                ImGui::Spacing();
+                if (DrawPanelButton("review-board-refresh-empty", "REFRESH STATE", ImVec2(ShellUi(220.0f), ShellUi(34.0f)), true, true)) {
+                    RefreshReviewBoardState(state, true);
+                }
+                ImGui::EndChild();
+                EndCanvasOverlayRegion();
+                EndScreenTransition();
+                return;
+            }
+
+            const auto& board = *state.review_board;
+            const ImVec4 verification_color =
+                board.verification_status == "ok" ? ImVec4(0.40f, 0.88f, 0.64f, 1.0f) :
+                (board.verification_status == "warning" ? ImVec4(0.95f, 0.68f, 0.19f, 1.0f) : ImVec4(0.92f, 0.48f, 0.35f, 1.0f));
+
+            ImGui::Text("%s", board.ticket_id.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", ReviewBoardScopeSummary(board).c_str());
+            if (!board.title.empty()) {
+                ImGui::PushTextWrapPos(wrap_x);
+                ImGui::TextWrapped("%s", board.title.c_str());
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::TextColored(verification_color, "Package verification: %s", board.verification_status.c_str());
+            ImGui::Text("DoD status: %s", board.dod_overall_status.c_str());
+            ImGui::Text("Visible progress: %d%%", board.visible_dod_progress_percent);
+            if (!board.generated_at.empty()) {
+                ImGui::TextDisabled("Generated: %s", board.generated_at.c_str());
+            }
+
+            ImGui::Spacing();
+            InlineSectionLabel("Execution Snapshot");
+            ImGui::BulletText("Smoke: %d/%d passed", board.smoke_completed, board.smoke_total);
+            ImGui::BulletText(
+                "Battery: %d total / %d exact / %d proxy / %d crash",
+                board.battery_total,
+                board.exact_candidate_ready,
+                board.proxy_candidate_ready,
+                board.runtime_crash
+            );
+            ImGui::BulletText("Unresolved exact family: %s", ReviewBoardPrimaryUnresolvedFamily(board).c_str());
+
+            ImGui::Spacing();
+            InlineSectionLabel("Primary Actions");
+            if (DrawPanelButton("review-board-refresh", "REFRESH STATE", ImVec2(ShellUi(188.0f), ShellUi(32.0f)), false, true)) {
+                RefreshReviewBoardState(state, true);
+            }
+            ImGui::SameLine();
+            if (DrawPanelButton("review-board-open-gallery", "OPEN GALLERY", ImVec2(ShellUi(188.0f), ShellUi(32.0f)), false, !ReviewBoardArtifactPath(state, "Candidate gallery").empty())) {
+                OpenPath(ReviewBoardArtifactPath(state, "Candidate gallery"));
+            }
+            if (DrawPanelButton("review-board-open-dod", "OPEN DOD MATRIX", ImVec2(ShellUi(188.0f), ShellUi(32.0f)), false, !ReviewBoardArtifactPath(state, "DoD matrix").empty())) {
+                OpenPath(ReviewBoardArtifactPath(state, "DoD matrix"));
+            }
+            ImGui::SameLine();
+            if (DrawPanelButton("review-board-open-daily", "OPEN DAILY SUMMARY", ImVec2(ShellUi(188.0f), ShellUi(32.0f)), false, !ReviewBoardArtifactPath(state, "Latest daily snapshot markdown").empty())) {
+                OpenPath(ReviewBoardArtifactPath(state, "Latest daily snapshot markdown"));
+            }
+            if (DrawPanelButton("review-board-open-package", "OPEN PACKAGE FOLDER", ImVec2(ShellUi(188.0f), ShellUi(32.0f)), false, !ReviewBoardPackageFolderPath(state).empty())) {
+                OpenFolderPath(ReviewBoardPackageFolderPath(state));
+            }
+            ImGui::SameLine();
+            if (DrawPanelButton("review-board-copy-status", "COPY STATUS", ImVec2(ShellUi(188.0f), ShellUi(32.0f)), true, true)) {
+                if (CopyText(sg_preflight::native_shell::ToWide(BuildReviewBoardStatusText(board)))) {
+                    state.status_line = "Copied review-board status.";
+                }
+            }
+
+            ImGui::Spacing();
+            InlineSectionLabel("Review First");
+            if (board.review_priority_items.empty()) {
+                ImGui::TextDisabled("No ranked review items are available in the current state.");
+            } else {
+                for (size_t index = 0; index < board.review_priority_items.size(); ++index) {
+                    const auto& item = board.review_priority_items[index];
+                    ImGui::Text("%zu. %s / %s", index + 1U, item.profile_id.c_str(), item.filter_name.c_str());
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("[%s | p=%d]", item.verdict.c_str(), item.priority_score);
+                    if (!item.reason.empty()) {
+                        ImGui::PushTextWrapPos(wrap_x);
+                        ImGui::TextWrapped("%s", item.reason.c_str());
+                        ImGui::PopTextWrapPos();
+                    }
+                    if (!item.recommendation.empty()) {
+                        ImGui::TextDisabled("%s", item.recommendation.c_str());
+                    }
+                    ImGui::Spacing();
+                }
+            }
+
+            ImGui::Spacing();
+            InlineSectionLabel("Open Blockers");
+            if (board.open_items.empty()) {
+                ImGui::TextDisabled("No open blockers are recorded in the current review-board state.");
+            } else {
+                for (const auto& item : board.open_items) {
+                    ImGui::BulletText("%s", item.c_str());
+                }
+            }
+        }
+        ImGui::EndChild();
+    }
+    EndCanvasOverlayRegion();
+
+    if (BeginCanvasOverlayRegion("review-board-side", layout.side_content_min, layout.side_content_max)) {
+        if (ImGui::BeginChild("review-board-side-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+            BeginScreenTextTransition(state);
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "OPEN DECISIONS");
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+
+            if (!state.review_board.has_value() || state.review_board->decisions.empty()) {
+                ImGui::TextDisabled("No review-owner decisions are bundled yet.");
+            } else {
+                for (const auto& item : state.review_board->decisions) {
+                    ImGui::Text("%s", item.title.c_str());
+                    ImGui::TextDisabled("%s", item.pending ? "Pending owner input" : "Recorded");
+                    ImGui::Spacing();
+                }
+            }
+
+            ImGui::Spacing();
+            BeginScreenTextTransition(state);
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "ARTIFACTS");
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+
+            if (!state.review_board.has_value() || state.review_board->artifacts.empty()) {
+                ImGui::TextDisabled("No artifact links are available.");
+            } else {
+                for (const auto& artifact : state.review_board->artifacts) {
+                    ImGui::Text("%s", artifact.label.c_str());
+                    ImGui::TextDisabled("%s", artifact.path.c_str());
+                    if (DrawPanelButton(
+                            ("review-board-artifact-" + artifact.label).c_str(),
+                            "OPEN",
+                            ImVec2(ShellUi(116.0f), ShellUi(28.0f)),
+                            false,
+                            !artifact.path.empty()
+                        )) {
+                        OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
+                    }
+                    ImGui::Spacing();
+                }
+            }
+        }
+        ImGui::EndChild();
+    }
+    EndCanvasOverlayRegion();
+    EndScreenTransition();
+}
+
 void RenderCurrentScreen(ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Language:
@@ -7124,6 +7439,9 @@ void RenderCurrentScreen(ShellState& state) {
         break;
     case ShellScreen::Stages:
         RenderStagesScreen(state);
+        break;
+    case ShellScreen::ReviewBoard:
+        RenderReviewBoardScreen(state);
         break;
     }
 }
@@ -7505,11 +7823,22 @@ void RenderButtonGuide(ShellState& state) {
         break;
     case ShellScreen::Stages:
         guide_items = {
-            {"guide-next", "Enter", Tr(state, UiText::Return), true, false, true},
+            {"guide-next", "Enter", "BOARD", true, false, true},
             {"guide-bmw-intake", "F8", "BMW Intake", !bmw_checklist_path.empty(), false, true},
             {"guide-jira", "F7", Tr(state, UiText::CopyJira), true, true, false},
             {"guide-hero", "F9", Tr(state, UiText::CopyQaHero), true, true, false},
             {"guide-handoff", "F10", Tr(state, UiText::CopyHandoff), true, true, false},
+            {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
+        };
+        break;
+    case ShellScreen::ReviewBoard:
+        guide_items = {
+            {"guide-next", "Enter", Tr(state, UiText::Return), true, false, true},
+            {"guide-gallery", "F5", "Open Gallery", !ReviewBoardArtifactPath(state, "Candidate gallery").empty(), false, true},
+            {"guide-dod", "F6", "Open DoD", !ReviewBoardArtifactPath(state, "DoD matrix").empty(), false, true},
+            {"guide-copy-status", "F7", "Copy Status", state.review_board.has_value(), false, true},
+            {"guide-package", "F8", "Open Package", !ReviewBoardPackageFolderPath(state).empty(), false, true},
+            {"guide-refresh", "F9", "Refresh", true, false, true},
             {"guide-back", "Esc", Tr(state, UiText::Back), true, true, true},
         };
         break;
@@ -8178,6 +8507,36 @@ void HandleShellHotkeys(ShellState& state) {
             }
             break;
         }
+        case ShellScreen::ReviewBoard:
+        {
+            if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+                const std::wstring path = ReviewBoardArtifactPath(state, "Candidate gallery");
+                if (!path.empty()) {
+                    OpenPath(path);
+                }
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) {
+                const std::wstring path = ReviewBoardArtifactPath(state, "DoD matrix");
+                if (!path.empty()) {
+                    OpenPath(path);
+                }
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_F7, false) || ImGui::IsKeyPressed(ImGuiKey_J, false)) {
+                if (state.review_board.has_value() && CopyText(sg_preflight::native_shell::ToWide(BuildReviewBoardStatusText(*state.review_board)))) {
+                    state.status_line = "Copied review-board status.";
+                }
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_F8, false)) {
+                const std::wstring path = ReviewBoardPackageFolderPath(state);
+                if (!path.empty()) {
+                    OpenFolderPath(path);
+                }
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_F9, false)) {
+                RefreshReviewBoardState(state, true);
+            }
+            break;
+        }
         default:
             break;
         }
@@ -8699,6 +9058,7 @@ void RenderShell(ShellState& state) {
     case ShellScreen::Files:
     case ShellScreen::Environment:
     case ShellScreen::Stages:
+    case ShellScreen::ReviewBoard:
         if (BeginLayoutRegionAt("screen-region", 0.0f, 0.0f, 1280.0f, 720.0f)) {
             RenderCurrentScreen(state);
             RenderWizardNavigation(state);

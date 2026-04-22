@@ -44,6 +44,8 @@ const char* ScreenLabel(sg_preflight::native_shell::ShellScreen screen) {
         return "ENV";
     case sg_preflight::native_shell::ShellScreen::Stages:
         return "STAGES";
+    case sg_preflight::native_shell::ShellScreen::ReviewBoard:
+        return "BOARD";
     default:
         return "SCREEN";
     }
@@ -115,6 +117,8 @@ bool CanAdvanceFromPage(const ShellState& state, sg_preflight::native_shell::She
         return true;
     case sg_preflight::native_shell::ShellScreen::Stages:
         return true;
+    case sg_preflight::native_shell::ShellScreen::ReviewBoard:
+        return true;
     default:
         return false;
     }
@@ -145,6 +149,8 @@ sg_preflight::native_shell::ShellScreen NextScreen(const ShellState& state, sg_p
     case sg_preflight::native_shell::ShellScreen::Environment:
         return sg_preflight::native_shell::ShellScreen::Stages;
     case sg_preflight::native_shell::ShellScreen::Stages:
+        return sg_preflight::native_shell::ShellScreen::ReviewBoard;
+    case sg_preflight::native_shell::ShellScreen::ReviewBoard:
         return sg_preflight::native_shell::ShellScreen::Select;
     default:
         return sg_preflight::native_shell::ShellScreen::Select;
@@ -171,6 +177,8 @@ sg_preflight::native_shell::ShellScreen PreviousScreen(const ShellState& state, 
         return HasArtifactsReady(state) ? sg_preflight::native_shell::ShellScreen::Files : sg_preflight::native_shell::ShellScreen::Run;
     case sg_preflight::native_shell::ShellScreen::Stages:
         return sg_preflight::native_shell::ShellScreen::Environment;
+    case sg_preflight::native_shell::ShellScreen::ReviewBoard:
+        return sg_preflight::native_shell::ShellScreen::Stages;
     default:
         return sg_preflight::native_shell::ShellScreen::Introduction;
     }
@@ -191,6 +199,8 @@ bool ShouldAutoRefreshRunInCurrentScreen(const ShellState& state) {
     case sg_preflight::native_shell::ShellScreen::Environment:
     case sg_preflight::native_shell::ShellScreen::Stages:
         return true;
+    case sg_preflight::native_shell::ShellScreen::ReviewBoard:
+        return false;
     case sg_preflight::native_shell::ShellScreen::Language:
     case sg_preflight::native_shell::ShellScreen::Introduction:
     case sg_preflight::native_shell::ShellScreen::Select:
