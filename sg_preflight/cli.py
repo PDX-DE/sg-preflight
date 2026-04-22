@@ -43,6 +43,13 @@ from sg_preflight.services import (
     sg_checker_catalog,
 )
 from sg_preflight.daily_snapshot import materialize_daily_qa_snapshot
+from sg_preflight.review_state import (
+    build_review_board_state,
+    list_review_packages,
+    load_daily_delta,
+    load_review_priority,
+    verify_sendable_package,
+)
 from sg_preflight.screenshot_triage import materialize_screenshot_triage
 from sg_preflight.ticket_review import (
     default_ticket_review_output_root,
@@ -296,6 +303,9 @@ def _console_ticket_review(result: object, *, as_json: bool = False) -> None:
     print(f"Manual review companion: {result.manual_review_companion_path}")
     print(f"Manual evidence index: {result.manual_evidence_index_path}")
     print(f"Manual evidence JSON: {result.manual_evidence_json_path}")
+    print(f"Review-owner decisions: {result.review_owner_decisions_path}")
+    print(f"Sent package manifest: {result.sent_package_manifest_path}")
+    print(f"ZIP SHA256 sidecar: {result.zip_sha256_path}")
     if bundle.findings:
         print("Findings:")
         for finding in bundle.findings[:5]:
@@ -342,6 +352,10 @@ def _console_daily_snapshot(result: object, *, as_json: bool = False) -> None:
     print(f"Config check: {snapshot.config_check.status}")
     print(f"Markdown: {result.markdown_path}")
     print(f"JSON: {result.json_path}")
+    if getattr(result, "review_priority_markdown_path", None):
+        print(f"Review priority ranking: {result.review_priority_markdown_path}")
+    if getattr(result, "delta_summary_markdown_path", None):
+        print(f"Daily delta summary: {result.delta_summary_markdown_path}")
     if snapshot.smoke_results:
         print("Smoke results:")
         for item in snapshot.smoke_results:
@@ -427,6 +441,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Explicit candidate screenshot root (repeatable)",
     )
+    ticket_review.add_argument(
+        "--sendable",
+        action="store_true",
+        help="Generate the clean sendable package variant (no internal action bundles).",
+    )
     ticket_review.add_argument("--json", action="store_true", help="Print bundle payload as JSON")
 
     screenshot_triage = sub.add_parser(
@@ -479,6 +498,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Additional broader screenshot battery filter to run (repeatable)",
     )
     daily_snapshot.add_argument("--json", action="store_true", help="Print snapshot payload as JSON")
+
+    review_board = sub.add_parser(
+        "review-board",
+        help="Inspect the latest ticket review package/operator state as structured JSON",
+    )
+    review_board_sub = review_board.add_subparsers(dest="review_board_command", required=True)
+
+    review_board_list = review_board_sub.add_parser("list", help="List discovered review packages")
+    review_board_list.add_argument("--workspace", help="Workspace root override")
+    review_board_list.add_argument("--json", action="store_true", help="Print package list as JSON")
+
+    review_board_latest = review_board_sub.add_parser("latest", help="Load the latest review-board state")
+    review_board_latest.add_argument("--workspace", help="Workspace root override")
+    review_board_latest.add_argument("--ticket-id", help="Optional ticket id filter")
+    review_board_latest.add_argument("--json", action="store_true", help="Print review-board state as JSON")
+
+    review_board_verify = review_board_sub.add_parser("verify", help="Verify one sendable package")
+    review_board_verify_group = review_board_verify.add_mutually_exclusive_group(required=True)
+    review_board_verify_group.add_argument("--latest", action="store_true", help="Verify the latest package")
+    review_board_verify_group.add_argument("--path", help="Package root or ZIP path to verify")
+    review_board_verify.add_argument("--workspace", help="Workspace root override")
+    review_board_verify.add_argument("--ticket-id", help="Optional ticket id filter for --latest")
+    review_board_verify.add_argument("--json", action="store_true", help="Print verification payload as JSON")
+
+    review_priority = sub.add_parser(
+        "review-priority",
+        help="Inspect latest screenshot review-priority artifacts as structured JSON",
+    )
+    review_priority_sub = review_priority.add_subparsers(dest="review_priority_command", required=True)
+    review_priority_latest = review_priority_sub.add_parser("latest", help="Load latest review-priority artifact")
+    review_priority_latest.add_argument("--workspace", help="Workspace root override")
+    review_priority_latest.add_argument("--ticket-id", help="Optional ticket id filter")
+    review_priority_latest.add_argument("--json", action="store_true", help="Print review-priority payload as JSON")
+
+    daily_delta = sub.add_parser(
+        "daily-delta",
+        help="Inspect latest daily QA delta artifacts as structured JSON",
+    )
+    daily_delta_sub = daily_delta.add_subparsers(dest="daily_delta_command", required=True)
+    daily_delta_latest = daily_delta_sub.add_parser("latest", help="Load latest daily QA delta artifact")
+    daily_delta_latest.add_argument("--workspace", help="Workspace root override")
+    daily_delta_latest.add_argument("--ticket-id", help="Optional ticket id filter")
+    daily_delta_latest.add_argument("--json", action="store_true", help="Print daily-delta payload as JSON")
 
     run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
     run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
@@ -594,6 +656,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     desktop_environment_parser.add_argument("--workspace", help="Workspace root override")
     desktop_environment_parser.add_argument("--json", action="store_true", help="Print environment payload as JSON")
+
+    desktop_review_board_parser = desktop_state_sub.add_parser(
+        "review-board",
+        help="Load the latest review-board state for native-shell consumers",
+    )
+    desktop_review_board_parser.add_argument("--ticket-id", help="Optional ticket id filter")
+    desktop_review_board_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_review_board_parser.add_argument("--json", action="store_true", help="Print review-board payload as JSON")
 
     desktop_attach_manual_parser = desktop_state_sub.add_parser(
         "attach-manual-evidence",
@@ -731,6 +801,7 @@ def main(argv: list[str] | None = None) -> int:
                 output_root=output_root,
                 scope_note=args.scope_note,
                 candidate_roots=tuple(Path(item).resolve() for item in args.candidate_root if str(item).strip()),
+                include_action_bundles=not args.sendable,
             )
         except Exception as exc:
             print(_console_safe(f"ticket-review failed: {exc}"), file=sys.stderr)
@@ -810,6 +881,56 @@ def main(argv: list[str] | None = None) -> int:
             print(_console_safe(f"daily-qa-snapshot failed: {exc}"), file=sys.stderr)
             return 1
         _console_daily_snapshot(result, as_json=args.json)
+        return 0
+
+    if args.command == "review-board":
+        review_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.review_board_command == "list":
+                payload = list_review_packages(review_root)
+            elif args.review_board_command == "latest":
+                payload = build_review_board_state(args.ticket_id, review_root)
+            elif args.review_board_command == "verify":
+                if args.latest:
+                    latest = build_review_board_state(args.ticket_id, review_root)
+                    payload = verify_sendable_package(latest["package_zip_path"] or latest["package_path"], review_root)
+                else:
+                    payload = verify_sendable_package(args.path, review_root)
+            else:
+                parser.error(f"Unhandled review-board command: {args.review_board_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"review-board failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_desktop_payload(payload)
+        return 0
+
+    if args.command == "review-priority":
+        review_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.review_priority_command == "latest":
+                payload = load_review_priority(args.ticket_id, review_root)
+            else:
+                parser.error(f"Unhandled review-priority command: {args.review_priority_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"review-priority failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_desktop_payload(payload)
+        return 0
+
+    if args.command == "daily-delta":
+        delta_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.daily_delta_command == "latest":
+                payload = load_daily_delta(args.ticket_id, delta_root)
+            else:
+                parser.error(f"Unhandled daily-delta command: {args.daily_delta_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"daily-delta failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_desktop_payload(payload)
         return 0
 
     if args.command == "run-profile":
@@ -942,6 +1063,8 @@ def main(argv: list[str] | None = None) -> int:
             payload = desktop_run_snapshot(args.run_id_or_path, state_root)
         elif args.desktop_state_command == "environment":
             payload = desktop_environment_doctor(state_root)
+        elif args.desktop_state_command == "review-board":
+            payload = build_review_board_state(args.ticket_id or None, state_root)
         elif args.desktop_state_command == "attach-manual-evidence":
             payload = attach_manual_evidence(
                 args.run_id_or_path,

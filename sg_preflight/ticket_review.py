@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -595,6 +596,9 @@ class TicketReviewBundleResult:
     manual_review_companion_path: Path
     manual_evidence_index_path: Path
     manual_evidence_json_path: Path
+    review_owner_decisions_path: Path
+    sent_package_manifest_path: Path
+    zip_sha256_path: Path
     zip_path: Path
 
 
@@ -1035,6 +1039,10 @@ def _package_daily_snapshot_result(
     packaged_gaps_markdown: Path | None = None
     packaged_gaps_json: Path | None = None
     packaged_review_gallery_html: Path | None = None
+    packaged_review_priority_markdown: Path | None = None
+    packaged_review_priority_json: Path | None = None
+    packaged_delta_summary_markdown: Path | None = None
+    packaged_delta_summary_json: Path | None = None
     if packaged_snapshot.battery_results:
         packaged_gaps_markdown = packaged_root / "battery-baseline-gaps.md"
         packaged_gaps_json = packaged_root / "battery-baseline-gaps.json"
@@ -1045,6 +1053,18 @@ def _package_daily_snapshot_result(
             packaged_review_gallery_html,
             _render_candidate_review_gallery(packaged_snapshot, html_root=packaged_review_gallery_html),
         )
+        if result.review_priority_markdown_path is not None:
+            packaged_review_priority_markdown = packaged_root / "review-priority-ranking.md"
+            _copy_file(result.review_priority_markdown_path, packaged_review_priority_markdown)
+        if result.review_priority_json_path is not None:
+            packaged_review_priority_json = packaged_root / "review-priority-ranking.json"
+            _copy_file(result.review_priority_json_path, packaged_review_priority_json)
+    if result.delta_summary_markdown_path is not None:
+        packaged_delta_summary_markdown = packaged_root / "daily-qa-delta-summary.md"
+        _copy_file(result.delta_summary_markdown_path, packaged_delta_summary_markdown)
+    if result.delta_summary_json_path is not None:
+        packaged_delta_summary_json = packaged_root / "daily-qa-delta-summary.json"
+        _copy_file(result.delta_summary_json_path, packaged_delta_summary_json)
 
     return DailyQaSnapshotResult(
         output_root=packaged_root,
@@ -1054,6 +1074,10 @@ def _package_daily_snapshot_result(
         battery_baseline_gaps_markdown_path=packaged_gaps_markdown,
         battery_baseline_gaps_json_path=packaged_gaps_json,
         review_gallery_html_path=packaged_review_gallery_html,
+        review_priority_markdown_path=packaged_review_priority_markdown,
+        review_priority_json_path=packaged_review_priority_json,
+        delta_summary_markdown_path=packaged_delta_summary_markdown,
+        delta_summary_json_path=packaged_delta_summary_json,
     )
 
 
@@ -2507,6 +2531,32 @@ def _build_dod_items(
             )
             screenshot_evidence.append(baseline_json_rel)
             support_evidence.append(baseline_json_rel)
+        if daily_snapshot.review_priority_markdown_path is not None:
+            priority_rel = _bundle_evidence(
+                "Review priority ranking",
+                daily_snapshot.review_priority_markdown_path,
+            )
+            screenshot_evidence.append(priority_rel)
+            support_evidence.append(priority_rel)
+        if daily_snapshot.review_priority_json_path is not None:
+            priority_json_rel = _bundle_evidence(
+                "Review priority ranking JSON",
+                daily_snapshot.review_priority_json_path,
+            )
+            screenshot_evidence.append(priority_json_rel)
+            support_evidence.append(priority_json_rel)
+        if daily_snapshot.delta_summary_markdown_path is not None:
+            delta_rel = _bundle_evidence(
+                "Daily QA delta summary",
+                daily_snapshot.delta_summary_markdown_path,
+            )
+            support_evidence.append(delta_rel)
+        if daily_snapshot.delta_summary_json_path is not None:
+            delta_json_rel = _bundle_evidence(
+                "Daily QA delta summary JSON",
+                daily_snapshot.delta_summary_json_path,
+            )
+            support_evidence.append(delta_json_rel)
         if daily_snapshot.review_gallery_html_path is not None:
             review_gallery_rel = _bundle_evidence(
                 "Candidate review gallery",
@@ -3248,6 +3298,116 @@ def _make_zip(package_root: Path) -> Path:
     return zip_path
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _dod_completion_percent(bundle: TicketReviewBundle) -> int:
+    status_points = {
+        "blocked": 0,
+        "needs_scope": 25,
+        "partial": 50,
+        "manual_ready": 60,
+        "prepared": 75,
+        "covered_with_findings": 100,
+        "covered": 100,
+    }
+    if not bundle.dod_items:
+        return 0
+    total = sum(status_points.get(item.status, 0) for item in bundle.dod_items)
+    return round(total / len(bundle.dod_items))
+
+
+def _review_owner_decisions_markdown(bundle: TicketReviewBundle) -> str:
+    lines = [
+        "# Review-owner decisions",
+        "",
+        f"- Ticket: `{bundle.ticket_id}`",
+        f"- Scope: `{', '.join(bundle.profile_ids) if bundle.profile_ids else 'none confirmed'}`",
+        "",
+        "## lights_OnlyCones",
+        "Decision: blocker / follow-up / accepted limitation / needs more investigation",
+        "Owner:",
+        "Date:",
+        "Notes:",
+        "",
+        "## Screenshot candidate/proxy outputs",
+        "Decision: accepted / needs changes / partial",
+        "Owner:",
+        "Date:",
+        "Notes:",
+        "",
+        "## RaCo asset review",
+        "Decision: passed / failed / not reviewed",
+        "Owner:",
+        "Date:",
+        "Notes:",
+        "",
+        "## Jira writeback",
+        "Status:",
+        "Owner:",
+        "",
+        "## Additional review-owner notes",
+        "",
+        "- screenshot tests bmws:",
+        "- check changelogs cars bmw:",
+        "- check readme cars bmw:",
+        "- check readme/changelogs cars shared bmw:",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _sent_package_manifest_markdown(
+    *,
+    bundle: TicketReviewBundle,
+    package_root: Path,
+    zip_path: Path,
+    zip_sha256_path: Path,
+    key_files: tuple[Path, ...],
+) -> str:
+    lines = [
+        "# SENT PACKAGE MANIFEST",
+        "",
+        f"- Ticket ID: `{bundle.ticket_id}`",
+        f"- Title: {bundle.title}",
+        f"- Scope: `{', '.join(bundle.profile_ids) if bundle.profile_ids else 'none confirmed'}`",
+        f"- Generated at UTC: `{bundle.generated_at_utc}`",
+        f"- Overall status: `{bundle.overall_status}`",
+        f"- Visible DoD progress (conservative): `{_dod_completion_percent(bundle)}%`",
+        f"- Package folder: `{package_root.name}`",
+        f"- ZIP name: `{zip_path.name}`",
+        f"- ZIP size bytes: `{zip_path.stat().st_size}`",
+        f"- ZIP SHA256 sidecar: `{zip_sha256_path.name}`",
+        "- ZIP SHA256 is recorded in the sidecar file to avoid self-referential checksum drift inside the archive.",
+        "",
+        "## Important included files",
+    ]
+    for path in key_files:
+        lines.append(f"- `{_display_path(path, package_root)}`")
+    lines.extend(["", "## Known open blockers"])
+    if bundle.blockers:
+        lines.extend(f"- {item}" for item in bundle.blockers)
+    else:
+        lines.append("- None")
+    lines.extend(
+        [
+            "",
+            "## Distribution record",
+            "- Sent status: not recorded automatically",
+            "- Sent to:",
+            "- Sent on:",
+            "- Notes:",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def materialize_ticket_review_bundle(
     ticket_id: str,
     *,
@@ -3360,6 +3520,14 @@ def materialize_ticket_review_bundle(
             evidence_index.append(_bundle_evidence("Battery baseline gaps", daily_snapshot.battery_baseline_gaps_markdown_path))
         if daily_snapshot.battery_baseline_gaps_json_path is not None:
             evidence_index.append(_bundle_evidence("Battery baseline gaps JSON", daily_snapshot.battery_baseline_gaps_json_path))
+        if daily_snapshot.review_priority_markdown_path is not None:
+            evidence_index.append(_bundle_evidence("Review priority ranking", daily_snapshot.review_priority_markdown_path))
+        if daily_snapshot.review_priority_json_path is not None:
+            evidence_index.append(_bundle_evidence("Review priority ranking JSON", daily_snapshot.review_priority_json_path))
+        if daily_snapshot.delta_summary_markdown_path is not None:
+            evidence_index.append(_bundle_evidence("Daily QA delta summary", daily_snapshot.delta_summary_markdown_path))
+        if daily_snapshot.delta_summary_json_path is not None:
+            evidence_index.append(_bundle_evidence("Daily QA delta summary JSON", daily_snapshot.delta_summary_json_path))
         if daily_snapshot.review_gallery_html_path is not None:
             evidence_index.append(_bundle_evidence("Candidate review gallery", daily_snapshot.review_gallery_html_path))
         scoped_profiles = {context.profile.profile_id.upper() for context in contexts}
@@ -3429,6 +3597,8 @@ def materialize_ticket_review_bundle(
     stakeholder_sync_path = package_root / f"{ticket_id}-stakeholder-sync.md"
     review_protocol_path = package_root / f"{ticket_id}-review-protocol.md"
     owner_matrix_path = package_root / f"{ticket_id}-owner-matrix.md"
+    review_owner_decisions_path = package_root / "review-owner-decisions.md"
+    sent_package_manifest_path = package_root / "SENT_PACKAGE_MANIFEST.md"
 
     _write_json(bundle_json_path, bundle.to_dict())
     _write_text(review_status_path, _review_status_markdown(bundle, package_root=package_root))
@@ -3506,8 +3676,30 @@ def materialize_ticket_review_bundle(
         ),
     )
     _write_text(owner_matrix_path, _owner_matrix_markdown(bundle))
+    _write_text(review_owner_decisions_path, _review_owner_decisions_markdown(bundle))
 
     zip_path = _make_zip(package_root)
+    zip_sha256_path = zip_path.with_suffix(zip_path.suffix + ".sha256")
+    zip_sha256_path.write_text(f"{_sha256_file(zip_path)} *{zip_path.name}\n", encoding="utf-8")
+    _write_text(
+        sent_package_manifest_path,
+        _sent_package_manifest_markdown(
+            bundle=bundle,
+            package_root=package_root,
+            zip_path=zip_path,
+            zip_sha256_path=zip_sha256_path,
+            key_files=(
+                dod_matrix_path,
+                review_status_path,
+                teams_update_path,
+                stakeholder_sync_path,
+                review_owner_decisions_path,
+                manual_index_path,
+            ),
+        ),
+    )
+    zip_path = _make_zip(package_root)
+    zip_sha256_path.write_text(f"{_sha256_file(zip_path)} *{zip_path.name}\n", encoding="utf-8")
     return TicketReviewBundleResult(
         bundle=bundle,
         package_root=package_root,
@@ -3528,5 +3720,8 @@ def materialize_ticket_review_bundle(
         manual_review_companion_path=review_companion_path,
         manual_evidence_index_path=manual_index_path,
         manual_evidence_json_path=manual_json_path,
+        review_owner_decisions_path=review_owner_decisions_path,
+        sent_package_manifest_path=sent_package_manifest_path,
+        zip_sha256_path=zip_sha256_path,
         zip_path=zip_path,
     )

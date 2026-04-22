@@ -162,6 +162,44 @@ struct EnvironmentDoctorItem {
     std::string next_action;
 };
 
+struct ReviewPriorityItem {
+    std::string profile_id;
+    std::string filter_name;
+    std::string verdict;
+    int priority_score = 0;
+    std::string reason;
+    std::string recommendation;
+    std::string log_path;
+};
+
+struct ReviewOwnerDecisionItem {
+    std::string title;
+    bool pending = true;
+};
+
+struct ReviewBoardState {
+    std::string ticket_id;
+    std::string title;
+    std::vector<std::string> scope;
+    std::string package_path;
+    std::string package_zip_path;
+    std::string generated_at;
+    std::string verification_status;
+    std::string dod_overall_status;
+    int visible_dod_progress_percent = 0;
+    int smoke_completed = 0;
+    int smoke_total = 0;
+    int battery_total = 0;
+    int exact_candidate_ready = 0;
+    int proxy_candidate_ready = 0;
+    int runtime_crash = 0;
+    std::vector<std::string> unresolved_families;
+    std::vector<std::string> open_items;
+    std::vector<ReviewPriorityItem> review_priority_items;
+    std::vector<ReviewOwnerDecisionItem> decisions;
+    std::vector<ArtifactItem> artifacts;
+};
+
 std::wstring ToWide(const std::string& text);
 std::string ToUtf8(const std::wstring& text);
 void AppendNativeTrace(std::string_view line);
@@ -181,6 +219,7 @@ std::vector<RecentRunItem> LoadRecentRuns(
     int limit
 );
 std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& config);
+ReviewBoardState LoadReviewBoard(const BackendConfig& config, const std::string& ticket_id);
 ManualEvidenceItem AttachManualEvidence(
     const BackendConfig& config,
     const std::string& run_id_or_path,

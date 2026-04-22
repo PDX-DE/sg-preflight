@@ -14,7 +14,7 @@ from unittest import mock
 from sg_preflight.cli import main
 from sg_preflight.qa_actions import build_action_record, get_operator_action, save_action_record
 from sg_preflight.services import RunRequest, execute_profile_run
-from tests.operator_helpers import create_temp_g65_profile, write_text
+from tests.operator_helpers import create_review_package_fixture, create_temp_g65_profile, write_text
 from tests.test_qa_actions import _create_checker_files
 
 
@@ -111,16 +111,17 @@ class TestCLI(unittest.TestCase):
 
             stdout = io.StringIO()
             with mock.patch("sg_preflight.cli.subprocess.Popen") as popen:
-                with redirect_stdout(stdout):
-                    result = main(
-                        [
-                            "launch-action",
-                            "qa_stack__g65",
-                            "--workspace",
-                            str(root),
-                            "--json",
-                        ]
-                    )
+                with mock.patch("sg_preflight.qa_actions.prerequisite_status", return_value=[]):
+                    with redirect_stdout(stdout):
+                        result = main(
+                            [
+                                "launch-action",
+                                "qa_stack__g65",
+                                "--workspace",
+                                str(root),
+                                "--json",
+                            ]
+                        )
 
         self.assertEqual(result, 0)
         popen.assert_called_once()
@@ -260,6 +261,113 @@ class TestCLI(unittest.TestCase):
             (candidate_root.resolve(),),
         )
 
+    def test_review_board_related_commands_return_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture = create_review_package_fixture(root)
+
+            review_board_stdout = io.StringIO()
+            with redirect_stdout(review_board_stdout):
+                review_board_result = main(
+                    [
+                        "review-board",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--ticket-id",
+                        "IDCEVODEV-960073",
+                        "--json",
+                    ]
+                )
+
+            verify_stdout = io.StringIO()
+            with redirect_stdout(verify_stdout):
+                verify_result = main(
+                    [
+                        "review-board",
+                        "verify",
+                        "--workspace",
+                        str(root),
+                        "--path",
+                        str(fixture["zip_path"]),
+                        "--json",
+                    ]
+                )
+
+            priority_stdout = io.StringIO()
+            with redirect_stdout(priority_stdout):
+                priority_result = main(
+                    [
+                        "review-priority",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--ticket-id",
+                        "IDCEVODEV-960073",
+                        "--json",
+                    ]
+                )
+
+            delta_stdout = io.StringIO()
+            with redirect_stdout(delta_stdout):
+                delta_result = main(
+                    [
+                        "daily-delta",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--ticket-id",
+                        "IDCEVODEV-960073",
+                        "--json",
+                    ]
+                )
+
+            desktop_stdout = io.StringIO()
+            with redirect_stdout(desktop_stdout):
+                desktop_result = main(
+                    [
+                        "desktop-state",
+                        "review-board",
+                        "--workspace",
+                        str(root),
+                        "--ticket-id",
+                        "IDCEVODEV-960073",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(review_board_result, 0)
+        self.assertEqual(verify_result, 0)
+        self.assertEqual(priority_result, 0)
+        self.assertEqual(delta_result, 0)
+        self.assertEqual(desktop_result, 0)
+        self.assertEqual(json.loads(review_board_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
+        self.assertEqual(json.loads(verify_stdout.getvalue())["status"], "warning")
+        self.assertEqual(json.loads(priority_stdout.getvalue())["source"], "daily_snapshot")
+        self.assertIn("current_created_at", json.loads(delta_stdout.getvalue()))
+        self.assertEqual(json.loads(desktop_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
+
+    def test_ticket_review_cli_sendable_disables_action_bundles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_result = mock.Mock()
+            fake_result.bundle = mock.Mock()
+
+            with mock.patch("sg_preflight.cli.materialize_ticket_review_bundle", return_value=fake_result) as materialize:
+                with mock.patch("sg_preflight.cli._console_ticket_review"):
+                    result = main(
+                        [
+                            "ticket-review",
+                            "IDCEVODEV-960073",
+                            "--workspace",
+                            str(root),
+                            "--sendable",
+                        ]
+                    )
+
+        self.assertEqual(result, 0)
+        self.assertFalse(materialize.call_args.kwargs["include_action_bundles"])
+
     def test_daily_snapshot_cli_forwards_battery_filters(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -290,12 +398,13 @@ class TestCLI(unittest.TestCase):
             (
                 "default",
                 "openAllDoors_",
+                "lights_drl_front",
                 "lights_LowBeam",
                 "lights_HighBeam",
+                "lights_OnlyCones",
                 "welcome_animation_",
                 "automatic_Doors_",
                 "highlighting_Doors",
-                "lights_drl_front",
             ),
         )
 

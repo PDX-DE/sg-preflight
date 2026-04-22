@@ -343,6 +343,10 @@ class DailyQaSnapshotResult:
     battery_baseline_gaps_markdown_path: Path | None = None
     battery_baseline_gaps_json_path: Path | None = None
     review_gallery_html_path: Path | None = None
+    review_priority_markdown_path: Path | None = None
+    review_priority_json_path: Path | None = None
+    delta_summary_markdown_path: Path | None = None
+    delta_summary_json_path: Path | None = None
 
 
 def _snapshot_result_from_dict(payload: dict[str, Any]) -> DailyQaSnapshot:
@@ -426,6 +430,10 @@ def load_daily_qa_snapshot(output_root: Path) -> DailyQaSnapshotResult | None:
     baseline_gaps_markdown_path = root / "battery-baseline-gaps.md"
     baseline_gaps_json_path = root / "battery-baseline-gaps.json"
     review_gallery_html_path = root / "candidate-review-gallery.html"
+    review_priority_markdown_path = root / "review-priority-ranking.md"
+    review_priority_json_path = root / "review-priority-ranking.json"
+    delta_summary_markdown_path = root / "daily-qa-delta-summary.md"
+    delta_summary_json_path = root / "daily-qa-delta-summary.json"
     if not json_path.exists():
         return None
     payload = json.loads(json_path.read_text(encoding="utf-8"))
@@ -439,6 +447,10 @@ def load_daily_qa_snapshot(output_root: Path) -> DailyQaSnapshotResult | None:
         battery_baseline_gaps_markdown_path=baseline_gaps_markdown_path if baseline_gaps_markdown_path.exists() else None,
         battery_baseline_gaps_json_path=baseline_gaps_json_path if baseline_gaps_json_path.exists() else None,
         review_gallery_html_path=review_gallery_html_path if review_gallery_html_path.exists() else None,
+        review_priority_markdown_path=review_priority_markdown_path if review_priority_markdown_path.exists() else None,
+        review_priority_json_path=review_priority_json_path if review_priority_json_path.exists() else None,
+        delta_summary_markdown_path=delta_summary_markdown_path if delta_summary_markdown_path.exists() else None,
+        delta_summary_json_path=delta_summary_json_path if delta_summary_json_path.exists() else None,
     )
 
 
@@ -446,6 +458,7 @@ def find_latest_daily_qa_snapshot(
     workspace_root: Path | None = None,
     *,
     required_profiles: tuple[str, ...] = (),
+    exclude_output_roots: tuple[Path, ...] = (),
 ) -> DailyQaSnapshotResult | None:
     workspace = _workspace_root(workspace_root)
     out_root = workspace / "out"
@@ -453,9 +466,12 @@ def find_latest_daily_qa_snapshot(
         return None
 
     normalized_required = {item.strip().upper() for item in required_profiles if item and item.strip()}
+    excluded = {path.resolve() for path in exclude_output_roots}
     candidates: list[DailyQaSnapshotResult] = []
     for directory in out_root.glob("daily-3d-car-qa-summary-*"):
         if not directory.is_dir():
+            continue
+        if directory.resolve() in excluded:
             continue
         loaded = load_daily_qa_snapshot(directory)
         if loaded is None:
@@ -630,6 +646,24 @@ def _battery_gap_recommendation(item: BmwBatteryResult) -> str:
     return "Generate or locate the expected baseline before visual comparison."
 
 
+def _review_priority_reason(item: BmwBatteryResult) -> str:
+    if item.verdict == "needs_manual_review":
+        return "Diff payload exists and needs a human pass/fail decision."
+    if item.verdict == "baseline_candidate_ready":
+        return "Exact candidate output exists; baseline approval can be done quickly."
+    if item.verdict == "proxy_candidate_ready":
+        return "Proxy lamp-state output exists, but the exact cone-enabled effect is not locally validated."
+    if item.verdict == "likely_ok":
+        return "Exact compare completed locally with no visible diff."
+    if item.verdict == "runtime_crash":
+        return "Local BMW viewer/runtime crashed during this scenario."
+    if item.verdict == "scenario_output_missing":
+        return "Scenario harness ran, but the requested target output name was not emitted."
+    if item.verdict == "baseline_missing":
+        return "No expected baseline is available yet."
+    return "Needs investigation."
+
+
 def _review_priority_score(item: BmwBatteryResult) -> int:
     if item.verdict == "needs_manual_review":
         return 100
@@ -640,6 +674,209 @@ def _review_priority_score(item: BmwBatteryResult) -> int:
     if item.verdict == "likely_ok":
         return 20
     return 0
+
+
+def _review_priority_payload(snapshot: DailyQaSnapshot) -> dict[str, Any]:
+    items = sorted(
+        snapshot.battery_results,
+        key=lambda item: (
+            _review_priority_score(item),
+            item.diff_count,
+            item.actual_count,
+            item.profile_id.upper(),
+            item.filter_name.lower(),
+        ),
+        reverse=True,
+    )
+    ranked = [
+        {
+            "profile_id": item.profile_id,
+            "filter_name": item.filter_name,
+            "verdict": item.verdict,
+            "priority_score": _review_priority_score(item),
+            "reason": _review_priority_reason(item),
+            "recommendation": _battery_gap_recommendation(item),
+            "expected_count": item.expected_count,
+            "actual_count": item.actual_count,
+            "diff_count": item.diff_count,
+            "target_output_present": item.target_output_present,
+            "proxy_files": list(item.proxy_files),
+            "actual_files": list(item.actual_files),
+            "log_path": item.log_path,
+        }
+        for item in items
+        if item.verdict in {
+            "needs_manual_review",
+            "baseline_candidate_ready",
+            "proxy_candidate_ready",
+            "likely_ok",
+            "runtime_crash",
+            "scenario_output_missing",
+        }
+    ]
+    return {
+        "created_at": snapshot.created_at,
+        "scope_profiles": list(snapshot.scope_profiles),
+        "ranked_items": ranked,
+        "top_five": ranked[:5],
+    }
+
+
+def _render_review_priority_markdown(snapshot: DailyQaSnapshot) -> str:
+    payload = _review_priority_payload(snapshot)
+    lines = [
+        "# Screenshot Review Priority Ranking",
+        "",
+        f"- Generated: `{snapshot.created_at}`",
+        f"- Scope: `{', '.join(snapshot.scope_profiles)}`",
+        "- This is deterministic operator ranking, not final visual signoff.",
+        "",
+        "| Priority | Profile | Scenario | Verdict | Reason | Recommendation |",
+        "| ---: | --- | --- | --- | --- | --- |",
+    ]
+    for item in payload["ranked_items"]:
+        lines.append(
+            f"| {item['priority_score']} | {item['profile_id']} | `{item['filter_name']}` | "
+            f"`{item['verdict']}` | {item['reason']} | {item['recommendation']} |"
+        )
+    if not payload["ranked_items"]:
+        lines.append("| 0 | - | - | - | No ranked screenshot items in this snapshot. | - |")
+    lines.extend(["", "## Top 5 To Review", ""])
+    for item in payload["top_five"]:
+        lines.append(
+            f"- {item['profile_id']}: `{item['filter_name']}` -> `{item['verdict']}` "
+            f"(priority {item['priority_score']})"
+        )
+    if not payload["top_five"]:
+        lines.append("- No screenshot items require ranking in this snapshot.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _snapshot_failure_keys(snapshot: DailyQaSnapshot) -> set[str]:
+    failure_keys: set[str] = set()
+    for item in snapshot.smoke_results:
+        if item.status != "completed" or item.diff_count > 0:
+            failure_keys.add(f"smoke:{item.profile_id}:{item.smoke_test}")
+    for item in snapshot.battery_results:
+        if item.verdict in {"runtime_crash", "scenario_output_missing", "blocked", "baseline_missing", "needs_manual_review"}:
+            failure_keys.add(f"battery:{item.profile_id}:{item.filter_name}")
+    return failure_keys
+
+
+def _snapshot_diff_keys(snapshot: DailyQaSnapshot) -> set[str]:
+    diff_keys: set[str] = set()
+    for item in snapshot.smoke_results:
+        if item.diff_count > 0:
+            diff_keys.add(f"smoke:{item.profile_id}:{item.smoke_test}")
+    for item in snapshot.battery_results:
+        if item.verdict == "needs_manual_review":
+            diff_keys.add(f"battery:{item.profile_id}:{item.filter_name}")
+    return diff_keys
+
+
+def _snapshot_status_counts(snapshot: DailyQaSnapshot) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in snapshot.battery_results:
+        counts[item.verdict] = counts.get(item.verdict, 0) + 1
+    for item in snapshot.smoke_results:
+        key = f"smoke_{item.status}"
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _daily_delta_payload(
+    current: DailyQaSnapshot,
+    previous: DailyQaSnapshot | None,
+    *,
+    current_output_root: Path,
+    previous_output_root: Path | None = None,
+) -> dict[str, Any]:
+    if previous is None:
+        return {
+            "current_created_at": current.created_at,
+            "previous_created_at": "",
+            "current_output_root": str(current_output_root),
+            "previous_output_root": "",
+            "scope_profiles": list(current.scope_profiles),
+            "new_failures": [],
+            "resolved_failures": [],
+            "new_screenshot_diffs": [],
+            "unchanged_blockers": list(current.blocked_steps),
+            "changed_counts": {"current": _snapshot_status_counts(current), "previous": {}},
+            "top_five_to_review": list(current.top_review_items[:5]),
+        }
+
+    current_failures = _snapshot_failure_keys(current)
+    previous_failures = _snapshot_failure_keys(previous)
+    current_diffs = _snapshot_diff_keys(current)
+    previous_diffs = _snapshot_diff_keys(previous)
+    return {
+        "current_created_at": current.created_at,
+        "previous_created_at": previous.created_at,
+        "current_output_root": str(current_output_root),
+        "previous_output_root": str(previous_output_root) if previous_output_root is not None else "",
+        "scope_profiles": list(current.scope_profiles),
+        "new_failures": sorted(current_failures - previous_failures),
+        "resolved_failures": sorted(previous_failures - current_failures),
+        "new_screenshot_diffs": sorted(current_diffs - previous_diffs),
+        "unchanged_blockers": sorted(set(current.blocked_steps).intersection(previous.blocked_steps)),
+        "changed_counts": {
+            "current": _snapshot_status_counts(current),
+            "previous": _snapshot_status_counts(previous),
+        },
+        "top_five_to_review": list(current.top_review_items[:5]),
+    }
+
+
+def _render_daily_delta_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "# Daily QA Delta Summary",
+        "",
+        f"- Current run: `{payload.get('current_created_at', '')}`",
+        f"- Previous run: `{payload.get('previous_created_at', '') or 'none'}`",
+        f"- Current output root: `{payload.get('current_output_root', '')}`",
+    ]
+    previous_output_root = str(payload.get("previous_output_root", "")).strip()
+    if previous_output_root:
+        lines.append(f"- Previous output root: `{previous_output_root}`")
+    lines.extend(
+        [
+            "",
+            "## New Failures",
+        ]
+    )
+    new_failures = payload.get("new_failures", [])
+    if new_failures:
+        lines.extend(f"- `{item}`" for item in new_failures)
+    else:
+        lines.append("- None")
+    lines.extend(["", "## Resolved Failures"])
+    resolved_failures = payload.get("resolved_failures", [])
+    if resolved_failures:
+        lines.extend(f"- `{item}`" for item in resolved_failures)
+    else:
+        lines.append("- None")
+    lines.extend(["", "## New Screenshot Diffs"])
+    new_diffs = payload.get("new_screenshot_diffs", [])
+    if new_diffs:
+        lines.extend(f"- `{item}`" for item in new_diffs)
+    else:
+        lines.append("- None")
+    lines.extend(["", "## Unchanged Blockers"])
+    unchanged = payload.get("unchanged_blockers", [])
+    if unchanged:
+        lines.extend(f"- {item}" for item in unchanged)
+    else:
+        lines.append("- None")
+    lines.extend(["", "## Changed Counts", "", "```json", json.dumps(payload.get("changed_counts", {}), indent=2, ensure_ascii=False), "```", "", "## Top 5 To Review"])
+    top = payload.get("top_five_to_review", [])
+    if top:
+        lines.extend(f"- {item}" for item in top)
+    else:
+        lines.append("- None")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _render_candidate_review_gallery(snapshot: DailyQaSnapshot, *, html_root: Path | None = None) -> str:
@@ -1952,6 +2189,10 @@ def materialize_daily_qa_snapshot(
     battery_baseline_gaps_markdown_path: Path | None = None
     battery_baseline_gaps_json_path: Path | None = None
     review_gallery_html_path: Path | None = None
+    review_priority_markdown_path: Path | None = None
+    review_priority_json_path: Path | None = None
+    delta_summary_markdown_path: Path | None = None
+    delta_summary_json_path: Path | None = None
     markdown_path.write_text(_render_snapshot_markdown(snapshot), encoding="utf-8")
     json_path.write_text(json.dumps(snapshot.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     if snapshot.battery_results:
@@ -1970,6 +2211,37 @@ def materialize_daily_qa_snapshot(
             _render_candidate_review_gallery(snapshot),
             encoding="utf-8",
         )
+        review_priority_markdown_path = final_output_root / "review-priority-ranking.md"
+        review_priority_json_path = final_output_root / "review-priority-ranking.json"
+        review_priority_markdown_path.write_text(
+            _render_review_priority_markdown(snapshot),
+            encoding="utf-8",
+        )
+        review_priority_json_path.write_text(
+            json.dumps(_review_priority_payload(snapshot), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    previous_snapshot = find_latest_daily_qa_snapshot(
+        workspace,
+        required_profiles=tuple(profile_ids),
+        exclude_output_roots=(final_output_root,),
+    )
+    delta_payload = _daily_delta_payload(
+        snapshot,
+        previous_snapshot.snapshot if previous_snapshot is not None else None,
+        current_output_root=final_output_root,
+        previous_output_root=previous_snapshot.output_root if previous_snapshot is not None else None,
+    )
+    delta_summary_markdown_path = final_output_root / "daily-qa-delta-summary.md"
+    delta_summary_json_path = final_output_root / "daily-qa-delta-summary.json"
+    delta_summary_markdown_path.write_text(
+        _render_daily_delta_markdown(delta_payload),
+        encoding="utf-8",
+    )
+    delta_summary_json_path.write_text(
+        json.dumps(delta_payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
     return DailyQaSnapshotResult(
         output_root=final_output_root,
         snapshot=snapshot,
@@ -1978,4 +2250,8 @@ def materialize_daily_qa_snapshot(
         battery_baseline_gaps_markdown_path=battery_baseline_gaps_markdown_path,
         battery_baseline_gaps_json_path=battery_baseline_gaps_json_path,
         review_gallery_html_path=review_gallery_html_path,
+        review_priority_markdown_path=review_priority_markdown_path,
+        review_priority_json_path=review_priority_json_path,
+        delta_summary_markdown_path=delta_summary_markdown_path,
+        delta_summary_json_path=delta_summary_json_path,
     )

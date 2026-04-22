@@ -30,6 +30,7 @@ from sg_preflight.qa_actions import (
     load_action_record,
     save_action_record as save_action_task_record,
 )
+from sg_preflight.review_state import build_review_board_state
 from sg_preflight.reporting import build_report_presentation, finding_hint, retheme_html_report
 from sg_preflight.services import (
     RunRequest,
@@ -197,6 +198,17 @@ def _doc_file_link(root: Path, relative_path: str) -> dict[str, str]:
     return {
         "path": str(path),
         "href": _file_href(path),
+    }
+
+
+def _review_board_file_card(label: str, artifact: dict[str, Any]) -> dict[str, str]:
+    path = Path(str(artifact.get("absolute_path", ""))) if artifact.get("absolute_path") else Path()
+    href = _file_href(path) if artifact.get("exists") else ""
+    return {
+        "label": label,
+        "path": str(path) if path else "",
+        "relative_path": str(artifact.get("relative_path", "")),
+        "href": href,
     }
 
 
@@ -2421,6 +2433,29 @@ def create_app(
             },
         )
 
+    @app.get("/ui/review-board")
+    async def review_board_view(request: Request, ticket_id: str = "") -> Any:
+        state = build_review_board_state(ticket_id or None, app.state.workspace_root)
+        artifact_refs = state.get("artifact_references", {})
+        file_cards = [
+            _review_board_file_card("Candidate gallery", artifact_refs.get("candidate_gallery", {})),
+            _review_board_file_card("DoD matrix", artifact_refs.get("dod_matrix", {})),
+            _review_board_file_card("Daily summary", artifact_refs.get("latest_daily_snapshot_markdown", {})),
+            _review_board_file_card("Review-priority ranking", artifact_refs.get("review_priority_markdown", {})),
+            _review_board_file_card("Daily delta", artifact_refs.get("daily_delta_markdown", {})),
+            _review_board_file_card("Review-owner decisions", artifact_refs.get("review_owner_decisions", {})),
+            _review_board_file_card("Package manifest", artifact_refs.get("package_manifest", {})),
+            _review_board_file_card("Package ZIP", artifact_refs.get("package_zip", {})),
+        ]
+        return app.state.templates.TemplateResponse(
+            request,
+            "review_board.html",
+            {
+                "review_board": state,
+                "file_cards": [item for item in file_cards if item["path"]],
+            },
+        )
+
     @app.get("/ui/stages/{stage_key}")
     async def workflow_stage_view(request: Request, stage_key: str) -> Any:
         stage = _get_workflow_stage(stage_key)
@@ -2726,6 +2761,10 @@ def create_app(
         payload = record.to_dict()
         payload["live_log_tail"] = _tail_text_file(record.paths.get("log", ""), limit=24)
         return JSONResponse(payload)
+
+    @app.get("/ui/api/review-board/latest")
+    async def review_board_api(ticket_id: str = "") -> JSONResponse:
+        return JSONResponse(build_review_board_state(ticket_id or None, app.state.workspace_root))
 
     @app.get("/ui/audits/mirror/deep")
     async def run_deep_audit() -> RedirectResponse:

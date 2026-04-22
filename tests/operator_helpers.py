@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import zipfile
 from pathlib import Path
 
@@ -238,3 +239,169 @@ return constants
         mirror_audit_targets=("Cars_IDCevo/BMW/G65", "Cars/BMW/CarPaint.json"),
         reference_repo_root=repo_root,
     )
+
+
+def create_review_package_fixture(temp_root: Path, ticket_id: str = "IDCEVODEV-960073") -> dict[str, Path]:
+    out_root = temp_root / "out"
+    package_root = out_root / f"{ticket_id}-review-package-2026-04-22"
+    snapshot_root = out_root / "daily-3d-car-qa-summary-2026-04-22-163526"
+    package_snapshot_root = package_root / "artifacts" / "daily-snapshot"
+
+    daily_payload = {
+        "created_at": "2026-04-22T16:50:52",
+        "scope_profiles": ["NA8", "G78", "G50"],
+        "smoke_results": [
+            {"profile_id": "NA8", "status": "completed"},
+            {"profile_id": "G78", "status": "completed"},
+            {"profile_id": "G50", "status": "completed"},
+        ],
+        "battery_results": [
+            {"profile_id": "NA8", "filter_name": "default", "verdict": "baseline_candidate_ready"},
+            {"profile_id": "NA8", "filter_name": "lights_LowBeam", "verdict": "proxy_candidate_ready"},
+            {"profile_id": "NA8", "filter_name": "lights_OnlyCones", "verdict": "runtime_crash"},
+        ],
+        "top_review_items": [
+            "NA8: `default` generated a candidate output; baseline approval can be done quickly.",
+            "NA8: `lights_LowBeam` has a proxy lamp-state screenshot ready; exact cone effect is still blocked locally.",
+        ],
+        "blocked_steps": [
+            "Jira writeback remains external to this local snapshot.",
+            "NA8: `lights_OnlyCones` crashes the local BMW viewer; this is a runtime/content issue.",
+        ],
+    }
+
+    review_priority_payload = {
+        "created_at": "2026-04-22T16:50:52",
+        "scope_profiles": ["NA8", "G78", "G50"],
+        "ranked_items": [
+            {
+                "profile_id": "NA8",
+                "filter_name": "default",
+                "verdict": "baseline_candidate_ready",
+                "priority_score": 80,
+                "reason": "Exact candidate output exists; baseline approval can be done quickly.",
+                "recommendation": "Candidate output exists; quick baseline-approval pass is possible.",
+                "log_path": str((snapshot_root / "na8-bmw-battery.log").resolve()),
+            },
+            {
+                "profile_id": "NA8",
+                "filter_name": "lights_OnlyCones",
+                "verdict": "runtime_crash",
+                "priority_score": 10,
+                "reason": "Viewer crashes locally.",
+                "recommendation": "Treat as technical blocker, not human review.",
+                "log_path": str((snapshot_root / "na8-bmw-battery.log").resolve()),
+            },
+        ],
+    }
+
+    delta_payload = {
+        "current_created_at": "2026-04-22T16:50:52",
+        "previous_created_at": "2026-04-22T10:50:33",
+        "new_failures": [],
+        "resolved_failures": [],
+        "new_screenshot_diffs": [],
+        "unchanged_blockers": [
+            "Jira writeback remains external to this local snapshot.",
+        ],
+        "changed_counts": {
+            "current": {
+                "baseline_candidate_ready": 1,
+                "proxy_candidate_ready": 1,
+                "runtime_crash": 1,
+                "smoke_completed": 3,
+            },
+            "previous": {
+                "baseline_candidate_ready": 1,
+                "proxy_candidate_ready": 1,
+                "runtime_crash": 1,
+                "smoke_completed": 3,
+            },
+        },
+        "top_five_to_review": [
+            "NA8: `default` generated a candidate output; baseline approval can be done quickly.",
+        ],
+    }
+
+    review_bundle = {
+        "ticket_id": ticket_id,
+        "title": ticket_id,
+        "generated_at_utc": "2026-04-22T14:35:37.106276+00:00",
+        "overall_status": "partial",
+        "profile_ids": ["NA8", "G78", "G50"],
+        "scope_note": "Confirmed delivery scope from Jana is NA8, G78, and G50.",
+        "blockers": [
+            "screenshot tests bmws: Representative local smoke evidence is attached for the confirmed cars.",
+            "Support: Need Jana to confirm reporting cadence.",
+        ],
+        "next_questions": [
+            "Should lights_OnlyCones be treated as a blocker or a follow-up?",
+        ],
+    }
+
+    write_json(package_root / f"{ticket_id}-review-bundle.json", review_bundle)
+    write_text(
+        package_root / "SENT_PACKAGE_MANIFEST.md",
+        "\n".join(
+            [
+                "# SENT PACKAGE MANIFEST",
+                "",
+                f"- Ticket ID: `{ticket_id}`",
+                "- Visible DoD progress (conservative): `70%`",
+            ]
+        )
+        + "\n",
+    )
+    write_text(
+        package_root / "review-owner-decisions.md",
+        "\n".join(
+            [
+                "# Review-owner decisions",
+                "",
+                "## lights_OnlyCones",
+                "Decision: blocker / follow-up / accepted limitation / needs more investigation",
+                "Owner:",
+                "Date:",
+                "Notes:",
+                "",
+                "## Screenshot candidate/proxy outputs",
+                "Decision: accepted / needs changes / partial",
+                "Owner:",
+                "Date:",
+                "Notes:",
+            ]
+        )
+        + "\n",
+    )
+    write_text(package_root / f"{ticket_id}-dod-matrix.md", "# DoD Matrix\n")
+    write_text(package_root / f"{ticket_id}-review-status.md", "# Review Status\n")
+    write_text(package_root / f"{ticket_id}-teams-update.md", "# Teams Update\n")
+    write_text(package_snapshot_root / "daily-3d-car-qa-summary.md", "# Daily Summary\n")
+    write_json(package_snapshot_root / "daily-3d-car-qa-summary.json", daily_payload)
+    write_text(
+        package_snapshot_root / "candidate-review-gallery.html",
+        "<html><body><img src=\"images/na8/default/default.png\" /></body></html>",
+    )
+    write_text(package_snapshot_root / "logs" / "na8-bmw-smoke.log", "Export finished\nFile sizes: Ramses=123456b RLogic=0b\n")
+    write_text(package_snapshot_root / "logs" / "na8-bmw-battery.log", "battery fixture\n")
+    write_text(package_snapshot_root / "images" / "na8" / "default" / "default.png", "png fixture\n")
+
+    write_text(snapshot_root / "daily-3d-car-qa-summary.md", "# Daily Summary\n")
+    write_json(snapshot_root / "daily-3d-car-qa-summary.json", daily_payload)
+    write_text(snapshot_root / "review-priority-ranking.md", "# Review Priority Ranking\n")
+    write_json(snapshot_root / "review-priority-ranking.json", review_priority_payload)
+    write_text(snapshot_root / "daily-qa-delta-summary.md", "# Daily Delta Summary\n")
+    write_json(snapshot_root / "daily-qa-delta-summary.json", delta_payload)
+    write_text(snapshot_root / "na8-bmw-battery.log", "battery fixture\n")
+
+    zip_path = package_root.with_suffix(".zip")
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("placeholder.txt", "fixture\n")
+    digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    write_text(zip_path.with_suffix(zip_path.suffix + ".sha256"), f"{digest} *{zip_path.name}\n")
+
+    return {
+        "package_root": package_root,
+        "zip_path": zip_path,
+        "snapshot_root": snapshot_root,
+    }

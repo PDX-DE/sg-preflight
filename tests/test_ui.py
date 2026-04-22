@@ -29,7 +29,7 @@ from sg_preflight.services import (
     save_run_record,
 )
 from sg_preflight.ui import create_app
-from tests.operator_helpers import create_temp_g65_profile, write_text
+from tests.operator_helpers import create_review_package_fixture, create_temp_g65_profile, write_text
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "checkers"
@@ -50,6 +50,7 @@ class TestOperatorUI(unittest.TestCase):
                     label="BMW G70 test slice",
                     repo_root=profile.repo_root,
                     project_root=profile.project_root,
+                    project_relative=profile.project_relative,
                     config_path=profile.config_path,
                     default_context=profile.default_context,
                     description=profile.description,
@@ -66,6 +67,7 @@ class TestOperatorUI(unittest.TestCase):
                     label="BMW G45 test slice",
                     repo_root=profile.repo_root,
                     project_root=profile.project_root,
+                    project_relative=profile.project_relative,
                     config_path=profile.config_path,
                     default_context=profile.default_context,
                     description=profile.description,
@@ -251,6 +253,24 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(evidence_page.status_code, 200)
         self.assertIn("Attach the result in the real ticket", evidence_page.text)
 
+    def test_review_board_page_and_api_render_latest_structured_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            create_review_package_fixture(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            page = client.get("/ui/review-board?ticket_id=IDCEVODEV-960073")
+            payload = client.get("/ui/api/review-board/latest?ticket_id=IDCEVODEV-960073")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Review board", page.text)
+        self.assertIn("IDCEVODEV-960073", page.text)
+        self.assertIn("lights_OnlyCones", page.text)
+        self.assertEqual(payload.status_code, 200)
+        self.assertEqual(payload.json()["ticket_id"], "IDCEVODEV-960073")
+        self.assertEqual(payload.json()["screenshot_battery_counts"]["runtime_crash"], 1)
+
     def test_result_page_shows_diff_against_previous_completed_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -407,7 +427,7 @@ class TestOperatorUI(unittest.TestCase):
 
         self.assertEqual(result_page.status_code, 200)
         self.assertIn("This automation is blocked here", result_page.text)
-        self.assertIn("Scene check needs both the mirrored", result_page.text)
+        self.assertIn("check_scenes.py", result_page.text)
         self.assertIn("Do this next", result_page.text)
         self.assertNotIn("Raw log", result_page.text)
 
@@ -708,6 +728,7 @@ class TestOperatorUI(unittest.TestCase):
                 label="BMW G65 test slice",
                 repo_root=mirror_root,
                 project_root=mirror_root / "Cars_IDCevo" / "BMW" / "G65",
+                project_relative=Path("Cars_IDCevo/BMW/G65"),
                 config_path=root / "config" / "sg_rules_live_g65.json",
                 mirror_audit_targets=("Cars_IDCevo/BMW/G65", "Cars/BMW/CarPaint.json"),
                 reference_repo_root=reference_root,

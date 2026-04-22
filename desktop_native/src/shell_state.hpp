@@ -30,6 +30,7 @@ struct ShellState {
     std::vector<sg_preflight::native_shell::RecentRunItem> recent_runs;
     std::optional<sg_preflight::native_shell::ActionSnapshot> snapshot;
     std::optional<sg_preflight::native_shell::RunSnapshot> run_snapshot;
+    std::optional<sg_preflight::native_shell::ReviewBoardState> review_board;
     int selected_profile_index = 0;
     int selected_evidence_index = 0;
     int selected_artifact_index = 0;

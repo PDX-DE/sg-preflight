@@ -78,13 +78,22 @@ class TestDailySnapshot(unittest.TestCase):
 
             self.assertTrue(result.markdown_path.exists())
             self.assertTrue(result.json_path.exists())
+            self.assertTrue(result.delta_summary_markdown_path is not None)
+            self.assertTrue(result.delta_summary_json_path is not None)
+            self.assertTrue(result.delta_summary_markdown_path.exists())
+            self.assertTrue(result.delta_summary_json_path.exists())
+            self.assertIsNone(result.review_priority_markdown_path)
+            self.assertIsNone(result.review_priority_json_path)
             self.assertEqual(result.snapshot.config_check.status, "ready")
             self.assertEqual(result.snapshot.scope_profiles, ("NA8", "G78", "G50"))
 
             markdown = result.markdown_path.read_text(encoding="utf-8")
+            delta_markdown = result.delta_summary_markdown_path.read_text(encoding="utf-8")
             self.assertIn("Daily 3D Car QA Summary", markdown)
             self.assertIn("Scope: `NA8, G78, G50`", markdown)
             self.assertIn("fixture configuration output", markdown)
+            self.assertIn("Daily QA Delta Summary", delta_markdown)
+            self.assertIn("Previous run: `none`", delta_markdown)
 
     def test_materialize_daily_qa_snapshot_writes_battery_baseline_gap_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -162,11 +171,21 @@ class TestDailySnapshot(unittest.TestCase):
 
             self.assertIsNotNone(result.battery_baseline_gaps_markdown_path)
             self.assertIsNotNone(result.battery_baseline_gaps_json_path)
+            self.assertIsNotNone(result.review_priority_markdown_path)
+            self.assertIsNotNone(result.review_priority_json_path)
+            self.assertIsNotNone(result.delta_summary_markdown_path)
+            self.assertIsNotNone(result.delta_summary_json_path)
             self.assertTrue(result.battery_baseline_gaps_markdown_path.exists())
             self.assertTrue(result.battery_baseline_gaps_json_path.exists())
+            self.assertTrue(result.review_priority_markdown_path.exists())
+            self.assertTrue(result.review_priority_json_path.exists())
+            self.assertTrue(result.delta_summary_markdown_path.exists())
+            self.assertTrue(result.delta_summary_json_path.exists())
 
             markdown = result.battery_baseline_gaps_markdown_path.read_text(encoding="utf-8")
             payload = result.battery_baseline_gaps_json_path.read_text(encoding="utf-8")
+            priority_markdown = result.review_priority_markdown_path.read_text(encoding="utf-8")
+            delta_markdown = result.delta_summary_markdown_path.read_text(encoding="utf-8")
 
             self.assertIn("highlighting_Doors", markdown)
             self.assertIn("highlighting_Doors.png", markdown)
@@ -174,6 +193,10 @@ class TestDailySnapshot(unittest.TestCase):
             self.assertIn("openAllDoors_rightView.png", markdown)
             self.assertIn("highlighting_Doors.png", payload)
             self.assertIn("scenario_output_missing", payload)
+            self.assertIn("Screenshot Review Priority Ranking", priority_markdown)
+            self.assertIn("`highlighting_Doors`", priority_markdown)
+            self.assertIn("Daily QA Delta Summary", delta_markdown)
+            self.assertIn("NA8: `highlighting_Doors` did not generate the requested scenario output", delta_markdown)
 
     def test_snapshot_result_from_dict_roundtrips_battery_results(self) -> None:
         payload = {

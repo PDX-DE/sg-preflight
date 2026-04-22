@@ -147,6 +147,22 @@ def _create_daily_snapshot_fixture(root: Path, profile_id: str) -> None:
     )
     write_text(output_root / "daily-3d-car-qa-summary.md", "# fixture snapshot\n")
     write_text(
+        output_root / "review-priority-ranking.md",
+        "# Screenshot Review Priority Ranking\n\n- G65: `default` -> `baseline_candidate_ready`\n",
+    )
+    write_text(
+        output_root / "review-priority-ranking.json",
+        '{\n  "ranked_items": [\n    {\n      "profile_id": "G65",\n      "filter_name": "default",\n      "verdict": "baseline_candidate_ready",\n      "priority_score": 70\n    }\n  ],\n  "top_five": []\n}\n',
+    )
+    write_text(
+        output_root / "daily-qa-delta-summary.md",
+        "# Daily QA Delta Summary\n\n- Current run: `2026-04-21T17:57:55`\n- Previous run: `none`\n",
+    )
+    write_text(
+        output_root / "daily-qa-delta-summary.json",
+        '{\n  "current_created_at": "2026-04-21T17:57:55",\n  "previous_created_at": "",\n  "new_failures": [],\n  "resolved_failures": [],\n  "new_screenshot_diffs": [],\n  "unchanged_blockers": [],\n  "changed_counts": {\n    "current": {\n      "baseline_candidate_ready": 1,\n      "proxy_candidate_ready": 1,\n      "smoke_completed": 1\n    },\n    "previous": {}\n  },\n  "top_five_to_review": []\n}\n',
+    )
+    write_text(
         output_root / "daily-3d-car-qa-summary.json",
         """
 {
@@ -347,6 +363,9 @@ class TestTicketReview(unittest.TestCase):
             self.assertTrue(result.manual_review_companion_path.exists())
             self.assertTrue(result.manual_evidence_index_path.exists())
             self.assertTrue(result.manual_evidence_json_path.exists())
+            self.assertTrue(result.review_owner_decisions_path.exists())
+            self.assertTrue(result.sent_package_manifest_path.exists())
+            self.assertTrue(result.zip_sha256_path.exists())
             self.assertTrue(result.zip_path.exists())
 
             item_map = {item.key: item for item in result.bundle.dod_items}
@@ -375,6 +394,9 @@ class TestTicketReview(unittest.TestCase):
             target_text = result.delivery_target_catalog_path.read_text(encoding="utf-8")
             manual_companion_text = result.manual_review_companion_path.read_text(encoding="utf-8")
             manual_index_text = result.manual_evidence_index_path.read_text(encoding="utf-8")
+            decisions_text = result.review_owner_decisions_path.read_text(encoding="utf-8")
+            manifest_text = result.sent_package_manifest_path.read_text(encoding="utf-8")
+            sha256_text = result.zip_sha256_path.read_text(encoding="utf-8")
 
             self.assertIn("Concrete Findings", review_text)
             self.assertIn("Manual Evidence Rollup", review_text)
@@ -424,6 +446,12 @@ class TestTicketReview(unittest.TestCase):
             self.assertIn("Krister - 3D_Assets_Sizes.xlsm", target_text)
             self.assertIn("Manual review record", manual_companion_text)
             self.assertIn("Total attached evidence items: 0", manual_index_text)
+            self.assertIn("# Review-owner decisions", decisions_text)
+            self.assertIn("## lights_OnlyCones", decisions_text)
+            self.assertIn("# SENT PACKAGE MANIFEST", manifest_text)
+            self.assertIn("IDCEVODEV-960073", manifest_text)
+            self.assertIn(result.zip_path.name, manifest_text)
+            self.assertIn(result.zip_path.name, sha256_text)
 
             self.assertTrue(any("screenshot triage" in evidence.label.lower() for evidence in item_map["screenshot_tests_bmws"].evidence))
             self.assertTrue(any("screenshot test config" in evidence.label.lower() for evidence in item_map["screenshot_tests_bmws"].evidence))
@@ -457,6 +485,10 @@ class TestTicketReview(unittest.TestCase):
             self.assertTrue((packaged_snapshot_root / "logs" / "g65-smoke.log").exists())
             self.assertTrue((packaged_snapshot_root / "logs" / "g65-battery-default.log").exists())
             self.assertTrue((packaged_snapshot_root / "logs" / "g65-battery-lowbeam.log").exists())
+            self.assertTrue((packaged_snapshot_root / "review-priority-ranking.md").exists())
+            self.assertTrue((packaged_snapshot_root / "review-priority-ranking.json").exists())
+            self.assertTrue((packaged_snapshot_root / "daily-qa-delta-summary.md").exists())
+            self.assertTrue((packaged_snapshot_root / "daily-qa-delta-summary.json").exists())
             self.assertTrue((packaged_snapshot_root / "images" / "g65" / "default" / "tests" / "actuals" / "default.png").exists())
             self.assertTrue(
                 (
@@ -476,6 +508,8 @@ class TestTicketReview(unittest.TestCase):
             self.assertIn("artifacts/daily-snapshot/logs/g65-smoke.log", matrix_text)
             self.assertIn("artifacts/daily-snapshot/logs/g65-battery-default.log", matrix_text)
             self.assertIn("artifacts/daily-snapshot/logs/g65-battery-lowbeam.log", matrix_text)
+            self.assertIn("review-priority-ranking.md", matrix_text)
+            self.assertIn("daily-qa-delta-summary.md", matrix_text)
             self.assertNotIn("digital-3d-car-models/ci/scripts/car_manager.py", matrix_text)
 
     def test_materialize_ticket_review_bundle_harvests_manual_evidence_from_blocked_scene_check(self) -> None:

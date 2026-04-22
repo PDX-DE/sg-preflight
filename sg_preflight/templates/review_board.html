@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Review Board - SG Preflight Operator UI{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="#package-card">
+    <span class="shell-route-title">Open the latest review package</span>
+    <span class="shell-route-detail">Use the packaged evidence, not local guesswork.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#review-priority">
+    <span class="shell-route-title">Check review priority first</span>
+    <span class="shell-route-detail">Start with the highest-signal screenshot items.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#open-decisions">
+    <span class="shell-route-title">Resolve owner decisions</span>
+    <span class="shell-route-detail">Keep blocker/follow-up calls explicit.</span>
+  </a>
+</li>
+{% endblock %}
+{% block content %}
+{% set board = review_board %}
+<section class="hero-panel hero-panel--simple" id="package-card">
+  <div class="hero-copy">
+    <p class="eyebrow">Review board</p>
+    <h2>{{ board.ticket_id }} - {{ board.scope|join(", ") }}</h2>
+    <p class="hero-text">
+      Latest structured operator state for the sendable review package, the current daily snapshot, and the remaining review-owner decisions.
+    </p>
+    <div class="hero-bullets">
+      <span>Package verification: {{ board.package_verification.status }}</span>
+      <span>DoD status: {{ board.dod_status_summary.overall_status }}</span>
+      <span>Visible progress: {{ board.visible_dod_progress_percent if board.visible_dod_progress_percent is not none else "n/a" }}%</span>
+      <span>Generated: {{ board.generated_at }}</span>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Execution summary</h3>
+      <p>The Python backend owns this state. The web surface only renders the current structured snapshot.</p>
+    </div>
+  </div>
+  <div class="quick-start-grid">
+    <article class="quick-start-card">
+      <p class="eyebrow">Smoke</p>
+      <h4>{{ board.daily_snapshot_summary.smoke_completed }}/{{ board.daily_snapshot_summary.smoke_total }} passed</h4>
+      <p>Representative BMW local export + screenshot smoke for the current scope.</p>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Battery</p>
+      <h4>{{ board.screenshot_battery_counts.exact_candidate_ready }} exact / {{ board.screenshot_battery_counts.proxy_candidate_ready }} proxy / {{ board.screenshot_battery_counts.runtime_crash }} crash</h4>
+      <p>{{ board.screenshot_battery_counts.total }} total broader screenshot checks in the latest snapshot.</p>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Unresolved family</p>
+      <h4>{{ board.unresolved_families|join(", ") if board.unresolved_families else "none" }}</h4>
+      <p>Exact runtime/content families that still need review-owner direction or follow-up.</p>
+    </article>
+  </div>
+</section>
+
+<section class="panel" id="review-priority">
+  <div class="panel-head">
+    <div>
+      <h3>Top review-priority items</h3>
+      <p>Use these before opening the full gallery or browsing all artifacts.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for item in board.top_review_priority_items %}
+    <div class="run-card">
+      <div class="min-w-0">
+        <strong>{{ item.profile_id }} - {{ item.filter_name }}</strong>
+        <div class="muted">{{ item.verdict }} / priority {{ item.priority_score }}</div>
+        {% if item.reason %}
+        <div class="muted">{{ item.reason }}</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel" id="open-decisions">
+  <div class="panel-head">
+    <div>
+      <h3>Open review-owner decisions</h3>
+      <p>These are still waiting for human owner input.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for section in board.review_owner_decisions.sections %}
+    <div class="run-card">
+      <div class="min-w-0">
+        <strong>{{ section.title }}</strong>
+        <div class="muted">{% if section.pending %}Pending owner input{% else %}Recorded{% endif %}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Open items / blockers</h3>
+      <p>Current unresolved items merged from the package, latest snapshot, and package verification.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for item in board.open_items %}
+    <div class="note-block note-block--warn">{{ item }}</div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Artifact links</h3>
+      <p>Open the main packaged evidence directly from the current workspace.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for item in file_cards %}
+    <div class="run-card">
+      <div class="min-w-0">
+        <strong>{{ item.label }}</strong>
+        {% if item.relative_path %}
+        <div class="muted">{{ item.relative_path }}</div>
+        {% else %}
+        <div class="muted">{{ item.path }}</div>
+        {% endif %}
+      </div>
+      <div class="run-card-actions">
+        {% if item.href %}
+        <a href="{{ item.href }}">Open</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

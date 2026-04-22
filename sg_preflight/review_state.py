@@ -1,0 +1,538 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+_REVIEW_PACKAGE_SUFFIX = "-review-package-"
+_REVIEW_BUNDLE_SUFFIX = "-review-bundle.json"
+
+
+def _workspace_root(workspace: Path | str | None = None) -> Path:
+    root = Path(workspace) if workspace is not None else Path(__file__).resolve().parents[1]
+    return root.resolve()
+
+
+def _out_root(workspace: Path | str | None = None) -> Path:
+    return _workspace_root(workspace) / "out"
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected JSON object in {path}")
+    return payload
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_manifest_progress(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    match = re.search(
+        r"Visible DoD progress \(conservative\):\s*`?(\d+)%`?",
+        path.read_text(encoding="utf-8"),
+    )
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _load_review_owner_sections(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("## "):
+            if current is not None:
+                sections.append(current)
+            current = {"title": line[3:].strip(), "fields": {}, "raw_lines": []}
+            continue
+        if current is None:
+            continue
+        current["raw_lines"].append(raw_line)
+        if ":" in raw_line:
+            key, value = raw_line.split(":", 1)
+            current["fields"][key.strip()] = value.strip()
+    if current is not None:
+        sections.append(current)
+    for section in sections:
+        fields = section.get("fields", {})
+        decision = str(fields.get("Decision", "")).strip()
+        section["pending"] = decision == "" or "/" in decision
+    return sections
+
+
+def _artifact_ref(path: Path | None, *, package_root: Path | None, workspace_root: Path) -> dict[str, Any]:
+    if path is None:
+        return {
+            "absolute_path": "",
+            "relative_path": "",
+            "workspace_relative_path": "",
+            "exists": False,
+        }
+
+    absolute = path.resolve()
+    relative = ""
+    workspace_relative = ""
+    if package_root is not None:
+        try:
+            relative = absolute.relative_to(package_root.resolve()).as_posix()
+        except ValueError:
+            relative = ""
+    try:
+        workspace_relative = absolute.relative_to(workspace_root.resolve()).as_posix()
+    except ValueError:
+        workspace_relative = ""
+    return {
+        "absolute_path": str(absolute),
+        "relative_path": relative,
+        "workspace_relative_path": workspace_relative,
+        "exists": absolute.exists(),
+    }
+
+
+def _summarize_daily_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+    smoke_results = payload.get("smoke_results", [])
+    battery_results = payload.get("battery_results", [])
+    exact_ready = sum(1 for item in battery_results if item.get("verdict") == "baseline_candidate_ready")
+    proxy_ready = sum(1 for item in battery_results if item.get("verdict") == "proxy_candidate_ready")
+    runtime_crash = sum(1 for item in battery_results if item.get("verdict") == "runtime_crash")
+    unresolved_families = sorted(
+        {
+            str(item.get("filter_name", "")).strip()
+            for item in battery_results
+            if item.get("verdict") == "runtime_crash" and str(item.get("filter_name", "")).strip()
+        }
+    )
+    return {
+        "created_at": payload.get("created_at", ""),
+        "scope_profiles": list(payload.get("scope_profiles", [])),
+        "smoke_completed": sum(1 for item in smoke_results if str(item.get("status", "")).strip().lower() == "completed"),
+        "smoke_total": len(smoke_results),
+        "battery_total": len(battery_results),
+        "exact_candidate_ready": exact_ready,
+        "proxy_candidate_ready": proxy_ready,
+        "runtime_crash": runtime_crash,
+        "unresolved_families": unresolved_families,
+        "top_review_items": list(payload.get("top_review_items", [])),
+        "blocked_steps": list(payload.get("blocked_steps", [])),
+    }
+
+
+def _top_level_daily_snapshot_dirs(workspace: Path) -> list[Path]:
+    out_root = _out_root(workspace)
+    if not out_root.exists():
+        return []
+    roots = [
+        path
+        for path in out_root.iterdir()
+        if path.is_dir() and path.name.startswith("daily-3d-car-qa-summary-")
+    ]
+    return sorted(roots, key=lambda item: item.stat().st_mtime, reverse=True)
+
+
+def _review_bundle_paths(workspace: Path) -> list[Path]:
+    out_root = _out_root(workspace)
+    if not out_root.exists():
+        return []
+    return sorted(
+        out_root.rglob(f"*{_REVIEW_BUNDLE_SUFFIX}"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def load_review_package(path: Path | str, workspace: Path | str | None = None) -> dict[str, Any]:
+    workspace_root = _workspace_root(workspace)
+    raw_path = Path(path)
+    if raw_path.suffix.lower() == ".zip":
+        package_root = raw_path.with_suffix("")
+    elif raw_path.is_file():
+        package_root = raw_path.parent
+    else:
+        package_root = raw_path
+    package_root = package_root.resolve()
+
+    bundle_candidates = list(package_root.glob(f"*{_REVIEW_BUNDLE_SUFFIX}"))
+    if not bundle_candidates:
+        raise FileNotFoundError(f"No review-bundle JSON found under {package_root}")
+    bundle_json_path = bundle_candidates[0]
+    bundle = _load_json(bundle_json_path)
+
+    zip_path = package_root.with_suffix(".zip")
+    sha256_path = Path(str(zip_path) + ".sha256")
+    manifest_path = package_root / "SENT_PACKAGE_MANIFEST.md"
+    decisions_path = package_root / "review-owner-decisions.md"
+    dod_matrix_path = package_root / f"{bundle['ticket_id']}-dod-matrix.md"
+    review_status_path = package_root / f"{bundle['ticket_id']}-review-status.md"
+    teams_update_path = package_root / f"{bundle['ticket_id']}-teams-update.md"
+    candidate_gallery_path = package_root / "artifacts" / "daily-snapshot" / "candidate-review-gallery.html"
+    daily_snapshot_md_path = package_root / "artifacts" / "daily-snapshot" / "daily-3d-car-qa-summary.md"
+    daily_snapshot_json_path = package_root / "artifacts" / "daily-snapshot" / "daily-3d-car-qa-summary.json"
+    review_priority_md_path = package_root / "artifacts" / "daily-snapshot" / "review-priority-ranking.md"
+    review_priority_json_path = package_root / "artifacts" / "daily-snapshot" / "review-priority-ranking.json"
+    daily_delta_md_path = package_root / "artifacts" / "daily-snapshot" / "daily-qa-delta-summary.md"
+    daily_delta_json_path = package_root / "artifacts" / "daily-snapshot" / "daily-qa-delta-summary.json"
+    nested_reference = "refs" in {part.lower() for part in package_root.parts}
+
+    return {
+        "ticket_id": str(bundle.get("ticket_id", "")),
+        "title": str(bundle.get("title", "")),
+        "generated_at": str(bundle.get("generated_at_utc", "")),
+        "overall_status": str(bundle.get("overall_status", "")),
+        "scope": list(bundle.get("profile_ids", [])),
+        "scope_note": str(bundle.get("scope_note", "")),
+        "blockers": list(bundle.get("blockers", [])),
+        "next_questions": list(bundle.get("next_questions", [])),
+        "package_root": str(package_root),
+        "zip_path": str(zip_path) if zip_path.exists() else "",
+        "sha256_path": str(sha256_path) if sha256_path.exists() else "",
+        "nested_reference": nested_reference,
+        "visible_dod_progress_percent": _load_manifest_progress(manifest_path),
+        "review_bundle_json": _artifact_ref(bundle_json_path, package_root=package_root, workspace_root=workspace_root),
+        "manifest": _artifact_ref(manifest_path, package_root=package_root, workspace_root=workspace_root),
+        "review_owner_decisions": _artifact_ref(decisions_path, package_root=package_root, workspace_root=workspace_root),
+        "dod_matrix": _artifact_ref(dod_matrix_path, package_root=package_root, workspace_root=workspace_root),
+        "review_status": _artifact_ref(review_status_path, package_root=package_root, workspace_root=workspace_root),
+        "teams_update": _artifact_ref(teams_update_path, package_root=package_root, workspace_root=workspace_root),
+        "candidate_gallery": _artifact_ref(candidate_gallery_path, package_root=package_root, workspace_root=workspace_root),
+        "daily_snapshot_markdown": _artifact_ref(daily_snapshot_md_path, package_root=package_root, workspace_root=workspace_root),
+        "daily_snapshot_json": _artifact_ref(daily_snapshot_json_path, package_root=package_root, workspace_root=workspace_root),
+        "review_priority_markdown": _artifact_ref(review_priority_md_path, package_root=package_root, workspace_root=workspace_root),
+        "review_priority_json": _artifact_ref(review_priority_json_path, package_root=package_root, workspace_root=workspace_root),
+        "daily_delta_markdown": _artifact_ref(daily_delta_md_path, package_root=package_root, workspace_root=workspace_root),
+        "daily_delta_json": _artifact_ref(daily_delta_json_path, package_root=package_root, workspace_root=workspace_root),
+    }
+
+
+def list_review_packages(workspace: Path | str | None = None) -> list[dict[str, Any]]:
+    workspace_root = _workspace_root(workspace)
+    packages = [load_review_package(path, workspace_root) for path in _review_bundle_paths(workspace_root)]
+    return sorted(
+        packages,
+        key=lambda item: (
+            item["nested_reference"],
+            -_parse_iso_datetime(item["generated_at"]).timestamp() if item["generated_at"] else 0.0,
+        ),
+    )
+
+
+def load_latest_review_package(ticket_id: str | None = None, workspace: Path | str | None = None) -> dict[str, Any]:
+    packages = list_review_packages(workspace)
+    if ticket_id:
+        filtered = [item for item in packages if item["ticket_id"].lower() == ticket_id.strip().lower()]
+    else:
+        filtered = packages
+    if not filtered:
+        raise FileNotFoundError("No matching review package was found.")
+    top_level = [item for item in filtered if not item["nested_reference"]]
+    return top_level[0] if top_level else filtered[0]
+
+
+def load_latest_daily_snapshot(workspace: Path | str | None = None) -> dict[str, Any]:
+    workspace_root = _workspace_root(workspace)
+    for snapshot_root in _top_level_daily_snapshot_dirs(workspace_root):
+        json_path = snapshot_root / "daily-3d-car-qa-summary.json"
+        md_path = snapshot_root / "daily-3d-car-qa-summary.md"
+        if not json_path.exists():
+            continue
+        payload = _load_json(json_path)
+        summary = _summarize_daily_snapshot(payload)
+        return {
+            "root": str(snapshot_root),
+            "json_path": str(json_path),
+            "markdown_path": str(md_path) if md_path.exists() else "",
+            "summary": summary,
+            "payload": payload,
+        }
+    raise FileNotFoundError("No top-level daily snapshot JSON was found.")
+
+
+def load_review_priority(ticket_id: str | None = None, workspace: Path | str | None = None) -> dict[str, Any]:
+    workspace_root = _workspace_root(workspace)
+    package = load_latest_review_package(ticket_id, workspace_root)
+    package_json_path = Path(package["review_priority_json"]["absolute_path"]) if package["review_priority_json"]["absolute_path"] else None
+    package_md_path = Path(package["review_priority_markdown"]["absolute_path"]) if package["review_priority_markdown"]["absolute_path"] else None
+    if package_json_path is not None and package_json_path.exists():
+        json_path = package_json_path
+        md_path = package_md_path
+        source = "package"
+    else:
+        snapshot = load_latest_daily_snapshot(workspace_root)
+        snapshot_root = Path(snapshot["root"])
+        json_path = snapshot_root / "review-priority-ranking.json"
+        md_path = snapshot_root / "review-priority-ranking.md"
+        source = "daily_snapshot"
+    if not json_path.exists():
+        raise FileNotFoundError("No review-priority JSON artifact was found.")
+    payload = _load_json(json_path)
+    ranked_items = list(payload.get("ranked_items", []))
+    return {
+        "source": source,
+        "json_path": str(json_path),
+        "markdown_path": str(md_path) if md_path.exists() else "",
+        "created_at": str(payload.get("created_at", "")),
+        "scope_profiles": list(payload.get("scope_profiles", [])),
+        "ranked_items": ranked_items,
+        "top_items": ranked_items[:5],
+    }
+
+
+def load_daily_delta(ticket_id: str | None = None, workspace: Path | str | None = None) -> dict[str, Any]:
+    workspace_root = _workspace_root(workspace)
+    package = load_latest_review_package(ticket_id, workspace_root)
+    package_json_path = Path(package["daily_delta_json"]["absolute_path"]) if package["daily_delta_json"]["absolute_path"] else None
+    package_md_path = Path(package["daily_delta_markdown"]["absolute_path"]) if package["daily_delta_markdown"]["absolute_path"] else None
+    if package_json_path is not None and package_json_path.exists():
+        json_path = package_json_path
+        md_path = package_md_path
+        source = "package"
+    else:
+        snapshot = load_latest_daily_snapshot(workspace_root)
+        snapshot_root = Path(snapshot["root"])
+        json_path = snapshot_root / "daily-qa-delta-summary.json"
+        md_path = snapshot_root / "daily-qa-delta-summary.md"
+        source = "daily_snapshot"
+    if not json_path.exists():
+        raise FileNotFoundError("No daily-delta JSON artifact was found.")
+    payload = _load_json(json_path)
+    return {
+        "source": source,
+        "json_path": str(json_path),
+        "markdown_path": str(md_path) if md_path.exists() else "",
+        "current_created_at": str(payload.get("current_created_at", "")),
+        "previous_created_at": str(payload.get("previous_created_at", "")),
+        "new_failures": list(payload.get("new_failures", [])),
+        "resolved_failures": list(payload.get("resolved_failures", [])),
+        "new_screenshot_diffs": list(payload.get("new_screenshot_diffs", [])),
+        "unchanged_blockers": list(payload.get("unchanged_blockers", [])),
+        "changed_counts": dict(payload.get("changed_counts", {})),
+        "top_five_to_review": list(payload.get("top_five_to_review", [])),
+    }
+
+
+def load_review_owner_decisions(ticket_id: str | None = None, workspace: Path | str | None = None) -> dict[str, Any]:
+    workspace_root = _workspace_root(workspace)
+    package = load_latest_review_package(ticket_id, workspace_root)
+    decisions_path = Path(package["review_owner_decisions"]["absolute_path"]) if package["review_owner_decisions"]["absolute_path"] else None
+    if decisions_path is None or not decisions_path.exists():
+        raise FileNotFoundError("No review-owner decisions template was found.")
+    sections = _load_review_owner_sections(decisions_path)
+    return {
+        "path": str(decisions_path),
+        "exists": True,
+        "sections": sections,
+        "pending_count": sum(1 for item in sections if item.get("pending")),
+    }
+
+
+def verify_sendable_package(zip_path: Path | str, workspace: Path | str | None = None) -> dict[str, Any]:
+    workspace_root = _workspace_root(workspace)
+    raw = Path(zip_path)
+    if raw.suffix.lower() == ".zip":
+        package_root = raw.with_suffix("")
+        archive_path = raw
+    else:
+        package_root = raw
+        archive_path = raw.with_suffix(".zip")
+    package_root = package_root.resolve()
+    archive_path = archive_path.resolve()
+    sha256_path = Path(str(archive_path) + ".sha256")
+
+    required_files = {
+        "review_bundle_json": package_root / next(
+            (path.name for path in package_root.glob(f"*{_REVIEW_BUNDLE_SUFFIX}")),
+            f"{package_root.name}-review-bundle.json",
+        ),
+        "manifest": package_root / "SENT_PACKAGE_MANIFEST.md",
+        "review_owner_decisions": package_root / "review-owner-decisions.md",
+        "candidate_gallery": package_root / "artifacts" / "daily-snapshot" / "candidate-review-gallery.html",
+        "daily_snapshot_json": package_root / "artifacts" / "daily-snapshot" / "daily-3d-car-qa-summary.json",
+        "daily_snapshot_markdown": package_root / "artifacts" / "daily-snapshot" / "daily-3d-car-qa-summary.md",
+    }
+    optional_files = {
+        "review_priority_json": package_root / "artifacts" / "daily-snapshot" / "review-priority-ranking.json",
+        "daily_delta_json": package_root / "artifacts" / "daily-snapshot" / "daily-qa-delta-summary.json",
+    }
+
+    missing_required = [key for key, path in required_files.items() if not path.exists()]
+    missing_optional = [key for key, path in optional_files.items() if not path.exists()]
+    zip_exists = archive_path.exists()
+    sha_sidecar_exists = sha256_path.exists()
+
+    sha_expected = ""
+    sha_actual = ""
+    sha_match = False
+    if zip_exists:
+        sha_actual = _file_sha256(archive_path)
+    if sha_sidecar_exists:
+        sha_expected = sha256_path.read_text(encoding="utf-8").strip().split(" ", 1)[0]
+        sha_match = sha_expected.lower() == sha_actual.lower() if sha_actual else False
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    if not zip_exists:
+        errors.append("Package ZIP is missing.")
+    if missing_required:
+        errors.extend(f"Missing required packaged artifact: {item}" for item in missing_required)
+    if zip_exists and not sha_sidecar_exists:
+        warnings.append("ZIP SHA256 sidecar is missing.")
+    if zip_exists and sha_sidecar_exists and not sha_match:
+        warnings.append("ZIP SHA256 sidecar does not match the current archive content.")
+    warnings.extend(
+        f"Optional package artifact is not bundled and will need snapshot fallback: {item}"
+        for item in missing_optional
+    )
+
+    status = "ok"
+    if errors:
+        status = "error"
+    elif warnings:
+        status = "warning"
+
+    return {
+        "status": status,
+        "package_root": str(package_root),
+        "zip_path": str(archive_path) if zip_exists else "",
+        "sha256_path": str(sha256_path) if sha_sidecar_exists else "",
+        "sha256_expected": sha_expected,
+        "sha256_actual": sha_actual,
+        "sha256_match": sha_match,
+        "required_files": {
+            key: _artifact_ref(path, package_root=package_root, workspace_root=workspace_root)
+            for key, path in required_files.items()
+        },
+        "optional_files": {
+            key: _artifact_ref(path, package_root=package_root, workspace_root=workspace_root)
+            for key, path in optional_files.items()
+        },
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def build_review_board_state(ticket_id: str | None = None, workspace: Path | str | None = None) -> dict[str, Any]:
+    workspace_root = _workspace_root(workspace)
+    package = load_latest_review_package(ticket_id, workspace_root)
+    daily_snapshot = load_latest_daily_snapshot(workspace_root)
+    review_priority = load_review_priority(ticket_id, workspace_root)
+    daily_delta = load_daily_delta(ticket_id, workspace_root)
+    decisions = load_review_owner_decisions(ticket_id, workspace_root)
+    verification = verify_sendable_package(package["zip_path"] or package["package_root"], workspace_root)
+
+    snapshot_summary = daily_snapshot["summary"]
+    blocker_list: list[str] = []
+    for item in package["blockers"]:
+        if item not in blocker_list:
+            blocker_list.append(item)
+    for item in snapshot_summary["blocked_steps"]:
+        if item not in blocker_list:
+            blocker_list.append(item)
+    for item in verification["errors"] + verification["warnings"]:
+        if item not in blocker_list:
+            blocker_list.append(item)
+
+    package_root = Path(package["package_root"])
+    latest_snapshot_root = Path(daily_snapshot["root"])
+
+    def _artifact_entry(label: str, path: str) -> dict[str, Any]:
+        artifact_path = Path(path) if path else None
+        return {
+            "label": label,
+            **_artifact_ref(artifact_path, package_root=package_root, workspace_root=workspace_root),
+        }
+
+    top_review_items = []
+    for item in review_priority["top_items"]:
+        top_review_items.append(
+            {
+                "profile_id": str(item.get("profile_id", "")),
+                "filter_name": str(item.get("filter_name", "")),
+                "verdict": str(item.get("verdict", "")),
+                "priority_score": int(item.get("priority_score", 0)),
+                "reason": str(item.get("reason", "")),
+                "recommendation": str(item.get("recommendation", "")),
+                "log_path": str(item.get("log_path", "")),
+            }
+        )
+
+    return {
+        "ticket_id": package["ticket_id"],
+        "title": package["title"],
+        "scope": package["scope"] or snapshot_summary["scope_profiles"],
+        "package_path": package["package_root"],
+        "generated_at": package["generated_at"],
+        "package_zip_path": package["zip_path"],
+        "package_sha256_path": package["sha256_path"],
+        "visible_dod_progress_percent": package["visible_dod_progress_percent"],
+        "package_verification": verification,
+        "dod_status_summary": {
+            "overall_status": package["overall_status"],
+            "blocker_count": len(package["blockers"]),
+            "next_question_count": len(package["next_questions"]),
+            "visible_progress_percent": package["visible_dod_progress_percent"],
+        },
+        "daily_snapshot_summary": snapshot_summary,
+        "screenshot_battery_counts": {
+            "total": snapshot_summary["battery_total"],
+            "exact_candidate_ready": snapshot_summary["exact_candidate_ready"],
+            "proxy_candidate_ready": snapshot_summary["proxy_candidate_ready"],
+            "runtime_crash": snapshot_summary["runtime_crash"],
+        },
+        "unresolved_families": snapshot_summary["unresolved_families"],
+        "review_priority": {
+            "source": review_priority["source"],
+            "json_path": review_priority["json_path"],
+            "markdown_path": review_priority["markdown_path"],
+            "top_items": top_review_items,
+        },
+        "daily_delta": {
+            "source": daily_delta["source"],
+            "json_path": daily_delta["json_path"],
+            "markdown_path": daily_delta["markdown_path"],
+            "new_failures": daily_delta["new_failures"],
+            "resolved_failures": daily_delta["resolved_failures"],
+            "unchanged_blockers": daily_delta["unchanged_blockers"],
+            "top_five_to_review": daily_delta["top_five_to_review"],
+        },
+        "review_owner_decisions": {
+            "path": decisions["path"],
+            "pending_count": decisions["pending_count"],
+            "sections": decisions["sections"],
+        },
+        "open_items": blocker_list,
+        "top_review_priority_items": top_review_items,
+        "artifact_references": {
+            "package_manifest": _artifact_entry("Package manifest", package["manifest"]["absolute_path"]),
+            "review_owner_decisions": _artifact_entry("Review-owner decisions", package["review_owner_decisions"]["absolute_path"]),
+            "dod_matrix": _artifact_entry("DoD matrix", package["dod_matrix"]["absolute_path"]),
+            "review_status": _artifact_entry("Review status", package["review_status"]["absolute_path"]),
+            "teams_update": _artifact_entry("Teams update", package["teams_update"]["absolute_path"]),
+            "candidate_gallery": _artifact_entry("Candidate gallery", package["candidate_gallery"]["absolute_path"]),
+            "package_daily_snapshot_json": _artifact_entry("Packaged daily snapshot JSON", package["daily_snapshot_json"]["absolute_path"]),
+            "latest_daily_snapshot_json": _artifact_entry("Latest daily snapshot JSON", str(latest_snapshot_root / "daily-3d-car-qa-summary.json")),
+            "latest_daily_snapshot_markdown": _artifact_entry("Latest daily snapshot markdown", str(latest_snapshot_root / "daily-3d-car-qa-summary.md")),
+            "review_priority_json": _artifact_entry("Review-priority JSON", review_priority["json_path"]),
+            "review_priority_markdown": _artifact_entry("Review-priority markdown", review_priority["markdown_path"]),
+            "daily_delta_json": _artifact_entry("Daily delta JSON", daily_delta["json_path"]),
+            "daily_delta_markdown": _artifact_entry("Daily delta markdown", daily_delta["markdown_path"]),
+            "package_zip": _artifact_entry("Package ZIP", package["zip_path"]),
+            "package_sha256": _artifact_entry("Package SHA256 sidecar", package["sha256_path"]),
+        },
+    }

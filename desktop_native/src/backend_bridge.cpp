@@ -468,6 +468,76 @@ void from_json(const json& payload, EnvironmentDoctorItem& item) {
     item.next_action = ValueString(payload, "next_action");
 }
 
+void from_json(const json& payload, ReviewPriorityItem& item) {
+    item.profile_id = ValueString(payload, "profile_id");
+    item.filter_name = ValueString(payload, "filter_name");
+    item.verdict = ValueString(payload, "verdict");
+    item.priority_score = ValueInt(payload, "priority_score", 0);
+    item.reason = ValueString(payload, "reason");
+    item.recommendation = ValueString(payload, "recommendation");
+    item.log_path = ValueString(payload, "log_path");
+}
+
+void from_json(const json& payload, ReviewOwnerDecisionItem& item) {
+    item.title = ValueString(payload, "title");
+    item.pending = ValueBool(payload, "pending", true);
+}
+
+void from_json(const json& payload, ReviewBoardState& item) {
+    item.ticket_id = ValueString(payload, "ticket_id");
+    item.title = ValueString(payload, "title");
+    item.package_path = ValueString(payload, "package_path");
+    item.package_zip_path = ValueString(payload, "package_zip_path");
+    item.generated_at = ValueString(payload, "generated_at");
+    item.visible_dod_progress_percent = ValueInt(payload, "visible_dod_progress_percent", 0);
+    if (payload.contains("scope") && payload.at("scope").is_array()) {
+        item.scope = payload.at("scope").get<std::vector<std::string>>();
+    }
+    if (payload.contains("package_verification") && payload.at("package_verification").is_object()) {
+        item.verification_status = ValueString(payload.at("package_verification"), "status");
+    }
+    if (payload.contains("dod_status_summary") && payload.at("dod_status_summary").is_object()) {
+        item.dod_overall_status = ValueString(payload.at("dod_status_summary"), "overall_status");
+    }
+    if (payload.contains("daily_snapshot_summary") && payload.at("daily_snapshot_summary").is_object()) {
+        const json& summary = payload.at("daily_snapshot_summary");
+        item.smoke_completed = ValueInt(summary, "smoke_completed", 0);
+        item.smoke_total = ValueInt(summary, "smoke_total", 0);
+    }
+    if (payload.contains("screenshot_battery_counts") && payload.at("screenshot_battery_counts").is_object()) {
+        const json& counts = payload.at("screenshot_battery_counts");
+        item.battery_total = ValueInt(counts, "total", 0);
+        item.exact_candidate_ready = ValueInt(counts, "exact_candidate_ready", 0);
+        item.proxy_candidate_ready = ValueInt(counts, "proxy_candidate_ready", 0);
+        item.runtime_crash = ValueInt(counts, "runtime_crash", 0);
+    }
+    if (payload.contains("unresolved_families") && payload.at("unresolved_families").is_array()) {
+        item.unresolved_families = payload.at("unresolved_families").get<std::vector<std::string>>();
+    }
+    if (payload.contains("open_items") && payload.at("open_items").is_array()) {
+        item.open_items = payload.at("open_items").get<std::vector<std::string>>();
+    }
+    if (payload.contains("top_review_priority_items") && payload.at("top_review_priority_items").is_array()) {
+        item.review_priority_items = payload.at("top_review_priority_items").get<std::vector<ReviewPriorityItem>>();
+    }
+    if (payload.contains("review_owner_decisions") && payload.at("review_owner_decisions").is_object()) {
+        const json& decisions = payload.at("review_owner_decisions");
+        if (decisions.contains("sections") && decisions.at("sections").is_array()) {
+            item.decisions = decisions.at("sections").get<std::vector<ReviewOwnerDecisionItem>>();
+        }
+    }
+    if (payload.contains("artifact_references") && payload.at("artifact_references").is_object()) {
+        for (const auto& [_, value] : payload.at("artifact_references").items()) {
+            ArtifactItem artifact;
+            artifact.label = ValueString(value, "label");
+            artifact.path = ValueString(value, "absolute_path");
+            if (!artifact.path.empty()) {
+                item.artifacts.push_back(artifact);
+            }
+        }
+    }
+}
+
 std::vector<ProfileItem> LoadProfiles(const BackendConfig& config) {
     std::vector<std::wstring> args = {L"desktop-state", L"profiles", L"--json"};
     AppendWorkspace(args, config);
@@ -555,6 +625,20 @@ std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& co
     };
     AppendWorkspace(args, config);
     return ParseArray<EnvironmentDoctorItem>(RunJsonCommand(config, args));
+}
+
+ReviewBoardState LoadReviewBoard(const BackendConfig& config, const std::string& ticket_id) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"review-board",
+        L"--json",
+    };
+    if (!ticket_id.empty()) {
+        args.push_back(L"--ticket-id");
+        args.push_back(ToWide(ticket_id));
+    }
+    AppendWorkspace(args, config);
+    return RunJsonCommand(config, args).get<ReviewBoardState>();
 }
 
 ManualEvidenceItem AttachManualEvidence(
