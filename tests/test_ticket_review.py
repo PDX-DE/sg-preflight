@@ -133,6 +133,54 @@ def _create_native_verification(root: Path) -> None:
     write_text(verification_root / "environment.png", "png fixture\n")
 
 
+def _create_daily_snapshot_fixture(root: Path, profile_id: str) -> None:
+    output_root = root / "out" / "daily-3d-car-qa-summary-fixture"
+    output_root.mkdir(parents=True, exist_ok=True)
+    write_text(output_root / "daily-3d-car-qa-summary.md", "# fixture snapshot\n")
+    write_text(
+        output_root / "daily-3d-car-qa-summary.json",
+        """
+{
+  "created_at": "2026-04-21T17:57:55",
+  "scope_profiles": ["G65"],
+  "bmw_repo_root": "C:/fixture/digital-3d-car-models",
+  "config_check": {
+    "status": "ready",
+    "python_exe": "C:/fixture/python.exe",
+    "repo_root": "C:/fixture/digital-3d-car-models",
+    "log_path": "C:/fixture/config.log",
+    "output_excerpt": "",
+    "error": ""
+  },
+  "smoke_results": [
+    {
+      "profile_id": "G65",
+      "bmw_profile_id": "G65_EVO",
+      "status": "completed",
+      "smoke_test": "openAllDoors_rightView",
+      "python_exe": "C:/fixture/python.exe",
+      "sg_project_root": "C:/repositories/trunk/Cars_IDCevo/BMW/G65",
+      "bmw_test_config_path": "C:/fixture/test_config_tmp.lua",
+      "log_path": "C:/fixture/g65-smoke.log",
+      "exported_ramses_size": 123456,
+      "exported_rlogic_size": 0,
+      "expected_count": 2,
+      "actual_count": 2,
+      "diff_count": 0,
+      "compare_ok": true,
+      "error": "",
+      "notes": ["fixture smoke"]
+    }
+  ],
+  "blocked_steps": [],
+  "top_review_items": ["G65: openAllDoors_rightView passed locally with no visible diff."],
+  "notes": []
+}
+""".strip()
+        + "\n",
+    )
+
+
 class TestTicketReview(unittest.TestCase):
     def test_materialize_ticket_review_bundle_can_stay_scope_first_without_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -168,6 +216,7 @@ class TestTicketReview(unittest.TestCase):
             _create_checker_files(root)
             _create_visual_review_files(root, profile.project_root)
             _create_native_verification(root)
+            _create_daily_snapshot_fixture(root, "G65")
 
             delivery_action = get_operator_action("delivery_checklist__g65", root, profiles=[profile])
             repo_action = get_operator_action("repo_checker_profile__g65", root, profiles=[profile])
@@ -230,6 +279,7 @@ class TestTicketReview(unittest.TestCase):
             item_map = {item.key: item for item in result.bundle.dod_items}
             self.assertEqual(item_map["format_checker_svn"].status, "covered_with_findings")
             self.assertEqual(item_map["screenshot_tests_bmws"].status, "partial")
+            self.assertEqual(item_map["headless_export_check_bmw"].status, "covered")
             self.assertEqual(item_map["asset_review_in_raco_bmws"].status, "manual_ready")
             self.assertEqual(item_map["support"].status, "needs_scope")
             self.assertFalse(result.bundle.manual_evidence)
@@ -256,6 +306,8 @@ class TestTicketReview(unittest.TestCase):
             self.assertIn("Concrete Findings", review_text)
             self.assertIn("Manual Evidence Rollup", review_text)
             self.assertIn("screenshot tests bmws", matrix_text)
+            self.assertIn("Representative local BMW export proof is attached", matrix_text)
+            self.assertIn("smoke `openAllDoors_rightView` -> passed locally with no visible diff", matrix_text)
             self.assertIn("Proposed clarified wording", dod_update_text)
             self.assertIn("What I still need from Adrian / Hristofor / Stefan", teams_text)
             self.assertIn("## Message For Jana", stakeholder_text)

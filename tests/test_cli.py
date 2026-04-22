@@ -260,6 +260,45 @@ class TestCLI(unittest.TestCase):
             (candidate_root.resolve(),),
         )
 
+    def test_daily_snapshot_cli_forwards_battery_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_result = mock.Mock()
+            fake_result.snapshot = mock.Mock()
+            fake_result.markdown_path = root / "snapshot.md"
+            fake_result.json_path = root / "snapshot.json"
+
+            with mock.patch("sg_preflight.cli.materialize_daily_qa_snapshot", return_value=fake_result) as materialize:
+                with mock.patch("sg_preflight.cli._console_daily_snapshot") as console:
+                    result = main(
+                        [
+                            "daily-qa-snapshot",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "NA8",
+                            "--battery-defaults",
+                            "--battery-filter",
+                            "lights_drl_front",
+                        ]
+                    )
+
+        self.assertEqual(result, 0)
+        console.assert_called_once()
+        self.assertEqual(
+            materialize.call_args.kwargs["battery_filters"],
+            (
+                "default",
+                "openAllDoors_",
+                "lights_LowBeam",
+                "lights_HighBeam",
+                "welcome_animation_",
+                "automatic_Doors_",
+                "highlighting_Doors",
+                "lights_drl_front",
+            ),
+        )
+
     def test_screenshot_triage_cli_forwards_candidate_roots(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -291,6 +330,38 @@ class TestCLI(unittest.TestCase):
             materialize.call_args.kwargs["candidate_roots"],
             (candidate_root.resolve(),),
         )
+
+    def test_daily_qa_snapshot_cli_forwards_profiles_and_smoke_options(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_result = mock.Mock()
+            fake_result.snapshot = mock.Mock()
+
+            with mock.patch("sg_preflight.cli.materialize_daily_qa_snapshot", return_value=fake_result) as materialize:
+                with mock.patch("sg_preflight.cli._console_daily_snapshot") as console:
+                    result = main(
+                        [
+                            "daily-qa-snapshot",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "NA8",
+                            "--profile",
+                            "G78",
+                            "--smoke-test",
+                            "openAllDoors_rightView",
+                            "--no-smoke",
+                        ]
+                    )
+
+        self.assertEqual(result, 0)
+        console.assert_called_once()
+        self.assertEqual(
+            materialize.call_args.kwargs["profile_ids"],
+            ("NA8", "G78"),
+        )
+        self.assertEqual(materialize.call_args.kwargs["smoke_test"], "openAllDoors_rightView")
+        self.assertFalse(materialize.call_args.kwargs["run_smoke"])
 
     def test_good_demo_passes(self) -> None:
         result = subprocess.run(

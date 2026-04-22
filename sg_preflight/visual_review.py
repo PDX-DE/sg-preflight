@@ -593,6 +593,8 @@ def build_visual_review_prep(
         shared_svn_log_lines=shared_svn_log_lines,
     )
 
+    test_config = _find_test_config(resolved_project_root)
+
     return VisualReviewPrep(
         profile_id=profile_id,
         project_root=str(resolved_project_root),
@@ -608,7 +610,7 @@ def build_visual_review_prep(
         screenshot_files=screenshot_files,
         priority_screenshots=priority,
         constants_readme_path=str(constants_readme) if constants_readme.exists() else "",
-        screenshot_test_config_path=str(_find_test_config(resolved_project_root)),
+        screenshot_test_config_path=str(test_config) if test_config.exists() else "",
         raco_scene_path=str(raco_scene) if raco_scene.exists() else "",
         blender_workfile_path=str(blender_workfile) if blender_workfile.exists() else "",
         shared_root=str(shared_root) if shared_root.exists() else "",

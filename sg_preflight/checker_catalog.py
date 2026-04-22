@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.bmw_delivery import discover_bmw_models_repo
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.tool_readiness import probe_raco_runtime, representative_raco_scene
 
@@ -98,14 +99,7 @@ def _raco_headless_path(root: Path) -> Path:
 
 
 def _bmw_models_repo_path(root: Path) -> Path:
-    return _env_or_default_path(
-        ("SG_CARMODELS_REPO",),
-        (
-            root / "external" / "digital-3d-car-models",
-            root.parent / "digital-3d-car-models",
-            Path(r"C:\repos\digital-3d-car-models"),
-        ),
-    )
+    return discover_bmw_models_repo(root)
 
 
 def _delivery_checklist_paths(root: Path) -> dict[str, Path]:

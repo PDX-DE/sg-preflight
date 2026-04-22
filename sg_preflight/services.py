@@ -16,6 +16,7 @@ from sg_preflight.adapters.materialize import (
     materialize_bundle,
     resolve_materialize_inputs,
 )
+from sg_preflight.bmw_delivery import discover_bmw_models_repo
 from sg_preflight.bundle import load_bundle
 from sg_preflight.checker_catalog import list_checker_catalog
 from sg_preflight.config_loader import load_config, load_json
@@ -780,15 +781,7 @@ def _blender_executable_path(root: Path) -> Path:
 
 
 def _bmw_models_repo_path(root: Path) -> Path:
-    path, _ = _env_or_default_path(
-        ("SG_CARMODELS_REPO",),
-        (
-            root / "external" / "digital-3d-car-models",
-            root.parent / "digital-3d-car-models",
-            Path(r"C:\repos\digital-3d-car-models"),
-        ),
-    )
-    return path
+    return discover_bmw_models_repo(root)
 
 
 def _delivery_checklist_root(root: Path) -> Path:

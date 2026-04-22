@@ -10,6 +10,8 @@ import shutil
 import zipfile
 from typing import Any, Iterable
 
+from sg_preflight.bmw_delivery import BmwScreenshotSurface, inspect_bmw_screenshot_surface
+from sg_preflight.daily_snapshot import DailyQaSnapshotResult, find_latest_daily_qa_snapshot
 from sg_preflight.profiles import RunProfile, get_run_profile, resolve_source_repo_root
 from sg_preflight.qa_actions import ActionRecord, load_action_record, operator_ui_actions_root
 from sg_preflight.screenshot_triage import ScreenshotTriageBundle, ScreenshotTriageReport, materialize_screenshot_triage
@@ -18,7 +20,7 @@ from sg_preflight.visual_review import VisualReviewPrep, build_visual_review_pre
 
 
 _PROCESS_QUESTIONS = (
-    "Can you confirm which cars/slices are actually in scope for {ticket_id}? Current local grounding is: {profiles}.",
+    "Can you confirm whether the grounded list `{profiles}` is complete for {ticket_id}, or if any additional cars/slices should also be reviewed?",
     "Where are the screenshot test candidate/result images generated and which folder is the source of truth?",
     "What is the normal screenshot-test pass/fail reading flow: diff report, threshold, log, or manual folder comparison?",
     "What exactly counts as `asset review in raco (bmws)` done: scene opens, missing-resource check, visual comparison, or a formal scene-check report?",
@@ -66,7 +68,7 @@ _QA_CAPABILITY_SPECS = (
         "status_present": "available locally",
         "status_missing": "missing locally",
         "checks": "Lua/shader/style/repo checks that SG can already run on the live SVN slice.",
-        "how_to_use": 'py ".pdx\\checkers\\executeChecks.py" "C:\\repositories\\trunk\\Cars_IDCevo\\BMW\\G70"',
+        "how_to_use": 'py ".pdx\\checkers\\executeChecks.py" "C:\\repositories\\trunk\\Cars_IDCevo\\BMW\\<PROFILE>"',
         "blocker": "Needs the SG repo root and a fix-vs-report decision for surfaced findings.",
     },
     {
@@ -133,8 +135,8 @@ _QA_CAPABILITY_SPECS = (
         "status_present": "blocked by BMW access",
         "status_missing": "blocked by BMW access",
         "checks": "BMW-owned export/interface/screenshot smoke flow from digital-3d-car-models.",
-        "how_to_use": 'Expected commands once access exists: "py car_manager.py export <CAR>", "py car_manager.py screenshots <CAR>", or "py main.py screenshots_ext C:/PATH/TO/PROJECT.rca -b BMW".',
-        "blocker": "BMW Git clone, helper scripts, and the real candidate-output folder are still inaccessible from this machine.",
+        "how_to_use": 'Documented BMW helper commands: "py ci/scripts/car_manager.py screenshots <CAR> -diff", "py ci/scripts/car_manager.py screenshots --generate <CAR>", and "py ci/scripts/car_manager.py screenshots_ext C:/PATH/TO/PROJECT.rca -b BMW".',
+        "blocker": "Needs the BMW repo helper surface plus real expected/actual/diff screenshot payload; empty folders are not evidence of a passing run.",
     },
     {
         "label": "BMW headless export proof",
@@ -143,8 +145,8 @@ _QA_CAPABILITY_SPECS = (
         "status_present": "blocked by BMW access",
         "status_missing": "blocked by BMW access",
         "checks": "The proving command/output for BMW-side headless export success that the delivery ticket expects.",
-        "how_to_use": "Document the exact command and expected success output now; execute it only after BMW-side access and scripts are available.",
-        "blocker": "BMW repo/scripts and the owning toolchain are still blocked locally.",
+        "how_to_use": 'Documented BMW helper command: "py ci/scripts/car_manager.py export <CAR>". Treat proof as the captured export log plus the printed binary file sizes.',
+        "blocker": "Needs the BMW repo helper surface, runnable local toolchain, and a captured success log; packaging the helper alone does not prove export success.",
     },
     {
         "label": "Rack / hardware car-paint review",
@@ -470,6 +472,14 @@ class ReviewEvidence:
 
 
 @dataclass(frozen=True)
+class RacoManualReviewProbeResult:
+    output_root: Path
+    markdown_path: Path
+    json_path: Path
+    profile_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class TicketFinding:
     severity: str
     summary: str
@@ -581,6 +591,7 @@ class TicketReviewBundleResult:
 class _ProfileContext:
     profile: RunProfile
     prep: VisualReviewPrep
+    bmw_surface: BmwScreenshotSurface
     triage_bundle: ScreenshotTriageBundle
     scene_record: ActionRecord | None
     stack_record: ActionRecord | None
@@ -591,6 +602,8 @@ class _ProfileContext:
     action_bundle_evidence: tuple[ReviewEvidence, ...]
     packaged_source_evidence: tuple[ReviewEvidence, ...]
     manual_review_paths: dict[str, Path]
+    bmw_surface_markdown_path: Path
+    bmw_surface_json_path: Path
 
 
 def _utc_now() -> str:
@@ -640,6 +653,8 @@ def _safe_relative(path: Path, root: Path) -> Path | None:
 
 def _copy_file(source: Path, destination: Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        return destination
     if source.resolve() != destination.resolve():
         shutil.copy2(source.resolve(), destination)
     return destination
@@ -666,7 +681,10 @@ def _dedupe_evidence(items: Iterable[ReviewEvidence]) -> tuple[ReviewEvidence, .
 
 
 def _bundle_evidence(label: str, path: str | Path, detail: str = "") -> ReviewEvidence:
-    return ReviewEvidence(label=label, path=str(path), detail=detail)
+    normalized = str(path)
+    if normalized in {"", ".", "not found"}:
+        normalized = "not found"
+    return ReviewEvidence(label=label, path=normalized, detail=detail)
 
 
 def _all_action_records(workspace: Path) -> tuple[ActionRecord, ...]:
@@ -774,6 +792,138 @@ def _package_live_sources(
     return _dedupe_evidence(packaged)
 
 
+def _package_external_file(
+    *,
+    label: str,
+    path: str | Path,
+    package_root: Path,
+    relative_dir: str | Path,
+) -> ReviewEvidence | None:
+    source = Path(path).resolve()
+    if not source.exists() or not source.is_file():
+        return None
+    destination = package_root / relative_dir / source.name
+    _copy_file(source, destination)
+    return _bundle_evidence(label, destination)
+
+
+def _load_raco_manual_review_probe(output_root: Path) -> RacoManualReviewProbeResult | None:
+    root = output_root.resolve()
+    markdown_path = root / "raco-manual-review-probe.md"
+    json_path = root / "raco-manual-review-probe.json"
+    if not markdown_path.exists() or not json_path.exists():
+        return None
+    try:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, list):
+        return None
+    profile_ids = tuple(
+        dict.fromkeys(
+            str(item.get("profile_id", "")).strip()
+            for item in payload
+            if isinstance(item, dict) and str(item.get("profile_id", "")).strip()
+        )
+    )
+    return RacoManualReviewProbeResult(
+        output_root=root,
+        markdown_path=markdown_path,
+        json_path=json_path,
+        profile_ids=profile_ids,
+    )
+
+
+def _find_latest_raco_manual_review_probe(
+    workspace: Path,
+    *,
+    required_profiles: tuple[str, ...] = (),
+) -> RacoManualReviewProbeResult | None:
+    out_root = workspace / "out"
+    if not out_root.exists():
+        return None
+
+    normalized_required = {item.strip().upper() for item in required_profiles if item and item.strip()}
+    candidates: list[RacoManualReviewProbeResult] = []
+    for directory in out_root.glob("raco-manual-review-probe-*"):
+        if not directory.is_dir():
+            continue
+        loaded = _load_raco_manual_review_probe(directory)
+        if loaded is None:
+            continue
+        available_profiles = {item.upper() for item in loaded.profile_ids}
+        if normalized_required and not normalized_required.issubset(available_profiles):
+            continue
+        candidates.append(loaded)
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: (
+            item.json_path.stat().st_mtime if item.json_path.exists() else 0,
+            item.output_root.name,
+        ),
+        reverse=True,
+    )
+    return candidates[0]
+
+
+def _package_daily_snapshot_result(
+    result: DailyQaSnapshotResult,
+    package_root: Path,
+) -> DailyQaSnapshotResult:
+    packaged_markdown = package_root / "artifacts" / "daily-snapshot" / result.markdown_path.name
+    packaged_json = package_root / "artifacts" / "daily-snapshot" / result.json_path.name
+    _copy_file(result.markdown_path, packaged_markdown)
+    _copy_file(result.json_path, packaged_json)
+
+    packaged_gaps_markdown: Path | None = None
+    packaged_gaps_json: Path | None = None
+    packaged_review_gallery_html: Path | None = None
+    if result.battery_baseline_gaps_markdown_path and result.battery_baseline_gaps_markdown_path.exists():
+        packaged_gaps_markdown = (
+            package_root / "artifacts" / "daily-snapshot" / result.battery_baseline_gaps_markdown_path.name
+        )
+        _copy_file(result.battery_baseline_gaps_markdown_path, packaged_gaps_markdown)
+    if result.battery_baseline_gaps_json_path and result.battery_baseline_gaps_json_path.exists():
+        packaged_gaps_json = (
+            package_root / "artifacts" / "daily-snapshot" / result.battery_baseline_gaps_json_path.name
+        )
+        _copy_file(result.battery_baseline_gaps_json_path, packaged_gaps_json)
+    if result.review_gallery_html_path and result.review_gallery_html_path.exists():
+        packaged_review_gallery_html = (
+            package_root / "artifacts" / "daily-snapshot" / result.review_gallery_html_path.name
+        )
+        _copy_file(result.review_gallery_html_path, packaged_review_gallery_html)
+
+    return DailyQaSnapshotResult(
+        output_root=packaged_markdown.parent,
+        snapshot=result.snapshot,
+        markdown_path=packaged_markdown,
+        json_path=packaged_json,
+        battery_baseline_gaps_markdown_path=packaged_gaps_markdown,
+        battery_baseline_gaps_json_path=packaged_gaps_json,
+        review_gallery_html_path=packaged_review_gallery_html,
+    )
+
+
+def _package_raco_manual_review_probe(
+    probe: RacoManualReviewProbeResult,
+    package_root: Path,
+) -> RacoManualReviewProbeResult:
+    packaged_markdown = package_root / "artifacts" / "raco-probe" / probe.markdown_path.name
+    packaged_json = package_root / "artifacts" / "raco-probe" / probe.json_path.name
+    _copy_file(probe.markdown_path, packaged_markdown)
+    _copy_file(probe.json_path, packaged_json)
+    return RacoManualReviewProbeResult(
+        output_root=packaged_markdown.parent,
+        markdown_path=packaged_markdown,
+        json_path=packaged_json,
+        profile_ids=probe.profile_ids,
+    )
+
+
 def _latest_native_verification_dir(workspace: Path) -> Path | None:
     verification_root = workspace / "build" / "native-installer-fullscreen" / "verification"
     if not verification_root.exists():
@@ -822,7 +972,9 @@ def _manual_review_texts(
         f"- Changelog heading: {prep.changelog_heading or 'not found'}",
         f"- Representative RaCo scene: `{prep.raco_scene_path or 'not found'}`",
         f"- Representative Blender workfile: `{prep.blender_workfile_path or 'not found'}`",
-        f"- Baseline root: `{prep.screenshot_root or 'not found'}`",
+        f"- Screenshot baseline root: `{report.expected_root or prep.screenshot_root or 'not found'}`",
+        f"- BMW actuals root: `{context.bmw_surface.actuals_root or 'not found'}`",
+        f"- BMW diff root: `{context.bmw_surface.diff_root or 'not found'}`",
         f"- Screenshot triage: `{triage_path}`",
     ]
     return {
@@ -847,9 +999,7 @@ def _manual_review_texts(
                 f"# Manual review record - {profile_id}",
                 "",
                 *[
-                    line.replace("- Baseline root:", "- Screenshot baseline root:")
-                    if line.startswith("- Baseline root:")
-                    else line
+                    line
                     for line in common_header[:-1]
                 ],
                 f"- Current screenshot triage: {report.pair_count} pair(s), {report.missing_candidate_count} missing candidate, {report.needs_review_count} needs review, {report.dimension_mismatch_count} dimension mismatch",
@@ -872,7 +1022,9 @@ def _manual_review_texts(
                 "",
                 f"- Ticket: {ticket_id}",
                 f"- Profile: {profile_id}",
-                f"- Baseline root: `{prep.screenshot_root or 'not found'}`",
+                f"- Baseline root: `{report.expected_root or prep.screenshot_root or 'not found'}`",
+                f"- BMW actuals root: `{context.bmw_surface.actuals_root or 'not found'}`",
+                f"- BMW diff root: `{context.bmw_surface.diff_root or 'not found'}`",
                 f"- Triage report: `{triage_path}`",
                 f"- Suggested baseline checks first: {priority}",
                 "",
@@ -1007,6 +1159,43 @@ def _manual_followups(record: ActionRecord | None) -> tuple[str, ...]:
     return tuple(str(item) for item in raw if item)
 
 
+def _bmw_surface_markdown(surface: BmwScreenshotSurface) -> str:
+    lines = [
+        f"# BMW screenshot surface - {surface.profile_id}",
+        "",
+        f"- SG profile: `{surface.profile_id}`",
+        f"- BMW profile folder: `{surface.bmw_profile_id}`",
+        f"- BMW repo root: `{surface.repo_root or 'not found'}`",
+        f"- BMW cars root: `{surface.cars_root or 'not found'}`",
+        f"- BMW car root: `{surface.car_root or 'not found'}`",
+        f"- BMW CI scripts root: `{surface.ci_scripts_root or 'not found'}`",
+        f"- BMW CI tools root: `{surface.ci_tools_root or 'not found'}`",
+        f"- BMW CI README: `{surface.ci_readme_path or 'not found'}`",
+        f"- BMW car_manager.py: `{surface.car_manager_path or 'not found'}`",
+        f"- Export/tests root: `{surface.export_tests_root or 'not found'}`",
+        f"- SG expected root: `{surface.sg_expected_root or 'not found'}` ({surface.sg_expected_count} image(s))",
+        f"- BMW expected root: `{surface.bmw_expected_root or 'not found'}` ({surface.bmw_expected_count} image(s))",
+        f"- BMW actuals root: `{surface.actuals_root or 'not found'}` ({surface.actual_count} image(s))",
+        f"- BMW diff root: `{surface.diff_root or 'not found'}` ({surface.diff_count} image(s))",
+        f"- BMW test config: `{surface.test_config_path or 'not found'}`",
+        "",
+        "## Documented BMW command surface",
+        "- Export proof command: `py ci/scripts/car_manager.py export <CAR>`",
+        "- Screenshot generation command: `py ci/scripts/car_manager.py screenshots --generate <CAR>`",
+        "- Screenshot comparison command: `py ci/scripts/car_manager.py screenshots <CAR> -diff`",
+        "- External RCA screenshot command: `py ci/scripts/car_manager.py screenshots_ext C:/PATH/TO/PROJECT.rca -b BMW`",
+        "- Expected screenshot proof: the current repo writes into `export/tests/{expected,actuals,diff}`.",
+        "- Expected export proof: captured export log plus the printed binary file sizes from `car_manager.py export`.",
+        "",
+        "## Notes",
+    ]
+    if surface.notes:
+        lines.extend(f"- {note}" for note in surface.notes)
+    else:
+        lines.append("- No BMW-side notes were recorded for this profile.")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _profile_context(
     *,
     ticket_id: str,
@@ -1019,14 +1208,42 @@ def _profile_context(
 ) -> _ProfileContext:
     profile = get_run_profile(profile_id, workspace)
     prep = build_visual_review_prep(profile.profile_id, profile.source_project_root(), repo_root=source_root)
+    bmw_surface = inspect_bmw_screenshot_surface(
+        profile.profile_id,
+        workspace_root=workspace,
+        sg_project_root=profile.source_project_root(),
+    )
     triage_root = package_root / "artifacts" / "screenshot-triage" / profile.profile_id.lower()
+    effective_expected_root = Path(bmw_surface.sg_expected_root or bmw_surface.bmw_expected_root) if (
+        bmw_surface.sg_expected_root or bmw_surface.bmw_expected_root
+    ) else None
+    effective_candidate_roots = tuple(
+        dict.fromkeys(
+            [
+                *(path.resolve() for path in candidate_roots),
+                *(Path(bmw_surface.actuals_root).resolve() for _ in [0] if bmw_surface.actuals_root),
+            ]
+        )
+    )
+    effective_diff_roots = tuple(
+        Path(bmw_surface.diff_root).resolve()
+        for _ in [0]
+        if bmw_surface.diff_root
+    )
     triage_bundle = materialize_screenshot_triage(
         profile.profile_id,
         profile.source_project_root(),
         triage_root,
-        candidate_roots=candidate_roots,
+        expected_root=effective_expected_root,
+        candidate_roots=effective_candidate_roots,
+        diff_reference_roots=effective_diff_roots,
         priority_names=prep.priority_screenshots,
     )
+    bmw_surface_root = package_root / "artifacts" / "bmw-surface" / profile.profile_id.lower()
+    bmw_surface_markdown_path = bmw_surface_root / "surface.md"
+    bmw_surface_json_path = bmw_surface_root / "surface.json"
+    _write_text(bmw_surface_markdown_path, _bmw_surface_markdown(bmw_surface))
+    _write_json(bmw_surface_json_path, bmw_surface.to_dict())
 
     action_ids = _action_ids_for_profile(profile.profile_id)
     scene_record = _latest_record(all_records, action_ids["scene"])
@@ -1044,6 +1261,9 @@ def _profile_context(
         prep.changelog_path,
         prep.constants_readme_path,
         prep.screenshot_test_config_path,
+        bmw_surface.test_config_path,
+        bmw_surface.ci_readme_path,
+        bmw_surface.car_manager_path,
         *prep.shared_doc_paths,
     ]
     packaged_source_evidence = _package_live_sources(source_paths, package_root, source_root)
@@ -1052,6 +1272,7 @@ def _profile_context(
     context = _ProfileContext(
         profile=profile,
         prep=prep,
+        bmw_surface=bmw_surface,
         triage_bundle=triage_bundle,
         scene_record=scene_record,
         stack_record=stack_record,
@@ -1062,6 +1283,8 @@ def _profile_context(
         action_bundle_evidence=action_bundle_evidence,
         packaged_source_evidence=packaged_source_evidence,
         manual_review_paths=manual_review_paths,
+        bmw_surface_markdown_path=bmw_surface_markdown_path,
+        bmw_surface_json_path=bmw_surface_json_path,
     )
     _materialize_manual_review_templates(ticket_id=ticket_id, context=context)
     return context
@@ -1249,21 +1472,130 @@ def _item_status_summary(
     )
 
 
-def _support_blockers(workspace: Path, delivery_record: ActionRecord | None) -> tuple[str, ...]:
-    followups = _manual_followups(delivery_record)
-    if followups:
-        return followups
+def _screenshot_surface_summary(contexts: tuple[_ProfileContext, ...]) -> str:
+    if not contexts:
+        return "No confirmed local slice is grounded yet, so screenshot-test evidence is intentionally not claimed."
+    parts: list[str] = []
+    for context in contexts:
+        surface = context.bmw_surface
+        report = context.triage_bundle.report
+        part = (
+            f"{context.profile.profile_id}: SG expected {surface.sg_expected_count}, "
+            f"BMW expected {surface.bmw_expected_count}, actuals {surface.actual_count}, diff {surface.diff_count}"
+        )
+        if surface.export_tests_root:
+            if surface.actual_count == 0 and surface.diff_count == 0:
+                part += "; BMW screenshot surface exists but currently contains no screenshot payload"
+            else:
+                part += f"; triage pairs {report.pair_count}, needs review {report.needs_review_count}"
+        else:
+            part += "; BMW export/tests surface not present locally"
+        parts.append(part)
+    return "<br>".join(parts)
+
+
+def _headless_surface_summary(contexts: tuple[_ProfileContext, ...]) -> str:
+    if not contexts:
+        return "No confirmed local slice is grounded yet, so BMW headless-export readiness is intentionally not claimed."
+    ready = [context for context in contexts if context.bmw_surface.car_manager_path]
+    if ready:
+        profiles = ", ".join(context.profile.profile_id for context in ready)
+        return (
+            f"BMW repo helpers are locally visible for {profiles}: `ci/scripts/car_manager.py` and the CI README are packaged. "
+            "No verified local export execution is attached yet; the next proof still needs the safe command run and captured `export finished` plus file sizes output."
+        )
+    return "The BMW headless-export helper surface is still not visible locally for the grounded slice(s)."
+
+
+def _snapshot_smoke_results(
+    snapshot_result: DailyQaSnapshotResult | None,
+    contexts: tuple[_ProfileContext, ...],
+) -> dict[str, Any]:
+    if snapshot_result is None or not contexts:
+        return {}
+
+    scoped_profiles = {context.profile.profile_id.upper() for context in contexts}
+    result_map = {
+        item.profile_id.upper(): item
+        for item in snapshot_result.snapshot.smoke_results
+        if item.profile_id and item.profile_id.upper() in scoped_profiles
+    }
+    if not result_map or scoped_profiles - set(result_map):
+        return {}
+    return result_map
+
+
+def _snapshot_battery_results(
+    snapshot_result: DailyQaSnapshotResult | None,
+    contexts: tuple[_ProfileContext, ...],
+) -> dict[str, tuple[Any, ...]]:
+    if snapshot_result is None or not contexts:
+        return {}
+
+    scoped_profiles = {context.profile.profile_id.upper() for context in contexts}
+    result_map: dict[str, list[Any]] = {}
+    for item in getattr(snapshot_result.snapshot, "battery_results", ()):
+        profile_key = str(getattr(item, "profile_id", "")).upper()
+        if not profile_key or profile_key not in scoped_profiles:
+            continue
+        result_map.setdefault(profile_key, []).append(item)
+    if not result_map or scoped_profiles - set(result_map):
+        return {}
+    return {key: tuple(value) for key, value in result_map.items()}
+
+
+def _current_support_blockers(workspace: Path) -> tuple[str, ...]:
     readiness = {item["key"]: item for item in prerequisite_status(workspace)}
-    keys = (
-        "bmw_models_repo",
-        "bmw_car_manager_script",
-        "bmw_test_main_script",
-    )
-    blockers = []
-    for key in keys:
-        item = readiness.get(key, {})
-        if item.get("status") != "available":
-            blockers.append(f"{item.get('label', key)} missing locally. Path: {item.get('path', '')}")
+    blockers: list[str] = []
+    bmw_models = readiness.get("bmw_models_repo", {})
+    bmw_car_manager = readiness.get("bmw_car_manager_script", {})
+    bmw_test_main = readiness.get("bmw_test_main_script", {})
+    bmw_readme = readiness.get("bmw_screenshot_scripts", {})
+    if bmw_models.get("status") != "available":
+        blockers.append(f"{bmw_models.get('label', 'bmw_models_repo')} missing locally. Path: {bmw_models.get('path', '')}")
+    if (
+        bmw_car_manager.get("status") != "available"
+        and bmw_test_main.get("status") != "available"
+    ):
+        blockers.append(
+            "BMW screenshot/headless helpers are missing locally. "
+            f"car_manager path: {bmw_car_manager.get('path', '')}"
+        )
+    if bmw_readme.get("status") != "available":
+        blockers.append(
+            f"{bmw_readme.get('label', 'BMW screenshot scripts README')} missing locally. "
+            f"Path: {bmw_readme.get('path', '')}"
+        )
+    return tuple(blockers)
+
+
+def _is_stale_followup(
+    followup: str,
+    readiness: dict[str, dict[str, str]],
+) -> bool:
+    text = followup.lower()
+    if "bmw delivery repo is missing locally" in text:
+        return readiness.get("bmw_models_repo", {}).get("status") == "available"
+    if "car_manager.py" in text:
+        return readiness.get("bmw_car_manager_script", {}).get("status") == "available"
+    if "test/main.py" in text:
+        return (
+            readiness.get("bmw_car_manager_script", {}).get("status") == "available"
+            or readiness.get("bmw_test_main_script", {}).get("status") == "available"
+        )
+    if "ci/scripts/readme" in text or "screenshot scripts" in text:
+        return readiness.get("bmw_screenshot_scripts", {}).get("status") == "available"
+    return False
+
+
+def _support_blockers(workspace: Path, delivery_record: ActionRecord | None) -> tuple[str, ...]:
+    readiness = {item["key"]: item for item in prerequisite_status(workspace)}
+    blockers = list(_current_support_blockers(workspace))
+    for followup in _manual_followups(delivery_record):
+        if _is_stale_followup(followup, readiness):
+            continue
+        if followup not in blockers:
+            blockers.append(followup)
     return tuple(blockers)
 
 
@@ -1383,9 +1715,11 @@ def _qa_capability_matrix_markdown(
     *,
     ticket_id: str,
     source_root: Path,
+    workspace: Path,
     scope_note: str,
     profile_ids: tuple[str, ...],
 ) -> str:
+    readiness = {item["key"]: item for item in prerequisite_status(workspace)}
     lines = [
         f"# QA Capability Matrix - {ticket_id}",
         "",
@@ -1399,6 +1733,32 @@ def _qa_capability_matrix_markdown(
         "| --- | --- | --- | --- | --- | --- |",
     ]
     for spec in _QA_CAPABILITY_SPECS:
+        if spec["label"] in {"BMW screenshot smoke flow", "BMW headless export proof"}:
+            bmw_models = readiness.get("bmw_models_repo", {})
+            bmw_car_manager = readiness.get("bmw_car_manager_script", {})
+            bmw_readme = readiness.get("bmw_screenshot_scripts", {})
+            if (
+                bmw_models.get("status") == "available"
+                and bmw_car_manager.get("status") == "available"
+                and bmw_readme.get("status") == "available"
+            ):
+                status = "helper surface available locally"
+                verified = "<br>".join(
+                    entry
+                    for entry in (
+                        f"`{bmw_models.get('path', '')}`" if bmw_models.get("path") else "",
+                        f"`{bmw_car_manager.get('path', '')}`" if bmw_car_manager.get("path") else "",
+                        f"`{bmw_readme.get('path', '')}`" if bmw_readme.get("path") else "",
+                    )
+                    if entry
+                )
+            else:
+                status = spec["status_present"]
+                verified = f"Confluence section: `{spec['section']}`"
+            lines.append(
+                f"| {spec['label']} | {status} | {verified} | {spec['checks']} | {spec['how_to_use']} | {spec['blocker']} |"
+            )
+            continue
         relative_paths = tuple(spec.get("relative_paths", ()))
         if relative_paths:
             resolved_paths = _resolve_capability_paths(source_root, relative_paths)
@@ -1584,6 +1944,13 @@ def _delivery_surface_map_markdown(
     bmw_models = readiness.get("bmw_models_repo", {})
     bmw_car_manager = readiness.get("bmw_car_manager_script", {})
     bmw_main_script = readiness.get("bmw_test_main_script", {})
+    bmw_repo_ready = bmw_models.get("status") == "available"
+    bmw_execution_state = "partially, for inspection and packaging only" if bmw_repo_ready else "no"
+    bmw_local_evidence = (
+        "CI README, car_manager helper, local tests-folder structure, and packaged root/count documentation."
+        if bmw_repo_ready
+        else "Expected commands, blocker documentation, required evidence fields in the bundle."
+    )
 
     def _blocked_text(item: dict[str, Any]) -> str:
         label = str(item.get("label", "BMW prerequisite"))
@@ -1591,6 +1958,13 @@ def _delivery_surface_map_markdown(
         detail = f" Path: {path}" if path else ""
         status = str(item.get("status", "missing"))
         return f"{label} is {status}.{detail}"
+
+    if bmw_car_manager.get("status") == "available":
+        bmw_helper_text = _blocked_text(bmw_car_manager)
+    elif bmw_main_script.get("status") == "available":
+        bmw_helper_text = _blocked_text(bmw_main_script)
+    else:
+        bmw_helper_text = f"{_blocked_text(bmw_car_manager)} {_blocked_text(bmw_main_script)}"
 
     lines = [
         f"# Delivery Surface Map - {ticket_id}",
@@ -1603,7 +1977,7 @@ def _delivery_surface_map_markdown(
         "| --- | --- | --- | --- | --- | --- |",
         f"| SG-local SVN evidence | `trunk`, `.pdx`, car changelogs/readmes, shared docs, expected screenshot baselines, representative `.rca`/Blender files. | SG / PDX | yes | Ticket bundle, DoD matrix, screenshot triage on baselines, checker findings, shared-doc review prep. | Does not prove BMW smoke/headless execution. |",
         "| SG-local manual review | RaCo/Blender review sessions, manual screenshots, notes, checklists, asset comparisons. | SG / assigned reviewer | yes, manually | Manual evidence attachments, Blender-vs-RaCo notes, operator checklists. | Human judgment and pass/fail criteria still need agreement. |",
-        f"| BMW Git / digital-3d-car-models | Production delivery repo, headless export, interface tests, screenshot smoke flow. | BMW / Team Wombat | no | Expected commands, blocker documentation, required evidence fields in the bundle. | {_blocked_text(bmw_models)} {_blocked_text(bmw_car_manager)} {_blocked_text(bmw_main_script)} |",
+        f"| BMW Git / digital-3d-car-models | Production delivery repo, headless export, interface tests, screenshot smoke flow. | BMW / Team Wombat | {bmw_execution_state} | {bmw_local_evidence} | {_blocked_text(bmw_models)} {bmw_helper_text} {'Verified screenshot payload is still missing in the current snapshot.' if bmw_repo_ready else ''} |",
         "| digital-3d-car-raw / blender plugins | Workfiles/pipeline data and Blender plugin surfaces that feed final delivery prep. | SG + BMW Git surfaces | not from the current blocked environment | Documentation of the repo split and why `_Workfiles` stay out of production delivery repos. | Access/PR flow remains outside the current local ticket execution path. |",
         "| Rack-only flows | Physical rack validation, ADB/localhost:9091 paint review, final hardware-side visual checks. | SG reviewer + designer/BMW PO | no, unless the rack is physically available | Operator instructions and blocked/manual classification only. | Physical hardware, 3D Car Test app, and review session availability. |",
         "| Jira / PR / CI follow-up | BMW Jira comments, PR links, CI observation, Review by BMW handoff. | BMW + SG delivery process | no | Teams-ready and Jira-ready text artifacts from the bundle. | Jira access, Git web/PR, and BMW CI ownership remain blocked. |",
@@ -1887,13 +2261,41 @@ def _build_dod_items(
     manual_evidence: tuple[TicketManualEvidenceItem, ...],
     manual_evidence_index_path: Path,
     support_artifacts: tuple[ReviewEvidence, ...] = (),
+    daily_snapshot: DailyQaSnapshotResult | None = None,
+    raco_probe: RacoManualReviewProbeResult | None = None,
 ) -> tuple[TicketDoDItem, ...]:
     scope_grounded = bool(contexts)
     screenshot_manual = tuple(item for item in manual_evidence if item.kind == "screenshot")
     asset_manual = tuple(item for item in manual_evidence if item.kind in _MANUAL_EVIDENCE_ASSET_KINDS)
     format_findings = tuple(finding for context in contexts for finding in _record_findings(context.repo_record))
-    baselines_present = any(context.prep.screenshot_count > 0 for context in contexts)
-    screenshot_status = "partial" if baselines_present or screenshot_manual else "blocked"
+    snapshot_results = _snapshot_smoke_results(daily_snapshot, contexts)
+    snapshot_battery = _snapshot_battery_results(daily_snapshot, contexts)
+    snapshot_diagnostics = tuple(daily_snapshot.snapshot.diagnostics) if daily_snapshot is not None else ()
+    snapshot_smoke_completed = bool(snapshot_results) and all(
+        item.status == "completed" for item in snapshot_results.values()
+    )
+    snapshot_headless_covered = snapshot_smoke_completed and all(
+        item.exported_ramses_size > 0 for item in snapshot_results.values()
+    )
+    snapshot_screenshot_ready = snapshot_smoke_completed and all(
+        item.expected_count > 0 and item.actual_count > 0 for item in snapshot_results.values()
+    )
+    snapshot_all_compare_ok = snapshot_screenshot_ready and all(
+        item.compare_ok and item.diff_count == 0 for item in snapshot_results.values()
+    )
+    baselines_present = any(
+        context.prep.screenshot_count > 0
+        or context.bmw_surface.sg_expected_count > 0
+        or context.bmw_surface.bmw_expected_count > 0
+        for context in contexts
+    )
+    bmw_screenshot_surface_present = any(context.bmw_surface.export_tests_root for context in contexts)
+    bmw_headless_surface_present = any(context.bmw_surface.car_manager_path for context in contexts)
+    screenshot_status = (
+        "partial"
+        if snapshot_screenshot_ready or baselines_present or screenshot_manual or bmw_screenshot_surface_present
+        else "blocked"
+    )
     asset_status = "partial" if asset_manual else "manual_ready" if any(
         context.prep.raco_scene_path or context.prep.blender_workfile_path for context in contexts
     ) else "blocked"
@@ -1905,6 +2307,10 @@ def _build_dod_items(
         context.prep.constants_readme_path or context.prep.project_readme_paths for context in contexts
     ) else "blocked"
     shared_status = "prepared" if any(context.prep.shared_doc_paths for context in contexts) else "blocked"
+    headless_status = "covered" if snapshot_headless_covered else "partial" if bmw_headless_surface_present else "blocked"
+    raco_probe_ready = bool(raco_probe and {
+        item.strip().upper() for item in raco_probe.profile_ids if item and item.strip()
+    }.issuperset({context.profile.profile_id.upper() for context in contexts}))
 
     screenshot_evidence: list[ReviewEvidence] = []
     asset_evidence: list[ReviewEvidence] = []
@@ -1917,16 +2323,51 @@ def _build_dod_items(
         _bundle_evidence("Ticket manual evidence index", manual_evidence_index_path),
         *support_artifacts,
     ]
+    if daily_snapshot is not None:
+        snapshot_rel = _bundle_evidence("Daily QA snapshot", daily_snapshot.markdown_path)
+        snapshot_json_rel = _bundle_evidence("Daily QA snapshot JSON", daily_snapshot.json_path)
+        screenshot_evidence.extend((snapshot_rel, snapshot_json_rel))
+        headless_evidence.extend((snapshot_rel, snapshot_json_rel))
+        support_evidence.extend((snapshot_rel, snapshot_json_rel))
+        if daily_snapshot.battery_baseline_gaps_markdown_path is not None:
+            baseline_rel = _bundle_evidence(
+                "Battery baseline gaps",
+                daily_snapshot.battery_baseline_gaps_markdown_path,
+            )
+            screenshot_evidence.append(baseline_rel)
+            support_evidence.append(baseline_rel)
+        if daily_snapshot.battery_baseline_gaps_json_path is not None:
+            baseline_json_rel = _bundle_evidence(
+                "Battery baseline gaps JSON",
+                daily_snapshot.battery_baseline_gaps_json_path,
+            )
+            screenshot_evidence.append(baseline_json_rel)
+            support_evidence.append(baseline_json_rel)
+        if daily_snapshot.review_gallery_html_path is not None:
+            review_gallery_rel = _bundle_evidence(
+                "Candidate review gallery",
+                daily_snapshot.review_gallery_html_path,
+            )
+            screenshot_evidence.append(review_gallery_rel)
+            support_evidence.append(review_gallery_rel)
+    if raco_probe is not None:
+        probe_rel = _bundle_evidence("RaCo manual review probe", raco_probe.markdown_path)
+        probe_json_rel = _bundle_evidence("RaCo manual review probe JSON", raco_probe.json_path)
+        asset_evidence.extend((probe_rel, probe_json_rel))
+        support_evidence.extend((probe_rel, probe_json_rel))
 
     for context in contexts:
         triage = context.triage_bundle
         prep = context.prep
         screenshot_evidence.extend(
             [
-                _bundle_evidence("Screenshot baselines", prep.screenshot_root or "not found"),
-                _bundle_evidence("Screenshot test config", prep.screenshot_test_config_path or "not found"),
+                _bundle_evidence("Screenshot baselines", context.triage_bundle.report.expected_root or prep.screenshot_root or "not found"),
+                _bundle_evidence("Screenshot test config", prep.screenshot_test_config_path or context.bmw_surface.test_config_path or "not found"),
                 _bundle_evidence(f"{context.profile.profile_id} screenshot triage", triage.markdown_path),
                 _bundle_evidence(f"{context.profile.profile_id} screenshot triage HTML", triage.html_path),
+                _bundle_evidence(f"{context.profile.profile_id} BMW screenshot surface", context.bmw_surface_markdown_path),
+                _bundle_evidence("BMW actuals root", context.bmw_surface.actuals_root or "not found"),
+                _bundle_evidence("BMW diff root", context.bmw_surface.diff_root or "not found"),
                 _bundle_evidence("Screenshot evidence slots", context.manual_review_paths["slots"]),
                 _bundle_evidence("Visual review checklist", context.manual_review_paths["visual_checklist"]),
             ]
@@ -1961,6 +2402,18 @@ def _build_dod_items(
                     context.delivery_record.paths.get("summary_md", ""),
                 )
             )
+        headless_evidence.extend(
+            [
+                _bundle_evidence(f"{context.profile.profile_id} BMW screenshot surface", context.bmw_surface_markdown_path),
+                _bundle_evidence("BMW car_manager.py", context.bmw_surface.car_manager_path or "not found"),
+                _bundle_evidence("BMW CI README", context.bmw_surface.ci_readme_path or "not found"),
+            ]
+        )
+        snapshot_item = snapshot_results.get(context.profile.profile_id.upper())
+        if snapshot_item is not None and snapshot_item.log_path:
+            log_evidence = _bundle_evidence(f"{context.profile.profile_id} BMW smoke log", snapshot_item.log_path)
+            screenshot_evidence.append(log_evidence)
+            headless_evidence.append(log_evidence)
         for blocker in _support_blockers(workspace, context.delivery_record):
             support_evidence.append(_bundle_evidence("Delivery blocker", blocker))
         support_evidence.append(_bundle_evidence("Scope note", scope_note))
@@ -1974,16 +2427,92 @@ def _build_dod_items(
             asset_evidence.append(evidence)
 
     triage_reports = [context.triage_bundle.report for context in contexts]
-    screenshot_summary = _item_status_summary(triage_reports[0]) if triage_reports else "No screenshot baseline root is packaged yet."
+    screenshot_summary = _screenshot_surface_summary(contexts)
+    if snapshot_results:
+        snapshot_parts = []
+        for context in contexts:
+            item = snapshot_results.get(context.profile.profile_id.upper())
+            if item is None:
+                continue
+            status_text = (
+                "passed locally with no visible diff"
+                if item.compare_ok and item.diff_count == 0
+                else "needs manual review"
+                if item.diff_count > 0
+                else item.status
+            )
+            snapshot_parts.append(
+                f"{context.profile.profile_id}: smoke `{item.smoke_test}` -> {status_text}; "
+                f"expected {item.expected_count}, actual {item.actual_count}, diff {item.diff_count}, "
+                f"Ramses {item.exported_ramses_size}b"
+            )
+            battery_items = snapshot_battery.get(context.profile.profile_id.upper(), ())
+            if battery_items:
+                verdict_counts: dict[str, int] = {}
+                for battery_item in battery_items:
+                    verdict = str(getattr(battery_item, "verdict", "")).strip() or "unknown"
+                    verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+                snapshot_parts.append(
+                    f"{context.profile.profile_id}: broader battery -> "
+                    + ", ".join(f"{key} {value}" for key, value in sorted(verdict_counts.items()))
+                )
+        if snapshot_parts:
+            for diagnostic in snapshot_diagnostics:
+                snapshot_parts.append(f"battery diagnosis -> {diagnostic}")
+            screenshot_summary = "<br>".join(snapshot_parts)
+
+    headless_summary = _headless_surface_summary(contexts)
+    if snapshot_results:
+        executed = ", ".join(
+            f"{item.profile_id} ({item.exported_ramses_size}b Ramses)"
+            for item in snapshot_results.values()
+            if item.status == "completed"
+        )
+        if executed:
+            headless_summary = (
+                f"Representative local BMW export proof is attached for {executed}. "
+                "The smoke logs include `Export finished` and `File sizes` output from the BMW helper flow."
+            )
+
+    if snapshot_screenshot_ready:
+        screenshot_next_input = (
+            "Representative local smoke evidence is attached for the confirmed cars. Remaining work is narrowing the remaining beam-family runtime/content failures in the wider battery, then completing human screenshot verdicts for the exact or proxy-ready outputs."
+            if snapshot_diagnostics
+            else "Representative local smoke evidence is attached for the confirmed cars. Remaining work is broader scenario coverage plus human screenshot verdicts for any changed outputs once those scenarios emit the right targets."
+        )
+    else:
+        screenshot_next_input = (
+            "Need real screenshot payload for the confirmed cars when folders are empty, plus the normal pass/fail reading flow from Adrian / Hristofor / Stefan."
+        )
+    headless_next_input = (
+        "Representative local BMW export proof is attached. If delivery requires broader coverage, run additional scenarios/cars and capture the same proof pattern."
+        if snapshot_headless_covered
+        else "Need a verified safe local export command plus captured `export finished` and file sizes output for one confirmed delivery car."
+    )
+    if snapshot_screenshot_ready:
+        screenshot_now_text = (
+            "Use the attached daily snapshot, smoke logs, and triage outputs as the current source of truth. The representative smoke path is green, and the broader battery now isolates a small beam-family runtime/content tail instead of a generic screenshot backlog."
+            if snapshot_diagnostics
+            else "Use the attached daily snapshot, smoke logs, and triage outputs as the current source of truth. The representative smoke path is green, and the broader battery outputs can now be reviewed directly."
+        )
+    else:
+        screenshot_now_text = (
+            "Review the packaged baseline/test-config roots, BMW actuals/diff roots, and deterministic triage output. Treat every changed or missing pair as manual review work, not as an automatic regression verdict."
+        )
+    headless_now_text = (
+        "Use the attached BMW smoke logs as export proof. They already capture `Export finished`, file sizes, and screenshot-compare results for the confirmed delivery cars."
+        if snapshot_headless_covered
+        else "Package the BMW CI README plus car_manager helper, document the expected `export finished` and file-sizes proof, and only execute the export once the safe local command is confirmed."
+    )
 
     return (
         TicketDoDItem(
             key="headless_export_check_bmw",
             label="headless export check bmw",
-            status="blocked",
-            summary="The BMW-owned headless export path is still not executable locally from this machine.",
-            what_can_be_done_now="Document prerequisites, mirrored deliveryChecklist bridge assets, and expected evidence for the BMW-owned export flow.",
-            blocked_next_input="BMW repo/scripts/viewer access is still missing locally; the exact proving command/output still needs confirmation.",
+            status=headless_status,
+            summary=headless_summary,
+            what_can_be_done_now=headless_now_text,
+            blocked_next_input=headless_next_input,
             owner_hint="BMW tooling owner / Adrian / Hristofor / Stefan",
             evidence=_dedupe_evidence(headless_evidence),
         ),
@@ -1992,8 +2521,8 @@ def _build_dod_items(
             label="screenshot tests bmws",
             status=screenshot_status,
             summary=screenshot_summary if scope_grounded else "No confirmed local slice is grounded yet, so screenshot-test evidence is intentionally not claimed.",
-            what_can_be_done_now="Review the expected baseline set, test config, and changelog-driven priority shortlist. When candidates exist locally, use the deterministic triage output and diff artifacts as the first pass.",
-            blocked_next_input="Need the real screenshot-test reading flow, the source-of-truth candidate-output folder, and pass/fail interpretation from Adrian / Hristofor / Stefan.",
+            what_can_be_done_now=screenshot_now_text,
+            blocked_next_input=screenshot_next_input,
             owner_hint="Adrian / Hristofor / Stefan for the reading flow",
             evidence=_dedupe_evidence(screenshot_evidence),
         ),
@@ -2023,7 +2552,7 @@ def _build_dod_items(
                 else "No confirmed local slice is grounded yet, so no car-specific changelog is being claimed for this ticket."
             ),
             what_can_be_done_now="Review the latest changelog section and recent SVN log lines before trusting screenshot differences.",
-            blocked_next_input=f"Need confirmation whether {contexts[0].profile.profile_id if contexts else 'the current slice'} is the real ticket scope or only the first concrete slice. {scope_note}",
+            blocked_next_input="Need confirmation whether any additional cars beyond the confirmed delivery scope also belong to this ticket, and which changelog entries should be treated as delivery-relevant.",
             owner_hint="Assigned reviewer once scope is confirmed",
             evidence=_dedupe_evidence(changelog_evidence),
         ),
@@ -2037,7 +2566,7 @@ def _build_dod_items(
                 else "No confirmed local slice is grounded yet, so no car-specific README evidence is being claimed for this ticket."
             ),
             what_can_be_done_now="Review the current README/constant notes before closing manual visual review.",
-            blocked_next_input=f"Need confirmation whether the current slice list is complete for the ticket. {scope_note}",
+            blocked_next_input="Need confirmation whether any additional cars beyond the confirmed delivery scope also belong to this ticket, and whether any extra README/constants notes must be reviewed.",
             owner_hint="Assigned reviewer once scope is confirmed",
             evidence=_dedupe_evidence(readme_evidence),
         ),
@@ -2048,11 +2577,17 @@ def _build_dod_items(
             summary=(
                 "Manual evidence is already attached from real action bundles."
                 if asset_manual
+                else "Representative RaCo scenes are ready and the current headless probe shows them as launchable for the grounded slice(s)."
+                if raco_probe_ready
                 else "A representative RaCo scene is ready to open for manual review."
                 if scope_grounded
                 else "No confirmed local slice is grounded yet, so no specific RaCo/Blender review target is being claimed."
             ),
-            what_can_be_done_now="Open the representative `.rca` scene, compare against Blender/workfiles, and attach manual review notes/screenshots.",
+            what_can_be_done_now=(
+                "Use the packaged RaCo manual review probe plus the manual-review templates, then open the representative `.rca` scene, compare against Blender/workfiles, and attach manual review notes/screenshots."
+                if raco_probe_ready
+                else "Open the representative `.rca` scene, compare against Blender/workfiles, and attach manual review notes/screenshots."
+            ),
             blocked_next_input="Need agreed pass/fail criteria for what counts as the RaCo asset review being done, not just a scene-open check.",
             owner_hint="Adrian / Hristofor / Stefan for review criteria",
             evidence=_dedupe_evidence(asset_evidence),
@@ -2067,7 +2602,7 @@ def _build_dod_items(
                 else "No confirmed local slice is grounded yet, so shared-module evidence is intentionally not attached."
             ),
             what_can_be_done_now="Review the prioritized shared BMW README and CHANGELOG set alongside the car changelog.",
-            blocked_next_input="Need confirmation which shared modules actually belong to this ticket scope.",
+            blocked_next_input="Need confirmation which `_Shared_IDCevo` or shared BMW modules actually changed for this delivery and must be reviewed.",
             owner_hint="Assigned reviewer once shared-module scope is confirmed",
             evidence=_dedupe_evidence(shared_evidence),
         ),
@@ -2077,7 +2612,7 @@ def _build_dod_items(
             status="needs_scope",
             summary="Support is not a verifiable DoD item until the owner and expected output are defined.",
             what_can_be_done_now="Use this bundle for status reporting, blockers, findings, and next-step questions while Jira access is blocked.",
-            blocked_next_input="Need Jana to define what support means this week: reporting channel, owner, and expected cadence.",
+            blocked_next_input="Need Jana to confirm whether the reporting flow is fixable findings -> Quality-Hero bug report channel and status/material -> Jana + Adrian, or if a different cadence/channel is required.",
             owner_hint="Jana",
             evidence=_dedupe_evidence(support_evidence),
         ),
@@ -2280,9 +2815,9 @@ def _dod_update_draft_markdown(bundle: TicketReviewBundle) -> str:
         [
             "",
             "## Immediate recommendation",
-            "- Keep G70 as the first grounded slice, but do not present it as confirmed final scope for either ticket.",
-            "- Ask Jana to confirm the real cars/slices for `IDCEVODEV-960073` and `IDCEVODEV-977874` before widening the evidence claim.",
-            "- Ask Adrian / Hristofor / Stefan for the screenshot-result reading flow and the real candidate-output root before claiming any screenshot test is done.",
+            "- Keep G70 only as the earlier prototype/local dry run; do not present it as the current delivery scope.",
+            "- Treat `NA8`, `G78`, and `G50` as the current confirmed delivery scope unless Jana adds more cars.",
+            "- Ask Adrian / Hristofor / Stefan for the screenshot-result reading flow and the real candidate-output rule when the current `actuals/diff` folders are still empty.",
             "- Keep the current SG checker finding as a minor reported issue until someone decides whether it should be fixed now or only assigned.",
             "",
         ]
@@ -2309,27 +2844,35 @@ def _teams_update_markdown(bundle: TicketReviewBundle) -> str:
         else ""
     )
     profile_text = ", ".join(bundle.profile_ids) if bundle.profile_ids else "no grounded slice yet"
+    headless_item = next((item for item in bundle.dod_items if item.key == "headless_export_check_bmw"), None)
+    screenshot_item = next((item for item in bundle.dod_items if item.key == "screenshot_tests_bmws"), None)
+    bmw_block = (
+        "- BMW repo snapshot and helper scripts are packaged locally, and representative local headless export proof is attached\n"
+        "- representative smoke evidence is attached, broader candidate outputs exist for most wider scenarios, and the remaining local technical blocker is the beam-family runtime/content crash\n"
+        if (headless_item and headless_item.status != "blocked") or (screenshot_item and screenshot_item.status != "blocked")
+        else "- BMW Git / digital-3d-car-models\n"
+    )
     return (
         f"# Teams Update - {bundle.ticket_id}\n\n"
         "Message\n\n"
         f"I prepared a grounded local SG-side review bundle for `{bundle.ticket_id}` from the real SVN context on this machine.\n"
-        f"As a first concrete pass I used {profile_text}, but I am not treating that as confirmed final scope yet.\n\n"
+        f"Current scope packaged here: {profile_text}.\n"
+        f"Scope note: {bundle.scope_note}\n\n"
         f"{finding_block}\n"
         "What is already covered locally:\n"
         "- car changelog/readme review prep from the live SVN checkout\n"
         "- shared BMW README/CHANGELOG review prep\n"
-        "- screenshot baseline and test-config discovery\n"
+        "- screenshot baseline/test-config discovery and BMW screenshot-surface packaging\n"
         "- representative RaCo/Blender entrypoints\n"
         "- SG-side repo checker / format flow evidence\n"
         f"{manual_block}\n"
         "What is still blocked on my side:\n"
         "- BMW Jira access\n"
-        "- BMW Git / digital-3d-car-models\n"
-        "- BMW helper scripts / headless export execution\n"
-        "- real BMW screenshot smoke execution and candidate-output interpretation\n\n"
+        f"{bmw_block}"
+        "- real pass/fail signoff for visual deltas\n\n"
         "What I still need from Adrian / Hristofor / Stefan:\n"
-        "- exact cars/slices in scope\n"
-        "- where screenshot result/candidate images are generated\n"
+        "- confirmation of the safe local headless-export command to run from the BMW snapshot\n"
+        "- where screenshot result/candidate images are generated when the actuals/diff folders are empty\n"
         "- how screenshot-test pass/fail is normally read\n"
         "- what exactly counts as asset review in RaCo done\n"
     )
@@ -2342,7 +2885,8 @@ def _stakeholder_sync_markdown(bundle: TicketReviewBundle) -> str:
         "",
         "## Message For Jana",
         "I still do not have Jira access, but I can work from the screenshots and the live SVN checkout for now.",
-        f"I prepared a grounded local SG-side review package from `C:\\repositories\\trunk`. As a first concrete pass I used {profile_text}, but I am not treating that as confirmed final scope yet.",
+        f"I prepared a grounded local SG-side review package from `C:\\repositories\\trunk` for {profile_text}.",
+        f"Scope note: {bundle.scope_note}",
         "The package includes car changelog/readme material, shared BMW docs, screenshot baselines/test config, representative RaCo/Blender entrypoints, and SG-side checker output.",
     ]
     if bundle.findings:
@@ -2363,12 +2907,10 @@ def _stakeholder_sync_markdown(bundle: TicketReviewBundle) -> str:
             "",
             "What is still blocked on my side:",
             "- BMW Jira access",
-            "- BMW Git / digital-3d-car-models",
-            "- BMW helper scripts",
-            "- headless export execution",
-            "- real BMW screenshot smoke execution",
+            "- broader screenshot coverage still hits a reproducible local beam-family runtime/content crash on `lights_LowBeam`, `lights_HighBeam`, and `lights_OnlyCones`",
+            "- real screenshot pass/fail verdicts are still manual review work once the remaining beam-family scenarios render correctly",
             "",
-            f"Can you confirm which cars/slices are in scope for `{bundle.ticket_id}` and `IDCEVODEV-977874`? I also need a short sync with Adrian / Hristofor / Stefan on how screenshot-test results are read and where candidate outputs are stored.",
+            f"The confirmed delivery scope packaged here is `{profile_text}`. I still need a short sync with Adrian / Hristofor / Stefan on how screenshot-test results are read in practice and whether the beam-family scenarios require extra local setup or are expected to render from the current BMW snapshot.",
             "",
             "## Questions For Adrian / Hristofor / Stefan",
         ]
@@ -2551,7 +3093,12 @@ def materialize_ticket_review_bundle(
     effective_scope_note = (
         scope_note.strip()
         or (
-            f"Current local evidence is grounded in {normalized_profiles[0]} as the first concrete live-SVN slice, not as confirmed final ticket scope."
+            (
+                "Current local evidence is grounded in the confirmed delivery scope "
+                f"{', '.join(normalized_profiles)}."
+            )
+            if len(normalized_profiles) > 1
+            else f"Current local evidence is grounded in {normalized_profiles[0]} as the first concrete live-SVN slice, not as confirmed final ticket scope."
             if normalized_profiles
             else "No car/slice is confirmed locally yet. This bundle is intentionally process-first and blocker-first until scope is confirmed."
         )
@@ -2570,6 +3117,18 @@ def materialize_ticket_review_bundle(
         )
         for profile_id in normalized_profiles
     )
+    daily_snapshot = find_latest_daily_qa_snapshot(
+        workspace_root,
+        required_profiles=tuple(context.profile.profile_id for context in contexts),
+    )
+    if daily_snapshot is not None:
+        daily_snapshot = _package_daily_snapshot_result(daily_snapshot, package_root)
+    raco_probe = _find_latest_raco_manual_review_probe(
+        workspace_root,
+        required_profiles=tuple(context.profile.profile_id for context in contexts),
+    )
+    if raco_probe is not None:
+        raco_probe = _package_raco_manual_review_probe(raco_probe, package_root)
 
     manual_evidence = _harvest_manual_evidence(contexts, package_root)
     manual_index_path = package_root / f"{ticket_id}-manual-evidence-index.md"
@@ -2595,6 +3154,8 @@ def materialize_ticket_review_bundle(
                 _bundle_evidence(f"{context.profile.profile_id} screenshot triage", context.triage_bundle.markdown_path),
                 _bundle_evidence(f"{context.profile.profile_id} screenshot triage JSON", context.triage_bundle.json_path),
                 _bundle_evidence(f"{context.profile.profile_id} screenshot triage HTML", context.triage_bundle.html_path),
+                _bundle_evidence(f"{context.profile.profile_id} BMW screenshot surface", context.bmw_surface_markdown_path),
+                _bundle_evidence(f"{context.profile.profile_id} BMW screenshot surface JSON", context.bmw_surface_json_path),
                 _bundle_evidence(f"{context.profile.profile_id} manual review companion", context.manual_review_paths["companion"]),
                 _bundle_evidence(f"{context.profile.profile_id} manual review record", context.manual_review_paths["record"]),
                 _bundle_evidence(f"{context.profile.profile_id} screenshot evidence slots", context.manual_review_paths["slots"]),
@@ -2610,6 +3171,22 @@ def materialize_ticket_review_bundle(
     evidence_index.append(_bundle_evidence("Delivery surface map", delivery_surface_map_path))
     evidence_index.append(_bundle_evidence("RaCo script catalog", raco_script_catalog_path))
     evidence_index.append(_bundle_evidence("Delivery target catalog", delivery_target_catalog_path))
+    if daily_snapshot is not None:
+        evidence_index.append(_bundle_evidence("Daily QA snapshot", daily_snapshot.markdown_path))
+        evidence_index.append(_bundle_evidence("Daily QA snapshot JSON", daily_snapshot.json_path))
+        if daily_snapshot.battery_baseline_gaps_markdown_path is not None:
+            evidence_index.append(_bundle_evidence("Battery baseline gaps", daily_snapshot.battery_baseline_gaps_markdown_path))
+        if daily_snapshot.battery_baseline_gaps_json_path is not None:
+            evidence_index.append(_bundle_evidence("Battery baseline gaps JSON", daily_snapshot.battery_baseline_gaps_json_path))
+        if daily_snapshot.review_gallery_html_path is not None:
+            evidence_index.append(_bundle_evidence("Candidate review gallery", daily_snapshot.review_gallery_html_path))
+        scoped_profiles = {context.profile.profile_id.upper() for context in contexts}
+        for item in daily_snapshot.snapshot.smoke_results:
+            if item.profile_id.upper() in scoped_profiles and item.log_path:
+                evidence_index.append(_bundle_evidence(f"{item.profile_id} BMW smoke log", item.log_path))
+    if raco_probe is not None:
+        evidence_index.append(_bundle_evidence("RaCo manual review probe", raco_probe.markdown_path))
+        evidence_index.append(_bundle_evidence("RaCo manual review probe JSON", raco_probe.json_path))
     verification_evidence = _package_verification_dir(workspace_root, package_root)
     if verification_evidence is not None:
         evidence_index.append(verification_evidence)
@@ -2629,6 +3206,8 @@ def materialize_ticket_review_bundle(
             _bundle_evidence("RaCo script catalog", raco_script_catalog_path),
             _bundle_evidence("Delivery target catalog", delivery_target_catalog_path),
         ),
+        daily_snapshot=daily_snapshot,
+        raco_probe=raco_probe,
     )
     bundle = TicketReviewBundle(
         ticket_id=ticket_id,
@@ -2669,6 +3248,7 @@ def materialize_ticket_review_bundle(
         _qa_capability_matrix_markdown(
             ticket_id=ticket_id,
             source_root=source_root,
+            workspace=workspace,
             scope_note=effective_scope_note,
             profile_ids=bundle.profile_ids,
         ),

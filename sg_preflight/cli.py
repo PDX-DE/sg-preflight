@@ -42,6 +42,7 @@ from sg_preflight.services import (
     qa_workflow_status,
     sg_checker_catalog,
 )
+from sg_preflight.daily_snapshot import materialize_daily_qa_snapshot
 from sg_preflight.screenshot_triage import materialize_screenshot_triage
 from sg_preflight.ticket_review import (
     default_ticket_review_output_root,
@@ -328,6 +329,49 @@ def _console_screenshot_triage(bundle: object, *, as_json: bool = False) -> None
     print(f"JSON: {bundle.json_path}")
 
 
+def _console_daily_snapshot(result: object, *, as_json: bool = False) -> None:
+    snapshot = result.snapshot
+    if as_json:
+        print(json.dumps(snapshot.to_dict(), indent=2, ensure_ascii=False))
+        return
+
+    print("Daily 3D Car QA Summary")
+    print(f"Generated: {snapshot.created_at}")
+    print(f"Scope: {', '.join(snapshot.scope_profiles)}")
+    print(f"BMW repo root: {snapshot.bmw_repo_root}")
+    print(f"Config check: {snapshot.config_check.status}")
+    print(f"Markdown: {result.markdown_path}")
+    print(f"JSON: {result.json_path}")
+    if snapshot.smoke_results:
+        print("Smoke results:")
+        for item in snapshot.smoke_results:
+            print(
+                _console_safe(
+                    f"  - {item.profile_id}: status={item.status} smoke={item.smoke_test} "
+                    f"ramses={item.exported_ramses_size}b expected={item.expected_count} "
+                    f"actual={item.actual_count} diff={item.diff_count} "
+                    f"compare={'passed' if item.compare_ok else 'not-passed'}"
+                )
+            )
+    if getattr(snapshot, "battery_results", ()):
+        print("Battery results:")
+        for item in snapshot.battery_results:
+            print(
+                _console_safe(
+                    f"  - {item.profile_id}: filter={item.filter_name} verdict={item.verdict} "
+                    f"expected={item.expected_count} actual={item.actual_count} diff={item.diff_count}"
+                )
+            )
+    if snapshot.top_review_items:
+        print("Top review items:")
+        for item in snapshot.top_review_items:
+            print(f"  - {item}")
+    if snapshot.blocked_steps:
+        print("Blocked steps:")
+        for item in snapshot.blocked_steps:
+            print(f"  - {item}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sg-preflight")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -400,6 +444,41 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot_triage.add_argument("--workspace", help="Workspace root override")
     screenshot_triage.add_argument("--output-root", help="Directory to write triage artifacts")
     screenshot_triage.add_argument("--json", action="store_true", help="Print triage payload as JSON")
+
+    daily_snapshot = sub.add_parser(
+        "daily-qa-snapshot",
+        help="Run the local BMW+SG daily QA snapshot for confirmed delivery cars",
+    )
+    daily_snapshot.add_argument(
+        "--profile",
+        action="append",
+        default=[],
+        help="Profile id to include in the snapshot, repeatable (defaults to NA8,G78,G50)",
+    )
+    daily_snapshot.add_argument("--workspace", help="Workspace root override")
+    daily_snapshot.add_argument("--output-root", help="Directory to write snapshot artifacts")
+    daily_snapshot.add_argument(
+        "--smoke-test",
+        default="openAllDoors_rightView",
+        help="Smoke test filter to run through the BMW screenshot flow",
+    )
+    daily_snapshot.add_argument(
+        "--no-smoke",
+        action="store_true",
+        help="Skip per-profile smoke runs and only materialize environment/config status",
+    )
+    daily_snapshot.add_argument(
+        "--battery-defaults",
+        action="store_true",
+        help="Run the curated broader screenshot battery in addition to the representative smoke test",
+    )
+    daily_snapshot.add_argument(
+        "--battery-filter",
+        action="append",
+        default=[],
+        help="Additional broader screenshot battery filter to run (repeatable)",
+    )
+    daily_snapshot.add_argument("--json", action="store_true", help="Print snapshot payload as JSON")
 
     run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
     run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
@@ -689,6 +768,48 @@ def main(argv: list[str] | None = None) -> int:
             print(_console_safe(f"screenshot-triage failed: {exc}"), file=sys.stderr)
             return 1
         _console_screenshot_triage(bundle, as_json=args.json)
+        return 0
+
+    if args.command == "daily-qa-snapshot":
+        snapshot_root = Path(args.workspace).resolve() if args.workspace else root
+        output_root = Path(args.output_root).resolve() if args.output_root else None
+        profile_ids = tuple(str(item).strip() for item in args.profile if str(item).strip())
+        battery_filters = tuple(str(item).strip() for item in args.battery_filter if str(item).strip())
+        if args.battery_defaults:
+            battery_filters = (
+                "default",
+                "openAllDoors_",
+                "lights_drl_front",
+                "lights_LowBeam",
+                "lights_HighBeam",
+                "lights_OnlyCones",
+                "welcome_animation_",
+                "automatic_Doors_",
+                "highlighting_Doors",
+            ) + tuple(item for item in battery_filters if item not in {
+                "default",
+                "openAllDoors_",
+                "lights_drl_front",
+                "lights_LowBeam",
+                "lights_HighBeam",
+                "lights_OnlyCones",
+                "welcome_animation_",
+                "automatic_Doors_",
+                "highlighting_Doors",
+            })
+        try:
+            result = materialize_daily_qa_snapshot(
+                workspace_root=snapshot_root,
+                output_root=output_root,
+                profile_ids=profile_ids or ("NA8", "G78", "G50"),
+                run_smoke=not args.no_smoke,
+                smoke_test=args.smoke_test,
+                battery_filters=battery_filters,
+            )
+        except Exception as exc:
+            print(_console_safe(f"daily-qa-snapshot failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_daily_snapshot(result, as_json=args.json)
         return 0
 
     if args.command == "run-profile":

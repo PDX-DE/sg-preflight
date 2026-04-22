@@ -40,6 +40,7 @@ def default_search_roots() -> list[Path]:
         os.environ.get("SG_REPO"),
         os.environ.get("SG-Repo"),
         os.environ.get("SP_REPO"),
+        os.environ.get("SG_BMW_CAR_MODELS_ROOT"),
         os.environ.get("SG_CARMODELS_REPO"),
         os.environ.get("SG-CarModels-Repo"),
         str(workspace_root / "repositories"),

@@ -216,6 +216,7 @@ return constants
         label="BMW G65 test slice",
         repo_root=repo_root,
         project_root=project_root,
+        project_relative=Path("Cars_IDCevo/BMW/G65"),
         config_path=ROOT / "config" / "sg_rules_live_g65.json",
         default_context={
             "car_model": "G65",

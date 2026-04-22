@@ -419,6 +419,7 @@ def _build_env_payload(overrides: Mapping[str, str] | None) -> dict[str, str]:
     required = [
         "SG_REPO",
         "SP_REPO",
+        "SG_BMW_CAR_MODELS_ROOT",
         "SG_CARMODELS_REPO",
         "SG-Repo",
         "SG-CarModels-Repo",
@@ -429,6 +430,11 @@ def _build_env_payload(overrides: Mapping[str, str] | None) -> dict[str, str]:
         payload["SG-Repo"] = payload["SG_REPO"]
     if payload["SG-Repo"] and not payload["SG_REPO"]:
         payload["SG_REPO"] = payload["SG-Repo"]
+
+    if payload["SG_BMW_CAR_MODELS_ROOT"] and not payload["SG_CARMODELS_REPO"]:
+        payload["SG_CARMODELS_REPO"] = payload["SG_BMW_CAR_MODELS_ROOT"]
+    if payload["SG_CARMODELS_REPO"] and not payload["SG_BMW_CAR_MODELS_ROOT"]:
+        payload["SG_BMW_CAR_MODELS_ROOT"] = payload["SG_CARMODELS_REPO"]
 
     if payload["SG_CARMODELS_REPO"] and not payload["SG-CarModels-Repo"]:
         payload["SG-CarModels-Repo"] = payload["SG_CARMODELS_REPO"]

@@ -55,6 +55,6 @@ class TestDeliverySupportPackage(unittest.TestCase):
             self.assertIn("Current Progress", progress_text)
             self.assertIn("BMW-side end-to-end execution", progress_text)
             self.assertIn("Suggested Teams update", coordinator_text)
-            self.assertIn("BMW-owned side", coordinator_text)
+            self.assertIn("BMW status right now", coordinator_text)
             self.assertIn("exact screenshot-test reading flow", review_owner_text)
             self.assertIn("keep improving `sg-preflight`", continuation_text)

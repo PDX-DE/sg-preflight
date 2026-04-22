@@ -71,6 +71,9 @@ class TestScreenshotTriage(unittest.TestCase):
             self.assertEqual(pair_map["mismatch"].classification, "dimension_mismatch")
             self.assertEqual(pair_map["missing_candidate"].classification, "missing_candidate")
             self.assertEqual(pair_map["extra_candidate"].classification, "missing_baseline")
+            self.assertIsNotNone(pair_map["changed"].review_score)
+            self.assertGreater(pair_map["changed"].review_score or 0.0, 0.0)
+            self.assertTrue(pair_map["changed"].anomaly_hints)
             self.assertTrue(Path(pair_map["tiny_drift"].diff_image_path).exists())
             self.assertTrue(Path(pair_map["changed"].diff_image_path).exists())
 
@@ -110,6 +113,22 @@ class TestScreenshotTriage(unittest.TestCase):
 
             self.assertEqual(bundle.report.unchanged_count, 1)
             self.assertEqual(bundle.report.candidate_roots[0].kind, "operator-supplied")
+
+    def test_materialize_screenshot_triage_keeps_missing_expected_root_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "NA8"
+
+            bundle = materialize_screenshot_triage(
+                "NA8",
+                project_root,
+                root / "out" / "triage",
+            )
+
+            self.assertEqual(bundle.report.expected_root, "")
+            self.assertEqual(bundle.report.pair_count, 0)
+            self.assertFalse(bundle.report.pairs)
+            self.assertTrue(any("No `export/tests/expected` baseline root was detected" in note for note in bundle.report.notes))
 
 
 if __name__ == "__main__":

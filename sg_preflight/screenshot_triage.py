@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from PIL import Image, ImageChops, ImageOps, ImageStat
+    from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageStat
 except ImportError:  # pragma: no cover - exercised through graceful fallback
     Image = None
     ImageChops = None
+    ImageFilter = None
     ImageOps = None
     ImageStat = None
 
@@ -59,6 +60,8 @@ class ScreenshotPair:
     exact_match: bool = False
     changed_pixel_ratio: float | None = None
     mean_abs_diff: float | None = None
+    review_score: float | None = None
+    anomaly_hints: tuple[str, ...] = ()
     diff_image_path: str = ""
     priority: bool = False
 
@@ -69,6 +72,7 @@ class ScreenshotTriageReport:
     project_root: str
     generated_at_utc: str
     expected_root: str = ""
+    diff_roots: tuple[ScreenshotRoot, ...] = ()
     candidate_roots: tuple[ScreenshotRoot, ...] = ()
     pair_count: int = 0
     unchanged_count: int = 0
@@ -99,9 +103,12 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _find_expected_root(project_root: Path) -> Path:
+def _find_expected_root(project_root: Path, explicit_root: Path | None = None) -> Path | None:
+    if explicit_root is not None:
+        resolved = explicit_root.resolve()
+        return resolved if resolved.exists() else None
     candidate = project_root / "export" / "tests" / "expected"
-    return candidate if candidate.exists() else Path()
+    return candidate.resolve() if candidate.exists() else None
 
 
 def _discover_candidate_roots(
@@ -111,20 +118,20 @@ def _discover_candidate_roots(
     matches: list[tuple[Path, str]] = []
     seen: set[Path] = set()
 
-    def consider(path: Path, kind: str) -> None:
+    def consider(path: Path, kind: str, *, allow_empty: bool = False) -> None:
         if not path.exists() or not path.is_dir():
             return
         resolved = path.resolve()
         if resolved in seen:
             return
-        image_count = sum(1 for item in resolved.iterdir() if item.is_file() and item.suffix.lower() in _IMAGE_SUFFIXES)
-        if image_count <= 0:
+        image_count = sum(1 for item in resolved.rglob("*") if item.is_file() and item.suffix.lower() in _IMAGE_SUFFIXES)
+        if image_count <= 0 and not allow_empty:
             return
         seen.add(resolved)
         matches.append((resolved, kind))
 
     for path in explicit_roots:
-        consider(path, "operator-supplied")
+        consider(path, "operator-supplied", allow_empty=True)
 
     tests_root = project_root / "export" / "tests"
     if tests_root.exists():
@@ -135,7 +142,7 @@ def _discover_candidate_roots(
             if not child.is_dir():
                 continue
             lowered = child.name.lower()
-            if expected_root and child.resolve() == expected_root.resolve():
+            if expected_root is not None and child.resolve() == expected_root:
                 continue
             if lowered in _CANDIDATE_DIR_NAMES or any(token in lowered for token in ("candidate", "result", "output", "actual")):
                 consider(child, "auto-detected")
@@ -196,13 +203,67 @@ def _nonzero_diff_mask(diff: Any) -> Any:
     return mask
 
 
+def _auto_review_signals(
+    baseline: Any,
+    candidate: Any,
+    *,
+    changed_ratio: float,
+    mean_abs_diff: float,
+) -> tuple[float, tuple[str, ...]]:
+    if ImageOps is None or ImageStat is None or ImageFilter is None:
+        return 0.0, ()
+
+    baseline_gray = ImageOps.grayscale(baseline)
+    candidate_gray = ImageOps.grayscale(candidate)
+    baseline_brightness = float(ImageStat.Stat(baseline_gray).mean[0])
+    candidate_brightness = float(ImageStat.Stat(candidate_gray).mean[0])
+    brightness_shift = abs(candidate_brightness - baseline_brightness)
+
+    baseline_alpha = float(ImageStat.Stat(baseline.getchannel("A")).mean[0])
+    candidate_alpha = float(ImageStat.Stat(candidate.getchannel("A")).mean[0])
+    alpha_shift = abs(candidate_alpha - baseline_alpha)
+
+    baseline_edges = baseline_gray.filter(ImageFilter.FIND_EDGES)
+    candidate_edges = candidate_gray.filter(ImageFilter.FIND_EDGES)
+    edge_delta = float(ImageStat.Stat(ImageChops.difference(baseline_edges, candidate_edges)).mean[0])
+
+    hints: list[str] = []
+    if changed_ratio >= 0.35:
+        hints.append("possible camera/state mismatch or large scene-level delta")
+    if mean_abs_diff >= 12.0 and changed_ratio <= 0.08:
+        hints.append("possible localized artifact or material/shader drift")
+    if brightness_shift >= 10.0 and edge_delta <= 6.0:
+        hints.append("possible lighting/shader delta")
+    if edge_delta >= 12.0 and changed_ratio >= 0.03:
+        hints.append("possible geometry/camera/normal mismatch")
+    if alpha_shift >= 8.0:
+        hints.append("possible transparency/mask issue")
+    if (
+        changed_ratio >= 0.05
+        and mean_abs_diff >= 8.0
+        and brightness_shift < 10.0
+        and edge_delta < 12.0
+    ):
+        hints.append("possible texture/material patch")
+
+    score = min(
+        100.0,
+        (changed_ratio * 120.0)
+        + (mean_abs_diff * 2.5)
+        + brightness_shift
+        + (edge_delta * 1.75)
+        + alpha_shift,
+    )
+    return round(score, 2), tuple(dict.fromkeys(hints))
+
+
 def _diff_metrics(
     baseline_path: Path,
     candidate_path: Path,
     *,
     diff_root: Path,
     key: str,
-) -> tuple[str, str, tuple[int, int], tuple[int, int], bool, float | None, float | None, str]:
+) -> tuple[str, str, tuple[int, int], tuple[int, int], bool, float | None, float | None, float | None, tuple[str, ...], str]:
     if Image is None or ImageChops is None or ImageOps is None or ImageStat is None:
         exact_match = _binary_identical(baseline_path, candidate_path)
         classification = "unchanged" if exact_match else "needs_review"
@@ -211,12 +272,23 @@ def _diff_metrics(
             if exact_match
             else "Pillow is not available, so only byte-level comparison ran. Needs human review."
         )
-        return classification, summary, (), (), exact_match, 0.0 if exact_match else None, 0.0 if exact_match else None, ""
+        return (
+            classification,
+            summary,
+            (),
+            (),
+            exact_match,
+            0.0 if exact_match else None,
+            0.0 if exact_match else None,
+            0.0 if exact_match else None,
+            (),
+            "",
+        )
 
     baseline = _load_rgba(baseline_path)
     candidate = _load_rgba(candidate_path)
     if baseline is None or candidate is None:
-        return "needs_review", "Image backend could not load one of the files. Needs human review.", (), (), False, None, None, ""
+        return "needs_review", "Image backend could not load one of the files. Needs human review.", (), (), False, None, None, None, (), ""
 
     baseline_size = tuple(int(value) for value in baseline.size)
     candidate_size = tuple(int(value) for value in candidate.size)
@@ -229,13 +301,15 @@ def _diff_metrics(
             False,
             None,
             None,
+            None,
+            (),
             "",
         )
 
     diff = ImageChops.difference(baseline, candidate)
     diff_mask = _nonzero_diff_mask(diff)
     if diff_mask.getbbox() is None:
-        return "unchanged", "Images are pixel-identical.", baseline_size, candidate_size, True, 0.0, 0.0, ""
+        return "unchanged", "Images are pixel-identical.", baseline_size, candidate_size, True, 0.0, 0.0, 0.0, (), ""
 
     histogram = diff_mask.point(lambda value: 255 if value else 0).histogram()
     total_pixels = baseline_size[0] * baseline_size[1]
@@ -245,6 +319,12 @@ def _diff_metrics(
     mean_abs_diff = sum(float(value) for value in stat.mean) / len(stat.mean)
 
     classification = "near_identical" if changed_ratio <= _NEAR_IDENTICAL_RATIO and mean_abs_diff <= _NEAR_IDENTICAL_MEAN else "needs_review"
+    review_score, anomaly_hints = _auto_review_signals(
+        baseline,
+        candidate,
+        changed_ratio=changed_ratio,
+        mean_abs_diff=mean_abs_diff,
+    )
     summary = (
         f"Near-identical drift: {changed_ratio:.4%} changed pixels, mean absolute diff {mean_abs_diff:.3f}."
         if classification == "near_identical"
@@ -258,21 +338,35 @@ def _diff_metrics(
         diff_path = str((diff_root / f"{safe_name}.png").resolve())
         ImageOps.autocontrast(diff_mask).save(diff_path)
 
-    return classification, summary, baseline_size, candidate_size, False, changed_ratio, mean_abs_diff, diff_path
+    return (
+        classification,
+        summary,
+        baseline_size,
+        candidate_size,
+        False,
+        changed_ratio,
+        mean_abs_diff,
+        review_score if classification == "needs_review" else 0.0,
+        anomaly_hints if classification == "needs_review" else (),
+        diff_path,
+    )
 
 
 def build_screenshot_triage(
     profile_id: str,
     project_root: Path,
     *,
+    expected_root: Path | None = None,
     candidate_roots: tuple[Path, ...] = (),
+    diff_reference_roots: tuple[Path, ...] = (),
     priority_names: tuple[str, ...] = (),
     diff_root: Path | None = None,
 ) -> ScreenshotTriageReport:
     resolved_project_root = project_root.resolve()
-    expected_root = _find_expected_root(resolved_project_root)
+    resolved_expected_root = _find_expected_root(resolved_project_root, expected_root)
     discovered_candidates = _discover_candidate_roots(resolved_project_root, candidate_roots)
-    baseline_map = _image_map(expected_root) if expected_root.exists() else {}
+    discovered_diff_roots = _discover_candidate_roots(resolved_project_root, diff_reference_roots)
+    baseline_map = _image_map(resolved_expected_root) if resolved_expected_root is not None else {}
 
     candidate_map: dict[str, Path] = {}
     candidate_root_items: list[ScreenshotRoot] = []
@@ -287,6 +381,15 @@ def build_screenshot_triage(
         )
         for key, path in root_map.items():
             candidate_map.setdefault(key, path)
+
+    diff_root_items = [
+        ScreenshotRoot(
+            kind=root_kind,
+            path=str(root),
+            image_count=len(_image_map(root)),
+        )
+        for root, root_kind in discovered_diff_roots
+    ]
 
     pairs: list[ScreenshotPair] = []
     counts = {
@@ -326,7 +429,18 @@ def build_screenshot_triage(
                 priority=priority,
             )
         else:
-            classification, summary, baseline_size, candidate_size, exact_match, changed_ratio, mean_abs_diff, diff_path = _diff_metrics(
+            (
+                classification,
+                summary,
+                baseline_size,
+                candidate_size,
+                exact_match,
+                changed_ratio,
+                mean_abs_diff,
+                review_score,
+                anomaly_hints,
+                diff_path,
+            ) = _diff_metrics(
                 baseline_path,
                 candidate_path,
                 diff_root=diff_root or Path(),
@@ -343,6 +457,8 @@ def build_screenshot_triage(
                 exact_match=exact_match,
                 changed_pixel_ratio=changed_ratio,
                 mean_abs_diff=mean_abs_diff,
+                review_score=review_score,
+                anomaly_hints=anomaly_hints,
                 diff_image_path=diff_path,
                 priority=priority,
             )
@@ -354,21 +470,32 @@ def build_screenshot_triage(
         key=lambda item: (
             0 if item.priority else 1,
             _CLASSIFICATION_PRIORITY.get(item.classification, 99),
+            -(item.review_score or 0.0),
             item.key,
         )
     )
 
     notes = []
-    if not expected_root.exists():
+    if resolved_expected_root is None:
         notes.append("No `export/tests/expected` baseline root was detected under the project.")
-    if expected_root.exists() and not discovered_candidates:
+    if resolved_expected_root is not None and not discovered_candidates:
         notes.append("No candidate screenshot root was detected locally. This is preparation/triage scaffolding only.")
     if discovered_candidates:
         notes.append(
             "Candidate screenshot roots were detected locally: "
             + ", ".join(f"{Path(item.path).name} ({item.kind})" for item in candidate_root_items[:4])
         )
+        if not any(item.image_count > 0 for item in candidate_root_items):
+            notes.append("Candidate roots are present, but they currently contain no screenshot image payload.")
+    if diff_root_items:
+        notes.append(
+            "Reference diff roots were detected locally: "
+            + ", ".join(f"{Path(item.path).name} ({item.kind})" for item in diff_root_items[:4])
+        )
+        if not any(item.image_count > 0 for item in diff_root_items):
+            notes.append("Reference diff roots are present, but they currently contain no diff image payload.")
     notes.append("Classifications are conservative. `needs_review` is not a regression verdict.")
+    notes.append("Auto anomaly hints are heuristic triage signals, not defect verdicts.")
     if Image is None:
         notes.append("Pillow is not available, so only byte-level fallback comparison can run.")
 
@@ -376,7 +503,8 @@ def build_screenshot_triage(
         profile_id=profile_id,
         project_root=str(resolved_project_root),
         generated_at_utc=_utc_now(),
-        expected_root=str(expected_root) if expected_root.exists() else "",
+        expected_root=str(resolved_expected_root) if resolved_expected_root is not None else "",
+        diff_roots=tuple(diff_root_items),
         candidate_roots=tuple(candidate_root_items),
         pair_count=len(pairs),
         unchanged_count=counts["unchanged"],
@@ -418,6 +546,13 @@ def _markdown(report: ScreenshotTriageReport) -> str:
     else:
         lines.append("- No candidate root detected.")
 
+    lines.extend(["", "## Reference diff roots"])
+    if report.diff_roots:
+        for item in report.diff_roots:
+            lines.append(f"- `{item.path}` ({item.image_count} image(s), {item.kind})")
+    else:
+        lines.append("- No reference diff root detected.")
+
     lines.extend(["", "## Notes"])
     lines.extend(f"- {line}" for line in report.notes)
 
@@ -426,6 +561,10 @@ def _markdown(report: ScreenshotTriageReport) -> str:
         for pair in report.pairs[:40]:
             lines.append(f"- {pair.key} [{pair.classification}]")
             lines.append(f"  - {pair.summary}")
+            if pair.review_score:
+                lines.append(f"  - Review score: `{pair.review_score:.2f}`")
+            if pair.anomaly_hints:
+                lines.append(f"  - Auto hints: `{'; '.join(pair.anomaly_hints)}`")
             if pair.baseline_path:
                 lines.append(f"  - Baseline: `{pair.baseline_path}`")
             if pair.candidate_path:
@@ -459,15 +598,27 @@ def _html(report: ScreenshotTriageReport) -> str:
             else "<div class='missing'>No diff</div>"
         )
         rows.append(
-            "<article class='pair'>"
-            f"<h2>{escape(pair.key)} [{escape(pair.classification)}]</h2>"
-            f"<p>{escape(pair.summary)}</p>"
-            "<div class='grid'>"
-            f"<div><strong>Baseline</strong>{baseline}</div>"
-            f"<div><strong>Candidate</strong>{candidate}</div>"
-            f"<div><strong>Diff</strong>{diff}</div>"
-            "</div>"
-            "</article>"
+            (
+                "<article class='pair'>"
+                f"<h2>{escape(pair.key)} [{escape(pair.classification)}]</h2>"
+                f"<p>{escape(pair.summary)}</p>"
+                + (
+                    f"<p><strong>Review score:</strong> {pair.review_score:.2f}</p>"
+                    if pair.review_score
+                    else ""
+                )
+                + (
+                    f"<p><strong>Auto hints:</strong> {escape('; '.join(pair.anomaly_hints))}</p>"
+                    if pair.anomaly_hints
+                    else ""
+                )
+                + "<div class='grid'>"
+                + f"<div><strong>Baseline</strong>{baseline}</div>"
+                + f"<div><strong>Candidate</strong>{candidate}</div>"
+                + f"<div><strong>Diff</strong>{diff}</div>"
+                + "</div>"
+                + "</article>"
+            )
         )
 
     notes = "".join(f"<li>{escape(note)}</li>" for note in report.notes)
@@ -503,7 +654,9 @@ def materialize_screenshot_triage(
     project_root: Path,
     output_root: Path,
     *,
+    expected_root: Path | None = None,
     candidate_roots: tuple[Path, ...] = (),
+    diff_reference_roots: tuple[Path, ...] = (),
     priority_names: tuple[str, ...] = (),
 ) -> ScreenshotTriageBundle:
     output_root.mkdir(parents=True, exist_ok=True)
@@ -511,7 +664,9 @@ def materialize_screenshot_triage(
     report = build_screenshot_triage(
         profile_id,
         project_root,
+        expected_root=expected_root,
         candidate_roots=candidate_roots,
+        diff_reference_roots=diff_reference_roots,
         priority_names=priority_names,
         diff_root=diff_root,
     )
