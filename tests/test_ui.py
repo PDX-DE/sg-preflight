@@ -285,11 +285,37 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("lights_OnlyCones", page.text)
         self.assertIn("External findings", page.text)
         self.assertIn("G78 LightFX / HeadLights update", page.text)
+        self.assertIn("Save decision", page.text)
         self.assertEqual(payload.status_code, 200)
         self.assertEqual(payload.json()["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(payload.json()["screenshot_battery_counts"]["runtime_crash"], 1)
         self.assertIn("IDCEVODEV-960073 QA status", payload.json()["review_owner_update_text"])
         self.assertEqual(payload.json()["external_findings"]["count"], 1)
+
+    def test_review_board_decision_api_updates_tracked_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            create_review_package_fixture(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            response = client.post(
+                "/ui/api/review-decisions",
+                json={
+                    "ticket_id": "IDCEVODEV-960073",
+                    "decision_key": "lights_OnlyCones",
+                    "title": "lights_OnlyCones",
+                    "status": "follow_up",
+                    "owner": "Adrian",
+                    "note": "Treat as follow-up unless delivery is blocked.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["decision_state"]["decisions"][0]["status"], "follow_up")
+        self.assertEqual(payload["review_board"]["review_owner_decisions"]["sections"][0]["owner"], "Adrian")
 
     def test_result_page_shows_diff_against_previous_completed_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

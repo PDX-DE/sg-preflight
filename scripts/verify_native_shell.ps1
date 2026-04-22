@@ -350,42 +350,49 @@ try {
     Capture-Stage -TargetProcess $process -Name "run_after_observe"
 
     $runCompleted = Wait-ForTracePattern -Path $tracePath -Pattern "still_running=false" -TimeoutSeconds $RunCompletionTimeoutSeconds
-    if ($runCompleted) {
+    if (-not $runCompleted) {
+        $log.Add("[flow] run completion trace missing; probing manual advance from RUN anyway")
+    }
+
+    Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
+    $runAdvancePattern = Wait-ForAnyTracePattern -Path $tracePath -Patterns @(
+        "UI screen_change from=RUN to=EVIDENCE",
+        "UI screen_change from=RUN to=FILES",
+        "UI screen_change from=RUN to=ENV"
+    ) -TimeoutSeconds 6
+
+    if ($runAdvancePattern -eq "UI screen_change from=RUN to=EVIDENCE") {
+        Capture-Stage -TargetProcess $process -Name "evidence"
         Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
-        $runAdvancePattern = Wait-ForAnyTracePattern -Path $tracePath -Patterns @(
-            "UI screen_change from=RUN to=EVIDENCE",
-            "UI screen_change from=RUN to=FILES",
-            "UI screen_change from=RUN to=ENV"
+        $nextPattern = Wait-ForAnyTracePattern -Path $tracePath -Patterns @(
+            "UI screen_change from=EVIDENCE to=FILES",
+            "UI screen_change from=EVIDENCE to=ENV"
         ) -TimeoutSeconds 6
-
-        if ($runAdvancePattern -eq "UI screen_change from=RUN to=EVIDENCE") {
-            Capture-Stage -TargetProcess $process -Name "evidence"
-            Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
-            $nextPattern = Wait-ForAnyTracePattern -Path $tracePath -Patterns @(
-                "UI screen_change from=EVIDENCE to=FILES",
-                "UI screen_change from=EVIDENCE to=ENV"
-            ) -TimeoutSeconds 6
-            if ($nextPattern) {
-                $runAdvancePattern = $nextPattern
-            }
+        if ($nextPattern) {
+            $runAdvancePattern = $nextPattern
         }
+    }
 
-        if ($runAdvancePattern -in @("UI screen_change from=RUN to=FILES", "UI screen_change from=EVIDENCE to=FILES")) {
-            Capture-Stage -TargetProcess $process -Name "files"
-            Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
-            if (Wait-ForTracePattern -Path $tracePath -Pattern "UI screen_change from=FILES to=ENV" -TimeoutSeconds 6) {
-                $runAdvancePattern = "UI screen_change from=FILES to=ENV"
-            }
+    if ($runAdvancePattern -in @("UI screen_change from=RUN to=FILES", "UI screen_change from=EVIDENCE to=FILES")) {
+        Capture-Stage -TargetProcess $process -Name "files"
+        Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
+        if (Wait-ForTracePattern -Path $tracePath -Pattern "UI screen_change from=FILES to=ENV" -TimeoutSeconds 6) {
+            $runAdvancePattern = "UI screen_change from=FILES to=ENV"
         }
+    }
 
-        if ($runAdvancePattern -in @("UI screen_change from=RUN to=ENV", "UI screen_change from=EVIDENCE to=ENV", "UI screen_change from=FILES to=ENV")) {
-            Capture-Stage -TargetProcess $process -Name "environment"
-            Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
-            [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI screen_change from=ENV to=STAGES" -TimeoutSeconds 6)
-            Capture-Stage -TargetProcess $process -Name "stages"
+    if ($runAdvancePattern -in @("UI screen_change from=RUN to=ENV", "UI screen_change from=EVIDENCE to=ENV", "UI screen_change from=FILES to=ENV")) {
+        Capture-Stage -TargetProcess $process -Name "environment"
+        Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
+        [void](Wait-ForTracePattern -Path $tracePath -Pattern "UI screen_change from=ENV to=STAGES" -TimeoutSeconds 6)
+        Capture-Stage -TargetProcess $process -Name "stages"
+        Send-Key -TargetProcess $process -Keys "{ENTER}" -SettleMs $ScreenSettleMs
+        if (Wait-ForTracePattern -Path $tracePath -Pattern "UI screen_change from=STAGES to=BOARD" -TimeoutSeconds 25) {
+            Capture-Stage -TargetProcess $process -Name "review_board"
         }
-    } else {
-        $log.Add("[flow] run did not complete within $RunCompletionTimeoutSeconds seconds; skipped deeper screen capture")
+    }
+    if (-not $runAdvancePattern) {
+        $log.Add("[flow] RUN screen did not advance during verification.")
     }
 
     if (-not $process.HasExited) {

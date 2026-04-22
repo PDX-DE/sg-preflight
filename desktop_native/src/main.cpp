@@ -3629,6 +3629,76 @@ std::string ReviewBoardDecisionSummary(const sg_preflight::native_shell::ReviewB
     return joined;
 }
 
+std::string ReviewBoardExternalFindingSummary(const sg_preflight::native_shell::ReviewBoardState& board) {
+    if (board.external_findings.empty()) {
+        return "No external findings recorded.";
+    }
+    int reported_count = 0;
+    std::vector<std::string> surfaces;
+    for (const auto& item : board.external_findings) {
+        if (item.status == "reported") {
+            ++reported_count;
+        }
+        for (const auto& surface : item.related_investigation_surfaces) {
+            if (surface.empty()) {
+                continue;
+            }
+            if (std::find(surfaces.begin(), surfaces.end(), surface) == surfaces.end()) {
+                surfaces.push_back(surface);
+            }
+        }
+    }
+    std::string summary = std::to_string(reported_count) + "/" + std::to_string(board.external_findings.size()) + " reported";
+    if (!surfaces.empty()) {
+        summary += " / signals: ";
+        const size_t visible_count = std::min<size_t>(3U, surfaces.size());
+        for (size_t index = 0; index < visible_count; ++index) {
+            if (index > 0U) {
+                summary += ", ";
+            }
+            summary += surfaces[index];
+        }
+        if (surfaces.size() > visible_count) {
+            summary += ", ...";
+        }
+    }
+    return summary;
+}
+
+bool ApplyReviewBoardDecisionStatus(
+    ShellState& state,
+    const sg_preflight::native_shell::ReviewOwnerDecisionItem& item,
+    const std::string& status
+) {
+    if (!state.review_board.has_value() || state.review_board->ticket_id.empty()) {
+        state.last_error = "No review-board ticket is loaded yet.";
+        return false;
+    }
+    const std::string decision_key = !item.key.empty() ? item.key : item.title;
+    if (decision_key.empty()) {
+        state.last_error = "Decision entry is missing a key/title.";
+        return false;
+    }
+    try {
+        state.review_board = sg_preflight::native_shell::SetReviewDecision(
+            state.backend,
+            state.review_board->ticket_id,
+            decision_key,
+            status,
+            item.owner,
+            item.notes,
+            item.date,
+            item.title
+        );
+        state.last_error.clear();
+        state.status_line = "Updated review decision: " + item.title + " -> " + status;
+        return true;
+    } catch (const std::exception& ex) {
+        state.last_error = ex.what();
+        return false;
+    }
+}
+
 void RenderReviewBoardManualReviewSection(ShellState& state, const sg_preflight::native_shell::ReviewBoardState& board, float wrap_x) {
     InlineSectionLabel("GUIDED MANUAL REVIEW");
     if (board.manual_review_profiles.empty()) {
@@ -7410,6 +7480,7 @@ void RenderReviewBoardScreen(ShellState& state) {
             if (!board.daily_delta_headline.empty()) {
                 ImGui::BulletText("Since previous run: %s", board.daily_delta_headline.c_str());
             }
+            ImGui::BulletText("External findings: %s", ReviewBoardExternalFindingSummary(board).c_str());
             ImGui::BulletText("Unresolved exact family: %s", ReviewBoardPrimaryUnresolvedFamily(board).c_str());
             ImGui::BulletText("Needs decision: %s", ReviewBoardDecisionSummary(board).c_str());
 
@@ -7450,6 +7521,28 @@ void RenderReviewBoardScreen(ShellState& state) {
             if (DrawPanelButton("review-board-copy-digest", "COPY DIGEST", ImVec2(ShellUi(188.0f), ShellUi(32.0f)), true, true)) {
                 if (CopyText(sg_preflight::native_shell::ToWide(BuildReviewBoardDigestText(board)))) {
                     state.status_line = "Copied review-board morning digest.";
+                }
+            }
+
+            ImGui::Spacing();
+            InlineSectionLabel("Delta / Human Signals");
+            if (board.has_previous_run) {
+                ImGui::BulletText(
+                    "Delta counts: +%d failures / %d resolved / %d new diffs / %d unchanged blockers",
+                    board.new_failures_count,
+                    board.resolved_failures_count,
+                    board.new_screenshot_diffs_count,
+                    board.unchanged_blockers_count
+                );
+            } else {
+                ImGui::TextDisabled("No previous-run comparison is available yet.");
+            }
+            if (board.external_findings.empty()) {
+                ImGui::TextDisabled("No external human findings are currently tracked.");
+            } else {
+                for (size_t index = 0; index < std::min<size_t>(3U, board.external_findings.size()); ++index) {
+                    const auto& item = board.external_findings[index];
+                    ImGui::BulletText("%s", item.finding.c_str());
                 }
             }
 
@@ -7532,35 +7625,63 @@ void RenderReviewBoardScreen(ShellState& state) {
                         decision_meta += " / " + item.owner;
                     }
                     ImGui::TextDisabled("%s", decision_meta.c_str());
-                    ImGui::Spacing();
-                }
-            }
-
-            ImGui::Spacing();
-            BeginScreenTextTransition(state);
-            if (g_small_font != nullptr) {
-                ImGui::PushFont(g_small_font);
-            }
-            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "ARTIFACTS");
-            if (g_small_font != nullptr) {
-                ImGui::PopFont();
-            }
-            EndScreenTextTransition();
-
-            if (!state.review_board.has_value() || state.review_board->artifacts.empty()) {
-                ImGui::TextDisabled("No artifact links are available.");
-            } else {
-                for (const auto& artifact : state.review_board->artifacts) {
-                    ImGui::Text("%s", artifact.label.c_str());
-                    ImGui::TextDisabled("%s", artifact.path.c_str());
+                    const ImVec2 decision_button_size(ShellUi(108.0f), ShellUi(26.0f));
                     if (DrawPanelButton(
-                            ("review-board-artifact-" + artifact.label).c_str(),
-                            "OPEN",
-                            ImVec2(ShellUi(116.0f), ShellUi(28.0f)),
+                            ("review-board-decision-follow-up-" + item.key).c_str(),
+                            "FOLLOW-UP",
+                            decision_button_size,
                             false,
-                            !artifact.path.empty()
+                            item.status != "follow_up"
                         )) {
-                        OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
+                        ApplyReviewBoardDecisionStatus(state, item, "follow_up");
+                    }
+                    ImGui::SameLine();
+                    if (DrawPanelButton(
+                            ("review-board-decision-blocker-" + item.key).c_str(),
+                            "BLOCKER",
+                            decision_button_size,
+                            false,
+                            item.status != "blocker"
+                        )) {
+                        ApplyReviewBoardDecisionStatus(state, item, "blocker");
+                    }
+                    if (DrawPanelButton(
+                            ("review-board-decision-passed-" + item.key).c_str(),
+                            "PASS",
+                            decision_button_size,
+                            false,
+                            item.status != "passed"
+                        )) {
+                        ApplyReviewBoardDecisionStatus(state, item, "passed");
+                    }
+                    ImGui::SameLine();
+                    if (DrawPanelButton(
+                            ("review-board-decision-failed-" + item.key).c_str(),
+                            "FAIL",
+                            decision_button_size,
+                            false,
+                            item.status != "failed"
+                        )) {
+                        ApplyReviewBoardDecisionStatus(state, item, "failed");
+                    }
+                    ImGui::SameLine();
+                    if (DrawPanelButton(
+                            ("review-board-decision-blocked-" + item.key).c_str(),
+                            "BLOCKED",
+                            decision_button_size,
+                            false,
+                            item.status != "blocked"
+                        )) {
+                        ApplyReviewBoardDecisionStatus(state, item, "blocked");
+                    }
+                    if (DrawPanelButton(
+                            ("review-board-decision-pending-" + item.key).c_str(),
+                            "RESET PENDING",
+                            ImVec2(ShellUi(164.0f), ShellUi(26.0f)),
+                            false,
+                            item.status != "pending"
+                        )) {
+                        ApplyReviewBoardDecisionStatus(state, item, "pending");
                     }
                     ImGui::Spacing();
                 }
@@ -7592,10 +7713,50 @@ void RenderReviewBoardScreen(ShellState& state) {
                     if (!finding_meta.empty()) {
                         ImGui::TextDisabled("%s", finding_meta.c_str());
                     }
+                    if (!item.related_investigation_surfaces.empty()) {
+                        std::string surfaces;
+                        for (size_t index = 0; index < item.related_investigation_surfaces.size(); ++index) {
+                            if (index > 0U) {
+                                surfaces += ", ";
+                            }
+                            surfaces += item.related_investigation_surfaces[index];
+                        }
+                        ImGui::TextDisabled("Signals: %s", surfaces.c_str());
+                    }
                     if (!item.note.empty()) {
                         ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX());
                         ImGui::TextWrapped("%s", item.note.c_str());
                         ImGui::PopTextWrapPos();
+                    }
+                    ImGui::Spacing();
+                }
+            }
+
+            ImGui::Spacing();
+            BeginScreenTextTransition(state);
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "ARTIFACTS");
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+
+            if (!state.review_board.has_value() || state.review_board->artifacts.empty()) {
+                ImGui::TextDisabled("No artifact links are available.");
+            } else {
+                for (const auto& artifact : state.review_board->artifacts) {
+                    ImGui::Text("%s", artifact.label.c_str());
+                    ImGui::TextDisabled("%s", artifact.path.c_str());
+                    if (DrawPanelButton(
+                            ("review-board-artifact-" + artifact.label).c_str(),
+                            "OPEN",
+                            ImVec2(ShellUi(116.0f), ShellUi(28.0f)),
+                            false,
+                            !artifact.path.empty()
+                        )) {
+                        OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
                     }
                     ImGui::Spacing();
                 }

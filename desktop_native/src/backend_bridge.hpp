@@ -271,6 +271,16 @@ std::vector<RecentRunItem> LoadRecentRuns(
 );
 std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& config);
 ReviewBoardState LoadReviewBoard(const BackendConfig& config, const std::string& ticket_id);
+ReviewBoardState SetReviewDecision(
+    const BackendConfig& config,
+    const std::string& ticket_id,
+    const std::string& decision_key,
+    const std::string& status,
+    const std::string& owner = {},
+    const std::string& note = {},
+    const std::string& date = {},
+    const std::string& title = {}
+);
 ManualEvidenceItem AttachManualEvidence(
     const BackendConfig& config,
     const std::string& run_id_or_path,

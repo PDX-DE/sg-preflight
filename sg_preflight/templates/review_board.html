@@ -66,6 +66,17 @@
       <h4>{{ board.daily_delta_summary.headline }}</h4>
       <p>Daily delta surfaced directly on the board instead of buried in a separate artifact.</p>
     </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">External findings</p>
+      <h4>{{ board.external_findings.headline }}</h4>
+      <p>
+        {% if board.external_findings.related_investigation_surfaces %}
+        Related surfaces: {{ board.external_findings.related_investigation_surfaces[:3]|join(", ") }}{% if board.external_findings.related_investigation_surfaces|length > 3 %}, ...{% endif %}
+        {% else %}
+        Human-reported findings tracked alongside the automated QA state.
+        {% endif %}
+      </p>
+    </article>
   </div>
 </section>
 
@@ -128,7 +139,28 @@
     <div class="run-card">
       <div class="min-w-0">
         <strong>{{ section.title }}</strong>
-        <div class="muted">{{ section.status }}{% if section.owner %} / {{ section.owner }}{% endif %}</div>
+        <div class="muted">{{ section.status }}{% if section.owner %} / {{ section.owner }}{% endif %}{% if section.date %} / {{ section.date }}{% endif %}</div>
+        <form class="review-decision-form stack" data-ticket-id="{{ board.ticket_id }}" data-decision-key="{{ section.key }}" data-decision-title="{{ section.title }}">
+          <label class="muted">
+            Status
+            <select name="status">
+              {% for option in board.review_owner_decisions.status_options %}
+              <option value="{{ option }}" {% if option == section.status %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="muted">
+            Owner
+            <input type="text" name="owner" value="{{ section.owner }}" placeholder="Adrian / Jana / reviewer">
+          </label>
+          <label class="muted">
+            Note
+            <textarea name="note" rows="3" placeholder="Decision rationale or follow-up note">{{ section.notes }}</textarea>
+          </label>
+          <div class="action-row action-row--wrap">
+            <button class="button subtle" type="submit">Save decision</button>
+          </div>
+        </form>
       </div>
     </div>
     {% endfor %}

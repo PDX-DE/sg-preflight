@@ -616,6 +616,60 @@
     });
   });
 
+  document.querySelectorAll(".review-decision-form").forEach((form) => {
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+
+      const ticketId = form.getAttribute("data-ticket-id") || "";
+      const decisionKey = form.getAttribute("data-decision-key") || "";
+      const title = form.getAttribute("data-decision-title") || "";
+      const statusField = form.querySelector('select[name="status"]');
+      const ownerField = form.querySelector('input[name="owner"]');
+      const noteField = form.querySelector('textarea[name="note"]');
+      const submitButton = form.querySelector('button[type="submit"]');
+      if (!ticketId || !decisionKey || !statusField || !submitButton) {
+        return;
+      }
+
+      const originalText = submitButton.textContent;
+      submitButton.disabled = true;
+      submitButton.textContent = "Saving...";
+      try {
+        const response = await fetch("/ui/api/review-decisions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticket_id: ticketId,
+            decision_key: decisionKey,
+            title: title,
+            status: statusField.value,
+            owner: ownerField ? ownerField.value : "",
+            note: noteField ? noteField.value : ""
+          })
+        });
+        if (!response.ok) {
+          submitButton.textContent = "Save failed";
+          window.setTimeout(function () {
+            submitButton.disabled = false;
+            submitButton.textContent = originalText;
+          }, 1800);
+          return;
+        }
+
+        submitButton.textContent = "Saved";
+        window.setTimeout(function () {
+          window.location.reload();
+        }, 250);
+      } catch (_error) {
+        submitButton.textContent = "Save failed";
+        window.setTimeout(function () {
+          submitButton.disabled = false;
+          submitButton.textContent = originalText;
+        }, 1800);
+      }
+    });
+  });
+
   const launchWithFeedback = async function (button, payloadBuilder, endpoint, startingCopy) {
     const originalText = button.textContent;
     button.disabled = true;

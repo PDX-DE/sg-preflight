@@ -30,7 +30,8 @@ from sg_preflight.qa_actions import (
     load_action_record,
     save_action_record as save_action_task_record,
 )
-from sg_preflight.review_state import build_review_board_state
+from sg_preflight.review_state import build_review_board_state, load_latest_review_package
+from sg_preflight.review_tracking import set_review_decision
 from sg_preflight.reporting import build_report_presentation, finding_hint, retheme_html_report
 from sg_preflight.services import (
     RunRequest,
@@ -2766,6 +2767,43 @@ def create_app(
     @app.get("/ui/api/review-board/latest")
     async def review_board_api(ticket_id: str = "") -> JSONResponse:
         return JSONResponse(build_review_board_state(ticket_id or None, app.state.workspace_root))
+
+    @app.post("/ui/api/review-decisions")
+    async def review_decisions_set_api(request: Request) -> JSONResponse:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+
+        ticket_id = str(payload.get("ticket_id", "")).strip()
+        decision_key = str(payload.get("decision_key", "")).strip()
+        status = str(payload.get("status", "")).strip()
+        if not ticket_id:
+            raise HTTPException(status_code=400, detail="ticket_id is required")
+        if not decision_key:
+            raise HTTPException(status_code=400, detail="decision_key is required")
+        if not status:
+            raise HTTPException(status_code=400, detail="status is required")
+
+        package = load_latest_review_package(ticket_id, app.state.workspace_root)
+        fallback_path = Path(package["review_owner_decisions"]["absolute_path"]) if package["review_owner_decisions"]["absolute_path"] else None
+        decision_state = set_review_decision(
+            ticket_id,
+            decision_key,
+            status=status,
+            owner=str(payload.get("owner", "")).strip(),
+            note=str(payload.get("note", "")).strip(),
+            date=str(payload.get("date", "")).strip(),
+            title=str(payload.get("title", "")).strip(),
+            workspace=app.state.workspace_root,
+            fallback_markdown_path=fallback_path,
+        )
+        return JSONResponse(
+            {
+                "ok": True,
+                "decision_state": decision_state,
+                "review_board": build_review_board_state(ticket_id, app.state.workspace_root),
+            }
+        )
 
     @app.get("/ui/audits/mirror/deep")
     async def run_deep_audit() -> RedirectResponse:

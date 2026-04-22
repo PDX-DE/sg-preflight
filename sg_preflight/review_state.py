@@ -9,6 +9,7 @@ from typing import Any
 
 from sg_preflight.review_messages import build_digest_json, build_morning_digest, build_review_owner_update
 from sg_preflight.review_tracking import (
+    REVIEW_DECISION_STATUS_OPTIONS,
     load_external_findings,
     load_review_decisions,
 )
@@ -699,6 +700,8 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
             "path": decisions["path"],
             "json_path": decisions.get("json_path", ""),
             "pending_count": decisions["pending_count"],
+            "status_options": list(REVIEW_DECISION_STATUS_OPTIONS),
+            "pending_titles": [item["title"] for item in decisions["sections"] if item.get("pending", False)],
             "sections": decisions["sections"],
             "updated_at": decisions.get("updated_at", ""),
         },
@@ -709,6 +712,11 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
             "reported_count": external_findings["reported_count"],
             "items": external_findings["findings"],
             "related_investigation_surfaces": external_findings["related_investigation_surfaces"],
+            "headline": (
+                f"{external_findings['reported_count']}/{external_findings['count']} reported"
+                if external_findings["count"]
+                else "No external findings recorded"
+            ),
         },
         "open_items": blocker_list,
         "top_review_priority_items": top_review_items,

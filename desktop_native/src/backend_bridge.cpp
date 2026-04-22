@@ -718,6 +718,46 @@ ReviewBoardState LoadReviewBoard(const BackendConfig& config, const std::string&
     return RunJsonCommand(config, args).get<ReviewBoardState>();
 }
 
+ReviewBoardState SetReviewDecision(
+    const BackendConfig& config,
+    const std::string& ticket_id,
+    const std::string& decision_key,
+    const std::string& status,
+    const std::string& owner,
+    const std::string& note,
+    const std::string& date,
+    const std::string& title
+) {
+    std::vector<std::wstring> args = {
+        L"review-decisions",
+        L"set",
+        ToWide(ticket_id),
+        ToWide(decision_key),
+        L"--status",
+        ToWide(status),
+        L"--json",
+    };
+    if (!owner.empty()) {
+        args.push_back(L"--owner");
+        args.push_back(ToWide(owner));
+    }
+    if (!note.empty()) {
+        args.push_back(L"--note");
+        args.push_back(ToWide(note));
+    }
+    if (!date.empty()) {
+        args.push_back(L"--date");
+        args.push_back(ToWide(date));
+    }
+    if (!title.empty()) {
+        args.push_back(L"--title");
+        args.push_back(ToWide(title));
+    }
+    AppendWorkspace(args, config);
+    (void)RunJsonCommand(config, args);
+    return LoadReviewBoard(config, ticket_id);
+}
+
 ManualEvidenceItem AttachManualEvidence(
     const BackendConfig& config,
     const std::string& run_id_or_path,

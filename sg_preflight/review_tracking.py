@@ -8,6 +8,16 @@ from typing import Any
 
 _DEFAULT_DECISION_STATUS = "pending"
 _PENDING_DECISION_STATUSES = {"", "pending", "needs_more_investigation", "not_reviewed"}
+REVIEW_DECISION_STATUS_OPTIONS = (
+    "pending",
+    "blocker",
+    "follow_up",
+    "accepted_limitation",
+    "passed",
+    "failed",
+    "not_reviewed",
+    "blocked",
+)
 
 
 def _workspace_root(workspace: Path | str | None = None) -> Path:
