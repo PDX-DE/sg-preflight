@@ -61,6 +61,9 @@ class TestReviewState(unittest.TestCase):
         self.assertEqual(state["daily_delta"]["source"], "daily_snapshot")
         self.assertEqual(Path(state["package_path"]).resolve(), expected_package_root)
         self.assertTrue(state["artifact_references"]["candidate_gallery"]["exists"])
+        self.assertIn("IDCEVODEV-960073 QA status", state["review_owner_update_text"])
+        self.assertIn("Daily 3D Car QA Digest", state["morning_digest_text"])
+        self.assertEqual(state["morning_digest"]["ticket_id"], "IDCEVODEV-960073")
 
     def test_verify_sendable_package_reports_warning_when_optional_package_json_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

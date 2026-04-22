@@ -3563,6 +3563,9 @@ std::string ReviewBoardPrimaryUnresolvedFamily(const sg_preflight::native_shell:
 }
 
 std::string BuildReviewBoardStatusText(const sg_preflight::native_shell::ReviewBoardState& board) {
+    if (!board.review_owner_update_text.empty()) {
+        return board.review_owner_update_text;
+    }
     std::string text;
     text += board.ticket_id.empty() ? "Review package local QA status" : board.ticket_id + " local QA status";
     text += "\n";
@@ -3588,6 +3591,13 @@ std::string BuildReviewBoardStatusText(const sg_preflight::native_shell::ReviewB
         }
     }
     return text;
+}
+
+std::string BuildReviewBoardDigestText(const sg_preflight::native_shell::ReviewBoardState& board) {
+    if (!board.morning_digest_text.empty()) {
+        return board.morning_digest_text;
+    }
+    return BuildReviewBoardStatusText(board);
 }
 
 std::wstring SelectedEvidencePath(const ShellState& state) {
@@ -7316,6 +7326,11 @@ void RenderReviewBoardScreen(ShellState& state) {
                     state.status_line = "Copied review-board status.";
                 }
             }
+            if (DrawPanelButton("review-board-copy-digest", "COPY DIGEST", ImVec2(ShellUi(188.0f), ShellUi(32.0f)), true, true)) {
+                if (CopyText(sg_preflight::native_shell::ToWide(BuildReviewBoardDigestText(board)))) {
+                    state.status_line = "Copied review-board morning digest.";
+                }
+            }
 
             ImGui::Spacing();
             InlineSectionLabel("Review First");
@@ -7338,6 +7353,18 @@ void RenderReviewBoardScreen(ShellState& state) {
                     ImGui::Spacing();
                 }
             }
+
+            ImGui::Spacing();
+            InlineSectionLabel("Copy-ready Update");
+            ImGui::PushTextWrapPos(wrap_x);
+            ImGui::TextWrapped("%s", BuildReviewBoardStatusText(board).c_str());
+            ImGui::PopTextWrapPos();
+
+            ImGui::Spacing();
+            InlineSectionLabel("Morning Digest");
+            ImGui::PushTextWrapPos(wrap_x);
+            ImGui::TextWrapped("%s", BuildReviewBoardDigestText(board).c_str());
+            ImGui::PopTextWrapPos();
 
             ImGui::Spacing();
             InlineSectionLabel("Open Blockers");

@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.review_messages import build_digest_json, build_morning_digest, build_review_owner_update
+
 _REVIEW_PACKAGE_SUFFIX = "-review-package-"
 _REVIEW_BUNDLE_SUFFIX = "-review-bundle.json"
 
@@ -472,12 +474,13 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
             }
         )
 
-    return {
+    state = {
         "ticket_id": package["ticket_id"],
         "title": package["title"],
         "scope": package["scope"] or snapshot_summary["scope_profiles"],
         "package_path": package["package_root"],
         "generated_at": package["generated_at"],
+        "daily_snapshot_created_at": str(daily_snapshot["payload"].get("created_at", "")),
         "package_zip_path": package["zip_path"],
         "package_sha256_path": package["sha256_path"],
         "visible_dod_progress_percent": package["visible_dod_progress_percent"],
@@ -506,9 +509,13 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
             "source": daily_delta["source"],
             "json_path": daily_delta["json_path"],
             "markdown_path": daily_delta["markdown_path"],
+            "current_created_at": daily_delta["current_created_at"],
+            "previous_created_at": daily_delta["previous_created_at"],
             "new_failures": daily_delta["new_failures"],
             "resolved_failures": daily_delta["resolved_failures"],
+            "new_screenshot_diffs": daily_delta["new_screenshot_diffs"],
             "unchanged_blockers": daily_delta["unchanged_blockers"],
+            "changed_counts": daily_delta["changed_counts"],
             "top_five_to_review": daily_delta["top_five_to_review"],
         },
         "review_owner_decisions": {
@@ -536,3 +543,7 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
             "package_sha256": _artifact_entry("Package SHA256 sidecar", package["sha256_path"]),
         },
     }
+    state["review_owner_update_text"] = build_review_owner_update(state)
+    state["morning_digest"] = build_digest_json(state)
+    state["morning_digest_text"] = build_morning_digest(state)
+    return state

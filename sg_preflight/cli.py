@@ -31,6 +31,7 @@ from sg_preflight.qa_actions import (
     load_action_record,
     save_action_record,
 )
+from sg_preflight.review_messages import build_digest_json, build_morning_digest, build_review_owner_update
 from sg_preflight.retro import parse_retro_export, write_retro_json, write_retro_markdown
 from sg_preflight.services import (
     VALID_PACKS,
@@ -514,6 +515,14 @@ def build_parser() -> argparse.ArgumentParser:
     review_board_latest.add_argument("--ticket-id", help="Optional ticket id filter")
     review_board_latest.add_argument("--json", action="store_true", help="Print review-board state as JSON")
 
+    review_board_copy = review_board_sub.add_parser(
+        "copy-update",
+        help="Build the copy-ready review-owner update from the latest review-board state",
+    )
+    review_board_copy.add_argument("--workspace", help="Workspace root override")
+    review_board_copy.add_argument("--ticket-id", help="Optional ticket id filter")
+    review_board_copy.add_argument("--json", action="store_true", help="Print review-owner update payload as JSON")
+
     review_board_verify = review_board_sub.add_parser("verify", help="Verify one sendable package")
     review_board_verify_group = review_board_verify.add_mutually_exclusive_group(required=True)
     review_board_verify_group.add_argument("--latest", action="store_true", help="Verify the latest package")
@@ -541,6 +550,16 @@ def build_parser() -> argparse.ArgumentParser:
     daily_delta_latest.add_argument("--workspace", help="Workspace root override")
     daily_delta_latest.add_argument("--ticket-id", help="Optional ticket id filter")
     daily_delta_latest.add_argument("--json", action="store_true", help="Print daily-delta payload as JSON")
+
+    daily_digest = sub.add_parser(
+        "daily-digest",
+        help="Build the copy-ready daily QA digest from the latest review-board state",
+    )
+    daily_digest_sub = daily_digest.add_subparsers(dest="daily_digest_command", required=True)
+    daily_digest_latest = daily_digest_sub.add_parser("latest", help="Load the latest daily QA digest")
+    daily_digest_latest.add_argument("--workspace", help="Workspace root override")
+    daily_digest_latest.add_argument("--ticket-id", help="Optional ticket id filter")
+    daily_digest_latest.add_argument("--json", action="store_true", help="Print daily digest payload as JSON")
 
     run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
     run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
@@ -890,6 +909,15 @@ def main(argv: list[str] | None = None) -> int:
                 payload = list_review_packages(review_root)
             elif args.review_board_command == "latest":
                 payload = build_review_board_state(args.ticket_id, review_root)
+            elif args.review_board_command == "copy-update":
+                state = build_review_board_state(args.ticket_id, review_root)
+                payload = {
+                    "ticket_id": state["ticket_id"],
+                    "scope": state["scope"],
+                    "generated_at": state["generated_at"],
+                    "package_path": state["package_path"],
+                    "text": build_review_owner_update(state),
+                }
             elif args.review_board_command == "verify":
                 if args.latest:
                     latest = build_review_board_state(args.ticket_id, review_root)
@@ -902,7 +930,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(_console_safe(f"review-board failed: {exc}"), file=sys.stderr)
             return 1
-        _console_desktop_payload(payload)
+        if args.review_board_command == "copy-update" and not args.json:
+            print(_console_safe(str(payload["text"])))
+        else:
+            _console_desktop_payload(payload)
         return 0
 
     if args.command == "review-priority":
@@ -931,6 +962,25 @@ def main(argv: list[str] | None = None) -> int:
             print(_console_safe(f"daily-delta failed: {exc}"), file=sys.stderr)
             return 1
         _console_desktop_payload(payload)
+        return 0
+
+    if args.command == "daily-digest":
+        digest_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.daily_digest_command == "latest":
+                state = build_review_board_state(args.ticket_id, digest_root)
+                payload = build_digest_json(state)
+                payload["text"] = build_morning_digest(state)
+            else:
+                parser.error(f"Unhandled daily-digest command: {args.daily_digest_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"daily-digest failed: {exc}"), file=sys.stderr)
+            return 1
+        if args.json:
+            _console_desktop_payload(payload)
+        else:
+            print(_console_safe(str(payload["text"])))
         return 0
 
     if args.command == "run-profile":

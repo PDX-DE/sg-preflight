@@ -266,10 +266,14 @@ class TestOperatorUI(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Review board", page.text)
         self.assertIn("IDCEVODEV-960073", page.text)
+        self.assertIn("Copy Review Owner Update", page.text)
+        self.assertIn("Copy Morning Digest", page.text)
+        self.assertIn("Representative smoke: 3/3 passed", page.text)
         self.assertIn("lights_OnlyCones", page.text)
         self.assertEqual(payload.status_code, 200)
         self.assertEqual(payload.json()["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(payload.json()["screenshot_battery_counts"]["runtime_crash"], 1)
+        self.assertIn("IDCEVODEV-960073 QA status", payload.json()["review_owner_update_text"])
 
     def test_result_page_shows_diff_against_previous_completed_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

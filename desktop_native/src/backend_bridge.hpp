@@ -184,6 +184,8 @@ struct ReviewBoardState {
     std::string package_path;
     std::string package_zip_path;
     std::string generated_at;
+    std::string review_owner_update_text;
+    std::string morning_digest_text;
     std::string verification_status;
     std::string dod_overall_status;
     int visible_dod_progress_percent = 0;

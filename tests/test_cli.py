@@ -280,6 +280,33 @@ class TestCLI(unittest.TestCase):
                     ]
                 )
 
+            copy_update_stdout = io.StringIO()
+            with redirect_stdout(copy_update_stdout):
+                copy_update_result = main(
+                    [
+                        "review-board",
+                        "copy-update",
+                        "--workspace",
+                        str(root),
+                        "--ticket-id",
+                        "IDCEVODEV-960073",
+                    ]
+                )
+
+            copy_update_json_stdout = io.StringIO()
+            with redirect_stdout(copy_update_json_stdout):
+                copy_update_json_result = main(
+                    [
+                        "review-board",
+                        "copy-update",
+                        "--workspace",
+                        str(root),
+                        "--ticket-id",
+                        "IDCEVODEV-960073",
+                        "--json",
+                    ]
+                )
+
             verify_stdout = io.StringIO()
             with redirect_stdout(verify_stdout):
                 verify_result = main(
@@ -322,6 +349,33 @@ class TestCLI(unittest.TestCase):
                     ]
                 )
 
+            digest_stdout = io.StringIO()
+            with redirect_stdout(digest_stdout):
+                digest_result = main(
+                    [
+                        "daily-digest",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--ticket-id",
+                        "IDCEVODEV-960073",
+                    ]
+                )
+
+            digest_json_stdout = io.StringIO()
+            with redirect_stdout(digest_json_stdout):
+                digest_json_result = main(
+                    [
+                        "daily-digest",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--ticket-id",
+                        "IDCEVODEV-960073",
+                        "--json",
+                    ]
+                )
+
             desktop_stdout = io.StringIO()
             with redirect_stdout(desktop_stdout):
                 desktop_result = main(
@@ -337,14 +391,22 @@ class TestCLI(unittest.TestCase):
                 )
 
         self.assertEqual(review_board_result, 0)
+        self.assertEqual(copy_update_result, 0)
+        self.assertEqual(copy_update_json_result, 0)
         self.assertEqual(verify_result, 0)
         self.assertEqual(priority_result, 0)
         self.assertEqual(delta_result, 0)
+        self.assertEqual(digest_result, 0)
+        self.assertEqual(digest_json_result, 0)
         self.assertEqual(desktop_result, 0)
         self.assertEqual(json.loads(review_board_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
+        self.assertIn("IDCEVODEV-960073 QA status", copy_update_stdout.getvalue())
+        self.assertEqual(json.loads(copy_update_json_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(json.loads(verify_stdout.getvalue())["status"], "warning")
         self.assertEqual(json.loads(priority_stdout.getvalue())["source"], "daily_snapshot")
         self.assertIn("current_created_at", json.loads(delta_stdout.getvalue()))
+        self.assertIn("Daily 3D Car QA Digest", digest_stdout.getvalue())
+        self.assertEqual(json.loads(digest_json_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(json.loads(desktop_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
 
     def test_ticket_review_cli_sendable_disables_action_bundles(self) -> None:

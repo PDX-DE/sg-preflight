@@ -64,6 +64,31 @@
   </div>
 </section>
 
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Copy-ready updates</h3>
+      <p>Use the short status update for review-owner communication and the digest for the daily operating loop.</p>
+    </div>
+  </div>
+  <div class="action-row action-row--wrap">
+    <button class="button copy-button" type="button" data-copy-target="review-owner-update">Copy Review Owner Update</button>
+    <button class="button subtle copy-button" type="button" data-copy-target="morning-digest">Copy Morning Digest</button>
+  </div>
+  <div class="quick-start-grid">
+    <article class="quick-start-card">
+      <p class="eyebrow">Review-owner update</p>
+      <div class="note-block"><pre>{{ board.review_owner_update_text }}</pre></div>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Morning digest</p>
+      <div class="note-block"><pre>{{ board.morning_digest_text }}</pre></div>
+    </article>
+  </div>
+  <textarea id="review-owner-update" hidden>{{ board.review_owner_update_text }}</textarea>
+  <textarea id="morning-digest" hidden>{{ board.morning_digest_text }}</textarea>
+</section>
+
 <section class="panel" id="review-priority">
   <div class="panel-head">
     <div>

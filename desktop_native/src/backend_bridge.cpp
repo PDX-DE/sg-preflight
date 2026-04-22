@@ -489,6 +489,8 @@ void from_json(const json& payload, ReviewBoardState& item) {
     item.package_path = ValueString(payload, "package_path");
     item.package_zip_path = ValueString(payload, "package_zip_path");
     item.generated_at = ValueString(payload, "generated_at");
+    item.review_owner_update_text = ValueString(payload, "review_owner_update_text");
+    item.morning_digest_text = ValueString(payload, "morning_digest_text");
     item.visible_dod_progress_percent = ValueInt(payload, "visible_dod_progress_percent", 0);
     if (payload.contains("scope") && payload.at("scope").is_array()) {
         item.scope = payload.at("scope").get<std::vector<std::string>>();
