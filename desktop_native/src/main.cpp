@@ -8200,6 +8200,9 @@ void RenderReviewBoardScreen(ShellState& state) {
             ImGui::BulletText("External findings: %s", ReviewBoardExternalFindingSummary(board).c_str());
             ImGui::BulletText("Unresolved exact family: %s", ReviewBoardPrimaryUnresolvedFamily(board).c_str());
             ImGui::BulletText("Needs decision: %s", ReviewBoardDecisionSummary(board).c_str());
+            if (!board.operator_next_step.empty()) {
+                ImGui::BulletText("Next step: %s", board.operator_next_step.c_str());
+            }
 
             ImGui::Spacing();
             InlineSectionLabel("PACKAGE STATE");
@@ -8262,6 +8265,30 @@ void RenderReviewBoardScreen(ShellState& state) {
             } else {
                 ImGui::TextDisabled("No previous-run comparison is available yet.");
             }
+            if (!board.new_failures.empty()) {
+                ImGui::Text("New failures:");
+                for (const auto& item : board.new_failures) {
+                    ImGui::BulletText("%s", item.c_str());
+                }
+            }
+            if (!board.resolved_failures.empty()) {
+                ImGui::Text("Resolved:");
+                for (const auto& item : board.resolved_failures) {
+                    ImGui::BulletText("%s", item.c_str());
+                }
+            }
+            if (!board.new_screenshot_diffs.empty()) {
+                ImGui::Text("New diffs:");
+                for (const auto& item : board.new_screenshot_diffs) {
+                    ImGui::BulletText("%s", item.c_str());
+                }
+            }
+            if (!board.unchanged_blockers.empty()) {
+                ImGui::Text("Unchanged blockers:");
+                for (const auto& item : board.unchanged_blockers) {
+                    ImGui::BulletText("%s", item.c_str());
+                }
+            }
             if (board.external_findings.empty()) {
                 ImGui::TextDisabled("No external human findings are currently tracked.");
             } else {
@@ -8281,8 +8308,9 @@ void RenderReviewBoardScreen(ShellState& state) {
                     ImGui::Text("%zu. %s / %s", index + 1U, item.profile_id.c_str(), item.filter_name.c_str());
                     ImGui::SameLine();
                     ImGui::TextDisabled(
-                        "[%s | %s | p=%d%s]",
+                        "[%s | %s | %s | p=%d%s]",
                         item.priority_level.c_str(),
+                        item.attention_category.c_str(),
                         item.verdict.c_str(),
                         item.priority_score,
                         item.is_new_since_previous_run ? " | new" : ""
@@ -8294,6 +8322,16 @@ void RenderReviewBoardScreen(ShellState& state) {
                     }
                     if (!item.recommendation.empty()) {
                         ImGui::TextDisabled("%s", item.recommendation.c_str());
+                    }
+                    if (!item.signals.empty()) {
+                        std::string joined;
+                        for (size_t signal_index = 0; signal_index < item.signals.size(); ++signal_index) {
+                            if (signal_index > 0U) {
+                                joined += " | ";
+                            }
+                            joined += item.signals[signal_index];
+                        }
+                        ImGui::TextDisabled("%s", joined.c_str());
                     }
                     ImGui::Spacing();
                 }

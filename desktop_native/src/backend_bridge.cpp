@@ -481,10 +481,14 @@ void from_json(const json& payload, ReviewPriorityItem& item) {
     item.filter_name = ValueString(payload, "filter_name");
     item.verdict = ValueString(payload, "verdict");
     item.priority_level = ValueString(payload, "priority_level");
+    item.attention_category = ValueString(payload, "attention_category");
     item.priority_score = ValueInt(payload, "priority_score", 0);
     item.reason = ValueString(payload, "reason");
     item.recommendation = ValueString(payload, "recommendation");
     item.log_path = ValueString(payload, "log_path");
+    if (payload.contains("signals") && payload.at("signals").is_array()) {
+        item.signals = payload.at("signals").get<std::vector<std::string>>();
+    }
     item.is_new_since_previous_run = ValueBool(payload, "is_new_since_previous_run", false);
 }
 
@@ -586,7 +590,23 @@ void from_json(const json& payload, ReviewBoardState& item) {
         item.new_screenshot_diffs_count = ValueInt(delta, "new_screenshot_diffs_count", 0);
         item.unchanged_blockers_count = ValueInt(delta, "unchanged_blockers_count", 0);
         item.daily_delta_headline = ValueString(delta, "headline");
+        if (delta.contains("new_failure_preview") && delta.at("new_failure_preview").is_array()) {
+            item.new_failures = delta.at("new_failure_preview").get<std::vector<std::string>>();
+        }
+        if (delta.contains("resolved_failure_preview") && delta.at("resolved_failure_preview").is_array()) {
+            item.resolved_failures = delta.at("resolved_failure_preview").get<std::vector<std::string>>();
+        }
+        if (delta.contains("new_screenshot_diff_preview") && delta.at("new_screenshot_diff_preview").is_array()) {
+            item.new_screenshot_diffs = delta.at("new_screenshot_diff_preview").get<std::vector<std::string>>();
+        }
+        if (delta.contains("unchanged_blocker_preview") && delta.at("unchanged_blocker_preview").is_array()) {
+            item.unchanged_blockers = delta.at("unchanged_blocker_preview").get<std::vector<std::string>>();
+        }
+        if (delta.contains("review_first_preview") && delta.at("review_first_preview").is_array()) {
+            item.review_first_preview = delta.at("review_first_preview").get<std::vector<std::string>>();
+        }
     }
+    item.operator_next_step = ValueString(payload, "operator_next_step");
     if (payload.contains("unresolved_families") && payload.at("unresolved_families").is_array()) {
         item.unresolved_families = payload.at("unresolved_families").get<std::vector<std::string>>();
     }

@@ -665,25 +665,82 @@ def _review_priority_reason(item: BmwBatteryResult) -> str:
 
 
 def _review_priority_score(item: BmwBatteryResult) -> int:
+    base = 0
     if item.verdict == "runtime_crash":
-        return 100
-    if item.verdict == "needs_manual_review":
-        return 95
-    if item.verdict in {"scenario_output_missing", "baseline_missing"}:
-        return 90
-    if item.verdict == "proxy_candidate_ready":
-        return 75
-    if item.verdict == "baseline_candidate_ready":
-        return 60
-    if item.verdict == "likely_ok":
-        return 20
-    return 0
+        base = 100
+    elif item.verdict == "needs_manual_review":
+        base = 88
+    elif item.verdict in {"scenario_output_missing", "baseline_missing"}:
+        base = 92
+    elif item.verdict == "proxy_candidate_ready":
+        base = 72
+    elif item.verdict == "baseline_candidate_ready":
+        base = 55
+    elif item.verdict == "likely_ok":
+        base = 18
+
+    family = item.filter_name.casefold()
+    family_bonus = 0
+    if family == "lights_onlycones":
+        family_bonus = 16
+    elif family in {"lights_highbeam", "lights_lowbeam"}:
+        family_bonus = 10
+    elif family.startswith("lights_"):
+        family_bonus = 7
+    elif family.startswith("openalldoors_"):
+        family_bonus = 4
+    elif family.startswith("welcome_animation_"):
+        family_bonus = 2
+
+    diff_bonus = min(max(item.diff_count, 0), 3) * 3
+    actual_bonus = 4 if item.actual_count > 0 else 0
+    target_bonus = 5 if item.target_output_present else 0
+    proxy_bonus = 4 if item.proxy_files else 0
+    return base + family_bonus + diff_bonus + actual_bonus + target_bonus + proxy_bonus
+
+
+def _review_priority_signals(item: BmwBatteryResult) -> tuple[str, ...]:
+    signals: list[str] = []
+    if item.verdict == "runtime_crash":
+        signals.append("runtime crash")
+    elif item.verdict == "needs_manual_review":
+        signals.append("diff review needed")
+    elif item.verdict == "scenario_output_missing":
+        signals.append("target output missing")
+    elif item.verdict == "baseline_missing":
+        signals.append("baseline missing")
+    elif item.verdict == "proxy_candidate_ready":
+        signals.append("proxy-only coverage")
+    elif item.verdict == "baseline_candidate_ready":
+        signals.append("exact candidate ready")
+    elif item.verdict == "likely_ok":
+        signals.append("exact compare likely ok")
+
+    family = item.filter_name.casefold()
+    if family == "lights_onlycones":
+        signals.append("cone family")
+    elif family in {"lights_highbeam", "lights_lowbeam"}:
+        signals.append("beam family")
+    elif family.startswith("lights_"):
+        signals.append("lightfx family")
+
+    if item.diff_count > 0:
+        signals.append(f"{item.diff_count} diff payload")
+    if item.actual_count == 0:
+        signals.append("no actual output")
+    elif item.actual_count > 1:
+        signals.append(f"{item.actual_count} actual outputs")
+    if item.target_output_present:
+        signals.append("target output present")
+    if item.proxy_files:
+        signals.append("proxy files present")
+    return tuple(signals)
 
 
 def _review_priority_level(item: BmwBatteryResult) -> str:
-    if item.verdict in {"runtime_crash", "needs_manual_review", "scenario_output_missing", "baseline_missing"}:
+    if item.verdict in {"runtime_crash", "scenario_output_missing", "baseline_missing"}:
         return "P0"
-    if item.verdict == "proxy_candidate_ready":
+    if item.verdict in {"needs_manual_review", "proxy_candidate_ready"}:
         return "P1"
     if item.verdict == "baseline_candidate_ready":
         return "P2"
@@ -709,6 +766,7 @@ def _review_priority_payload(snapshot: DailyQaSnapshot) -> dict[str, Any]:
             "verdict": item.verdict,
             "priority_level": _review_priority_level(item),
             "priority_score": _review_priority_score(item),
+            "signals": list(_review_priority_signals(item)),
             "reason": _review_priority_reason(item),
             "recommendation": _battery_gap_recommendation(item),
             "expected_count": item.expected_count,

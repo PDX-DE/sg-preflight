@@ -284,6 +284,8 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Representative smoke: 3/3 passed", page.text)
         self.assertIn("lights_OnlyCones", page.text)
         self.assertIn("External findings", page.text)
+        self.assertIn("Next operator step", page.text)
+        self.assertIn("Delta detail", page.text)
         self.assertIn("G78 LightFX / HeadLights update", page.text)
         self.assertIn("Save decision", page.text)
         self.assertIn("Save external finding", page.text)

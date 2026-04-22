@@ -180,12 +180,19 @@ def build_digest_json(state: dict[str, Any], previous_state: dict[str, Any] | No
         "still_unresolved": list(delta.get("unchanged_blockers", [])),
         "resolved": list(delta.get("resolved_failures", [])),
         "review_first": _review_first_items(state),
+        "operator_next_step": str(state.get("operator_next_step", "")).strip(),
         "open_blockers": blockers,
         "delta_summary": {
             "new_failures_count": int(delta_summary.get("new_failures_count", 0) or 0),
             "resolved_failures_count": int(delta_summary.get("resolved_failures_count", 0) or 0),
             "new_screenshot_diffs_count": int(delta_summary.get("new_screenshot_diffs_count", 0) or 0),
             "unchanged_blockers_count": int(delta_summary.get("unchanged_blockers_count", 0) or 0),
+            "operator_signal": str(delta_summary.get("operator_signal", "")).strip(),
+            "new_failure_preview": list(delta_summary.get("new_failure_preview", [])),
+            "resolved_failure_preview": list(delta_summary.get("resolved_failure_preview", [])),
+            "new_screenshot_diff_preview": list(delta_summary.get("new_screenshot_diff_preview", [])),
+            "unchanged_blocker_preview": list(delta_summary.get("unchanged_blocker_preview", [])),
+            "review_first_preview": list(delta_summary.get("review_first_preview", [])),
         },
     }
 
@@ -208,26 +215,30 @@ def build_morning_digest(state: dict[str, Any], previous_state: dict[str, Any] |
     if digest["date"]:
         title += f" ({digest['date']})"
     lines = [title]
-    lines.append(f"Scope: {scope}")
-    lines.append(f"Package verification: {verification}")
+    lines.append(f"Scope: {scope} | Package verification: {verification}")
     lines.append(f"Smoke: {smoke['completed']}/{smoke['total']} passed")
     lines.append(
         "Battery: "
         f"{battery['covered']}/{battery['total']} covered "
         f"({battery['exact_candidate_ready']} exact, {battery['proxy_candidate_ready']} proxy, {battery['runtime_crash']} crash)"
     )
-    lines.append(
+    delta_line = (
         "Delta: "
         f"+{delta_summary['new_failures_count']} failures, "
         f"{delta_summary['resolved_failures_count']} resolved, "
         f"{delta_summary['new_screenshot_diffs_count']} new diffs, "
         f"{delta_summary['unchanged_blockers_count']} unchanged blockers"
     )
+    if delta_summary["operator_signal"]:
+        delta_line += f" | {delta_summary['operator_signal']}"
+    lines.append(delta_line)
     lines.append(f"Unresolved exact: {unresolved}")
     if pending_decisions:
         lines.append("Needs decision: " + "; ".join(pending_decisions[:2]) + ("; ..." if len(pending_decisions) > 2 else ""))
     elif review_first:
         lines.append("Review first: " + review_first[0])
+    elif digest["operator_next_step"]:
+        lines.append("Next step: " + digest["operator_next_step"])
     if blockers:
         lines.append("Open blockers: " + "; ".join(blockers))
     return "\n".join(lines)

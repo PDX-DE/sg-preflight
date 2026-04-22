@@ -175,10 +175,12 @@ struct ReviewPriorityItem {
     std::string filter_name;
     std::string verdict;
     std::string priority_level;
+    std::string attention_category;
     int priority_score = 0;
     std::string reason;
     std::string recommendation;
     std::string log_path;
+    std::vector<std::string> signals;
     bool is_new_since_previous_run = false;
 };
 
@@ -250,6 +252,12 @@ struct ReviewBoardState {
     int new_screenshot_diffs_count = 0;
     int unchanged_blockers_count = 0;
     std::string daily_delta_headline;
+    std::vector<std::string> new_failures;
+    std::vector<std::string> resolved_failures;
+    std::vector<std::string> new_screenshot_diffs;
+    std::vector<std::string> unchanged_blockers;
+    std::vector<std::string> review_first_preview;
+    std::string operator_next_step;
     std::vector<std::string> unresolved_families;
     std::vector<std::string> open_items;
     std::vector<ReviewPriorityItem> review_priority_items;

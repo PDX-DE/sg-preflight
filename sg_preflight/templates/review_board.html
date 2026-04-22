@@ -64,7 +64,7 @@
     <article class="quick-start-card">
       <p class="eyebrow">Since previous run</p>
       <h4>{{ board.daily_delta_summary.headline }}</h4>
-      <p>Daily delta surfaced directly on the board instead of buried in a separate artifact.</p>
+      <p>{{ board.daily_delta_summary.operator_signal }}</p>
     </article>
     <article class="quick-start-card">
       <p class="eyebrow">External findings</p>
@@ -76,6 +76,11 @@
         Human-reported findings tracked alongside the automated QA state.
         {% endif %}
       </p>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Next operator step</p>
+      <h4>{{ board.operator_next_step }}</h4>
+      <p>Keep the daily loop explicit: inspect first, decide next, then open the right artifact.</p>
     </article>
   </div>
 </section>
@@ -117,13 +122,63 @@
     <div class="run-card">
       <div class="min-w-0">
         <strong>{{ item.profile_id }} - {{ item.filter_name }}</strong>
-        <div class="muted">{{ item.priority_level }} / {{ item.verdict }} / priority {{ item.priority_score }}{% if item.is_new_since_previous_run %} / new{% endif %}</div>
+        <div class="muted">{{ item.priority_level }} / {{ item.attention_category }} / {{ item.verdict }} / priority {{ item.priority_score }}{% if item.is_new_since_previous_run %} / new{% endif %}</div>
         {% if item.reason %}
         <div class="muted">{{ item.reason }}</div>
+        {% endif %}
+        {% if item.signals %}
+        <div class="muted">Signals: {{ item.signals|join(", ") }}</div>
         {% endif %}
       </div>
     </div>
     {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Delta detail</h3>
+      <p>Make the previous-run comparison explicit so operators can tell what changed without opening another report first.</p>
+    </div>
+  </div>
+  <div class="quick-start-grid">
+    <article class="quick-start-card">
+      <p class="eyebrow">New failures</p>
+      <h4>{{ board.daily_delta_summary.new_failures_count }}</h4>
+      {% if board.daily_delta_summary.new_failure_preview %}
+      <p>{{ board.daily_delta_summary.new_failure_preview|join(" | ") }}</p>
+      {% else %}
+      <p>No new failures in the latest comparison.</p>
+      {% endif %}
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Resolved</p>
+      <h4>{{ board.daily_delta_summary.resolved_failures_count }}</h4>
+      {% if board.daily_delta_summary.resolved_failure_preview %}
+      <p>{{ board.daily_delta_summary.resolved_failure_preview|join(" | ") }}</p>
+      {% else %}
+      <p>No failures were resolved since the previous run.</p>
+      {% endif %}
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">New diffs</p>
+      <h4>{{ board.daily_delta_summary.new_screenshot_diffs_count }}</h4>
+      {% if board.daily_delta_summary.new_screenshot_diff_preview %}
+      <p>{{ board.daily_delta_summary.new_screenshot_diff_preview|join(" | ") }}</p>
+      {% else %}
+      <p>No new screenshot diffs were detected.</p>
+      {% endif %}
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Unchanged blockers</p>
+      <h4>{{ board.daily_delta_summary.unchanged_blockers_count }}</h4>
+      {% if board.daily_delta_summary.unchanged_blocker_preview %}
+      <p>{{ board.daily_delta_summary.unchanged_blocker_preview|join(" | ") }}</p>
+      {% else %}
+      <p>No unchanged blockers were carried over.</p>
+      {% endif %}
+    </article>
   </div>
 </section>
 

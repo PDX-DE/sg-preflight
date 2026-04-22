@@ -17,6 +17,16 @@ from sg_preflight.review_tracking import (
 _REVIEW_PACKAGE_SUFFIX = "-review-package-"
 _REVIEW_BUNDLE_SUFFIX = "-review-bundle.json"
 _MANUAL_STATUSES = ("pending", "passed", "issue", "blocked")
+_HIGH_PRIORITY_VERDICTS = {"runtime_crash", "scenario_output_missing", "baseline_missing"}
+_PRIORITY_BASE_SCORES = {
+    "runtime_crash": 100,
+    "scenario_output_missing": 92,
+    "baseline_missing": 90,
+    "needs_manual_review": 88,
+    "proxy_candidate_ready": 72,
+    "baseline_candidate_ready": 55,
+    "likely_ok": 18,
+}
 
 
 def _workspace_root(workspace: Path | str | None = None) -> Path:
@@ -205,6 +215,87 @@ def _artifact_ref(path: Path | None, *, package_root: Path | None, workspace_roo
     }
 
 
+def _family_priority_bonus(filter_name: str) -> int:
+    family = str(filter_name).strip().casefold()
+    if family == "lights_onlycones":
+        return 16
+    if family in {"lights_highbeam", "lights_lowbeam"}:
+        return 10
+    if family.startswith("lights_"):
+        return 7
+    if family.startswith("openalldoors_"):
+        return 4
+    if family.startswith("welcome_animation_"):
+        return 2
+    return 0
+
+
+def _priority_score_from_payload(item: dict[str, Any], *, is_new: bool = False) -> int:
+    verdict = str(item.get("verdict", "")).strip()
+    raw_score = int(item.get("priority_score", 0) or 0)
+    base_score = _PRIORITY_BASE_SCORES.get(verdict, 0)
+    score = max(raw_score, base_score)
+    score += _family_priority_bonus(str(item.get("filter_name", "")))
+    score += min(max(int(item.get("diff_count", 0) or 0), 0), 3) * 3
+    if int(item.get("actual_count", 0) or 0) > 0:
+        score += 4
+    if bool(item.get("target_output_present", False)):
+        score += 5
+    if item.get("proxy_files"):
+        score += 4
+    if is_new:
+        score += 15
+    return score
+
+
+def _priority_level_from_payload(item: dict[str, Any], *, is_new: bool = False) -> str:
+    verdict = str(item.get("verdict", "")).strip()
+    if verdict in _HIGH_PRIORITY_VERDICTS:
+        return "P0"
+    if verdict == "needs_manual_review":
+        return "P0" if is_new else "P1"
+    if verdict == "proxy_candidate_ready":
+        return "P1"
+    if verdict == "baseline_candidate_ready":
+        return "P1" if is_new and _family_priority_bonus(str(item.get("filter_name", ""))) >= 7 else "P2"
+    if verdict == "likely_ok":
+        return "P2" if is_new else "P3"
+    return "P3"
+
+
+def _priority_attention_category(item: dict[str, Any], *, is_new: bool = False) -> str:
+    level = _priority_level_from_payload(item, is_new=is_new)
+    if level == "P0":
+        return "must inspect"
+    if level == "P1":
+        return "inspect before delivery"
+    if level == "P2":
+        return "inspect if time"
+    return "low priority / unchanged"
+
+
+def _priority_signals_from_payload(item: dict[str, Any], *, is_new: bool = False) -> list[str]:
+    payload_signals = [str(signal).strip() for signal in item.get("signals", []) if str(signal).strip()]
+    seen = {signal.casefold() for signal in payload_signals}
+
+    def _append(text: str) -> None:
+        key = text.casefold()
+        if key not in seen:
+            payload_signals.append(text)
+            seen.add(key)
+
+    verdict = str(item.get("verdict", "")).strip()
+    if verdict == "needs_manual_review":
+        _append("diff review needed")
+    if verdict in _HIGH_PRIORITY_VERDICTS:
+        _append("technical blocker")
+    if is_new:
+        _append("new since previous run")
+    elif verdict == "likely_ok":
+        _append("unchanged exact compare")
+    return payload_signals
+
+
 def _summarize_daily_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     smoke_results = payload.get("smoke_results", [])
     battery_results = payload.get("battery_results", [])
@@ -382,29 +473,10 @@ def load_review_priority(ticket_id: str | None = None, workspace: Path | str | N
     payload = _load_json(json_path)
     ranked_items = list(payload.get("ranked_items", []))
     for item in ranked_items:
-        verdict = str(item.get("verdict", "")).strip()
-        if verdict == "runtime_crash":
-            item["priority_score"] = 100
-        elif verdict == "needs_manual_review":
-            item["priority_score"] = 95
-        elif verdict in {"scenario_output_missing", "baseline_missing"}:
-            item["priority_score"] = 90
-        elif verdict == "proxy_candidate_ready":
-            item["priority_score"] = 75
-        elif verdict == "baseline_candidate_ready":
-            item["priority_score"] = 60
-        elif verdict == "likely_ok":
-            item["priority_score"] = 20
-        if str(item.get("priority_level", "")).strip():
-            continue
-        if verdict in {"runtime_crash", "needs_manual_review", "scenario_output_missing", "baseline_missing"}:
-            item["priority_level"] = "P0"
-        elif verdict == "proxy_candidate_ready":
-            item["priority_level"] = "P1"
-        elif verdict == "baseline_candidate_ready":
-            item["priority_level"] = "P2"
-        else:
-            item["priority_level"] = "P3"
+        item["priority_score"] = _priority_score_from_payload(item, is_new=False)
+        item["priority_level"] = _priority_level_from_payload(item, is_new=False)
+        item["attention_category"] = _priority_attention_category(item, is_new=False)
+        item["signals"] = _priority_signals_from_payload(item, is_new=False)
     ranked_items.sort(
         key=lambda item: (
             int(item.get("priority_score", 0)),
@@ -609,19 +681,10 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
         return f"battery:{profile_id}:{filter_name}" if profile_id and filter_name else ""
 
     def _priority_level(item: dict[str, Any], *, is_new: bool) -> str:
-        verdict = str(item.get("verdict", "")).strip()
-        if verdict in {"runtime_crash", "needs_manual_review", "scenario_output_missing", "baseline_missing"}:
-            return "P0"
-        if verdict == "proxy_candidate_ready":
-            return "P1"
-        if verdict == "baseline_candidate_ready":
-            return "P1" if is_new else "P2"
-        if verdict == "likely_ok":
-            return "P2" if is_new else "P3"
-        return "P3"
+        return _priority_level_from_payload(item, is_new=is_new)
 
     top_review_items = []
-    for item in review_priority["top_items"]:
+    for item in review_priority["ranked_items"]:
         item_key = _priority_key(item)
         is_new = item_key in new_review_keys
         top_review_items.append(
@@ -629,14 +692,25 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
                 "profile_id": str(item.get("profile_id", "")),
                 "filter_name": str(item.get("filter_name", "")),
                 "verdict": str(item.get("verdict", "")),
-                "priority_score": int(item.get("priority_score", 0)),
+                "priority_score": _priority_score_from_payload(item, is_new=is_new),
                 "priority_level": str(item.get("priority_level", "")) or _priority_level(item, is_new=is_new),
+                "attention_category": _priority_attention_category(item, is_new=is_new),
+                "signals": _priority_signals_from_payload(item, is_new=is_new),
                 "reason": str(item.get("reason", "")),
                 "recommendation": str(item.get("recommendation", "")),
                 "log_path": str(item.get("log_path", "")),
                 "is_new_since_previous_run": is_new,
             }
         )
+    top_review_items.sort(
+        key=lambda item: (
+            int(item.get("priority_score", 0)),
+            str(item.get("profile_id", "")).upper(),
+            str(item.get("filter_name", "")).lower(),
+        ),
+        reverse=True,
+    )
+    top_review_items = top_review_items[:5]
 
     delta_summary = {
         "has_previous_run": bool(str(daily_delta["previous_created_at"]).strip()),
@@ -644,13 +718,42 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
         "resolved_failures_count": len(daily_delta["resolved_failures"]),
         "new_screenshot_diffs_count": len(daily_delta["new_screenshot_diffs"]),
         "unchanged_blockers_count": len(daily_delta["unchanged_blockers"]),
+        "new_failure_preview": list(daily_delta["new_failures"][:3]),
+        "resolved_failure_preview": list(daily_delta["resolved_failures"][:3]),
+        "new_screenshot_diff_preview": list(daily_delta["new_screenshot_diffs"][:3]),
+        "unchanged_blocker_preview": list(daily_delta["unchanged_blockers"][:3]),
+        "review_first_preview": list(daily_delta["top_five_to_review"][:3]),
         "headline": (
             f"+{len(daily_delta['new_failures'])} failures / "
             f"{len(daily_delta['resolved_failures'])} resolved / "
             f"{len(daily_delta['new_screenshot_diffs'])} new diffs / "
             f"{len(daily_delta['unchanged_blockers'])} unchanged blockers"
         ),
+        "operator_signal": (
+            "No previous run yet; use this as the initial baseline."
+            if not str(daily_delta["previous_created_at"]).strip()
+            else (
+                f"Review {len(daily_delta['new_failures']) + len(daily_delta['new_screenshot_diffs'])} new changes first."
+                if daily_delta["new_failures"] or daily_delta["new_screenshot_diffs"]
+                else (
+                    f"No new failures; {len(daily_delta['unchanged_blockers'])} blocker(s) remain unchanged."
+                    if daily_delta["unchanged_blockers"]
+                    else "No new failures or diffs; focus on the current review queue."
+                )
+            )
+        ),
     }
+
+    pending_decisions = [item["title"] for item in decisions["sections"] if item.get("pending", False)]
+    if pending_decisions:
+        operator_next_step = f"Resolve review-owner decision: {pending_decisions[0]}"
+    elif top_review_items:
+        operator_next_step = (
+            f"Open gallery and inspect {top_review_items[0]['profile_id']} / {top_review_items[0]['filter_name']} "
+            f"({top_review_items[0]['priority_level']})"
+        )
+    else:
+        operator_next_step = "Open the package artifacts and confirm the current local QA state."
 
     state = {
         "ticket_id": package["ticket_id"],
@@ -721,6 +824,7 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
         "open_items": blocker_list,
         "top_review_priority_items": top_review_items,
         "daily_delta_summary": delta_summary,
+        "operator_next_step": operator_next_step,
         "manual_review_profiles": _build_manual_review_profiles(
             package,
             workspace_root=workspace_root,

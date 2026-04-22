@@ -11,6 +11,9 @@ from sg_preflight.daily_snapshot import (
     BmwSmokeResult,
     _battery_verdict,
     _beam_family_diagnostics,
+    _review_priority_level,
+    _review_priority_payload,
+    _review_priority_score,
     _render_local_battery_override_lua,
     _render_local_call_screenshot_override_lua,
     _snapshot_result_from_dict,
@@ -22,6 +25,58 @@ from tests.operator_helpers import write_text
 
 
 class TestDailySnapshot(unittest.TestCase):
+    def test_review_priority_scoring_weights_cone_runtime_above_exact_candidate(self) -> None:
+        cone_crash = BmwBatteryResult(
+            profile_id="NA8",
+            bmw_profile_id="NA8_EVO",
+            filter_name="lights_OnlyCones",
+            verdict="runtime_crash",
+            status="failed",
+            results_root="out/cones",
+            log_path="out/cones.log",
+            actual_count=1,
+            target_output_present=True,
+        )
+        default_candidate = BmwBatteryResult(
+            profile_id="NA8",
+            bmw_profile_id="NA8_EVO",
+            filter_name="default",
+            verdict="baseline_candidate_ready",
+            status="completed",
+            results_root="out/default",
+            log_path="out/default.log",
+            actual_count=1,
+            target_output_present=True,
+        )
+
+        self.assertGreater(_review_priority_score(cone_crash), _review_priority_score(default_candidate))
+        self.assertEqual(_review_priority_level(cone_crash), "P0")
+
+        payload = _review_priority_payload(
+            _snapshot_result_from_dict(
+                {
+                    "created_at": "2026-04-23T08:00:00",
+                    "scope_profiles": ["NA8"],
+                    "bmw_repo_root": "C:/repo/digital-3d-car-models",
+                    "config_check": {
+                        "status": "ready",
+                        "python_exe": "python.exe",
+                        "repo_root": "C:/repo/digital-3d-car-models",
+                        "log_path": "out/config.log",
+                    },
+                    "smoke_results": [],
+                    "battery_results": [default_candidate.to_dict(), cone_crash.to_dict()],
+                    "blocked_steps": [],
+                    "top_review_items": [],
+                    "notes": [],
+                }
+            )
+        )
+
+        self.assertEqual(payload["ranked_items"][0]["filter_name"], "lights_OnlyCones")
+        self.assertIn("runtime crash", payload["ranked_items"][0]["signals"])
+        self.assertIn("cone family", payload["ranked_items"][0]["signals"])
+
     def test_ensure_idcevo_bmw_support_files_copies_generic_bmw_support_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
