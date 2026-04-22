@@ -598,6 +598,9 @@ void from_json(const json& payload, ReviewBoardState& item) {
     }
     if (payload.contains("review_owner_decisions") && payload.at("review_owner_decisions").is_object()) {
         const json& decisions = payload.at("review_owner_decisions");
+        if (decisions.contains("status_options") && decisions.at("status_options").is_array()) {
+            item.decision_status_options = decisions.at("status_options").get<std::vector<std::string>>();
+        }
         if (decisions.contains("sections") && decisions.at("sections").is_array()) {
             item.decisions = decisions.at("sections").get<std::vector<ReviewOwnerDecisionItem>>();
         }
@@ -760,6 +763,69 @@ ReviewBoardState SetReviewDecision(
     if (!title.empty()) {
         args.push_back(L"--title");
         args.push_back(ToWide(title));
+    }
+    AppendWorkspace(args, config);
+    (void)RunJsonCommand(config, args);
+    return LoadReviewBoard(config, ticket_id);
+}
+
+ReviewBoardState AddExternalFinding(
+    const BackendConfig& config,
+    const std::string& ticket_id,
+    const std::string& source,
+    const std::string& reported_by,
+    const std::string& category,
+    const std::vector<std::string>& scope,
+    const std::string& finding,
+    const std::string& owner,
+    const std::string& status,
+    const std::string& note,
+    const std::string& finding_type,
+    const std::vector<std::string>& related_investigation_surfaces
+) {
+    std::vector<std::wstring> args = {
+        L"external-findings",
+        L"add",
+        ToWide(ticket_id),
+        L"--source",
+        ToWide(source),
+        L"--reported-by",
+        ToWide(reported_by),
+        L"--category",
+        ToWide(category),
+        L"--finding",
+        ToWide(finding),
+        L"--json",
+    };
+    for (const auto& scope_item : scope) {
+        if (scope_item.empty()) {
+            continue;
+        }
+        args.push_back(L"--scope");
+        args.push_back(ToWide(scope_item));
+    }
+    if (!owner.empty()) {
+        args.push_back(L"--owner");
+        args.push_back(ToWide(owner));
+    }
+    if (!status.empty()) {
+        args.push_back(L"--status");
+        args.push_back(ToWide(status));
+    }
+    if (!note.empty()) {
+        args.push_back(L"--note");
+        args.push_back(ToWide(note));
+    }
+    if (!finding_type.empty()) {
+        args.push_back(L"--type");
+        args.push_back(ToWide(finding_type));
+    }
+    for (const auto& surface : related_investigation_surfaces) {
+        if (surface.empty()) {
+            continue;
+        }
+        args.push_back(L"--related-surface");
+        args.push_back(ToWide(surface));
     }
     AppendWorkspace(args, config);
     (void)RunJsonCommand(config, args);

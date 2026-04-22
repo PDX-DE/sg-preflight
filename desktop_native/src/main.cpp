@@ -367,6 +367,7 @@ void RefreshRunSnapshot(ShellState& state);
 void RefreshResultPanels(ShellState& state);
 void RefreshProfilePanels(ShellState& state, bool refresh_results = true);
 void RefreshReviewBoardState(ShellState& state, bool update_status = true);
+void SyncReviewBoardEditors(ShellState& state);
 void RenderLocalStatePanel(ShellState& state, const char* id, const char* title, float height, const std::string& loading_copy);
 void StartInitialShellLoad(ShellState& state);
 void PollInitialShellLoad(ShellState& state);
@@ -388,6 +389,7 @@ bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool
 void DrawReadonlyPathLine(const char* id, const std::string& text, bool monospace);
 void DrawReadonlyTextBox(const char* id, const std::string& text, bool monospace, float height);
 std::string Ellipsize(const std::string& text, size_t limit);
+std::string JoinScopeList(const std::vector<std::string>& scope);
 void DrawPromptTextStyled(
     ImDrawList* draw,
     ImFont* font,
@@ -3427,6 +3429,7 @@ void RefreshProfiles(ShellState& state) {
 void RefreshReviewBoardState(ShellState& state, bool update_status) {
     try {
         state.review_board = sg_preflight::native_shell::LoadReviewBoard(state.backend, std::string());
+        SyncReviewBoardEditors(state);
         state.last_error.clear();
         if (update_status && state.review_board.has_value()) {
             state.status_line = "Loaded review board for " + state.review_board->ticket_id + ".";
@@ -3734,6 +3737,126 @@ std::string ReviewBoardExternalFindingSummary(const sg_preflight::native_shell::
     return summary;
 }
 
+template <size_t N>
+void CopyStringToBuffer(std::array<char, N>& buffer, const std::string& value) {
+    buffer.fill('\0');
+    if (N == 0U) {
+        return;
+    }
+    const size_t copy_count = std::min(value.size(), N - 1U);
+    if (copy_count > 0U) {
+        std::memcpy(buffer.data(), value.data(), copy_count);
+    }
+    buffer[copy_count] = '\0';
+}
+
+template <size_t N>
+std::string BufferToString(const std::array<char, N>& buffer) {
+    return std::string(buffer.data());
+}
+
+int FindDecisionStatusIndex(const sg_preflight::native_shell::ReviewBoardState& board, const std::string& status) {
+    const std::vector<std::string>& options = board.decision_status_options;
+    if (options.empty()) {
+        return 0;
+    }
+    const auto match = std::find(options.begin(), options.end(), status);
+    if (match == options.end()) {
+        return 0;
+    }
+    return static_cast<int>(std::distance(options.begin(), match));
+}
+
+const sg_preflight::native_shell::ReviewOwnerDecisionItem* FindSelectedReviewDecision(const ShellState& state) {
+    if (!state.review_board.has_value() || state.review_board->decisions.empty()) {
+        return nullptr;
+    }
+    const auto& decisions = state.review_board->decisions;
+    if (!state.selected_review_decision_key.empty()) {
+        const auto match = std::find_if(
+            decisions.begin(),
+            decisions.end(),
+            [&](const auto& item) { return item.key == state.selected_review_decision_key; }
+        );
+        if (match != decisions.end()) {
+            return &(*match);
+        }
+    }
+    return &decisions.front();
+}
+
+void LoadReviewDecisionEditor(ShellState& state, const sg_preflight::native_shell::ReviewOwnerDecisionItem& item) {
+    state.selected_review_decision_key = item.key;
+    CopyStringToBuffer(state.review_decision_owner, item.owner);
+    CopyStringToBuffer(state.review_decision_note, item.notes);
+    if (state.review_board.has_value()) {
+        state.selected_review_decision_status_index = FindDecisionStatusIndex(*state.review_board, item.status);
+    } else {
+        state.selected_review_decision_status_index = 0;
+    }
+}
+
+std::vector<std::string> SplitCsvList(std::string_view text) {
+    std::vector<std::string> items;
+    std::string current;
+    for (char ch : text) {
+        if (ch == ',') {
+            std::string trimmed = current;
+            trimmed.erase(trimmed.begin(), std::find_if(trimmed.begin(), trimmed.end(), [](unsigned char c) { return std::isspace(c) == 0; }));
+            trimmed.erase(std::find_if(trimmed.rbegin(), trimmed.rend(), [](unsigned char c) { return std::isspace(c) == 0; }).base(), trimmed.end());
+            if (!trimmed.empty()) {
+                items.push_back(trimmed);
+            }
+            current.clear();
+            continue;
+        }
+        current.push_back(ch);
+    }
+    std::string trimmed = current;
+    trimmed.erase(trimmed.begin(), std::find_if(trimmed.begin(), trimmed.end(), [](unsigned char c) { return std::isspace(c) == 0; }));
+    trimmed.erase(std::find_if(trimmed.rbegin(), trimmed.rend(), [](unsigned char c) { return std::isspace(c) == 0; }).base(), trimmed.end());
+    if (!trimmed.empty()) {
+        items.push_back(trimmed);
+    }
+    return items;
+}
+
+void SyncReviewBoardEditors(ShellState& state) {
+    if (!state.review_board.has_value()) {
+        state.selected_review_decision_key.clear();
+        return;
+    }
+    const auto& board = *state.review_board;
+    const auto* selected = FindSelectedReviewDecision(state);
+    if (selected != nullptr) {
+        const bool owner_empty = BufferToString(state.review_decision_owner).empty();
+        const bool note_empty = BufferToString(state.review_decision_note).empty();
+        const bool selection_changed = state.selected_review_decision_key != selected->key;
+        if (selection_changed || owner_empty && note_empty) {
+            LoadReviewDecisionEditor(state, *selected);
+        }
+    }
+
+    if (BufferToString(state.external_finding_source).empty()) {
+        CopyStringToBuffer(state.external_finding_source, "Teams / 3D Car - Bug Reports / Jana");
+    }
+    if (BufferToString(state.external_finding_reported_by).empty()) {
+        CopyStringToBuffer(state.external_finding_reported_by, "Jana");
+    }
+    if (BufferToString(state.external_finding_category).empty()) {
+        CopyStringToBuffer(state.external_finding_category, "changelog");
+    }
+    if (BufferToString(state.external_finding_status).empty()) {
+        CopyStringToBuffer(state.external_finding_status, "reported");
+    }
+    if (BufferToString(state.external_finding_scope).empty()) {
+        CopyStringToBuffer(state.external_finding_scope, JoinScopeList(board.scope));
+    }
+    if (BufferToString(state.external_finding_related_surfaces).empty()) {
+        CopyStringToBuffer(state.external_finding_related_surfaces, "lights_OnlyCones");
+    }
+}
+
 bool ApplyReviewBoardDecisionStatus(
     ShellState& state,
     const sg_preflight::native_shell::ReviewOwnerDecisionItem& item,
@@ -3761,6 +3884,86 @@ bool ApplyReviewBoardDecisionStatus(
         );
         state.last_error.clear();
         state.status_line = "Updated review decision: " + item.title + " -> " + status;
+        return true;
+    } catch (const std::exception& ex) {
+        state.last_error = ex.what();
+        return false;
+    }
+}
+
+bool SaveReviewBoardDecisionEditor(ShellState& state) {
+    if (!state.review_board.has_value() || state.review_board->ticket_id.empty()) {
+        state.last_error = "No review-board ticket is loaded yet.";
+        return false;
+    }
+    const auto* item = FindSelectedReviewDecision(state);
+    if (item == nullptr) {
+        state.last_error = "No review decision is selected.";
+        return false;
+    }
+    const auto& options = state.review_board->decision_status_options;
+    if (options.empty()) {
+        state.last_error = "Review decision status options are unavailable.";
+        return false;
+    }
+    const int clamped_index = std::clamp(state.selected_review_decision_status_index, 0, static_cast<int>(options.size()) - 1);
+    try {
+        state.review_board = sg_preflight::native_shell::SetReviewDecision(
+            state.backend,
+            state.review_board->ticket_id,
+            !item->key.empty() ? item->key : item->title,
+            options[static_cast<size_t>(clamped_index)],
+            BufferToString(state.review_decision_owner),
+            BufferToString(state.review_decision_note),
+            item->date,
+            item->title
+        );
+        SyncReviewBoardEditors(state);
+        state.last_error.clear();
+        state.status_line = "Saved review decision editor changes.";
+        return true;
+    } catch (const std::exception& ex) {
+        state.last_error = ex.what();
+        return false;
+    }
+}
+
+bool SaveExternalFindingCapture(ShellState& state) {
+    if (!state.review_board.has_value() || state.review_board->ticket_id.empty()) {
+        state.last_error = "No review-board ticket is loaded yet.";
+        return false;
+    }
+    const std::string finding = BufferToString(state.external_finding_text);
+    if (finding.empty()) {
+        state.last_error = "External finding text is required.";
+        return false;
+    }
+    const std::vector<std::string> scope = SplitCsvList(BufferToString(state.external_finding_scope));
+    if (scope.empty()) {
+        state.last_error = "External finding scope is required.";
+        return false;
+    }
+    try {
+        state.review_board = sg_preflight::native_shell::AddExternalFinding(
+            state.backend,
+            state.review_board->ticket_id,
+            BufferToString(state.external_finding_source),
+            BufferToString(state.external_finding_reported_by),
+            BufferToString(state.external_finding_category),
+            scope,
+            finding,
+            BufferToString(state.external_finding_owner),
+            BufferToString(state.external_finding_status),
+            BufferToString(state.external_finding_note),
+            "finding",
+            SplitCsvList(BufferToString(state.external_finding_related_surfaces))
+        );
+        SyncReviewBoardEditors(state);
+        CopyStringToBuffer(state.external_finding_text, "");
+        CopyStringToBuffer(state.external_finding_owner, "");
+        CopyStringToBuffer(state.external_finding_note, "");
+        state.last_error.clear();
+        state.status_line = "Saved external finding to review tracking.";
         return true;
     } catch (const std::exception& ex) {
         state.last_error = ex.what();
@@ -8161,65 +8364,52 @@ void RenderReviewBoardScreen(ShellState& state) {
                         decision_meta += " / " + item.owner;
                     }
                     ImGui::TextDisabled("%s", decision_meta.c_str());
-                    const ImVec2 decision_button_size(ShellUi(108.0f), ShellUi(26.0f));
                     if (DrawPanelButton(
-                            ("review-board-decision-follow-up-" + item.key).c_str(),
-                            "FOLLOW-UP",
-                            decision_button_size,
+                            ("review-board-decision-edit-" + item.key).c_str(),
+                            state.selected_review_decision_key == item.key ? "EDITING" : "EDIT",
+                            ImVec2(ShellUi(136.0f), ShellUi(26.0f)),
                             false,
-                            item.status != "follow_up"
+                            true
                         )) {
-                        ApplyReviewBoardDecisionStatus(state, item, "follow_up");
-                    }
-                    ImGui::SameLine();
-                    if (DrawPanelButton(
-                            ("review-board-decision-blocker-" + item.key).c_str(),
-                            "BLOCKER",
-                            decision_button_size,
-                            false,
-                            item.status != "blocker"
-                        )) {
-                        ApplyReviewBoardDecisionStatus(state, item, "blocker");
-                    }
-                    if (DrawPanelButton(
-                            ("review-board-decision-passed-" + item.key).c_str(),
-                            "PASS",
-                            decision_button_size,
-                            false,
-                            item.status != "passed"
-                        )) {
-                        ApplyReviewBoardDecisionStatus(state, item, "passed");
-                    }
-                    ImGui::SameLine();
-                    if (DrawPanelButton(
-                            ("review-board-decision-failed-" + item.key).c_str(),
-                            "FAIL",
-                            decision_button_size,
-                            false,
-                            item.status != "failed"
-                        )) {
-                        ApplyReviewBoardDecisionStatus(state, item, "failed");
-                    }
-                    ImGui::SameLine();
-                    if (DrawPanelButton(
-                            ("review-board-decision-blocked-" + item.key).c_str(),
-                            "BLOCKED",
-                            decision_button_size,
-                            false,
-                            item.status != "blocked"
-                        )) {
-                        ApplyReviewBoardDecisionStatus(state, item, "blocked");
-                    }
-                    if (DrawPanelButton(
-                            ("review-board-decision-pending-" + item.key).c_str(),
-                            "RESET PENDING",
-                            ImVec2(ShellUi(164.0f), ShellUi(26.0f)),
-                            false,
-                            item.status != "pending"
-                        )) {
-                        ApplyReviewBoardDecisionStatus(state, item, "pending");
+                        LoadReviewDecisionEditor(state, item);
                     }
                     ImGui::Spacing();
+                }
+
+                const auto* selected_decision = FindSelectedReviewDecision(state);
+                if (selected_decision != nullptr) {
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    ImGui::Text("Decision editor: %s", selected_decision->title.c_str());
+                    const auto& status_options = state.review_board->decision_status_options;
+                    if (!status_options.empty()) {
+                        std::vector<const char*> combo_items;
+                        combo_items.reserve(status_options.size());
+                        for (const auto& option : status_options) {
+                            combo_items.push_back(option.c_str());
+                        }
+                        ImGui::Combo(
+                            "Decision status",
+                            &state.selected_review_decision_status_index,
+                            combo_items.data(),
+                            static_cast<int>(combo_items.size())
+                        );
+                    }
+                    ImGui::InputText("Decision owner", state.review_decision_owner.data(), state.review_decision_owner.size());
+                    ImGui::InputTextMultiline(
+                        "Decision note",
+                        state.review_decision_note.data(),
+                        state.review_decision_note.size(),
+                        ImVec2(0.0f, ShellUi(88.0f))
+                    );
+                    if (DrawPanelButton("review-board-decision-save", "SAVE DECISION", ImVec2(ShellUi(164.0f), ShellUi(28.0f)), true, true)) {
+                        SaveReviewBoardDecisionEditor(state);
+                    }
+                    ImGui::SameLine();
+                    if (DrawPanelButton("review-board-decision-reset", "RESET", ImVec2(ShellUi(120.0f), ShellUi(28.0f)), false, true)) {
+                        LoadReviewDecisionEditor(state, *selected_decision);
+                    }
                 }
             }
 
@@ -8266,6 +8456,33 @@ void RenderReviewBoardScreen(ShellState& state) {
                     }
                     ImGui::Spacing();
                 }
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::Text("Quick capture");
+            ImGui::InputText("Finding source", state.external_finding_source.data(), state.external_finding_source.size());
+            ImGui::InputText("Reported by", state.external_finding_reported_by.data(), state.external_finding_reported_by.size());
+            ImGui::InputText("Category", state.external_finding_category.data(), state.external_finding_category.size());
+            ImGui::InputText("Scope", state.external_finding_scope.data(), state.external_finding_scope.size());
+            ImGui::InputText("Owner", state.external_finding_owner.data(), state.external_finding_owner.size());
+            ImGui::InputText("Status", state.external_finding_status.data(), state.external_finding_status.size());
+            ImGui::InputText("Related surfaces", state.external_finding_related_surfaces.data(), state.external_finding_related_surfaces.size());
+            ImGui::InputTextMultiline(
+                "Finding",
+                state.external_finding_text.data(),
+                state.external_finding_text.size(),
+                ImVec2(0.0f, ShellUi(74.0f))
+            );
+            ImGui::InputTextMultiline(
+                "Finding note",
+                state.external_finding_note.data(),
+                state.external_finding_note.size(),
+                ImVec2(0.0f, ShellUi(64.0f))
+            );
+            if (DrawPanelButton("review-board-external-finding-save", "SAVE FINDING", ImVec2(ShellUi(156.0f), ShellUi(28.0f)), true, true)) {
+                SaveExternalFindingCapture(state);
             }
 
             ImGui::Spacing();

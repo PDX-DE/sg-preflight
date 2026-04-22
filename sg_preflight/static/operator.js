@@ -670,6 +670,70 @@
     });
   });
 
+  document.querySelectorAll(".external-finding-form").forEach((form) => {
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+
+      const ticketId = form.getAttribute("data-ticket-id") || "";
+      const sourceField = form.querySelector('input[name="source"]');
+      const reportedByField = form.querySelector('input[name="reported_by"]');
+      const categoryField = form.querySelector('input[name="category"]');
+      const typeField = form.querySelector('input[name="finding_type"]');
+      const scopeField = form.querySelector('input[name="scope"]');
+      const findingField = form.querySelector('textarea[name="finding"]');
+      const ownerField = form.querySelector('input[name="owner"]');
+      const statusField = form.querySelector('input[name="status"]');
+      const relatedField = form.querySelector('input[name="related_investigation_surfaces"]');
+      const noteField = form.querySelector('textarea[name="note"]');
+      const submitButton = form.querySelector('button[type="submit"]');
+      if (!ticketId || !sourceField || !reportedByField || !categoryField || !scopeField || !findingField || !submitButton) {
+        return;
+      }
+
+      const originalText = submitButton.textContent;
+      submitButton.disabled = true;
+      submitButton.textContent = "Saving...";
+      try {
+        const response = await fetch("/ui/api/external-findings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticket_id: ticketId,
+            source: sourceField.value,
+            reported_by: reportedByField.value,
+            category: categoryField.value,
+            finding_type: typeField ? typeField.value : "",
+            scope: scopeField.value,
+            finding: findingField.value,
+            owner: ownerField ? ownerField.value : "",
+            status: statusField ? statusField.value : "",
+            related_investigation_surfaces: relatedField ? relatedField.value : "",
+            note: noteField ? noteField.value : ""
+          })
+        });
+        if (!response.ok) {
+          submitButton.textContent = "Save failed";
+          window.setTimeout(function () {
+            submitButton.disabled = false;
+            submitButton.textContent = originalText;
+          }, 1800);
+          return;
+        }
+
+        submitButton.textContent = "Saved";
+        window.setTimeout(function () {
+          window.location.reload();
+        }, 250);
+      } catch (_error) {
+        submitButton.textContent = "Save failed";
+        window.setTimeout(function () {
+          submitButton.disabled = false;
+          submitButton.textContent = originalText;
+        }, 1800);
+      }
+    });
+  });
+
   const launchWithFeedback = async function (button, payloadBuilder, endpoint, startingCopy) {
     const originalText = button.textContent;
     button.disabled = true;

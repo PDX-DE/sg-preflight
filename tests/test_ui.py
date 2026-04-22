@@ -286,6 +286,7 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("External findings", page.text)
         self.assertIn("G78 LightFX / HeadLights update", page.text)
         self.assertIn("Save decision", page.text)
+        self.assertIn("Save external finding", page.text)
         self.assertEqual(payload.status_code, 200)
         self.assertEqual(payload.json()["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(payload.json()["screenshot_battery_counts"]["runtime_crash"], 1)
@@ -316,6 +317,36 @@ class TestOperatorUI(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["decision_state"]["decisions"][0]["status"], "follow_up")
         self.assertEqual(payload["review_board"]["review_owner_decisions"]["sections"][0]["owner"], "Adrian")
+
+    def test_review_board_external_findings_api_updates_tracked_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            create_review_package_fixture(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            response = client.post(
+                "/ui/api/external-findings",
+                json={
+                    "ticket_id": "IDCEVODEV-960073",
+                    "source": "Teams / 3D Car - Bug Reports / Jana",
+                    "reported_by": "Jana",
+                    "category": "changelog",
+                    "scope": "NA8, G78",
+                    "finding": "Missing changelog entry for light cones position change",
+                    "owner": "Ana-Karina Nazare",
+                    "status": "reported",
+                    "related_investigation_surfaces": "lights_OnlyCones, Pivot Master",
+                    "note": "Track separately from screenshot/export evidence.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["finding_state"]["count"], 1)
+        self.assertEqual(payload["review_board"]["external_findings"]["count"], 1)
+        self.assertIn("lights_OnlyCones", payload["review_board"]["external_findings"]["related_investigation_surfaces"])
 
     def test_result_page_shows_diff_against_previous_completed_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

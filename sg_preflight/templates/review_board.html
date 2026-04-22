@@ -174,6 +174,57 @@
       <p>Human-reported findings from Teams, manual review, or other non-automated channels.</p>
     </div>
   </div>
+  <div class="run-card">
+    <div class="min-w-0">
+      <strong>Capture external finding</strong>
+      <div class="muted">This writes to tracked JSON first and regenerates the Markdown view from that state.</div>
+      <form class="external-finding-form stack" data-ticket-id="{{ board.ticket_id }}">
+        <label class="muted">
+          Source
+          <input type="text" name="source" value="Teams / 3D Car - Bug Reports / Jana" placeholder="Teams / 3D Car - Bug Reports / Jana">
+        </label>
+        <label class="muted">
+          Reported by
+          <input type="text" name="reported_by" value="Jana" placeholder="Jana">
+        </label>
+        <label class="muted">
+          Category
+          <input type="text" name="category" value="changelog" placeholder="changelog">
+        </label>
+        <label class="muted">
+          Type
+          <input type="text" name="finding_type" value="finding" placeholder="finding">
+        </label>
+        <label class="muted">
+          Scope
+          <input type="text" name="scope" value="{{ board.scope|join(', ') }}" placeholder="NA8, G78, G50">
+        </label>
+        <label class="muted">
+          Finding
+          <textarea name="finding" rows="3" placeholder="Missing changelog entry for light cones position change"></textarea>
+        </label>
+        <label class="muted">
+          Owner
+          <input type="text" name="owner" value="" placeholder="Ana-Karina Nazare">
+        </label>
+        <label class="muted">
+          Status
+          <input type="text" name="status" value="reported" placeholder="reported">
+        </label>
+        <label class="muted">
+          Related surfaces
+          <input type="text" name="related_investigation_surfaces" value="lights_OnlyCones" placeholder="lights_OnlyCones, Pivot Master">
+        </label>
+        <label class="muted">
+          Note
+          <textarea name="note" rows="3" placeholder="Track separately from screenshot/export evidence."></textarea>
+        </label>
+        <div class="action-row action-row--wrap">
+          <button class="button subtle" type="submit">Save external finding</button>
+        </div>
+      </form>
+    </div>
+  </div>
   <div class="stack">
     {% if board.external_findings["items"] %}
       {% for item in board.external_findings["items"] %}

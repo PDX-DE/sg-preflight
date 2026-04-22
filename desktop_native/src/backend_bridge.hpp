@@ -253,6 +253,7 @@ struct ReviewBoardState {
     std::vector<std::string> unresolved_families;
     std::vector<std::string> open_items;
     std::vector<ReviewPriorityItem> review_priority_items;
+    std::vector<std::string> decision_status_options;
     std::vector<ReviewOwnerDecisionItem> decisions;
     std::vector<ExternalFindingItem> external_findings;
     std::vector<ManualReviewProfileItem> manual_review_profiles;
@@ -288,6 +289,20 @@ ReviewBoardState SetReviewDecision(
     const std::string& note = {},
     const std::string& date = {},
     const std::string& title = {}
+);
+ReviewBoardState AddExternalFinding(
+    const BackendConfig& config,
+    const std::string& ticket_id,
+    const std::string& source,
+    const std::string& reported_by,
+    const std::string& category,
+    const std::vector<std::string>& scope,
+    const std::string& finding,
+    const std::string& owner = {},
+    const std::string& status = {},
+    const std::string& note = {},
+    const std::string& finding_type = {},
+    const std::vector<std::string>& related_investigation_surfaces = {}
 );
 ManualEvidenceItem AttachManualEvidence(
     const BackendConfig& config,

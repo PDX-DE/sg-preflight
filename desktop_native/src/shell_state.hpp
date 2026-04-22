@@ -73,6 +73,19 @@ struct ShellState {
     bool exit_transition_active = false;
     double exit_transition_started_at = -1.0;
     std::array<char, 4096> manual_evidence_note{};
+    std::string selected_review_decision_key;
+    int selected_review_decision_status_index = 0;
+    std::array<char, 256> review_decision_owner{};
+    std::array<char, 1024> review_decision_note{};
+    std::array<char, 256> external_finding_source{};
+    std::array<char, 128> external_finding_reported_by{};
+    std::array<char, 128> external_finding_category{};
+    std::array<char, 128> external_finding_scope{};
+    std::array<char, 512> external_finding_text{};
+    std::array<char, 128> external_finding_owner{};
+    std::array<char, 64> external_finding_status{};
+    std::array<char, 512> external_finding_note{};
+    std::array<char, 256> external_finding_related_surfaces{};
 };
 
 struct ProfilePanelLoadResult {

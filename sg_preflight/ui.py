@@ -31,7 +31,7 @@ from sg_preflight.qa_actions import (
     save_action_record as save_action_task_record,
 )
 from sg_preflight.review_state import build_review_board_state, load_latest_review_package
-from sg_preflight.review_tracking import set_review_decision
+from sg_preflight.review_tracking import add_external_finding, set_review_decision
 from sg_preflight.reporting import build_report_presentation, finding_hint, retheme_html_report
 from sg_preflight.services import (
     RunRequest,
@@ -211,6 +211,22 @@ def _review_board_file_card(label: str, artifact: dict[str, Any]) -> dict[str, s
         "relative_path": str(artifact.get("relative_path", "")),
         "href": href,
     }
+
+
+def _split_multi_value(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        items = value
+    else:
+        items = [value]
+    normalized: list[str] = []
+    for item in items:
+        for chunk in str(item).split(","):
+            trimmed = chunk.strip()
+            if trimmed:
+                normalized.append(trimmed)
+    return normalized
 
 
 def _profile_card(root: Path, profile: RunProfile) -> dict[str, Any]:
@@ -2801,6 +2817,54 @@ def create_app(
             {
                 "ok": True,
                 "decision_state": decision_state,
+                "review_board": build_review_board_state(ticket_id, app.state.workspace_root),
+            }
+        )
+
+    @app.post("/ui/api/external-findings")
+    async def external_findings_add_api(request: Request) -> JSONResponse:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+
+        ticket_id = str(payload.get("ticket_id", "")).strip()
+        source = str(payload.get("source", "")).strip()
+        reported_by = str(payload.get("reported_by", "")).strip()
+        category = str(payload.get("category", "")).strip()
+        finding = str(payload.get("finding", "")).strip()
+        scope = _split_multi_value(payload.get("scope", []))
+        related_surfaces = _split_multi_value(payload.get("related_investigation_surfaces", []))
+        if not ticket_id:
+            raise HTTPException(status_code=400, detail="ticket_id is required")
+        if not source:
+            raise HTTPException(status_code=400, detail="source is required")
+        if not reported_by:
+            raise HTTPException(status_code=400, detail="reported_by is required")
+        if not category:
+            raise HTTPException(status_code=400, detail="category is required")
+        if not finding:
+            raise HTTPException(status_code=400, detail="finding is required")
+        if not scope:
+            raise HTTPException(status_code=400, detail="scope is required")
+
+        finding_state = add_external_finding(
+            ticket_id,
+            source=source,
+            reported_by=reported_by,
+            category=category,
+            scope=scope,
+            finding=finding,
+            owner=str(payload.get("owner", "")).strip(),
+            status=str(payload.get("status", "")).strip() or "reported",
+            note=str(payload.get("note", "")).strip(),
+            finding_type=str(payload.get("finding_type", "")).strip() or "finding",
+            related_investigation_surfaces=related_surfaces,
+            workspace=app.state.workspace_root,
+        )
+        return JSONResponse(
+            {
+                "ok": True,
+                "finding_state": finding_state,
                 "review_board": build_review_board_state(ticket_id, app.state.workspace_root),
             }
         )
