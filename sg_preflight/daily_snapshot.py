@@ -630,7 +630,19 @@ def _battery_gap_recommendation(item: BmwBatteryResult) -> str:
     return "Generate or locate the expected baseline before visual comparison."
 
 
-def _render_candidate_review_gallery(snapshot: DailyQaSnapshot) -> str:
+def _review_priority_score(item: BmwBatteryResult) -> int:
+    if item.verdict == "needs_manual_review":
+        return 100
+    if item.verdict == "baseline_candidate_ready":
+        return 80
+    if item.verdict == "proxy_candidate_ready":
+        return 60
+    if item.verdict == "likely_ok":
+        return 20
+    return 0
+
+
+def _render_candidate_review_gallery(snapshot: DailyQaSnapshot, *, html_root: Path | None = None) -> str:
     sections: list[str] = [
         "<!doctype html>",
         "<html lang=\"en\">",
@@ -649,6 +661,10 @@ def _render_candidate_review_gallery(snapshot: DailyQaSnapshot) -> str:
         ".tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #2563eb; color: #eff6ff; font-size: 12px; margin-right: 8px; }",
         ".tag.warn { background: #b45309; color: #fffbeb; }",
         ".tag.ok { background: #166534; color: #ecfdf5; }",
+        ".tag.proxy { background: #7c3aed; color: #f5f3ff; }",
+        ".summary { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 24px; }",
+        ".summary .item { background: #0f172a; border: 1px solid #374151; border-radius: 10px; padding: 10px 12px; min-width: 14rem; }",
+        ".recommendation { color: #cbd5e1; margin: 10px 0 0; }",
         "code { color: #bfdbfe; }",
         "</style>",
         "</head>",
@@ -662,6 +678,14 @@ def _render_candidate_review_gallery(snapshot: DailyQaSnapshot) -> str:
         for item in snapshot.battery_results
         if item.verdict in {"baseline_candidate_ready", "proxy_candidate_ready", "needs_manual_review", "likely_ok"}
     ]
+    items.sort(
+        key=lambda item: (
+            _review_priority_score(item),
+            item.profile_id.upper(),
+            item.filter_name.lower(),
+        ),
+        reverse=True,
+    )
     if not items:
         sections.extend(
             [
@@ -672,13 +696,36 @@ def _render_candidate_review_gallery(snapshot: DailyQaSnapshot) -> str:
         )
         return "\n".join(sections)
 
+    verdict_counts: dict[str, int] = {}
     for item in items:
+        verdict_counts[item.verdict] = verdict_counts.get(item.verdict, 0) + 1
+    sections.extend(
+        [
+            "<div class=\"summary\">",
+            f"<div class=\"item\"><strong>Total reviewable items</strong><br>{len(items)}</div>",
+            f"<div class=\"item\"><strong>Needs manual diff review</strong><br>{verdict_counts.get('needs_manual_review', 0)}</div>",
+            f"<div class=\"item\"><strong>Exact baseline candidates</strong><br>{verdict_counts.get('baseline_candidate_ready', 0)}</div>",
+            f"<div class=\"item\"><strong>Proxy candidates</strong><br>{verdict_counts.get('proxy_candidate_ready', 0)}</div>",
+            f"<div class=\"item\"><strong>Likely OK exact compares</strong><br>{verdict_counts.get('likely_ok', 0)}</div>",
+            "</div>",
+        ]
+    )
+
+    for item in items:
+        priority_score = _review_priority_score(item)
+        recommendation = (
+            "Review the diff payload and decide pass/fail."
+            if item.verdict == "needs_manual_review"
+            else _battery_gap_recommendation(item)
+        )
+        verdict_tag_class = "ok" if item.verdict == "likely_ok" else "proxy" if item.verdict == "proxy_candidate_ready" else "warn" if item.verdict == "needs_manual_review" else ""
         sections.extend(
             [
                 "<div class=\"card\">",
                 f"<h2>{escape(item.profile_id)} / <code>{escape(item.filter_name)}</code></h2>",
                 "<div class=\"meta\">",
-                f"<span class=\"tag {'ok' if item.verdict == 'likely_ok' else 'warn' if item.verdict == 'needs_manual_review' else ''}\">{escape(item.verdict)}</span>",
+                f"<span class=\"tag {verdict_tag_class}\">{escape(item.verdict)}</span>",
+                f"<span class=\"tag\">priority {priority_score}</span>",
                 f"<span>Expected {item.expected_count} | Actual {item.actual_count} | Diff {item.diff_count}</span>",
                 "</div>",
                 "<div class=\"gallery\">",
@@ -697,16 +744,27 @@ def _render_candidate_review_gallery(snapshot: DailyQaSnapshot) -> str:
             image_path = (shot_root / name).resolve()
             if not image_path.exists():
                 continue
+            image_src = image_path.as_uri()
+            image_display_path = str(image_path)
+            if html_root is not None:
+                image_src = Path(os.path.relpath(image_path, html_root.parent)).as_posix()
+                image_display_path = image_src
             sections.extend(
                 [
                     "<div class=\"shot\">",
-                    f"<h3>{escape(name)} <span class=\"tag warn\">{escape(shot_label)}</span></h3>",
-                    f"<img src=\"{image_path.as_uri()}\" alt=\"{escape(name)}\">",
-                    f"<p><code>{escape(str(image_path))}</code></p>",
+                    f"<h3>{escape(name)} <span class=\"tag {'proxy' if shot_label == 'proxy' else 'warn'}\">{escape(shot_label)}</span></h3>",
+                    f"<img src=\"{escape(image_src)}\" alt=\"{escape(name)}\">",
+                    f"<p><code>{escape(image_display_path)}</code></p>",
                     "</div>",
                 ]
             )
-        sections.extend(["</div>", "</div>"])
+        sections.extend(
+            [
+                "</div>",
+                f"<p class=\"recommendation\"><strong>Suggested next action:</strong> {escape(recommendation)}</p>",
+                "</div>",
+            ]
+        )
 
     sections.extend(["</body>", "</html>"])
     return "\n".join(sections)

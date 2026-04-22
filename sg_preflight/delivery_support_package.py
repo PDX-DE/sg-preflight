@@ -320,7 +320,7 @@ def _coordinator_update_markdown(
         )
     lines.extend(
         [
-            f"> What I still need from {review_owner_group} is the exact screenshot-test reading flow, what counts as `asset review in raco (bmws)` done, and the safe local proof command/output for the BMW headless-export step.  ",
+            f"> What I still need from {review_owner_group} is the exact screenshot-test reading flow, what counts as `asset review in raco (bmws)` done, whether the attached representative local export/smoke proof is accepted as DoD evidence, and whether `lights_OnlyCones` is a blocker or a follow-up.  ",
             f"> The package is here: `{package_root}` and the grounded ticket bundle is here: `{_relative(grounded.package_root, package_root)}`.",
         ]
     )
@@ -365,8 +365,9 @@ def _review_owners_update_markdown(
             f"> I still need your help on the parts {coordinator_name} pointed me to:  ",
             "> 1. What is the exact screenshot-test reading flow and source-of-truth folder for candidate results when actuals/diff folders are empty?  ",
             "> 2. What exactly counts as `asset review in raco (bmws)` done?  ",
-            "> 3. What is the safe proving command/output for `headless export check bmw` from the current BMW snapshot?  ",
-            "> 4. Should the SG-side checker finding be fixed now or only reported for delivery-week tracking?  ",
+            "> 3. Is the attached representative local export/smoke proof accepted as DoD evidence for `headless export check bmw`?  ",
+            "> 4. Should `lights_OnlyCones` be treated as a delivery blocker or a follow-up?  ",
+            "> 5. Should the SG-side checker finding be fixed now or only reported for delivery-week tracking?  ",
             f"> Package root: `{package_root}`.  ",
             f"> Review-owner group captured for this package: `{review_owner_group}`.",
         ]
@@ -387,8 +388,8 @@ def _next_steps_markdown(
         "## Immediate delivery-week steps",
         "",
         f"1. Send the {coordinator_name} update with the package root and current blocker summary.",
-        f"2. Ask {review_owner_group} for the exact screenshot-reading flow and the safe headless-export proof command.",
-        "3. Use the grounded ticket bundle for manual screenshot and RaCo review on NA8/G78/G50, not for fake BMW-side signoff.",
+        f"2. Ask {review_owner_group} for the exact screenshot-reading flow, whether the attached representative local export/smoke proof is accepted as DoD evidence, and whether `lights_OnlyCones` is blocker or follow-up.",
+        "3. Use the grounded ticket bundle for manual screenshot and RaCo review on the confirmed delivery scope, not for fake BMW-side signoff.",
         f"4. Keep `{scope_first.bundle.ticket_id}` in scope-first mode until a concrete local slice or real ticket detail is confirmed.",
         "",
         "## If more automation is possible after clarification",
@@ -446,10 +447,10 @@ def _continuation_markdown(
         "- RaCo script catalog and delivery target catalog",
         "",
         "## Still left",
-        "- safe local BMW export execution proof",
-        "- real screenshot payload for the confirmed cars",
-        "- rack-only validation",
-        "- manual visual verdicts",
+        "- review-owner confirmation that the attached representative local export/smoke proof is accepted as DoD evidence",
+        "- final visual verdicts for exact/proxy-ready screenshot outputs",
+        "- real RaCo pass/fail signoff",
+        "- decision whether `lights_OnlyCones` is delivery blocker or follow-up",
         "- clarification from the review owners",
         "",
         "## Start here",
@@ -473,6 +474,7 @@ def materialize_delivery_support_package(
     scope_ticket_id: str = _DEFAULT_SCOPE_TICKET,
     coordinator_name: str = _DEFAULT_COORDINATOR_NAME,
     review_owner_group: str = _DEFAULT_REVIEW_OWNER_GROUP,
+    include_action_bundles: bool = False,
 ) -> DeliverySupportPackageResult:
     workspace_root = (workspace or Path(__file__).resolve().parents[1]).resolve()
     package_root = _fresh_output_root((output_root or default_delivery_support_package_output_root(workspace_root)).resolve())
@@ -482,19 +484,21 @@ def materialize_delivery_support_package(
         dict.fromkeys(item.strip() for item in requested_grounded_profiles if item and item.strip())
     )
 
-    references_root = package_root / "references"
+    references_root = package_root / "refs"
     grounded = materialize_ticket_review_bundle(
         grounded_ticket_id,
         title=grounded_title,
         profile_ids=normalized_grounded_profiles,
         workspace=workspace_root,
-        output_root=references_root / grounded_ticket_id / grounded_ticket_id,
+        output_root=references_root / grounded_ticket_id,
         scope_note=grounded_scope_note,
+        include_action_bundles=include_action_bundles,
     )
     scope_first = materialize_ticket_review_bundle(
         scope_ticket_id,
         workspace=workspace_root,
-        output_root=references_root / scope_ticket_id / scope_ticket_id,
+        output_root=references_root / scope_ticket_id,
+        include_action_bundles=include_action_bundles,
     )
 
     brief_path = package_root / "00_delivery_support_brief.md"

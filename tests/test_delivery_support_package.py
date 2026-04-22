@@ -41,6 +41,8 @@ class TestDeliverySupportPackage(unittest.TestCase):
             self.assertTrue(result.continuation_path.exists())
             self.assertTrue(result.grounded_bundle.package_root.exists())
             self.assertTrue(result.scope_bundle.package_root.exists())
+            self.assertFalse((result.grounded_bundle.package_root / "artifacts" / "actions").exists())
+            self.assertFalse((result.scope_bundle.package_root / "artifacts" / "actions").exists())
 
             brief_text = result.brief_path.read_text(encoding="utf-8")
             progress_text = result.progress_path.read_text(encoding="utf-8")

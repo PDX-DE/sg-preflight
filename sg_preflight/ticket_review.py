@@ -11,7 +11,18 @@ import zipfile
 from typing import Any, Iterable
 
 from sg_preflight.bmw_delivery import BmwScreenshotSurface, inspect_bmw_screenshot_surface
-from sg_preflight.daily_snapshot import DailyQaSnapshotResult, find_latest_daily_qa_snapshot
+from sg_preflight.daily_snapshot import (
+    BmwBatteryResult,
+    BmwConfigCheckResult,
+    BmwSmokeResult,
+    DailyQaSnapshot,
+    DailyQaSnapshotResult,
+    _battery_baseline_gap_payload,
+    _render_battery_baseline_gaps_markdown,
+    _render_candidate_review_gallery,
+    _render_snapshot_markdown,
+    find_latest_daily_qa_snapshot,
+)
 from sg_preflight.profiles import RunProfile, get_run_profile, resolve_source_repo_root
 from sg_preflight.qa_actions import ActionRecord, load_action_record, operator_ui_actions_root
 from sg_preflight.screenshot_triage import ScreenshotTriageBundle, ScreenshotTriageReport, materialize_screenshot_triage
@@ -601,6 +612,7 @@ class _ProfileContext:
     action_records_for_package: tuple[ActionRecord, ...]
     action_bundle_evidence: tuple[ReviewEvidence, ...]
     packaged_source_evidence: tuple[ReviewEvidence, ...]
+    packaged_source_index: dict[str, ReviewEvidence]
     manual_review_paths: dict[str, Path]
     bmw_surface_markdown_path: Path
     bmw_surface_json_path: Path
@@ -685,6 +697,20 @@ def _bundle_evidence(label: str, path: str | Path, detail: str = "") -> ReviewEv
     if normalized in {"", ".", "not found"}:
         normalized = "not found"
     return ReviewEvidence(label=label, path=normalized, detail=detail)
+
+
+def _display_path(path: str | Path, package_root: Path | None = None) -> str:
+    normalized = str(path).strip()
+    if normalized in {"", ".", "not found"}:
+        return "not found"
+    if package_root is not None:
+        try:
+            relative = _safe_relative(Path(normalized), package_root)
+        except (OSError, ValueError):
+            relative = None
+        if relative is not None:
+            return str(relative).replace("\\", "/")
+    return normalized.replace("\\", "/")
 
 
 def _all_action_records(workspace: Path) -> tuple[ActionRecord, ...]:
@@ -783,13 +809,18 @@ def _package_live_sources(
     paths: Iterable[str],
     package_root: Path,
     source_root: Path,
-) -> tuple[ReviewEvidence, ...]:
+) -> tuple[tuple[ReviewEvidence, ...], dict[str, ReviewEvidence]]:
     packaged: list[ReviewEvidence] = []
+    packaged_index: dict[str, ReviewEvidence] = {}
     for item in paths:
         evidence = _package_live_source(item, package_root, source_root)
         if evidence is not None:
             packaged.append(evidence)
-    return _dedupe_evidence(packaged)
+            try:
+                packaged_index[str(Path(item).resolve())] = evidence
+            except OSError:
+                packaged_index[str(item)] = evidence
+    return _dedupe_evidence(packaged), packaged_index
 
 
 def _package_external_file(
@@ -805,6 +836,26 @@ def _package_external_file(
     destination = package_root / relative_dir / source.name
     _copy_file(source, destination)
     return _bundle_evidence(label, destination)
+
+
+def _packaged_source_evidence(
+    context: _ProfileContext,
+    source_path: str | Path,
+    *,
+    label: str | None = None,
+    detail: str = "",
+) -> ReviewEvidence:
+    normalized = str(source_path).strip()
+    if normalized in {"", ".", "not found"}:
+        return _bundle_evidence(label or "not found", "not found", detail)
+    try:
+        key = str(Path(normalized).resolve())
+    except OSError:
+        key = normalized
+    packaged = context.packaged_source_index.get(key)
+    if packaged is not None:
+        return ReviewEvidence(label=label or packaged.label, path=packaged.path, detail=detail or packaged.detail)
+    return _bundle_evidence(label or Path(normalized).name, normalized, detail)
 
 
 def _load_raco_manual_review_probe(output_root: Path) -> RacoManualReviewProbeResult | None:
@@ -873,33 +924,131 @@ def _package_daily_snapshot_result(
     result: DailyQaSnapshotResult,
     package_root: Path,
 ) -> DailyQaSnapshotResult:
-    packaged_markdown = package_root / "artifacts" / "daily-snapshot" / result.markdown_path.name
-    packaged_json = package_root / "artifacts" / "daily-snapshot" / result.json_path.name
-    _copy_file(result.markdown_path, packaged_markdown)
-    _copy_file(result.json_path, packaged_json)
+    packaged_root = package_root / "artifacts" / "daily-snapshot"
+    logs_root = packaged_root / "logs"
+    images_root = packaged_root / "images"
+
+    def _copy_log(log_path: str) -> str:
+        normalized = str(log_path).strip()
+        if not normalized:
+            return normalized
+        source = Path(normalized)
+        if not source.exists() or not source.is_file():
+            return normalized
+        destination = logs_root / source.name
+        _copy_file(source, destination)
+        return str(Path("logs") / destination.name).replace("\\", "/")
+
+    def _copy_named_files(source_root: Path, destination_root: Path, names: tuple[str, ...]) -> tuple[str, ...]:
+        copied: list[str] = []
+        for name in names:
+            source = source_root / name
+            if not source.exists() or not source.is_file():
+                continue
+            _copy_file(source, destination_root / name)
+            copied.append(name)
+        return tuple(copied)
+
+    packaged_config = BmwConfigCheckResult(
+        status=result.snapshot.config_check.status,
+        python_exe=result.snapshot.config_check.python_exe,
+        repo_root=result.snapshot.config_check.repo_root,
+        log_path=_copy_log(result.snapshot.config_check.log_path),
+        output_excerpt=result.snapshot.config_check.output_excerpt,
+        error=result.snapshot.config_check.error,
+    )
+
+    packaged_smoke_results: list[BmwSmokeResult] = []
+    for item in result.snapshot.smoke_results:
+        packaged_smoke_results.append(
+            BmwSmokeResult(
+                profile_id=item.profile_id,
+                bmw_profile_id=item.bmw_profile_id,
+                status=item.status,
+                smoke_test=item.smoke_test,
+                python_exe=item.python_exe,
+                sg_project_root=item.sg_project_root,
+                bmw_test_config_path=item.bmw_test_config_path,
+                log_path=_copy_log(item.log_path),
+                exported_ramses_size=item.exported_ramses_size,
+                exported_rlogic_size=item.exported_rlogic_size,
+                expected_count=item.expected_count,
+                actual_count=item.actual_count,
+                diff_count=item.diff_count,
+                compare_ok=item.compare_ok,
+                error=item.error,
+                notes=item.notes,
+            )
+        )
+
+    packaged_battery_results: list[BmwBatteryResult] = []
+    for item in result.snapshot.battery_results:
+        scenario_root = images_root / item.profile_id.lower() / _slug(item.filter_name)
+        actual_source_root = Path(item.results_root) / "tests" / "actuals"
+        diff_source_root = Path(item.results_root) / "tests" / "diff"
+        proxy_source_root = Path(item.results_root) / "tests" / "proxy_actuals"
+        actual_files = _copy_named_files(actual_source_root, scenario_root / "tests" / "actuals", item.actual_files)
+        diff_files = _copy_named_files(diff_source_root, scenario_root / "tests" / "diff", item.diff_files)
+        proxy_files = _copy_named_files(proxy_source_root, scenario_root / "tests" / "proxy_actuals", item.proxy_files)
+        packaged_battery_results.append(
+            BmwBatteryResult(
+                profile_id=item.profile_id,
+                bmw_profile_id=item.bmw_profile_id,
+                filter_name=item.filter_name,
+                verdict=item.verdict,
+                status=item.status,
+                results_root=str(scenario_root),
+                log_path=_copy_log(item.log_path),
+                expected_count=item.expected_count,
+                actual_count=item.actual_count,
+                diff_count=item.diff_count,
+                compare_ok=item.compare_ok,
+                error=item.error,
+                missing_expected_baseline=item.missing_expected_baseline,
+                actual_files=actual_files,
+                expected_files=item.expected_files,
+                diff_files=diff_files,
+                proxy_files=proxy_files,
+                target_output_present=item.target_output_present,
+                notes=item.notes,
+            )
+        )
+
+    packaged_snapshot = DailyQaSnapshot(
+        created_at=result.snapshot.created_at,
+        scope_profiles=result.snapshot.scope_profiles,
+        bmw_repo_root=result.snapshot.bmw_repo_root,
+        config_check=packaged_config,
+        smoke_results=tuple(packaged_smoke_results),
+        battery_results=tuple(packaged_battery_results),
+        diagnostics=result.snapshot.diagnostics,
+        blocked_steps=result.snapshot.blocked_steps,
+        top_review_items=result.snapshot.top_review_items,
+        notes=result.snapshot.notes,
+    )
+
+    packaged_markdown = packaged_root / result.markdown_path.name
+    packaged_json = packaged_root / result.json_path.name
+    _write_text(packaged_markdown, _render_snapshot_markdown(packaged_snapshot))
+    _write_json(packaged_json, packaged_snapshot.to_dict())
 
     packaged_gaps_markdown: Path | None = None
     packaged_gaps_json: Path | None = None
     packaged_review_gallery_html: Path | None = None
-    if result.battery_baseline_gaps_markdown_path and result.battery_baseline_gaps_markdown_path.exists():
-        packaged_gaps_markdown = (
-            package_root / "artifacts" / "daily-snapshot" / result.battery_baseline_gaps_markdown_path.name
+    if packaged_snapshot.battery_results:
+        packaged_gaps_markdown = packaged_root / "battery-baseline-gaps.md"
+        packaged_gaps_json = packaged_root / "battery-baseline-gaps.json"
+        _write_text(packaged_gaps_markdown, _render_battery_baseline_gaps_markdown(packaged_snapshot))
+        _write_json(packaged_gaps_json, _battery_baseline_gap_payload(packaged_snapshot))
+        packaged_review_gallery_html = packaged_root / "candidate-review-gallery.html"
+        _write_text(
+            packaged_review_gallery_html,
+            _render_candidate_review_gallery(packaged_snapshot, html_root=packaged_review_gallery_html),
         )
-        _copy_file(result.battery_baseline_gaps_markdown_path, packaged_gaps_markdown)
-    if result.battery_baseline_gaps_json_path and result.battery_baseline_gaps_json_path.exists():
-        packaged_gaps_json = (
-            package_root / "artifacts" / "daily-snapshot" / result.battery_baseline_gaps_json_path.name
-        )
-        _copy_file(result.battery_baseline_gaps_json_path, packaged_gaps_json)
-    if result.review_gallery_html_path and result.review_gallery_html_path.exists():
-        packaged_review_gallery_html = (
-            package_root / "artifacts" / "daily-snapshot" / result.review_gallery_html_path.name
-        )
-        _copy_file(result.review_gallery_html_path, packaged_review_gallery_html)
 
     return DailyQaSnapshotResult(
-        output_root=packaged_markdown.parent,
-        snapshot=result.snapshot,
+        output_root=packaged_root,
+        snapshot=packaged_snapshot,
         markdown_path=packaged_markdown,
         json_path=packaged_json,
         battery_baseline_gaps_markdown_path=packaged_gaps_markdown,
@@ -922,6 +1071,16 @@ def _package_raco_manual_review_probe(
         json_path=packaged_json,
         profile_ids=probe.profile_ids,
     )
+
+
+def _resolve_snapshot_artifact_path(snapshot_result: DailyQaSnapshotResult | None, path: str | Path) -> str:
+    normalized = str(path).strip()
+    if normalized in {"", ".", "not found"}:
+        return "not found"
+    candidate = Path(normalized)
+    if candidate.is_absolute() or snapshot_result is None:
+        return str(candidate)
+    return str((snapshot_result.output_root / candidate).resolve())
 
 
 def _latest_native_verification_dir(workspace: Path) -> Path | None:
@@ -1205,6 +1364,7 @@ def _profile_context(
     candidate_roots: tuple[Path, ...],
     source_root: Path,
     all_records: tuple[ActionRecord, ...],
+    include_action_bundles: bool,
 ) -> _ProfileContext:
     profile = get_run_profile(profile_id, workspace)
     prep = build_visual_review_prep(profile.profile_id, profile.source_project_root(), repo_root=source_root)
@@ -1255,18 +1415,21 @@ def _profile_context(
         for action_id in action_ids.values()
     )
     records_for_package = _unique_records((scene_record, stack_record, repo_record, delivery_record, *manual_records))
-    action_bundle_evidence = _package_action_records(records_for_package, package_root)
+    action_bundle_evidence = ()
+    if include_action_bundles:
+        action_bundle_evidence = _package_action_records(records_for_package, package_root)
 
     source_paths = [
         prep.changelog_path,
         prep.constants_readme_path,
+        *prep.project_readme_paths[:1],
         prep.screenshot_test_config_path,
         bmw_surface.test_config_path,
         bmw_surface.ci_readme_path,
         bmw_surface.car_manager_path,
         *prep.shared_doc_paths,
     ]
-    packaged_source_evidence = _package_live_sources(source_paths, package_root, source_root)
+    packaged_source_evidence, packaged_source_index = _package_live_sources(source_paths, package_root, source_root)
     manual_review_paths = _manual_review_template_paths(package_root, profile.profile_id)
 
     context = _ProfileContext(
@@ -1282,6 +1445,7 @@ def _profile_context(
         action_records_for_package=records_for_package,
         action_bundle_evidence=action_bundle_evidence,
         packaged_source_evidence=packaged_source_evidence,
+        packaged_source_index=packaged_source_index,
         manual_review_paths=manual_review_paths,
         bmw_surface_markdown_path=bmw_surface_markdown_path,
         bmw_surface_json_path=bmw_surface_json_path,
@@ -1416,6 +1580,7 @@ def _manual_evidence_index_markdown(
     *,
     ticket_id: str,
     items: tuple[TicketManualEvidenceItem, ...],
+    package_root: Path | None = None,
 ) -> str:
     lines = [
         f"# Ticket Manual Evidence Index - {ticket_id}",
@@ -1438,7 +1603,7 @@ def _manual_evidence_index_markdown(
                 f"  - Source action: {item.source_action_id}",
                 f"  - Source run: {item.source_run_id}",
                 f"  - Original path: `{item.original_path or 'n/a'}`",
-                f"  - Packaged path: `{item.packaged_path}`",
+                f"  - Packaged path: `{_display_path(item.packaged_path, package_root)}`",
             ]
         )
         if item.note:
@@ -1502,7 +1667,7 @@ def _headless_surface_summary(contexts: tuple[_ProfileContext, ...]) -> str:
         profiles = ", ".join(context.profile.profile_id for context in ready)
         return (
             f"BMW repo helpers are locally visible for {profiles}: `ci/scripts/car_manager.py` and the CI README are packaged. "
-            "No verified local export execution is attached yet; the next proof still needs the safe command run and captured `export finished` plus file sizes output."
+            "Representative local export proof should be attached separately wherever the daily snapshot contains completed smoke results; if review owners accept that proof, the remaining headless question is only whether any broader scenario coverage is still required."
         )
     return "The BMW headless-export helper surface is still not visible locally for the grounded slice(s)."
 
@@ -1954,10 +2119,8 @@ def _delivery_surface_map_markdown(
 
     def _blocked_text(item: dict[str, Any]) -> str:
         label = str(item.get("label", "BMW prerequisite"))
-        path = str(item.get("path", "")).strip()
-        detail = f" Path: {path}" if path else ""
         status = str(item.get("status", "missing"))
-        return f"{label} is {status}.{detail}"
+        return f"{label} is {status}."
 
     if bmw_car_manager.get("status") == "available":
         bmw_helper_text = _blocked_text(bmw_car_manager)
@@ -1977,7 +2140,7 @@ def _delivery_surface_map_markdown(
         "| --- | --- | --- | --- | --- | --- |",
         f"| SG-local SVN evidence | `trunk`, `.pdx`, car changelogs/readmes, shared docs, expected screenshot baselines, representative `.rca`/Blender files. | SG / PDX | yes | Ticket bundle, DoD matrix, screenshot triage on baselines, checker findings, shared-doc review prep. | Does not prove BMW smoke/headless execution. |",
         "| SG-local manual review | RaCo/Blender review sessions, manual screenshots, notes, checklists, asset comparisons. | SG / assigned reviewer | yes, manually | Manual evidence attachments, Blender-vs-RaCo notes, operator checklists. | Human judgment and pass/fail criteria still need agreement. |",
-        f"| BMW Git / digital-3d-car-models | Production delivery repo, headless export, interface tests, screenshot smoke flow. | BMW / Team Wombat | {bmw_execution_state} | {bmw_local_evidence} | {_blocked_text(bmw_models)} {bmw_helper_text} {'Verified screenshot payload is still missing in the current snapshot.' if bmw_repo_ready else ''} |",
+        f"| BMW Git / digital-3d-car-models | Production delivery repo, headless export, interface tests, screenshot smoke flow. | BMW / Team Wombat | {bmw_execution_state} | {bmw_local_evidence} | {_blocked_text(bmw_models)} {bmw_helper_text} Static repo folders alone are not proof; use the attached local smoke/battery outputs as execution evidence. |",
         "| digital-3d-car-raw / blender plugins | Workfiles/pipeline data and Blender plugin surfaces that feed final delivery prep. | SG + BMW Git surfaces | not from the current blocked environment | Documentation of the repo split and why `_Workfiles` stay out of production delivery repos. | Access/PR flow remains outside the current local ticket execution path. |",
         "| Rack-only flows | Physical rack validation, ADB/localhost:9091 paint review, final hardware-side visual checks. | SG reviewer + designer/BMW PO | no, unless the rack is physically available | Operator instructions and blocked/manual classification only. | Physical hardware, 3D Car Test app, and review session availability. |",
         "| Jira / PR / CI follow-up | BMW Jira comments, PR links, CI observation, Review by BMW handoff. | BMW + SG delivery process | no | Teams-ready and Jira-ready text artifacts from the bundle. | Jira access, Git web/PR, and BMW CI ownership remain blocked. |",
@@ -2263,6 +2426,7 @@ def _build_dod_items(
     support_artifacts: tuple[ReviewEvidence, ...] = (),
     daily_snapshot: DailyQaSnapshotResult | None = None,
     raco_probe: RacoManualReviewProbeResult | None = None,
+    include_action_bundles: bool = True,
 ) -> tuple[TicketDoDItem, ...]:
     scope_grounded = bool(contexts)
     screenshot_manual = tuple(item for item in manual_evidence if item.kind == "screenshot")
@@ -2361,41 +2525,39 @@ def _build_dod_items(
         prep = context.prep
         screenshot_evidence.extend(
             [
-                _bundle_evidence("Screenshot baselines", context.triage_bundle.report.expected_root or prep.screenshot_root or "not found"),
-                _bundle_evidence("Screenshot test config", prep.screenshot_test_config_path or context.bmw_surface.test_config_path or "not found"),
+                _packaged_source_evidence(
+                    context,
+                    prep.screenshot_test_config_path or context.bmw_surface.test_config_path or "not found",
+                    label="Screenshot test config",
+                ),
                 _bundle_evidence(f"{context.profile.profile_id} screenshot triage", triage.markdown_path),
-                _bundle_evidence(f"{context.profile.profile_id} screenshot triage HTML", triage.html_path),
                 _bundle_evidence(f"{context.profile.profile_id} BMW screenshot surface", context.bmw_surface_markdown_path),
-                _bundle_evidence("BMW actuals root", context.bmw_surface.actuals_root or "not found"),
-                _bundle_evidence("BMW diff root", context.bmw_surface.diff_root or "not found"),
                 _bundle_evidence("Screenshot evidence slots", context.manual_review_paths["slots"]),
                 _bundle_evidence("Visual review checklist", context.manual_review_paths["visual_checklist"]),
             ]
         )
         asset_evidence.extend(
             [
-                _bundle_evidence("Representative RaCo scene", prep.raco_scene_path or "not found"),
-                _bundle_evidence("Representative Blender workfile", prep.blender_workfile_path or "not found"),
                 _bundle_evidence("Manual review companion", context.manual_review_paths["companion"]),
                 _bundle_evidence("Manual review record", context.manual_review_paths["record"]),
                 _bundle_evidence("Blender vs RaCo checklist", context.manual_review_paths["blender_raco"]),
             ]
         )
-        if context.repo_record is not None:
+        if include_action_bundles and context.repo_record is not None:
             format_evidence.append(_bundle_evidence(f"{context.profile.profile_id} repo checker summary", context.repo_record.paths.get("summary_md", "")))
         if format_findings:
             first = format_findings[0]
             format_evidence.append(_bundle_evidence("First concrete finding", first.path or ""))
         if prep.changelog_path:
-            changelog_evidence.append(_bundle_evidence("Car changelog", prep.changelog_path))
+            changelog_evidence.append(_packaged_source_evidence(context, prep.changelog_path, label="Car changelog"))
         if prep.constants_readme_path:
-            readme_evidence.append(_bundle_evidence("Car README", prep.constants_readme_path))
+            readme_evidence.append(_packaged_source_evidence(context, prep.constants_readme_path, label="Car README"))
         elif prep.project_readme_paths:
-            readme_evidence.append(_bundle_evidence("Car README", prep.project_readme_paths[0]))
+            readme_evidence.append(_packaged_source_evidence(context, prep.project_readme_paths[0], label="Car README"))
         if prep.shared_doc_paths:
             for path in prep.shared_doc_paths[:6]:
-                shared_evidence.append(_bundle_evidence("Shared BMW doc", path))
-        if context.delivery_record is not None:
+                shared_evidence.append(_packaged_source_evidence(context, path, label="Shared BMW doc"))
+        if include_action_bundles and context.delivery_record is not None:
             headless_evidence.append(
                 _bundle_evidence(
                     f"{context.profile.profile_id} delivery checklist summary",
@@ -2405,17 +2567,29 @@ def _build_dod_items(
         headless_evidence.extend(
             [
                 _bundle_evidence(f"{context.profile.profile_id} BMW screenshot surface", context.bmw_surface_markdown_path),
-                _bundle_evidence("BMW car_manager.py", context.bmw_surface.car_manager_path or "not found"),
-                _bundle_evidence("BMW CI README", context.bmw_surface.ci_readme_path or "not found"),
+                _packaged_source_evidence(context, context.bmw_surface.car_manager_path or "not found", label="BMW car_manager.py"),
+                _packaged_source_evidence(context, context.bmw_surface.ci_readme_path or "not found", label="BMW CI README"),
             ]
         )
         snapshot_item = snapshot_results.get(context.profile.profile_id.upper())
         if snapshot_item is not None and snapshot_item.log_path:
-            log_evidence = _bundle_evidence(f"{context.profile.profile_id} BMW smoke log", snapshot_item.log_path)
+            log_evidence = _bundle_evidence(
+                f"{context.profile.profile_id} BMW smoke log",
+                _resolve_snapshot_artifact_path(daily_snapshot, snapshot_item.log_path),
+            )
             screenshot_evidence.append(log_evidence)
             headless_evidence.append(log_evidence)
-        for blocker in _support_blockers(workspace, context.delivery_record):
-            support_evidence.append(_bundle_evidence("Delivery blocker", blocker))
+        battery_items = snapshot_battery.get(context.profile.profile_id.upper(), ())
+        if battery_items:
+            seen_battery_logs: set[str] = set()
+            for battery_item in battery_items:
+                resolved_log_path = _resolve_snapshot_artifact_path(daily_snapshot, battery_item.log_path)
+                if resolved_log_path in seen_battery_logs or resolved_log_path == "not found":
+                    continue
+                seen_battery_logs.add(resolved_log_path)
+                screenshot_evidence.append(
+                    _bundle_evidence(f"{context.profile.profile_id} BMW battery log", resolved_log_path)
+                )
         support_evidence.append(_bundle_evidence("Scope note", scope_note))
 
     for item in manual_evidence:
@@ -2476,7 +2650,7 @@ def _build_dod_items(
 
     if snapshot_screenshot_ready:
         screenshot_next_input = (
-            "Representative local smoke evidence is attached for the confirmed cars. Remaining work is narrowing the remaining beam-family runtime/content failures in the wider battery, then completing human screenshot verdicts for the exact or proxy-ready outputs."
+            "Representative local smoke evidence is attached for the confirmed cars. Remaining work is the final visual verdict for exact/proxy-ready outputs plus review-owner confirmation on whether `lights_OnlyCones` is a delivery blocker or a follow-up."
             if snapshot_diagnostics
             else "Representative local smoke evidence is attached for the confirmed cars. Remaining work is broader scenario coverage plus human screenshot verdicts for any changed outputs once those scenarios emit the right targets."
         )
@@ -2485,13 +2659,13 @@ def _build_dod_items(
             "Need real screenshot payload for the confirmed cars when folders are empty, plus the normal pass/fail reading flow from Adrian / Hristofor / Stefan."
         )
     headless_next_input = (
-        "Representative local BMW export proof is attached. If delivery requires broader coverage, run additional scenarios/cars and capture the same proof pattern."
+        "Representative local BMW export proof is attached. Need review-owner confirmation whether this local proof is accepted as DoD evidence and whether any broader scenario coverage is still required."
         if snapshot_headless_covered
-        else "Need a verified safe local export command plus captured `export finished` and file sizes output for one confirmed delivery car."
+        else "Need captured `export finished` and file sizes output for one confirmed delivery car."
     )
     if snapshot_screenshot_ready:
         screenshot_now_text = (
-            "Use the attached daily snapshot, smoke logs, and triage outputs as the current source of truth. The representative smoke path is green, and the broader battery now isolates a small beam-family runtime/content tail instead of a generic screenshot backlog."
+            "Use the attached daily snapshot, smoke logs, triage outputs, and candidate gallery as the current source of truth. The representative smoke path is green, low/high beam have proxy coverage, and the remaining exact local blocker is `lights_OnlyCones`."
             if snapshot_diagnostics
             else "Use the attached daily snapshot, smoke logs, and triage outputs as the current source of truth. The representative smoke path is green, and the broader battery outputs can now be reviewed directly."
         )
@@ -2502,7 +2676,7 @@ def _build_dod_items(
     headless_now_text = (
         "Use the attached BMW smoke logs as export proof. They already capture `Export finished`, file sizes, and screenshot-compare results for the confirmed delivery cars."
         if snapshot_headless_covered
-        else "Package the BMW CI README plus car_manager helper, document the expected `export finished` and file-sizes proof, and only execute the export once the safe local command is confirmed."
+        else "Package the BMW CI README plus car_manager helper, document the expected `export finished` and file-sizes proof, and only execute the export once the local export proof can be captured."
     )
 
     return (
@@ -2645,7 +2819,7 @@ def _bundle_questions(ticket_id: str, profile_ids: tuple[str, ...]) -> tuple[str
     )
 
 
-def _review_status_markdown(bundle: TicketReviewBundle) -> str:
+def _review_status_markdown(bundle: TicketReviewBundle, *, package_root: Path | None = None) -> str:
     lines = [
         f"# Ticket Review Status - {bundle.ticket_id}",
         "",
@@ -2699,7 +2873,7 @@ def _review_status_markdown(bundle: TicketReviewBundle) -> str:
     if bundle.manual_evidence:
         for item in bundle.manual_evidence:
             lines.append(f"- [{item.kind}] {item.label}")
-            lines.append(f"  - Packaged path: `{item.packaged_path}`")
+            lines.append(f"  - Packaged path: `{_display_path(item.packaged_path, package_root)}`")
 
     lines.extend(["", "## Blockers"])
     if bundle.blockers:
@@ -2713,7 +2887,7 @@ def _review_status_markdown(bundle: TicketReviewBundle) -> str:
     lines.extend(["", "## Package Evidence"])
     if bundle.evidence_index:
         for item in bundle.evidence_index:
-            lines.append(f"- {item.label}: `{item.path}`")
+            lines.append(f"- {item.label}: `{_display_path(item.path, package_root)}`")
     else:
         lines.append("- No package evidence paths were recorded.")
 
@@ -2722,7 +2896,7 @@ def _review_status_markdown(bundle: TicketReviewBundle) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _dod_matrix_markdown(bundle: TicketReviewBundle) -> str:
+def _dod_matrix_markdown(bundle: TicketReviewBundle, *, package_root: Path | None = None) -> str:
     lines = [
         f"# DoD Matrix - {bundle.ticket_id}",
         "",
@@ -2742,7 +2916,7 @@ def _dod_matrix_markdown(bundle: TicketReviewBundle) -> str:
         lines.append(f"### {item.label}")
         if item.evidence:
             for evidence in item.evidence:
-                lines.append(f"- {evidence.label}: `{evidence.path}`")
+                lines.append(f"- {evidence.label}: `{_display_path(evidence.path, package_root)}`")
         else:
             lines.append("- No evidence linked yet.")
 
@@ -2848,7 +3022,7 @@ def _teams_update_markdown(bundle: TicketReviewBundle) -> str:
     screenshot_item = next((item for item in bundle.dod_items if item.key == "screenshot_tests_bmws"), None)
     bmw_block = (
         "- BMW repo snapshot and helper scripts are packaged locally, and representative local headless export proof is attached\n"
-        "- representative smoke evidence is attached, broader candidate outputs exist for most wider scenarios, and the remaining local technical blocker is the beam-family runtime/content crash\n"
+        "- representative smoke evidence is attached, broader candidate outputs exist for most wider scenarios, low/high beam have proxy coverage, and the remaining exact local technical blocker is `lights_OnlyCones`\n"
         if (headless_item and headless_item.status != "blocked") or (screenshot_item and screenshot_item.status != "blocked")
         else "- BMW Git / digital-3d-car-models\n"
     )
@@ -2871,10 +3045,11 @@ def _teams_update_markdown(bundle: TicketReviewBundle) -> str:
         f"{bmw_block}"
         "- real pass/fail signoff for visual deltas\n\n"
         "What I still need from Adrian / Hristofor / Stefan:\n"
-        "- confirmation of the safe local headless-export command to run from the BMW snapshot\n"
+        "- confirmation whether the attached representative local export proof is accepted as DoD evidence\n"
         "- where screenshot result/candidate images are generated when the actuals/diff folders are empty\n"
         "- how screenshot-test pass/fail is normally read\n"
         "- what exactly counts as asset review in RaCo done\n"
+        "- whether `lights_OnlyCones` should be treated as a delivery blocker or a follow-up\n"
     )
 
 
@@ -2907,10 +3082,10 @@ def _stakeholder_sync_markdown(bundle: TicketReviewBundle) -> str:
             "",
             "What is still blocked on my side:",
             "- BMW Jira access",
-            "- broader screenshot coverage still hits a reproducible local beam-family runtime/content crash on `lights_LowBeam`, `lights_HighBeam`, and `lights_OnlyCones`",
-            "- real screenshot pass/fail verdicts are still manual review work once the remaining beam-family scenarios render correctly",
+            "- broader screenshot coverage still has one reproducible exact local runtime/content blocker on `lights_OnlyCones`; `lights_LowBeam` and `lights_HighBeam` are proxy-covered",
+            "- real screenshot pass/fail verdicts are still manual review work for the candidate/proxy outputs",
             "",
-            f"The confirmed delivery scope packaged here is `{profile_text}`. I still need a short sync with Adrian / Hristofor / Stefan on how screenshot-test results are read in practice and whether the beam-family scenarios require extra local setup or are expected to render from the current BMW snapshot.",
+            f"The confirmed delivery scope packaged here is `{profile_text}`. I still need a short sync with Adrian / Hristofor / Stefan on how screenshot-test results are read in practice, whether the attached local export proof is accepted as DoD evidence, and whether `lights_OnlyCones` is a delivery blocker or a follow-up.",
             "",
             "## Questions For Adrian / Hristofor / Stefan",
         ]
@@ -2950,6 +3125,7 @@ def _review_protocol_markdown(
     bundle: TicketReviewBundle,
     contexts: tuple[_ProfileContext, ...],
     workspace: Path,
+    package_root: Path | None = None,
     manual_evidence_index_path: Path,
     manual_review_companion_path: Path,
     qa_capability_matrix_path: Path,
@@ -2988,13 +3164,13 @@ def _review_protocol_markdown(
     )
     for url in _BMW_DOC_URLS:
         lines.extend([f"- BMW reference page: `{url}`", "  - Reachable from this machine, but BMW Confluence login is still required."])
-    lines.append(f"- Packaged manual-review index: `{manual_review_companion_path}`")
-    lines.append(f"- Packaged QA capability matrix: `{qa_capability_matrix_path}`")
-    lines.append(f"- Packaged 3D QA playbook: `{three_d_qa_playbook_path}`")
-    lines.append(f"- Packaged repo topology reference: `{repo_topology_reference_path}`")
-    lines.append(f"- Packaged delivery surface map: `{delivery_surface_map_path}`")
-    lines.append(f"- Packaged RaCo script catalog: `{raco_script_catalog_path}`")
-    lines.append(f"- Packaged delivery target catalog: `{delivery_target_catalog_path}`")
+    lines.append(f"- Packaged manual-review index: `{_display_path(manual_review_companion_path, package_root)}`")
+    lines.append(f"- Packaged QA capability matrix: `{_display_path(qa_capability_matrix_path, package_root)}`")
+    lines.append(f"- Packaged 3D QA playbook: `{_display_path(three_d_qa_playbook_path, package_root)}`")
+    lines.append(f"- Packaged repo topology reference: `{_display_path(repo_topology_reference_path, package_root)}`")
+    lines.append(f"- Packaged delivery surface map: `{_display_path(delivery_surface_map_path, package_root)}`")
+    lines.append(f"- Packaged RaCo script catalog: `{_display_path(raco_script_catalog_path, package_root)}`")
+    lines.append(f"- Packaged delivery target catalog: `{_display_path(delivery_target_catalog_path, package_root)}`")
 
     lines.extend(
         [
@@ -3028,7 +3204,7 @@ def _review_protocol_markdown(
             "## Manual Evidence Rollup",
             f"- Total attached evidence items: {len(bundle.manual_evidence)}",
             f"- Counts by kind: {_counts_by_kind_text(bundle.manual_evidence)}",
-            f"- Packaged manual evidence index: `{manual_evidence_index_path}`",
+            f"- Packaged manual evidence index: `{_display_path(manual_evidence_index_path, package_root)}`",
             "",
             "## Attach Examples",
         ]
@@ -3081,6 +3257,7 @@ def materialize_ticket_review_bundle(
     output_root: Path | None = None,
     scope_note: str = "",
     candidate_roots: tuple[Path, ...] = (),
+    include_action_bundles: bool = True,
 ) -> TicketReviewBundleResult:
     workspace_root = (workspace or Path(__file__).resolve().parents[1]).resolve()
     source_root = resolve_source_repo_root(workspace_root)
@@ -3114,6 +3291,7 @@ def materialize_ticket_review_bundle(
             candidate_roots=candidate_roots,
             source_root=source_root,
             all_records=all_records,
+            include_action_bundles=include_action_bundles,
         )
         for profile_id in normalized_profiles
     )
@@ -3139,7 +3317,10 @@ def materialize_ticket_review_bundle(
     delivery_surface_map_path = package_root / f"{ticket_id}-delivery-surface-map.md"
     raco_script_catalog_path = package_root / f"{ticket_id}-raco-script-catalog.md"
     delivery_target_catalog_path = package_root / f"{ticket_id}-delivery-target-catalog.md"
-    _write_text(manual_index_path, _manual_evidence_index_markdown(ticket_id=ticket_id, items=manual_evidence))
+    _write_text(
+        manual_index_path,
+        _manual_evidence_index_markdown(ticket_id=ticket_id, items=manual_evidence, package_root=package_root),
+    )
     _write_json(manual_json_path, _manual_evidence_json_payload(ticket_id=ticket_id, items=manual_evidence))
 
     review_companion_path = package_root / f"{ticket_id}-manual-review-companion.md"
@@ -3147,13 +3328,14 @@ def materialize_ticket_review_bundle(
 
     evidence_index: list[ReviewEvidence] = []
     for context in contexts:
+        if not include_action_bundles:
+            context.triage_bundle.html_path.unlink(missing_ok=True)
         evidence_index.extend(context.action_bundle_evidence)
         evidence_index.extend(context.packaged_source_evidence)
         evidence_index.extend(
             [
                 _bundle_evidence(f"{context.profile.profile_id} screenshot triage", context.triage_bundle.markdown_path),
                 _bundle_evidence(f"{context.profile.profile_id} screenshot triage JSON", context.triage_bundle.json_path),
-                _bundle_evidence(f"{context.profile.profile_id} screenshot triage HTML", context.triage_bundle.html_path),
                 _bundle_evidence(f"{context.profile.profile_id} BMW screenshot surface", context.bmw_surface_markdown_path),
                 _bundle_evidence(f"{context.profile.profile_id} BMW screenshot surface JSON", context.bmw_surface_json_path),
                 _bundle_evidence(f"{context.profile.profile_id} manual review companion", context.manual_review_paths["companion"]),
@@ -3183,14 +3365,24 @@ def materialize_ticket_review_bundle(
         scoped_profiles = {context.profile.profile_id.upper() for context in contexts}
         for item in daily_snapshot.snapshot.smoke_results:
             if item.profile_id.upper() in scoped_profiles and item.log_path:
-                evidence_index.append(_bundle_evidence(f"{item.profile_id} BMW smoke log", item.log_path))
+                evidence_index.append(
+                    _bundle_evidence(
+                        f"{item.profile_id} BMW smoke log",
+                        _resolve_snapshot_artifact_path(daily_snapshot, item.log_path),
+                    )
+                )
+        seen_battery_log_paths: set[str] = set()
+        for item in daily_snapshot.snapshot.battery_results:
+            if item.profile_id.upper() not in scoped_profiles or not item.log_path:
+                continue
+            resolved_log_path = _resolve_snapshot_artifact_path(daily_snapshot, item.log_path)
+            if resolved_log_path in seen_battery_log_paths or resolved_log_path == "not found":
+                continue
+            seen_battery_log_paths.add(resolved_log_path)
+            evidence_index.append(_bundle_evidence(f"{item.profile_id} BMW battery log", resolved_log_path))
     if raco_probe is not None:
         evidence_index.append(_bundle_evidence("RaCo manual review probe", raco_probe.markdown_path))
         evidence_index.append(_bundle_evidence("RaCo manual review probe JSON", raco_probe.json_path))
-    verification_evidence = _package_verification_dir(workspace_root, package_root)
-    if verification_evidence is not None:
-        evidence_index.append(verification_evidence)
-
     findings = tuple(finding for context in contexts for finding in _record_findings(context.repo_record))
     dod_items = _build_dod_items(
         contexts=contexts,
@@ -3208,6 +3400,7 @@ def materialize_ticket_review_bundle(
         ),
         daily_snapshot=daily_snapshot,
         raco_probe=raco_probe,
+        include_action_bundles=include_action_bundles,
     )
     bundle = TicketReviewBundle(
         ticket_id=ticket_id,
@@ -3238,8 +3431,8 @@ def materialize_ticket_review_bundle(
     owner_matrix_path = package_root / f"{ticket_id}-owner-matrix.md"
 
     _write_json(bundle_json_path, bundle.to_dict())
-    _write_text(review_status_path, _review_status_markdown(bundle))
-    _write_text(dod_matrix_path, _dod_matrix_markdown(bundle))
+    _write_text(review_status_path, _review_status_markdown(bundle, package_root=package_root))
+    _write_text(dod_matrix_path, _dod_matrix_markdown(bundle, package_root=package_root))
     _write_text(dod_update_draft_path, _dod_update_draft_markdown(bundle))
     _write_text(teams_update_path, _teams_update_markdown(bundle))
     _write_text(stakeholder_sync_path, _stakeholder_sync_markdown(bundle))
@@ -3301,6 +3494,7 @@ def materialize_ticket_review_bundle(
             bundle=bundle,
             contexts=contexts,
             workspace=workspace_root,
+            package_root=package_root,
             manual_evidence_index_path=manual_json_path,
             manual_review_companion_path=review_companion_path,
             qa_capability_matrix_path=qa_capability_matrix_path,

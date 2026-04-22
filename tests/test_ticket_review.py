@@ -136,6 +136,15 @@ def _create_native_verification(root: Path) -> None:
 def _create_daily_snapshot_fixture(root: Path, profile_id: str) -> None:
     output_root = root / "out" / "daily-3d-car-qa-summary-fixture"
     output_root.mkdir(parents=True, exist_ok=True)
+    fixture_root = root / "fixture" / "daily-snapshot"
+    write_text(fixture_root / "config.log", "config fixture\n")
+    write_text(fixture_root / f"{profile_id.lower()}-smoke.log", "Export finished\nFile sizes: Ramses=123456b RLogic=0b\n")
+    write_text(fixture_root / f"{profile_id.lower()}-battery-default.log", "default battery fixture\n")
+    write_text(fixture_root / f"{profile_id.lower()}-battery-lowbeam.log", "lowbeam proxy battery fixture\n")
+    _write_png_fixture(fixture_root / profile_id.lower() / "default" / "tests" / "actuals" / "default.png")
+    _write_png_fixture(
+        fixture_root / profile_id.lower() / "lights_lowbeam" / "tests" / "proxy_actuals" / "lights_LowBeam_proxy.png"
+    )
     write_text(output_root / "daily-3d-car-qa-summary.md", "# fixture snapshot\n")
     write_text(
         output_root / "daily-3d-car-qa-summary.json",
@@ -148,7 +157,7 @@ def _create_daily_snapshot_fixture(root: Path, profile_id: str) -> None:
     "status": "ready",
     "python_exe": "C:/fixture/python.exe",
     "repo_root": "C:/fixture/digital-3d-car-models",
-    "log_path": "C:/fixture/config.log",
+    "log_path": "__CONFIG_LOG__",
     "output_excerpt": "",
     "error": ""
   },
@@ -161,7 +170,7 @@ def _create_daily_snapshot_fixture(root: Path, profile_id: str) -> None:
       "python_exe": "C:/fixture/python.exe",
       "sg_project_root": "C:/repositories/trunk/Cars_IDCevo/BMW/G65",
       "bmw_test_config_path": "C:/fixture/test_config_tmp.lua",
-      "log_path": "C:/fixture/g65-smoke.log",
+      "log_path": "__SMOKE_LOG__",
       "exported_ramses_size": 123456,
       "exported_rlogic_size": 0,
       "expected_count": 2,
@@ -172,11 +181,74 @@ def _create_daily_snapshot_fixture(root: Path, profile_id: str) -> None:
       "notes": ["fixture smoke"]
     }
   ],
+  "battery_results": [
+    {
+      "profile_id": "G65",
+      "bmw_profile_id": "G65_EVO",
+      "filter_name": "default",
+      "verdict": "baseline_candidate_ready",
+      "status": "completed",
+      "results_root": "__DEFAULT_ROOT__",
+      "log_path": "__DEFAULT_LOG__",
+      "expected_count": 1,
+      "actual_count": 1,
+      "diff_count": 0,
+      "compare_ok": true,
+      "error": "",
+      "missing_expected_baseline": "",
+      "actual_files": ["default.png"],
+      "expected_files": ["default.png"],
+      "diff_files": [],
+      "proxy_files": [],
+      "target_output_present": true,
+      "notes": ["fixture candidate"]
+    },
+    {
+      "profile_id": "G65",
+      "bmw_profile_id": "G65_EVO",
+      "filter_name": "lights_LowBeam",
+      "verdict": "proxy_candidate_ready",
+      "status": "completed",
+      "results_root": "__LOWBEAM_ROOT__",
+      "log_path": "__LOWBEAM_LOG__",
+      "expected_count": 0,
+      "actual_count": 0,
+      "diff_count": 0,
+      "compare_ok": false,
+      "error": "",
+      "missing_expected_baseline": "lights_LowBeam.png",
+      "actual_files": [],
+      "expected_files": [],
+      "diff_files": [],
+      "proxy_files": ["lights_LowBeam_proxy.png"],
+      "target_output_present": false,
+      "notes": ["fixture proxy"]
+    }
+  ],
+  "diagnostics": ["G65: exact cone rendering unresolved; low/high beam proxy coverage exists."],
   "blocked_steps": [],
   "top_review_items": ["G65: openAllDoors_rightView passed locally with no visible diff."],
   "notes": []
 }
 """.strip()
+        .replace("__CONFIG_LOG__", str((fixture_root / "config.log").resolve()).replace("\\", "/"))
+        .replace("__SMOKE_LOG__", str((fixture_root / f"{profile_id.lower()}-smoke.log").resolve()).replace("\\", "/"))
+        .replace(
+            "__DEFAULT_ROOT__",
+            str((fixture_root / profile_id.lower() / "default").resolve()).replace("\\", "/"),
+        )
+        .replace(
+            "__DEFAULT_LOG__",
+            str((fixture_root / f"{profile_id.lower()}-battery-default.log").resolve()).replace("\\", "/"),
+        )
+        .replace(
+            "__LOWBEAM_ROOT__",
+            str((fixture_root / profile_id.lower() / "lights_lowbeam").resolve()).replace("\\", "/"),
+        )
+        .replace(
+            "__LOWBEAM_LOG__",
+            str((fixture_root / f"{profile_id.lower()}-battery-lowbeam.log").resolve()).replace("\\", "/"),
+        )
         + "\n",
     )
 
@@ -256,6 +328,7 @@ class TestTicketReview(unittest.TestCase):
                 workspace=root,
                 output_root=root / "out" / "IDCEVODEV-960073-review-package",
                 scope_note="G65 is only the first concrete live-SVN slice, not confirmed final scope.",
+                include_action_bundles=False,
             )
 
             self.assertTrue(result.review_status_path.exists())
@@ -352,8 +425,8 @@ class TestTicketReview(unittest.TestCase):
             self.assertIn("Manual review record", manual_companion_text)
             self.assertIn("Total attached evidence items: 0", manual_index_text)
 
-            self.assertTrue(any("expected" in evidence.path for evidence in item_map["screenshot_tests_bmws"].evidence))
             self.assertTrue(any("screenshot triage" in evidence.label.lower() for evidence in item_map["screenshot_tests_bmws"].evidence))
+            self.assertTrue(any("screenshot test config" in evidence.label.lower() for evidence in item_map["screenshot_tests_bmws"].evidence))
             self.assertTrue(any("screenshot evidence slots" in evidence.label.lower() for evidence in item_map["screenshot_tests_bmws"].evidence))
             self.assertTrue(any("manual review record" in evidence.label.lower() for evidence in item_map["asset_review_in_raco_bmws"].evidence))
             self.assertTrue(any("qa capability matrix" in evidence.label.lower() for evidence in item_map["support"].evidence))
@@ -362,14 +435,48 @@ class TestTicketReview(unittest.TestCase):
             self.assertTrue(any("delivery surface map" in evidence.label.lower() for evidence in item_map["support"].evidence))
             self.assertTrue(any("raco script catalog" in evidence.label.lower() for evidence in item_map["support"].evidence))
             self.assertTrue(any("delivery target catalog" in evidence.label.lower() for evidence in item_map["support"].evidence))
-            self.assertTrue(
-                (result.package_root / "artifacts" / "verification" / "auto-fixture" / "verification.log").exists()
-            )
-            self.assertTrue(any("repo checker summary" in evidence.label.lower() for evidence in item_map["format_checker_svn"].evidence))
+            self.assertFalse(any("delivery blocker" in evidence.label.lower() for evidence in item_map["support"].evidence))
+            self.assertFalse(any("repo checker summary" in evidence.label.lower() for evidence in item_map["format_checker_svn"].evidence))
             self.assertTrue(any(evidence.label == "CHANGELOG.md" for evidence in result.bundle.evidence_index))
             self.assertTrue(
                 (result.package_root / "artifacts" / "manual-review" / "g65" / "manual-review-record.md").exists()
             )
+            self.assertFalse((result.package_root / "artifacts" / "verification").exists())
+
+            packaged_snapshot_root = result.package_root / "artifacts" / "daily-snapshot"
+            packaged_gallery = packaged_snapshot_root / "candidate-review-gallery.html"
+            packaged_gallery_text = packaged_gallery.read_text(encoding="utf-8")
+            self.assertTrue(packaged_gallery.exists())
+            self.assertNotIn("file:///", packaged_gallery_text)
+            self.assertIn('src="images/g65/default/tests/actuals/default.png"', packaged_gallery_text)
+            self.assertIn(
+                'src="images/g65/lights_lowbeam/tests/proxy_actuals/lights_LowBeam_proxy.png"',
+                packaged_gallery_text,
+            )
+            self.assertTrue((packaged_snapshot_root / "logs" / "config.log").exists())
+            self.assertTrue((packaged_snapshot_root / "logs" / "g65-smoke.log").exists())
+            self.assertTrue((packaged_snapshot_root / "logs" / "g65-battery-default.log").exists())
+            self.assertTrue((packaged_snapshot_root / "logs" / "g65-battery-lowbeam.log").exists())
+            self.assertTrue((packaged_snapshot_root / "images" / "g65" / "default" / "tests" / "actuals" / "default.png").exists())
+            self.assertTrue(
+                (
+                    packaged_snapshot_root
+                    / "images"
+                    / "g65"
+                    / "lights_lowbeam"
+                    / "tests"
+                    / "proxy_actuals"
+                    / "lights_LowBeam_proxy.png"
+                ).exists()
+            )
+            self.assertFalse((result.package_root / "artifacts" / "actions").exists())
+            self.assertFalse(
+                (result.package_root / "artifacts" / "screenshot-triage" / "g65" / "screenshot-triage.html").exists()
+            )
+            self.assertIn("artifacts/daily-snapshot/logs/g65-smoke.log", matrix_text)
+            self.assertIn("artifacts/daily-snapshot/logs/g65-battery-default.log", matrix_text)
+            self.assertIn("artifacts/daily-snapshot/logs/g65-battery-lowbeam.log", matrix_text)
+            self.assertNotIn("digital-3d-car-models/ci/scripts/car_manager.py", matrix_text)
 
     def test_materialize_ticket_review_bundle_harvests_manual_evidence_from_blocked_scene_check(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
