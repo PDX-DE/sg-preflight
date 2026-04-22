@@ -28,9 +28,11 @@ class TestReviewMessages(unittest.TestCase):
         self.assertIn("Daily 3D Car QA Digest", digest)
         self.assertIn("(2026-04-22)", digest)
         self.assertIn("Battery: 2/3 covered", digest)
+        self.assertIn("Delta: +0 failures, 0 resolved, 0 new diffs, 1 unchanged blockers", digest)
         self.assertIn("Unresolved exact: lights_OnlyCones", digest)
-        self.assertLessEqual(len([line for line in digest.splitlines() if line.strip()]), 8)
+        self.assertLessEqual(len([line for line in digest.splitlines() if line.strip()]), 9)
 
         self.assertEqual(digest_json["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(digest_json["screenshot_battery"]["covered"], 2)
         self.assertEqual(digest_json["unresolved_families"], ["lights_OnlyCones"])
+        self.assertEqual(digest_json["delta_summary"]["unchanged_blockers_count"], 1)

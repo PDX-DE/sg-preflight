@@ -472,15 +472,40 @@ void from_json(const json& payload, ReviewPriorityItem& item) {
     item.profile_id = ValueString(payload, "profile_id");
     item.filter_name = ValueString(payload, "filter_name");
     item.verdict = ValueString(payload, "verdict");
+    item.priority_level = ValueString(payload, "priority_level");
     item.priority_score = ValueInt(payload, "priority_score", 0);
     item.reason = ValueString(payload, "reason");
     item.recommendation = ValueString(payload, "recommendation");
     item.log_path = ValueString(payload, "log_path");
+    item.is_new_since_previous_run = ValueBool(payload, "is_new_since_previous_run", false);
 }
 
 void from_json(const json& payload, ReviewOwnerDecisionItem& item) {
+    item.key = ValueString(payload, "key");
     item.title = ValueString(payload, "title");
+    item.status = ValueString(payload, "status");
+    item.owner = ValueString(payload, "owner");
+    item.date = ValueString(payload, "date");
+    item.notes = ValueString(payload, "notes");
     item.pending = ValueBool(payload, "pending", true);
+}
+
+void from_json(const json& payload, ExternalFindingItem& item) {
+    item.finding_id = ValueString(payload, "finding_id");
+    item.source = ValueString(payload, "source");
+    item.reported_by = ValueString(payload, "reported_by");
+    item.type = ValueString(payload, "type");
+    item.category = ValueString(payload, "category");
+    if (payload.contains("scope") && payload.at("scope").is_array()) {
+        item.scope = payload.at("scope").get<std::vector<std::string>>();
+    }
+    item.finding = ValueString(payload, "finding");
+    item.owner = ValueString(payload, "owner");
+    item.status = ValueString(payload, "status");
+    item.note = ValueString(payload, "note");
+    if (payload.contains("related_investigation_surfaces") && payload.at("related_investigation_surfaces").is_array()) {
+        item.related_investigation_surfaces = payload.at("related_investigation_surfaces").get<std::vector<std::string>>();
+    }
 }
 
 void from_json(const json& payload, ManualReviewProfileItem& item) {
@@ -545,6 +570,15 @@ void from_json(const json& payload, ReviewBoardState& item) {
         item.proxy_candidate_ready = ValueInt(counts, "proxy_candidate_ready", 0);
         item.runtime_crash = ValueInt(counts, "runtime_crash", 0);
     }
+    if (payload.contains("daily_delta_summary") && payload.at("daily_delta_summary").is_object()) {
+        const json& delta = payload.at("daily_delta_summary");
+        item.has_previous_run = ValueBool(delta, "has_previous_run", false);
+        item.new_failures_count = ValueInt(delta, "new_failures_count", 0);
+        item.resolved_failures_count = ValueInt(delta, "resolved_failures_count", 0);
+        item.new_screenshot_diffs_count = ValueInt(delta, "new_screenshot_diffs_count", 0);
+        item.unchanged_blockers_count = ValueInt(delta, "unchanged_blockers_count", 0);
+        item.daily_delta_headline = ValueString(delta, "headline");
+    }
     if (payload.contains("unresolved_families") && payload.at("unresolved_families").is_array()) {
         item.unresolved_families = payload.at("unresolved_families").get<std::vector<std::string>>();
     }
@@ -558,6 +592,12 @@ void from_json(const json& payload, ReviewBoardState& item) {
         const json& decisions = payload.at("review_owner_decisions");
         if (decisions.contains("sections") && decisions.at("sections").is_array()) {
             item.decisions = decisions.at("sections").get<std::vector<ReviewOwnerDecisionItem>>();
+        }
+    }
+    if (payload.contains("external_findings") && payload.at("external_findings").is_object()) {
+        const json& findings = payload.at("external_findings");
+        if (findings.contains("items") && findings.at("items").is_array()) {
+            item.external_findings = findings.at("items").get<std::vector<ExternalFindingItem>>();
         }
     }
     if (payload.contains("manual_review_profiles") && payload.at("manual_review_profiles").is_array()) {

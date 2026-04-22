@@ -153,6 +153,7 @@ def build_digest_json(state: dict[str, Any], previous_state: dict[str, Any] | No
     delta = state.get("daily_delta", {})
     unresolved_families = [str(item).strip() for item in state.get("unresolved_families", []) if str(item).strip()]
     blockers = _open_blockers(state)
+    delta_summary = state.get("daily_delta_summary", {})
 
     return {
         "title": "Daily 3D Car QA Digest",
@@ -180,6 +181,12 @@ def build_digest_json(state: dict[str, Any], previous_state: dict[str, Any] | No
         "resolved": list(delta.get("resolved_failures", [])),
         "review_first": _review_first_items(state),
         "open_blockers": blockers,
+        "delta_summary": {
+            "new_failures_count": int(delta_summary.get("new_failures_count", 0) or 0),
+            "resolved_failures_count": int(delta_summary.get("resolved_failures_count", 0) or 0),
+            "new_screenshot_diffs_count": int(delta_summary.get("new_screenshot_diffs_count", 0) or 0),
+            "unchanged_blockers_count": int(delta_summary.get("unchanged_blockers_count", 0) or 0),
+        },
     }
 
 
@@ -193,6 +200,7 @@ def build_morning_digest(state: dict[str, Any], previous_state: dict[str, Any] |
     pending_decisions = _pending_decisions(state)
     blockers = _digest_blockers(state)
     review_first = digest["review_first"]
+    delta_summary = digest["delta_summary"]
 
     title = "Daily 3D Car QA Digest"
     if digest["ticket_id"]:
@@ -207,6 +215,13 @@ def build_morning_digest(state: dict[str, Any], previous_state: dict[str, Any] |
         "Battery: "
         f"{battery['covered']}/{battery['total']} covered "
         f"({battery['exact_candidate_ready']} exact, {battery['proxy_candidate_ready']} proxy, {battery['runtime_crash']} crash)"
+    )
+    lines.append(
+        "Delta: "
+        f"+{delta_summary['new_failures_count']} failures, "
+        f"{delta_summary['resolved_failures_count']} resolved, "
+        f"{delta_summary['new_screenshot_diffs_count']} new diffs, "
+        f"{delta_summary['unchanged_blockers_count']} unchanged blockers"
     )
     lines.append(f"Unresolved exact: {unresolved}")
     if pending_decisions:

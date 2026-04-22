@@ -32,6 +32,12 @@ from sg_preflight.qa_actions import (
     save_action_record,
 )
 from sg_preflight.review_messages import build_digest_json, build_morning_digest, build_review_owner_update
+from sg_preflight.review_tracking import (
+    add_external_finding,
+    load_external_findings,
+    load_review_decisions,
+    set_review_decision,
+)
 from sg_preflight.retro import parse_retro_export, write_retro_json, write_retro_markdown
 from sg_preflight.services import (
     VALID_PACKS,
@@ -48,6 +54,7 @@ from sg_preflight.review_state import (
     build_review_board_state,
     list_review_packages,
     load_daily_delta,
+    load_latest_review_package,
     load_review_priority,
     verify_sendable_package,
 )
@@ -561,6 +568,50 @@ def build_parser() -> argparse.ArgumentParser:
     daily_digest_latest.add_argument("--ticket-id", help="Optional ticket id filter")
     daily_digest_latest.add_argument("--json", action="store_true", help="Print daily digest payload as JSON")
 
+    review_decisions = sub.add_parser(
+        "review-decisions",
+        help="Record and inspect review-owner decisions using JSON as source-of-truth",
+    )
+    review_decisions_sub = review_decisions.add_subparsers(dest="review_decisions_command", required=True)
+    review_decisions_latest = review_decisions_sub.add_parser("latest", help="Load latest review-owner decision state")
+    review_decisions_latest.add_argument("ticket_id", help="Ticket id such as IDCEVODEV-960073")
+    review_decisions_latest.add_argument("--workspace", help="Workspace root override")
+    review_decisions_latest.add_argument("--json", action="store_true", help="Print decision payload as JSON")
+    review_decisions_set = review_decisions_sub.add_parser("set", help="Set one review-owner decision")
+    review_decisions_set.add_argument("ticket_id", help="Ticket id such as IDCEVODEV-960073")
+    review_decisions_set.add_argument("decision_key", help="Decision key or title, such as lights_OnlyCones")
+    review_decisions_set.add_argument("--status", required=True, help="Decision status such as follow_up or blocker")
+    review_decisions_set.add_argument("--owner", default="", help="Decision owner")
+    review_decisions_set.add_argument("--note", default="", help="Decision note")
+    review_decisions_set.add_argument("--date", default="", help="Decision date override")
+    review_decisions_set.add_argument("--title", default="", help="Optional display title override")
+    review_decisions_set.add_argument("--workspace", help="Workspace root override")
+    review_decisions_set.add_argument("--json", action="store_true", help="Print updated decision payload as JSON")
+
+    external_findings = sub.add_parser(
+        "external-findings",
+        help="Record and inspect external findings such as Teams/Jira/manual review notes",
+    )
+    external_findings_sub = external_findings.add_subparsers(dest="external_findings_command", required=True)
+    external_findings_latest = external_findings_sub.add_parser("latest", help="Load latest external findings")
+    external_findings_latest.add_argument("ticket_id", help="Ticket id such as IDCEVODEV-960073")
+    external_findings_latest.add_argument("--workspace", help="Workspace root override")
+    external_findings_latest.add_argument("--json", action="store_true", help="Print findings payload as JSON")
+    external_findings_add = external_findings_sub.add_parser("add", help="Add one external finding")
+    external_findings_add.add_argument("ticket_id", help="Ticket id such as IDCEVODEV-960073")
+    external_findings_add.add_argument("--source", required=True, help="Source such as Teams / 3D Car - Bug Reports / Jana")
+    external_findings_add.add_argument("--reported-by", required=True, help="Reporter name")
+    external_findings_add.add_argument("--category", required=True, help="Category such as changelog")
+    external_findings_add.add_argument("--type", dest="finding_type", default="finding", help="Finding type label")
+    external_findings_add.add_argument("--scope", action="append", required=True, help="Scope item, repeatable or comma-separated")
+    external_findings_add.add_argument("--finding", required=True, help="Finding text")
+    external_findings_add.add_argument("--owner", default="", help="Named owner for the finding")
+    external_findings_add.add_argument("--status", default="reported", help="Finding status")
+    external_findings_add.add_argument("--note", default="", help="Optional note")
+    external_findings_add.add_argument("--related-surface", action="append", default=[], help="Related investigation surface, repeatable")
+    external_findings_add.add_argument("--workspace", help="Workspace root override")
+    external_findings_add.add_argument("--json", action="store_true", help="Print updated findings payload as JSON")
+
     run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
     run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
     run_profile.add_argument(
@@ -981,6 +1032,68 @@ def main(argv: list[str] | None = None) -> int:
             _console_desktop_payload(payload)
         else:
             print(_console_safe(str(payload["text"])))
+        return 0
+
+    if args.command == "review-decisions":
+        tracking_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.review_decisions_command == "latest":
+                package = load_latest_review_package(args.ticket_id, tracking_root)
+                fallback_path = Path(package["review_owner_decisions"]["absolute_path"]) if package["review_owner_decisions"]["absolute_path"] else None
+                payload = load_review_decisions(args.ticket_id, tracking_root, fallback_markdown_path=fallback_path)
+            elif args.review_decisions_command == "set":
+                package = load_latest_review_package(args.ticket_id, tracking_root)
+                fallback_path = Path(package["review_owner_decisions"]["absolute_path"]) if package["review_owner_decisions"]["absolute_path"] else None
+                payload = set_review_decision(
+                    args.ticket_id,
+                    args.decision_key,
+                    status=args.status,
+                    owner=args.owner,
+                    note=args.note,
+                    date=args.date,
+                    title=args.title,
+                    workspace=tracking_root,
+                    fallback_markdown_path=fallback_path,
+                )
+            else:
+                parser.error(f"Unhandled review-decisions command: {args.review_decisions_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"review-decisions failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_desktop_payload(payload)
+        return 0
+
+    if args.command == "external-findings":
+        tracking_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.external_findings_command == "latest":
+                payload = load_external_findings(args.ticket_id, tracking_root)
+            elif args.external_findings_command == "add":
+                scopes: list[str] = []
+                for item in args.scope:
+                    scopes.extend(part.strip() for part in str(item).split(",") if part.strip())
+                payload = add_external_finding(
+                    args.ticket_id,
+                    source=args.source,
+                    reported_by=args.reported_by,
+                    category=args.category,
+                    scope=scopes,
+                    finding=args.finding,
+                    owner=args.owner,
+                    status=args.status,
+                    note=args.note,
+                    finding_type=args.finding_type,
+                    related_investigation_surfaces=args.related_surface,
+                    workspace=tracking_root,
+                )
+            else:
+                parser.error(f"Unhandled external-findings command: {args.external_findings_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"external-findings failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_desktop_payload(payload)
         return 0
 
     if args.command == "run-profile":

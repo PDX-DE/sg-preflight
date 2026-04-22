@@ -665,15 +665,29 @@ def _review_priority_reason(item: BmwBatteryResult) -> str:
 
 
 def _review_priority_score(item: BmwBatteryResult) -> int:
-    if item.verdict == "needs_manual_review":
+    if item.verdict == "runtime_crash":
         return 100
-    if item.verdict == "baseline_candidate_ready":
-        return 80
+    if item.verdict == "needs_manual_review":
+        return 95
+    if item.verdict in {"scenario_output_missing", "baseline_missing"}:
+        return 90
     if item.verdict == "proxy_candidate_ready":
+        return 75
+    if item.verdict == "baseline_candidate_ready":
         return 60
     if item.verdict == "likely_ok":
         return 20
     return 0
+
+
+def _review_priority_level(item: BmwBatteryResult) -> str:
+    if item.verdict in {"runtime_crash", "needs_manual_review", "scenario_output_missing", "baseline_missing"}:
+        return "P0"
+    if item.verdict == "proxy_candidate_ready":
+        return "P1"
+    if item.verdict == "baseline_candidate_ready":
+        return "P2"
+    return "P3"
 
 
 def _review_priority_payload(snapshot: DailyQaSnapshot) -> dict[str, Any]:
@@ -693,6 +707,7 @@ def _review_priority_payload(snapshot: DailyQaSnapshot) -> dict[str, Any]:
             "profile_id": item.profile_id,
             "filter_name": item.filter_name,
             "verdict": item.verdict,
+            "priority_level": _review_priority_level(item),
             "priority_score": _review_priority_score(item),
             "reason": _review_priority_reason(item),
             "recommendation": _battery_gap_recommendation(item),
@@ -736,7 +751,7 @@ def _render_review_priority_markdown(snapshot: DailyQaSnapshot) -> str:
     ]
     for item in payload["ranked_items"]:
         lines.append(
-            f"| {item['priority_score']} | {item['profile_id']} | `{item['filter_name']}` | "
+            f"| {item['priority_level']} ({item['priority_score']}) | {item['profile_id']} | `{item['filter_name']}` | "
             f"`{item['verdict']}` | {item['reason']} | {item['recommendation']} |"
         )
     if not payload["ranked_items"]:
@@ -745,7 +760,7 @@ def _render_review_priority_markdown(snapshot: DailyQaSnapshot) -> str:
     for item in payload["top_five"]:
         lines.append(
             f"- {item['profile_id']}: `{item['filter_name']}` -> `{item['verdict']}` "
-            f"(priority {item['priority_score']})"
+            f"({item['priority_level']} / {item['priority_score']})"
         )
     if not payload["top_five"]:
         lines.append("- No screenshot items require ranking in this snapshot.")

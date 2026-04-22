@@ -61,6 +61,11 @@
       <h4>{{ board.unresolved_families|join(", ") if board.unresolved_families else "none" }}</h4>
       <p>Exact runtime/content families that still need review-owner direction or follow-up.</p>
     </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Since previous run</p>
+      <h4>{{ board.daily_delta_summary.headline }}</h4>
+      <p>Daily delta surfaced directly on the board instead of buried in a separate artifact.</p>
+    </article>
   </div>
 </section>
 
@@ -101,7 +106,7 @@
     <div class="run-card">
       <div class="min-w-0">
         <strong>{{ item.profile_id }} - {{ item.filter_name }}</strong>
-        <div class="muted">{{ item.verdict }} / priority {{ item.priority_score }}</div>
+        <div class="muted">{{ item.priority_level }} / {{ item.verdict }} / priority {{ item.priority_score }}{% if item.is_new_since_previous_run %} / new{% endif %}</div>
         {% if item.reason %}
         <div class="muted">{{ item.reason }}</div>
         {% endif %}
@@ -123,10 +128,40 @@
     <div class="run-card">
       <div class="min-w-0">
         <strong>{{ section.title }}</strong>
-        <div class="muted">{% if section.pending %}Pending owner input{% else %}Recorded{% endif %}</div>
+        <div class="muted">{{ section.status }}{% if section.owner %} / {{ section.owner }}{% endif %}</div>
       </div>
     </div>
     {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>External findings</h3>
+      <p>Human-reported findings from Teams, manual review, or other non-automated channels.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% if board.external_findings["items"] %}
+      {% for item in board.external_findings["items"] %}
+      <div class="run-card">
+        <div class="min-w-0">
+          <strong>{{ item.finding }}</strong>
+          <div class="muted">{{ item.category }} / {{ item.status }} / {{ item.source }}</div>
+          <div class="muted">Scope: {{ item.scope|join(", ") if item.scope else "n/a" }}{% if item.owner %} / Owner: {{ item.owner }}{% endif %}</div>
+          {% if item.note %}
+          <div class="muted">{{ item.note }}</div>
+          {% endif %}
+          {% if item.related_investigation_surfaces %}
+          <div class="muted">Related surfaces: {{ item.related_investigation_surfaces|join(", ") }}</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="note-block">No external findings have been recorded yet.</div>
+    {% endif %}
   </div>
 </section>
 

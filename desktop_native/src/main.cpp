@@ -7407,6 +7407,9 @@ void RenderReviewBoardScreen(ShellState& state) {
                 board.proxy_candidate_ready,
                 board.runtime_crash
             );
+            if (!board.daily_delta_headline.empty()) {
+                ImGui::BulletText("Since previous run: %s", board.daily_delta_headline.c_str());
+            }
             ImGui::BulletText("Unresolved exact family: %s", ReviewBoardPrimaryUnresolvedFamily(board).c_str());
             ImGui::BulletText("Needs decision: %s", ReviewBoardDecisionSummary(board).c_str());
 
@@ -7459,7 +7462,13 @@ void RenderReviewBoardScreen(ShellState& state) {
                     const auto& item = board.review_priority_items[index];
                     ImGui::Text("%zu. %s / %s", index + 1U, item.profile_id.c_str(), item.filter_name.c_str());
                     ImGui::SameLine();
-                    ImGui::TextDisabled("[%s | p=%d]", item.verdict.c_str(), item.priority_score);
+                    ImGui::TextDisabled(
+                        "[%s | %s | p=%d%s]",
+                        item.priority_level.c_str(),
+                        item.verdict.c_str(),
+                        item.priority_score,
+                        item.is_new_since_previous_run ? " | new" : ""
+                    );
                     if (!item.reason.empty()) {
                         ImGui::PushTextWrapPos(wrap_x);
                         ImGui::TextWrapped("%s", item.reason.c_str());
@@ -7518,7 +7527,11 @@ void RenderReviewBoardScreen(ShellState& state) {
             } else {
                 for (const auto& item : state.review_board->decisions) {
                     ImGui::Text("%s", item.title.c_str());
-                    ImGui::TextDisabled("%s", item.pending ? "Pending owner input" : "Recorded");
+                    std::string decision_meta = item.status.empty() ? (item.pending ? "pending" : "recorded") : item.status;
+                    if (!item.owner.empty()) {
+                        decision_meta += " / " + item.owner;
+                    }
+                    ImGui::TextDisabled("%s", decision_meta.c_str());
                     ImGui::Spacing();
                 }
             }
@@ -7548,6 +7561,41 @@ void RenderReviewBoardScreen(ShellState& state) {
                             !artifact.path.empty()
                         )) {
                         OpenPath(sg_preflight::native_shell::ToWide(artifact.path));
+                    }
+                    ImGui::Spacing();
+                }
+            }
+
+            ImGui::Spacing();
+            BeginScreenTextTransition(state);
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "EXTERNAL FINDINGS");
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+
+            if (!state.review_board.has_value() || state.review_board->external_findings.empty()) {
+                ImGui::TextDisabled("No external findings are recorded yet.");
+            } else {
+                for (const auto& item : state.review_board->external_findings) {
+                    ImGui::Text("%s", item.finding.c_str());
+                    std::string finding_meta = item.category;
+                    if (!item.status.empty()) {
+                        finding_meta += finding_meta.empty() ? item.status : " / " + item.status;
+                    }
+                    if (!item.owner.empty()) {
+                        finding_meta += finding_meta.empty() ? item.owner : " / " + item.owner;
+                    }
+                    if (!finding_meta.empty()) {
+                        ImGui::TextDisabled("%s", finding_meta.c_str());
+                    }
+                    if (!item.note.empty()) {
+                        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX());
+                        ImGui::TextWrapped("%s", item.note.c_str());
+                        ImGui::PopTextWrapPos();
                     }
                     ImGui::Spacing();
                 }

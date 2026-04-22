@@ -166,15 +166,36 @@ struct ReviewPriorityItem {
     std::string profile_id;
     std::string filter_name;
     std::string verdict;
+    std::string priority_level;
     int priority_score = 0;
     std::string reason;
     std::string recommendation;
     std::string log_path;
+    bool is_new_since_previous_run = false;
 };
 
 struct ReviewOwnerDecisionItem {
+    std::string key;
     std::string title;
+    std::string status;
+    std::string owner;
+    std::string date;
+    std::string notes;
     bool pending = true;
+};
+
+struct ExternalFindingItem {
+    std::string finding_id;
+    std::string source;
+    std::string reported_by;
+    std::string type;
+    std::string category;
+    std::vector<std::string> scope;
+    std::string finding;
+    std::string owner;
+    std::string status;
+    std::string note;
+    std::vector<std::string> related_investigation_surfaces;
 };
 
 struct ManualReviewProfileItem {
@@ -215,10 +236,17 @@ struct ReviewBoardState {
     int exact_candidate_ready = 0;
     int proxy_candidate_ready = 0;
     int runtime_crash = 0;
+    bool has_previous_run = false;
+    int new_failures_count = 0;
+    int resolved_failures_count = 0;
+    int new_screenshot_diffs_count = 0;
+    int unchanged_blockers_count = 0;
+    std::string daily_delta_headline;
     std::vector<std::string> unresolved_families;
     std::vector<std::string> open_items;
     std::vector<ReviewPriorityItem> review_priority_items;
     std::vector<ReviewOwnerDecisionItem> decisions;
+    std::vector<ExternalFindingItem> external_findings;
     std::vector<ManualReviewProfileItem> manual_review_profiles;
     std::vector<ArtifactItem> artifacts;
 };

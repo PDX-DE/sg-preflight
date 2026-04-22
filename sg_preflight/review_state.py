@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from sg_preflight.review_messages import build_digest_json, build_morning_digest, build_review_owner_update
+from sg_preflight.review_tracking import (
+    load_external_findings,
+    load_review_decisions,
+)
 
 _REVIEW_PACKAGE_SUFFIX = "-review-package-"
 _REVIEW_BUNDLE_SUFFIX = "-review-bundle.json"
@@ -52,33 +56,6 @@ def _load_manifest_progress(path: Path) -> int | None:
     if not match:
         return None
     return int(match.group(1))
-
-
-def _load_review_owner_sections(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    sections: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if line.startswith("## "):
-            if current is not None:
-                sections.append(current)
-            current = {"title": line[3:].strip(), "fields": {}, "raw_lines": []}
-            continue
-        if current is None:
-            continue
-        current["raw_lines"].append(raw_line)
-        if ":" in raw_line:
-            key, value = raw_line.split(":", 1)
-            current["fields"][key.strip()] = value.strip()
-    if current is not None:
-        sections.append(current)
-    for section in sections:
-        fields = section.get("fields", {})
-        decision = str(fields.get("Decision", "")).strip()
-        section["pending"] = decision == "" or "/" in decision
-    return sections
 
 
 def _bundle_evidence_map(bundle_payload: dict[str, Any]) -> dict[str, dict[str, str]]:
@@ -403,6 +380,38 @@ def load_review_priority(ticket_id: str | None = None, workspace: Path | str | N
         raise FileNotFoundError("No review-priority JSON artifact was found.")
     payload = _load_json(json_path)
     ranked_items = list(payload.get("ranked_items", []))
+    for item in ranked_items:
+        verdict = str(item.get("verdict", "")).strip()
+        if verdict == "runtime_crash":
+            item["priority_score"] = 100
+        elif verdict == "needs_manual_review":
+            item["priority_score"] = 95
+        elif verdict in {"scenario_output_missing", "baseline_missing"}:
+            item["priority_score"] = 90
+        elif verdict == "proxy_candidate_ready":
+            item["priority_score"] = 75
+        elif verdict == "baseline_candidate_ready":
+            item["priority_score"] = 60
+        elif verdict == "likely_ok":
+            item["priority_score"] = 20
+        if str(item.get("priority_level", "")).strip():
+            continue
+        if verdict in {"runtime_crash", "needs_manual_review", "scenario_output_missing", "baseline_missing"}:
+            item["priority_level"] = "P0"
+        elif verdict == "proxy_candidate_ready":
+            item["priority_level"] = "P1"
+        elif verdict == "baseline_candidate_ready":
+            item["priority_level"] = "P2"
+        else:
+            item["priority_level"] = "P3"
+    ranked_items.sort(
+        key=lambda item: (
+            int(item.get("priority_score", 0)),
+            str(item.get("profile_id", "")).upper(),
+            str(item.get("filter_name", "")).lower(),
+        ),
+        reverse=True,
+    )
     return {
         "source": source,
         "json_path": str(json_path),
@@ -453,13 +462,21 @@ def load_review_owner_decisions(ticket_id: str | None = None, workspace: Path | 
     decisions_path = Path(package["review_owner_decisions"]["absolute_path"]) if package["review_owner_decisions"]["absolute_path"] else None
     if decisions_path is None or not decisions_path.exists():
         raise FileNotFoundError("No review-owner decisions template was found.")
-    sections = _load_review_owner_sections(decisions_path)
+    tracked = load_review_decisions(package["ticket_id"], workspace_root, fallback_markdown_path=decisions_path)
     return {
-        "path": str(decisions_path),
+        "path": tracked["markdown_path"],
+        "json_path": tracked["json_path"],
         "exists": True,
-        "sections": sections,
-        "pending_count": sum(1 for item in sections if item.get("pending")),
+        "sections": tracked["decisions"],
+        "pending_count": tracked["pending_count"],
+        "updated_at": tracked["updated_at"],
     }
+
+
+def load_external_review_findings(ticket_id: str | None = None, workspace: Path | str | None = None) -> dict[str, Any]:
+    workspace_root = _workspace_root(workspace)
+    package = load_latest_review_package(ticket_id, workspace_root)
+    return load_external_findings(package["ticket_id"], workspace_root)
 
 
 def verify_sendable_package(zip_path: Path | str, workspace: Path | str | None = None) -> dict[str, Any]:
@@ -554,6 +571,7 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
     review_priority = load_review_priority(ticket_id, workspace_root)
     daily_delta = load_daily_delta(ticket_id, workspace_root)
     decisions = load_review_owner_decisions(ticket_id, workspace_root)
+    external_findings = load_external_review_findings(ticket_id, workspace_root)
     verification = verify_sendable_package(package["zip_path"] or package["package_root"], workspace_root)
 
     snapshot_summary = daily_snapshot["summary"]
@@ -578,19 +596,60 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
             **_artifact_ref(artifact_path, package_root=package_root, workspace_root=workspace_root),
         }
 
+    new_review_keys = {
+        str(item).strip()
+        for item in list(daily_delta["new_failures"]) + list(daily_delta["new_screenshot_diffs"])
+        if str(item).strip()
+    }
+
+    def _priority_key(item: dict[str, Any]) -> str:
+        profile_id = str(item.get("profile_id", "")).strip()
+        filter_name = str(item.get("filter_name", "")).strip()
+        return f"battery:{profile_id}:{filter_name}" if profile_id and filter_name else ""
+
+    def _priority_level(item: dict[str, Any], *, is_new: bool) -> str:
+        verdict = str(item.get("verdict", "")).strip()
+        if verdict in {"runtime_crash", "needs_manual_review", "scenario_output_missing", "baseline_missing"}:
+            return "P0"
+        if verdict == "proxy_candidate_ready":
+            return "P1"
+        if verdict == "baseline_candidate_ready":
+            return "P1" if is_new else "P2"
+        if verdict == "likely_ok":
+            return "P2" if is_new else "P3"
+        return "P3"
+
     top_review_items = []
     for item in review_priority["top_items"]:
+        item_key = _priority_key(item)
+        is_new = item_key in new_review_keys
         top_review_items.append(
             {
                 "profile_id": str(item.get("profile_id", "")),
                 "filter_name": str(item.get("filter_name", "")),
                 "verdict": str(item.get("verdict", "")),
                 "priority_score": int(item.get("priority_score", 0)),
+                "priority_level": str(item.get("priority_level", "")) or _priority_level(item, is_new=is_new),
                 "reason": str(item.get("reason", "")),
                 "recommendation": str(item.get("recommendation", "")),
                 "log_path": str(item.get("log_path", "")),
+                "is_new_since_previous_run": is_new,
             }
         )
+
+    delta_summary = {
+        "has_previous_run": bool(str(daily_delta["previous_created_at"]).strip()),
+        "new_failures_count": len(daily_delta["new_failures"]),
+        "resolved_failures_count": len(daily_delta["resolved_failures"]),
+        "new_screenshot_diffs_count": len(daily_delta["new_screenshot_diffs"]),
+        "unchanged_blockers_count": len(daily_delta["unchanged_blockers"]),
+        "headline": (
+            f"+{len(daily_delta['new_failures'])} failures / "
+            f"{len(daily_delta['resolved_failures'])} resolved / "
+            f"{len(daily_delta['new_screenshot_diffs'])} new diffs / "
+            f"{len(daily_delta['unchanged_blockers'])} unchanged blockers"
+        ),
+    }
 
     state = {
         "ticket_id": package["ticket_id"],
@@ -638,11 +697,22 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
         },
         "review_owner_decisions": {
             "path": decisions["path"],
+            "json_path": decisions.get("json_path", ""),
             "pending_count": decisions["pending_count"],
             "sections": decisions["sections"],
+            "updated_at": decisions.get("updated_at", ""),
+        },
+        "external_findings": {
+            "json_path": external_findings["json_path"],
+            "markdown_path": external_findings["markdown_path"],
+            "count": external_findings["count"],
+            "reported_count": external_findings["reported_count"],
+            "items": external_findings["findings"],
+            "related_investigation_surfaces": external_findings["related_investigation_surfaces"],
         },
         "open_items": blocker_list,
         "top_review_priority_items": top_review_items,
+        "daily_delta_summary": delta_summary,
         "manual_review_profiles": _build_manual_review_profiles(
             package,
             workspace_root=workspace_root,
@@ -650,7 +720,8 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
         ),
         "artifact_references": {
             "package_manifest": _artifact_entry("Package manifest", package["manifest"]["absolute_path"]),
-            "review_owner_decisions": _artifact_entry("Review-owner decisions", package["review_owner_decisions"]["absolute_path"]),
+            "review_owner_decisions": _artifact_entry("Review-owner decisions", decisions["path"]),
+            "review_owner_decisions_json": _artifact_entry("Review-owner decisions JSON", decisions.get("json_path", "")),
             "dod_matrix": _artifact_entry("DoD matrix", package["dod_matrix"]["absolute_path"]),
             "review_status": _artifact_entry("Review status", package["review_status"]["absolute_path"]),
             "teams_update": _artifact_entry("Teams update", package["teams_update"]["absolute_path"]),
@@ -662,6 +733,8 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
             "review_priority_markdown": _artifact_entry("Review-priority markdown", review_priority["markdown_path"]),
             "daily_delta_json": _artifact_entry("Daily delta JSON", daily_delta["json_path"]),
             "daily_delta_markdown": _artifact_entry("Daily delta markdown", daily_delta["markdown_path"]),
+            "external_findings_json": _artifact_entry("External findings JSON", external_findings["json_path"]),
+            "external_findings_markdown": _artifact_entry("External findings markdown", external_findings["markdown_path"]),
             "package_zip": _artifact_entry("Package ZIP", package["zip_path"]),
             "package_sha256": _artifact_entry("Package SHA256 sidecar", package["sha256_path"]),
         },

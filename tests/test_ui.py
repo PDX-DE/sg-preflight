@@ -21,6 +21,7 @@ from sg_preflight.qa_actions import (
     get_operator_action,
     save_action_record as save_action_task_record,
 )
+from sg_preflight.review_tracking import add_external_finding
 from sg_preflight.services import (
     RUN_PROGRESS_PLAN,
     RunRequest,
@@ -258,6 +259,18 @@ class TestOperatorUI(unittest.TestCase):
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
             create_review_package_fixture(root)
+            add_external_finding(
+                "IDCEVODEV-960073",
+                source="Teams / 3D Car - Bug Reports / Jana",
+                reported_by="Jana",
+                category="changelog",
+                scope=["G78"],
+                finding="G78 LightFX / HeadLights update",
+                owner="Ana-Karina Nazare",
+                status="reported",
+                note="Track separately from the sent package.",
+                workspace=root,
+            )
             client = TestClient(create_app(root=root, profiles=[profile]))
 
             page = client.get("/ui/review-board?ticket_id=IDCEVODEV-960073")
@@ -270,10 +283,13 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Copy Morning Digest", page.text)
         self.assertIn("Representative smoke: 3/3 passed", page.text)
         self.assertIn("lights_OnlyCones", page.text)
+        self.assertIn("External findings", page.text)
+        self.assertIn("G78 LightFX / HeadLights update", page.text)
         self.assertEqual(payload.status_code, 200)
         self.assertEqual(payload.json()["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(payload.json()["screenshot_battery_counts"]["runtime_crash"], 1)
         self.assertIn("IDCEVODEV-960073 QA status", payload.json()["review_owner_update_text"])
+        self.assertEqual(payload.json()["external_findings"]["count"], 1)
 
     def test_result_page_shows_diff_against_previous_completed_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

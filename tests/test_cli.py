@@ -390,6 +390,57 @@ class TestCLI(unittest.TestCase):
                     ]
                 )
 
+            decisions_stdout = io.StringIO()
+            with redirect_stdout(decisions_stdout):
+                decisions_result = main(
+                    [
+                        "review-decisions",
+                        "set",
+                        "IDCEVODEV-960073",
+                        "lights_OnlyCones",
+                        "--workspace",
+                        str(root),
+                        "--status",
+                        "follow_up",
+                        "--owner",
+                        "Adrian",
+                        "--note",
+                        "Treat as follow-up.",
+                        "--json",
+                    ]
+                )
+
+            findings_stdout = io.StringIO()
+            with redirect_stdout(findings_stdout):
+                findings_result = main(
+                    [
+                        "external-findings",
+                        "add",
+                        "IDCEVODEV-960073",
+                        "--workspace",
+                        str(root),
+                        "--source",
+                        "Teams / 3D Car - Bug Reports / Jana",
+                        "--reported-by",
+                        "Jana",
+                        "--category",
+                        "changelog",
+                        "--type",
+                        "changelog finding",
+                        "--scope",
+                        "G50,NA8",
+                        "--finding",
+                        "Missing changelog entry for light cones position change",
+                        "--owner",
+                        "Ana-Karina Nazare",
+                        "--status",
+                        "reported",
+                        "--related-surface",
+                        "lights_OnlyCones",
+                        "--json",
+                    ]
+                )
+
         self.assertEqual(review_board_result, 0)
         self.assertEqual(copy_update_result, 0)
         self.assertEqual(copy_update_json_result, 0)
@@ -399,6 +450,8 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(digest_result, 0)
         self.assertEqual(digest_json_result, 0)
         self.assertEqual(desktop_result, 0)
+        self.assertEqual(decisions_result, 0)
+        self.assertEqual(findings_result, 0)
         self.assertEqual(json.loads(review_board_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
         self.assertIn("IDCEVODEV-960073 QA status", copy_update_stdout.getvalue())
         self.assertEqual(json.loads(copy_update_json_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
@@ -408,6 +461,8 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Daily 3D Car QA Digest", digest_stdout.getvalue())
         self.assertEqual(json.loads(digest_json_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(json.loads(desktop_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
+        self.assertEqual(json.loads(decisions_stdout.getvalue())["decisions"][0]["status"], "follow_up")
+        self.assertEqual(json.loads(findings_stdout.getvalue())["findings"][0]["category"], "changelog")
 
     def test_ticket_review_cli_sendable_disables_action_bundles(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

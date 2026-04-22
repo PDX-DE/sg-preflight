@@ -2444,6 +2444,7 @@ def create_app(
             _review_board_file_card("Review-priority ranking", artifact_refs.get("review_priority_markdown", {})),
             _review_board_file_card("Daily delta", artifact_refs.get("daily_delta_markdown", {})),
             _review_board_file_card("Review-owner decisions", artifact_refs.get("review_owner_decisions", {})),
+            _review_board_file_card("External findings", artifact_refs.get("external_findings_markdown", {})),
             _review_board_file_card("Package manifest", artifact_refs.get("package_manifest", {})),
             _review_board_file_card("Package ZIP", artifact_refs.get("package_zip", {})),
         ]
