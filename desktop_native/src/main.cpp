@@ -47,6 +47,7 @@ using sg_preflight::native_shell::DdsTextureHandle;
 using sg_preflight::native_shell::EvidenceItem;
 using sg_preflight::native_shell::EnvironmentDoctorItem;
 using sg_preflight::native_shell::ManualCard;
+using sg_preflight::native_shell::ManualReviewProfileItem;
 using sg_preflight::native_shell::ManualEvidenceItem;
 using sg_preflight::native_shell::ProfileItem;
 using sg_preflight::native_shell::RecentActionItem;
@@ -404,6 +405,7 @@ float DrawLeftAlignedPromptParagraphStyled(
     float alpha,
     const std::string& text
 );
+void InlineSectionLabel(const char* text);
 
 constexpr float kPanelGrid = 9.0f;
 constexpr float kPanelHeaderHeight = 34.0f;
@@ -3598,6 +3600,118 @@ std::string BuildReviewBoardDigestText(const sg_preflight::native_shell::ReviewB
         return board.morning_digest_text;
     }
     return BuildReviewBoardStatusText(board);
+}
+
+std::string ReviewBoardDecisionSummary(const sg_preflight::native_shell::ReviewBoardState& board) {
+    std::vector<std::string> pending_titles;
+    for (const auto& decision : board.decisions) {
+        if (!decision.pending || decision.title.empty()) {
+            continue;
+        }
+        pending_titles.push_back(decision.title);
+        if (pending_titles.size() >= 2U) {
+            break;
+        }
+    }
+    if (pending_titles.empty()) {
+        return "No open review-owner decisions recorded.";
+    }
+    std::string joined;
+    for (size_t index = 0; index < pending_titles.size(); ++index) {
+        if (index > 0U) {
+            joined += " | ";
+        }
+        joined += pending_titles[index];
+    }
+    if (board.decisions.size() > pending_titles.size()) {
+        joined += " | ...";
+    }
+    return joined;
+}
+
+void RenderReviewBoardManualReviewSection(ShellState& state, const sg_preflight::native_shell::ReviewBoardState& board, float wrap_x) {
+    InlineSectionLabel("GUIDED MANUAL REVIEW");
+    if (board.manual_review_profiles.empty()) {
+        ImGui::TextDisabled("No manual-review package artifacts are available for the current review board.");
+        return;
+    }
+
+    for (const ManualReviewProfileItem& item : board.manual_review_profiles) {
+        ImGui::Text("%s [%s]", item.profile_id.c_str(), item.status.c_str());
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextWrapped("%s", item.summary.c_str());
+        ImGui::PopTextWrapPos();
+        if (!item.note.empty()) {
+            ImGui::TextDisabled("%s", item.note.c_str());
+        }
+
+        const ImVec2 button_size(ShellUi(176.0f), ShellUi(28.0f));
+        if (DrawPanelButton(
+                ("review-board-raco-" + item.profile_id).c_str(),
+                "OPEN RACO",
+                button_size,
+                false,
+                item.raco_scene_exists && !item.raco_scene_path.empty()
+            )) {
+            OpenPath(sg_preflight::native_shell::ToWide(item.raco_scene_path));
+        }
+        ImGui::SameLine();
+        if (DrawPanelButton(
+                ("review-board-blender-" + item.profile_id).c_str(),
+                "OPEN BLENDER",
+                button_size,
+                false,
+                item.blender_workfile_exists && !item.blender_workfile_path.empty()
+            )) {
+            OpenPath(sg_preflight::native_shell::ToWide(item.blender_workfile_path));
+        }
+
+        if (DrawPanelButton(
+                ("review-board-gallery-" + item.profile_id).c_str(),
+                "OPEN GALLERY",
+                button_size,
+                false,
+                item.candidate_gallery_exists && !item.candidate_gallery_path.empty()
+            )) {
+            OpenPath(sg_preflight::native_shell::ToWide(item.candidate_gallery_path));
+        }
+        ImGui::SameLine();
+        if (DrawPanelButton(
+                ("review-board-triage-" + item.profile_id).c_str(),
+                "OPEN TRIAGE",
+                button_size,
+                false,
+                item.screenshot_triage_exists && !item.screenshot_triage_path.empty()
+            )) {
+            OpenPath(sg_preflight::native_shell::ToWide(item.screenshot_triage_path));
+        }
+
+        if (DrawPanelButton(
+                ("review-board-record-" + item.profile_id).c_str(),
+                "OPEN REVIEW RECORD",
+                button_size,
+                false,
+                item.manual_review_record_exists && !item.manual_review_record_path.empty()
+            )) {
+            OpenPath(sg_preflight::native_shell::ToWide(item.manual_review_record_path));
+        }
+        ImGui::SameLine();
+        if (DrawPanelButton(
+                ("review-board-copy-note-" + item.profile_id).c_str(),
+                "COPY REVIEW NOTE",
+                button_size,
+                true,
+                !item.copy_review_note_text.empty()
+            )) {
+            if (CopyText(sg_preflight::native_shell::ToWide(item.copy_review_note_text))) {
+                state.status_line = "Copied manual review note for " + item.profile_id + ".";
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
 }
 
 std::wstring SelectedEvidencePath(const ShellState& state) {
@@ -7282,24 +7396,28 @@ void RenderReviewBoardScreen(ShellState& state) {
                 ImGui::TextWrapped("%s", board.title.c_str());
                 ImGui::PopTextWrapPos();
             }
-            ImGui::TextColored(verification_color, "Package verification: %s", board.verification_status.c_str());
-            ImGui::Text("DoD status: %s", board.dod_overall_status.c_str());
-            ImGui::Text("Visible progress: %d%%", board.visible_dod_progress_percent);
-            if (!board.generated_at.empty()) {
-                ImGui::TextDisabled("Generated: %s", board.generated_at.c_str());
-            }
-
             ImGui::Spacing();
-            InlineSectionLabel("Execution Snapshot");
+            InlineSectionLabel("AT A GLANCE");
             ImGui::BulletText("Smoke: %d/%d passed", board.smoke_completed, board.smoke_total);
             ImGui::BulletText(
-                "Battery: %d total / %d exact / %d proxy / %d crash",
+                "Battery: %d/%d covered (%d exact / %d proxy / %d crash)",
+                board.exact_candidate_ready + board.proxy_candidate_ready,
                 board.battery_total,
                 board.exact_candidate_ready,
                 board.proxy_candidate_ready,
                 board.runtime_crash
             );
             ImGui::BulletText("Unresolved exact family: %s", ReviewBoardPrimaryUnresolvedFamily(board).c_str());
+            ImGui::BulletText("Needs decision: %s", ReviewBoardDecisionSummary(board).c_str());
+
+            ImGui::Spacing();
+            InlineSectionLabel("PACKAGE STATE");
+            ImGui::TextColored(verification_color, "Package verification: %s", board.verification_status.c_str());
+            ImGui::Text("DoD status: %s", board.dod_overall_status.c_str());
+            ImGui::Text("Visible progress: %d%%", board.visible_dod_progress_percent);
+            if (!board.generated_at.empty()) {
+                ImGui::TextDisabled("Generated: %s", board.generated_at.c_str());
+            }
 
             ImGui::Spacing();
             InlineSectionLabel("Primary Actions");
@@ -7375,6 +7493,9 @@ void RenderReviewBoardScreen(ShellState& state) {
                     ImGui::BulletText("%s", item.c_str());
                 }
             }
+
+            ImGui::Spacing();
+            RenderReviewBoardManualReviewSection(state, board, wrap_x);
         }
         ImGui::EndChild();
     }

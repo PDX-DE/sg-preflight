@@ -1488,6 +1488,9 @@ def desktop_run_snapshot(
         try:
             action_record = load_action_record(run_id_or_path, root)
         except (FileNotFoundError, OSError, ValueError):
+            reference = str(run_id_or_path).strip()
+            if _looks_like_transient_run_reference(reference):
+                return _initializing_run_snapshot(reference)
             raise run_error
         return _desktop_run_snapshot_from_action_record(action_record, root)
 
@@ -1530,6 +1533,46 @@ def desktop_run_snapshot(
             project_root=str(run_record.project_root).strip(),
             output_root=str(run_record.paths.get("output_root", "")).strip(),
         ),
+    )
+
+
+def _looks_like_transient_run_reference(reference: str) -> bool:
+    normalized = reference.strip().replace("/", "\\").lower()
+    if not normalized:
+        return False
+    if "\\out\\operator-ui\\" in normalized:
+        return True
+    try:
+        uuid.UUID(reference.strip())
+        return True
+    except (ValueError, AttributeError):
+        return False
+
+
+def _initializing_run_snapshot(reference: str) -> DesktopRunSnapshot:
+    summary_lines = (
+        "Action record is initializing.",
+        "The native shell is waiting for the nested action bundle to be written.",
+    )
+    notes = (
+        "This is a transient operator-state refresh while a long-running action is still materializing its nested run bundle.",
+        "Refresh again in a moment; the structured run snapshot should replace this placeholder automatically.",
+    )
+    return DesktopRunSnapshot(
+        run_id=reference,
+        profile_id="",
+        profile_label="Initializing action record",
+        status="queued",
+        created_at_utc="",
+        workflow_stage_label="Initializing action record",
+        summary_title="Action record is initializing",
+        summary_lines=summary_lines,
+        grouped_lines=(),
+        notes=notes,
+        packs=(),
+        artifacts=(),
+        source_files=(),
+        copy_items=(),
     )
 
 

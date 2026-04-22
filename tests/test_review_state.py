@@ -64,6 +64,12 @@ class TestReviewState(unittest.TestCase):
         self.assertIn("IDCEVODEV-960073 QA status", state["review_owner_update_text"])
         self.assertIn("Daily 3D Car QA Digest", state["morning_digest_text"])
         self.assertEqual(state["morning_digest"]["ticket_id"], "IDCEVODEV-960073")
+        self.assertEqual(len(state["manual_review_profiles"]), 3)
+        self.assertEqual(state["manual_review_profiles"][0]["profile_id"], "NA8")
+        self.assertEqual(state["manual_review_profiles"][0]["status"], "pending")
+        self.assertTrue(state["manual_review_profiles"][0]["raco_scene"]["exists"])
+        self.assertTrue(state["manual_review_profiles"][0]["blender_workfile"]["exists"])
+        self.assertIn("manual review", state["manual_review_profiles"][0]["copy_review_note_text"].lower())
 
     def test_verify_sendable_package_reports_warning_when_optional_package_json_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

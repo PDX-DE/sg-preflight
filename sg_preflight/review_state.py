@@ -11,6 +11,7 @@ from sg_preflight.review_messages import build_digest_json, build_morning_digest
 
 _REVIEW_PACKAGE_SUFFIX = "-review-package-"
 _REVIEW_BUNDLE_SUFFIX = "-review-bundle.json"
+_MANUAL_STATUSES = ("pending", "passed", "issue", "blocked")
 
 
 def _workspace_root(workspace: Path | str | None = None) -> Path:
@@ -78,6 +79,123 @@ def _load_review_owner_sections(path: Path) -> list[dict[str, Any]]:
         decision = str(fields.get("Decision", "")).strip()
         section["pending"] = decision == "" or "/" in decision
     return sections
+
+
+def _bundle_evidence_map(bundle_payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    mapping: dict[str, dict[str, str]] = {}
+    for item in bundle_payload.get("evidence_index", []):
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label", "")).strip()
+        path = str(item.get("path", "")).strip()
+        if not label or not path:
+            continue
+        mapping[label] = {
+            "path": path,
+            "detail": str(item.get("detail", "")).strip(),
+        }
+    return mapping
+
+
+def _parse_markdown_bullet_path(path: Path | None, prefix: str) -> str:
+    if path is None or not path.exists():
+        return ""
+    needle = f"- {prefix}:"
+    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line.startswith(needle):
+            continue
+        value = line.split(":", 1)[1].strip()
+        if value.startswith("`") and value.endswith("`"):
+            value = value[1:-1]
+        return value.strip()
+    return ""
+
+
+def _manual_review_status(record_path: Path | None, *, has_scene: bool, has_blender: bool) -> str:
+    if not has_scene and not has_blender:
+        return "blocked"
+    if record_path is None or not record_path.exists():
+        return "pending"
+    content = record_path.read_text(encoding="utf-8", errors="replace").lower()
+    if "[x] yes" in content and "[x] no" not in content:
+        return "passed"
+    if "[x] no" in content:
+        return "issue"
+    return "pending"
+
+
+def _manual_review_note(profile_id: str, status: str, unresolved_families: list[str]) -> str:
+    lines = [
+        f"{profile_id} manual review",
+        f"- Status: {status}",
+        "- Open the representative RaCo scene and Blender workfile.",
+        "- Compare the candidate/proxy screenshots against intended changes.",
+        "- Record pass / issue / blocked explicitly and attach screenshot evidence if needed.",
+    ]
+    if unresolved_families:
+        lines.append(f"- Technical blocker to keep in mind: {', '.join(unresolved_families)}")
+    return "\n".join(lines)
+
+
+def _build_manual_review_profiles(
+    package: dict[str, Any],
+    *,
+    workspace_root: Path,
+    unresolved_families: list[str],
+) -> list[dict[str, Any]]:
+    bundle_json_path = Path(package["review_bundle_json"]["absolute_path"])
+    bundle_payload = _load_json(bundle_json_path)
+    evidence_map = _bundle_evidence_map(bundle_payload)
+    candidate_gallery_path = str(package["candidate_gallery"]["absolute_path"]).strip()
+    manual_profiles: list[dict[str, Any]] = []
+
+    def _optional_path(path_text: str) -> Path | None:
+        normalized = str(path_text).strip()
+        return Path(normalized) if normalized else None
+
+    for profile_id in package.get("scope", []):
+        profile = str(profile_id).strip()
+        if not profile:
+            continue
+        companion_path = _optional_path(evidence_map.get(f"{profile} manual review companion", {}).get("path", ""))
+        record_path = _optional_path(evidence_map.get(f"{profile} manual review record", {}).get("path", ""))
+        slots_path = _optional_path(evidence_map.get(f"{profile} screenshot evidence slots", {}).get("path", ""))
+        blender_raco_path = _optional_path(evidence_map.get(f"{profile} Blender vs RaCo checklist", {}).get("path", ""))
+        visual_checklist_path = _optional_path(evidence_map.get(f"{profile} visual review checklist", {}).get("path", ""))
+        triage_path = _optional_path(evidence_map.get(f"{profile} screenshot triage", {}).get("path", ""))
+
+        raco_scene_path = _parse_markdown_bullet_path(companion_path, "Representative RaCo scene")
+        blender_workfile_path = _parse_markdown_bullet_path(companion_path, "Representative Blender workfile")
+        baseline_root_path = _parse_markdown_bullet_path(companion_path, "Screenshot baseline root")
+        bmw_actuals_root_path = _parse_markdown_bullet_path(companion_path, "BMW actuals root")
+        bmw_diff_root_path = _parse_markdown_bullet_path(companion_path, "BMW diff root")
+
+        has_scene = Path(raco_scene_path).exists() if raco_scene_path else False
+        has_blender = Path(blender_workfile_path).exists() if blender_workfile_path else False
+        status = _manual_review_status(record_path, has_scene=has_scene, has_blender=has_blender)
+
+        manual_profiles.append(
+            {
+                "profile_id": profile,
+                "status": status if status in _MANUAL_STATUSES else "pending",
+                "summary": "Open the representative RaCo scene and Blender workfile, compare the current screenshot outputs, and record the human verdict explicitly.",
+                "note": "Manual review is still human-owned. The tool only prepares the right assets, paths, and note text.",
+                "copy_review_note_text": _manual_review_note(profile, status, unresolved_families),
+                "raco_scene": _artifact_ref(Path(raco_scene_path) if raco_scene_path else None, package_root=None, workspace_root=workspace_root),
+                "blender_workfile": _artifact_ref(Path(blender_workfile_path) if blender_workfile_path else None, package_root=None, workspace_root=workspace_root),
+                "candidate_gallery": _artifact_ref(Path(candidate_gallery_path) if candidate_gallery_path else None, package_root=None, workspace_root=workspace_root),
+                "screenshot_triage": _artifact_ref(triage_path, package_root=None, workspace_root=workspace_root),
+                "manual_review_record": _artifact_ref(record_path, package_root=None, workspace_root=workspace_root),
+                "screenshot_evidence_slots": _artifact_ref(slots_path, package_root=None, workspace_root=workspace_root),
+                "blender_raco_checklist": _artifact_ref(blender_raco_path, package_root=None, workspace_root=workspace_root),
+                "visual_review_checklist": _artifact_ref(visual_checklist_path, package_root=None, workspace_root=workspace_root),
+                "baseline_root": _artifact_ref(Path(baseline_root_path) if baseline_root_path else None, package_root=None, workspace_root=workspace_root),
+                "bmw_actuals_root": _artifact_ref(Path(bmw_actuals_root_path) if bmw_actuals_root_path else None, package_root=None, workspace_root=workspace_root),
+                "bmw_diff_root": _artifact_ref(Path(bmw_diff_root_path) if bmw_diff_root_path else None, package_root=None, workspace_root=workspace_root),
+            }
+        )
+    return manual_profiles
 
 
 def _artifact_ref(path: Path | None, *, package_root: Path | None, workspace_root: Path) -> dict[str, Any]:
@@ -525,6 +643,11 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
         },
         "open_items": blocker_list,
         "top_review_priority_items": top_review_items,
+        "manual_review_profiles": _build_manual_review_profiles(
+            package,
+            workspace_root=workspace_root,
+            unresolved_families=snapshot_summary["unresolved_families"],
+        ),
         "artifact_references": {
             "package_manifest": _artifact_entry("Package manifest", package["manifest"]["absolute_path"]),
             "review_owner_decisions": _artifact_entry("Review-owner decisions", package["review_owner_decisions"]["absolute_path"]),

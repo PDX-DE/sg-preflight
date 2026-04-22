@@ -246,6 +246,7 @@ def create_review_package_fixture(temp_root: Path, ticket_id: str = "IDCEVODEV-9
     package_root = out_root / f"{ticket_id}-review-package-2026-04-22"
     snapshot_root = out_root / "daily-3d-car-qa-summary-2026-04-22-163526"
     package_snapshot_root = package_root / "artifacts" / "daily-snapshot"
+    repo_root = temp_root / "repositories" / "trunk"
 
     daily_payload = {
         "created_at": "2026-04-22T16:50:52",
@@ -337,7 +338,95 @@ def create_review_package_fixture(temp_root: Path, ticket_id: str = "IDCEVODEV-9
         "next_questions": [
             "Should lights_OnlyCones be treated as a blocker or a follow-up?",
         ],
+        "evidence_index": [],
     }
+
+    for profile_id in ("NA8", "G78", "G50"):
+        profile_slug = profile_id.lower()
+        scene_path = repo_root / "Cars_IDCevo" / "BMW" / profile_id / "main" / f"Main_{profile_id}.rca"
+        blend_path = repo_root / "Cars_IDCevo" / "BMW" / profile_id / "_Workfiles" / "blender" / f"{profile_id}_WheelFX.blend"
+        expected_root = repo_root / "Cars_IDCevo" / "BMW" / profile_id / "export" / "tests" / "expected"
+        actuals_root = temp_root / "digital-3d-car-models" / "cars" / "BMW" / f"{profile_id}_EVO" / "export" / "tests" / "actuals"
+        diff_root = temp_root / "digital-3d-car-models" / "cars" / "BMW" / f"{profile_id}_EVO" / "export" / "tests" / "diff"
+        manual_root = package_root / "artifacts" / "manual-review" / profile_slug
+        triage_path = package_root / "artifacts" / "screenshot-triage" / profile_slug / "screenshot-triage.md"
+        companion_path = manual_root / "manual-review-companion.md"
+        record_path = manual_root / "manual-review-record.md"
+        slots_path = manual_root / "screenshot-evidence-slots.md"
+        blender_raco_path = manual_root / "blender-vs-raco-checklist.md"
+        visual_checklist_path = manual_root / "visual-review-checklist.md"
+
+        write_text(scene_path, "fixture rca\n")
+        write_text(blend_path, "fixture blend\n")
+        expected_root.mkdir(parents=True, exist_ok=True)
+        actuals_root.mkdir(parents=True, exist_ok=True)
+        diff_root.mkdir(parents=True, exist_ok=True)
+        write_text(triage_path, f"# {profile_id} screenshot triage\n")
+        write_text(
+            companion_path,
+            "\n".join(
+                [
+                    f"# Manual review companion - {profile_id}",
+                    "",
+                    f"- Ticket: {ticket_id}",
+                    f"- Profile: {profile_id}",
+                    "- Changelog heading: [1.1.0] - NOT YET DELIVERED",
+                    f"- Representative RaCo scene: `{scene_path}`",
+                    f"- Representative Blender workfile: `{blend_path}`",
+                    f"- Screenshot baseline root: `{expected_root}`",
+                    f"- BMW actuals root: `{actuals_root}`",
+                    f"- BMW diff root: `{diff_root}`",
+                    f"- Screenshot triage: `{triage_path}`",
+                ]
+            )
+            + "\n",
+        )
+        write_text(
+            record_path,
+            "\n".join(
+                [
+                    f"# Manual review record - {profile_id}",
+                    "",
+                    f"- Ticket: {ticket_id}",
+                    f"- Profile: {profile_id}",
+                    "- Manual checks:",
+                    "- Blender vs RaCo compared: [ ] yes [ ] no",
+                    "- Multi-angle review completed: [ ] yes [ ] no",
+                    "- Screenshot evidence attached: [ ] yes [ ] no",
+                    "- Rack / BMW smoke blocker documented: [ ] yes [ ] no",
+                    "",
+                    "Notes:",
+                    "-",
+                ]
+            )
+            + "\n",
+        )
+        write_text(slots_path, f"# Screenshot evidence slots - {profile_id}\n")
+        write_text(
+            blender_raco_path,
+            "\n".join(
+                [
+                    f"# Blender vs RaCo checklist - {profile_id}",
+                    "",
+                    f"- Ticket: {ticket_id}",
+                    f"- Profile: {profile_id}",
+                    f"- RaCo scene: `{scene_path}`",
+                    f"- Blender workfile: `{blend_path}`",
+                ]
+            )
+            + "\n",
+        )
+        write_text(visual_checklist_path, f"# Visual review checklist - {profile_id}\n")
+        review_bundle["evidence_index"].extend(
+            [
+                {"label": f"{profile_id} screenshot triage", "path": str(triage_path), "detail": ""},
+                {"label": f"{profile_id} manual review companion", "path": str(companion_path), "detail": ""},
+                {"label": f"{profile_id} manual review record", "path": str(record_path), "detail": ""},
+                {"label": f"{profile_id} screenshot evidence slots", "path": str(slots_path), "detail": ""},
+                {"label": f"{profile_id} Blender vs RaCo checklist", "path": str(blender_raco_path), "detail": ""},
+                {"label": f"{profile_id} visual review checklist", "path": str(visual_checklist_path), "detail": ""},
+            ]
+        )
 
     write_json(package_root / f"{ticket_id}-review-bundle.json", review_bundle)
     write_text(

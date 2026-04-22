@@ -177,6 +177,26 @@ struct ReviewOwnerDecisionItem {
     bool pending = true;
 };
 
+struct ManualReviewProfileItem {
+    std::string profile_id;
+    std::string status;
+    std::string summary;
+    std::string note;
+    std::string copy_review_note_text;
+    std::string raco_scene_path;
+    bool raco_scene_exists = false;
+    std::string blender_workfile_path;
+    bool blender_workfile_exists = false;
+    std::string candidate_gallery_path;
+    bool candidate_gallery_exists = false;
+    std::string screenshot_triage_path;
+    bool screenshot_triage_exists = false;
+    std::string manual_review_record_path;
+    bool manual_review_record_exists = false;
+    std::string screenshot_evidence_slots_path;
+    bool screenshot_evidence_slots_exists = false;
+};
+
 struct ReviewBoardState {
     std::string ticket_id;
     std::string title;
@@ -199,6 +219,7 @@ struct ReviewBoardState {
     std::vector<std::string> open_items;
     std::vector<ReviewPriorityItem> review_priority_items;
     std::vector<ReviewOwnerDecisionItem> decisions;
+    std::vector<ManualReviewProfileItem> manual_review_profiles;
     std::vector<ArtifactItem> artifacts;
 };
 

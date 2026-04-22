@@ -483,6 +483,38 @@ void from_json(const json& payload, ReviewOwnerDecisionItem& item) {
     item.pending = ValueBool(payload, "pending", true);
 }
 
+void from_json(const json& payload, ManualReviewProfileItem& item) {
+    item.profile_id = ValueString(payload, "profile_id");
+    item.status = ValueString(payload, "status");
+    item.summary = ValueString(payload, "summary");
+    item.note = ValueString(payload, "note");
+    item.copy_review_note_text = ValueString(payload, "copy_review_note_text");
+    if (payload.contains("raco_scene") && payload.at("raco_scene").is_object()) {
+        item.raco_scene_path = ValueString(payload.at("raco_scene"), "absolute_path");
+        item.raco_scene_exists = ValueBool(payload.at("raco_scene"), "exists", false);
+    }
+    if (payload.contains("blender_workfile") && payload.at("blender_workfile").is_object()) {
+        item.blender_workfile_path = ValueString(payload.at("blender_workfile"), "absolute_path");
+        item.blender_workfile_exists = ValueBool(payload.at("blender_workfile"), "exists", false);
+    }
+    if (payload.contains("candidate_gallery") && payload.at("candidate_gallery").is_object()) {
+        item.candidate_gallery_path = ValueString(payload.at("candidate_gallery"), "absolute_path");
+        item.candidate_gallery_exists = ValueBool(payload.at("candidate_gallery"), "exists", false);
+    }
+    if (payload.contains("screenshot_triage") && payload.at("screenshot_triage").is_object()) {
+        item.screenshot_triage_path = ValueString(payload.at("screenshot_triage"), "absolute_path");
+        item.screenshot_triage_exists = ValueBool(payload.at("screenshot_triage"), "exists", false);
+    }
+    if (payload.contains("manual_review_record") && payload.at("manual_review_record").is_object()) {
+        item.manual_review_record_path = ValueString(payload.at("manual_review_record"), "absolute_path");
+        item.manual_review_record_exists = ValueBool(payload.at("manual_review_record"), "exists", false);
+    }
+    if (payload.contains("screenshot_evidence_slots") && payload.at("screenshot_evidence_slots").is_object()) {
+        item.screenshot_evidence_slots_path = ValueString(payload.at("screenshot_evidence_slots"), "absolute_path");
+        item.screenshot_evidence_slots_exists = ValueBool(payload.at("screenshot_evidence_slots"), "exists", false);
+    }
+}
+
 void from_json(const json& payload, ReviewBoardState& item) {
     item.ticket_id = ValueString(payload, "ticket_id");
     item.title = ValueString(payload, "title");
@@ -527,6 +559,9 @@ void from_json(const json& payload, ReviewBoardState& item) {
         if (decisions.contains("sections") && decisions.at("sections").is_array()) {
             item.decisions = decisions.at("sections").get<std::vector<ReviewOwnerDecisionItem>>();
         }
+    }
+    if (payload.contains("manual_review_profiles") && payload.at("manual_review_profiles").is_array()) {
+        item.manual_review_profiles = payload.at("manual_review_profiles").get<std::vector<ManualReviewProfileItem>>();
     }
     if (payload.contains("artifact_references") && payload.at("artifact_references").is_object()) {
         for (const auto& [_, value] : payload.at("artifact_references").items()) {

@@ -26,9 +26,10 @@ class TestReviewMessages(unittest.TestCase):
         self.assertIn("lights_OnlyCones", update)
 
         self.assertIn("Daily 3D Car QA Digest", digest)
-        self.assertIn("Date: 2026-04-22", digest)
-        self.assertIn("Review first:", digest)
-        self.assertIn("Open blockers:", digest)
+        self.assertIn("(2026-04-22)", digest)
+        self.assertIn("Battery: 2/3 covered", digest)
+        self.assertIn("Unresolved exact: lights_OnlyCones", digest)
+        self.assertLessEqual(len([line for line in digest.splitlines() if line.strip()]), 8)
 
         self.assertEqual(digest_json["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(digest_json["screenshot_battery"]["covered"], 2)

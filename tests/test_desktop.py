@@ -122,6 +122,18 @@ class TestDesktopEvidenceModel(unittest.TestCase):
             self.assertTrue(recent_runs[0].summary.startswith("Counts:"))
             self.assertTrue(any(item.key == "bmw_screenshot_smoke" for item in blockers))
 
+    def test_run_snapshot_returns_initializing_placeholder_for_transient_missing_nested_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            transient_run_id = "123e4567-e89b-12d3-a456-426614174000"
+
+            snapshot = desktop_run_snapshot(transient_run_id, root)
+
+        self.assertEqual(snapshot.run_id, transient_run_id)
+        self.assertEqual(snapshot.status, "queued")
+        self.assertEqual(snapshot.summary_title, "Action record is initializing")
+        self.assertIn("waiting for the nested action bundle", snapshot.summary_lines[1].lower())
+
 
 class TestDesktopFileOps(unittest.TestCase):
     def test_normalize_local_path_keeps_existing_file(self) -> None:

@@ -52,6 +52,19 @@ def _open_blockers(state: dict[str, Any]) -> list[str]:
     return blockers
 
 
+def _digest_blockers(state: dict[str, Any]) -> list[str]:
+    blockers = _open_blockers(state)
+    condensed: list[str] = []
+    lowered = [item.casefold() for item in blockers]
+    if any("jira" in item for item in lowered) or any("codecraft" in item for item in lowered) or any("qx" in item for item in lowered):
+        condensed.append("Jira / CodeCraft / QX access")
+    if _pending_decisions(state):
+        condensed.append("review-owner decisions")
+    if not condensed and blockers:
+        condensed.append(blockers[0])
+    return condensed
+
+
 def _review_first_items(state: dict[str, Any]) -> list[str]:
     delta_items = [
         str(item).strip()
@@ -176,47 +189,30 @@ def build_morning_digest(state: dict[str, Any], previous_state: dict[str, Any] |
     verification = digest["package_verification_status"] or "unknown"
     smoke = digest["representative_smoke"]
     battery = digest["screenshot_battery"]
+    unresolved = ", ".join(digest["unresolved_families"]) if digest["unresolved_families"] else "none"
+    pending_decisions = _pending_decisions(state)
+    blockers = _digest_blockers(state)
+    review_first = digest["review_first"]
 
-    def _emit_list(title: str, items: list[str], *, numbered: bool = False) -> list[str]:
-        if not items:
-            return [title, "- none"]
-        if numbered:
-            return [title, *[f"{index}. {item}" for index, item in enumerate(items, start=1)]]
-        return [title, *[f"- {item}" for item in items]]
-
-    lines = ["Daily 3D Car QA Digest"]
-    if digest["date"]:
-        lines.append(f"Date: {digest['date']}")
+    title = "Daily 3D Car QA Digest"
     if digest["ticket_id"]:
-        lines.append(f"Ticket: {digest['ticket_id']}")
+        title += f" - {digest['ticket_id']}"
+    if digest["date"]:
+        title += f" ({digest['date']})"
+    lines = [title]
     lines.append(f"Scope: {scope}")
-    lines.extend(
-        [
-            "",
-            f"Package verification: {verification}",
-            f"Representative smoke: {smoke['completed']}/{smoke['total']} passed",
-            f"Screenshot battery: {battery['covered']}/{battery['total']} covered",
-            f"- {battery['exact_candidate_ready']} exact candidate-ready",
-            f"- {battery['proxy_candidate_ready']} proxy candidate-ready",
-            f"- {battery['runtime_crash']} exact unresolved",
-        ]
+    lines.append(f"Package verification: {verification}")
+    lines.append(f"Smoke: {smoke['completed']}/{smoke['total']} passed")
+    lines.append(
+        "Battery: "
+        f"{battery['covered']}/{battery['total']} covered "
+        f"({battery['exact_candidate_ready']} exact, {battery['proxy_candidate_ready']} proxy, {battery['runtime_crash']} crash)"
     )
-
-    if digest["unresolved_families"]:
-        lines.extend(["", "Only unresolved exact family:", *[f"- {item}" for item in digest["unresolved_families"]]])
-
-    lines.extend(
-        [
-            "",
-            *_emit_list("New since previous run:", digest["new_since_previous_run"]["new_failures"] + digest["new_since_previous_run"]["new_screenshot_diffs"]),
-            "",
-            *_emit_list("Still unresolved:", digest["still_unresolved"]),
-            "",
-            *_emit_list("Resolved:", digest["resolved"]),
-            "",
-            *_emit_list("Review first:", digest["review_first"], numbered=True),
-            "",
-            *_emit_list("Open blockers:", digest["open_blockers"]),
-        ]
-    )
+    lines.append(f"Unresolved exact: {unresolved}")
+    if pending_decisions:
+        lines.append("Needs decision: " + "; ".join(pending_decisions[:2]) + ("; ..." if len(pending_decisions) > 2 else ""))
+    elif review_first:
+        lines.append("Review first: " + review_first[0])
+    if blockers:
+        lines.append("Open blockers: " + "; ".join(blockers))
     return "\n".join(lines)
