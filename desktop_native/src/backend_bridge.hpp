@@ -140,9 +140,17 @@ struct RunSnapshot {
     std::string profile_id;
     std::string profile_label;
     std::string status;
+    bool initializing = false;
     std::string created_at_utc;
     std::string workflow_stage_label;
     std::string summary_title;
+    std::string current_command;
+    std::string log_path;
+    std::string log_tail;
+    std::string output_root;
+    std::string project_root;
+    std::string error_message;
+    int exit_code = 0;
     std::vector<std::string> summary_lines;
     std::vector<std::string> grouped_lines;
     std::vector<std::string> notes;

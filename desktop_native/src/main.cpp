@@ -40,6 +40,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 
 using sg_preflight::native_shell::ActionItem;
 using sg_preflight::native_shell::ActionSnapshot;
+using sg_preflight::native_shell::ArtifactItem;
 using sg_preflight::native_shell::BackendConfig;
 using sg_preflight::native_shell::BlockerItem;
 using sg_preflight::native_shell::CopyItem;
@@ -384,6 +385,9 @@ float ShellExitTextVisibility(const ShellState& state);
 std::string SanitiseTraceText(std::string text);
 void DrawSelectionContainerChrome(ImDrawList* draw, const ImVec2& min, const ImVec2& max, float alpha, bool fade_top);
 bool DrawPanelButton(const char* id, const std::string& label, ImVec2 size, bool accent, bool enabled);
+void DrawReadonlyPathLine(const char* id, const std::string& text, bool monospace);
+void DrawReadonlyTextBox(const char* id, const std::string& text, bool monospace, float height);
+std::string Ellipsize(const std::string& text, size_t limit);
 void DrawPromptTextStyled(
     ImDrawList* draw,
     ImFont* font,
@@ -1771,6 +1775,71 @@ std::string MakeVisibleLogTail(const std::string& log_tail, bool running) {
     return trimmed;
 }
 
+bool IsTransientStateMaterializationError(std::string_view text) {
+    if (text.empty()) {
+        return false;
+    }
+    std::string lowered(text);
+    std::transform(
+        lowered.begin(),
+        lowered.end(),
+        lowered.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); }
+    );
+    const bool mentions_missing =
+        lowered.find("filenotfounderror") != std::string::npos
+        || lowered.find("no such file") != std::string::npos
+        || lowered.find("cannot find the file") != std::string::npos
+        || lowered.find("path does not exist") != std::string::npos;
+    const bool mentions_operator_record =
+        lowered.find("action.json") != std::string::npos
+        || lowered.find("run.json") != std::string::npos
+        || lowered.find("\\out\\operator-ui\\") != std::string::npos;
+    return mentions_missing && mentions_operator_record;
+}
+
+sg_preflight::native_shell::RunSnapshot BuildInitializingRunSnapshot(const std::string& reference) {
+    sg_preflight::native_shell::RunSnapshot snapshot;
+    snapshot.run_id = reference;
+    snapshot.profile_label = "Initializing action record";
+    snapshot.status = "queued";
+    snapshot.initializing = true;
+    snapshot.workflow_stage_label = "Initializing action record";
+    snapshot.summary_title = "Action record is initializing";
+    snapshot.summary_lines = {
+        "Action record is initializing.",
+        "The native shell is waiting for the nested action bundle to be written.",
+    };
+    snapshot.notes = {
+        "This is a transient refresh while the backend materializes a nested action or run record.",
+        "Refresh again in a moment; the structured run snapshot should replace this placeholder automatically.",
+    };
+    return snapshot;
+}
+
+std::optional<sg_preflight::native_shell::RunSnapshot> TryLoadRunSnapshot(
+    const BackendConfig& backend,
+    const std::string& run_id_or_path
+) {
+    try {
+        return sg_preflight::native_shell::LoadRunSnapshot(backend, run_id_or_path);
+    } catch (const std::exception& error) {
+        if (!IsTransientStateMaterializationError(error.what())) {
+            throw;
+        }
+        std::string detail = error.what();
+        if (detail.size() > 220U) {
+            detail.resize(217U);
+            detail += "...";
+        }
+        TraceUi(
+            "run_snapshot_initializing ref=\"" + run_id_or_path
+            + "\" detail=\"" + detail + "\""
+        );
+        return BuildInitializingRunSnapshot(run_id_or_path);
+    }
+}
+
 std::string NextButtonLabel(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Language:
@@ -3071,7 +3140,7 @@ RunRefreshResult BuildRunRefresh(
         );
 
     if (should_refresh_result_snapshot) {
-        result.run_snapshot = sg_preflight::native_shell::LoadRunSnapshot(backend, result.current_result_run_id);
+        result.run_snapshot = TryLoadRunSnapshot(backend, result.current_result_run_id);
     }
 
     if (
@@ -3080,7 +3149,7 @@ RunRefreshResult BuildRunRefresh(
         && !result.recent_runs.empty()
     ) {
         result.current_result_run_id = result.recent_runs.front().run_id;
-        result.run_snapshot = sg_preflight::native_shell::LoadRunSnapshot(backend, result.current_result_run_id);
+        result.run_snapshot = TryLoadRunSnapshot(backend, result.current_result_run_id);
     }
 
     return result;
@@ -3225,7 +3294,7 @@ void RefreshRunSnapshot(ShellState& state) {
         return;
     }
     try {
-        state.run_snapshot = sg_preflight::native_shell::LoadRunSnapshot(state.backend, state.current_result_run_id);
+        state.run_snapshot = TryLoadRunSnapshot(state.backend, state.current_result_run_id);
         ClampSelections(state);
         state.last_error.clear();
     } catch (const std::exception& error) {
@@ -3894,6 +3963,413 @@ std::string BuildActionDiagnosticsText(const ActionSnapshot& snapshot) {
         text += snapshot.error_message + "\n";
     }
     return text;
+}
+
+std::string JoinScopeList(const std::vector<std::string>& scope) {
+    if (scope.empty()) {
+        return {};
+    }
+    std::string joined;
+    for (size_t index = 0; index < scope.size(); ++index) {
+        if (index > 0U) {
+            joined += " / ";
+        }
+        joined += scope[index];
+    }
+    return joined;
+}
+
+std::string LiveActivityPhaseLabel(const ShellState& state) {
+    if (state.run_refresh_loading) {
+        return "refreshing";
+    }
+    if (state.snapshot.has_value()) {
+        const auto& snapshot = *state.snapshot;
+        if (snapshot.status == "queued") {
+            return "initializing";
+        }
+        if (snapshot.status == "running") {
+            return "running";
+        }
+        if (snapshot.status == "completed") {
+            return "completed";
+        }
+        if (snapshot.status == "failed") {
+            return "failed";
+        }
+        if (snapshot.status == "blocked") {
+            return "blocked";
+        }
+        return snapshot.status;
+    }
+    if (state.run_snapshot.has_value()) {
+        const auto& snapshot = *state.run_snapshot;
+        if (snapshot.initializing || snapshot.status == "queued") {
+            return "initializing";
+        }
+        return snapshot.status.empty() ? "idle" : snapshot.status;
+    }
+    return "idle";
+}
+
+std::string LiveActivityActionLabel(const ShellState& state) {
+    if (state.snapshot.has_value() && !state.snapshot->title.empty()) {
+        return state.snapshot->title;
+    }
+    if (state.run_snapshot.has_value()) {
+        if (!state.run_snapshot->summary_title.empty()) {
+            return state.run_snapshot->summary_title;
+        }
+        if (!state.run_snapshot->profile_label.empty()) {
+            return state.run_snapshot->profile_label;
+        }
+    }
+    const std::string action_id = CurrentActionId(state);
+    return action_id.empty() ? "No backend action loaded." : action_id;
+}
+
+std::string LiveActivityScopeLabel(const ShellState& state) {
+    if (state.snapshot.has_value() && !state.snapshot->profile_id.empty()) {
+        return state.snapshot->profile_id;
+    }
+    if (state.run_snapshot.has_value() && !state.run_snapshot->profile_id.empty()) {
+        return state.run_snapshot->profile_id;
+    }
+    if (state.review_board.has_value()) {
+        const std::string joined = JoinScopeList(state.review_board->scope);
+        if (!joined.empty()) {
+            return joined;
+        }
+    }
+    const std::string profile_id = CurrentProfileId(state);
+    return profile_id.empty() ? "No scope declared." : profile_id;
+}
+
+std::string LiveActivityCommand(const ShellState& state) {
+    if (state.snapshot.has_value() && !state.snapshot->current_command.empty()) {
+        return state.snapshot->current_command;
+    }
+    if (state.run_snapshot.has_value() && !state.run_snapshot->current_command.empty()) {
+        return state.run_snapshot->current_command;
+    }
+    return {};
+}
+
+std::string LiveActivityLogPath(const ShellState& state) {
+    if (state.snapshot.has_value() && !state.snapshot->log_path.empty()) {
+        return state.snapshot->log_path;
+    }
+    if (state.run_snapshot.has_value() && !state.run_snapshot->log_path.empty()) {
+        return state.run_snapshot->log_path;
+    }
+    return {};
+}
+
+std::string LiveActivityLogTail(const ShellState& state) {
+    if (state.snapshot.has_value() && !state.snapshot->log_tail.empty()) {
+        return state.snapshot->log_tail;
+    }
+    if (state.run_snapshot.has_value() && !state.run_snapshot->log_tail.empty()) {
+        return state.run_snapshot->log_tail;
+    }
+    return {};
+}
+
+std::string LiveActivityOutputRoot(const ShellState& state) {
+    if (state.snapshot.has_value() && !state.snapshot->output_root.empty()) {
+        return state.snapshot->output_root;
+    }
+    if (state.run_snapshot.has_value() && !state.run_snapshot->output_root.empty()) {
+        return state.run_snapshot->output_root;
+    }
+    return {};
+}
+
+std::string LiveActivityProjectRoot(const ShellState& state) {
+    if (state.snapshot.has_value() && !state.snapshot->project_root.empty()) {
+        return state.snapshot->project_root;
+    }
+    if (state.run_snapshot.has_value() && !state.run_snapshot->project_root.empty()) {
+        return state.run_snapshot->project_root;
+    }
+    return {};
+}
+
+std::string LiveActivityError(const ShellState& state) {
+    if (state.snapshot.has_value()) {
+        const auto& snapshot = *state.snapshot;
+        if ((snapshot.status == "failed" || snapshot.exit_code != 0) && !snapshot.error_message.empty()) {
+            return snapshot.error_message;
+        }
+    }
+    if (state.run_snapshot.has_value()) {
+        const auto& snapshot = *state.run_snapshot;
+        if ((snapshot.status == "failed" || snapshot.exit_code != 0) && !snapshot.error_message.empty()) {
+            return snapshot.error_message;
+        }
+    }
+    if (!state.last_error.empty() && !IsTransientStateMaterializationError(state.last_error)) {
+        return state.last_error;
+    }
+    return {};
+}
+
+std::vector<ArtifactItem> LiveActivityArtifacts(const ShellState& state) {
+    std::vector<ArtifactItem> items;
+    const auto add_item = [&items](std::string label, std::string path) {
+        if (path.empty()) {
+            return;
+        }
+        const auto duplicate = std::find_if(
+            items.begin(),
+            items.end(),
+            [&](const ArtifactItem& item) { return item.path == path; }
+        );
+        if (duplicate == items.end()) {
+            items.push_back(ArtifactItem{std::move(label), std::move(path)});
+        }
+    };
+
+    add_item("Action log", LiveActivityLogPath(state));
+    add_item("Action folder", LiveActivityOutputRoot(state));
+    add_item("Project root", LiveActivityProjectRoot(state));
+    if (state.snapshot.has_value()) {
+        const auto& snapshot = *state.snapshot;
+        add_item("HTML report", snapshot.latest_run_links.html_report);
+        add_item("Markdown report", snapshot.latest_run_links.markdown_report);
+        add_item("JSON report", snapshot.latest_run_links.json_report);
+        for (const auto& artifact : snapshot.artifacts) {
+            add_item(artifact.label, artifact.path);
+            if (items.size() >= 6U) {
+                break;
+            }
+        }
+    }
+    if (items.size() < 6U && state.run_snapshot.has_value()) {
+        for (const auto& artifact : state.run_snapshot->artifacts) {
+            add_item(artifact.label, artifact.path);
+            if (items.size() >= 6U) {
+                break;
+            }
+        }
+    }
+    return items;
+}
+
+void RenderLiveActivityPanel(
+    ShellState& state,
+    const char* panel_id,
+    bool compact,
+    float preferred_log_height = 0.0f
+) {
+    const std::string panel_key = panel_id == nullptr ? "live-activity" : panel_id;
+    const bool running = IsActionStillRunning(state) || state.run_refresh_loading;
+    const std::string phase = LiveActivityPhaseLabel(state);
+    const std::string action_label = LiveActivityActionLabel(state);
+    const std::string scope_label = LiveActivityScopeLabel(state);
+    const std::string command = LiveActivityCommand(state);
+    const std::string log_path = LiveActivityLogPath(state);
+    const std::string log_tail = LiveActivityLogTail(state);
+    const std::string error_text = LiveActivityError(state);
+    const std::vector<ArtifactItem> artifacts = LiveActivityArtifacts(state);
+    const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+
+    ImGui::Text("Phase: %s", phase.c_str());
+    ImGui::Text("Action: %s", action_label.c_str());
+    ImGui::Text("Scope: %s", scope_label.c_str());
+    if (state.snapshot.has_value()) {
+        ImGui::TextDisabled(
+            "Progress: %d%% %s",
+            state.snapshot->progress_percent,
+            state.snapshot->progress_label.empty() ? "" : state.snapshot->progress_label.c_str()
+        );
+        if (!state.snapshot->progress_detail.empty()) {
+            ImGui::PushTextWrapPos(wrap_x);
+            ImGui::TextWrapped("%s", state.snapshot->progress_detail.c_str());
+            ImGui::PopTextWrapPos();
+        }
+    } else if (state.run_snapshot.has_value() && state.run_snapshot->initializing) {
+        ImGui::TextDisabled("%s", "Action record is initializing.");
+    }
+
+    ImGui::Spacing();
+    InlineSectionLabel("Command");
+    if (command.empty()) {
+        ImGui::TextDisabled("%s", running ? "Waiting for the backend to report the active command." : "No active command is reported.");
+    } else {
+        const std::string command_id = panel_key + "-command";
+        DrawReadonlyTextBox(command_id.c_str(), command, true, compact ? ShellUi(62.0f) : ShellUi(82.0f));
+    }
+
+    const float button_width = compact ? ShellUi(150.0f) : ShellUi(176.0f);
+    if (DrawPanelButton((panel_key + "-copy-command").c_str(), "COPY COMMAND", ImVec2(button_width, ShellUi(28.0f)), false, !command.empty())) {
+        if (CopyText(sg_preflight::native_shell::ToWide(command))) {
+            state.status_line = "Copied active backend command.";
+        }
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton((panel_key + "-open-log").c_str(), "OPEN LOG", ImVec2(button_width, ShellUi(28.0f)), false, !log_path.empty())) {
+        OpenPath(sg_preflight::native_shell::ToWide(log_path));
+    }
+    const std::string output_root = LiveActivityOutputRoot(state);
+    if (DrawPanelButton((panel_key + "-open-output").c_str(), "OPEN OUTPUT", ImVec2(button_width, ShellUi(28.0f)), false, !output_root.empty())) {
+        OpenFolderPath(sg_preflight::native_shell::ToWide(output_root));
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton((panel_key + "-refresh-activity").c_str(), "REFRESH", ImVec2(button_width, ShellUi(28.0f)), false, !state.run_refresh_loading && !state.current_run_id.empty())) {
+        StartRunRefresh(state, false);
+    }
+
+    ImGui::Spacing();
+    InlineSectionLabel("Recent Log");
+    const float log_height = preferred_log_height > 0.0f
+        ? preferred_log_height
+        : (compact ? ShellUi(110.0f) : ShellUi(154.0f));
+    const std::string visible_log = MakeVisibleLogTail(log_tail, running);
+    if (visible_log.empty()) {
+        ImGui::TextDisabled("%s", running ? "Log tail is not available yet." : "No backend log tail is available.");
+    } else {
+        const std::string log_id = panel_key + "-log";
+        DrawReadonlyTextBox(log_id.c_str(), visible_log, true, log_height);
+    }
+
+    ImGui::Spacing();
+    InlineSectionLabel("Latest Artifacts");
+    if (artifacts.empty()) {
+        ImGui::TextDisabled("%s", "No artifact paths are available yet.");
+    } else {
+        const size_t limit = compact ? std::min<size_t>(3U, artifacts.size()) : std::min<size_t>(5U, artifacts.size());
+        for (size_t index = 0; index < limit; ++index) {
+            const auto& artifact = artifacts[index];
+            ImGui::Text("%s", artifact.label.c_str());
+            const std::string artifact_id = panel_key + "-artifact-" + std::to_string(index);
+            DrawReadonlyPathLine(artifact_id.c_str(), artifact.path, true);
+        }
+    }
+
+    if (!error_text.empty()) {
+        ImGui::Spacing();
+        InlineSectionLabel("Last Error");
+        const std::string error_id = panel_key + "-error";
+        DrawReadonlyTextBox(error_id.c_str(), error_text, true, compact ? ShellUi(84.0f) : ShellUi(108.0f));
+    }
+}
+
+std::string LastVisibleLogLine(const std::string& text) {
+    if (text.empty()) {
+        return {};
+    }
+    const auto trim_copy = [](const std::string& input) {
+        size_t start = 0U;
+        while (start < input.size() && std::isspace(static_cast<unsigned char>(input[start])) != 0) {
+            ++start;
+        }
+        size_t end = input.size();
+        while (end > start && std::isspace(static_cast<unsigned char>(input[end - 1U])) != 0) {
+            --end;
+        }
+        return input.substr(start, end - start);
+    };
+    std::string current;
+    std::string last_non_empty;
+    for (char ch : text) {
+        if (ch == '\r') {
+            continue;
+        }
+        if (ch == '\n') {
+            const std::string trimmed = trim_copy(current);
+            if (!trimmed.empty()) {
+                last_non_empty = trimmed;
+            }
+            current.clear();
+            continue;
+        }
+        current.push_back(ch);
+    }
+    const std::string trimmed = trim_copy(current);
+    if (!trimmed.empty()) {
+        last_non_empty = trimmed;
+    }
+    return last_non_empty;
+}
+
+void RenderLiveActivitySummaryCard(
+    ShellState& state,
+    const char* panel_id,
+    bool include_refresh_button
+) {
+    const std::string panel_key = panel_id == nullptr ? "live-activity-summary" : panel_id;
+    const bool running = IsActionStillRunning(state) || state.run_refresh_loading;
+    const std::string phase = LiveActivityPhaseLabel(state);
+    const std::string action_label = LiveActivityActionLabel(state);
+    const std::string scope_label = LiveActivityScopeLabel(state);
+    const std::string command = LiveActivityCommand(state);
+    const std::string log_path = LiveActivityLogPath(state);
+    const std::string last_log_line = LastVisibleLogLine(LiveActivityLogTail(state));
+    const std::string output_root = LiveActivityOutputRoot(state);
+    const std::string error_text = LiveActivityError(state);
+    const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+
+    ImGui::Text("Phase: %s", phase.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("| %s", action_label.c_str());
+    ImGui::Text("Scope: %s", scope_label.c_str());
+    if (state.snapshot.has_value()) {
+        const auto& snapshot = *state.snapshot;
+        ImGui::TextDisabled(
+            "Progress: %d%% %s",
+            snapshot.progress_percent,
+            snapshot.progress_label.empty() ? "" : snapshot.progress_label.c_str()
+        );
+    } else if (state.run_snapshot.has_value() && state.run_snapshot->initializing) {
+        ImGui::TextDisabled("%s", "Action record is initializing.");
+    }
+
+    const std::string command_preview = command.empty()
+        ? (running ? "Waiting for the backend to report the active command." : "No active command is reported.")
+        : Ellipsize(command, 140U);
+    ImGui::PushTextWrapPos(wrap_x);
+    ImGui::TextWrapped("Command: %s", command_preview.c_str());
+    ImGui::PopTextWrapPos();
+
+    if (!last_log_line.empty()) {
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextDisabled("Log: %s", Ellipsize(last_log_line, 160U).c_str());
+        ImGui::PopTextWrapPos();
+    }
+
+    if (!output_root.empty()) {
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextDisabled("Output: %s", Ellipsize(output_root, 120U).c_str());
+        ImGui::PopTextWrapPos();
+    }
+
+    if (!error_text.empty()) {
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "Last error: %s", Ellipsize(error_text, 150U).c_str());
+        ImGui::PopTextWrapPos();
+    }
+
+    const float button_width = ShellUi(138.0f);
+    if (DrawPanelButton((panel_key + "-copy-command").c_str(), "COPY COMMAND", ImVec2(button_width, ShellUi(28.0f)), false, !command.empty())) {
+        if (CopyText(sg_preflight::native_shell::ToWide(command))) {
+            state.status_line = "Copied active backend command.";
+        }
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton((panel_key + "-open-log").c_str(), "OPEN LOG", ImVec2(button_width, ShellUi(28.0f)), false, !log_path.empty())) {
+        OpenPath(sg_preflight::native_shell::ToWide(log_path));
+    }
+    ImGui::SameLine();
+    if (DrawPanelButton((panel_key + "-open-output").c_str(), "OPEN OUTPUT", ImVec2(button_width, ShellUi(28.0f)), false, !output_root.empty())) {
+        OpenFolderPath(sg_preflight::native_shell::ToWide(output_root));
+    }
+    if (include_refresh_button) {
+        ImGui::SameLine();
+        if (DrawPanelButton((panel_key + "-refresh").c_str(), "REFRESH", ImVec2(button_width, ShellUi(28.0f)), false, !state.run_refresh_loading && !state.current_run_id.empty())) {
+            StartRunRefresh(state, false);
+        }
+    }
 }
 
 void RenderPathAdapterButtons(ShellState& state, const char* prefix, const std::wstring& target_path) {
@@ -5870,7 +6346,7 @@ void RenderRunStatusContent(ShellState& state) {
     ImGui::Spacing();
     ImGui::TextDisabled("%s", state.status_line.c_str());
 
-    if (!state.last_error.empty()) {
+    if (!state.last_error.empty() && !IsTransientStateMaterializationError(state.last_error)) {
         ImGui::Spacing();
         InlineSectionLabel("Last Error");
         const float error_height = std::min(ShellUi(132.0f), std::max(ShellUi(88.0f), ImGui::GetContentRegionAvail().y * 0.42f));
@@ -5903,6 +6379,15 @@ void RenderRunStatusContent(ShellState& state) {
             ImGui::Spacing();
             ImGui::TextDisabled("%s", sg_preflight::native_shell::FormatCommandLabel(state.language, snapshot.current_command).c_str());
         }
+
+        ImGui::Spacing();
+        InlineSectionLabel("LIVE ACTIVITY");
+        RenderLiveActivityPanel(
+            state,
+            "run-live-activity",
+            false,
+            running ? ShellUi(170.0f) : ShellUi(132.0f)
+        );
 
         ImGui::Spacing();
         InlineSectionLabel(Tr(state, UiText::Summary));
@@ -5952,6 +6437,9 @@ void RenderRunStatusContent(ShellState& state) {
         for (const std::string& line : run_snapshot.summary_lines) {
             ImGui::BulletText("%s", line.c_str());
         }
+        ImGui::Spacing();
+        InlineSectionLabel("LIVE ACTIVITY");
+        RenderLiveActivityPanel(state, "run-live-activity-fallback", false, ShellUi(132.0f));
         return;
     }
 
@@ -7355,6 +7843,18 @@ void RenderStagesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "CURRENT EXECUTION");
+        if (g_small_font != nullptr) {
+            ImGui::PopFont();
+        }
+        EndScreenTextTransition();
+        RenderLiveActivitySummaryCard(state, "stages-inline-activity", true);
+
+        ImGui::Spacing();
+        BeginScreenTextTransition(state);
+        if (g_small_font != nullptr) {
+            ImGui::PushFont(g_small_font);
+        }
         ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", Tr(state, UiText::ManualReview));
         if (g_small_font != nullptr) {
             ImGui::PopFont();
@@ -7367,6 +7867,20 @@ void RenderStagesScreen(ShellState& state) {
     EndCanvasOverlayRegion();
 
     if (BeginCanvasOverlayRegion("stages-side", layout.side_content_min, layout.side_content_max)) {
+        BeginScreenTextTransition(state);
+        if (g_small_font != nullptr) {
+            ImGui::PushFont(g_small_font);
+        }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "LIVE ACTIVITY");
+        if (g_small_font != nullptr) {
+            ImGui::PopFont();
+        }
+        EndScreenTextTransition();
+        ImGui::BeginChild("stages-live-activity-inline", ImVec2(0.0f, std::max(ShellUi(184.0f), ImGui::GetContentRegionAvail().y * 0.34f)), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+        RenderLiveActivityPanel(state, "stages-live-activity", true, ShellUi(96.0f));
+        ImGui::EndChild();
+
+        ImGui::Spacing();
         BeginScreenTextTransition(state);
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
@@ -7494,6 +8008,10 @@ void RenderReviewBoardScreen(ShellState& state) {
             }
 
             ImGui::Spacing();
+            InlineSectionLabel("CURRENT EXECUTION");
+            RenderLiveActivitySummaryCard(state, "review-board-summary-activity", true);
+
+            ImGui::Spacing();
             InlineSectionLabel("Primary Actions");
             if (DrawPanelButton("review-board-refresh", "REFRESH STATE", ImVec2(ShellUi(188.0f), ShellUi(32.0f)), false, true)) {
                 RefreshReviewBoardState(state, true);
@@ -7523,6 +8041,10 @@ void RenderReviewBoardScreen(ShellState& state) {
                     state.status_line = "Copied review-board morning digest.";
                 }
             }
+
+            ImGui::Spacing();
+            InlineSectionLabel("Recent Activity");
+            RenderLiveActivityPanel(state, "review-board-live-activity", true, ShellUi(90.0f));
 
             ImGui::Spacing();
             InlineSectionLabel("Delta / Human Signals");
@@ -7605,6 +8127,20 @@ void RenderReviewBoardScreen(ShellState& state) {
 
     if (BeginCanvasOverlayRegion("review-board-side", layout.side_content_min, layout.side_content_max)) {
         if (ImGui::BeginChild("review-board-side-scroll", ImVec2(0.0f, ImGui::GetContentRegionAvail().y), false, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+            BeginScreenTextTransition(state);
+            if (g_small_font != nullptr) {
+                ImGui::PushFont(g_small_font);
+            }
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "RECENT ACTIVITY");
+            if (g_small_font != nullptr) {
+                ImGui::PopFont();
+            }
+            EndScreenTextTransition();
+            ImGui::BeginChild("review-board-side-activity", ImVec2(0.0f, ShellUi(198.0f)), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            RenderLiveActivityPanel(state, "review-board-side-activity", true, ShellUi(90.0f));
+            ImGui::EndChild();
+
+            ImGui::Spacing();
             BeginScreenTextTransition(state);
             if (g_small_font != nullptr) {
                 ImGui::PushFont(g_small_font);

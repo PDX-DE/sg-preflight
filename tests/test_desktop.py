@@ -107,11 +107,15 @@ class TestDesktopEvidenceModel(unittest.TestCase):
 
             self.assertEqual(snapshot.run_id, record.run_id)
             self.assertEqual(snapshot.top_paths[0].path, str(profile.project_root / "resources" / "textures" / "unused_diffuse.png"))
+            self.assertTrue(snapshot.current_command)
+            self.assertTrue(snapshot.log_path)
             self.assertTrue(any(item.label == "Copy Jira note" for item in snapshot.copy_items))
             self.assertTrue(any(item.key == "pre_delivery" for item in snapshot.copy_items))
             self.assertTrue(snapshot.latest_run_links.html_report.endswith(".html"))
             self.assertTrue(snapshot.linked_run_id)
             self.assertEqual(run_snapshot.profile_id, "G65")
+            self.assertFalse(run_snapshot.initializing)
+            self.assertTrue(run_snapshot.output_root)
             self.assertTrue(any(item.label == "HTML report" for item in run_snapshot.artifacts))
             self.assertTrue(any(item.label == "Scene Hierarchy" for item in run_snapshot.source_files))
             self.assertIsNotNone(latest)
@@ -131,6 +135,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
 
         self.assertEqual(snapshot.run_id, transient_run_id)
         self.assertEqual(snapshot.status, "queued")
+        self.assertTrue(snapshot.initializing)
         self.assertEqual(snapshot.summary_title, "Action record is initializing")
         self.assertIn("waiting for the nested action bundle", snapshot.summary_lines[1].lower())
 

@@ -160,9 +160,17 @@ class DesktopRunSnapshot:
     profile_id: str
     profile_label: str
     status: str
+    initializing: bool
     created_at_utc: str
     workflow_stage_label: str
     summary_title: str
+    current_command: str
+    log_path: str
+    log_tail: str
+    output_root: str
+    project_root: str
+    error_message: str
+    exit_code: int
     summary_lines: tuple[str, ...]
     grouped_lines: tuple[str, ...]
     notes: tuple[str, ...]
@@ -1434,6 +1442,13 @@ def _desktop_run_snapshot_from_action_record(
     progress = record.progress if isinstance(record.progress, dict) else {}
     progress_label = str(progress.get("label", "")).strip()
     progress_detail = str(progress.get("detail", "")).strip()
+    current_step = str(progress.get("step_key", "")).strip()
+    step_details = progress.get("step_details", []) if isinstance(progress.get("step_details"), list) else []
+    current_meta: dict[str, Any] = {}
+    for item in step_details:
+        if isinstance(item, dict) and str(item.get("key", "")).strip() == current_step:
+            current_meta = dict(item.get("meta", {})) if isinstance(item.get("meta"), dict) else {}
+            break
 
     summary_title = str(summary.get("title", record.label)).strip() or record.label
     summary_lines: list[str] = []
@@ -1464,9 +1479,17 @@ def _desktop_run_snapshot_from_action_record(
         profile_id=record.profile_id,
         profile_label=profile_label,
         status=record.status,
+        initializing=False,
         created_at_utc=record.created_at_utc,
         workflow_stage_label=progress_label,
         summary_title=summary_title,
+        current_command=str(current_meta.get("command", record.command_preview)).strip(),
+        log_path=str(record.paths.get("log", "")).strip(),
+        log_tail=_tail_text(str(record.paths.get("log", "")).strip()),
+        output_root=str(record.paths.get("output_root", "")).strip(),
+        project_root=str(record.project_root).strip(),
+        error_message=str(record.error_message).strip(),
+        exit_code=int(record.exit_code or 0),
         summary_lines=tuple(summary_lines[:6]),
         grouped_lines=_action_grouped_lines(record, summary, evidence_items),
         notes=tuple(notes[:8]),
@@ -1512,9 +1535,17 @@ def desktop_run_snapshot(
         profile_id=run_record.profile_id,
         profile_label=run_record.profile_label,
         status=run_record.status,
+        initializing=False,
         created_at_utc=run_record.created_at_utc,
         workflow_stage_label=stage_label,
         summary_title=summary_title,
+        current_command="",
+        log_path="",
+        log_tail="",
+        output_root=str(run_record.paths.get("output_root", "")).strip(),
+        project_root=str(run_record.project_root).strip(),
+        error_message="",
+        exit_code=0,
         summary_lines=tuple(summary_lines),
         grouped_lines=grouped_lines,
         notes=tuple(str(note).strip() for note in run_record.notes if str(note).strip()),
@@ -1563,9 +1594,17 @@ def _initializing_run_snapshot(reference: str) -> DesktopRunSnapshot:
         profile_id="",
         profile_label="Initializing action record",
         status="queued",
+        initializing=True,
         created_at_utc="",
         workflow_stage_label="Initializing action record",
         summary_title="Action record is initializing",
+        current_command="",
+        log_path="",
+        log_tail="",
+        output_root="",
+        project_root="",
+        error_message="",
+        exit_code=0,
         summary_lines=summary_lines,
         grouped_lines=(),
         notes=notes,

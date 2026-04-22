@@ -432,9 +432,17 @@ void from_json(const json& payload, RunSnapshot& item) {
     item.profile_id = ValueString(payload, "profile_id");
     item.profile_label = ValueString(payload, "profile_label");
     item.status = ValueString(payload, "status");
+    item.initializing = ValueBool(payload, "initializing", false);
     item.created_at_utc = ValueString(payload, "created_at_utc");
     item.workflow_stage_label = ValueString(payload, "workflow_stage_label");
     item.summary_title = ValueString(payload, "summary_title");
+    item.current_command = ValueString(payload, "current_command");
+    item.log_path = ValueString(payload, "log_path");
+    item.log_tail = ValueString(payload, "log_tail");
+    item.output_root = ValueString(payload, "output_root");
+    item.project_root = ValueString(payload, "project_root");
+    item.error_message = ValueString(payload, "error_message");
+    item.exit_code = ValueInt(payload, "exit_code", 0);
     if (payload.contains("summary_lines") && payload.at("summary_lines").is_array()) {
         item.summary_lines = payload.at("summary_lines").get<std::vector<std::string>>();
     }
