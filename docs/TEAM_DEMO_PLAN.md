@@ -43,6 +43,8 @@ Show that SGFX can help a reviewer decide faster by collecting ticket scope, smo
 - Which output would you ignore?
 - What is missing before this becomes useful in daily work?
 
+Use [TEAM_FEEDBACK_CAPTURE.md](TEAM_FEEDBACK_CAPTURE.md) to record the answers.
+
 ## Exit Criteria
 
 - A teammate can understand the ticket state in under three minutes.

@@ -47,7 +47,7 @@ Goal: convert teammate feedback into usable workflow decisions.
 
 Acceptance criteria:
 
-- Feedback template exists.
+- Feedback template exists in [TEAM_FEEDBACK_CAPTURE.md](TEAM_FEEDBACK_CAPTURE.md).
 - Questions focus on speed, trust, unclear output, manual work left, and daily-use gaps.
 - Feedback is attached to the relevant SGFX follow-up ticket.
 

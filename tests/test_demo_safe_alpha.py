@@ -20,6 +20,8 @@ TEAM_FACING_FILES = (
     Path("docs/ROADMAP_NEXT.md"),
     Path("docs/SWARD_TO_SGFX_BOUNDARY.md"),
     Path("docs/AGENT_HANDOFF.md"),
+    Path("docs/TEAM_FEEDBACK_CAPTURE.md"),
+    Path("docs/TEAMS_DAILY_STATUS.md"),
 )
 
 FORBIDDEN_TEAM_FACING_PATTERNS = (
@@ -88,6 +90,30 @@ class TestDemoSafeAlpha(unittest.TestCase):
         self.assertNotIn("Unleashed", package_script)
         self.assertIn("Optional reference UI resources were omitted by default.", package_script)
         self.assertIn("Optional reference UI resources were omitted by default.", verifier)
+
+    def test_feedback_capture_docs_keep_alpha_validation_actionable(self) -> None:
+        feedback = (ROOT / "docs" / "TEAM_FEEDBACK_CAPTURE.md").read_text(encoding="utf-8")
+        status = (ROOT / "docs" / "TEAMS_DAILY_STATUS.md").read_text(encoding="utf-8")
+
+        required_feedback_prompts = [
+            "Would this help you review a 3D Car delivery faster?",
+            "What is unclear?",
+            "What would you still do manually?",
+            "Which output would you trust?",
+            "Which output would you ignore?",
+            "What is missing before this becomes useful in daily work?",
+        ]
+        for prompt in required_feedback_prompts:
+            self.assertIn(prompt, feedback)
+
+        self.assertIn("Trusted teammate", feedback)
+        self.assertIn("Follow-up ticket", feedback)
+        self.assertIn("Do not ask whether they like the UI", feedback)
+
+        self.assertIn("SGFX Quality-Hero", status)
+        self.assertIn("not production workflow yet", status)
+        self.assertIn("Jira access is still missing", status)
+        self.assertIn("Review Board workflow", status)
 
 
 if __name__ == "__main__":
