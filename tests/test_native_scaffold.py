@@ -23,8 +23,9 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("launch-action", text)
         self.assertIn("desktop-state", text)
         self.assertIn("does not replace the Python core", text)
-        self.assertIn("general_window.dds", text)
-        self.assertIn("im_font_atlas.bin", text)
+        self.assertIn("Review Board", text)
+        self.assertIn("manual review", text)
+        self.assertIn("does not run RaCo or Blender automatically", text)
 
     def test_native_bundle_script_is_present(self) -> None:
         script_path = ROOT / "scripts" / "package_native_shell_bundle.ps1"

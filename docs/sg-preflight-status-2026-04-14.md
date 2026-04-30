@@ -2,7 +2,7 @@
 
 ## Update - 2026-04-17
 
-Current local status on `feature/unleashed-ui-ux`:
+Current local status on `feature/operator-ui-ux`:
 
 - `sg-preflight` is now a working SG-side QA / preflight / evidence toolkit over one shared Python engine
 - the current operator surfaces are the CLI and the local browser UI; any future desktop GUI must wrap the same engine rather than replace it

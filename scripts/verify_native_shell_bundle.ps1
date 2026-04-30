@@ -128,9 +128,6 @@ try {
     Assert-True (-not (Test-Path (Join-Path $workspaceDir "out"))) "Safe bundle still contains workspace\\out."
     Assert-True (-not (Test-Path (Join-Path $workspaceDir "SERGFX.wav"))) "Safe bundle still contains SERGFX.wav."
     Assert-True (-not (Test-Path (Join-Path $workspaceDir "SERGFX.mp3"))) "Safe bundle still contains SERGFX.mp3."
-    Assert-True (-not (Test-Path (Join-Path $workspaceDir "BAChefPeePee.wav"))) "Safe bundle still contains BAChefPeePee.wav."
-    Assert-True (-not (Test-Path (Join-Path $workspaceDir "BAChefPeePee.mp3"))) "Safe bundle still contains BAChefPeePee.mp3."
-
     $ddsFiles = @()
     if (Test-Path $resourcesDir) {
         $ddsFiles = @(Get-ChildItem -LiteralPath $resourcesDir -Recurse -File -Filter *.dds -ErrorAction SilentlyContinue)
@@ -139,15 +136,16 @@ try {
 
     Assert-True (Test-WarningContains -Warnings $warnings -Needle "Repo mirror omitted by default.") "Bundle manifest warning for omitted repo mirror is missing."
     Assert-True (Test-WarningContains -Warnings $warnings -Needle "Generated evidence was omitted by default.") "Bundle manifest warning for omitted evidence is missing."
-    Assert-True (Test-WarningContains -Warnings $warnings -Needle "Reference Unleashed-style DDS resources were omitted by default.") "Bundle manifest warning for omitted reference resources is missing."
-    Assert-True (Test-WarningContains -Warnings $warnings -Needle "Optional music tracks were omitted by default") "Bundle manifest warning for omitted music is missing."
+    Assert-True (Test-WarningContains -Warnings $warnings -Needle "Optional reference UI resources were omitted by default.") "Bundle manifest warning for omitted reference resources is missing."
+    Assert-True (Test-WarningContains -Warnings $warnings -Needle "Optional audio tracks were omitted by default") "Bundle manifest warning for omitted audio is missing."
 
     Assert-True (Test-Path $bundleIniPath) "Bundled imgui.ini is missing."
     $bundleIniContent = Get-Content -LiteralPath $bundleIniPath -Raw
+    Assert-True ($bundleIniContent -match "(?m)^display_mode=work\r?$") "Bundled imgui.ini did not set work display mode by default."
     Assert-True ($bundleIniContent -match "(?m)^music_enabled=0\r?$") "Bundled imgui.ini did not disable music by default."
 
     $log.Add("[assert] manifest exists and safe-default flags are false")
-    $log.Add("[assert] repo mirror, evidence, music, and reference resources are absent")
+    $log.Add("[assert] repo mirror, evidence, optional audio, and reference resources are absent")
     $log.Add("[assert] manifest warnings and bundle imgui.ini are correct")
 
     $tracePath = Join-Path $OutputRoot "bundle-backend-trace.log"
@@ -170,7 +168,10 @@ try {
     }
 
     if (Test-Path $tracePath) {
-        $tracePreview = Get-Content -LiteralPath $tracePath | Select-Object -First 12
+        $traceContent = Get-Content -LiteralPath $tracePath -Raw
+        Assert-True ($traceContent -notmatch "initial_load_failed") "Bundled native shell reported backend initialization failure. See $tracePath"
+        Assert-True ($traceContent -notmatch "failed to locate pyvenv.cfg") "Bundled Python runtime is incomplete. See $tracePath"
+        $tracePreview = $traceContent -split "\r?\n" | Select-Object -First 12
         $log.Add("")
         $log.Add("[trace]")
         foreach ($line in $tracePreview) {

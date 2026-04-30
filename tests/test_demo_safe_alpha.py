@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+from pathlib import Path
+import re
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+TEAM_FACING_FILES = (
+    Path("README.md"),
+    Path("NOTICE.md"),
+    Path("desktop_native/README.md"),
+    Path("docs/native-alpha-demo-brief.md"),
+    Path("docs/operator-ui-workflow.md"),
+    Path("docs/teammate-pilot-playbook.md"),
+    Path("docs/sg-preflight-status-2026-04-14.md"),
+    Path("docs/TEAM_DEMO_PLAN.md"),
+    Path("docs/JANA_SYNC_PREP.md"),
+    Path("docs/ROADMAP_NEXT.md"),
+    Path("docs/SWARD_TO_SGFX_BOUNDARY.md"),
+    Path("docs/AGENT_HANDOFF.md"),
+)
+
+FORBIDDEN_TEAM_FACING_PATTERNS = (
+    re.compile(r"\bsonic\b", re.IGNORECASE),
+    re.compile(r"\bsega\b", re.IGNORECASE),
+    re.compile(r"\bunleashed\b", re.IGNORECASE),
+    re.compile(r"\bunleashedrecomp\b", re.IGNORECASE),
+    re.compile(r"reverse[- ]engineering", re.IGNORECASE),
+    re.compile(r"game[- ]ui[- ]porting", re.IGNORECASE),
+    re.compile(r"\beaster[- ]egg", re.IGNORECASE),
+    re.compile(r"\bbachef", re.IGNORECASE),
+)
+BOUNDARY_ONLY_PATTERNS = (
+    re.compile(r"\bsward\b", re.IGNORECASE),
+)
+
+
+class TestDemoSafeAlpha(unittest.TestCase):
+    def test_team_facing_docs_exist_and_use_safe_language(self) -> None:
+        missing: list[str] = []
+        risky: list[str] = []
+        for relative_path in TEAM_FACING_FILES:
+            path = ROOT / relative_path
+            if not path.exists():
+                missing.append(str(relative_path))
+                continue
+            text = path.read_text(encoding="utf-8")
+            for pattern in FORBIDDEN_TEAM_FACING_PATTERNS:
+                if pattern.search(text):
+                    risky.append(f"{relative_path}: {pattern.pattern}")
+            if relative_path != Path("docs/SWARD_TO_SGFX_BOUNDARY.md"):
+                for pattern in BOUNDARY_ONLY_PATTERNS:
+                    if pattern.search(text):
+                        risky.append(f"{relative_path}: {pattern.pattern}")
+
+        self.assertEqual(missing, [])
+        self.assertEqual(risky, [])
+
+    def test_web_home_keeps_review_board_easy_to_reach(self) -> None:
+        base = (ROOT / "sg_preflight" / "templates" / "base.html").read_text(encoding="utf-8")
+        home = (ROOT / "sg_preflight" / "templates" / "home.html").read_text(encoding="utf-8")
+
+        self.assertIn('href="/ui/review-board"', base)
+        self.assertIn("Review Board", base)
+        self.assertIn('href="/ui/review-board"', home)
+        self.assertIn("IDCEVODEV-960073", home)
+
+    def test_native_defaults_and_bundle_script_are_demo_safe(self) -> None:
+        native = (ROOT / "desktop_native" / "src" / "main.cpp").read_text(encoding="utf-8")
+        build_script = (ROOT / "scripts" / "build_native_shell.ps1").read_text(encoding="utf-8")
+        package_script = (ROOT / "scripts" / "package_native_shell_bundle.ps1").read_text(encoding="utf-8")
+        verifier = (ROOT / "scripts" / "verify_native_shell_bundle.ps1").read_text(encoding="utf-8")
+
+        self.assertIn('ensure_value(L"display_mode", L"work");', native)
+        self.assertIn('ensure_value(L"music_enabled", L"0");', native)
+        self.assertIn('L"display_mode",\n        L"work",', native)
+        self.assertIn("g_shell_display_mode = LoadDisplayModePreferenceFromIni();", native)
+
+        self.assertIn("display_mode=work", build_script)
+        self.assertIn("music_enabled=0", build_script)
+        self.assertIn("display_mode=work", package_script)
+        self.assertIn('$musicEnabledValue = if ($IncludeMusic) { "1" } else { "0" }', package_script)
+        self.assertNotIn("CHANGELOG.md", package_script)
+        self.assertNotIn("game_icon.png", package_script)
+        self.assertNotIn("BAChef", package_script)
+        self.assertNotIn("Unleashed", package_script)
+        self.assertIn("Optional reference UI resources were omitted by default.", package_script)
+        self.assertIn("Optional reference UI resources were omitted by default.", verifier)
+
+
+if __name__ == "__main__":
+    unittest.main()

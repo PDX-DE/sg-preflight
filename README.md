@@ -71,15 +71,13 @@ This tool is intentionally aimed at pain that is both:
 
 - Python core engine
 - CLI over the same engine
-- local web UI as the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos
-- experimental desktop operator shell over the same engine for faster local file opening, blocker visibility, and checker-evidence triage without replacing the browser UI
-  - current desktop v0 now translates the local UnleashedRecomp menu language into Qt chrome: scanline header bars, category-tab action strip, grid-framed panels, TV-static-style evidence framing, and a bottom button-guide band
-- experimental native desktop shell in `desktop_native/`, using C++ + Dear ImGui over the same Python action/evidence backend rather than a second validation engine
-  - the native shell now auto-discovers the repo root from the built executable path, resolves a local workspace Python when present, and translates more of the Unleashed-style interaction systems into custom chrome: animated scanline bars, amber title choreography, framed containers, animated action tabs, selection cards, cue hooks, and a bottom button guide
-  - when `UnleashedRecompResources` is available locally, the native shell now loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures at runtime instead of only drawing hand-made approximations; fonts still use direct OTF loading for now instead of the upstream prebuilt atlas snapshot
-  - the native shell now starts borderless fullscreen by default, uses a direct installer-style wizard flow (`Introduction`, `Select`, `Review`, `Run`, `Evidence`, `Files`, `Stages`) instead of the older dashboard-screen model, and adds local WAV-based UI cues plus an optional installer-music toggle in `Stages`
-  - the native shell now keeps the Unleashed-derived visual language abstract: no character/cast art in the operator flow, lighter chrome/static overlays, and screen-specific layouts so the shell reads more like step-by-step QA pages than one noisy control wall
-  - the native shell now ports more of the actual `installer_wizard.cpp` draw layer directly: top and bottom scanline-bar treatment, installer-style borders, bottom navigation button containers, page-specific button-guide behavior, and message-prompt/modal rhythm
+- local web UI as the lightweight review/status surface for guided checks, report viewing, evidence, handoff, teammate demos, and the Review Board
+- PySide desktop operator shell over the same engine for faster local file opening, blocker visibility, and checker-evidence triage without replacing the browser UI
+- native desktop shell in `desktop_native/`, using C++ + Dear ImGui over the same Python action/evidence backend rather than a second validation engine
+  - the native shell auto-discovers the repo root from the built executable path and resolves a local workspace Python when present
+  - it consumes Python-generated JSON/state for profiles, actions, run snapshots, review-board state, manual review readiness, environment status, and recent artifacts
+  - it keeps RaCo and Blender as explicit operator-open/manual-review tools; default checks do not auto-launch external review tools
+  - the default alpha startup uses a work-focused presentation with optional audio disabled
   - `scripts\build_native_shell.ps1` writes `build\latest_native_shell_path.txt`, and `scripts\package_native_shell_bundle.ps1` stages a copyable bundled shell for another-PC testing instead of assuming the raw `.exe` is enough by itself
 
 ## Quick start
@@ -156,7 +154,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_native_shell.ps1
 Stage a portable native-shell bundle for another PC:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\package_native_shell_bundle.ps1 -BuildDir build/native-installer-layer -BundleDir build/native-installer-layer-bundle
+powershell -ExecutionPolicy Bypass -File scripts\package_native_shell_bundle.ps1 -BuildDir build/native -BundleDir build/native-shell-bundle
 ```
 
 Check the latest built native-shell path:
@@ -226,9 +224,10 @@ Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-
 Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate-pilot-playbook.md).
 QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-alignment.md).
 SG checker coverage lives in [docs/sg-checker-coverage-matrix.md](docs/sg-checker-coverage-matrix.md).
+Team alpha prep lives in [docs/TEAM_DEMO_PLAN.md](docs/TEAM_DEMO_PLAN.md), [docs/JANA_SYNC_PREP.md](docs/JANA_SYNC_PREP.md), [docs/ROADMAP_NEXT.md](docs/ROADMAP_NEXT.md), and [docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md).
 Future desktop-shell research and visual-direction notes live under [docs/research](docs/research), while the experimental shell itself still wraps the same Python actions, reports, and evidence model.
 The native C++ shell scaffold lives under [desktop_native](desktop_native/README.md) and uses the same `launch-action` / `desktop-state` backend contract rather than forking the QA logic.
-It now also supports direct recent-run browsing, linked run/result drilldown beside action state, richer run-output and source-file panels, broader copy/export surfaces from the same persisted SG evidence model, automatic repo-root discovery when launched from `build\...\Release`, and a more faithful translated Unleashed-style shell around the same Python backend.
+It now also supports direct recent-run browsing, linked run/result drilldown beside action state, richer run-output and source-file panels, broader copy/export surfaces from the same persisted SG evidence model, automatic repo-root discovery when launched from `build\...\Release`, and Review Board/manual-review workflows around the same Python backend.
 
 Run the full smoke-test flow:
 

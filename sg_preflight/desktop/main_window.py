@@ -38,7 +38,7 @@ from sg_preflight.desktop.widgets import (
     HeaderBanner,
     OperatorChrome,
     StaticListWidget,
-    UnleashedPanel,
+    OperatorPanel,
 )
 from sg_preflight.desktop.workers import ActionRunner
 from sg_preflight.qa_actions import build_action_record, get_operator_action
@@ -73,7 +73,7 @@ class DesktopMainWindow(QMainWindow):
         self.header_banner = HeaderBanner("SG Preflight", "QA Operator Shell", central)
         layout.addWidget(self.header_banner)
 
-        self.mode_panel = UnleashedPanel("Mode Select", central)
+        self.mode_panel = OperatorPanel("Mode Select", central)
         mode_layout = QVBoxLayout(self.mode_panel)
         mode_layout.setSpacing(8)
         mode_label = QLabel("Recommended SG action tabs for the selected live slice.")
@@ -150,7 +150,7 @@ class DesktopMainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        profiles_box = UnleashedPanel("Profiles", widget)
+        profiles_box = OperatorPanel("Profiles", widget)
         profiles_layout = QVBoxLayout(profiles_box)
         self.profile_detail = QLabel("Canonical live slices on the mirrored SG tree.")
         self.profile_detail.setObjectName("panelHint")
@@ -161,7 +161,7 @@ class DesktopMainWindow(QMainWindow):
         profiles_layout.addWidget(self.profile_list)
         layout.addWidget(profiles_box, stretch=2)
 
-        actions_box = UnleashedPanel("Command Deck", widget)
+        actions_box = OperatorPanel("Command Deck", widget)
         actions_layout = QVBoxLayout(actions_box)
         self.action_detail = QLabel("The selected tab and the command deck stay in sync.")
         self.action_detail.setObjectName("panelHint")
@@ -179,7 +179,7 @@ class DesktopMainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        run_box = UnleashedPanel("Active Run / Result", widget)
+        run_box = OperatorPanel("Active Run / Result", widget)
         run_layout = QVBoxLayout(run_box)
         run_layout.setSpacing(10)
 
@@ -207,7 +207,7 @@ class DesktopMainWindow(QMainWindow):
         self.command_label.setObjectName("commandLabel")
         run_layout.addWidget(self.command_label)
 
-        summary_box = UnleashedPanel("Summary", run_box)
+        summary_box = OperatorPanel("Summary", run_box)
         summary_layout = QVBoxLayout(summary_box)
         self.summary_text = QPlainTextEdit(summary_box)
         self.summary_text.setReadOnly(True)
@@ -215,7 +215,7 @@ class DesktopMainWindow(QMainWindow):
         summary_layout.addWidget(self.summary_text)
         run_layout.addWidget(summary_box, stretch=2)
 
-        log_box = UnleashedPanel("Signal Log", run_box)
+        log_box = OperatorPanel("Signal Log", run_box)
         log_layout = QVBoxLayout(log_box)
         self.log_tail = QPlainTextEdit(log_box)
         self.log_tail.setReadOnly(True)
@@ -232,22 +232,22 @@ class DesktopMainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        evidence_box = UnleashedPanel("Open First", widget)
+        evidence_box = OperatorPanel("Open First", widget)
         evidence_layout = QVBoxLayout(evidence_box)
-        self.evidence_hint = QLabel("TV-static-framed evidence panel for the first files to inspect.")
+        self.evidence_hint = QLabel("File-backed evidence panel for the first files to inspect.")
         self.evidence_hint.setObjectName("panelHint")
         evidence_layout.addWidget(self.evidence_hint)
         self.evidence_list = StaticListWidget(flash=True, parent=evidence_box)
         evidence_layout.addWidget(self.evidence_list)
         layout.addWidget(evidence_box, stretch=2)
 
-        blockers_box = UnleashedPanel("Blockers", widget)
+        blockers_box = OperatorPanel("Blockers", widget)
         blockers_layout = QVBoxLayout(blockers_box)
         self.blocker_list = StaticListWidget(parent=blockers_box)
         blockers_layout.addWidget(self.blocker_list)
         layout.addWidget(blockers_box, stretch=1)
 
-        manual_box = UnleashedPanel("Manual Review Companion", widget)
+        manual_box = OperatorPanel("Manual Review Companion", widget)
         manual_layout = QVBoxLayout(manual_box)
         self.manual_list = StaticListWidget(parent=manual_box)
         manual_layout.addWidget(self.manual_list)

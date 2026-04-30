@@ -25,7 +25,6 @@
 #include <filesystem>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -221,13 +220,11 @@ struct ShellAudio {
     std::filesystem::path window_close;
     std::filesystem::path music;
     std::filesystem::path music_default;
-    std::filesystem::path music_easter_egg;
     bool attempted = false;
     bool available = false;
     bool sfx_enabled = true;
     bool music_enabled = false;
     bool music_playing = false;
-    bool music_easter_egg_selected = false;
     std::string last_error;
 };
 
@@ -259,7 +256,7 @@ enum class ShellDisplayMode {
     Cinematic,
 };
 
-ShellDisplayMode g_shell_display_mode = ShellDisplayMode::Cinematic;
+ShellDisplayMode g_shell_display_mode = ShellDisplayMode::Work;
 
 ShellState* g_live_shell_state = nullptr;
 
@@ -640,8 +637,8 @@ void EnsureShellIniDefaults(const std::filesystem::path& ini_path) {
         }
     };
 
-    ensure_value(L"display_mode", L"cinematic");
-    ensure_value(L"music_enabled", L"1");
+    ensure_value(L"display_mode", L"work");
+    ensure_value(L"music_enabled", L"0");
     ensure_value(L"sfx_enabled", L"1");
 }
 
@@ -759,7 +756,7 @@ ShellDisplayMode LoadDisplayModePreferenceFromIni() {
     GetPrivateProfileStringW(
         L"sg_preflight_native_shell",
         L"display_mode",
-        L"",
+        L"work",
         value_buffer,
         static_cast<DWORD>(std::size(value_buffer)),
         ini_path.wstring().c_str()
@@ -771,8 +768,8 @@ ShellDisplayMode LoadDisplayModePreferenceFromIni() {
         value.begin(),
         [](wchar_t character) { return static_cast<wchar_t>(towlower(character)); }
     );
-    const ShellDisplayMode mode = ShellDisplayMode::Cinematic;
-    if (value != L"cinematic") {
+    const ShellDisplayMode mode = value == L"cinematic" ? ShellDisplayMode::Cinematic : ShellDisplayMode::Work;
+    if (value != L"cinematic" && value != L"work") {
         SaveDisplayModePreferenceToIni(mode);
     }
     return mode;
@@ -802,7 +799,7 @@ bool LoadMusicPreferenceFromIni() {
     const bool enabled = GetPrivateProfileIntW(
         L"sg_preflight_native_shell",
         L"music_enabled",
-        1,
+        0,
         ini_path.wstring().c_str()
     ) != 0;
     if (value_buffer[0] == L'\0') {
@@ -974,16 +971,9 @@ std::optional<std::filesystem::path> DiscoverResourceRoot(const std::filesystem:
     const std::filesystem::path bundle_root = workspace_root.filename() == "workspace"
         ? workspace_root.parent_path()
         : workspace_root;
-    const std::array<std::filesystem::path, 9> direct_candidates = {
+    const std::array<std::filesystem::path, 2> direct_candidates = {
         bundle_root / "resources",
-        bundle_root / "UnleashedRecompResources-main" / "UnleashedRecompResources-main",
-        bundle_root / "UnleashedRecompResources-main",
-        bundle_root / "UnleashedRecompResources",
-        workspace_root / "UnleashedRecompResources-main" / "UnleashedRecompResources-main",
-        workspace_root / "UnleashedRecompResources-main",
-        workspace_root / "UnleashedRecompResources",
-        workspace_root / "UnleashedRecomp-1.0.3" / "UnleashedRecomp-1.0.3" / "UnleashedRecompResources",
-        workspace_root / "UnleashedRecomp-1.0.3" / "UnleashedRecomp-1.0.3" / "UnleashedRecompResources-main",
+        workspace_root / "resources",
     };
     for (const auto& candidate : direct_candidates) {
         if (IsResourceBundleRoot(candidate)) {
@@ -1387,7 +1377,7 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F12.png", "kb_key_F12.png", g_shell_assets.help_key_f12, 32U, 128U);
         load_optional_workspace_or_resource_texture("debug_icon.png", std::filesystem::path("images") / "common" / "raw" / "pdx-dev.png", g_shell_assets.debug_icon, 0U, 512U);
         load_optional_workspace_texture_candidates({"framework_sgfx_logo.png", "framework_icon.png"}, g_shell_assets.framework_icon);
-        load_optional_workspace_texture_candidates({"logo_sgfx.png", "game_icon.png"}, g_shell_assets.game_icon);
+        load_optional_workspace_texture_candidates({"logo_sgfx.png"}, g_shell_assets.game_icon);
         load_optional_preferred_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", std::filesystem::path("images") / "common" / "raw" / "arrow_circle.png", g_shell_assets.arrow_circle);
         load_optional_preferred_texture(std::filesystem::path("images") / "installer" / "pulse_install.dds", std::filesystem::path("images") / "common" / "raw" / "pulse_install.png", g_shell_assets.pulse_install);
         for (size_t index = 0; index < g_shell_assets.install_images.size(); ++index) {
@@ -1424,26 +1414,7 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
     if (!PathExists(g_shell_audio.music_default)) {
         g_shell_audio.music_default = *resource_root / "music" / "raw" / "installer.wav";
     }
-    g_shell_audio.music_easter_egg = workspace_root / "BAChefPeePee.wav";
-    if (!PathExists(g_shell_audio.music_easter_egg)) {
-        g_shell_audio.music_easter_egg = workspace_root / "BAChefPeePee.mp3";
-    }
     g_shell_audio.music = g_shell_audio.music_default;
-    g_shell_audio.music_easter_egg_selected = false;
-
-    const bool allow_dev_easter_eggs = EnvFlagEnabled(L"SERGFX_DEV_EASTER_EGGS");
-    if (allow_dev_easter_eggs && PathExists(g_shell_audio.music_default) && PathExists(g_shell_audio.music_easter_egg)) {
-        std::random_device random_device;
-        std::mt19937 generator(random_device());
-        std::uniform_int_distribution<int> distribution(1, 12);
-        if (distribution(generator) == 1) {
-            g_shell_audio.music = g_shell_audio.music_easter_egg;
-            g_shell_audio.music_easter_egg_selected = true;
-        }
-    } else if (allow_dev_easter_eggs && !PathExists(g_shell_audio.music_default) && PathExists(g_shell_audio.music_easter_egg)) {
-        g_shell_audio.music = g_shell_audio.music_easter_egg;
-        g_shell_audio.music_easter_egg_selected = true;
-    }
 
     const std::array<std::filesystem::path, 6> sfx_paths = {
         g_shell_audio.cursor,
@@ -1518,6 +1489,9 @@ void SetSfxEnabled(bool enabled) {
 void SetDisplayMode(ShellDisplayMode mode) {
     g_shell_display_mode = mode;
     SaveDisplayModePreferenceToIni(mode);
+    if (mode == ShellDisplayMode::Work && g_shell_audio.music_enabled) {
+        SetMusicEnabled(false);
+    }
     TraceUi(std::string("display_mode=") + (mode == ShellDisplayMode::Work ? "work" : "cinematic"));
 }
 
@@ -10321,7 +10295,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     };
     ImGui_ImplDX12_Init(&init_info);
 
-    g_shell_display_mode = ShellDisplayMode::Cinematic;
+    g_shell_display_mode = LoadDisplayModePreferenceFromIni();
     const bool music_enabled_preference = LoadMusicPreferenceFromIni();
     const bool sfx_enabled_preference = LoadSfxPreferenceFromIni();
     LoadShellAssets(std::filesystem::path(backend.workspace_root));

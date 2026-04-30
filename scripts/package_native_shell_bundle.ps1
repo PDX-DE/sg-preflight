@@ -8,7 +8,7 @@ param(
     [switch]$IncludeReferenceResources,
     [switch]$IncludeFonts,
     [switch]$IncludeMusic,
-    [switch]$IncludeDevEasterEggs
+    [string]$ReferenceResourcesRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -121,12 +121,24 @@ foreach ($item in $directxItems) {
 
 Set-Content -Path $latestBundlePathFile -Value (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe") -Encoding UTF8
 
-$pythonExe = (& python -c "import sys; print(sys.executable)").Trim()
-if (-not $pythonExe) {
+$pythonInfoJson = (& python -c "import json, sys; print(json.dumps({'executable': sys.executable, 'prefix': sys.prefix, 'base_prefix': sys.base_prefix}))").Trim()
+if (-not $pythonInfoJson) {
     throw "Could not resolve the current Python interpreter."
 }
-$pythonRoot = Split-Path -Parent $pythonExe
-Copy-Tree -Source $pythonRoot -Destination $pythonDir
+$pythonInfo = $pythonInfoJson | ConvertFrom-Json
+$pythonExe = [string]$pythonInfo.executable
+$pythonSourceRoot = if ([string]$pythonInfo.prefix -ne [string]$pythonInfo.base_prefix) {
+    [string]$pythonInfo.prefix
+} else {
+    Split-Path -Parent $pythonExe
+}
+$pythonExeRelative = if (Test-Path (Join-Path $pythonSourceRoot "Scripts\python.exe")) {
+    "Scripts\python.exe"
+} else {
+    Split-Path -Leaf $pythonExe
+}
+Copy-Tree -Source $pythonSourceRoot -Destination $pythonDir
+$bundledPythonExe = Join-Path $pythonDir $pythonExeRelative
 
 $workspaceItems = @(
     "sg_preflight",
@@ -135,7 +147,6 @@ $workspaceItems = @(
     "demo",
     "pyproject.toml",
     "README.md",
-    "CHANGELOG.md",
     "LICENSE",
     "NOTICE.md",
     "SECURITY.md",
@@ -145,7 +156,6 @@ $workspaceItems = @(
     "framework_sgfx_logo.png",
     "logo_sgfx.png",
     "framework_icon.png",
-    "game_icon.png",
     "kb_key_F1.png",
     "kb_key_F2.png",
     "kb_key_F3.png",
@@ -160,10 +170,6 @@ if ($IncludeEvidence) {
 if ($IncludeMusic) {
     $workspaceItems += "SERGFX.wav"
     $workspaceItems += "SERGFX.mp3"
-    if ($IncludeDevEasterEggs) {
-        $workspaceItems += "BAChefPeePee.wav"
-        $workspaceItems += "BAChefPeePee.mp3"
-    }
 }
 foreach ($item in $workspaceItems) {
     $source = Join-Path $repoRoot $item
@@ -183,7 +189,7 @@ function Set-ShellIniDefaults {
     )
 
     $iniContent = if (Test-Path $IniPath) { Get-Content -LiteralPath $IniPath -Raw } else { "" }
-    $shellSection = "[sg_preflight_native_shell]`r`ndisplay_mode=cinematic`r`nmusic_enabled=$MusicEnabledValue`r`nsfx_enabled=1`r`n"
+    $shellSection = "[sg_preflight_native_shell]`r`ndisplay_mode=work`r`nmusic_enabled=$MusicEnabledValue`r`nsfx_enabled=1`r`n"
 
     if ($iniContent -match "(?ms)^\[sg_preflight_native_shell\].*?(?=^\[|\z)") {
         $iniContent = [regex]::Replace(
@@ -208,13 +214,14 @@ if (Test-Path $bundleIniTemplatePath) {
 }
 Set-ShellIniDefaults -IniPath $bundleIniPath -MusicEnabledValue $musicEnabledValue
 
-$resourceCandidates = @(
-    (Join-Path $repoRoot "UnleashedRecompResources-main\UnleashedRecompResources-main"),
-    (Join-Path $repoRoot "UnleashedRecompResources-main"),
-    (Join-Path $repoRoot "UnleashedRecompResources"),
-    (Join-Path $repoRoot "UnleashedRecomp-1.0.3\UnleashedRecomp-1.0.3\UnleashedRecompResources"),
-    (Join-Path $repoRoot "Unleashed Recomp - Windows (Complete Installation) 1.0.3\resources")
-)
+$resourceCandidates = @()
+if ($ReferenceResourcesRoot) {
+    $resourceCandidates += $ReferenceResourcesRoot
+}
+$genericReferenceResources = Join-Path $repoRoot "resources\reference-ui"
+if (Test-Path $genericReferenceResources) {
+    $resourceCandidates += $genericReferenceResources
+}
 $resourceRoot = $null
 if ($IncludeReferenceResources) {
     foreach ($candidate in $resourceCandidates) {
@@ -265,7 +272,7 @@ Set-Content -Path (Join-Path $resolvedBundleDir "run_native_shell.bat") -Value $
 
 $manifest = [ordered]@{
     exe = (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe")
-    python = (Join-Path $pythonDir "python.exe")
+    python = $bundledPythonExe
     workspace = $workspaceDir
     resources = if ($resourceRoot) { $resourcesDir } else { "" }
     fonts = if ($IncludeFonts) { $fontsDir } else { "" }
@@ -278,13 +285,12 @@ $manifest = [ordered]@{
     include_reference_resources = [bool]$IncludeReferenceResources
     include_fonts = [bool]$IncludeFonts
     include_music = [bool]$IncludeMusic
-    include_dev_easter_eggs = [bool]$IncludeDevEasterEggs
     warnings = @(
         if (-not $IncludeRepoMirror) { "Repo mirror omitted by default. Live SG slice discovery will stay empty unless an external mirror is provided." }
         if (-not $IncludeEvidence) { "Generated evidence was omitted by default." }
-        if (-not $IncludeReferenceResources) { "Reference Unleashed-style DDS resources were omitted by default." }
+        if (-not $IncludeReferenceResources) { "Optional reference UI resources were omitted by default." }
         if (-not $IncludeFonts) { "Optional shell fonts were omitted by default; runtime will fall back to bundled/system fonts when needed." }
-        if (-not $IncludeMusic) { "Optional music tracks were omitted by default and bundle-root imgui.ini was set to music_enabled=0." }
+        if (-not $IncludeMusic) { "Optional audio tracks were omitted by default and bundle-root imgui.ini was set to music_enabled=0." }
     ) | Where-Object { $_ }
 }
 $manifest | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $resolvedBundleDir "bundle_manifest.json") -Encoding UTF8

@@ -145,7 +145,7 @@ class HeaderBanner(QWidget):
         painter.drawLine(int(square_x + square_w + 14), 56, int(rect.width() * 0.78), 56)
 
 
-class UnleashedPanel(QGroupBox):
+class OperatorPanel(QGroupBox):
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(title, parent)
         self.setContentsMargins(16, 34, 16, 16)
