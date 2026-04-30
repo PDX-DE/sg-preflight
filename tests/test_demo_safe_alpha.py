@@ -22,6 +22,7 @@ TEAM_FACING_FILES = (
     Path("docs/AGENT_HANDOFF.md"),
     Path("docs/TEAM_FEEDBACK_CAPTURE.md"),
     Path("docs/TEAMS_DAILY_STATUS.md"),
+    Path("docs/ALPHA_REMAINING_WORK.md"),
 )
 
 FORBIDDEN_TEAM_FACING_PATTERNS = (
@@ -114,6 +115,34 @@ class TestDemoSafeAlpha(unittest.TestCase):
         self.assertIn("not production workflow yet", status)
         self.assertIn("Jira access is still missing", status)
         self.assertIn("Review Board workflow", status)
+
+    def test_remaining_work_doc_separates_done_next_and_blocked_items(self) -> None:
+        remaining = (ROOT / "docs" / "ALPHA_REMAINING_WORK.md").read_text(encoding="utf-8")
+
+        self.assertIn("Done In Repo", remaining)
+        self.assertIn("Tool-Side Next", remaining)
+        self.assertIn("Human Or Access Blocked", remaining)
+        self.assertIn("Do Not Start Yet", remaining)
+        self.assertIn("Review Board workflow validation", remaining)
+        self.assertIn("Jira access", remaining)
+        self.assertIn("Do not resend", remaining)
+
+    def test_jana_sync_has_requested_one_page_structure_and_safe_cpp_framing(self) -> None:
+        jana = (ROOT / "docs" / "JANA_SYNC_PREP.md").read_text(encoding="utf-8")
+
+        for heading in [
+            "What Is Already Done",
+            "What Was Proven On Real Work",
+            "What Is Still Prototype",
+            "What I Need",
+            "If Asked Why C++",
+        ]:
+            self.assertIn(heading, jana)
+
+        self.assertIn("The Python layer remains the QA backend", jana)
+        self.assertIn("native operator surface", jana)
+        self.assertNotIn("High-Performance Computing", jana)
+        self.assertNotIn("FPS drops", jana)
 
 
 if __name__ == "__main__":

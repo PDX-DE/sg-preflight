@@ -6,6 +6,50 @@ Date: 30 April 2026
 
 SGFX / Project Quality-Hero is ready to show as a team-feedback alpha, centered on the Review Board. It is useful for status, evidence, screenshot triage, package traceability, manual review support, and decision tracking. It is not ready to claim production integration.
 
+## What Is Already Done
+
+- Python backend / CLI for SG QA checks and evidence.
+- Web Review Board for quick status and review.
+- Native C++ local operator shell for logs, artifacts, manual review actions, and local-heavy workflows.
+- Ticket package generation.
+- Screenshot battery and candidate review gallery.
+- Daily QA digest.
+- Review-owner decision tracking.
+- External findings tracking.
+- Copy-ready status updates.
+- Package verification.
+
+## What Was Proven On Real Work
+
+- Used on `IDCEVODEV-960073`.
+- Confirmed scope: `NA8 / G78 / G50`.
+- Representative local BMW export/smoke: `3/3 passed`.
+- Screenshot battery: `24/27 covered`.
+- Only unresolved exact family: `lights_OnlyCones`.
+- Remaining items are review-owner, visual verdict, RaCo signoff, Jira, or BMW/access-bound.
+
+## What Is Still Prototype
+
+- Native UI flow needs team feedback.
+- Team adoption is not validated yet.
+- The exact best review workflow needs teammate input.
+- RaCo/Blender manual signoff wording still needs agreement.
+- Daily automatic run process should remain opt-in until the team confirms value.
+- Jira/BMW integration depends on access and process clarity.
+
+## What I Need
+
+- Jira access.
+- Feedback from 3D colleagues on whether the Review Board workflow matches real QA work.
+- Confirmation on what counts as done for screenshot and RaCo/manual review.
+- Formal tickets so SGFX work can be prioritized correctly.
+
+## If Asked Why C++
+
+The Python layer remains the QA backend because it is best for automation, data parsing, reporting, and integration with existing scripts.
+
+The C++ shell is the native operator surface. It is useful for local-heavy workflows: responsive UI, log visibility, artifact opening, keyboard-driven interaction, screenshot/manual evidence workflows, and future RaCo/Blender/BMW tool orchestration.
+
 ## Current Ticket Snapshot
 
 - Ticket: `IDCEVODEV-960073`

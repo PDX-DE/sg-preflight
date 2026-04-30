@@ -224,7 +224,7 @@ Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-
 Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate-pilot-playbook.md).
 QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-alignment.md).
 SG checker coverage lives in [docs/sg-checker-coverage-matrix.md](docs/sg-checker-coverage-matrix.md).
-Team alpha prep lives in [docs/TEAM_DEMO_PLAN.md](docs/TEAM_DEMO_PLAN.md), [docs/JANA_SYNC_PREP.md](docs/JANA_SYNC_PREP.md), [docs/ROADMAP_NEXT.md](docs/ROADMAP_NEXT.md), and [docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md).
+Team alpha prep lives in [docs/ALPHA_REMAINING_WORK.md](docs/ALPHA_REMAINING_WORK.md), [docs/TEAM_DEMO_PLAN.md](docs/TEAM_DEMO_PLAN.md), [docs/TEAM_FEEDBACK_CAPTURE.md](docs/TEAM_FEEDBACK_CAPTURE.md), [docs/TEAMS_DAILY_STATUS.md](docs/TEAMS_DAILY_STATUS.md), [docs/JANA_SYNC_PREP.md](docs/JANA_SYNC_PREP.md), [docs/ROADMAP_NEXT.md](docs/ROADMAP_NEXT.md), and [docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md).
 Future desktop-shell research and visual-direction notes live under [docs/research](docs/research), while the experimental shell itself still wraps the same Python actions, reports, and evidence model.
 The native C++ shell scaffold lives under [desktop_native](desktop_native/README.md) and uses the same `launch-action` / `desktop-state` backend contract rather than forking the QA logic.
 It now also supports direct recent-run browsing, linked run/result drilldown beside action state, richer run-output and source-file panels, broader copy/export surfaces from the same persisted SG evidence model, automatic repo-root discovery when launched from `build\...\Release`, and Review Board/manual-review workflows around the same Python backend.
