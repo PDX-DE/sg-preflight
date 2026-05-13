@@ -122,6 +122,52 @@ class TestReviewState(unittest.TestCase):
         self.assertEqual(verification["errors"], [])
         self.assertIn("review_priority_json", verification["optional_files"])
 
+    def test_review_board_promotes_new_manual_diff_from_daily_delta(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture = create_review_package_fixture(root)
+            snapshot_root = fixture["snapshot_root"]
+            write_json(
+                snapshot_root / "review-priority-ranking.json",
+                {
+                    "created_at": "2026-05-13T08:00:00",
+                    "scope_profiles": ["G50"],
+                    "ranked_items": [
+                        {
+                            "profile_id": "G50",
+                            "filter_name": "mirrors_leftView",
+                            "verdict": "needs_manual_review",
+                            "priority_level": "P1",
+                            "priority_score": 88,
+                            "reason": "Diff payload exists and needs a human pass/fail decision.",
+                            "signals": ["diff review needed"],
+                        }
+                    ],
+                },
+            )
+            write_json(
+                snapshot_root / "daily-qa-delta-summary.json",
+                {
+                    "current_created_at": "2026-05-13T08:00:00",
+                    "previous_created_at": "2026-05-12T08:00:00",
+                    "new_failures": [],
+                    "resolved_failures": [],
+                    "new_screenshot_diffs": ["battery:G50:mirrors_leftView"],
+                    "unchanged_blockers": [],
+                    "changed_counts": {"current": {}, "previous": {}},
+                    "top_five_to_review": ["G50: `mirrors_leftView` produced a new diff payload."],
+                },
+            )
+
+            state = build_review_board_state("IDCEVODEV-960073", root)
+            item = state["top_review_priority_items"][0]
+
+        self.assertEqual(item["priority_level"], "P0")
+        self.assertEqual(item["attention_category"], "must inspect")
+        self.assertTrue(item["is_new_since_previous_run"])
+        self.assertIn("new since previous run", item["signals"])
+        self.assertIn("New since previous run", item["reason"])
+
     def test_load_helpers_return_structured_json_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

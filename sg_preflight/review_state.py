@@ -687,16 +687,20 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
     for item in review_priority["ranked_items"]:
         item_key = _priority_key(item)
         is_new = item_key in new_review_keys
+        computed_level = _priority_level(item, is_new=is_new)
+        reason = str(item.get("reason", "")).strip()
+        if is_new and "new since previous run" not in reason.casefold():
+            reason = f"{reason} New since previous run." if reason else "New since previous run."
         top_review_items.append(
             {
                 "profile_id": str(item.get("profile_id", "")),
                 "filter_name": str(item.get("filter_name", "")),
                 "verdict": str(item.get("verdict", "")),
                 "priority_score": _priority_score_from_payload(item, is_new=is_new),
-                "priority_level": str(item.get("priority_level", "")) or _priority_level(item, is_new=is_new),
+                "priority_level": computed_level,
                 "attention_category": _priority_attention_category(item, is_new=is_new),
                 "signals": _priority_signals_from_payload(item, is_new=is_new),
-                "reason": str(item.get("reason", "")),
+                "reason": reason,
                 "recommendation": str(item.get("recommendation", "")),
                 "log_path": str(item.get("log_path", "")),
                 "is_new_since_previous_run": is_new,

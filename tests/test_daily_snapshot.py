@@ -14,6 +14,7 @@ from sg_preflight.daily_snapshot import (
     _review_priority_level,
     _review_priority_payload,
     _review_priority_score,
+    _render_review_priority_markdown,
     _render_local_battery_override_lua,
     _render_local_call_screenshot_override_lua,
     _snapshot_result_from_dict,
@@ -76,6 +77,114 @@ class TestDailySnapshot(unittest.TestCase):
         self.assertEqual(payload["ranked_items"][0]["filter_name"], "lights_OnlyCones")
         self.assertIn("runtime crash", payload["ranked_items"][0]["signals"])
         self.assertIn("cone family", payload["ranked_items"][0]["signals"])
+
+    def test_review_priority_ranking_keeps_all_p0_to_p3_items_with_reasons(self) -> None:
+        items = [
+            BmwBatteryResult(
+                profile_id="G50",
+                bmw_profile_id="G50_EVO",
+                filter_name="mirrors_leftView",
+                verdict="scenario_output_missing",
+                status="failed",
+                results_root="out/g50/mirrors",
+                log_path="out/g50-mirrors.log",
+                expected_count=1,
+                actual_count=1,
+                missing_expected_baseline="mirrors_leftView.png",
+                actual_files=("mirrors_wrongName.png",),
+            ),
+            BmwBatteryResult(
+                profile_id="G50",
+                bmw_profile_id="G50_EVO",
+                filter_name="countryVariant_SelectiveYellow",
+                verdict="baseline_candidate_ready",
+                status="completed",
+                results_root="out/g50/selective-yellow",
+                log_path="out/g50-selective-yellow.log",
+                actual_count=1,
+                target_output_present=True,
+                actual_files=("countryVariant_SelectiveYellow.png",),
+            ),
+            BmwBatteryResult(
+                profile_id="G65",
+                bmw_profile_id="G65_EVO",
+                filter_name="default",
+                verdict="baseline_candidate_ready",
+                status="completed",
+                results_root="out/g65/default",
+                log_path="out/g65-default.log",
+                actual_count=1,
+                target_output_present=True,
+                actual_files=("default.png",),
+            ),
+            BmwBatteryResult(
+                profile_id="G65",
+                bmw_profile_id="G65_EVO",
+                filter_name="default_Static",
+                verdict="likely_ok",
+                status="completed",
+                results_root="out/g65/default-static",
+                log_path="out/g65-default-static.log",
+                expected_count=1,
+                actual_count=1,
+                compare_ok=True,
+                actual_files=("default_Static.png",),
+            ),
+            BmwBatteryResult(
+                profile_id="G70",
+                bmw_profile_id="G70_EVO",
+                filter_name="trimline_missingBaseline",
+                verdict="baseline_missing",
+                status="failed",
+                results_root="out/g70/trimline",
+                log_path="out/g70-trimline.log",
+                actual_count=1,
+                missing_expected_baseline="trimline_missingBaseline.png",
+                actual_files=("trimline_missingBaseline.png",),
+            ),
+        ]
+        snapshot = _snapshot_result_from_dict(
+            {
+                "created_at": "2026-05-13T08:00:00",
+                "scope_profiles": ["G50", "G65", "G70"],
+                "bmw_repo_root": "C:/repo/digital-3d-car-models",
+                "config_check": {
+                    "status": "ready",
+                    "python_exe": "python.exe",
+                    "repo_root": "C:/repo/digital-3d-car-models",
+                    "log_path": "out/config.log",
+                },
+                "smoke_results": [],
+                "battery_results": [item.to_dict() for item in items],
+                "blocked_steps": [],
+                "top_review_items": [],
+                "notes": [],
+            }
+        )
+
+        payload = _review_priority_payload(snapshot)
+        ranked_by_filter = {item["filter_name"]: item for item in payload["ranked_items"]}
+
+        self.assertEqual(set(ranked_by_filter), {item.filter_name for item in items})
+        self.assertEqual(ranked_by_filter["mirrors_leftView"]["priority_level"], "P0")
+        self.assertEqual(ranked_by_filter["trimline_missingBaseline"]["priority_level"], "P0")
+        self.assertEqual(ranked_by_filter["countryVariant_SelectiveYellow"]["priority_level"], "P1")
+        self.assertEqual(ranked_by_filter["default"]["priority_level"], "P2")
+        self.assertEqual(ranked_by_filter["default_Static"]["priority_level"], "P3")
+        self.assertIn("missing candidate", ranked_by_filter["mirrors_leftView"]["signals"])
+        self.assertIn("missing baseline", ranked_by_filter["trimline_missingBaseline"]["signals"])
+        self.assertIn("known risk: Selective Yellow", ranked_by_filter["countryVariant_SelectiveYellow"]["signals"])
+        for item in payload["ranked_items"]:
+            self.assertRegex(item["priority_level"], r"^P[0-3]$")
+            self.assertTrue(item["reason"])
+            self.assertTrue(item["attention_category"])
+
+        markdown = _render_review_priority_markdown(snapshot)
+        self.assertIn("P0", markdown)
+        self.assertIn("P1", markdown)
+        self.assertIn("P2", markdown)
+        self.assertIn("P3", markdown)
+        self.assertIn("Selective Yellow", markdown)
 
     def test_ensure_idcevo_bmw_support_files_copies_generic_bmw_support_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

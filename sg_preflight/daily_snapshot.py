@@ -62,6 +62,22 @@ _CONFIG_SENTINEL = "SGPREFLIGHT_CONFIG_RESULT="
 _LUA_TEST_STATUS_SENTINEL = "SGPREFLIGHT_LUA_TEST_STATUS="
 _LUA_SCREENSHOT_STATUS_SENTINEL = "SGPREFLIGHT_LUA_SCREENSHOT_STATUS="
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+_REVIEW_PRIORITY_ORDER = {"P0": 3, "P1": 2, "P2": 1, "P3": 0}
+_KNOWN_RISK_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("LightFX", ("lightfx", "lights_", "light_")),
+    ("WelcomeFX", ("welcomefx", "welcome_animation", "welcome animation")),
+    ("Iconic Glow", ("iconicglow", "iconic_glow", "iconic glow")),
+    ("Selective Yellow", ("selectiveyellow", "selective_yellow", "selective yellow")),
+    ("mirrors", ("mirror", "mirrors")),
+    ("rims", ("rim", "rims", "wheel")),
+    ("logos", ("logo", "logos")),
+    ("flaps", ("flap", "flaps")),
+    ("doors", ("door", "doors")),
+    ("hood", ("hood",)),
+    ("tailgate", ("tailgate",)),
+    ("trimline", ("trimline", "trim_line")),
+    ("country variant", ("countryvariant", "country_variant", "country variant")),
+)
 _LOCAL_BATTERY_TEST_OVERRIDES = {
     "lights_LowBeam": (
         'if testViews["lights_LowBeam"] ~= nil then\n'
@@ -637,41 +653,94 @@ def _scenario_image_names(root: Path) -> tuple[str, ...]:
 
 
 def _battery_gap_recommendation(item: BmwBatteryResult) -> str:
+    if item.verdict == "runtime_crash":
+        return "Treat as a technical blocker before manual screenshot approval."
     if item.verdict == "scenario_output_missing":
         return "Treat as config/output mismatch before human visual review."
+    if item.verdict == "needs_manual_review":
+        return "Open the diff payload and record a human pass/fail decision."
     if item.verdict == "baseline_candidate_ready":
-        return "Candidate output exists; quick baseline-approval pass is possible."
+        return "Candidate output exists; manual baseline review can start."
     if item.verdict == "proxy_candidate_ready":
         return "Proxy output exists; it validates local lamp-state rendering but not the exact beam-cone effect."
+    if item.verdict == "likely_ok":
+        return "Keep as low-priority evidence; no automatic approval is implied."
+    if item.verdict == "blocked":
+        return "Unblock or rerun the screenshot check before visual comparison."
     return "Generate or locate the expected baseline before visual comparison."
 
 
+def _review_priority_text_blob(item: BmwBatteryResult) -> str:
+    parts = [
+        item.filter_name,
+        item.verdict,
+        item.status,
+        item.error,
+        item.missing_expected_baseline,
+        *item.actual_files,
+        *item.expected_files,
+        *item.diff_files,
+        *item.proxy_files,
+        *item.notes,
+    ]
+    compacted = " ".join(str(part) for part in parts if str(part).strip())
+    spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", compacted)
+    return f"{compacted} {spaced}".casefold()
+
+
+def _review_priority_risk_labels(item: BmwBatteryResult) -> tuple[str, ...]:
+    blob = _review_priority_text_blob(item)
+    labels: list[str] = []
+    for label, needles in _KNOWN_RISK_KEYWORDS:
+        if any(needle.casefold() in blob for needle in needles):
+            labels.append(label)
+    return tuple(dict.fromkeys(labels))
+
+
+def _review_priority_has_dimension_mismatch(item: BmwBatteryResult) -> bool:
+    blob = _review_priority_text_blob(item)
+    return "dimension mismatch" in blob or "size mismatch" in blob
+
+
 def _review_priority_reason(item: BmwBatteryResult) -> str:
-    if item.verdict == "needs_manual_review":
-        return "Diff payload exists and needs a human pass/fail decision."
-    if item.verdict == "baseline_candidate_ready":
-        return "Exact candidate output exists; baseline approval can be done quickly."
-    if item.verdict == "proxy_candidate_ready":
-        return "Proxy lamp-state output exists, but the exact cone-enabled effect is not locally validated."
-    if item.verdict == "likely_ok":
-        return "Exact compare completed locally with no visible diff."
-    if item.verdict == "runtime_crash":
-        return "Local BMW viewer/runtime crashed during this scenario."
-    if item.verdict == "scenario_output_missing":
-        return "Scenario harness ran, but the requested target output name was not emitted."
-    if item.verdict == "baseline_missing":
-        return "No expected baseline is available yet."
-    return "Needs investigation."
+    if _review_priority_has_dimension_mismatch(item):
+        reason = "Screenshot dimensions differ and need blocker-level triage before visual approval."
+    elif item.verdict == "needs_manual_review":
+        reason = "Diff payload exists and needs a human pass/fail decision."
+    elif item.verdict == "baseline_candidate_ready":
+        reason = "Exact candidate output exists, but the baseline still needs a human approval decision."
+    elif item.verdict == "proxy_candidate_ready":
+        reason = "Proxy output exists, but the exact requested screenshot is not locally validated."
+    elif item.verdict == "likely_ok":
+        reason = "Exact compare completed locally with no visible diff; keep as low-priority review evidence."
+    elif item.verdict == "runtime_crash":
+        reason = "Local BMW viewer/runtime crashed during this scenario."
+    elif item.verdict == "scenario_output_missing":
+        reason = "Requested screenshot candidate is missing or emitted under an unexpected name."
+    elif item.verdict == "baseline_missing":
+        reason = "Critical expected baseline is missing, so a reviewer cannot make a direct comparison yet."
+    elif item.verdict == "blocked":
+        reason = "Screenshot check is blocked before a candidate can be reviewed."
+    else:
+        reason = "Needs investigation before this screenshot can be treated as reviewed."
+    risk_labels = _review_priority_risk_labels(item)
+    if risk_labels:
+        reason += f" Known-risk area: {', '.join(risk_labels)}."
+    return reason
 
 
 def _review_priority_score(item: BmwBatteryResult) -> int:
     base = 0
-    if item.verdict == "runtime_crash":
+    if _review_priority_has_dimension_mismatch(item):
+        base = 98
+    elif item.verdict == "runtime_crash":
         base = 100
     elif item.verdict == "needs_manual_review":
         base = 88
     elif item.verdict in {"scenario_output_missing", "baseline_missing"}:
         base = 92
+    elif item.verdict == "blocked":
+        base = 94
     elif item.verdict == "proxy_candidate_ready":
         base = 72
     elif item.verdict == "baseline_candidate_ready":
@@ -691,30 +760,35 @@ def _review_priority_score(item: BmwBatteryResult) -> int:
         family_bonus = 4
     elif family.startswith("welcome_animation_"):
         family_bonus = 2
+    risk_bonus = 20 if _review_priority_risk_labels(item) else 0
 
     diff_bonus = min(max(item.diff_count, 0), 3) * 3
     actual_bonus = 4 if item.actual_count > 0 else 0
     target_bonus = 5 if item.target_output_present else 0
     proxy_bonus = 4 if item.proxy_files else 0
-    return base + family_bonus + diff_bonus + actual_bonus + target_bonus + proxy_bonus
+    return base + family_bonus + risk_bonus + diff_bonus + actual_bonus + target_bonus + proxy_bonus
 
 
 def _review_priority_signals(item: BmwBatteryResult) -> tuple[str, ...]:
     signals: list[str] = []
+    if _review_priority_has_dimension_mismatch(item):
+        signals.append("dimension mismatch")
     if item.verdict == "runtime_crash":
         signals.append("runtime crash")
-    elif item.verdict == "needs_manual_review":
+    if item.verdict == "needs_manual_review":
         signals.append("diff review needed")
-    elif item.verdict == "scenario_output_missing":
-        signals.append("target output missing")
-    elif item.verdict == "baseline_missing":
-        signals.append("baseline missing")
-    elif item.verdict == "proxy_candidate_ready":
-        signals.append("proxy-only coverage")
-    elif item.verdict == "baseline_candidate_ready":
-        signals.append("exact candidate ready")
-    elif item.verdict == "likely_ok":
-        signals.append("exact compare likely ok")
+    if item.verdict == "scenario_output_missing":
+        signals.append("missing candidate")
+    if item.verdict == "baseline_missing" or item.missing_expected_baseline:
+        signals.append("missing baseline")
+    if item.verdict == "proxy_candidate_ready":
+        signals.append("proxy-only output")
+    if item.verdict == "baseline_candidate_ready":
+        signals.append("exact unresolved state")
+    if item.verdict == "likely_ok":
+        signals.append("unchanged exact compare")
+    if item.verdict == "blocked":
+        signals.append("blocked screenshot check")
 
     family = item.filter_name.casefold()
     if family == "lights_onlycones":
@@ -725,6 +799,7 @@ def _review_priority_signals(item: BmwBatteryResult) -> tuple[str, ...]:
         signals.append("lightfx family")
 
     if item.diff_count > 0:
+        signals.append("diff present")
         signals.append(f"{item.diff_count} diff payload")
     if item.actual_count == 0:
         signals.append("no actual output")
@@ -734,29 +809,50 @@ def _review_priority_signals(item: BmwBatteryResult) -> tuple[str, ...]:
         signals.append("target output present")
     if item.proxy_files:
         signals.append("proxy files present")
-    return tuple(signals)
+    signals.extend(f"known risk: {label}" for label in _review_priority_risk_labels(item))
+    return tuple(dict.fromkeys(signals))
 
 
 def _review_priority_level(item: BmwBatteryResult) -> str:
-    if item.verdict in {"runtime_crash", "scenario_output_missing", "baseline_missing"}:
+    if _review_priority_has_dimension_mismatch(item):
+        return "P0"
+    if item.verdict in {"runtime_crash", "scenario_output_missing", "baseline_missing", "blocked"}:
         return "P0"
     if item.verdict in {"needs_manual_review", "proxy_candidate_ready"}:
         return "P1"
     if item.verdict == "baseline_candidate_ready":
-        return "P2"
+        return "P1" if _review_priority_risk_labels(item) else "P2"
+    if item.verdict == "likely_ok":
+        return "P2" if _review_priority_risk_labels(item) else "P3"
     return "P3"
+
+
+def _review_priority_attention_category(level: str) -> str:
+    if level == "P0":
+        return "must inspect"
+    if level == "P1":
+        return "inspect before delivery"
+    if level == "P2":
+        return "normal review"
+    return "low-priority / unchanged"
+
+
+def _ranked_review_priority_key(item: BmwBatteryResult) -> tuple[int, int, int, int, str, str]:
+    level = _review_priority_level(item)
+    return (
+        _REVIEW_PRIORITY_ORDER.get(level, 0),
+        _review_priority_score(item),
+        item.diff_count,
+        item.actual_count,
+        item.profile_id.upper(),
+        item.filter_name.lower(),
+    )
 
 
 def _review_priority_payload(snapshot: DailyQaSnapshot) -> dict[str, Any]:
     items = sorted(
         snapshot.battery_results,
-        key=lambda item: (
-            _review_priority_score(item),
-            item.diff_count,
-            item.actual_count,
-            item.profile_id.upper(),
-            item.filter_name.lower(),
-        ),
+        key=_ranked_review_priority_key,
         reverse=True,
     )
     ranked = [
@@ -766,6 +862,7 @@ def _review_priority_payload(snapshot: DailyQaSnapshot) -> dict[str, Any]:
             "verdict": item.verdict,
             "priority_level": _review_priority_level(item),
             "priority_score": _review_priority_score(item),
+            "attention_category": _review_priority_attention_category(_review_priority_level(item)),
             "signals": list(_review_priority_signals(item)),
             "reason": _review_priority_reason(item),
             "recommendation": _battery_gap_recommendation(item),
@@ -778,14 +875,7 @@ def _review_priority_payload(snapshot: DailyQaSnapshot) -> dict[str, Any]:
             "log_path": item.log_path,
         }
         for item in items
-        if item.verdict in {
-            "needs_manual_review",
-            "baseline_candidate_ready",
-            "proxy_candidate_ready",
-            "likely_ok",
-            "runtime_crash",
-            "scenario_output_missing",
-        }
+        if item.filter_name.strip()
     ]
     return {
         "created_at": snapshot.created_at,
@@ -2229,7 +2319,7 @@ def materialize_daily_qa_snapshot(
             )
         elif item.verdict == "baseline_candidate_ready":
             top_review_items.append(
-                f"{item.profile_id}: `{item.filter_name}` generated a candidate output; baseline approval can be done quickly."
+                f"{item.profile_id}: `{item.filter_name}` generated a candidate output; manual baseline review can start."
             )
         elif item.verdict == "proxy_candidate_ready":
             top_review_items.append(
