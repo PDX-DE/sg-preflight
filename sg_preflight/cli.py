@@ -22,6 +22,11 @@ from sg_preflight.desktop.evidence_model import (
     desktop_recent_runs,
     desktop_run_snapshot,
 )
+from sg_preflight.daily_digest import (
+    build_latest_daily_digest,
+    render_daily_digest_markdown,
+    render_daily_digest_text,
+)
 from sg_preflight.profiles import get_run_profile, list_run_profiles
 from sg_preflight.qa_actions import (
     attach_manual_evidence,
@@ -32,7 +37,7 @@ from sg_preflight.qa_actions import (
     load_action_record,
     save_action_record,
 )
-from sg_preflight.review_messages import build_digest_json, build_morning_digest, build_review_owner_update
+from sg_preflight.review_messages import build_review_owner_update
 from sg_preflight.review_tracking import (
     add_external_finding,
     load_external_findings,
@@ -568,6 +573,7 @@ def build_parser() -> argparse.ArgumentParser:
     daily_digest_latest.add_argument("--workspace", help="Workspace root override")
     daily_digest_latest.add_argument("--ticket-id", help="Optional ticket id filter")
     daily_digest_latest.add_argument("--json", action="store_true", help="Print daily digest payload as JSON")
+    daily_digest_latest.add_argument("--markdown", action="store_true", help="Print daily digest as Markdown")
 
     review_decisions = sub.add_parser(
         "review-decisions",
@@ -1028,9 +1034,7 @@ def main(argv: list[str] | None = None) -> int:
         digest_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
         try:
             if args.daily_digest_command == "latest":
-                state = build_review_board_state(args.ticket_id, digest_root)
-                payload = build_digest_json(state)
-                payload["text"] = build_morning_digest(state)
+                payload = build_latest_daily_digest(args.ticket_id, digest_root)
             else:
                 parser.error(f"Unhandled daily-digest command: {args.daily_digest_command}")
                 return 1
@@ -1039,8 +1043,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if args.json:
             _console_desktop_payload(payload)
+        elif args.markdown:
+            print(_console_safe(render_daily_digest_markdown(payload)))
         else:
-            print(_console_safe(str(payload["text"])))
+            print(_console_safe(render_daily_digest_text(payload)))
         return 0
 
     if args.command == "review-decisions":

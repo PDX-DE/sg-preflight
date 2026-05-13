@@ -406,6 +406,20 @@ class TestCLI(unittest.TestCase):
                     ]
                 )
 
+            digest_markdown_stdout = io.StringIO()
+            with redirect_stdout(digest_markdown_stdout):
+                digest_markdown_result = main(
+                    [
+                        "daily-digest",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--ticket-id",
+                        "IDCEVODEV-960073",
+                        "--markdown",
+                    ]
+                )
+
             desktop_stdout = io.StringIO()
             with redirect_stdout(desktop_stdout):
                 desktop_result = main(
@@ -479,6 +493,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(delta_result, 0)
         self.assertEqual(digest_result, 0)
         self.assertEqual(digest_json_result, 0)
+        self.assertEqual(digest_markdown_result, 0)
         self.assertEqual(desktop_result, 0)
         self.assertEqual(decisions_result, 0)
         self.assertEqual(findings_result, 0)
@@ -489,7 +504,14 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(json.loads(priority_stdout.getvalue())["source"], "daily_snapshot")
         self.assertIn("current_created_at", json.loads(delta_stdout.getvalue()))
         self.assertIn("Daily 3D Car QA Digest", digest_stdout.getvalue())
-        self.assertEqual(json.loads(digest_json_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
+        digest_payload = json.loads(digest_json_stdout.getvalue())
+        self.assertEqual(digest_payload["ticket_id"], "IDCEVODEV-960073")
+        self.assertIn("evidence_prepared", digest_payload["sections"])
+        self.assertIn("manual_review_pending", digest_payload["sections"])
+        self.assertIn("waiting_for_owner", digest_payload["sections"])
+        self.assertIn("suggested_review_order", digest_payload["sections"])
+        self.assertIn("# Daily 3D Car QA Digest", digest_markdown_stdout.getvalue())
+        self.assertIn("Suggested review order", digest_markdown_stdout.getvalue())
         self.assertEqual(json.loads(desktop_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(json.loads(decisions_stdout.getvalue())["decisions"][0]["status"], "follow_up")
         self.assertEqual(json.loads(findings_stdout.getvalue())["findings"][0]["category"], "changelog")
