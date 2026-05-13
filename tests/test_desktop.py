@@ -12,6 +12,7 @@ from sg_preflight.desktop.evidence_model import (
     desktop_action_snapshot,
     desktop_actions_for_profile,
     desktop_blocker_items,
+    desktop_operator_overview,
     desktop_recent_actions,
     desktop_recent_runs,
     desktop_run_snapshot,
@@ -54,6 +55,34 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         )
         self.assertTrue(actions[0].ready)
         self.assertFalse(actions[2].ready)
+
+    def test_operator_overview_summarizes_native_startup_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            _create_checker_files(root)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "SG_RACO_HEADLESS": str(root / "missing" / "RaCoHeadless.exe"),
+                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
+                },
+                clear=False,
+            ):
+                with mock.patch("sg_preflight.services.shutil.which", return_value=None):
+                    overview = desktop_operator_overview(root, profile_id="G65", profiles=[profile])
+
+        self.assertEqual(overview.recommended_profile_id, "G65")
+        self.assertEqual(overview.recommended_action_id, "qa_stack__g65")
+        self.assertGreaterEqual(overview.ready_profile_count, 1)
+        self.assertGreaterEqual(overview.action_count, 5)
+        self.assertGreaterEqual(overview.ready_action_count, 1)
+        self.assertGreaterEqual(overview.blocked_action_count, 1)
+        self.assertGreaterEqual(overview.blocker_count, 1)
+        self.assertGreaterEqual(overview.manual_card_count, 1)
+        self.assertIn("ready", overview.environment_state_counts)
+        self.assertIn("G65", overview.summary_line)
 
     def test_action_snapshot_reads_aggregated_checker_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

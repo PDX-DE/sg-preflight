@@ -16,6 +16,7 @@ from sg_preflight.desktop.evidence_model import (
     desktop_blocker_items,
     desktop_environment_doctor,
     desktop_manual_cards,
+    desktop_operator_overview,
     desktop_profiles,
     desktop_recent_actions,
     desktop_recent_runs,
@@ -674,6 +675,14 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_profiles_parser.add_argument("--workspace", help="Workspace root override")
     desktop_profiles_parser.add_argument("--json", action="store_true", help="Print profile payload as JSON")
 
+    desktop_overview_parser = desktop_state_sub.add_parser(
+        "overview",
+        help="Load compact native-shell startup and heartbeat state",
+    )
+    desktop_overview_parser.add_argument("--profile-id", help="Optional profile filter")
+    desktop_overview_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_overview_parser.add_argument("--json", action="store_true", help="Print overview payload as JSON")
+
     desktop_actions_parser = desktop_state_sub.add_parser("actions", help="List desktop actions for one profile")
     desktop_actions_parser.add_argument("profile_id", help="Profile id such as G65")
     desktop_actions_parser.add_argument("--workspace", help="Workspace root override")
@@ -1202,6 +1211,11 @@ def main(argv: list[str] | None = None) -> int:
         state_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
         if args.desktop_state_command == "profiles":
             payload = desktop_profiles(state_root)
+        elif args.desktop_state_command == "overview":
+            payload = desktop_operator_overview(
+                state_root,
+                profile_id=args.profile_id or "",
+            )
         elif args.desktop_state_command == "actions":
             payload = desktop_actions_for_profile(args.profile_id, state_root)
         elif args.desktop_state_command == "blockers":

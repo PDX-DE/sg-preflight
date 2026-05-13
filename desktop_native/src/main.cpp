@@ -49,6 +49,7 @@ using sg_preflight::native_shell::EnvironmentDoctorItem;
 using sg_preflight::native_shell::ManualCard;
 using sg_preflight::native_shell::ManualReviewProfileItem;
 using sg_preflight::native_shell::ManualEvidenceItem;
+using sg_preflight::native_shell::OperatorOverview;
 using sg_preflight::native_shell::ProfileItem;
 using sg_preflight::native_shell::RecentActionItem;
 using sg_preflight::native_shell::RecentRunItem;
@@ -359,6 +360,7 @@ void RenderSummaryPanel(ShellState& state);
 void RenderEvidencePanel(ShellState& state);
 void RenderArtifactsPanel(ShellState& state);
 void RenderBlockersPanel(ShellState& state);
+void RenderOperatorOverviewPanel(ShellState& state, const char* panel_id, bool compact);
 void RefreshSnapshot(ShellState& state);
 void RefreshRunSnapshot(ShellState& state);
 void RefreshResultPanels(ShellState& state);
@@ -1816,6 +1818,21 @@ std::optional<sg_preflight::native_shell::RunSnapshot> TryLoadRunSnapshot(
     }
 }
 
+std::optional<sg_preflight::native_shell::OperatorOverview> TryLoadOperatorOverview(
+    const BackendConfig& backend,
+    const std::string& profile_id
+) {
+    try {
+        return sg_preflight::native_shell::LoadOperatorOverview(backend, profile_id);
+    } catch (const std::exception& error) {
+        TraceUi(
+            "operator_overview_unavailable profile=\"" + profile_id
+            + "\" error=\"" + SanitiseTraceText(error.what()) + "\""
+        );
+        return std::nullopt;
+    }
+}
+
 std::string NextButtonLabel(const ShellState& state) {
     switch (state.current_screen) {
     case ShellScreen::Language:
@@ -2852,6 +2869,7 @@ InitialShellLoadResult BuildInitialShellLoad(const BackendConfig& backend) {
     result.actions = sg_preflight::native_shell::LoadActions(backend, profile.profile_id);
     result.blockers = sg_preflight::native_shell::LoadBlockers(backend, profile.profile_id);
     result.manual_cards = sg_preflight::native_shell::LoadManualCards(backend, profile.profile_id);
+    result.operator_overview = TryLoadOperatorOverview(backend, profile.profile_id);
     StoreProfileSelectionCache(profile.profile_id, result.actions, result.blockers, result.manual_cards);
     if (!backend.initial_action_id.empty()) {
         const auto action_match = std::find_if(
@@ -2932,6 +2950,7 @@ void PollInitialShellLoad(ShellState& state) {
     state.environment_items = std::move(pending->environment_items);
     state.recent_actions = std::move(pending->recent_actions);
     state.recent_runs = std::move(pending->recent_runs);
+    state.operator_overview = std::move(pending->operator_overview);
     state.snapshot = std::move(pending->snapshot);
     state.run_snapshot = std::move(pending->run_snapshot);
     state.selected_profile_index = pending->selected_profile_index;
@@ -3005,6 +3024,7 @@ void StartProfilePanelLoad(ShellState& state, const std::string& profile_id) {
             result.actions = sg_preflight::native_shell::LoadActions(backend, profile_id);
             result.blockers = sg_preflight::native_shell::LoadBlockers(backend, profile_id);
             result.manual_cards = sg_preflight::native_shell::LoadManualCards(backend, profile_id);
+            result.operator_overview = TryLoadOperatorOverview(backend, profile_id);
         } catch (const std::exception& error) {
             result.error = error.what();
         }
@@ -3053,6 +3073,7 @@ void PollProfilePanelLoad(ShellState& state) {
     state.actions = std::move(pending->actions);
     state.blockers = std::move(pending->blockers);
     state.manual_cards = std::move(pending->manual_cards);
+    state.operator_overview = std::move(pending->operator_overview);
     StoreProfileSelectionCache(CurrentProfileId(state), state.actions, state.blockers, state.manual_cards);
     state.selected_action_id = state.actions.empty()
         ? std::string("daily_live_matrix")
@@ -3127,6 +3148,7 @@ RunRefreshResult BuildRunRefresh(
         result.current_result_run_id = result.recent_runs.front().run_id;
         result.run_snapshot = TryLoadRunSnapshot(backend, result.current_result_run_id);
     }
+    result.operator_overview = TryLoadOperatorOverview(backend, profile_id);
 
     return result;
 }
@@ -3227,6 +3249,7 @@ void PollRunRefresh(ShellState& state) {
         && !pending->current_result_run_id.empty()
         && pending->current_result_run_id == state.current_result_run_id;
     state.current_result_run_id = std::move(pending->current_result_run_id);
+    state.operator_overview = std::move(pending->operator_overview);
     if (pending->refresh_recent_lists) {
         state.recent_actions = std::move(pending->recent_actions);
         state.recent_runs = std::move(pending->recent_runs);
@@ -3337,6 +3360,7 @@ void RefreshProfilePanels(ShellState& state, bool refresh_results) {
         state.actions.clear();
         state.blockers.clear();
         state.manual_cards.clear();
+        state.operator_overview.reset();
         if (refresh_results) {
             state.recent_actions.clear();
             state.recent_runs.clear();
@@ -3352,6 +3376,7 @@ void RefreshProfilePanels(ShellState& state, bool refresh_results) {
             state.manual_cards = sg_preflight::native_shell::LoadManualCards(state.backend, profile_id);
             StoreProfileSelectionCache(profile_id, state.actions, state.blockers, state.manual_cards);
         }
+        state.operator_overview = TryLoadOperatorOverview(state.backend, profile_id);
         if (state.selected_action_id.empty() || (state.selected_action_id != "daily_live_matrix" && FindSelectedAction(state) == nullptr)) {
             state.selected_action_id = state.actions.empty() ? "daily_live_matrix" : state.actions.front().action_id;
         }
@@ -3377,6 +3402,7 @@ void RefreshProfiles(ShellState& state) {
             state.manual_cards.clear();
             state.recent_actions.clear();
             state.recent_runs.clear();
+            state.operator_overview.reset();
             state.snapshot.reset();
             state.run_snapshot.reset();
             return;
@@ -4546,6 +4572,90 @@ void RenderLiveActivitySummaryCard(
         if (DrawPanelButton((panel_key + "-refresh").c_str(), "REFRESH", ImVec2(button_width, ShellUi(28.0f)), false, !state.run_refresh_loading && !state.current_run_id.empty())) {
             StartRunRefresh(state, false);
         }
+    }
+}
+
+void RenderOperatorOverviewPanel(ShellState& state, const char* panel_id, bool compact) {
+    const std::string panel_key = panel_id == nullptr ? "operator-overview" : panel_id;
+    if (!state.operator_overview.has_value()) {
+        ImGui::TextDisabled("%s", "Overview unavailable.");
+        ImGui::TextDisabled("%s", "The shell still uses the individual Python state endpoints.");
+        if (DrawPanelButton((panel_key + "-refresh").c_str(), "REFRESH OVERVIEW", ImVec2(ShellUi(182.0f), ShellUi(28.0f)), false, !CurrentProfileId(state).empty())) {
+            state.operator_overview = TryLoadOperatorOverview(state.backend, CurrentProfileId(state));
+            state.status_line = state.operator_overview.has_value()
+                ? "Refreshed operator overview."
+                : "Operator overview unavailable.";
+        }
+        return;
+    }
+
+    const OperatorOverview& overview = *state.operator_overview;
+    ImGui::Text("Backend: %s", "ready");
+    if (!overview.generated_at_utc.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("| heartbeat %s", overview.generated_at_utc.c_str());
+    }
+
+    const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+    if (!overview.summary_line.empty()) {
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextWrapped("%s", overview.summary_line.c_str());
+        ImGui::PopTextWrapPos();
+    }
+
+    ImGui::Text(
+        "Profiles: %d ready | selected %s",
+        overview.ready_profile_count,
+        overview.recommended_profile_id.empty() ? "(none)" : overview.recommended_profile_id.c_str()
+    );
+    ImGui::Text(
+        "Actions: %d/%d ready | %d blocked",
+        overview.ready_action_count,
+        overview.action_count,
+        overview.blocked_action_count
+    );
+    ImGui::Text(
+        "Follow-up: %d blocker card(s) | %d manual card(s)",
+        overview.blocker_count,
+        overview.manual_card_count
+    );
+
+    std::string environment_counts;
+    for (const auto& [state_key, count] : overview.environment_state_counts) {
+        if (!environment_counts.empty()) {
+            environment_counts += " | ";
+        }
+        environment_counts += state_key + ": " + std::to_string(count);
+    }
+    ImGui::TextDisabled(
+        "Environment: %s",
+        environment_counts.empty() ? "not reported" : environment_counts.c_str()
+    );
+
+    if (!overview.latest_action_run_id.empty() || !overview.latest_run_id.empty()) {
+        ImGui::Spacing();
+        InlineSectionLabel("Latest Backend State");
+        if (!overview.latest_action_run_id.empty()) {
+            ImGui::TextDisabled(
+                "Action: %s [%s]",
+                overview.latest_action_run_id.c_str(),
+                overview.latest_action_status.empty() ? "unknown" : overview.latest_action_status.c_str()
+            );
+        }
+        if (!overview.latest_run_id.empty()) {
+            ImGui::TextDisabled(
+                "Run: %s [%s]",
+                overview.latest_run_id.c_str(),
+                overview.latest_run_status.empty() ? "unknown" : overview.latest_run_status.c_str()
+            );
+        }
+    }
+
+    if (!compact && DrawPanelButton((panel_key + "-refresh").c_str(), "REFRESH OVERVIEW", ImVec2(ShellUi(182.0f), ShellUi(28.0f)), false, !CurrentProfileId(state).empty())) {
+        state.operator_overview = TryLoadOperatorOverview(state.backend, CurrentProfileId(state));
+        state.status_line = state.operator_overview.has_value()
+            ? "Refreshed operator overview."
+            : "Operator overview unavailable.";
     }
 }
 
@@ -6522,6 +6632,9 @@ void RenderRunStatusContent(ShellState& state) {
     }
     ImGui::Spacing();
     ImGui::TextDisabled("%s", state.status_line.c_str());
+    ImGui::Spacing();
+    InlineSectionLabel("OPERATOR OVERVIEW");
+    RenderOperatorOverviewPanel(state, "run-operator-overview", true);
 
     if (!state.last_error.empty() && !IsTransientStateMaterializationError(state.last_error)) {
         ImGui::Spacing();
@@ -8062,6 +8175,18 @@ void RenderStagesScreen(ShellState& state) {
         if (g_small_font != nullptr) {
             ImGui::PushFont(g_small_font);
         }
+        ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "OPERATOR OVERVIEW");
+        if (g_small_font != nullptr) {
+            ImGui::PopFont();
+        }
+        EndScreenTextTransition();
+        RenderOperatorOverviewPanel(state, "stages-operator-overview", true);
+
+        ImGui::Spacing();
+        BeginScreenTextTransition(state);
+        if (g_small_font != nullptr) {
+            ImGui::PushFont(g_small_font);
+        }
         ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.19f, 1.0f), "%s", "MANUAL EVIDENCE");
         if (g_small_font != nullptr) {
             ImGui::PopFont();
@@ -8225,6 +8350,10 @@ void RenderReviewBoardScreen(ShellState& state) {
             ImGui::Spacing();
             InlineSectionLabel("Recent Activity");
             RenderLiveActivityPanel(state, "review-board-live-activity", true, ShellUi(90.0f));
+
+            ImGui::Spacing();
+            InlineSectionLabel("Operator Overview");
+            RenderOperatorOverviewPanel(state, "review-board-operator-overview", true);
 
             ImGui::Spacing();
             InlineSectionLabel("Delta / Human Signals");

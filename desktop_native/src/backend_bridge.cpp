@@ -476,6 +476,31 @@ void from_json(const json& payload, EnvironmentDoctorItem& item) {
     item.next_action = ValueString(payload, "next_action");
 }
 
+void from_json(const json& payload, OperatorOverview& item) {
+    item.workspace_root = ValueString(payload, "workspace_root");
+    item.generated_at_utc = ValueString(payload, "generated_at_utc");
+    item.recommended_profile_id = ValueString(payload, "recommended_profile_id");
+    item.recommended_action_id = ValueString(payload, "recommended_action_id");
+    item.ready_profile_count = ValueInt(payload, "ready_profile_count", 0);
+    item.action_count = ValueInt(payload, "action_count", 0);
+    item.ready_action_count = ValueInt(payload, "ready_action_count", 0);
+    item.blocked_action_count = ValueInt(payload, "blocked_action_count", 0);
+    item.blocker_count = ValueInt(payload, "blocker_count", 0);
+    item.manual_card_count = ValueInt(payload, "manual_card_count", 0);
+    item.latest_action_run_id = ValueString(payload, "latest_action_run_id");
+    item.latest_action_status = ValueString(payload, "latest_action_status");
+    item.latest_run_id = ValueString(payload, "latest_run_id");
+    item.latest_run_status = ValueString(payload, "latest_run_status");
+    item.summary_line = ValueString(payload, "summary_line");
+    if (payload.contains("environment_state_counts") && payload.at("environment_state_counts").is_object()) {
+        for (const auto& [key, value] : payload.at("environment_state_counts").items()) {
+            if (value.is_number_integer()) {
+                item.environment_state_counts[key] = value.get<int>();
+            }
+        }
+    }
+}
+
 void from_json(const json& payload, ReviewPriorityItem& item) {
     item.profile_id = ValueString(payload, "profile_id");
     item.filter_name = ValueString(payload, "filter_name");
@@ -733,6 +758,20 @@ std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& co
     };
     AppendWorkspace(args, config);
     return ParseArray<EnvironmentDoctorItem>(RunJsonCommand(config, args));
+}
+
+OperatorOverview LoadOperatorOverview(const BackendConfig& config, const std::string& profile_id) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"overview",
+        L"--json",
+    };
+    if (!profile_id.empty()) {
+        args.push_back(L"--profile-id");
+        args.push_back(ToWide(profile_id));
+    }
+    AppendWorkspace(args, config);
+    return RunJsonCommand(config, args).get<OperatorOverview>();
 }
 
 ReviewBoardState LoadReviewBoard(const BackendConfig& config, const std::string& ticket_id) {

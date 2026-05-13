@@ -20,6 +20,7 @@ from sg_preflight.services import (
     load_run_report,
     prerequisite_status,
     qa_workflow_status,
+    utc_now,
     workspace_root,
 )
 from sg_preflight.visual_review import build_visual_review_prep
@@ -189,6 +190,26 @@ class DesktopEnvironmentItem:
     summary: str
     path: str
     next_action: str
+
+
+@dataclass(frozen=True)
+class DesktopOperatorOverview:
+    workspace_root: str
+    generated_at_utc: str
+    recommended_profile_id: str
+    recommended_action_id: str
+    ready_profile_count: int
+    action_count: int
+    ready_action_count: int
+    blocked_action_count: int
+    blocker_count: int
+    manual_card_count: int
+    environment_state_counts: dict[str, int]
+    latest_action_run_id: str
+    latest_action_status: str
+    latest_run_id: str
+    latest_run_status: str
+    summary_line: str
 
 
 def _ready_profiles(root: Path, profiles: list[RunProfile] | None = None) -> list[RunProfile]:
@@ -547,6 +568,103 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
         ),
     ]
     return items
+
+
+def _state_counts(items: list[DesktopEnvironmentItem]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        state = item.state.strip().lower() or "unknown"
+        counts[state] = counts.get(state, 0) + 1
+    return counts
+
+
+def desktop_operator_overview(
+    workspace: Path | None = None,
+    *,
+    profile_id: str = "",
+    profiles: list[RunProfile] | None = None,
+) -> DesktopOperatorOverview:
+    root = workspace_root(workspace)
+    ready_profiles = _ready_profiles(root, profiles)
+    normalized_profile = profile_id.strip().lower()
+    selected_profile = next(
+        (
+            profile
+            for profile in ready_profiles
+            if profile.profile_id.strip().lower() == normalized_profile
+        ),
+        ready_profiles[0] if ready_profiles else None,
+    )
+    selected_profile_id = selected_profile.profile_id if selected_profile is not None else ""
+    recommended_action_id = (
+        f"qa_stack__{selected_profile_id.lower()}" if selected_profile_id else ""
+    )
+
+    actions = (
+        desktop_actions_for_profile(selected_profile_id, root, profiles=ready_profiles)
+        if selected_profile_id
+        else []
+    )
+    blockers = (
+        desktop_blocker_items(selected_profile_id, root, profiles=ready_profiles)
+        if selected_profile_id
+        else []
+    )
+    manual_cards = (
+        desktop_manual_cards(selected_profile_id, root, profiles=ready_profiles)
+        if selected_profile_id
+        else []
+    )
+    environment_items = desktop_environment_doctor(root)
+    recent_action_items = (
+        desktop_recent_actions(root, profile_id=selected_profile_id, limit=1)
+        if selected_profile_id
+        else []
+    )
+    recent_run_items = (
+        desktop_recent_runs(root, profile_id=selected_profile_id, limit=1)
+        if selected_profile_id
+        else []
+    )
+
+    ready_action_count = sum(1 for action in actions if action.ready)
+    blocked_action_count = len(actions) - ready_action_count
+    blocker_count = sum(
+        1
+        for item in blockers
+        if item.state.strip().lower() not in {"ready", "covered"}
+    )
+    latest_action = recent_action_items[0] if recent_action_items else None
+    latest_run = recent_run_items[0] if recent_run_items else None
+
+    if selected_profile_id:
+        summary_line = (
+            f"{selected_profile_id}: {ready_action_count}/{len(actions)} native actions ready; "
+            f"{blocker_count} blocker card(s); {len(manual_cards)} manual card(s)."
+        )
+        if latest_action is not None:
+            summary_line += f" Latest action: {latest_action.status}."
+    else:
+        summary_line = "No ready SG profile is available for the native operator overview."
+
+    return DesktopOperatorOverview(
+        workspace_root=str(root),
+        generated_at_utc=utc_now(),
+        recommended_profile_id=selected_profile_id,
+        recommended_action_id=recommended_action_id,
+        ready_profile_count=len(ready_profiles),
+        action_count=len(actions),
+        ready_action_count=ready_action_count,
+        blocked_action_count=blocked_action_count,
+        blocker_count=blocker_count,
+        manual_card_count=len(manual_cards),
+        environment_state_counts=_state_counts(environment_items),
+        latest_action_run_id=latest_action.run_id if latest_action is not None else "",
+        latest_action_status=latest_action.status if latest_action is not None else "",
+        latest_run_id=latest_run.run_id if latest_run is not None else "",
+        latest_run_status=latest_run.status if latest_run is not None else "",
+        summary_line=summary_line,
+    )
 
 
 def desktop_profiles(

@@ -27,6 +27,18 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("manual review", text)
         self.assertIn("does not run RaCo or Blender automatically", text)
 
+    def test_native_shell_consumes_python_owned_operator_overview(self) -> None:
+        bridge_header = (ROOT / "desktop_native" / "src" / "backend_bridge.hpp").read_text(encoding="utf-8")
+        bridge_source = (ROOT / "desktop_native" / "src" / "backend_bridge.cpp").read_text(encoding="utf-8")
+        main_source = (ROOT / "desktop_native" / "src" / "main.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("OperatorOverview", bridge_header)
+        self.assertIn("LoadOperatorOverview", bridge_header)
+        self.assertIn('L"overview"', bridge_source)
+        self.assertIn("desktop-state", bridge_source)
+        self.assertIn("overview unavailable", main_source.lower())
+        self.assertIn("RenderOperatorOverviewPanel", main_source)
+
     def test_native_bundle_script_is_present(self) -> None:
         script_path = ROOT / "scripts" / "package_native_shell_bundle.ps1"
         self.assertTrue(script_path.exists())

@@ -231,6 +231,36 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(run_snapshot_payload["run_id"], run_record.run_id)
         self.assertIn("Counts:", run_snapshot_payload["summary_lines"][1])
 
+    def test_desktop_state_overview_returns_native_startup_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            create_temp_g65_profile(root)
+            _create_checker_files(root)
+            (root / "config").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "config" / "sg_rules_live_g65.json", root / "config" / "sg_rules_live_g65.json")
+
+            overview_stdout = io.StringIO()
+            with redirect_stdout(overview_stdout):
+                result = main(
+                    [
+                        "desktop-state",
+                        "overview",
+                        "--workspace",
+                        str(root),
+                        "--profile-id",
+                        "G65",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(overview_stdout.getvalue())
+        self.assertEqual(payload["recommended_profile_id"], "G65")
+        self.assertEqual(payload["recommended_action_id"], "qa_stack__g65")
+        self.assertGreaterEqual(payload["action_count"], 5)
+        self.assertGreaterEqual(payload["blocker_count"], 1)
+        self.assertIn("summary_line", payload)
+
     def test_ticket_review_cli_forwards_candidate_roots(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

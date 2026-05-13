@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -170,6 +171,25 @@ struct EnvironmentDoctorItem {
     std::string next_action;
 };
 
+struct OperatorOverview {
+    std::string workspace_root;
+    std::string generated_at_utc;
+    std::string recommended_profile_id;
+    std::string recommended_action_id;
+    int ready_profile_count = 0;
+    int action_count = 0;
+    int ready_action_count = 0;
+    int blocked_action_count = 0;
+    int blocker_count = 0;
+    int manual_card_count = 0;
+    std::map<std::string, int> environment_state_counts;
+    std::string latest_action_run_id;
+    std::string latest_action_status;
+    std::string latest_run_id;
+    std::string latest_run_status;
+    std::string summary_line;
+};
+
 struct ReviewPriorityItem {
     std::string profile_id;
     std::string filter_name;
@@ -287,6 +307,7 @@ std::vector<RecentRunItem> LoadRecentRuns(
     int limit
 );
 std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& config);
+OperatorOverview LoadOperatorOverview(const BackendConfig& config, const std::string& profile_id);
 ReviewBoardState LoadReviewBoard(const BackendConfig& config, const std::string& ticket_id);
 ReviewBoardState SetReviewDecision(
     const BackendConfig& config,

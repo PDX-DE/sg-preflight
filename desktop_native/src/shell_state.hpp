@@ -28,6 +28,7 @@ struct ShellState {
     std::vector<sg_preflight::native_shell::EnvironmentDoctorItem> environment_items;
     std::vector<sg_preflight::native_shell::RecentActionItem> recent_actions;
     std::vector<sg_preflight::native_shell::RecentRunItem> recent_runs;
+    std::optional<sg_preflight::native_shell::OperatorOverview> operator_overview;
     std::optional<sg_preflight::native_shell::ActionSnapshot> snapshot;
     std::optional<sg_preflight::native_shell::RunSnapshot> run_snapshot;
     std::optional<sg_preflight::native_shell::ReviewBoardState> review_board;
@@ -94,6 +95,7 @@ struct ProfilePanelLoadResult {
     std::vector<sg_preflight::native_shell::ActionItem> actions;
     std::vector<sg_preflight::native_shell::BlockerItem> blockers;
     std::vector<sg_preflight::native_shell::ManualCard> manual_cards;
+    std::optional<sg_preflight::native_shell::OperatorOverview> operator_overview;
     std::string error;
 };
 
@@ -108,6 +110,7 @@ struct RunRefreshResult {
     bool still_running = false;
     std::vector<sg_preflight::native_shell::RecentActionItem> recent_actions;
     std::vector<sg_preflight::native_shell::RecentRunItem> recent_runs;
+    std::optional<sg_preflight::native_shell::OperatorOverview> operator_overview;
     std::optional<sg_preflight::native_shell::ActionSnapshot> snapshot;
     std::optional<sg_preflight::native_shell::RunSnapshot> run_snapshot;
     std::string error;
@@ -127,6 +130,7 @@ struct InitialShellLoadResult {
     std::vector<sg_preflight::native_shell::EnvironmentDoctorItem> environment_items;
     std::vector<sg_preflight::native_shell::RecentActionItem> recent_actions;
     std::vector<sg_preflight::native_shell::RecentRunItem> recent_runs;
+    std::optional<sg_preflight::native_shell::OperatorOverview> operator_overview;
     std::optional<sg_preflight::native_shell::ActionSnapshot> snapshot;
     std::optional<sg_preflight::native_shell::RunSnapshot> run_snapshot;
     int selected_profile_index = 0;
