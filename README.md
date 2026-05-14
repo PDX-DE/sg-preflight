@@ -450,6 +450,7 @@ This is already fully runnable, but it is still an early internal release:
   - `G65` surfaces real constant drift between `Pivot_Master` and `Module_constants`
   - `G45` proves the multi-family anchor support while still surfacing the shared duplicate BMW carpaint ID
 - visual checks are not automated here
+- `manual-review` is a local step-through companion for the Quality Hero RaCo / Blender checklist: the operator creates a session, records each verdict, adds notes or screenshot references, and exports a summary. It does not review, approve, or auto-pass any step.
 - rack / screenshot / trace integration is not yet wired in
 - missing BMW-side access or a local `digital-3d-car-models` clone is still an explicit blocker for full screenshot-smoke coverage on this machine
 

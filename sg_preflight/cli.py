@@ -27,6 +27,14 @@ from sg_preflight.daily_digest import (
     render_daily_digest_markdown,
     render_daily_digest_text,
 )
+from sg_preflight.manual_review import (
+    VALID_VERDICTS,
+    create_manual_review_session,
+    load_manual_review_session,
+    open_manual_review_tool,
+    record_manual_review_step,
+    render_manual_review_markdown,
+)
 from sg_preflight.profiles import get_run_profile, list_run_profiles
 from sg_preflight.qa_actions import (
     attach_manual_evidence,
@@ -575,6 +583,43 @@ def build_parser() -> argparse.ArgumentParser:
     daily_digest_latest.add_argument("--json", action="store_true", help="Print daily digest payload as JSON")
     daily_digest_latest.add_argument("--markdown", action="store_true", help="Print daily digest as Markdown")
 
+    manual_review = sub.add_parser(
+        "manual-review",
+        help="Create and update operator-recorded RaCo / Blender manual-review sessions",
+    )
+    manual_review_sub = manual_review.add_subparsers(dest="manual_review_command", required=True)
+    manual_review_session = manual_review_sub.add_parser("session", help="Create a manual-review session")
+    manual_review_session.add_argument("--profile", required=True, help="Profile id such as G65")
+    manual_review_session.add_argument("--ticket", required=True, help="Ticket id such as IDCEVODEV-977874")
+    manual_review_session.add_argument("--workspace", help="Workspace root override")
+    manual_review_session.add_argument("--output-root", help="Optional output root for manual-review sessions")
+    manual_review_session.add_argument("--session-id", help="Optional deterministic session id")
+    manual_review_session.add_argument("--json", action="store_true", help="Print session as JSON")
+    manual_review_session.add_argument("--markdown", action="store_true", help="Print session summary as Markdown")
+
+    manual_review_record = manual_review_sub.add_parser("record-step", help="Record one reviewer verdict")
+    manual_review_record.add_argument("session_id", help="Manual-review session id or session.json path")
+    manual_review_record.add_argument("--workspace", help="Workspace root override")
+    manual_review_record.add_argument("--step", required=True, help="Step slug such as blender_visual_check")
+    manual_review_record.add_argument("--verdict", required=True, choices=VALID_VERDICTS, help="Reviewer-recorded verdict")
+    manual_review_record.add_argument("--note", default="", help="Reviewer note")
+    manual_review_record.add_argument("--screenshot", default="", help="Optional existing screenshot path")
+    manual_review_record.add_argument("--json", action="store_true", help="Print updated session as JSON")
+    manual_review_record.add_argument("--markdown", action="store_true", help="Print updated session as Markdown")
+
+    manual_review_summary = manual_review_sub.add_parser("summary", help="Render one manual-review session")
+    manual_review_summary.add_argument("session_id", help="Manual-review session id or session.json path")
+    manual_review_summary.add_argument("--workspace", help="Workspace root override")
+    manual_review_summary.add_argument("--json", action="store_true", help="Print session as JSON")
+    manual_review_summary.add_argument("--markdown", action="store_true", help="Print session summary as Markdown")
+
+    for command_name, tool_name in (("open-raco", "raco"), ("open-blender", "blender")):
+        open_parser = manual_review_sub.add_parser(command_name, help=f"Open {tool_name} for a manual-review step")
+        open_parser.add_argument("session_id", help="Manual-review session id or session.json path")
+        open_parser.add_argument("--workspace", help="Workspace root override")
+        open_parser.add_argument("--step", required=True, help="Step slug to open for")
+        open_parser.add_argument("--json", action="store_true", help="Print launch payload as JSON")
+
     review_decisions = sub.add_parser(
         "review-decisions",
         help="Record and inspect review-owner decisions using JSON as source-of-truth",
@@ -1047,6 +1092,50 @@ def main(argv: list[str] | None = None) -> int:
             print(_console_safe(render_daily_digest_markdown(payload)))
         else:
             print(_console_safe(render_daily_digest_text(payload)))
+        return 0
+
+    if args.command == "manual-review":
+        review_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.manual_review_command == "session":
+                payload = create_manual_review_session(
+                    profile_id=args.profile,
+                    ticket_id=args.ticket,
+                    workspace=review_root,
+                    output_root=Path(args.output_root).resolve() if args.output_root else None,
+                    session_id=args.session_id,
+                )
+            elif args.manual_review_command == "record-step":
+                payload = record_manual_review_step(
+                    args.session_id,
+                    args.step,
+                    args.verdict,
+                    workspace=review_root,
+                    note=args.note,
+                    screenshot=Path(args.screenshot).resolve() if args.screenshot else None,
+                )
+            elif args.manual_review_command == "summary":
+                payload = load_manual_review_session(args.session_id, workspace=review_root)
+            elif args.manual_review_command == "open-raco":
+                payload = open_manual_review_tool(args.session_id, args.step, tool="raco", workspace=review_root)
+            elif args.manual_review_command == "open-blender":
+                payload = open_manual_review_tool(args.session_id, args.step, tool="blender", workspace=review_root)
+            else:
+                parser.error(f"Unhandled manual-review command: {args.manual_review_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"manual-review failed: {exc}"), file=sys.stderr)
+            return 1
+        if getattr(args, "json", False):
+            _console_desktop_payload(payload)
+        elif getattr(args, "markdown", False) or args.manual_review_command == "summary":
+            print(_console_safe(render_manual_review_markdown(payload)))
+        else:
+            print(_console_safe(f"Manual review session: {payload.get('session_id', '')}"))
+            if payload.get("session_path"):
+                print(_console_safe(f"Session JSON: {payload['session_path']}"))
+            if payload.get("markdown_path"):
+                print(_console_safe(f"Markdown: {payload['markdown_path']}"))
         return 0
 
     if args.command == "review-decisions":

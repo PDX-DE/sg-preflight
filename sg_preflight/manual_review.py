@@ -1,0 +1,432 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import subprocess
+import uuid
+from typing import Any
+
+from sg_preflight.services import operator_ui_root, prerequisite_status, utc_now
+from sg_preflight.utils import ensure_parent
+
+
+MANUAL_REVIEW_HEADER = (
+    "Manual review companion. Operator records the verdict per step. "
+    "Not a tool-generated review or approval."
+)
+
+VALID_VERDICTS = ("pass", "fail", "blocked", "not_applicable")
+_PENDING_VERDICT = "pending"
+_SESSION_FILENAME = "session.json"
+_CONFLUENCE_SOURCE = (
+    "PDX_SERGFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt"
+)
+
+
+@dataclass(frozen=True)
+class ManualReviewStepTemplate:
+    slug: str
+    title: str
+    guidance: tuple[str, ...]
+    tool_hint: str
+
+    def to_session_step(self) -> dict[str, Any]:
+        return {
+            "slug": self.slug,
+            "title": self.title,
+            "guidance": list(self.guidance),
+            "tool_hint": self.tool_hint,
+            "verdict": _PENDING_VERDICT,
+            "note": "",
+            "screenshot_path": "",
+            "recorded_at_utc": "",
+            "recorded_by_tool": False,
+        }
+
+
+QUALITY_HERO_STEPS: tuple[ManualReviewStepTemplate, ...] = (
+    ManualReviewStepTemplate(
+        slug="blender_visual_check",
+        title="Blender Visual Check",
+        tool_hint="blender",
+        guidance=(
+            "Open the relevant car for testing using an up to date SG-Toolkit in Blender.",
+            "Rotate car and look for artefacts and missing or broken meshes.",
+            "Test naming and Blender pipeline setup including naming in the outliner.",
+            "Go through Trimlines and test color change and material change options in the Analyze section.",
+            "Test light functionality including Iconic Glow, position lights and Selective Yellow for relevant country variants.",
+            "Check Logos, Lights, Side Mirrors, Rims and Flaps with extra care.",
+        ),
+    ),
+    ManualReviewStepTemplate(
+        slug="constants_info_verification",
+        title="Constants Info Verification",
+        tool_hint="manual",
+        guidance=(
+            "Use the information provided in the car's Epic.",
+            "Check the Constants script in _Common/constants/scripts or the Pivot_Master file in _Workfiles/json.",
+            "Compare Tire Diameter.",
+            "Compare Suspension information.",
+            "Compare Reflections.",
+        ),
+    ),
+    ManualReviewStepTemplate(
+        slug="final_look_comparison_raco_blender_epic",
+        title="Final Look Comparison RaCo & Blender & Epic",
+        tool_hint="raco_blender",
+        guidance=(
+            "Open the Blender and RaCo export scenes of the relevant car plus the Epic.",
+            "Compare the Blender scene to the exported and final look of the RaCo car.",
+            "Check Logos, Lights, Side Mirrors, Rims and Flaps with extra care.",
+            "Using the IDCEvo README, compare EngineType, CountryVariants, TrimLines and light functionality.",
+        ),
+    ),
+    ManualReviewStepTemplate(
+        slug="functionality_test_raco",
+        title="Functionality Test RaCo",
+        tool_hint="raco",
+        guidance=(
+            "With the already open scenes compare animations, lights and Iconic Glow between Blender and RaCo.",
+            "Activate WelcomeFX animations and check exterior light, loop state and animation ID behaviour.",
+            "Make sure Trimlines, Country variants and Exterior lights show relevant changes from Blender to RaCo scenes.",
+            r"Use C:\repos\Seriengrafik\trunk\.pdx\carmodel_data.json for engine and Trimline combinations.",
+        ),
+    ),
+    ManualReviewStepTemplate(
+        slug="anchor_points_test_raco",
+        title="Anchor Points Test RaCo",
+        tool_hint="raco",
+        guidance=(
+            "Open the car's Export scene and add the Abstract Scene View if it is not already set up.",
+            "Change Highlight option to Transparency.",
+            "In the Scene Graph go to Anchorpoints_BoundingBox and inspect the anchor points on screen.",
+            "Use the camera gimble and confirm each anchor point matches the actual tested position.",
+            'Naming convention: APN_BoundingBox_"vehicle_part"_"Position".',
+        ),
+    ),
+    ManualReviewStepTemplate(
+        slug="carpaints_test_raco",
+        title="CarPaints Test RaCo",
+        tool_hint="raco",
+        guidance=(
+            "Have the 3D Car git set up for testing using the Confluence instructions.",
+            "Open the PythonRunner view in the scene and import read_json_carpaints.py.",
+            "Use the car paints in the script and test different materials in multiple angles.",
+            "Check for artefacts between color or Met/Mat options.",
+            "Use the available colors listed at the top of the script.",
+        ),
+    ),
+    ManualReviewStepTemplate(
+        slug="documentation_review",
+        title="Documentation Review",
+        tool_hint="manual",
+        guidance=(
+            "Review 3DCar and Widget documentation relevant to the current ticket.",
+            "Check changelog and README content against what was actually delivered.",
+            "Keep documentation findings separate from visual verdicts.",
+        ),
+    ),
+)
+
+QUALITY_HERO_STEP_TITLES = tuple(step.title for step in QUALITY_HERO_STEPS)
+
+
+def _workspace(workspace: Path | str | None) -> Path:
+    return Path(workspace).resolve() if workspace is not None else Path(__file__).resolve().parents[1]
+
+
+def _slug(value: str) -> str:
+    slug = "".join(ch.lower() if ch.isalnum() else "_" for ch in value.strip())
+    return "_".join(part for part in slug.split("_") if part)
+
+
+def _session_root(
+    *,
+    ticket_id: str,
+    profile_id: str,
+    session_id: str,
+    workspace: Path | str | None,
+    output_root: Path | str | None = None,
+) -> Path:
+    base = Path(output_root).resolve() if output_root is not None else operator_ui_root(_workspace(workspace)) / "manual-reviews"
+    return base / _slug(ticket_id) / _slug(profile_id) / _slug(session_id)
+
+
+def _default_session_id(profile_id: str) -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{_slug(profile_id)}-{stamp}-{uuid.uuid4().hex[:8]}"
+
+
+def _summarize_steps(steps: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {
+        "total_steps": len(steps),
+        "recorded_steps": 0,
+        "pending_steps": 0,
+        "pass": 0,
+        "fail": 0,
+        "blocked": 0,
+        "not_applicable": 0,
+    }
+    for step in steps:
+        verdict = str(step.get("verdict", _PENDING_VERDICT)).strip()
+        if verdict == _PENDING_VERDICT:
+            counts["pending_steps"] += 1
+            continue
+        counts["recorded_steps"] += 1
+        if verdict in counts:
+            counts[verdict] += 1
+    return counts
+
+
+def _write_session(session: dict[str, Any]) -> dict[str, Any]:
+    session["summary"] = _summarize_steps(list(session.get("steps", [])))
+    path = Path(str(session["session_path"]))
+    ensure_parent(path)
+    markdown_path = path.with_name("manual-review-summary.md")
+    session["markdown_path"] = str(markdown_path)
+    markdown_path.write_text(render_manual_review_markdown(session), encoding="utf-8")
+    path.write_text(json.dumps(session, indent=2, ensure_ascii=False), encoding="utf-8")
+    return session
+
+
+def create_manual_review_session(
+    *,
+    profile_id: str,
+    ticket_id: str,
+    workspace: Path | str | None = None,
+    output_root: Path | str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    clean_profile = profile_id.strip()
+    clean_ticket = ticket_id.strip()
+    if not clean_profile:
+        raise ValueError("profile_id is required")
+    if not clean_ticket:
+        raise ValueError("ticket_id is required")
+    clean_session = (session_id or _default_session_id(clean_profile)).strip()
+    session_path_slug = _slug(clean_session)
+    root = _session_root(
+        ticket_id=clean_ticket,
+        profile_id=clean_profile,
+        session_id=session_path_slug,
+        workspace=workspace,
+        output_root=output_root,
+    )
+    session = {
+        "schema_version": 1,
+        "session_id": clean_session,
+        "ticket_id": clean_ticket,
+        "profile_id": clean_profile,
+        "status": "in_progress",
+        "created_at_utc": utc_now(),
+        "updated_at_utc": utc_now(),
+        "source": _CONFLUENCE_SOURCE,
+        "header": MANUAL_REVIEW_HEADER,
+        "session_root": str(root),
+        "session_path": str(root / _SESSION_FILENAME),
+        "markdown_path": str(root / "manual-review-summary.md"),
+        "steps": [step.to_session_step() for step in QUALITY_HERO_STEPS],
+    }
+    return _write_session(session)
+
+
+def _candidate_session_paths(session_id_or_path: str | Path, workspace: Path | str | None) -> list[Path]:
+    raw = Path(str(session_id_or_path))
+    if raw.exists():
+        return [raw if raw.is_file() else raw / _SESSION_FILENAME]
+    root = operator_ui_root(_workspace(workspace)) / "manual-reviews"
+    if not root.exists():
+        return []
+    session_slug = _slug(str(session_id_or_path))
+    return sorted(root.glob(f"*/*/{session_slug}/{_SESSION_FILENAME}"))
+
+
+def load_manual_review_session(session_id_or_path: str | Path, *, workspace: Path | str | None = None) -> dict[str, Any]:
+    matches = [path for path in _candidate_session_paths(session_id_or_path, workspace) if path.is_file()]
+    if not matches:
+        raise FileNotFoundError(f"No manual review session found for {session_id_or_path}")
+    if len(matches) > 1:
+        raise ValueError(f"Manual review session id is ambiguous: {session_id_or_path}")
+    payload = json.loads(matches[0].read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Manual review session is not a JSON object: {matches[0]}")
+    return payload
+
+
+def _find_step(session: dict[str, Any], step_slug: str) -> dict[str, Any]:
+    clean_slug = _slug(step_slug)
+    for step in session.get("steps", []):
+        if isinstance(step, dict) and str(step.get("slug", "")).strip() == clean_slug:
+            return step
+    raise KeyError(f"Unknown manual review step: {step_slug}")
+
+
+def record_manual_review_step(
+    session_id_or_path: str | Path,
+    step_slug: str,
+    verdict: str,
+    *,
+    workspace: Path | str | None = None,
+    note: str = "",
+    screenshot: Path | str | None = None,
+) -> dict[str, Any]:
+    clean_verdict = verdict.strip().lower()
+    if clean_verdict not in VALID_VERDICTS:
+        raise ValueError(f"Unsupported manual review verdict: {verdict}")
+    session = load_manual_review_session(session_id_or_path, workspace=workspace)
+    step = _find_step(session, step_slug)
+    screenshot_path = ""
+    if screenshot is not None and str(screenshot).strip():
+        candidate = Path(screenshot).resolve()
+        if not candidate.is_file():
+            raise FileNotFoundError(f"Manual review screenshot does not exist: {candidate}")
+        screenshot_path = str(candidate)
+    step["verdict"] = clean_verdict
+    step["note"] = note.strip()
+    step["screenshot_path"] = screenshot_path
+    step["recorded_at_utc"] = utc_now()
+    step["recorded_by_tool"] = False
+    session["updated_at_utc"] = utc_now()
+    return _write_session(session)
+
+
+def _step_markdown(step: dict[str, Any]) -> list[str]:
+    title = str(step.get("title", "")).strip()
+    slug = str(step.get("slug", "")).strip()
+    verdict = str(step.get("verdict", _PENDING_VERDICT)).strip() or _PENDING_VERDICT
+    lines = [f"### {title}", f"- Step: `{slug}`", f"- Verdict: [{verdict}]"]
+    if step.get("note"):
+        lines.append(f"- Reviewer note: {step['note']}")
+    if step.get("screenshot_path"):
+        lines.append(f"- Screenshot: `{step['screenshot_path']}`")
+    guidance = step.get("guidance", [])
+    if isinstance(guidance, list) and guidance:
+        lines.append("- Guidance:")
+        lines.extend(f"  - {item}" for item in guidance if str(item).strip())
+    return lines
+
+
+def render_manual_review_markdown(session: dict[str, Any]) -> str:
+    lines = [
+        f"# Manual review session - {session.get('ticket_id', '')} / {session.get('profile_id', '')}",
+        "",
+        MANUAL_REVIEW_HEADER,
+        "",
+        f"- Session: `{session.get('session_id', '')}`",
+        f"- Status: `{session.get('status', 'in_progress')}`",
+        f"- Source: `{session.get('source', _CONFLUENCE_SOURCE)}`",
+        "- Manual RaCo / Blender / screenshot review remains required.",
+        "",
+        "## Summary",
+    ]
+    summary = session.get("summary", {}) if isinstance(session.get("summary", {}), dict) else {}
+    lines.extend(
+        [
+            f"- Recorded steps: {summary.get('recorded_steps', 0)}/{summary.get('total_steps', 0)}",
+            f"- Pending steps: {summary.get('pending_steps', 0)}",
+            "",
+            "## Steps",
+        ]
+    )
+    for step in session.get("steps", []):
+        if isinstance(step, dict):
+            lines.extend(_step_markdown(step))
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _manual_review_root(workspace: Path | str | None) -> Path:
+    return operator_ui_root(_workspace(workspace)) / "manual-reviews"
+
+
+def list_manual_review_sessions(
+    *,
+    workspace: Path | str | None = None,
+    ticket_id: str | None = None,
+) -> list[dict[str, Any]]:
+    root = _manual_review_root(workspace)
+    if not root.exists():
+        return []
+    sessions: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*/*/*/session.json")):
+        try:
+            session = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(session, dict):
+            continue
+        if ticket_id and str(session.get("ticket_id", "")).strip().casefold() != ticket_id.strip().casefold():
+            continue
+        sessions.append(session)
+    return sessions
+
+
+def manual_review_digest_items(
+    *,
+    workspace: Path | str | None = None,
+    ticket_id: str | None = None,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for session in list_manual_review_sessions(workspace=workspace, ticket_id=ticket_id):
+        pending = [
+            step for step in session.get("steps", [])
+            if isinstance(step, dict) and str(step.get("verdict", _PENDING_VERDICT)).strip() == _PENDING_VERDICT
+        ]
+        for step in pending:
+            items.append(
+                {
+                    "label": f"{session.get('profile_id', '')} {session.get('session_id', '')} {step.get('slug', '')}".strip(),
+                    "status": "pending_manual_review",
+                    "detail": f"Operator verdict required for {step.get('title', step.get('slug', 'manual review step'))}.",
+                    "session_id": str(session.get("session_id", "")),
+                    "step_slug": str(step.get("slug", "")),
+                    "path": str(session.get("session_path", "")),
+                    "note": "Manual review companion only; not a tool-generated verdict.",
+                }
+            )
+    return items
+
+
+def _status_item(key: str, workspace: Path | str | None) -> dict[str, str]:
+    statuses = prerequisite_status(_workspace(workspace))
+    for item in statuses:
+        if item.get("key") == key:
+            return item
+    return {"status": "missing", "path": "", "detail": ""}
+
+
+def open_manual_review_tool(
+    session_id_or_path: str | Path,
+    step_slug: str,
+    *,
+    tool: str,
+    workspace: Path | str | None = None,
+    launch: bool = True,
+) -> dict[str, Any]:
+    session = load_manual_review_session(session_id_or_path, workspace=workspace)
+    step = _find_step(session, step_slug)
+    normalized_tool = tool.strip().lower()
+    if normalized_tool not in {"raco", "blender"}:
+        raise ValueError(f"Unsupported manual review tool: {tool}")
+    status_key = "raco_gui" if normalized_tool == "raco" else "blender_executable"
+    status = _status_item(status_key, workspace)
+    if str(status.get("status", "")).strip().lower() != "available":
+        label = "Ramses Composer / RaCo" if normalized_tool == "raco" else "Blender"
+        raise RuntimeError(f"{label} is not configured for manual review launching.")
+    executable = Path(str(status.get("path", ""))).resolve()
+    command = [str(executable)]
+    if launch:
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {
+        "session_id": session["session_id"],
+        "step": {
+            "slug": str(step.get("slug", "")),
+            "title": str(step.get("title", "")),
+            "verdict": str(step.get("verdict", _PENDING_VERDICT)),
+        },
+        "tool": normalized_tool,
+        "status": "launched" if launch else "ready",
+        "command": command,
+    }

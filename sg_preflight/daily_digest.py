@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.manual_review import manual_review_digest_items
 from sg_preflight.review_messages import build_digest_json, build_morning_digest
 from sg_preflight.review_state import build_review_board_state
 
@@ -121,8 +122,9 @@ def _blocker_items(state: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _manual_review_items(state: dict[str, Any]) -> list[dict[str, Any]]:
     profiles = state.get("manual_review_profiles", [])
+    session_items = state.get("manual_review_sessions", [])
     if not isinstance(profiles, list):
-        return []
+        profiles = []
     items: list[dict[str, Any]] = []
     for profile in profiles:
         if not isinstance(profile, dict):
@@ -139,6 +141,10 @@ def _manual_review_items(state: dict[str, Any]) -> list[dict[str, Any]]:
                 "note": str(profile.get("note", "")).strip(),
             }
         )
+    if isinstance(session_items, list):
+        for item in session_items:
+            if isinstance(item, dict):
+                items.append(dict(item))
     return items
 
 
@@ -275,6 +281,7 @@ def build_latest_daily_digest(
         if "No matching review package" not in str(exc):
             raise
         return build_no_data_daily_digest(ticket_id, workspace)
+    state["manual_review_sessions"] = manual_review_digest_items(workspace=workspace, ticket_id=ticket_id)
     return build_daily_digest(state)
 
 
@@ -305,6 +312,7 @@ def build_no_data_daily_digest(
         },
         "review_owner_decisions": {"sections": [], "pending_titles": []},
         "manual_review_profiles": [],
+        "manual_review_sessions": manual_review_digest_items(workspace=workspace, ticket_id=ticket_id),
         "artifact_references": {},
         "top_review_priority_items": [],
         "open_items": [],

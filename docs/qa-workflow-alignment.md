@@ -108,21 +108,22 @@ Current blocker:
 Even after access is available, the intended role of `sg-preflight` is still upstream:
 catch deterministic issues before the heavier BMW smoke runs start.
 
-### 7. Rack, carpaint tuning, and manual visual approval
+### 7. RaCo / Blender, carpaint tuning, and manual visual approval
 
-Current status: manual and hardware-dependent
+Current status: local alpha companion; verdicts remain manual and hardware-dependent
 
 What this means:
 
-- rack work, designer approval, and final visual judgement remain manual
+- RaCo / Blender work, designer approval, and final visual judgement remain manual
+- `manual-review` can create a step-through session for the documented Quality Hero checklist and capture the operator's per-step verdict, notes, and optional screenshot references
 - carpaint catalog sanity can be preflighted here
-- final look approval on rack is still outside the current automation boundary
+- final look approval in RaCo / Blender / rack review is still outside the current automation boundary
 
 Current blocker:
 
-- full end-to-end validation requires rack access, BMW-side setup, and usually `adb`
+- full end-to-end validation requires RaCo / Blender setup, rack access where relevant, BMW-side setup, and usually `adb`
 
-`sg-preflight` should reduce the number of avoidable issues that reach rack sessions.
+`sg-preflight` should make the manual review record more reproducible without turning the tool into the reviewer.
 
 ### 8. Delivery handoff and traceable evidence
 
@@ -155,8 +156,8 @@ The product direction should stay anchored to those workflow failures, not gener
 
 These are not claimed as solved by the current framework:
 
-- Blender visual quality review
-- final look comparison between Blender, RaCo, and Epic
+- automated Blender visual quality review
+- automated final look comparison between Blender, RaCo, and Epic
 - hardware-specific rack behavior
 - BMW screenshot baseline management
 - profiler / size-analysis execution
