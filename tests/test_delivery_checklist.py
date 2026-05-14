@@ -37,6 +37,17 @@ def _write_delivery_workbook(path: Path) -> None:
     workbook.save(path)
 
 
+def _write_export_size_workbook(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "G65"
+    worksheet.append(["Date", "SVN", "Changelog", "Ramses Size", "Logic Size", "Screenshot", "Comment"])
+    worksheet.append(["14.05.2026", "r12345", "r12340", "10.2MB", "1.4MB", "", "fixture row"])
+    worksheet.append(["15.05.2026", "r12399", "r12380", "10.4MB", "1.5MB", "", "latest row"])
+    workbook.save(path)
+
+
 class TestDeliveryChecklist(unittest.TestCase):
     def test_read_delivery_checklist_parses_profile_row_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -82,14 +93,50 @@ class TestDeliveryChecklist(unittest.TestCase):
         self.assertEqual(payload["status"], "no_workbook")
         self.assertFalse(payload["data_available"])
         self.assertEqual(payload["profile_id"], "G65")
-        self.assertIn("Delivery Data - BMW.xlsx", payload["workbook_path"])
+        self.assertIn("BMW Export Size.xlsx", payload["workbook_path"])
         self.assertIn("delivery-checklist data unavailable", payload["summary"].lower())
         self.assertEqual(payload["checks"], [])
+
+    def test_missing_workbook_uses_existing_trunk_delivery_checklist_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trunk = Path(temp_dir) / "repositories" / "trunk"
+            checklist_dir = trunk / ".pdx" / "checkers" / "deliveryChecklist"
+            checklist_dir.mkdir(parents=True)
+
+            resolved = resolve_delivery_checklist_workbook(workspace=trunk)
+            payload = read_delivery_checklist(profile_id="G65", workspace=trunk)
+
+        expected = checklist_dir / "Delivery Data - BMW.xlsx"
+        self.assertEqual(resolved, expected.resolve())
+        self.assertEqual(Path(payload["workbook_path"]), expected.resolve())
+        self.assertNotIn("repositories\\trunk\\repositories\\trunk", payload["workbook_path"])
+
+    def test_read_delivery_checklist_supports_export_size_workbook_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trunk = Path(temp_dir) / "repositories" / "trunk"
+            workbook_path = trunk / "Cars" / "BMW" / "BMW Export Size.xlsx"
+            _write_export_size_workbook(workbook_path)
+
+            payload = read_delivery_checklist(profile_id="G65", workspace=trunk)
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["matched_profile_id"], "G65")
+        self.assertEqual(payload["worksheet"], "G65")
+        self.assertEqual(payload["last_tested"], "15.05.2026")
+        self.assertEqual(payload["svn_revision"], "r12399")
+        self.assertEqual(payload["changelog_revision"], "r12380")
+        checks = {item["key"]: item for item in payload["checks"]}
+        self.assertEqual(checks["ramses_size"]["status"], "recorded")
+        self.assertEqual(checks["ramses_size"]["raw_value"], "10.4MB")
+        self.assertEqual(checks["logic_size"]["status"], "recorded")
+        self.assertEqual(checks["logic_size"]["raw_value"], "1.5MB")
+        self.assertIn("Ramses Size recorded", payload["summary"])
+        self.assertFalse(payload["is_approval"])
 
     def test_resolve_delivery_checklist_workbook_supports_mini_filename(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            workbook_path = root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist" / "Delivery Data - Mini.xlsx"
+            workbook_path = root / "repositories" / "trunk" / "Cars" / "MINI" / "MINI Export Size.xlsx"
             _write_delivery_workbook(workbook_path)
 
             resolved = resolve_delivery_checklist_workbook(workspace=root, brand="Mini")

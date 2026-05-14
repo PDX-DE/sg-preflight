@@ -48,6 +48,12 @@ _HEADER_ALIASES = {
     "interface": "interface",
     "perspectives": "perspectives",
     "perspective": "perspectives",
+    "ramsessize": "ramses_size",
+    "ramses": "ramses_size",
+    "logicsize": "logic_size",
+    "logic": "logic_size",
+    "comment": "comment",
+    "comments": "comment",
 }
 
 
@@ -58,11 +64,15 @@ def _workspace_root(workspace: Path | str | None = None) -> Path:
 
 def _brand_label(brand: str | None) -> str:
     value = str(brand or "BMW").strip()
-    return value.upper() if value.casefold() == "bmw" else value.title()
+    return value.upper() if value.casefold() in {"bmw", "mini"} else value.title()
 
 
 def _workbook_name_for_brand(brand: str | None) -> str:
     return f"Delivery Data - {_brand_label(brand)}.xlsx"
+
+
+def _export_size_workbook_name_for_brand(brand: str | None) -> str:
+    return f"{_brand_label(brand)} Export Size.xlsx"
 
 
 def resolve_delivery_checklist_workbook(
@@ -75,13 +85,21 @@ def resolve_delivery_checklist_workbook(
         return Path(workbook_path).resolve()
     root = _workspace_root(workspace)
     workbook_name = _workbook_name_for_brand(brand)
+    export_size_workbook_name = _export_size_workbook_name_for_brand(brand)
+    brand_label = _brand_label(brand)
     candidates = (
+        root / "repositories" / "trunk" / "Cars" / brand_label / export_size_workbook_name,
+        root / "Cars" / brand_label / export_size_workbook_name,
         root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist" / workbook_name,
         root / ".pdx" / "checkers" / "deliveryChecklist" / workbook_name,
+        root / export_size_workbook_name,
         root / workbook_name,
     )
     for candidate in candidates:
         if candidate.exists():
+            return candidate.resolve()
+    for candidate in candidates:
+        if candidate.parent.exists():
             return candidate.resolve()
     return candidates[0].resolve()
 
@@ -192,6 +210,73 @@ def _find_header(values: tuple[object, ...]) -> dict[int, str]:
     return header if has_profile and has_check else {}
 
 
+def _find_export_size_header(values: tuple[object, ...]) -> dict[int, str]:
+    header: dict[int, str] = {}
+    for index, value in enumerate(values):
+        key = _header_key(value)
+        if key:
+            header[index] = key
+    has_evidence = any(key in {"ramses_size", "logic_size"} for key in header.values())
+    has_context = any(key in {"last_tested", "svn_revision", "changelog_revision"} for key in header.values())
+    return header if has_evidence and has_context else {}
+
+
+def _recorded_check(key: str, label: str, value: object) -> dict[str, str]:
+    raw_value = _cell_text(value)
+    return {
+        "key": key,
+        "label": label,
+        "status": "recorded" if raw_value else "pending",
+        "raw_value": raw_value,
+    }
+
+
+def _sheet_delivery_payload(
+    *,
+    profile: str,
+    workbook: Path,
+    worksheet_title: str,
+    row_index: int,
+    mapped: dict[str, object],
+    brand: str | None,
+    row_count: int,
+) -> dict[str, Any]:
+    checks = [
+        _recorded_check("ramses_size", "Ramses Size", mapped.get("ramses_size")),
+        _recorded_check("logic_size", "Logic Size", mapped.get("logic_size")),
+    ]
+    summary_parts = [
+        f"{item['label']} {_status_text(str(item['status']))}"
+        for item in checks
+        if item["raw_value"] or item["status"] != "pending"
+    ]
+    summary = (
+        f"Delivery checklist {profile}: {'; '.join(summary_parts)}."
+        if summary_parts
+        else f"Delivery checklist {profile}: workbook row found, but no export-size values were recorded."
+    )
+    comment = _cell_text(mapped.get("comment"))
+    if comment:
+        summary = f"{summary} Comment: {comment}"
+    return {
+        "profile_id": profile,
+        "matched_profile_id": worksheet_title,
+        "status": "available",
+        "data_available": True,
+        "workbook_path": str(workbook),
+        "worksheet": worksheet_title,
+        "row": row_index,
+        "last_tested": _cell_text(mapped.get("last_tested")),
+        "svn_revision": _cell_text(mapped.get("svn_revision")),
+        "changelog_revision": _cell_text(mapped.get("changelog_revision")),
+        "workbook_metadata": _workbook_metadata(workbook, brand=brand, row_count=row_count),
+        "checks": checks,
+        "summary": summary,
+        "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+        "is_approval": False,
+    }
+
+
 def read_delivery_checklist(
     *,
     profile_id: str,
@@ -226,12 +311,29 @@ def read_delivery_checklist(
         workbook_row_count = 0
         for worksheet in loaded.worksheets:
             header: dict[int, str] = {}
+            header_has_profile = False
+            latest_sheet_row: dict[str, object] | None = None
+            latest_sheet_row_index = 0
+            sheet_matches_profile = _profile_token(worksheet.title) in candidate_tokens
             for row_index, values in enumerate(worksheet.iter_rows(values_only=True), start=1):
                 workbook_row_count += 1
                 if not header:
                     header = _find_header(values)
+                    if header:
+                        header_has_profile = True
+                    else:
+                        header = _find_export_size_header(values)
+                    continue
+                if not header:
                     continue
                 mapped = _row_mapping(values, header)
+                if not header_has_profile and sheet_matches_profile:
+                    if any(_cell_text(mapped.get(key)) for key in ("last_tested", "svn_revision", "changelog_revision", "ramses_size", "logic_size", "comment")):
+                        latest_sheet_row = mapped
+                        latest_sheet_row_index = row_index
+                    continue
+                if not header_has_profile:
+                    continue
                 profile_value = next((_cell_text(mapped.get(key)) for key in _PROFILE_KEYS if mapped.get(key)), "")
                 if not profile_value:
                     continue
@@ -268,6 +370,16 @@ def read_delivery_checklist(
                     "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
                     "is_approval": False,
                 }
+            if latest_sheet_row is not None:
+                return _sheet_delivery_payload(
+                    profile=profile,
+                    workbook=workbook,
+                    worksheet_title=worksheet.title,
+                    row_index=latest_sheet_row_index,
+                    mapped=latest_sheet_row,
+                    brand=brand,
+                    row_count=workbook_row_count,
+                )
     finally:
         loaded.close()
 
