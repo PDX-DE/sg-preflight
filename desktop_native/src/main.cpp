@@ -969,6 +969,16 @@ bool IsResourceBundleRoot(const std::filesystem::path& root) {
         && PathExists(root / "images" / "options_menu" / "options_static.dds");
 }
 
+bool ShouldSkipResourceSearchDir(const std::filesystem::path& root) {
+    const std::wstring lower_name = Lowercase(root.filename().wstring());
+    return lower_name == L".git"
+        || lower_name == L".venv"
+        || lower_name == L"venv"
+        || lower_name == L"build"
+        || lower_name == L"out"
+        || lower_name == L"__pycache__";
+}
+
 std::optional<std::filesystem::path> DiscoverResourceRoot(const std::filesystem::path& workspace_root) {
     const std::filesystem::path bundle_root = workspace_root.filename() == "workspace"
         ? workspace_root.parent_path()
@@ -988,15 +998,15 @@ std::optional<std::filesystem::path> DiscoverResourceRoot(const std::filesystem:
         if (error || !entry.is_directory()) {
             continue;
         }
-        const std::wstring lower_name = Lowercase(entry.path().filename().wstring());
-        if (lower_name.find(L"unleashedrecompresources") == std::wstring::npos) {
+        if (ShouldSkipResourceSearchDir(entry.path())) {
             continue;
         }
         if (IsResourceBundleRoot(entry.path())) {
             return entry.path();
         }
-        for (const auto& nested : std::filesystem::directory_iterator(entry.path(), error)) {
-            if (error || !nested.is_directory()) {
+        std::error_code nested_error;
+        for (const auto& nested : std::filesystem::directory_iterator(entry.path(), nested_error)) {
+            if (nested_error || !nested.is_directory() || ShouldSkipResourceSearchDir(nested.path())) {
                 continue;
             }
             if (IsResourceBundleRoot(nested.path())) {

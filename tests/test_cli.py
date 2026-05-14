@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -515,6 +515,48 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(json.loads(desktop_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(json.loads(decisions_stdout.getvalue())["decisions"][0]["status"], "follow_up")
         self.assertEqual(json.loads(findings_stdout.getvalue())["findings"][0]["category"], "changelog")
+
+    def test_daily_digest_latest_handles_fresh_workspace_without_review_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            markdown_stdout = io.StringIO()
+            markdown_stderr = io.StringIO()
+            with redirect_stdout(markdown_stdout), redirect_stderr(markdown_stderr):
+                markdown_result = main(
+                    [
+                        "daily-digest",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--markdown",
+                    ]
+                )
+
+            json_stdout = io.StringIO()
+            json_stderr = io.StringIO()
+            with redirect_stdout(json_stdout), redirect_stderr(json_stderr):
+                json_result = main(
+                    [
+                        "daily-digest",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(markdown_result, 0)
+        self.assertEqual(markdown_stderr.getvalue(), "")
+        self.assertIn("No review package found", markdown_stdout.getvalue())
+        self.assertIn("ticket-review", markdown_stdout.getvalue())
+        self.assertIn("Manual review remains required", markdown_stdout.getvalue())
+        self.assertEqual(json_result, 0)
+        self.assertEqual(json_stderr.getvalue(), "")
+        payload = json.loads(json_stdout.getvalue())
+        self.assertFalse(payload["data_available"])
+        self.assertEqual(payload["status"], "no_review_package")
+        self.assertIn("ticket-review", payload["setup_hint"])
 
     def test_ticket_review_cli_sendable_disables_action_bundles(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

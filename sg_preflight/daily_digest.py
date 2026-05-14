@@ -17,6 +17,17 @@ _GUARDRAILS = [
 ]
 
 
+def _review_package_setup_hint(ticket_id: str | None = None) -> str:
+    ticket = ticket_id.strip() if ticket_id else "<ticket-id>"
+    return f"Run python -m sg_preflight ticket-review {ticket} --profile <profile-id> --sendable first."
+
+
+def _workspace_text(workspace: Path | str | None) -> str:
+    if workspace is None:
+        return str(Path.cwd())
+    return str(Path(workspace).resolve())
+
+
 def _string_items(values: object) -> list[str]:
     if not isinstance(values, list):
         return []
@@ -214,6 +225,8 @@ def build_daily_digest(state: dict[str, Any]) -> dict[str, Any]:
     digest = {
         "title": "Daily 3D Car QA Digest",
         "ticket_id": str(state.get("ticket_id", "")).strip(),
+        "status": str(state.get("status", "ready")).strip() or "ready",
+        "data_available": bool(state.get("data_available", True)),
         "date": compact.get("date", ""),
         "scope": list(compact.get("scope", [])),
         "delivery_mode": "opt_in_manual",
@@ -256,8 +269,53 @@ def build_latest_daily_digest(
     ticket_id: str | None = None,
     workspace: Path | str | None = None,
 ) -> dict[str, Any]:
-    state = build_review_board_state(ticket_id, workspace)
+    try:
+        state = build_review_board_state(ticket_id, workspace)
+    except FileNotFoundError as exc:
+        if "No matching review package" not in str(exc):
+            raise
+        return build_no_data_daily_digest(ticket_id, workspace)
     return build_daily_digest(state)
+
+
+def build_no_data_daily_digest(
+    ticket_id: str | None = None,
+    workspace: Path | str | None = None,
+) -> dict[str, Any]:
+    state = {
+        "ticket_id": ticket_id or "",
+        "status": "no_review_package",
+        "data_available": False,
+        "scope": [],
+        "daily_snapshot_summary": {"smoke_completed": 0, "smoke_total": 0},
+        "screenshot_battery_counts": {"total": 0},
+        "daily_delta_summary": {
+            "new_failures_count": 0,
+            "resolved_failures_count": 0,
+            "new_screenshot_diffs_count": 0,
+            "unchanged_blockers_count": 0,
+            "operator_signal": "",
+        },
+        "daily_delta": {
+            "new_failures": [],
+            "new_screenshot_diffs": [],
+            "unchanged_blockers": [],
+            "resolved_failures": [],
+            "top_five_to_review": [],
+        },
+        "review_owner_decisions": {"sections": [], "pending_titles": []},
+        "manual_review_profiles": [],
+        "artifact_references": {},
+        "top_review_priority_items": [],
+        "open_items": [],
+    }
+    digest = build_daily_digest(state)
+    digest["workspace"] = _workspace_text(workspace)
+    digest["no_data_message"] = "No review package found in this workspace."
+    digest["setup_hint"] = _review_package_setup_hint(ticket_id)
+    digest["text"] = render_daily_digest_text(digest)
+    digest["markdown"] = render_daily_digest_markdown(digest)
+    return digest
 
 
 def _format_digest_title(digest: dict[str, Any]) -> str:
@@ -306,6 +364,11 @@ def render_daily_digest_text(digest: dict[str, Any]) -> str:
     else:
         lines.append(f"Scope: {scope}")
     lines.append("Opt-in local summary. Manual review remains required; not a visual approval.")
+    if digest.get("data_available") is False:
+        lines.append(str(digest.get("no_data_message", "No review package found in this workspace.")))
+        setup_hint = str(digest.get("setup_hint", "")).strip()
+        if setup_hint:
+            lines.append(f"Next step: {setup_hint}")
     sections = digest.get("sections", {})
     if isinstance(sections, dict):
         for section in sections.values():
@@ -331,6 +394,12 @@ def render_daily_digest_markdown(digest: dict[str, Any]) -> str:
         "> Opt-in local summary. No Jira or Teams post is performed. Manual review remains required; this is not a visual approval.",
         "",
     ]
+    if digest.get("data_available") is False:
+        lines.append(f"> {digest.get('no_data_message', 'No review package found in this workspace.')}")
+        setup_hint = str(digest.get("setup_hint", "")).strip()
+        if setup_hint:
+            lines.append(f"> Next step: `{setup_hint}`")
+        lines.append("")
     if digest.get("date"):
         lines.append(f"- Date: `{digest['date']}`")
     scope = " / ".join(str(item) for item in digest.get("scope", []) if str(item)) or "n/a"
