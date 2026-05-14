@@ -83,12 +83,14 @@ What this means:
 - the per-car action list now also wraps `printNotUsedResources.py` for local unused-resource scans against the mirrored car project
 - the per-car action list now also wraps the mirrored `.pdx/checkers/deliveryChecklist` assets as a local readiness bridge before BMW-owned delivery steps
 - the CLI can read the operator-local `Delivery Data - BMW.xlsx` workbook for one profile as evidence guidance, without writing back or turning the workbook state into an approval verdict
+- the CLI can read operator-local `Cars\size_analysis\<profile>_<date>.xlsx` export-size analysis workbooks as a separate read-only evidence source, without running the external export-size workflow or modifying those workbooks
 - scene check is also wrapped, but only runs when a local `RaCoHeadless.exe` is configured
 
 Current blocker:
 
 - scene execution still depends on a local `RaCoHeadless.exe`
 - the BMW-backed `deliveryChecklist` procedure is still only bridged here; actual execution still depends on BMW repo access plus the external `ci/scripts` helpers
+- export-size analysis workbook parsing depends on the external operator workflow having generated the workbook first
 
 ### 6. BMW screenshot / export / interface smoke
 

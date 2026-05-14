@@ -183,6 +183,15 @@ python -m sg_preflight delivery-checklist read --profile G65 --json
 
 This command reads `.pdx\checkers\deliveryChecklist\Delivery Data - BMW.xlsx` when it is available in the local SVN checkout. It is evidence guidance only; manual delivery review remains required.
 
+Read an operator-local export-size analysis workbook for one profile without modifying it:
+
+```bash
+python -m sg_preflight export-size-analysis read --profile G65 --workspace C:\repositories\trunk --latest --json
+python -m sg_preflight export-size-analysis read --profile G65 --workspace C:\repositories\trunk --date 20251002 --markdown
+```
+
+This command reads `Cars\size_analysis\<profile>_<date>.xlsx` workbooks when they exist in the local SVN checkout. It does not run the export-size workflow, does not write to the workbook, and does not turn size data into an approval verdict.
+
 Run the full daily live preflight matrix as one action:
 
 ```bash

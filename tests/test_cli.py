@@ -44,6 +44,18 @@ def _write_delivery_checklist_workbook(path: Path) -> None:
     workbook.save(path)
 
 
+def _write_export_size_analysis_workbook(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Overview"
+    worksheet.append(["G65", None, None, None, None, None, None])
+    worksheet.append(["Variant", "TextureCube", "Texture2D", "ArrayResource", "Effect", "Total", "Valeo est."])
+    worksheet.append(["BEV-Basis", 5616, 11935.61, 10677.94, 435.56, 28665.11, 25225.3])
+    worksheet.append(["ICE-MPP", 5616, 11935.61, 10677.94, 435.56, 28666.11, 25226.3])
+    workbook.save(path)
+
+
 class TestCLI(unittest.TestCase):
     def test_list_profiles_includes_live_registry(self) -> None:
         result = subprocess.run(
@@ -139,6 +151,56 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(markdown_result, 0)
         self.assertIn("Delivery checklist data is read-only", markdown_stdout.getvalue())
         self.assertIn("SGFX does not run the delivery checklist or modify the workbook.", markdown_stdout.getvalue())
+
+    def test_export_size_analysis_read_cli_returns_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook_path = root / "Cars" / "size_analysis" / "G65_20251002.xlsx"
+            _write_export_size_analysis_workbook(workbook_path)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "export-size-analysis",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--latest",
+                        "--json",
+                    ]
+                )
+
+            markdown_stdout = io.StringIO()
+            with redirect_stdout(markdown_stdout):
+                markdown_result = main(
+                    [
+                        "export-size-analysis",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--date",
+                        "20251002",
+                        "--markdown",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["profile_id"], "G65")
+        self.assertEqual(payload["matched_profile_id"], "G65")
+        self.assertEqual(payload["workbook_date"], "2025-10-02")
+        self.assertEqual(payload["variant_count"], 2)
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(markdown_result, 0)
+        self.assertIn("Export-size analysis data is read-only", markdown_stdout.getvalue())
+        self.assertIn("SGFX does not run the export size workflow or modify the workbook.", markdown_stdout.getvalue())
+        self.assertIn("BEV-Basis", markdown_stdout.getvalue())
 
     def test_workflow_status_reports_repo_scene_stage(self) -> None:
         result = subprocess.run(
