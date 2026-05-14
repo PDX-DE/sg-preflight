@@ -167,10 +167,6 @@ if ($IncludeRepoMirror) {
 if ($IncludeEvidence) {
     $workspaceItems += "out"
 }
-if ($IncludeMusic) {
-    $workspaceItems += "SERGFX.wav"
-    $workspaceItems += "SERGFX.mp3"
-}
 foreach ($item in $workspaceItems) {
     $source = Join-Path $repoRoot $item
     if (Test-Path $source) {
@@ -225,7 +221,7 @@ if (Test-Path $genericReferenceResources) {
 $resourceRoot = $null
 if ($IncludeReferenceResources) {
     foreach ($candidate in $resourceCandidates) {
-        if ((Test-Path $candidate) -and (Test-Path (Join-Path $candidate "images\common\general_window.dds")) -and (Test-Path (Join-Path $candidate "images\options_menu\options_static.dds"))) {
+        if ((Test-Path $candidate) -and (Test-Path (Join-Path $candidate "images\common\raw\general_window.png")) -and (Test-Path (Join-Path $candidate "images\common\raw\options_static.png"))) {
             $resourceRoot = $candidate
             break
         }
@@ -237,7 +233,6 @@ if ($resourceRoot) {
 
 $downloadsDir = Join-Path $env:USERPROFILE "Downloads"
 $fontNeedles = @(
-    @{ Pattern = "*Seurat*.otf"; Target = "FOT-SeuratPro-M.otf" },
     @{ Pattern = "*NewRodin*.otf"; Target = "FOT-NewRodinPro-DB.otf" },
     @{ Pattern = "DFSoGeiStd-W7.otf"; Target = "DFSoGeiStd-W7.otf" },
     @{ Pattern = "DFHeiStd-W7.otf"; Target = "DFHeiStd-W7.otf" }

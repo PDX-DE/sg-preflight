@@ -126,8 +126,6 @@ try {
 
     Assert-True (-not (Test-Path (Join-Path $workspaceDir "repositories"))) "Safe bundle still contains workspace\\repositories."
     Assert-True (-not (Test-Path (Join-Path $workspaceDir "out"))) "Safe bundle still contains workspace\\out."
-    Assert-True (-not (Test-Path (Join-Path $workspaceDir "SERGFX.wav"))) "Safe bundle still contains SERGFX.wav."
-    Assert-True (-not (Test-Path (Join-Path $workspaceDir "SERGFX.mp3"))) "Safe bundle still contains SERGFX.mp3."
     $ddsFiles = @()
     if (Test-Path $resourcesDir) {
         $ddsFiles = @(Get-ChildItem -LiteralPath $resourcesDir -Recurse -File -Filter *.dds -ErrorAction SilentlyContinue)

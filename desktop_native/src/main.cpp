@@ -198,7 +198,6 @@ struct ShellAssets {
     DdsTextureHandle options_static;
     DdsTextureHandle options_static_flash;
     DdsTextureHandle installer_panel;
-    DdsTextureHandle miles_electric_icon;
     DdsTextureHandle debug_icon;
     DdsTextureHandle arrow_circle;
     DdsTextureHandle pulse_install;
@@ -963,10 +962,10 @@ std::wstring ResolvePythonExecutable(const std::filesystem::path& workspace_root
 }
 
 bool IsResourceBundleRoot(const std::filesystem::path& root) {
-    return PathExists(root / "images" / "common" / "general_window.dds")
-        && PathExists(root / "images" / "common" / "select.dds")
-        && PathExists(root / "images" / "common" / "light.dds")
-        && PathExists(root / "images" / "options_menu" / "options_static.dds");
+    return PathExists(root / "images" / "common" / "raw" / "general_window.png")
+        && PathExists(root / "images" / "common" / "raw" / "select.png")
+        && PathExists(root / "images" / "common" / "raw" / "light.png")
+        && PathExists(root / "images" / "common" / "raw" / "options_static.png");
 }
 
 bool ShouldSkipResourceSearchDir(const std::filesystem::path& root) {
@@ -1235,7 +1234,6 @@ void ReleaseShellAssets() {
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.options_static_flash);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.installer_panel);
-    sg_preflight::native_shell::ReleaseTexture(g_shell_assets.miles_electric_icon);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.debug_icon);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.arrow_circle);
     sg_preflight::native_shell::ReleaseTexture(g_shell_assets.pulse_install);
@@ -1282,36 +1280,19 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
     g_shell_assets.resource_root = *resource_root;
     std::string error;
     const auto upload_context = BuildTextureUploadContext();
-    auto load_required_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target) {
-        if (!sg_preflight::native_shell::LoadDdsTexture(upload_context, *resource_root / relative, target, &error)) {
-            g_shell_assets.error = error;
-            return false;
-        }
-        return true;
-    };
-    auto load_required_preferred_texture = [&](const std::filesystem::path& dds_relative, const std::filesystem::path& png_relative, DdsTextureHandle& target) {
+    auto load_required_resource_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target) {
         std::string local_error;
-        const std::filesystem::path png_path = *resource_root / png_relative;
-        if (PathExists(png_path) && sg_preflight::native_shell::LoadWicTexture(upload_context, png_path, target, 0U, 0U, &local_error)) {
+        const std::filesystem::path asset_path = *resource_root / relative;
+        if (PathExists(asset_path) && sg_preflight::native_shell::LoadWicTexture(upload_context, asset_path, target, 0U, 0U, &local_error)) {
             return true;
         }
-        if (!sg_preflight::native_shell::LoadDdsTexture(upload_context, *resource_root / dds_relative, target, &local_error)) {
-            g_shell_assets.error = local_error;
-            return false;
-        }
-        return true;
+        g_shell_assets.error = local_error.empty() ? ("Texture was not found: " + asset_path.string()) : local_error;
+        return false;
     };
-    auto load_optional_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target) {
+    auto load_optional_resource_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target) {
         std::string optional_error;
-        sg_preflight::native_shell::LoadDdsTexture(upload_context, *resource_root / relative, target, &optional_error);
-    };
-    auto load_optional_preferred_texture = [&](const std::filesystem::path& dds_relative, const std::filesystem::path& png_relative, DdsTextureHandle& target) {
-        std::string optional_error;
-        const std::filesystem::path png_path = *resource_root / png_relative;
-        if (PathExists(png_path) && sg_preflight::native_shell::LoadWicTexture(upload_context, png_path, target, 0U, 0U, &optional_error)) {
-            return;
-        }
-        sg_preflight::native_shell::LoadDdsTexture(upload_context, *resource_root / dds_relative, target, &optional_error);
+        const std::filesystem::path asset_path = *resource_root / relative;
+        sg_preflight::native_shell::LoadWicTexture(upload_context, asset_path, target, 0U, 0U, &optional_error);
     };
     auto load_optional_workspace_texture = [&](const std::filesystem::path& relative, DdsTextureHandle& target, uint8_t alpha_trim_threshold = 0, uint32_t fit_square_canvas_size = 0) {
         std::string optional_error;
@@ -1366,15 +1347,14 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
     };
 
     if (
-        load_required_preferred_texture(std::filesystem::path("images") / "common" / "general_window.dds", std::filesystem::path("images") / "common" / "raw" / "general_window.png", g_shell_assets.general_window)
-        && load_required_preferred_texture(std::filesystem::path("images") / "common" / "select.dds", std::filesystem::path("images") / "common" / "raw" / "select.png", g_shell_assets.select)
-        && load_required_preferred_texture(std::filesystem::path("images") / "common" / "light.dds", std::filesystem::path("images") / "common" / "raw" / "light.png", g_shell_assets.light)
-        && load_required_preferred_texture(std::filesystem::path("images") / "options_menu" / "options_static.dds", std::filesystem::path("images") / "common" / "raw" / "options_static.png", g_shell_assets.options_static)
-        && load_required_preferred_texture(std::filesystem::path("images") / "options_menu" / "options_static_flash.dds", std::filesystem::path("images") / "common" / "raw" / "options_static_flash.png", g_shell_assets.options_static_flash)
-        && load_required_texture(std::filesystem::path("images") / "installer" / "miles_electric_icon.dds", g_shell_assets.miles_electric_icon)
+        load_required_resource_texture(std::filesystem::path("images") / "common" / "raw" / "general_window.png", g_shell_assets.general_window)
+        && load_required_resource_texture(std::filesystem::path("images") / "common" / "raw" / "select.png", g_shell_assets.select)
+        && load_required_resource_texture(std::filesystem::path("images") / "common" / "raw" / "light.png", g_shell_assets.light)
+        && load_required_resource_texture(std::filesystem::path("images") / "common" / "raw" / "options_static.png", g_shell_assets.options_static)
+        && load_required_resource_texture(std::filesystem::path("images") / "common" / "raw" / "options_static_flash.png", g_shell_assets.options_static_flash)
     ) {
-        load_optional_preferred_texture(std::filesystem::path("images") / "common" / "controller.dds", std::filesystem::path("images") / "common" / "raw" / "controller.png", g_shell_assets.controller_icons);
-        load_optional_texture(std::filesystem::path("images") / "common" / "kbm.dds", g_shell_assets.kbm_icons);
+        load_optional_resource_texture(std::filesystem::path("images") / "common" / "raw" / "controller.png", g_shell_assets.controller_icons);
+        load_optional_resource_texture(std::filesystem::path("images") / "common" / "raw" / "kbm.png", g_shell_assets.kbm_icons);
         load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F1.png", "kb_key_F1.png", g_shell_assets.help_key_f1, 32U, 128U);
         load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F2.png", "kb_key_F2.png", g_shell_assets.help_key_f2, 32U, 128U);
         load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F3.png", "kb_key_F3.png", g_shell_assets.help_key_f3, 32U, 128U);
@@ -1390,12 +1370,8 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         load_optional_workspace_or_resource_texture("debug_icon.png", std::filesystem::path("images") / "common" / "raw" / "pdx-dev.png", g_shell_assets.debug_icon, 0U, 512U);
         load_optional_workspace_texture_candidates({"framework_sgfx_logo.png", "framework_icon.png"}, g_shell_assets.framework_icon);
         load_optional_workspace_texture_candidates({"logo_sgfx.png"}, g_shell_assets.game_icon);
-        load_optional_preferred_texture(std::filesystem::path("images") / "installer" / "arrow_circle.dds", std::filesystem::path("images") / "common" / "raw" / "arrow_circle.png", g_shell_assets.arrow_circle);
-        load_optional_preferred_texture(std::filesystem::path("images") / "installer" / "pulse_install.dds", std::filesystem::path("images") / "common" / "raw" / "pulse_install.png", g_shell_assets.pulse_install);
-        for (size_t index = 0; index < g_shell_assets.install_images.size(); ++index) {
-            const std::string filename = "install_00" + std::to_string(index + 1U) + ".dds";
-            load_optional_texture(std::filesystem::path("images") / "installer" / filename, g_shell_assets.install_images[index]);
-        }
+        load_optional_resource_texture(std::filesystem::path("images") / "common" / "raw" / "arrow_circle.png", g_shell_assets.arrow_circle);
+        load_optional_resource_texture(std::filesystem::path("images") / "common" / "raw" / "pulse_install.png", g_shell_assets.pulse_install);
         g_shell_assets.loaded = true;
     }
 }
@@ -1419,13 +1395,7 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
     g_shell_audio.window = *resource_root / "sounds" / "raw" / "sys_actstg_pausewinopen.wav";
     g_shell_audio.page = *resource_root / "sounds" / "raw" / "sys_actstg_pausedecide.wav";
     g_shell_audio.window_close = *resource_root / "sounds" / "raw" / "sys_actstg_pausewinclose.wav";
-    g_shell_audio.music_default = workspace_root / "SERGFX.wav";
-    if (!PathExists(g_shell_audio.music_default)) {
-        g_shell_audio.music_default = workspace_root / "SERGFX.mp3";
-    }
-    if (!PathExists(g_shell_audio.music_default)) {
-        g_shell_audio.music_default = *resource_root / "music" / "raw" / "installer.wav";
-    }
+    g_shell_audio.music_default = *resource_root / "music" / "raw" / "installer.wav";
     g_shell_audio.music = g_shell_audio.music_default;
 
     const std::array<std::filesystem::path, 6> sfx_paths = {
@@ -1700,8 +1670,8 @@ const DdsTextureHandle* ChooseHeaderDebugIcon() {
     if (HasTexture(g_shell_assets.debug_icon)) {
         return &g_shell_assets.debug_icon;
     }
-    if (HasTexture(g_shell_assets.miles_electric_icon)) {
-        return &g_shell_assets.miles_electric_icon;
+    if (HasTexture(g_shell_assets.framework_icon)) {
+        return &g_shell_assets.framework_icon;
     }
     return nullptr;
 }
@@ -4821,10 +4791,6 @@ ImFont* TryLoadFont(ImGuiIO& io, const std::filesystem::path& path, float size) 
 }
 
 void LoadShellFonts(ImGuiIO& io, const std::filesystem::path& workspace_root) {
-    const std::vector<std::filesystem::path> seurat_candidates = {
-        std::filesystem::path("fot-seurat-pro-m") / "FOT-Seurat Pro M" / "FOT-Seurat Pro M.otf",
-        std::filesystem::path("FOT-SeuratPro-M.otf"),
-    };
     const std::vector<std::filesystem::path> new_rodin_candidates = {
         std::filesystem::path("fot-newrodin-pro-db") / "FOT-NewRodin Pro DB" / "FOT-NewRodin Pro DB.otf",
         std::filesystem::path("FOT-NewRodinPro-DB.otf"),
@@ -4839,12 +4805,11 @@ void LoadShellFonts(ImGuiIO& io, const std::filesystem::path& workspace_root) {
         return bundled.has_value() ? bundled : ResolveDownloadedFont(candidates, needles);
     };
 
-    const auto seurat_font = resolve_font(seurat_candidates, {L"seurat"});
     const auto new_rodin_font = resolve_font(new_rodin_candidates, {L"newrodin", L"new rodin"});
     const auto dfs_font = resolve_font(dfs_candidates, {L"dfsogei", L"dfheistd-w7"});
 
     g_title_font = new_rodin_font.has_value() ? TryLoadFont(io, *new_rodin_font, 31.0f) : nullptr;
-    g_body_font = seurat_font.has_value() ? TryLoadFont(io, *seurat_font, 18.0f) : nullptr;
+    g_body_font = nullptr;
     g_small_font = dfs_font.has_value() ? TryLoadFont(io, *dfs_font, 15.0f) : nullptr;
     g_readable_body_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeui.ttf)", 18.0f);
     g_readable_small_font = TryLoadFont(io, R"(C:\Windows\Fonts\segoeui.ttf)", 15.0f);
