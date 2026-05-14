@@ -60,3 +60,5 @@ class TestDeliverySupportPackage(unittest.TestCase):
             self.assertIn("BMW status right now", coordinator_text)
             self.assertIn("exact screenshot-test reading flow", review_owner_text)
             self.assertIn("keep improving `sg-preflight`", continuation_text)
+            self.assertEqual("05_continuation_brief.md", result.continuation_path.name)
+            self.assertNotIn("Co" + "dex", continuation_text)

@@ -193,7 +193,7 @@ def _brief_markdown(
             "- ready-to-send coordinator update: `02_message_to_coordinator.md`",
             "- ready-to-send review-owner handover: `03_message_to_review_owners.md`",
             "- immediate next steps and automation direction: `04_next_steps.md`",
-            "- new-chat continuation brief: `05_codex_continuation_brief.md`",
+            "- new-chat continuation brief: `05_continuation_brief.md`",
             f"- full grounded ticket package: `{_relative(grounded.package_root, package_root)}`",
             f"- full scope-first ticket package: `{_relative(scope_first.package_root, package_root)}`",
             "",
@@ -423,7 +423,7 @@ def _continuation_markdown(
     scope_first: TicketReviewBundleResult,
 ) -> str:
     lines = [
-        "# Codex Continuation Brief",
+        "# Continuation Brief",
         "",
         "Use this package as the starting point in a new chat.",
         "",
@@ -506,7 +506,7 @@ def materialize_delivery_support_package(
     coordinator_update_path = package_root / "02_message_to_coordinator.md"
     review_owners_update_path = package_root / "03_message_to_review_owners.md"
     next_steps_path = package_root / "04_next_steps.md"
-    continuation_path = package_root / "05_codex_continuation_brief.md"
+    continuation_path = package_root / "05_continuation_brief.md"
 
     _write_text(
         brief_path,
