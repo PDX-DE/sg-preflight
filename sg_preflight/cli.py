@@ -27,6 +27,11 @@ from sg_preflight.daily_digest import (
     render_daily_digest_markdown,
     render_daily_digest_text,
 )
+from sg_preflight.delivery_checklist import (
+    read_delivery_checklist,
+    render_delivery_checklist_markdown,
+    render_delivery_checklist_text,
+)
 from sg_preflight.manual_review import (
     VALID_VERDICTS,
     create_manual_review_session,
@@ -438,6 +443,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     checker_list = sub.add_parser("list-checkers", help="List SG checker coverage and readiness")
     checker_list.add_argument("--json", action="store_true", help="Print checker coverage as JSON")
+
+    delivery_checklist = sub.add_parser(
+        "delivery-checklist",
+        help="Read the operator-local delivery checklist workbook without writing to it",
+    )
+    delivery_checklist_sub = delivery_checklist.add_subparsers(dest="delivery_checklist_command", required=True)
+    delivery_checklist_read = delivery_checklist_sub.add_parser("read", help="Read delivery checklist evidence for one profile")
+    delivery_checklist_read.add_argument("--workspace", help="Workspace root override")
+    delivery_checklist_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    delivery_checklist_read.add_argument("--brand", default="BMW", help="Workbook brand label such as BMW or Mini")
+    delivery_checklist_read.add_argument("--workbook", help="Explicit delivery checklist workbook path")
+    delivery_checklist_read.add_argument("--json", action="store_true", help="Print delivery checklist payload as JSON")
+    delivery_checklist_read.add_argument("--markdown", action="store_true", help="Print delivery checklist payload as Markdown")
 
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
@@ -908,6 +926,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "list-checkers":
         _console_checkers(args.json)
+        return 0
+
+    if args.command == "delivery-checklist":
+        checklist_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.delivery_checklist_command == "read":
+                payload = read_delivery_checklist(
+                    profile_id=args.profile,
+                    workspace=checklist_root,
+                    workbook_path=Path(args.workbook).resolve() if args.workbook else None,
+                    brand=args.brand,
+                )
+            else:
+                parser.error(f"Unhandled delivery-checklist command: {args.delivery_checklist_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"delivery-checklist failed: {exc}"), file=sys.stderr)
+            return 1
+        if args.json:
+            _console_desktop_payload(payload)
+        elif args.markdown:
+            print(_console_safe(render_delivery_checklist_markdown(payload)))
+        else:
+            print(_console_safe(render_delivery_checklist_text(payload)))
         return 0
 
     if args.command == "workflow-status":

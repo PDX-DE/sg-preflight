@@ -82,6 +82,7 @@ What this means:
 - repo checker now runs the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
 - the per-car action list now also wraps `printNotUsedResources.py` for local unused-resource scans against the mirrored car project
 - the per-car action list now also wraps the mirrored `.pdx/checkers/deliveryChecklist` assets as a local readiness bridge before BMW-owned delivery steps
+- the CLI can read the operator-local `Delivery Data - BMW.xlsx` workbook for one profile as evidence guidance, without writing back or turning the workbook state into an approval verdict
 - scene check is also wrapped, but only runs when a local `RaCoHeadless.exe` is configured
 
 Current blocker:

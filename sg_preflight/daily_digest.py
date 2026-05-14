@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.delivery_checklist import (
+    delivery_checklist_digest_items,
+    read_delivery_checklists_for_profiles,
+)
 from sg_preflight.manual_review import manual_review_digest_items
 from sg_preflight.review_messages import build_digest_json, build_morning_digest
 from sg_preflight.review_state import build_review_board_state
@@ -241,7 +245,7 @@ def build_daily_digest(state: dict[str, Any]) -> dict[str, Any]:
         "sections": {
             "evidence_prepared": _section(
                 "Evidence prepared",
-                _summary_evidence_items(state) + _artifact_evidence_items(state),
+                _summary_evidence_items(state) + delivery_checklist_digest_items(state) + _artifact_evidence_items(state),
                 "No evidence artifacts recorded in the current state.",
             ),
             "blockers": _section(
@@ -282,6 +286,10 @@ def build_latest_daily_digest(
             raise
         return build_no_data_daily_digest(ticket_id, workspace)
     state["manual_review_sessions"] = manual_review_digest_items(workspace=workspace, ticket_id=ticket_id)
+    state["delivery_checklist"] = read_delivery_checklists_for_profiles(
+        tuple(str(item) for item in state.get("scope", []) if str(item).strip()),
+        workspace=workspace,
+    )
     return build_daily_digest(state)
 
 

@@ -11,6 +11,8 @@ from pathlib import Path
 import unittest
 from unittest import mock
 
+from openpyxl import Workbook
+
 from sg_preflight.cli import main
 from sg_preflight.qa_actions import build_action_record, get_operator_action, save_action_record
 from sg_preflight.services import RunRequest, execute_profile_run
@@ -19,6 +21,27 @@ from tests.test_qa_actions import _create_checker_files
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _write_delivery_checklist_workbook(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Delivery"
+    worksheet.append(
+        [
+            "Car",
+            "Last Tested",
+            "SVN Revision",
+            "Changelog Revision",
+            "Export Size",
+            "Screenshots",
+            "Interface",
+            "Perspectives",
+        ]
+    )
+    worksheet.append(["G65_EVO", "2026-05-14 08:30", "r12345", "r12340", "OK", "Fail", "n/a", "Blocked"])
+    workbook.save(path)
 
 
 class TestCLI(unittest.TestCase):
@@ -69,6 +92,53 @@ class TestCLI(unittest.TestCase):
         self.assertIn("checkall_bat", checker_keys)
         self.assertIn("delivery_checklist", checker_keys)
         self.assertIn("bmw_smoke", checker_keys)
+
+    def test_delivery_checklist_read_cli_returns_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook_path = root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist" / "Delivery Data - BMW.xlsx"
+            _write_delivery_checklist_workbook(workbook_path)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "delivery-checklist",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--json",
+                    ]
+                )
+
+            markdown_stdout = io.StringIO()
+            with redirect_stdout(markdown_stdout):
+                markdown_result = main(
+                    [
+                        "delivery-checklist",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--markdown",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["profile_id"], "G65")
+        self.assertEqual(payload["matched_profile_id"], "G65_EVO")
+        checks = {item["key"]: item for item in payload["checks"]}
+        self.assertEqual(checks["export_size"]["status"], "passed")
+        self.assertEqual(checks["screenshots"]["status"], "failed")
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(markdown_result, 0)
+        self.assertIn("Delivery checklist data is read-only", markdown_stdout.getvalue())
+        self.assertIn("SGFX does not run the delivery checklist or modify the workbook.", markdown_stdout.getvalue())
 
     def test_workflow_status_reports_repo_scene_stage(self) -> None:
         result = subprocess.run(

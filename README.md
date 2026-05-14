@@ -175,6 +175,14 @@ List the current SG checker coverage layer:
 python -m sg_preflight list-checkers --json
 ```
 
+Read the operator-local delivery-checklist workbook for one profile without modifying it:
+
+```bash
+python -m sg_preflight delivery-checklist read --profile G65 --json
+```
+
+This command reads `.pdx\checkers\deliveryChecklist\Delivery Data - BMW.xlsx` when it is available in the local SVN checkout. It is evidence guidance only; manual delivery review remains required.
+
 Run the full daily live preflight matrix as one action:
 
 ```bash
@@ -211,7 +219,7 @@ It provides:
   - full mirrored repo checker coverage for `checkall.bat` scope, exposed as `repo_checker_all` without calling the batch wrapper directly
   - repo checker on workspace or per-car scope, now wrapping the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
   - per-car unused-resource scan through `.pdx\checkers\printNotUsedResources.py`, now parsed into file-backed resource evidence
-  - per-car delivery-checklist readiness bridge through `.pdx\checkers\deliveryChecklist`, now parsed into openable local checklist assets plus explicit BMW-side blocked follow-ups
+  - per-car delivery-checklist readiness bridge through `.pdx\checkers\deliveryChecklist`, now parsed into openable local checklist assets, read-only workbook evidence when `Delivery Data - BMW.xlsx` is available, plus explicit BMW-side blocked follow-ups
   - per-car recommended QA stack
   - scene check when `RaCoHeadless.exe` is configured
   - BMW screenshot smoke as an explicit blocked stage until BMW-side access and target mapping exist
