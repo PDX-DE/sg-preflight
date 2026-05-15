@@ -21,6 +21,10 @@ from sg_preflight.export_size_analysis import (
     read_export_size_analyses_for_profiles,
 )
 from sg_preflight.manual_review import manual_review_digest_items
+from sg_preflight.qa_hero_readiness import (
+    qa_hero_readiness_digest_items,
+    read_qa_hero_readiness_for_profiles,
+)
 from sg_preflight.review_messages import build_digest_json, build_morning_digest
 from sg_preflight.review_state import build_review_board_state
 from sg_preflight.services import qa_workflow_status
@@ -322,6 +326,7 @@ def build_daily_digest(state: dict[str, Any]) -> dict[str, Any]:
                 _summary_evidence_items(state)
                 + bmw_screenshot_state_digest_items(state)
                 + bmw_git_readiness_digest_items(state)
+                + qa_hero_readiness_digest_items(state)
                 + delivery_checklist_digest_items(state)
                 + export_size_analysis_digest_items(state)
                 + _artifact_evidence_items(state),
@@ -389,6 +394,10 @@ def build_latest_daily_digest(
         tuple(str(item) for item in state.get("scope", []) if str(item).strip()),
         workspace=workspace,
     )
+    state["qa_hero_readiness"] = read_qa_hero_readiness_for_profiles(
+        tuple(str(item) for item in state.get("scope", []) if str(item).strip()),
+        workspace=workspace,
+    )
     state["export_size_analysis"] = read_export_size_analyses_for_profiles(
         tuple(str(item) for item in state.get("scope", []) if str(item).strip()),
         workspace=workspace,
@@ -428,6 +437,7 @@ def build_no_data_daily_digest(
         "qa_workflow_status": read_workflow_status_for_digest(workspace=workspace),
         "bmw_screenshot_state": [],
         "bmw_git_readiness": [],
+        "qa_hero_readiness": [],
         "artifact_references": {},
         "top_review_priority_items": [],
         "open_items": [],

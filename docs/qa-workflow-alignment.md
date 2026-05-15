@@ -103,12 +103,14 @@ What this means:
 - `sg-preflight` now exposes this stage as an explicit per-car action instead of leaving it as an undocumented external dependency
 - `screenshot-test-state read` can read local BMW / MINI Git `export/tests/expected`, `actuals`, `diff`, and `test_config.lua` folders for a profile and surface the counts in the daily digest
 - `bmw-git-readiness read` can read the local BMW / MINI `digital-3d-car-models` profile folder and surface profile-folder context such as latest local commit, README, main scene, screenshot test config, perspectives JSON, changelog, and `lids.json`
+- `qa-hero-readiness read` can read the same local BMW / MINI profile folder and surface presence/counts for LightFX, WelcomeFX, ShadesFX, CarPaint, anchor points, constants, and perspectives as readiness guidance for the documented Quality Hero checklist
 - this read-only state follows the documented delivery workflow: run BMW screenshot tooling, check the `diff` folder, compare `actuals`, and document intended differences in the delivery ticket
 
 Current blocker:
 
 - running the BMW / MINI screenshot tests still depends on BMW Git helper scripts, Python environment setup, viewer/runtime setup, and the operator-owned external workflow
 - BMW Git readiness is context only: it does not fetch from the remote, does not write to BMW Git, and does not decide whether a profile is approved for delivery
+- QA Hero readiness is presence/count evidence only: it does not run RaCo or Blender and does not replace the documented manual review steps
 - screenshot counts and folder paths are not visual verdicts; the reviewer still compares the images and records the manual decision
 
 Even after access is available, the intended role of `sg-preflight` is still upstream:
@@ -122,6 +124,7 @@ What this means:
 
 - RaCo / Blender work, designer approval, and final visual judgement remain manual
 - `manual-review` can create a step-through session for the documented Quality Hero checklist and capture the operator's per-step verdict, notes, and optional screenshot references
+- `qa-hero-readiness read` can prepare the operator by showing whether profile-level LightFX, WelcomeFX, ShadesFX, CarPaint, anchor-point, constants, and perspective inputs are visible locally
 - carpaint catalog sanity can be preflighted here
 - final look approval in RaCo / Blender / rack review is still outside the current automation boundary
 

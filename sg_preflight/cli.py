@@ -55,6 +55,11 @@ from sg_preflight.manual_review import (
     record_manual_review_step,
     render_manual_review_markdown,
 )
+from sg_preflight.qa_hero_readiness import (
+    read_qa_hero_readiness,
+    render_qa_hero_readiness_markdown,
+    render_qa_hero_readiness_text,
+)
 from sg_preflight.profiles import get_run_profile, list_run_profiles
 from sg_preflight.qa_actions import (
     attach_manual_evidence,
@@ -515,6 +520,21 @@ def build_parser() -> argparse.ArgumentParser:
     bmw_git_readiness_read.add_argument("--profile", required=True, help="Profile id such as G65")
     bmw_git_readiness_read.add_argument("--json", action="store_true", help="Print BMW Git readiness as JSON")
     bmw_git_readiness_read.add_argument("--markdown", action="store_true", help="Print BMW Git readiness as Markdown")
+
+    qa_hero_readiness = sub.add_parser(
+        "qa-hero-readiness",
+        help="Read local BMW/MINI QA Hero readiness signals without writing to BMW Git",
+    )
+    qa_hero_readiness_sub = qa_hero_readiness.add_subparsers(dest="qa_hero_readiness_command", required=True)
+    qa_hero_readiness_read = qa_hero_readiness_sub.add_parser(
+        "read",
+        help="Read QA Hero readiness for one profile",
+    )
+    qa_hero_readiness_read.add_argument("--workspace", help="Workspace root override")
+    qa_hero_readiness_read.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    qa_hero_readiness_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    qa_hero_readiness_read.add_argument("--json", action="store_true", help="Print QA Hero readiness as JSON")
+    qa_hero_readiness_read.add_argument("--markdown", action="store_true", help="Print QA Hero readiness as Markdown")
 
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
@@ -1080,6 +1100,29 @@ def main(argv: list[str] | None = None) -> int:
             print(_console_safe(render_bmw_git_readiness_markdown(payload)))
         else:
             print(_console_safe(render_bmw_git_readiness_text(payload)))
+        return 0
+
+    if args.command == "qa-hero-readiness":
+        readiness_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.qa_hero_readiness_command == "read":
+                payload = read_qa_hero_readiness(
+                    args.profile,
+                    workspace=readiness_root,
+                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+                )
+            else:
+                parser.error(f"Unhandled qa-hero-readiness command: {args.qa_hero_readiness_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"qa-hero-readiness failed: {exc}"), file=sys.stderr)
+            return 1
+        if args.json:
+            _console_desktop_payload(payload)
+        elif args.markdown:
+            print(_console_safe(render_qa_hero_readiness_markdown(payload)))
+        else:
+            print(_console_safe(render_qa_hero_readiness_text(payload)))
         return 0
 
     if args.command == "workflow-status":

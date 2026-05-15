@@ -210,6 +210,15 @@ python -m sg_preflight bmw-git-readiness read --profile G65 --markdown
 
 This command reads the local `digital-3d-car-models` checkout and reports profile-folder context such as latest profile commit, README, main scene, screenshot test config, perspectives JSON, changelog, and `lids.json`. It does not fetch, pull, checkout, or write to BMW Git. The output is operator context only; manual delivery and review decisions remain outside the tool.
 
+Read local BMW / MINI QA Hero readiness signals without modifying the repository:
+
+```bash
+python -m sg_preflight qa-hero-readiness read --profile G65 --json
+python -m sg_preflight qa-hero-readiness read --profile G65 --markdown
+```
+
+This command reads local `digital-3d-car-models` profile folders and surfaces presence/counts for QA Hero subsystems such as LightFX, WelcomeFX, ShadesFX, CarPaint, anchor points, constants, and perspectives. It is readiness guidance only: SGFX does not run RaCo or Blender here, does not write to BMW Git, and does not record the review verdict.
+
 Run the full daily live preflight matrix as one action:
 
 ```bash

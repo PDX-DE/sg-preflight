@@ -88,6 +88,18 @@ def _write_bmw_git_readiness_state(root: Path) -> None:
     _git(repo, "commit", "-m", "fixture profile")
 
 
+def _write_qa_hero_readiness_state(root: Path) -> None:
+    repo = root / "digital-3d-car-models"
+    car_root = repo / "cars" / "BMW" / "G65_EVO"
+    write_text(repo / "cars" / "BMW" / "CarPaint.json", '{"paints": [{"id": "black"}]}\n')
+    write_text(car_root / "resources" / "RES_G65_LightFX" / "RES_G65_LightFX.rca", "lightfx\n")
+    write_text(car_root / "resources" / "RES_G65_WelcomeFX" / "RES_G65_WelcomeFX.rca", "welcomefx\n")
+    write_text(car_root / "resources" / "RES_G65_ShadesFX" / "RES_G65_ShadesFX.rca", "shadesfx\n")
+    write_text(car_root / "resources" / "RES_G65_AnchorPoints" / "RES_G65_AnchorPoints.rca", "anchors\n")
+    write_text(car_root / "_Common" / "constants" / "scripts" / "Module_constants_G65.lua", "constants = {}\n")
+    write_text(car_root / "perspectives_CID180_LHD.json", "{}\n")
+
+
 class TestCLI(unittest.TestCase):
     def test_list_profiles_includes_live_registry(self) -> None:
         result = subprocess.run(
@@ -324,6 +336,51 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(markdown_result, 0)
         self.assertIn("BMW Git per-profile readiness is read-only", markdown_stdout.getvalue())
         self.assertIn("SGFX does not write to BMW Git or fetch from the remote.", markdown_stdout.getvalue())
+        self.assertNotIn("approved", markdown_stdout.getvalue().lower())
+
+    def test_qa_hero_readiness_read_cli_returns_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_qa_hero_readiness_state(root)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "qa-hero-readiness",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--json",
+                    ]
+                )
+
+            markdown_stdout = io.StringIO()
+            with redirect_stdout(markdown_stdout):
+                markdown_result = main(
+                    [
+                        "qa-hero-readiness",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--markdown",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["matched_profile_id"], "G65_EVO")
+        self.assertEqual(payload["available_count"], 7)
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(markdown_result, 0)
+        self.assertIn("QA Hero readiness state is read-only", markdown_stdout.getvalue())
+        self.assertIn("SGFX surfaces presence and counts only", markdown_stdout.getvalue())
+        self.assertIn("LightFX resources", markdown_stdout.getvalue())
         self.assertNotIn("approved", markdown_stdout.getvalue().lower())
 
     def test_workflow_status_reports_repo_scene_stage(self) -> None:
