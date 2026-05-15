@@ -48,6 +48,41 @@ class TestManualReviewCompanion(unittest.TestCase):
             self.assertIn("CarPaints Test RaCo", markdown)
             self.assertNotIn("automated visual approval", markdown.lower())
 
+    def test_quality_hero_steps_include_structured_review_focus_without_verdicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            session = create_manual_review_session(
+                profile_id="G65",
+                ticket_id="IDCEVODEV-977874",
+                workspace=root,
+                session_id="manual-001",
+            )
+
+        by_slug = {step["slug"]: step for step in session["steps"]}
+        blender = by_slug["blender_visual_check"]
+        functionality = by_slug["functionality_test_raco"]
+        carpaints = by_slug["carpaints_test_raco"]
+        anchors = by_slug["anchor_points_test_raco"]
+
+        self.assertIn("LightFX", blender["review_focus"])
+        self.assertIn("Selective Yellow", blender["review_focus"])
+        self.assertIn("WelcomeFX", functionality["review_focus"])
+        self.assertIn("Country variants", functionality["review_focus"])
+        self.assertIn("CarPaint / Lackcode", carpaints["review_focus"])
+        self.assertIn("Anchor points", anchors["review_focus"])
+        self.assertTrue(all(step["recorded_by_tool"] is False for step in session["steps"]))
+        self.assertTrue(all(step["verdict"] == "pending" for step in session["steps"]))
+        self.assertTrue(all(step["review_focus_note"].startswith("Review guidance only") for step in session["steps"]))
+
+        markdown = render_manual_review_markdown(session)
+        self.assertIn("Review focus:", markdown)
+        self.assertIn("LightFX", markdown)
+        self.assertIn("WelcomeFX", markdown)
+        self.assertIn("CarPaint / Lackcode", markdown)
+        self.assertIn("Review guidance only", markdown)
+        self.assertNotIn("approved", markdown.lower())
+
     def test_record_step_captures_explicit_reviewer_verdict_note_and_screenshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -231,6 +266,9 @@ class TestManualReviewCompanion(unittest.TestCase):
         self.assertTrue(any(item.get("session_id") == "manual-001" for item in items))
         self.assertIn("blender_visual_check", digest["markdown"])
         self.assertIn("Operator verdict required", digest["markdown"])
+        blender_item = next(item for item in items if item.get("step_slug") == "blender_visual_check")
+        self.assertIn("LightFX", blender_item["review_focus"])
+        self.assertIn("Review guidance only", blender_item["note"])
 
 
 if __name__ == "__main__":

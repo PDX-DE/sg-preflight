@@ -16,6 +16,7 @@ MANUAL_REVIEW_HEADER = (
     "Manual review companion. Operator records the verdict per step. "
     "Not a tool-generated review or approval."
 )
+REVIEW_FOCUS_NOTE = "Review guidance only; the operator records the verdict."
 
 VALID_VERDICTS = ("pass", "fail", "blocked", "not_applicable")
 _PENDING_VERDICT = "pending"
@@ -31,6 +32,8 @@ class ManualReviewStepTemplate:
     title: str
     guidance: tuple[str, ...]
     tool_hint: str
+    review_focus: tuple[str, ...] = ()
+    evidence_prompt: str = ""
 
     def to_session_step(self) -> dict[str, Any]:
         return {
@@ -38,6 +41,9 @@ class ManualReviewStepTemplate:
             "title": self.title,
             "guidance": list(self.guidance),
             "tool_hint": self.tool_hint,
+            "review_focus": list(self.review_focus),
+            "review_focus_note": REVIEW_FOCUS_NOTE,
+            "evidence_prompt": self.evidence_prompt,
             "verdict": _PENDING_VERDICT,
             "note": "",
             "screenshot_path": "",
@@ -59,6 +65,19 @@ QUALITY_HERO_STEPS: tuple[ManualReviewStepTemplate, ...] = (
             "Test light functionality including Iconic Glow, position lights and Selective Yellow for relevant country variants.",
             "Check Logos, Lights, Side Mirrors, Rims and Flaps with extra care.",
         ),
+        review_focus=(
+            "Logos",
+            "LightFX",
+            "Iconic Glow",
+            "Selective Yellow",
+            "Side mirrors",
+            "Rims",
+            "Flaps",
+            "Trimlines",
+            "Country variants",
+            "Material artifacts",
+        ),
+        evidence_prompt="Attach representative Blender screenshots for visible artifacts or country-variant light concerns.",
     ),
     ManualReviewStepTemplate(
         slug="constants_info_verification",
@@ -71,6 +90,15 @@ QUALITY_HERO_STEPS: tuple[ManualReviewStepTemplate, ...] = (
             "Compare Suspension information.",
             "Compare Reflections.",
         ),
+        review_focus=(
+            "Constants",
+            "Tire diameter",
+            "Suspension",
+            "Reflections",
+            "Pivot_Master",
+            "Epic comparison",
+        ),
+        evidence_prompt="Record the Epic source and constants source checked; attach screenshots only when useful for reviewer follow-up.",
     ),
     ManualReviewStepTemplate(
         slug="final_look_comparison_raco_blender_epic",
@@ -82,6 +110,18 @@ QUALITY_HERO_STEPS: tuple[ManualReviewStepTemplate, ...] = (
             "Check Logos, Lights, Side Mirrors, Rims and Flaps with extra care.",
             "Using the IDCEvo README, compare EngineType, CountryVariants, TrimLines and light functionality.",
         ),
+        review_focus=(
+            "RaCo vs Blender",
+            "EngineType",
+            "Country variants",
+            "Trimlines",
+            "Logos",
+            "Lights",
+            "Side mirrors",
+            "Rims",
+            "Flaps",
+        ),
+        evidence_prompt="Attach paired Blender/RaCo screenshots when the final look differs or requires owner follow-up.",
     ),
     ManualReviewStepTemplate(
         slug="functionality_test_raco",
@@ -93,6 +133,16 @@ QUALITY_HERO_STEPS: tuple[ManualReviewStepTemplate, ...] = (
             "Make sure Trimlines, Country variants and Exterior lights show relevant changes from Blender to RaCo scenes.",
             r"Use C:\repos\Seriengrafik\trunk\.pdx\carmodel_data.json for engine and Trimline combinations.",
         ),
+        review_focus=(
+            "Animations",
+            "LightFX",
+            "WelcomeFX",
+            "Iconic Glow",
+            "Exterior lights",
+            "Country variants",
+            "Trimlines",
+        ),
+        evidence_prompt="Record the animation and light combination tested and attach proof for blocked or failing states.",
     ),
     ManualReviewStepTemplate(
         slug="anchor_points_test_raco",
@@ -105,6 +155,14 @@ QUALITY_HERO_STEPS: tuple[ManualReviewStepTemplate, ...] = (
             "Use the camera gimble and confirm each anchor point matches the actual tested position.",
             'Naming convention: APN_BoundingBox_"vehicle_part"_"Position".',
         ),
+        review_focus=(
+            "Anchor points",
+            "Bounding boxes",
+            "Naming convention",
+            "Vehicle part positions",
+            "Abstract Scene View",
+        ),
+        evidence_prompt="Record the anchor family inspected and attach a RaCo screenshot when an anchor is missing or misaligned.",
     ),
     ManualReviewStepTemplate(
         slug="carpaints_test_raco",
@@ -117,6 +175,14 @@ QUALITY_HERO_STEPS: tuple[ManualReviewStepTemplate, ...] = (
             "Check for artefacts between color or Met/Mat options.",
             "Use the available colors listed at the top of the script.",
         ),
+        review_focus=(
+            "CarPaint / Lackcode",
+            "Color variants",
+            "Met/Mat options",
+            "Material artifacts",
+            "Multiple viewing angles",
+        ),
+        evidence_prompt="Record the color/material combinations tested and attach screenshots for visible paint or material artifacts.",
     ),
     ManualReviewStepTemplate(
         slug="documentation_review",
@@ -127,6 +193,14 @@ QUALITY_HERO_STEPS: tuple[ManualReviewStepTemplate, ...] = (
             "Check changelog and README content against what was actually delivered.",
             "Keep documentation findings separate from visual verdicts.",
         ),
+        review_focus=(
+            "README",
+            "Changelog",
+            "Delivery notes",
+            "Ticket scope",
+            "Manual findings",
+        ),
+        evidence_prompt="Record documentation mismatches without marking visual review complete.",
     ),
 )
 
@@ -297,6 +371,15 @@ def _step_markdown(step: dict[str, Any]) -> list[str]:
     slug = str(step.get("slug", "")).strip()
     verdict = str(step.get("verdict", _PENDING_VERDICT)).strip() or _PENDING_VERDICT
     lines = [f"### {title}", f"- Step: `{slug}`", f"- Verdict: [{verdict}]"]
+    review_focus = _string_list(step.get("review_focus", []))
+    if review_focus:
+        lines.append("- Review focus: " + ", ".join(review_focus))
+    evidence_prompt = str(step.get("evidence_prompt", "")).strip()
+    if evidence_prompt:
+        lines.append(f"- Evidence prompt: {evidence_prompt}")
+    review_focus_note = str(step.get("review_focus_note", "")).strip()
+    if review_focus_note:
+        lines.append(f"- Review focus note: {review_focus_note}")
     if step.get("note"):
         lines.append(f"- Reviewer note: {step['note']}")
     if step.get("screenshot_path"):
@@ -306,6 +389,12 @@ def _step_markdown(step: dict[str, Any]) -> list[str]:
         lines.append("- Guidance:")
         lines.extend(f"  - {item}" for item in guidance if str(item).strip())
     return lines
+
+
+def _string_list(values: object) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(item).strip() for item in values if str(item).strip()]
 
 
 def render_manual_review_markdown(session: dict[str, Any]) -> str:
@@ -375,15 +464,22 @@ def manual_review_digest_items(
             if isinstance(step, dict) and str(step.get("verdict", _PENDING_VERDICT)).strip() == _PENDING_VERDICT
         ]
         for step in pending:
+            review_focus = _string_list(step.get("review_focus", []))
+            review_focus_detail = f" Review focus: {', '.join(review_focus)}." if review_focus else ""
             items.append(
                 {
                     "label": f"{session.get('profile_id', '')} {session.get('session_id', '')} {step.get('slug', '')}".strip(),
                     "status": "pending_manual_review",
-                    "detail": f"Operator verdict required for {step.get('title', step.get('slug', 'manual review step'))}.",
+                    "detail": (
+                        f"Operator verdict required for {step.get('title', step.get('slug', 'manual review step'))}."
+                        f"{review_focus_detail}"
+                    ),
                     "session_id": str(session.get("session_id", "")),
                     "step_slug": str(step.get("slug", "")),
                     "path": str(session.get("session_path", "")),
-                    "note": "Manual review companion only; not a tool-generated verdict.",
+                    "review_focus": review_focus,
+                    "evidence_prompt": str(step.get("evidence_prompt", "")).strip(),
+                    "note": f"{REVIEW_FOCUS_NOTE} Manual review companion only; not a tool-generated verdict.",
                 }
             )
     return items
