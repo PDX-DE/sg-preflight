@@ -763,10 +763,13 @@ class TestCLI(unittest.TestCase):
         digest_payload = json.loads(digest_json_stdout.getvalue())
         self.assertEqual(digest_payload["ticket_id"], "IDCEVODEV-960073")
         self.assertIn("evidence_prepared", digest_payload["sections"])
+        self.assertIn("what_landed_today", digest_payload["sections"])
+        self.assertIn("workflow_status", digest_payload["sections"])
         self.assertIn("manual_review_pending", digest_payload["sections"])
         self.assertIn("waiting_for_owner", digest_payload["sections"])
         self.assertIn("suggested_review_order", digest_payload["sections"])
         self.assertIn("# Daily 3D Car QA Digest", digest_markdown_stdout.getvalue())
+        self.assertIn("Workflow status", digest_markdown_stdout.getvalue())
         self.assertIn("Suggested review order", digest_markdown_stdout.getvalue())
         self.assertEqual(json.loads(desktop_stdout.getvalue())["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(json.loads(decisions_stdout.getvalue())["decisions"][0]["status"], "follow_up")
@@ -813,6 +816,8 @@ class TestCLI(unittest.TestCase):
         self.assertFalse(payload["data_available"])
         self.assertEqual(payload["status"], "no_review_package")
         self.assertIn("ticket-review", payload["setup_hint"])
+        self.assertIn("what_landed_today", payload["sections"])
+        self.assertIn("workflow_status", payload["sections"])
 
     def test_ticket_review_cli_sendable_disables_action_bundles(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

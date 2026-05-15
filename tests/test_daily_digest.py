@@ -89,6 +89,108 @@ class TestDailyDigest(unittest.TestCase):
         self.assertIn("No suggested review-order items recorded in the current state.", markdown)
         self.assertIn("Manual review remains required", markdown)
 
+    def test_daily_digest_surfaces_what_landed_today_without_release_claim(self) -> None:
+        digest = build_daily_digest(
+            {
+                "ticket_id": "IDCEVODEV-LANDED",
+                "scope": ["G65"],
+                "daily_snapshot_summary": {"smoke_completed": 0, "smoke_total": 0},
+                "screenshot_battery_counts": {"total": 0},
+                "daily_delta_summary": {
+                    "new_failures_count": 0,
+                    "resolved_failures_count": 0,
+                    "new_screenshot_diffs_count": 0,
+                    "unchanged_blockers_count": 0,
+                    "operator_signal": "",
+                },
+                "daily_delta": {
+                    "new_failures": [],
+                    "new_screenshot_diffs": [],
+                    "unchanged_blockers": [],
+                    "resolved_failures": [],
+                    "top_five_to_review": [],
+                },
+                "review_owner_decisions": {"sections": [], "pending_titles": []},
+                "manual_review_profiles": [],
+                "artifact_references": {},
+                "top_review_priority_items": [],
+                "open_items": [],
+                "what_landed_today": [
+                    {
+                        "short_sha": "0fe84c3",
+                        "subject": "feat(checkers): surface BMW Git readiness",
+                        "committed_at": "2026-05-15 10:15:00 +0200",
+                    }
+                ],
+            }
+        )
+
+        items = digest["sections"]["what_landed_today"]["items"]
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["status"], "local_commit")
+        self.assertIn("0fe84c3", items[0]["detail"])
+        self.assertIn("local change log", items[0]["guidance"].lower())
+        self.assertIn("What landed today", digest["markdown"])
+        self.assertNotIn("approved", digest["markdown"].lower())
+        self.assertNotIn("deployed", digest["markdown"].lower())
+
+    def test_daily_digest_surfaces_workflow_status_without_verdict_claim(self) -> None:
+        digest = build_daily_digest(
+            {
+                "ticket_id": "IDCEVODEV-WORKFLOW",
+                "scope": ["G65"],
+                "daily_snapshot_summary": {"smoke_completed": 0, "smoke_total": 0},
+                "screenshot_battery_counts": {"total": 0},
+                "daily_delta_summary": {
+                    "new_failures_count": 0,
+                    "resolved_failures_count": 0,
+                    "new_screenshot_diffs_count": 0,
+                    "unchanged_blockers_count": 0,
+                    "operator_signal": "",
+                },
+                "daily_delta": {
+                    "new_failures": [],
+                    "new_screenshot_diffs": [],
+                    "unchanged_blockers": [],
+                    "resolved_failures": [],
+                    "top_five_to_review": [],
+                },
+                "review_owner_decisions": {"sections": [], "pending_titles": []},
+                "manual_review_profiles": [],
+                "artifact_references": {},
+                "top_review_priority_items": [],
+                "open_items": [],
+                "qa_workflow_status": [
+                    {
+                        "key": "delivery_checklist",
+                        "label": "BMW delivery checklist bridge",
+                        "state": "blocked",
+                        "summary": "The mirrored delivery assets are not complete on this machine.",
+                        "blockers": ["Missing deliveryChecklist helper."],
+                    },
+                    {
+                        "key": "handoff_evidence",
+                        "label": "Triage and delivery handoff evidence",
+                        "state": "covered",
+                        "summary": "Run records and reports are available.",
+                        "blockers": [],
+                    },
+                ],
+            }
+        )
+
+        items = digest["sections"]["workflow_status"]["items"]
+        blocked_items = [item for item in items if item["status"] == "blocked"]
+
+        self.assertEqual(len(items), 2)
+        self.assertTrue(blocked_items)
+        self.assertIn("Missing deliveryChecklist helper.", blocked_items[0]["detail"])
+        self.assertIn("status snapshot only", blocked_items[0]["guidance"])
+        self.assertIn("Workflow status", digest["markdown"])
+        self.assertIn("Manual review remains required", digest["markdown"])
+        self.assertNotIn("approval", digest["sections"]["workflow_status"]["heading"].lower())
+
     def test_daily_digest_surfaces_screenshot_test_state_as_guidance_not_verdict(self) -> None:
         digest = build_daily_digest(
             {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from sg_preflight.export_size_analysis import (
 from sg_preflight.manual_review import manual_review_digest_items
 from sg_preflight.review_messages import build_digest_json, build_morning_digest
 from sg_preflight.review_state import build_review_board_state
+from sg_preflight.services import qa_workflow_status
 
 
 _GUARDRAILS = [
@@ -90,6 +92,66 @@ def _artifact_evidence_items(state: dict[str, Any]) -> list[dict[str, Any]]:
                 "label": label,
                 "status": "prepared",
                 "path": path,
+            }
+        )
+    return items
+
+
+def _what_landed_today_items(state: dict[str, Any]) -> list[dict[str, Any]]:
+    commits = state.get("what_landed_today", [])
+    if not isinstance(commits, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for commit in commits:
+        if not isinstance(commit, dict):
+            continue
+        subject = str(commit.get("subject", "")).strip()
+        short_sha = str(commit.get("short_sha", "") or commit.get("sha", "")).strip()
+        committed_at = str(commit.get("committed_at", "")).strip()
+        if not subject and not short_sha:
+            continue
+        details = " | ".join(part for part in (short_sha, committed_at) if part)
+        items.append(
+            {
+                "label": subject or short_sha,
+                "status": "local_commit",
+                "detail": details,
+                "sha": str(commit.get("sha", "")).strip(),
+                "committed_at": committed_at,
+                "guidance": (
+                    "Local change log for this checkout only; not a deployment, release, approval, or QA verdict."
+                ),
+            }
+        )
+    return items
+
+
+def _workflow_status_items(state: dict[str, Any]) -> list[dict[str, Any]]:
+    workflow_items = state.get("qa_workflow_status", [])
+    if not isinstance(workflow_items, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for workflow_item in workflow_items:
+        if not isinstance(workflow_item, dict):
+            continue
+        label = str(workflow_item.get("label", "")).strip()
+        key = str(workflow_item.get("key", "")).strip()
+        state_value = str(workflow_item.get("state", "")).strip()
+        summary = str(workflow_item.get("summary", "")).strip()
+        blockers = _string_items(workflow_item.get("blockers", []))
+        if not label and not key:
+            continue
+        detail = summary
+        if blockers:
+            detail = f"{summary} Blockers: {'; '.join(blockers)}".strip()
+        items.append(
+            {
+                "label": label or key,
+                "status": state_value or "unknown",
+                "detail": detail,
+                "key": key,
+                "blockers": blockers,
+                "guidance": "Workflow status snapshot only; manual review and owner follow-up still decide outcomes.",
             }
         )
     return items
@@ -265,6 +327,16 @@ def build_daily_digest(state: dict[str, Any]) -> dict[str, Any]:
                 + _artifact_evidence_items(state),
                 "No evidence artifacts recorded in the current state.",
             ),
+            "what_landed_today": _section(
+                "What landed today",
+                _what_landed_today_items(state),
+                "No local commits recorded in the last 24 hours.",
+            ),
+            "workflow_status": _section(
+                "Workflow status",
+                _workflow_status_items(state),
+                "No workflow-status items recorded in the current state.",
+            ),
             "blockers": _section(
                 "Blockers",
                 _blocker_items(state),
@@ -303,6 +375,8 @@ def build_latest_daily_digest(
             raise
         return build_no_data_daily_digest(ticket_id, workspace)
     state["manual_review_sessions"] = manual_review_digest_items(workspace=workspace, ticket_id=ticket_id)
+    state["what_landed_today"] = read_recent_local_commits(workspace=workspace)
+    state["qa_workflow_status"] = read_workflow_status_for_digest(workspace=workspace)
     state["delivery_checklist"] = read_delivery_checklists_for_profiles(
         tuple(str(item) for item in state.get("scope", []) if str(item).strip()),
         workspace=workspace,
@@ -350,6 +424,8 @@ def build_no_data_daily_digest(
         "review_owner_decisions": {"sections": [], "pending_titles": []},
         "manual_review_profiles": [],
         "manual_review_sessions": manual_review_digest_items(workspace=workspace, ticket_id=ticket_id),
+        "what_landed_today": read_recent_local_commits(workspace=workspace),
+        "qa_workflow_status": read_workflow_status_for_digest(workspace=workspace),
         "bmw_screenshot_state": [],
         "bmw_git_readiness": [],
         "artifact_references": {},
@@ -363,6 +439,71 @@ def build_no_data_daily_digest(
     digest["text"] = render_daily_digest_text(digest)
     digest["markdown"] = render_daily_digest_markdown(digest)
     return digest
+
+
+def read_recent_local_commits(
+    workspace: Path | str | None = None,
+    *,
+    hours: int = 24,
+    max_count: int = 12,
+) -> list[dict[str, Any]]:
+    root = Path(workspace).resolve() if workspace is not None else Path.cwd()
+    command = [
+        "git",
+        "-C",
+        str(root),
+        "log",
+        f"--since={max(hours, 1)} hours ago",
+        f"--max-count={max(max_count, 1)}",
+        "--date=iso-strict",
+        "--format=%H%x1f%h%x1f%an%x1f%ai%x1f%s",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    items: list[dict[str, Any]] = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\x1f", 4)
+        if len(parts) != 5:
+            continue
+        sha, short_sha, author_name, committed_at, subject = (part.strip() for part in parts)
+        if not sha and not subject:
+            continue
+        items.append(
+            {
+                "sha": sha,
+                "short_sha": short_sha,
+                "author_name": author_name,
+                "committed_at": committed_at,
+                "subject": subject,
+            }
+        )
+    return items
+
+
+def read_workflow_status_for_digest(workspace: Path | str | None = None) -> list[dict[str, Any]]:
+    root = Path(workspace).resolve() if workspace is not None else None
+    try:
+        return qa_workflow_status(root)
+    except Exception as exc:
+        return [
+            {
+                "key": "workflow_status_unavailable",
+                "label": "Workflow status unavailable",
+                "state": "not_available",
+                "summary": "Workflow status could not be calculated for this checkout.",
+                "blockers": [str(exc)],
+            }
+        ]
 
 
 def _format_digest_title(digest: dict[str, Any]) -> str:
