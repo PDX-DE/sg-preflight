@@ -492,6 +492,11 @@ void from_json(const json& payload, OperatorOverview& item) {
     item.latest_run_id = ValueString(payload, "latest_run_id");
     item.latest_run_status = ValueString(payload, "latest_run_status");
     item.summary_line = ValueString(payload, "summary_line");
+    item.export_size_analysis_status = ValueString(payload, "export_size_analysis_status");
+    item.export_size_analysis_variant_count = ValueInt(payload, "export_size_analysis_variant_count", 0);
+    item.export_size_analysis_workbook_date = ValueString(payload, "export_size_analysis_workbook_date");
+    item.export_size_analysis_summary = ValueString(payload, "export_size_analysis_summary");
+    item.export_size_analysis_workbook_path = ValueString(payload, "export_size_analysis_workbook_path");
     if (payload.contains("environment_state_counts") && payload.at("environment_state_counts").is_object()) {
         for (const auto& [key, value] : payload.at("environment_state_counts").items()) {
             if (value.is_number_integer()) {

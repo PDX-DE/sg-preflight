@@ -188,6 +188,11 @@ struct OperatorOverview {
     std::string latest_run_id;
     std::string latest_run_status;
     std::string summary_line;
+    std::string export_size_analysis_status;
+    int export_size_analysis_variant_count = 0;
+    std::string export_size_analysis_workbook_date;
+    std::string export_size_analysis_summary;
+    std::string export_size_analysis_workbook_path;
 };
 
 struct ReviewPriorityItem {

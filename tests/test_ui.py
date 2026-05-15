@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 
 from sg_preflight.checker_evidence import (
     parse_delivery_checklist_log,
@@ -34,6 +35,19 @@ from tests.operator_helpers import create_review_package_fixture, create_temp_g6
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "checkers"
+
+
+def _write_export_size_analysis_workbook(path: Path, *, profile: str = "NA8") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Overview"
+    sheet.append([profile])
+    sheet.append([])
+    sheet.append(["VARIANT", "TextureCube", "Mesh", "TOTAL"])
+    sheet.append(["BEV-Basis", 5616, 23049.11, 28665.11])
+    sheet.append(["PHEV-MSP", 5620, 23100.55, 28720.55])
+    workbook.save(path)
 
 
 def _checker_fixture(name: str) -> str:
@@ -259,6 +273,10 @@ class TestOperatorUI(unittest.TestCase):
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
             create_review_package_fixture(root)
+            _write_export_size_analysis_workbook(
+                root / "repositories" / "trunk" / "Cars" / "size_analysis" / "NA8_20251002.xlsx",
+                profile="NA8",
+            )
             add_external_finding(
                 "IDCEVODEV-960073",
                 source="Teams / 3D Car - Bug Reports / Jana",
@@ -286,12 +304,17 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("External findings", page.text)
         self.assertIn("Next operator step", page.text)
         self.assertIn("Delta detail", page.text)
+        self.assertIn("Export-size analysis evidence", page.text)
+        self.assertIn("Export-size analysis NA8", page.text)
+        self.assertIn("read-only", page.text.lower())
         self.assertIn("G78 LightFX / HeadLights update", page.text)
         self.assertIn("Save decision", page.text)
         self.assertIn("Save external finding", page.text)
         self.assertEqual(payload.status_code, 200)
         self.assertEqual(payload.json()["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(payload.json()["screenshot_battery_counts"]["runtime_crash"], 1)
+        self.assertEqual(payload.json()["export_size_analysis"][0]["status"], "available")
+        self.assertEqual(payload.json()["export_size_analysis"][0]["variant_count"], 2)
         self.assertIn("IDCEVODEV-960073 QA status", payload.json()["review_owner_update_text"])
         self.assertEqual(payload.json()["external_findings"]["count"], 1)
 

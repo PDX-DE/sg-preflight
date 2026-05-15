@@ -135,6 +135,33 @@
   </div>
 </section>
 
+<section class="panel" id="export-size-analysis">
+  <div class="panel-head">
+    <div>
+      <h3>Export-size analysis evidence</h3>
+      <p>Read-only workbook evidence from operator-local size_analysis files. Manual review remains required.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for item in board.export_size_analysis_evidence %}
+    <div class="run-card">
+      <div class="min-w-0">
+        <strong>{{ item.label }}</strong>
+        <div class="muted">{{ item.status }}{% if item.detail %} / {{ item.detail }}{% endif %}</div>
+        {% if item.path %}
+        <div class="muted">{{ item.path }}</div>
+        {% endif %}
+        {% if item.note %}
+        <div class="muted">{{ item.note }}</div>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="note-block">No export-size analysis evidence recorded in the current state.</div>
+    {% endfor %}
+  </div>
+</section>
+
 <section class="panel">
   <div class="panel-head">
     <div>

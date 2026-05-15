@@ -38,6 +38,9 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("desktop-state", bridge_source)
         self.assertIn("overview unavailable", main_source.lower())
         self.assertIn("RenderOperatorOverviewPanel", main_source)
+        self.assertIn("export_size_analysis_status", bridge_header)
+        self.assertIn("export_size_analysis_variant_count", bridge_header)
+        self.assertIn("Export-size analysis", main_source)
 
     def test_native_bundle_script_is_present(self) -> None:
         script_path = ROOT / "scripts" / "package_native_shell_bundle.ps1"

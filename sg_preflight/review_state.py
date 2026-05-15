@@ -7,6 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.export_size_analysis import (
+    export_size_analysis_digest_items,
+    read_export_size_analyses_for_profiles,
+)
 from sg_preflight.review_messages import build_digest_json, build_morning_digest, build_review_owner_update
 from sg_preflight.review_tracking import (
     REVIEW_DECISION_STATUS_OPTIONS,
@@ -661,6 +665,14 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
 
     package_root = Path(package["package_root"])
     latest_snapshot_root = Path(daily_snapshot["root"])
+    scope_profiles = list(package["scope"] or snapshot_summary["scope_profiles"])
+    export_size_analysis = read_export_size_analyses_for_profiles(
+        tuple(str(item) for item in scope_profiles if str(item).strip()),
+        workspace=workspace_root,
+    )
+    export_size_analysis_evidence = export_size_analysis_digest_items(
+        {"export_size_analysis": export_size_analysis}
+    )
 
     def _artifact_entry(label: str, path: str) -> dict[str, Any]:
         artifact_path = Path(path) if path else None
@@ -762,7 +774,7 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
     state = {
         "ticket_id": package["ticket_id"],
         "title": package["title"],
-        "scope": package["scope"] or snapshot_summary["scope_profiles"],
+        "scope": scope_profiles,
         "package_path": package["package_root"],
         "generated_at": package["generated_at"],
         "daily_snapshot_created_at": str(daily_snapshot["payload"].get("created_at", "")),
@@ -829,6 +841,8 @@ def build_review_board_state(ticket_id: str | None = None, workspace: Path | str
         "top_review_priority_items": top_review_items,
         "daily_delta_summary": delta_summary,
         "operator_next_step": operator_next_step,
+        "export_size_analysis": export_size_analysis,
+        "export_size_analysis_evidence": export_size_analysis_evidence,
         "manual_review_profiles": _build_manual_review_profiles(
             package,
             workspace_root=workspace_root,

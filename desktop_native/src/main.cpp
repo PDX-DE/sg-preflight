@@ -4599,6 +4599,28 @@ void RenderOperatorOverviewPanel(ShellState& state, const char* panel_id, bool c
         overview.blocker_count,
         overview.manual_card_count
     );
+    if (!overview.export_size_analysis_status.empty()) {
+        ImGui::Spacing();
+        InlineSectionLabel("Export-size analysis");
+        ImGui::Text(
+            "Status: %s | variants: %d",
+            overview.export_size_analysis_status.c_str(),
+            overview.export_size_analysis_variant_count
+        );
+        if (!overview.export_size_analysis_workbook_date.empty()) {
+            ImGui::TextDisabled("Workbook date: %s", overview.export_size_analysis_workbook_date.c_str());
+        }
+        if (!overview.export_size_analysis_summary.empty()) {
+            ImGui::PushTextWrapPos(wrap_x);
+            ImGui::TextWrapped("%s", overview.export_size_analysis_summary.c_str());
+            ImGui::PopTextWrapPos();
+        } else {
+            ImGui::TextDisabled("%s", "Read-only workbook evidence; not approval.");
+        }
+        if (!overview.export_size_analysis_workbook_path.empty()) {
+            DrawReadonlyPathLine((panel_key + "-export-size-workbook").c_str(), overview.export_size_analysis_workbook_path, true);
+        }
+    }
 
     std::string environment_counts;
     for (const auto& [state_key, count] : overview.environment_state_counts) {

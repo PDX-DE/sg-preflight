@@ -8,6 +8,8 @@ from pathlib import Path
 import unittest
 from unittest import mock
 
+from openpyxl import Workbook
+
 from sg_preflight.desktop.evidence_model import (
     desktop_action_snapshot,
     desktop_actions_for_profile,
@@ -22,6 +24,19 @@ from sg_preflight.desktop.file_ops import build_open_command, build_reveal_comma
 from sg_preflight.qa_actions import execute_operator_action, get_operator_action
 from tests.operator_helpers import create_temp_g65_profile, write_text
 from tests.test_qa_actions import ROOT, _create_checker_files
+
+
+def _write_export_size_analysis_workbook(path: Path, *, profile: str = "G65") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Overview"
+    sheet.append([profile])
+    sheet.append([])
+    sheet.append(["VARIANT", "TextureCube", "Mesh", "TOTAL"])
+    sheet.append(["BEV-Basis", 5616, 23049.11, 28665.11])
+    sheet.append(["PHEV-MSP", 5620, 23100.55, 28720.55])
+    workbook.save(path)
 
 
 class TestDesktopEvidenceModel(unittest.TestCase):
@@ -61,6 +76,9 @@ class TestDesktopEvidenceModel(unittest.TestCase):
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
             _create_checker_files(root)
+            _write_export_size_analysis_workbook(
+                root / "repositories" / "trunk" / "Cars" / "size_analysis" / "G65_20251002.xlsx"
+            )
 
             with mock.patch.dict(
                 os.environ,
@@ -81,6 +99,10 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertGreaterEqual(overview.blocked_action_count, 1)
         self.assertGreaterEqual(overview.blocker_count, 1)
         self.assertGreaterEqual(overview.manual_card_count, 1)
+        self.assertEqual(overview.export_size_analysis_status, "available")
+        self.assertEqual(overview.export_size_analysis_variant_count, 2)
+        self.assertEqual(overview.export_size_analysis_workbook_date, "2025-10-02")
+        self.assertIn("read-only", overview.export_size_analysis_summary.casefold())
         self.assertIn("ready", overview.environment_state_counts)
         self.assertIn("G65", overview.summary_line)
 

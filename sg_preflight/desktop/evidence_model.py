@@ -11,6 +11,7 @@ import uuid
 
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.qa_actions import ActionRecord, list_operator_actions, list_recent_action_records, load_action_record
+from sg_preflight.export_size_analysis import read_export_size_analysis
 from sg_preflight.reporting import build_report_presentation
 from sg_preflight.services import (
     RunRecord,
@@ -210,6 +211,11 @@ class DesktopOperatorOverview:
     latest_run_id: str
     latest_run_status: str
     summary_line: str
+    export_size_analysis_status: str = "no_profile"
+    export_size_analysis_variant_count: int = 0
+    export_size_analysis_workbook_date: str = ""
+    export_size_analysis_summary: str = ""
+    export_size_analysis_workbook_path: str = ""
 
 
 def _ready_profiles(root: Path, profiles: list[RunProfile] | None = None) -> list[RunProfile]:
@@ -644,8 +650,18 @@ def desktop_operator_overview(
         )
         if latest_action is not None:
             summary_line += f" Latest action: {latest_action.status}."
+        export_size_analysis = read_export_size_analysis(
+            profile_id=selected_profile_id,
+            workspace=root,
+            latest=True,
+        )
     else:
         summary_line = "No ready SG profile is available for the native operator overview."
+        export_size_analysis = {}
+
+    export_size_analysis_summary = str(export_size_analysis.get("note", "")).strip()
+    if not export_size_analysis_summary:
+        export_size_analysis_summary = str(export_size_analysis.get("summary", "")).strip()
 
     return DesktopOperatorOverview(
         workspace_root=str(root),
@@ -664,6 +680,11 @@ def desktop_operator_overview(
         latest_run_id=latest_run.run_id if latest_run is not None else "",
         latest_run_status=latest_run.status if latest_run is not None else "",
         summary_line=summary_line,
+        export_size_analysis_status=str(export_size_analysis.get("status", "no_profile")).strip(),
+        export_size_analysis_variant_count=int(export_size_analysis.get("variant_count", 0) or 0),
+        export_size_analysis_workbook_date=str(export_size_analysis.get("workbook_date", "")).strip(),
+        export_size_analysis_summary=export_size_analysis_summary,
+        export_size_analysis_workbook_path=str(export_size_analysis.get("workbook_path", "")).strip(),
     )
 
 
