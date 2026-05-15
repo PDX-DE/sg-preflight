@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ _BMW_PROFILE_OVERRIDES = {
     "NA6": "NA6_EVO",
     "NA8": "NA8_EVO",
 }
+_SCREENSHOT_BRANDS = ("BMW", "MINI")
 
 
 def _workspace_root(explicit_root: Path | None = None) -> Path:
@@ -28,13 +30,14 @@ def _candidate_repo_paths(root: Path) -> tuple[Path, ...]:
         root / "digital-3d-car-models",
         root / "external" / "digital-3d-car-models",
         root.parent / "digital-3d-car-models",
+        Path(r"C:\3D Car git\digital-3d-car-models"),
         Path(r"C:\repos\digital-3d-car-models"),
     )
 
 
 def discover_bmw_models_repo(workspace_root: Path | None = None) -> Path:
     root = _workspace_root(workspace_root)
-    for key in ("SG_BMW_CAR_MODELS_ROOT", "SG_CARMODELS_REPO", "SG-CarModels-Repo"):
+    for key in ("SG_BMW_CAR_MODELS_ROOT", "SG_CARMODELS_REPO", "SG-CarModels-Repo", "Digital-3D-Car-Repo"):
         raw = os.environ.get(key, "").strip()
         if raw:
             return Path(raw)
@@ -62,12 +65,28 @@ def candidate_bmw_profile_ids(profile_id: str) -> tuple[str, ...]:
 def resolve_bmw_profile_id(profile_id: str, repo_root: Path | None = None) -> str:
     repo = (repo_root or Path()).resolve() if repo_root else Path()
     if repo:
-        bmw_root = repo / "cars" / "BMW"
-        for candidate in candidate_bmw_profile_ids(profile_id):
-            if (bmw_root / candidate).exists():
-                return candidate
+        for brand in _SCREENSHOT_BRANDS:
+            brand_root = repo / "cars" / brand
+            for candidate in candidate_bmw_profile_ids(profile_id):
+                if (brand_root / candidate).exists():
+                    return candidate
     candidates = candidate_bmw_profile_ids(profile_id)
     return candidates[0] if candidates else profile_id.strip()
+
+
+def _resolve_car_root(repo_root: Path, profile_id: str) -> tuple[str, str, Path, Path]:
+    candidates = candidate_bmw_profile_ids(profile_id)
+    for brand in _SCREENSHOT_BRANDS:
+        brand_root = repo_root / "cars" / brand
+        for candidate in candidates:
+            car_root = brand_root / candidate
+            if car_root.exists():
+                return brand, candidate, brand_root, car_root
+
+    fallback_brand = "BMW"
+    matched = candidates[0] if candidates else profile_id.strip()
+    brand_root = repo_root / "cars" / fallback_brand
+    return fallback_brand, matched, brand_root, brand_root / matched
 
 
 def _image_count(root: Path) -> int:
@@ -87,10 +106,21 @@ def _find_test_config(tests_root: Path) -> Path:
     return matches[0] if matches else Path()
 
 
+def _disabled_test_count(test_config_path: Path) -> int:
+    if not test_config_path.exists() or not test_config_path.is_file():
+        return 0
+    try:
+        text = test_config_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    return len(re.findall(r"\bdisableTest\s*\(", text))
+
+
 @dataclass(frozen=True)
 class BmwScreenshotSurface:
     profile_id: str
     bmw_profile_id: str
+    brand: str = "BMW"
     repo_root: str = ""
     cars_root: str = ""
     car_root: str = ""
@@ -121,9 +151,7 @@ def inspect_bmw_screenshot_surface(
     sg_project_root: Path | None = None,
 ) -> BmwScreenshotSurface:
     repo_root = discover_bmw_models_repo(workspace_root).resolve()
-    cars_root = repo_root / "cars" / "BMW"
-    bmw_profile_id = resolve_bmw_profile_id(profile_id, repo_root)
-    car_root = cars_root / bmw_profile_id
+    brand, bmw_profile_id, cars_root, car_root = _resolve_car_root(repo_root, profile_id)
     export_tests_root = car_root / "export" / "tests"
     actuals_root = export_tests_root / "actuals"
     diff_root = export_tests_root / "diff"
@@ -137,7 +165,7 @@ def inspect_bmw_screenshot_surface(
 
     notes: list[str] = []
     if export_tests_root.exists():
-        notes.append("BMW export/tests surface is present locally.")
+        notes.append(f"{brand} export/tests surface is present locally.")
     else:
         notes.append("BMW export/tests surface is not present locally for this profile.")
     if actuals_root.exists() and _image_count(actuals_root) == 0:
@@ -146,7 +174,7 @@ def inspect_bmw_screenshot_surface(
         notes.append("BMW diff root exists but currently contains no diff payload.")
     if not bmw_expected_root.exists():
         notes.append("No BMW expected root is visible in the local snapshot for this profile.")
-    if not sg_expected_root.exists():
+    if not sg_project_root or not sg_expected_root.exists():
         notes.append("No SG expected baseline root is available under the live SVN slice for this profile.")
     if test_config_path.exists() and test_config_path.name != "test_config.lua":
         notes.append(f"BMW uses `{test_config_path.name}` in this snapshot instead of `test_config.lua`.")
@@ -154,6 +182,7 @@ def inspect_bmw_screenshot_surface(
     return BmwScreenshotSurface(
         profile_id=profile_id,
         bmw_profile_id=bmw_profile_id,
+        brand=brand,
         repo_root=str(repo_root) if repo_root.exists() else "",
         cars_root=str(cars_root) if cars_root.exists() else "",
         car_root=str(car_root) if car_root.exists() else "",
@@ -162,14 +191,166 @@ def inspect_bmw_screenshot_surface(
         ci_readme_path=str(ci_readme_path) if ci_readme_path.exists() else "",
         car_manager_path=str(car_manager_path) if car_manager_path.exists() else "",
         export_tests_root=str(export_tests_root) if export_tests_root.exists() else "",
-        sg_expected_root=str(sg_expected_root) if sg_expected_root.exists() else "",
+        sg_expected_root=str(sg_expected_root) if sg_project_root and sg_expected_root.exists() else "",
         bmw_expected_root=str(bmw_expected_root) if bmw_expected_root.exists() else "",
         actuals_root=str(actuals_root) if actuals_root.exists() else "",
         diff_root=str(diff_root) if diff_root.exists() else "",
         test_config_path=str(test_config_path) if test_config_path.exists() else "",
-        sg_expected_count=_image_count(sg_expected_root),
+        sg_expected_count=_image_count(sg_expected_root) if sg_project_root else 0,
         bmw_expected_count=_image_count(bmw_expected_root),
         actual_count=_image_count(actuals_root),
         diff_count=_image_count(diff_root),
         notes=tuple(notes),
     )
+
+
+SCREENSHOT_STATE_BANNER = (
+    "Screenshot test state is read-only from local BMW/MINI Git/SVN screenshot folders. "
+    "SGFX does not run screenshot tests or approve screenshots."
+)
+_SCREENSHOT_STATE_NOTE = "Read-only screenshot test state; manual review remains required; not approval or delivery signoff."
+
+
+def _surface_status(surface: BmwScreenshotSurface) -> str:
+    if surface.bmw_expected_count > 0:
+        return "available"
+    if surface.export_tests_root:
+        return "no_expected_baselines"
+    if surface.car_root:
+        return "no_export_tests"
+    return "not_available"
+
+
+def read_bmw_screenshot_state(
+    profile_id: str,
+    *,
+    workspace: Path | str | None = None,
+    sg_project_root: Path | str | None = None,
+) -> dict[str, Any]:
+    workspace_path = Path(workspace).resolve() if workspace is not None else None
+    sg_root = Path(sg_project_root).resolve() if sg_project_root is not None else None
+    surface = inspect_bmw_screenshot_surface(
+        profile_id,
+        workspace_root=workspace_path,
+        sg_project_root=sg_root,
+    )
+    status = _surface_status(surface)
+    disabled_count = _disabled_test_count(Path(surface.test_config_path)) if surface.test_config_path else 0
+    summary = (
+        f"{surface.bmw_expected_count} expected / {surface.actual_count} actual / {surface.diff_count} diff screenshot file(s)"
+        if surface.bmw_expected_count or surface.actual_count or surface.diff_count
+        else f"screenshot test state unavailable for {profile_id.strip() or 'profile'}"
+    )
+    return {
+        "profile_id": surface.profile_id,
+        "matched_profile_id": surface.bmw_profile_id,
+        "brand": surface.brand,
+        "status": status,
+        "data_available": status == "available",
+        "repo_root": surface.repo_root,
+        "car_root": surface.car_root,
+        "export_tests_root": surface.export_tests_root,
+        "expected_root": surface.bmw_expected_root,
+        "actuals_root": surface.actuals_root,
+        "diff_root": surface.diff_root,
+        "test_config_path": surface.test_config_path,
+        "expected_count": surface.bmw_expected_count,
+        "actual_count": surface.actual_count,
+        "diff_count": surface.diff_count,
+        "disabled_test_count": disabled_count,
+        "sg_expected_count": surface.sg_expected_count,
+        "notes": list(surface.notes),
+        "summary": summary,
+        "note": _SCREENSHOT_STATE_NOTE,
+        "guidance": "Suggested screenshot review input only; compare expected, actuals, and diff folders before recording any reviewer verdict.",
+        "is_approval": False,
+    }
+
+
+def read_bmw_screenshot_states_for_profiles(
+    profile_ids: tuple[str, ...] | list[str],
+    *,
+    workspace: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    payloads: list[dict[str, Any]] = []
+    for profile_id in profile_ids:
+        profile = str(profile_id).strip()
+        if not profile or profile.casefold() in seen:
+            continue
+        seen.add(profile.casefold())
+        payloads.append(read_bmw_screenshot_state(profile, workspace=workspace))
+    return payloads
+
+
+def bmw_screenshot_state_digest_items(state: dict[str, Any]) -> list[dict[str, Any]]:
+    payloads = state.get("bmw_screenshot_state", [])
+    if not isinstance(payloads, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        profile = str(payload.get("profile_id", "")).strip()
+        matched = str(payload.get("matched_profile_id", "")).strip()
+        brand = str(payload.get("brand", "")).strip()
+        matched_label = f"{brand} {matched}".strip() if brand and matched else matched
+        label_profile = f"{profile} / {matched_label}" if profile and matched_label and profile != matched_label else profile or matched_label
+        expected = int(payload.get("expected_count", 0) or 0)
+        actual = int(payload.get("actual_count", 0) or 0)
+        diff = int(payload.get("diff_count", 0) or 0)
+        disabled = int(payload.get("disabled_test_count", 0) or 0)
+        detail = f"{expected} expected / {actual} actual / {diff} diff"
+        if disabled:
+            detail += f" / {disabled} disabled in test_config"
+        items.append(
+            {
+                "source": "bmw_screenshot_state",
+                "label": f"Screenshot test state ({label_profile or 'profile'})",
+                "status": str(payload.get("status", "")).strip() or "unknown",
+                "detail": detail,
+                "path": str(payload.get("expected_root", "")).strip(),
+                "note": str(payload.get("note", _SCREENSHOT_STATE_NOTE)).strip(),
+                "guidance": str(payload.get("guidance", "")).strip()
+                or "Suggested screenshot review input only; reviewer verdict required.",
+                "is_approval": False,
+            }
+        )
+    return items
+
+
+def render_bmw_screenshot_state_text(payload: dict[str, Any]) -> str:
+    lines = [
+        SCREENSHOT_STATE_BANNER,
+        f"Profile: {payload.get('profile_id', '')} ({payload.get('brand', 'BMW')} {payload.get('matched_profile_id', '')})",
+        f"Status: {payload.get('status', '')}",
+        f"Counts: {payload.get('expected_count', 0)} expected / {payload.get('actual_count', 0)} actual / {payload.get('diff_count', 0)} diff",
+        f"Disabled tests in config: {payload.get('disabled_test_count', 0)}",
+        f"Expected root: {payload.get('expected_root', '') or 'not found'}",
+        f"Actuals root: {payload.get('actuals_root', '') or 'not found'}",
+        f"Diff root: {payload.get('diff_root', '') or 'not found'}",
+        str(payload.get("note", _SCREENSHOT_STATE_NOTE)),
+    ]
+    return "\n".join(lines)
+
+
+def render_bmw_screenshot_state_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        f"# Screenshot Test State - {payload.get('profile_id', '') or 'profile'}",
+        "",
+        f"> {SCREENSHOT_STATE_BANNER}",
+        "",
+        f"- Matched brand/profile: `{payload.get('brand', 'BMW')} {payload.get('matched_profile_id', '')}`",
+        f"- Status: `{payload.get('status', '')}`",
+        f"- Expected baselines: `{payload.get('expected_count', 0)}`",
+        f"- Actual screenshots: `{payload.get('actual_count', 0)}`",
+        f"- Diff screenshots: `{payload.get('diff_count', 0)}`",
+        f"- Disabled tests in config: `{payload.get('disabled_test_count', 0)}`",
+        f"- Expected root: `{payload.get('expected_root', '') or 'not found'}`",
+        f"- Actuals root: `{payload.get('actuals_root', '') or 'not found'}`",
+        f"- Diff root: `{payload.get('diff_root', '') or 'not found'}`",
+        "",
+        f"> {payload.get('note', _SCREENSHOT_STATE_NOTE)}",
+        f"> {payload.get('guidance', 'Suggested screenshot review input only; reviewer verdict required.')}",
+    ]
+    return "\n".join(lines).rstrip() + "\n"

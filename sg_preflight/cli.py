@@ -10,6 +10,11 @@ from pathlib import Path
 from sg_preflight.adapters.common import write_json as write_adapter_json
 from sg_preflight.adapters.discovery import default_search_roots, probe_workspace
 from sg_preflight.adapters.materialize import materialize_bundle
+from sg_preflight.bmw_delivery import (
+    read_bmw_screenshot_state,
+    render_bmw_screenshot_state_markdown,
+    render_bmw_screenshot_state_text,
+)
 from sg_preflight.desktop.evidence_model import (
     desktop_action_snapshot,
     desktop_actions_for_profile,
@@ -476,6 +481,20 @@ def build_parser() -> argparse.ArgumentParser:
     export_size_date.add_argument("--latest", action="store_true", help="Pick the newest matching workbook by date")
     export_size_read.add_argument("--json", action="store_true", help="Print export-size analysis payload as JSON")
     export_size_read.add_argument("--markdown", action="store_true", help="Print export-size analysis payload as Markdown")
+
+    screenshot_state = sub.add_parser(
+        "screenshot-test-state",
+        help="Read local BMW/MINI screenshot expected/actual/diff state without running screenshot tests",
+    )
+    screenshot_state_sub = screenshot_state.add_subparsers(dest="screenshot_test_state_command", required=True)
+    screenshot_state_read = screenshot_state_sub.add_parser(
+        "read",
+        help="Read screenshot test state for one profile",
+    )
+    screenshot_state_read.add_argument("--workspace", help="Workspace root override")
+    screenshot_state_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    screenshot_state_read.add_argument("--json", action="store_true", help="Print screenshot test state as JSON")
+    screenshot_state_read.add_argument("--markdown", action="store_true", help="Print screenshot test state as Markdown")
 
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
@@ -995,6 +1014,28 @@ def main(argv: list[str] | None = None) -> int:
             print(_console_safe(render_export_size_analysis_markdown(payload)))
         else:
             print(_console_safe(render_export_size_analysis_text(payload)))
+        return 0
+
+    if args.command == "screenshot-test-state":
+        screenshot_state_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.screenshot_test_state_command == "read":
+                payload = read_bmw_screenshot_state(
+                    args.profile,
+                    workspace=screenshot_state_root,
+                )
+            else:
+                parser.error(f"Unhandled screenshot-test-state command: {args.screenshot_test_state_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"screenshot-test-state failed: {exc}"), file=sys.stderr)
+            return 1
+        if args.json:
+            _console_desktop_payload(payload)
+        elif args.markdown:
+            print(_console_safe(render_bmw_screenshot_state_markdown(payload)))
+        else:
+            print(_console_safe(render_bmw_screenshot_state_text(payload)))
         return 0
 
     if args.command == "workflow-status":

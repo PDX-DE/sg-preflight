@@ -89,6 +89,59 @@ class TestDailyDigest(unittest.TestCase):
         self.assertIn("No suggested review-order items recorded in the current state.", markdown)
         self.assertIn("Manual review remains required", markdown)
 
+    def test_daily_digest_surfaces_screenshot_test_state_as_guidance_not_verdict(self) -> None:
+        digest = build_daily_digest(
+            {
+                "ticket_id": "IDCEVODEV-SCREEN",
+                "scope": ["G65"],
+                "daily_snapshot_summary": {"smoke_completed": 0, "smoke_total": 0},
+                "screenshot_battery_counts": {"total": 0},
+                "daily_delta_summary": {
+                    "new_failures_count": 0,
+                    "resolved_failures_count": 0,
+                    "new_screenshot_diffs_count": 0,
+                    "unchanged_blockers_count": 0,
+                    "operator_signal": "",
+                },
+                "daily_delta": {
+                    "new_failures": [],
+                    "new_screenshot_diffs": [],
+                    "unchanged_blockers": [],
+                    "resolved_failures": [],
+                    "top_five_to_review": [],
+                },
+                "review_owner_decisions": {"sections": [], "pending_titles": []},
+                "manual_review_profiles": [],
+                "artifact_references": {},
+                "top_review_priority_items": [],
+                "open_items": [],
+                "bmw_screenshot_state": [
+                    {
+                        "profile_id": "G65",
+                        "matched_profile_id": "G65_EVO",
+                        "status": "available",
+                        "expected_count": 85,
+                        "actual_count": 34,
+                        "diff_count": 0,
+                        "disabled_test_count": 2,
+                        "expected_root": r"C:\3D Car git\digital-3d-car-models\cars\BMW\G65_EVO\export\tests\expected",
+                        "note": "Read-only screenshot test state; manual review remains required.",
+                        "is_approval": False,
+                    }
+                ],
+            }
+        )
+
+        items = digest["sections"]["evidence_prepared"]["items"]
+        screenshot_items = [item for item in items if item.get("source") == "bmw_screenshot_state"]
+
+        self.assertEqual(len(screenshot_items), 1)
+        self.assertIn("85 expected / 34 actual / 0 diff", screenshot_items[0]["detail"])
+        self.assertIn("Suggested screenshot review input only", screenshot_items[0]["guidance"])
+        self.assertFalse(screenshot_items[0]["is_approval"])
+        self.assertIn("Screenshot test state", digest["markdown"])
+        self.assertNotIn("approved", digest["markdown"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()

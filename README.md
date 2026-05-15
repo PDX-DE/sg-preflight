@@ -192,6 +192,15 @@ python -m sg_preflight export-size-analysis read --profile G65 --workspace C:\re
 
 This command reads `Cars\size_analysis\<profile>_<date>.xlsx` workbooks when they exist in the local SVN checkout. It does not run the export-size workflow, does not write to the workbook, and does not turn size data into an approval verdict.
 
+Read local BMW / MINI screenshot-test folder state without running the screenshot tests:
+
+```bash
+python -m sg_preflight screenshot-test-state read --profile G65 --json
+python -m sg_preflight screenshot-test-state read --profile G65 --markdown
+```
+
+This command reads `export\tests\expected`, `export\tests\actuals`, `export\tests\diff`, and `test_config.lua` under BMW and MINI profiles in the local `digital-3d-car-models` checkout. It is review guidance only: operators still compare the images and record the manual verdict.
+
 Run the full daily live preflight matrix as one action:
 
 ```bash
@@ -468,7 +477,7 @@ This is already fully runnable, but it is still an early internal release:
   - `G45` proves the multi-family anchor support while still surfacing the shared duplicate BMW carpaint ID
 - visual checks are not automated here
 - `manual-review` is a local step-through companion for the Quality Hero RaCo / Blender checklist: the operator creates a session, records each verdict, adds notes or screenshot references, and exports a summary. It does not review, approve, or auto-pass any step.
-- rack / screenshot / trace integration is not yet wired in
-- missing BMW-side access or a local `digital-3d-car-models` clone is still an explicit blocker for full screenshot-smoke coverage on this machine
+- rack / trace integration is not yet wired in
+- screenshot-test state can now be read from BMW and MINI profiles in a local `digital-3d-car-models` clone, but SGFX still does not run the screenshot tests or approve screenshots
 
-The next real step is to widen coverage from the current BMW rollout into MINI variants while keeping the validation core unchanged.
+The next real step is to widen end-to-end operator evidence across more BMW and MINI variants while keeping the validation core unchanged.

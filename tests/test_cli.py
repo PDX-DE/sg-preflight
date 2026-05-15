@@ -56,6 +56,16 @@ def _write_export_size_analysis_workbook(path: Path) -> None:
     workbook.save(path)
 
 
+def _write_screenshot_test_state(root: Path) -> None:
+    tests_root = root / "digital-3d-car-models" / "cars" / "BMW" / "G65_EVO" / "export" / "tests"
+    write_text(root / "digital-3d-car-models" / "ci" / "scripts" / "README.md", "fixture\n")
+    write_text(tests_root / "expected" / "front.png", "fake\n")
+    write_text(tests_root / "expected" / "rear.png", "fake\n")
+    write_text(tests_root / "actuals" / "front.png", "fake\n")
+    write_text(tests_root / "diff" / "rear.png", "fake\n")
+    write_text(tests_root / "test_config.lua", 'disableTest("country_variant_extra")\n')
+
+
 class TestCLI(unittest.TestCase):
     def test_list_profiles_includes_live_registry(self) -> None:
         result = subprocess.run(
@@ -201,6 +211,53 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Export-size analysis data is read-only", markdown_stdout.getvalue())
         self.assertIn("SGFX does not run the export size workflow or modify the workbook.", markdown_stdout.getvalue())
         self.assertIn("BEV-Basis", markdown_stdout.getvalue())
+
+    def test_screenshot_test_state_read_cli_returns_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_screenshot_test_state(root)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "screenshot-test-state",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--json",
+                    ]
+                )
+
+            markdown_stdout = io.StringIO()
+            with redirect_stdout(markdown_stdout):
+                markdown_result = main(
+                    [
+                        "screenshot-test-state",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--markdown",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["matched_profile_id"], "G65_EVO")
+        self.assertEqual(payload["expected_count"], 2)
+        self.assertEqual(payload["actual_count"], 1)
+        self.assertEqual(payload["diff_count"], 1)
+        self.assertEqual(payload["disabled_test_count"], 1)
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(markdown_result, 0)
+        self.assertIn("Screenshot test state is read-only", markdown_stdout.getvalue())
+        self.assertIn("SGFX does not run screenshot tests or approve screenshots.", markdown_stdout.getvalue())
+        self.assertNotIn("approved", markdown_stdout.getvalue().lower())
 
     def test_workflow_status_reports_repo_scene_stage(self) -> None:
         result = subprocess.run(
