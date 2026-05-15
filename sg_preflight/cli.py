@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 from sg_preflight.adapters.common import write_json as write_adapter_json
 from sg_preflight.adapters.discovery import default_search_roots, probe_workspace
@@ -120,6 +121,82 @@ def _json_ready(payload: object) -> object:
     if isinstance(payload, dict):
         return {str(key): _json_ready(value) for key, value in payload.items()}
     return payload
+
+
+def _json_text(payload: object) -> str:
+    return json.dumps(_json_ready(payload), indent=2, ensure_ascii=False)
+
+
+def _add_render_options(
+    parser: argparse.ArgumentParser,
+    *,
+    formats: tuple[str, ...] = ("text", "json", "markdown"),
+) -> None:
+    parser.add_argument(
+        "--format",
+        choices=formats,
+        default="",
+        help="Output format. Backward-compatible --json and --markdown aliases still work where available.",
+    )
+    parser.add_argument(
+        "--output-path",
+        "--out",
+        dest="output_path",
+        default="",
+        help="Write rendered command output to this file instead of stdout.",
+    )
+
+
+def _resolve_render_format(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    *,
+    default: str = "text",
+    formats: tuple[str, ...] = ("text", "json", "markdown"),
+) -> str:
+    selected = str(getattr(args, "format", "") or "").strip().lower()
+    legacy: list[str] = []
+    if getattr(args, "json", False):
+        legacy.append("json")
+    if getattr(args, "markdown", False):
+        legacy.append("markdown")
+    unique_legacy = sorted(set(legacy))
+    if len(unique_legacy) > 1:
+        parser.error("--json and --markdown cannot be combined; use --format instead")
+    if selected and unique_legacy and selected != unique_legacy[0]:
+        parser.error(f"--format {selected} cannot be combined with --{unique_legacy[0]}")
+    resolved = selected or (unique_legacy[0] if unique_legacy else default)
+    if resolved not in formats:
+        parser.error(f"--format {resolved} is not supported for this command")
+    return resolved
+
+
+def _emit_text(text: str, args: argparse.Namespace) -> None:
+    output_path = str(getattr(args, "output_path", "") or "").strip()
+    if output_path:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
+        return
+    print(_console_safe(text))
+
+
+def _emit_json(payload: object, args: argparse.Namespace) -> None:
+    _emit_text(_json_text(payload), args)
+
+
+def _emit_console(render: Callable[[], None], args: argparse.Namespace) -> None:
+    output_path = str(getattr(args, "output_path", "") or "").strip()
+    if not output_path:
+        render()
+        return
+    import io
+    from contextlib import redirect_stdout
+
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        render()
+    _emit_text(stdout.getvalue().rstrip("\n"), args)
 
 
 def _console_report(report: object) -> None:
@@ -457,12 +534,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     profile_list = sub.add_parser("list-profiles", help="List canonical live run profiles")
     profile_list.add_argument("--json", action="store_true", help="Print profile registry as JSON")
+    _add_render_options(profile_list, formats=("text", "json"))
 
     action_list = sub.add_parser("list-actions", help="List one-click SG QA actions")
     action_list.add_argument("--json", action="store_true", help="Print action registry as JSON")
+    _add_render_options(action_list, formats=("text", "json"))
 
     checker_list = sub.add_parser("list-checkers", help="List SG checker coverage and readiness")
     checker_list.add_argument("--json", action="store_true", help="Print checker coverage as JSON")
+    _add_render_options(checker_list, formats=("text", "json"))
 
     delivery_checklist = sub.add_parser(
         "delivery-checklist",
@@ -476,6 +556,7 @@ def build_parser() -> argparse.ArgumentParser:
     delivery_checklist_read.add_argument("--workbook", help="Explicit delivery checklist workbook path")
     delivery_checklist_read.add_argument("--json", action="store_true", help="Print delivery checklist payload as JSON")
     delivery_checklist_read.add_argument("--markdown", action="store_true", help="Print delivery checklist payload as Markdown")
+    _add_render_options(delivery_checklist_read)
 
     export_size = sub.add_parser(
         "export-size-analysis",
@@ -491,6 +572,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_size_date.add_argument("--latest", action="store_true", help="Pick the newest matching workbook by date")
     export_size_read.add_argument("--json", action="store_true", help="Print export-size analysis payload as JSON")
     export_size_read.add_argument("--markdown", action="store_true", help="Print export-size analysis payload as Markdown")
+    _add_render_options(export_size_read)
 
     screenshot_state = sub.add_parser(
         "screenshot-test-state",
@@ -505,6 +587,7 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot_state_read.add_argument("--profile", required=True, help="Profile id such as G65")
     screenshot_state_read.add_argument("--json", action="store_true", help="Print screenshot test state as JSON")
     screenshot_state_read.add_argument("--markdown", action="store_true", help="Print screenshot test state as Markdown")
+    _add_render_options(screenshot_state_read)
 
     bmw_git_readiness = sub.add_parser(
         "bmw-git-readiness",
@@ -520,6 +603,7 @@ def build_parser() -> argparse.ArgumentParser:
     bmw_git_readiness_read.add_argument("--profile", required=True, help="Profile id such as G65")
     bmw_git_readiness_read.add_argument("--json", action="store_true", help="Print BMW Git readiness as JSON")
     bmw_git_readiness_read.add_argument("--markdown", action="store_true", help="Print BMW Git readiness as Markdown")
+    _add_render_options(bmw_git_readiness_read)
 
     qa_hero_readiness = sub.add_parser(
         "qa-hero-readiness",
@@ -535,9 +619,11 @@ def build_parser() -> argparse.ArgumentParser:
     qa_hero_readiness_read.add_argument("--profile", required=True, help="Profile id such as G65")
     qa_hero_readiness_read.add_argument("--json", action="store_true", help="Print QA Hero readiness as JSON")
     qa_hero_readiness_read.add_argument("--markdown", action="store_true", help="Print QA Hero readiness as Markdown")
+    _add_render_options(qa_hero_readiness_read)
 
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
+    _add_render_options(workflow_list, formats=("text", "json"))
 
     ticket_review = sub.add_parser(
         "ticket-review",
@@ -679,6 +765,7 @@ def build_parser() -> argparse.ArgumentParser:
     daily_digest_latest.add_argument("--ticket-id", help="Optional ticket id filter")
     daily_digest_latest.add_argument("--json", action="store_true", help="Print daily digest payload as JSON")
     daily_digest_latest.add_argument("--markdown", action="store_true", help="Print daily digest as Markdown")
+    _add_render_options(daily_digest_latest)
 
     manual_review = sub.add_parser(
         "manual-review",
@@ -984,28 +1071,35 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(str(exc))
             return 1
 
-        result = execute_bundle_run(
-            bundle_dir=Path(args.bundle),
-            config_path=Path(args.config),
-            packs=packs,
-            fail_on=args.fail_on,
-            json_out=Path(args.json_out) if args.json_out else None,
-            html_out=Path(args.html_out) if args.html_out else None,
-            markdown_out=Path(args.md_out) if args.md_out else None,
-        )
+        try:
+            result = execute_bundle_run(
+                bundle_dir=Path(args.bundle),
+                config_path=Path(args.config),
+                packs=packs,
+                fail_on=args.fail_on,
+                json_out=Path(args.json_out) if args.json_out else None,
+                html_out=Path(args.html_out) if args.html_out else None,
+                markdown_out=Path(args.md_out) if args.md_out else None,
+            )
+        except Exception as exc:
+            print(_console_safe(f"run failed: {exc}"), file=sys.stderr)
+            return 1
         _console_report(result.report)
         return result.exit_code
 
     if args.command == "list-profiles":
-        _console_profiles(args.json)
+        output_format = _resolve_render_format(args, parser, formats=("text", "json"))
+        _emit_console(lambda: _console_profiles(output_format == "json"), args)
         return 0
 
     if args.command == "list-actions":
-        _console_actions(args.json)
+        output_format = _resolve_render_format(args, parser, formats=("text", "json"))
+        _emit_console(lambda: _console_actions(output_format == "json"), args)
         return 0
 
     if args.command == "list-checkers":
-        _console_checkers(args.json)
+        output_format = _resolve_render_format(args, parser, formats=("text", "json"))
+        _emit_console(lambda: _console_checkers(output_format == "json"), args)
         return 0
 
     if args.command == "delivery-checklist":
@@ -1024,12 +1118,13 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(_console_safe(f"delivery-checklist failed: {exc}"), file=sys.stderr)
             return 1
-        if args.json:
-            _console_desktop_payload(payload)
-        elif args.markdown:
-            print(_console_safe(render_delivery_checklist_markdown(payload)))
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_delivery_checklist_markdown(payload), args)
         else:
-            print(_console_safe(render_delivery_checklist_text(payload)))
+            _emit_text(render_delivery_checklist_text(payload), args)
         return 0
 
     if args.command == "export-size-analysis":
@@ -1049,12 +1144,13 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(_console_safe(f"export-size-analysis failed: {exc}"), file=sys.stderr)
             return 1
-        if args.json:
-            _console_desktop_payload(payload)
-        elif args.markdown:
-            print(_console_safe(render_export_size_analysis_markdown(payload)))
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_export_size_analysis_markdown(payload), args)
         else:
-            print(_console_safe(render_export_size_analysis_text(payload)))
+            _emit_text(render_export_size_analysis_text(payload), args)
         return 0
 
     if args.command == "screenshot-test-state":
@@ -1071,12 +1167,13 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(_console_safe(f"screenshot-test-state failed: {exc}"), file=sys.stderr)
             return 1
-        if args.json:
-            _console_desktop_payload(payload)
-        elif args.markdown:
-            print(_console_safe(render_bmw_screenshot_state_markdown(payload)))
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_bmw_screenshot_state_markdown(payload), args)
         else:
-            print(_console_safe(render_bmw_screenshot_state_text(payload)))
+            _emit_text(render_bmw_screenshot_state_text(payload), args)
         return 0
 
     if args.command == "bmw-git-readiness":
@@ -1094,12 +1191,13 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(_console_safe(f"bmw-git-readiness failed: {exc}"), file=sys.stderr)
             return 1
-        if args.json:
-            _console_desktop_payload(payload)
-        elif args.markdown:
-            print(_console_safe(render_bmw_git_readiness_markdown(payload)))
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_bmw_git_readiness_markdown(payload), args)
         else:
-            print(_console_safe(render_bmw_git_readiness_text(payload)))
+            _emit_text(render_bmw_git_readiness_text(payload), args)
         return 0
 
     if args.command == "qa-hero-readiness":
@@ -1117,17 +1215,19 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(_console_safe(f"qa-hero-readiness failed: {exc}"), file=sys.stderr)
             return 1
-        if args.json:
-            _console_desktop_payload(payload)
-        elif args.markdown:
-            print(_console_safe(render_qa_hero_readiness_markdown(payload)))
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_qa_hero_readiness_markdown(payload), args)
         else:
-            print(_console_safe(render_qa_hero_readiness_text(payload)))
+            _emit_text(render_qa_hero_readiness_text(payload), args)
         return 0
 
     if args.command == "workflow-status":
         items = qa_workflow_status(root)
-        _console_workflow_status(items, as_json=args.json)
+        output_format = _resolve_render_format(args, parser, formats=("text", "json"))
+        _emit_console(lambda: _console_workflow_status(items, as_json=output_format == "json"), args)
         return 0
 
     if args.command == "ticket-review":
@@ -1301,12 +1401,13 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(_console_safe(f"daily-digest failed: {exc}"), file=sys.stderr)
             return 1
-        if args.json:
-            _console_desktop_payload(payload)
-        elif args.markdown:
-            print(_console_safe(render_daily_digest_markdown(payload)))
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_daily_digest_markdown(payload), args)
         else:
-            print(_console_safe(render_daily_digest_text(payload)))
+            _emit_text(render_daily_digest_text(payload), args)
         return 0
 
     if args.command == "manual-review":

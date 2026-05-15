@@ -133,6 +133,32 @@ class TestCLI(unittest.TestCase):
         self.assertIn("delivery_checklist__g65", action_ids)
         self.assertIn("bmw_screenshot_smoke__g65", action_ids)
 
+    def test_list_profiles_accepts_format_and_output_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "profiles.json"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "sg_preflight",
+                    "list-profiles",
+                    "--format",
+                    "json",
+                    "--output-path",
+                    str(output_path),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+            self.assertEqual(result.stdout, "")
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            profile_ids = {item["profile_id"] for item in payload}
+            self.assertIn("G65", profile_ids)
+
     def test_list_checkers_reports_checker_catalog(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "list-checkers", "--json"],
@@ -245,6 +271,143 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Export-size analysis data is read-only", markdown_stdout.getvalue())
         self.assertIn("SGFX does not run the export size workflow or modify the workbook.", markdown_stdout.getvalue())
         self.assertIn("BEV-Basis", markdown_stdout.getvalue())
+
+    def test_read_commands_accept_format_and_output_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            delivery_workbook = root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist" / "Delivery Data - BMW.xlsx"
+            export_workbook = root / "Cars" / "size_analysis" / "G65_20251002.xlsx"
+            json_output = root / "reports" / "delivery.json"
+            markdown_output = root / "reports" / "export.md"
+            _write_delivery_checklist_workbook(delivery_workbook)
+            _write_export_size_analysis_workbook(export_workbook)
+
+            delivery_stdout = io.StringIO()
+            with redirect_stdout(delivery_stdout):
+                delivery_result = main(
+                    [
+                        "delivery-checklist",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--format",
+                        "json",
+                        "--out",
+                        str(json_output),
+                    ]
+                )
+
+            export_stdout = io.StringIO()
+            with redirect_stdout(export_stdout):
+                export_result = main(
+                    [
+                        "export-size-analysis",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--latest",
+                        "--format",
+                        "markdown",
+                        "--output-path",
+                        str(markdown_output),
+                    ]
+                )
+
+            self.assertEqual(delivery_result, 0)
+            self.assertEqual(delivery_stdout.getvalue(), "")
+            delivery_payload = json.loads(json_output.read_text(encoding="utf-8"))
+            self.assertEqual(delivery_payload["status"], "available")
+            self.assertFalse(delivery_payload["is_approval"])
+            self.assertEqual(export_result, 0)
+            self.assertEqual(export_stdout.getvalue(), "")
+            markdown = markdown_output.read_text(encoding="utf-8")
+            self.assertIn("Export-size analysis data is read-only", markdown)
+            self.assertIn("Manual delivery review", markdown)
+
+    def test_daily_digest_format_output_path_is_fresh_workspace_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            digest_path = root / "daily" / "morning.md"
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = main(
+                    [
+                        "daily-digest",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--format",
+                        "markdown",
+                        "--output-path",
+                        str(digest_path),
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(stderr.getvalue(), "")
+            markdown = digest_path.read_text(encoding="utf-8")
+            self.assertIn("No review package found", markdown)
+            self.assertIn("Manual review remains required", markdown)
+            self.assertNotIn("approved", markdown.lower())
+
+    def test_format_rejects_conflicting_legacy_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workbook_path = root / "Cars" / "size_analysis" / "G65_20251002.xlsx"
+            _write_export_size_analysis_workbook(workbook_path)
+
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as raised:
+                    main(
+                        [
+                            "export-size-analysis",
+                            "read",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G65",
+                            "--json",
+                            "--format",
+                            "markdown",
+                        ]
+                    )
+
+        self.assertNotEqual(raised.exception.code, 0)
+        self.assertIn("cannot be combined", stderr.getvalue())
+
+    def test_run_reports_malformed_json_config_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "broken.json"
+            config_path.write_text('{"packs": [', encoding="utf-8")
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = main(
+                    [
+                        "run",
+                        "--bundle",
+                        str(ROOT / "demo" / "good"),
+                        "--config",
+                        str(config_path),
+                        "--fail-on",
+                        "never",
+                    ]
+                )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("Malformed JSON", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_screenshot_test_state_read_cli_returns_json_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
