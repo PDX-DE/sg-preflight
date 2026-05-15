@@ -267,6 +267,8 @@ One-click action records persist under `out\operator-ui\actions`.
 Operator workflow notes live in [docs/operator-ui-workflow.md](docs/operator-ui-workflow.md).
 Teammate pilot guidance lives in [docs/teammate-pilot-playbook.md](docs/teammate-pilot-playbook.md).
 QA workflow alignment lives in [docs/qa-workflow-alignment.md](docs/qa-workflow-alignment.md).
+CLI usage and output options live in [docs/cli-overview.md](docs/cli-overview.md).
+JSON configuration guidance lives in [docs/json-workflow-guide.md](docs/json-workflow-guide.md).
 SG checker coverage lives in [docs/sg-checker-coverage-matrix.md](docs/sg-checker-coverage-matrix.md).
 Team alpha prep lives in [docs/ALPHA_REMAINING_WORK.md](docs/ALPHA_REMAINING_WORK.md), [docs/TEAM_DEMO_PLAN.md](docs/TEAM_DEMO_PLAN.md), [docs/TEAM_FEEDBACK_CAPTURE.md](docs/TEAM_FEEDBACK_CAPTURE.md), [docs/TEAMS_DAILY_STATUS.md](docs/TEAMS_DAILY_STATUS.md), [docs/JANA_SYNC_PREP.md](docs/JANA_SYNC_PREP.md), [docs/ROADMAP_NEXT.md](docs/ROADMAP_NEXT.md), and [docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md).
 Future desktop-shell research and visual-direction notes live under [docs/research](docs/research), while the experimental shell itself still wraps the same Python actions, reports, and evidence model.
