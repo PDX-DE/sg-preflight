@@ -154,6 +154,19 @@ def _status_text(status: str) -> str:
     return status.replace("_", " ")
 
 
+def _recorded_status(value: object) -> str:
+    raw = _cell_text(value)
+    if not raw:
+        return "pending"
+    normalized = re.sub(r"[^a-z0-9]+", " ", raw.casefold()).strip()
+    compact = normalized.replace(" ", "")
+    if compact in {"notrun", "notexecuted", "notstarted"}:
+        return "not_run"
+    if compact in {"notavailable", "unavailable", "na", "notapplicable"}:
+        return "not_available"
+    return "recorded"
+
+
 def _workbook_metadata(workbook_path: Path, *, brand: str | None, row_count: int = 0) -> dict[str, Any]:
     stat = workbook_path.stat() if workbook_path.exists() else None
     return {
@@ -226,7 +239,7 @@ def _recorded_check(key: str, label: str, value: object) -> dict[str, str]:
     return {
         "key": key,
         "label": label,
-        "status": "recorded" if raw_value else "pending",
+        "status": _recorded_status(value),
         "raw_value": raw_value,
     }
 

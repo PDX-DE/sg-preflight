@@ -133,6 +133,29 @@ class TestDeliveryChecklist(unittest.TestCase):
         self.assertIn("Ramses Size recorded", payload["summary"])
         self.assertFalse(payload["is_approval"])
 
+    def test_export_size_workbook_not_run_values_are_not_treated_as_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trunk = Path(temp_dir) / "repositories" / "trunk"
+            workbook_path = trunk / "Cars" / "BMW" / "BMW Export Size.xlsx"
+            workbook_path.parent.mkdir(parents=True, exist_ok=True)
+            workbook = Workbook()
+            worksheet = workbook.active
+            worksheet.title = "G65"
+            worksheet.append(["Date", "SVN", "Changelog", "Ramses Size", "Logic Size", "Screenshot", "Comment"])
+            worksheet.append(["15.05.2026", "r12399", "r12380", "not_run", "not_available", "", "tool could not complete"])
+            workbook.save(workbook_path)
+
+            payload = read_delivery_checklist(profile_id="G65", workspace=trunk)
+
+        checks = {item["key"]: item for item in payload["checks"]}
+        self.assertEqual(checks["ramses_size"]["status"], "not_run")
+        self.assertEqual(checks["ramses_size"]["raw_value"], "not_run")
+        self.assertEqual(checks["logic_size"]["status"], "not_available")
+        self.assertEqual(checks["logic_size"]["raw_value"], "not_available")
+        self.assertIn("Ramses Size not run", payload["summary"])
+        self.assertIn("Logic Size not available", payload["summary"])
+        self.assertFalse(payload["is_approval"])
+
     def test_resolve_delivery_checklist_workbook_supports_mini_filename(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
