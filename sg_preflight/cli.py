@@ -939,9 +939,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     retro = sub.add_parser(
         "retro-extract",
-        help="Parse a Whiteboard retro export into structured SG-preflight pain/action output",
+        help="Parse a team retrospective export into structured SG-preflight pain/action output",
+        description="Parse a team retrospective export into structured SG-preflight pain/action output",
     )
-    retro.add_argument("--html", required=True, help="Path to exported Whiteboard HTML")
+    retro.add_argument("--html", required=True, help="Path to exported team retrospective HTML")
     retro.add_argument("--comments-json", help="Optional path to exported comments JSON")
     retro.add_argument("--json-out", help="Write structured retro JSON here")
     retro.add_argument("--md-out", help="Write structured retro markdown here")

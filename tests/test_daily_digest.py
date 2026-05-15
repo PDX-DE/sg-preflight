@@ -46,7 +46,10 @@ class TestDailyDigest(unittest.TestCase):
             sections["suggested_review_order"]["items"][0]["guidance"],
         )
         self.assertNotIn("approved", sections["suggested_review_order"]["items"][0]["guidance"].lower())
+        self.assertNotIn("validated", sections["suggested_review_order"]["items"][0]["guidance"].lower())
         self.assertIn("[waiting_for_adrian]", digest["markdown"])
+        self.assertNotIn("approved", digest["markdown"].lower())
+        self.assertNotIn("validated", digest["markdown"].lower())
 
     def test_daily_digest_markdown_renders_clean_empty_state(self) -> None:
         digest = build_daily_digest(
@@ -88,6 +91,8 @@ class TestDailyDigest(unittest.TestCase):
         self.assertIn("No waiting-for-owner items recorded in the current state.", markdown)
         self.assertIn("No suggested review-order items recorded in the current state.", markdown)
         self.assertIn("Manual review remains required", markdown)
+        self.assertNotIn("approved", markdown.lower())
+        self.assertNotIn("validated", markdown.lower())
 
     def test_daily_digest_surfaces_what_landed_today_without_release_claim(self) -> None:
         digest = build_daily_digest(
@@ -133,6 +138,7 @@ class TestDailyDigest(unittest.TestCase):
         self.assertIn("local change log", items[0]["guidance"].lower())
         self.assertIn("What landed today", digest["markdown"])
         self.assertNotIn("approved", digest["markdown"].lower())
+        self.assertNotIn("validated", digest["markdown"].lower())
         self.assertNotIn("deployed", digest["markdown"].lower())
 
     def test_daily_digest_surfaces_workflow_status_without_verdict_claim(self) -> None:
@@ -190,6 +196,7 @@ class TestDailyDigest(unittest.TestCase):
         self.assertIn("Workflow status", digest["markdown"])
         self.assertIn("Manual review remains required", digest["markdown"])
         self.assertNotIn("approval", digest["sections"]["workflow_status"]["heading"].lower())
+        self.assertNotIn("validated", digest["markdown"].lower())
 
     def test_daily_digest_surfaces_screenshot_test_state_as_guidance_not_verdict(self) -> None:
         digest = build_daily_digest(
@@ -243,6 +250,7 @@ class TestDailyDigest(unittest.TestCase):
         self.assertFalse(screenshot_items[0]["is_approval"])
         self.assertIn("Screenshot test state", digest["markdown"])
         self.assertNotIn("approved", digest["markdown"].lower())
+        self.assertNotIn("validated", digest["markdown"].lower())
 
 
 if __name__ == "__main__":

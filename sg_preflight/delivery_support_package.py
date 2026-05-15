@@ -269,7 +269,7 @@ def _progress_markdown(
     lines.extend(
         [
             "- Jira writeback is still blocked.",
-            "- broader screenshot automation is still incomplete wherever the local BMW viewer/runtime fails or a final approved baseline is still missing.",
+            "- broader screenshot automation is still incomplete wherever the local BMW viewer/runtime fails or a final reviewed baseline is still missing.",
             "- manual RaCo asset review still needs a human pass/fail judgment.",
             "",
             "## What still needs a human",
@@ -281,7 +281,7 @@ def _progress_markdown(
             "",
             "## Most important practical conclusion",
             "",
-            "The framework is no longer just in preparation mode. We already executed representative local BMW export and screenshot smoke runs for the confirmed `NA8/G78/G50` scope. The remaining gap is now mainly wider-battery edge cases, quick baseline approval for the scenario families already emitting candidates, human visual review, and external BMW systems.",
+            "The framework is no longer just in preparation mode. We already executed representative local BMW export and screenshot smoke runs for the confirmed `NA8/G78/G50` scope. The remaining gap is now mainly wider-battery edge cases, quick baseline review for the scenario families already emitting candidates, human visual review, and external BMW systems.",
             "",
         ]
     )

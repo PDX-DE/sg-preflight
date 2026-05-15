@@ -262,7 +262,7 @@ def create_review_package_fixture(temp_root: Path, ticket_id: str = "IDCEVODEV-9
             {"profile_id": "NA8", "filter_name": "lights_OnlyCones", "verdict": "runtime_crash"},
         ],
         "top_review_items": [
-            "NA8: `default` generated a candidate output; baseline approval can be done quickly.",
+            "NA8: `default` generated a candidate output; baseline review can be done quickly.",
             "NA8: `lights_LowBeam` has a proxy lamp-state screenshot ready; exact cone effect is still blocked locally.",
         ],
         "blocked_steps": [
@@ -280,8 +280,8 @@ def create_review_package_fixture(temp_root: Path, ticket_id: str = "IDCEVODEV-9
                 "filter_name": "default",
                 "verdict": "baseline_candidate_ready",
                 "priority_score": 80,
-                "reason": "Exact candidate output exists; baseline approval can be done quickly.",
-                "recommendation": "Candidate output exists; quick baseline-approval pass is possible.",
+                "reason": "Exact candidate output exists; baseline review can be done quickly.",
+                "recommendation": "Candidate output exists; quick baseline-review pass is possible.",
                 "log_path": str((snapshot_root / "na8-bmw-battery.log").resolve()),
             },
             {
@@ -320,7 +320,7 @@ def create_review_package_fixture(temp_root: Path, ticket_id: str = "IDCEVODEV-9
             },
         },
         "top_five_to_review": [
-            "NA8: `default` generated a candidate output; baseline approval can be done quickly.",
+            "NA8: `default` generated a candidate output; baseline review can be done quickly.",
         ],
     }
 

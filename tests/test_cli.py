@@ -351,6 +351,19 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
         self.assertIn("experimental desktop operator shell", result.stdout.lower())
 
+    def test_retro_extract_help_uses_neutral_team_retro_wording(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "retro-extract", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertIn("team retrospective export", result.stdout)
+        self.assertNotIn("White" "board retro export", result.stdout)
+
     def test_desktop_command_dispatches_to_runner(self) -> None:
         with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=7) as runner:
             result = main(["desktop", "--profile", "G65"])

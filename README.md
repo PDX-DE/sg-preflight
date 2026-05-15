@@ -298,7 +298,7 @@ This writes a comparison summary plus per-car bundles, reports, and run records 
 > [!NOTE]
 > The live matrix is still the best single command for showing the tool to the 3D team because it compares the strongest current demo slices side by side, even though the registry now supports a wider real BMW slice set.
 
-Extract a structured pain/action summary from a Whiteboard retro export:
+Extract a structured pain/action summary from a team retrospective export:
 
 ```bash
 python -m sg_preflight retro-extract \

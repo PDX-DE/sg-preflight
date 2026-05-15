@@ -31,6 +31,9 @@ class TestReviewMessages(unittest.TestCase):
         self.assertIn("Delta: +0 failures, 0 resolved, 0 new diffs, 1 unchanged blockers", digest)
         self.assertIn("Unresolved exact: lights_OnlyCones", digest)
         self.assertLessEqual(len([line for line in digest.splitlines() if line.strip()]), 8)
+        combined_text = "\n".join([update, digest])
+        self.assertNotIn("approved", combined_text.lower())
+        self.assertNotIn("validated", combined_text.lower())
 
         self.assertEqual(digest_json["ticket_id"], "IDCEVODEV-960073")
         self.assertEqual(digest_json["screenshot_battery"]["covered"], 2)

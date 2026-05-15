@@ -654,7 +654,7 @@ def _scenario_image_names(root: Path) -> tuple[str, ...]:
 
 def _battery_gap_recommendation(item: BmwBatteryResult) -> str:
     if item.verdict == "runtime_crash":
-        return "Treat as a technical blocker before manual screenshot approval."
+        return "Treat as a technical blocker before manual screenshot review."
     if item.verdict == "scenario_output_missing":
         return "Treat as config/output mismatch before human visual review."
     if item.verdict == "needs_manual_review":
@@ -664,7 +664,7 @@ def _battery_gap_recommendation(item: BmwBatteryResult) -> str:
     if item.verdict == "proxy_candidate_ready":
         return "Proxy output exists; it validates local lamp-state rendering but not the exact beam-cone effect."
     if item.verdict == "likely_ok":
-        return "Keep as low-priority evidence; no automatic approval is implied."
+        return "Keep as low-priority evidence; no automatic verdict is implied."
     if item.verdict == "blocked":
         return "Unblock or rerun the screenshot check before visual comparison."
     return "Generate or locate the expected baseline before visual comparison."
@@ -704,13 +704,13 @@ def _review_priority_has_dimension_mismatch(item: BmwBatteryResult) -> bool:
 
 def _review_priority_reason(item: BmwBatteryResult) -> str:
     if _review_priority_has_dimension_mismatch(item):
-        reason = "Screenshot dimensions differ and need blocker-level triage before visual approval."
+        reason = "Screenshot dimensions differ and need blocker-level triage before visual review."
     elif item.verdict == "needs_manual_review":
         reason = "Diff payload exists and needs a human pass/fail decision."
     elif item.verdict == "baseline_candidate_ready":
-        reason = "Exact candidate output exists, but the baseline still needs a human approval decision."
+        reason = "Exact candidate output exists, but the baseline still needs a human review decision."
     elif item.verdict == "proxy_candidate_ready":
-        reason = "Proxy output exists, but the exact requested screenshot is not locally validated."
+        reason = "Proxy output exists, but the exact requested screenshot still needs review."
     elif item.verdict == "likely_ok":
         reason = "Exact compare completed locally with no visible diff; keep as low-priority review evidence."
     elif item.verdict == "runtime_crash":
