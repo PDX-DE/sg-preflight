@@ -11,6 +11,10 @@ from sg_preflight.bmw_delivery import (
     bmw_screenshot_state_digest_items,
     read_bmw_screenshot_states_for_profiles,
 )
+from sg_preflight.bmw_git_readiness import (
+    bmw_git_readiness_digest_items,
+    read_bmw_git_readiness_for_profiles,
+)
 from sg_preflight.export_size_analysis import (
     export_size_analysis_digest_items,
     read_export_size_analyses_for_profiles,
@@ -255,6 +259,7 @@ def build_daily_digest(state: dict[str, Any]) -> dict[str, Any]:
                 "Evidence prepared",
                 _summary_evidence_items(state)
                 + bmw_screenshot_state_digest_items(state)
+                + bmw_git_readiness_digest_items(state)
                 + delivery_checklist_digest_items(state)
                 + export_size_analysis_digest_items(state)
                 + _artifact_evidence_items(state),
@@ -306,6 +311,10 @@ def build_latest_daily_digest(
         tuple(str(item) for item in state.get("scope", []) if str(item).strip()),
         workspace=workspace,
     )
+    state["bmw_git_readiness"] = read_bmw_git_readiness_for_profiles(
+        tuple(str(item) for item in state.get("scope", []) if str(item).strip()),
+        workspace=workspace,
+    )
     state["export_size_analysis"] = read_export_size_analyses_for_profiles(
         tuple(str(item) for item in state.get("scope", []) if str(item).strip()),
         workspace=workspace,
@@ -342,6 +351,7 @@ def build_no_data_daily_digest(
         "manual_review_profiles": [],
         "manual_review_sessions": manual_review_digest_items(workspace=workspace, ticket_id=ticket_id),
         "bmw_screenshot_state": [],
+        "bmw_git_readiness": [],
         "artifact_references": {},
         "top_review_priority_items": [],
         "open_items": [],

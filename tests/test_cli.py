@@ -66,6 +66,28 @@ def _write_screenshot_test_state(root: Path) -> None:
     write_text(tests_root / "test_config.lua", 'disableTest("country_variant_extra")\n')
 
 
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)
+
+
+def _write_bmw_git_readiness_state(root: Path) -> None:
+    repo = root / "digital-3d-car-models"
+    car_root = repo / "cars" / "BMW" / "G65_EVO"
+    write_text(repo / "cars" / "BMW" / "README_IDCevo.md", "brand readme\n")
+    write_text(car_root / "README.md", "profile readme\n")
+    write_text(car_root / "_Workfiles" / ".keep", "\n")
+    write_text(car_root / "main" / "Main_G65.rca", "scene\n")
+    write_text(car_root / "export" / "tests" / "test_config.lua", "-- config\n")
+    write_text(car_root / "perspectives_CID180_LHD.json", "{}\n")
+    write_text(car_root / "CHANGELOG.md", "# Changelog\n")
+    write_text(car_root / "lids.json", "{}\n")
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    _git(repo, "config", "user.name", "David Erik Garcia Arena")
+    _git(repo, "config", "user.email", "88119698+Hawaiiiiii@users.noreply.github.com")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "fixture profile")
+
+
 class TestCLI(unittest.TestCase):
     def test_list_profiles_includes_live_registry(self) -> None:
         result = subprocess.run(
@@ -257,6 +279,51 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(markdown_result, 0)
         self.assertIn("Screenshot test state is read-only", markdown_stdout.getvalue())
         self.assertIn("SGFX does not run screenshot tests or approve screenshots.", markdown_stdout.getvalue())
+        self.assertNotIn("approved", markdown_stdout.getvalue().lower())
+
+    def test_bmw_git_readiness_read_cli_returns_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_bmw_git_readiness_state(root)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "bmw-git-readiness",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--json",
+                    ]
+                )
+
+            markdown_stdout = io.StringIO()
+            with redirect_stdout(markdown_stdout):
+                markdown_result = main(
+                    [
+                        "bmw-git-readiness",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--markdown",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["matched_profile_id"], "G65_EVO")
+        self.assertTrue(payload["main_scene_present"])
+        self.assertTrue(payload["latest_commit"]["sha"])
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(markdown_result, 0)
+        self.assertIn("BMW Git per-profile readiness is read-only", markdown_stdout.getvalue())
+        self.assertIn("SGFX does not write to BMW Git or fetch from the remote.", markdown_stdout.getvalue())
         self.assertNotIn("approved", markdown_stdout.getvalue().lower())
 
     def test_workflow_status_reports_repo_scene_stage(self) -> None:

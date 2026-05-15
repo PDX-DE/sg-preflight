@@ -15,6 +15,11 @@ from sg_preflight.bmw_delivery import (
     render_bmw_screenshot_state_markdown,
     render_bmw_screenshot_state_text,
 )
+from sg_preflight.bmw_git_readiness import (
+    read_bmw_git_readiness,
+    render_bmw_git_readiness_markdown,
+    render_bmw_git_readiness_text,
+)
 from sg_preflight.desktop.evidence_model import (
     desktop_action_snapshot,
     desktop_actions_for_profile,
@@ -495,6 +500,21 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot_state_read.add_argument("--profile", required=True, help="Profile id such as G65")
     screenshot_state_read.add_argument("--json", action="store_true", help="Print screenshot test state as JSON")
     screenshot_state_read.add_argument("--markdown", action="store_true", help="Print screenshot test state as Markdown")
+
+    bmw_git_readiness = sub.add_parser(
+        "bmw-git-readiness",
+        help="Read local BMW/MINI Git per-profile readiness without writing to BMW Git",
+    )
+    bmw_git_readiness_sub = bmw_git_readiness.add_subparsers(dest="bmw_git_readiness_command", required=True)
+    bmw_git_readiness_read = bmw_git_readiness_sub.add_parser(
+        "read",
+        help="Read BMW/MINI Git readiness for one profile",
+    )
+    bmw_git_readiness_read.add_argument("--workspace", help="Workspace root override")
+    bmw_git_readiness_read.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    bmw_git_readiness_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    bmw_git_readiness_read.add_argument("--json", action="store_true", help="Print BMW Git readiness as JSON")
+    bmw_git_readiness_read.add_argument("--markdown", action="store_true", help="Print BMW Git readiness as Markdown")
 
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
@@ -1036,6 +1056,29 @@ def main(argv: list[str] | None = None) -> int:
             print(_console_safe(render_bmw_screenshot_state_markdown(payload)))
         else:
             print(_console_safe(render_bmw_screenshot_state_text(payload)))
+        return 0
+
+    if args.command == "bmw-git-readiness":
+        readiness_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.bmw_git_readiness_command == "read":
+                payload = read_bmw_git_readiness(
+                    args.profile,
+                    workspace=readiness_root,
+                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+                )
+            else:
+                parser.error(f"Unhandled bmw-git-readiness command: {args.bmw_git_readiness_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"bmw-git-readiness failed: {exc}"), file=sys.stderr)
+            return 1
+        if args.json:
+            _console_desktop_payload(payload)
+        elif args.markdown:
+            print(_console_safe(render_bmw_git_readiness_markdown(payload)))
+        else:
+            print(_console_safe(render_bmw_git_readiness_text(payload)))
         return 0
 
     if args.command == "workflow-status":

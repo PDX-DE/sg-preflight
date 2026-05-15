@@ -201,6 +201,15 @@ python -m sg_preflight screenshot-test-state read --profile G65 --markdown
 
 This command reads `export\tests\expected`, `export\tests\actuals`, `export\tests\diff`, and `test_config.lua` under BMW and MINI profiles in the local `digital-3d-car-models` checkout. It is review guidance only: operators still compare the images and record the manual verdict.
 
+Read local BMW / MINI Git per-profile readiness without modifying the repository:
+
+```bash
+python -m sg_preflight bmw-git-readiness read --profile G65 --json
+python -m sg_preflight bmw-git-readiness read --profile G65 --markdown
+```
+
+This command reads the local `digital-3d-car-models` checkout and reports profile-folder context such as latest profile commit, README, main scene, screenshot test config, perspectives JSON, changelog, and `lids.json`. It does not fetch, pull, checkout, or write to BMW Git. The output is operator context only; manual delivery and review decisions remain outside the tool.
+
 Run the full daily live preflight matrix as one action:
 
 ```bash
@@ -479,5 +488,6 @@ This is already fully runnable, but it is still an early internal release:
 - `manual-review` is a local step-through companion for the Quality Hero RaCo / Blender checklist: the operator creates a session, records each verdict, adds notes or screenshot references, and exports a summary. It does not review, approve, or auto-pass any step.
 - rack / trace integration is not yet wired in
 - screenshot-test state can now be read from BMW and MINI profiles in a local `digital-3d-car-models` clone, but SGFX still does not run the screenshot tests or approve screenshots
+- BMW / MINI Git per-profile readiness can now be read from the local `digital-3d-car-models` clone without fetch, pull, checkout, or write operations
 
 The next real step is to widen end-to-end operator evidence across more BMW and MINI variants while keeping the validation core unchanged.
