@@ -48,6 +48,18 @@ python -m sg_preflight daily-digest latest --format json --out out\morning-diges
 
 On a fresh checkout with no review package, `daily-digest latest` exits 0 and prints a clear no-package summary with the setup hint for `ticket-review`.
 
+### Operator-local command templates
+
+```powershell
+python -m sg_preflight template save morning-digest --command daily-digest --args "latest --format markdown"
+python -m sg_preflight template list
+python -m sg_preflight template show morning-digest
+python -m sg_preflight template run morning-digest
+python -m sg_preflight template delete morning-digest
+```
+
+Templates are saved as JSON under the current workspace's `templates\` folder. They are local saved command configurations, not shared workflow definitions and not approval logic.
+
 ### SG / BMW evidence readers
 
 ```powershell

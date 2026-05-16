@@ -101,6 +101,125 @@ def _write_qa_hero_readiness_state(root: Path) -> None:
 
 
 class TestCLI(unittest.TestCase):
+    def test_template_cli_roundtrip_save_list_show_delete(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            save_stdout = io.StringIO()
+            save_stderr = io.StringIO()
+            with redirect_stdout(save_stdout), redirect_stderr(save_stderr):
+                save_result = main(
+                    [
+                        "template",
+                        "save",
+                        "morning-digest",
+                        "--workspace",
+                        str(root),
+                        "--command",
+                        "daily-digest",
+                        "--args",
+                        "latest --format markdown",
+                        "--description",
+                        "Morning digest for SG Daily",
+                        "--json",
+                    ]
+                )
+
+            list_stdout = io.StringIO()
+            list_stderr = io.StringIO()
+            with redirect_stdout(list_stdout), redirect_stderr(list_stderr):
+                list_result = main(["template", "list", "--workspace", str(root), "--json"])
+
+            show_stdout = io.StringIO()
+            show_stderr = io.StringIO()
+            with redirect_stdout(show_stdout), redirect_stderr(show_stderr):
+                show_result = main(["template", "show", "morning-digest", "--workspace", str(root), "--json"])
+
+            delete_stdout = io.StringIO()
+            delete_stderr = io.StringIO()
+            with redirect_stdout(delete_stdout), redirect_stderr(delete_stderr):
+                delete_result = main(["template", "delete", "morning-digest", "--workspace", str(root), "--json"])
+
+        self.assertEqual(save_result, 0, msg=save_stderr.getvalue())
+        self.assertEqual(list_result, 0, msg=list_stderr.getvalue())
+        self.assertEqual(show_result, 0, msg=show_stderr.getvalue())
+        self.assertEqual(delete_result, 0, msg=delete_stderr.getvalue())
+        save_payload = json.loads(save_stdout.getvalue())
+        list_payload = json.loads(list_stdout.getvalue())
+        show_payload = json.loads(show_stdout.getvalue())
+        delete_payload = json.loads(delete_stdout.getvalue())
+        self.assertEqual(save_payload["status"], "saved")
+        self.assertEqual(save_payload["note"], "Templates are operator-local saved command configurations. SGFX does not share templates between operators or post them anywhere.")
+        self.assertEqual(list_payload["templates"][0]["name"], "morning-digest")
+        self.assertEqual(show_payload["template"]["args"], ["latest", "--format", "markdown"])
+        self.assertEqual(delete_payload["status"], "deleted")
+
+    def test_template_run_executes_saved_command_without_shelling_out(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            save_stdout = io.StringIO()
+            save_stderr = io.StringIO()
+            with redirect_stdout(save_stdout), redirect_stderr(save_stderr):
+                save_result = main(
+                    [
+                        "template",
+                        "save",
+                        "profiles",
+                        "--workspace",
+                        str(root),
+                        "--command",
+                        "list-profiles",
+                        "--args",
+                        "--format json",
+                    ]
+                )
+
+            run_stdout = io.StringIO()
+            run_stderr = io.StringIO()
+            with redirect_stdout(run_stdout), redirect_stderr(run_stderr):
+                run_result = main(["template", "run", "profiles", "--workspace", str(root)])
+
+        self.assertEqual(save_result, 0, msg=save_stderr.getvalue())
+        self.assertEqual(run_result, 0, msg=run_stderr.getvalue())
+        self.assertIn("Templates are operator-local saved command configurations", run_stdout.getvalue())
+        self.assertIn('"profile_id": "G65"', run_stdout.getvalue())
+
+    def test_template_cli_duplicate_save_fails_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            save_stdout = io.StringIO()
+            save_stderr = io.StringIO()
+            with redirect_stdout(save_stdout), redirect_stderr(save_stderr):
+                save_result = main(
+                    [
+                        "template",
+                        "save",
+                        "profiles",
+                        "--workspace",
+                        str(root),
+                        "--command",
+                        "list-profiles",
+                    ]
+                )
+            self.assertEqual(save_result, 0, msg=save_stderr.getvalue())
+
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                duplicate_result = main(
+                    [
+                        "template",
+                        "save",
+                        "profiles",
+                        "--workspace",
+                        str(root),
+                        "--command",
+                        "list-actions",
+                    ]
+                )
+
+        self.assertEqual(duplicate_result, 1)
+        self.assertIn("already exists", stderr.getvalue())
+
     def test_list_profiles_includes_live_registry(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "list-profiles", "--json"],

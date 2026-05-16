@@ -175,6 +175,16 @@ List the current SG checker coverage layer:
 python -m sg_preflight list-checkers --json
 ```
 
+Save and run an operator-local command template:
+
+```bash
+python -m sg_preflight template save morning-digest --command daily-digest --args "latest --format markdown"
+python -m sg_preflight template list
+python -m sg_preflight template run morning-digest
+```
+
+Templates are saved under the current workspace's `templates\` folder. They are local command configurations only. SGFX does not share them between operators or post them anywhere.
+
 Read the operator-local delivery-checklist workbook for one profile without modifying it:
 
 ```bash

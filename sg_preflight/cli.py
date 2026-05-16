@@ -103,6 +103,17 @@ from sg_preflight.ticket_review import (
     default_ticket_review_output_root,
     materialize_ticket_review_bundle,
 )
+from sg_preflight.template_store import (
+    TEMPLATE_BANNER,
+    TemplateStoreError,
+    delete_template,
+    list_templates,
+    load_template,
+    parse_template_args,
+    save_template,
+    template_cli_args,
+    template_path,
+)
 from sg_preflight.visual_review import build_visual_review_prep
 
 
@@ -510,6 +521,42 @@ def _console_daily_snapshot(result: object, *, as_json: bool = False) -> None:
             print(f"  - {item}")
 
 
+def _render_template_command(template: dict[str, object]) -> str:
+    command = str(template.get("command") or "")
+    args = [str(item) for item in template.get("args", []) if str(item)]
+    return " ".join([command, *args]).strip()
+
+
+def _render_template_result(payload: dict[str, object]) -> str:
+    template = payload.get("template")
+    lines = [str(payload.get("note") or TEMPLATE_BANNER)]
+    status = str(payload.get("status") or "").strip()
+    if status:
+        lines.append(f"Status: {status}")
+    if isinstance(template, dict):
+        lines.append(f"Template: {template.get('name', '')}")
+        lines.append(f"Command: {_render_template_command(template)}")
+        description = str(template.get("description") or "").strip()
+        if description:
+            lines.append(f"Description: {description}")
+    path = str(payload.get("path") or "").strip()
+    if path:
+        lines.append(f"Path: {path}")
+    return "\n".join(lines)
+
+
+def _render_template_list(payload: dict[str, object]) -> str:
+    lines = [str(payload.get("note") or TEMPLATE_BANNER)]
+    templates = payload.get("templates")
+    if not isinstance(templates, list) or not templates:
+        lines.append("No templates saved.")
+        return "\n".join(lines)
+    for template in templates:
+        if isinstance(template, dict):
+            lines.append(f"- {template.get('name', '')}: {_render_template_command(template)}")
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sg-preflight")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -624,6 +671,40 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
     _add_render_options(workflow_list, formats=("text", "json"))
+
+    template = sub.add_parser(
+        "template",
+        help="Manage operator-local saved command configurations",
+        description=TEMPLATE_BANNER,
+    )
+    template_sub = template.add_subparsers(dest="template_command", required=True)
+    template_save = template_sub.add_parser("save", help="Save one operator-local command template")
+    template_save.add_argument("name", help="Template name")
+    template_save.add_argument("--workspace", help="Workspace root override")
+    template_save.add_argument("--command", dest="template_cli_command", required=True, help="SGFX CLI command name to save")
+    template_save.add_argument("--args", default="", help="Command arguments to save, quoted as one string")
+    template_save.add_argument("--description", default="", help="Short operator note for this template")
+    template_save.add_argument("--replace", action="store_true", help="Replace an existing template with the same name")
+    template_save.add_argument("--json", action="store_true", help="Print saved template metadata as JSON")
+
+    template_run = template_sub.add_parser("run", help="Run one saved operator-local command template")
+    template_run.add_argument("name", help="Template name")
+    template_run.add_argument("--workspace", help="Workspace root override")
+    template_run.add_argument("--args-override", default="", help="Override the saved argument string for this run")
+
+    template_list = template_sub.add_parser("list", help="List saved operator-local command templates")
+    template_list.add_argument("--workspace", help="Workspace root override")
+    template_list.add_argument("--json", action="store_true", help="Print template list as JSON")
+
+    template_show = template_sub.add_parser("show", help="Show one saved operator-local command template")
+    template_show.add_argument("name", help="Template name")
+    template_show.add_argument("--workspace", help="Workspace root override")
+    template_show.add_argument("--json", action="store_true", help="Print template metadata as JSON")
+
+    template_delete = template_sub.add_parser("delete", help="Delete one operator-local command template")
+    template_delete.add_argument("name", help="Template name")
+    template_delete.add_argument("--workspace", help="Workspace root override")
+    template_delete.add_argument("--json", action="store_true", help="Print deleted template metadata as JSON")
 
     ticket_review = sub.add_parser(
         "ticket-review",
@@ -1229,6 +1310,67 @@ def main(argv: list[str] | None = None) -> int:
         output_format = _resolve_render_format(args, parser, formats=("text", "json"))
         _emit_console(lambda: _console_workflow_status(items, as_json=output_format == "json"), args)
         return 0
+
+    if args.command == "template":
+        template_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.template_command == "save":
+                template_args = parse_template_args(args.args)
+                payload = save_template(
+                    template_root,
+                    args.name,
+                    command=args.template_cli_command,
+                    args=template_args,
+                    description=args.description,
+                    replace=args.replace,
+                )
+                result = {
+                    "status": "saved",
+                    "note": TEMPLATE_BANNER,
+                    "template": payload,
+                    "path": str(template_path(template_root, args.name)),
+                }
+                if args.json:
+                    _emit_json(result, args)
+                else:
+                    _emit_text(_render_template_result(result), args)
+                return 0
+            if args.template_command == "list":
+                payload = {"note": TEMPLATE_BANNER, "templates": list_templates(template_root)}
+                if args.json:
+                    _emit_json(payload, args)
+                else:
+                    _emit_text(_render_template_list(payload), args)
+                return 0
+            if args.template_command == "show":
+                payload = {"note": TEMPLATE_BANNER, "template": load_template(template_root, args.name)}
+                if args.json:
+                    _emit_json(payload, args)
+                else:
+                    _emit_text(_render_template_result({"status": "template", **payload}), args)
+                return 0
+            if args.template_command == "delete":
+                deleted = delete_template(template_root, args.name)
+                payload = {"status": "deleted", "note": TEMPLATE_BANNER, "template": deleted}
+                if args.json:
+                    _emit_json(payload, args)
+                else:
+                    _emit_text(_render_template_result(payload), args)
+                return 0
+            if args.template_command == "run":
+                template_payload = load_template(template_root, args.name)
+                run_args = template_cli_args(template_payload, args_override=args.args_override)
+                print(_console_safe(TEMPLATE_BANNER))
+                print(_console_safe(f"Running template '{template_payload['name']}': sg-preflight {' '.join(run_args)}"))
+                try:
+                    return main(run_args)
+                except SystemExit as exc:
+                    return int(exc.code or 0)
+            parser.error(f"Unhandled template command: {args.template_command}")
+            return 1
+        except TemplateStoreError as exc:
+            print(_console_safe(f"template failed: {exc}"), file=sys.stderr)
+            return 1
 
     if args.command == "ticket-review":
         review_root = Path(args.workspace).resolve() if args.workspace else root
