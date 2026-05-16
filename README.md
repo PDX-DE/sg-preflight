@@ -185,6 +185,15 @@ python -m sg_preflight template run morning-digest
 
 Templates are saved under the current workspace's `templates\` folder. They are local command configurations only. SGFX does not share them between operators or post them anywhere.
 
+Prepare a Jira comment without posting it:
+
+```bash
+python -m sg_preflight jira post --ticket IDCEVODEV-977874 --body-file out\jira-update.txt --json
+python -m sg_preflight jira post --ticket IDCEVODEV-977874 --section 19 --wording-file HANDOVER_WORDING.md --markdown
+```
+
+The default is a dry run: no HTTP request is sent. A real Jira comment requires a base URL, a PAT environment variable, and an explicit `--confirm` on that one command. SGFX does not auto-post, transition Jira issues, or mark QA approval.
+
 Read the operator-local delivery-checklist workbook for one profile without modifying it:
 
 ```bash

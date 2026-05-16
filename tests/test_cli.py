@@ -220,6 +220,60 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(duplicate_result, 1)
         self.assertIn("already exists", stderr.getvalue())
 
+    def test_jira_post_defaults_to_dry_run_from_numbered_section(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            wording_file = root / "out" / "agent-control" / "HANDOVER_WORDING.md"
+            wording_file.parent.mkdir(parents=True, exist_ok=True)
+            wording_file.write_text(
+                "## 19. Jira update\n\n```text\nStatus update\n\nEvidence is not approval.\n```\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = main(
+                    [
+                        "jira",
+                        "post",
+                        "--workspace",
+                        str(root),
+                        "--ticket",
+                        "IDCEVODEV-977874",
+                        "--section",
+                        "19",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(result, 0, msg=stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "dry_run")
+        self.assertFalse(payload["posted"])
+        self.assertTrue(payload["dry_run"])
+        self.assertIn("Evidence is not approval.", payload["body"])
+        self.assertIn("--confirm", payload["guard"])
+
+    def test_jira_post_confirm_requires_pat_and_base_url(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            result = main(
+                [
+                    "jira",
+                    "post",
+                    "--ticket",
+                    "IDCEVODEV-977874",
+                    "--body",
+                    "Status update",
+                    "--confirm",
+                ]
+            )
+
+        self.assertEqual(result, 1)
+        self.assertIn("Jira post failed", stderr.getvalue())
+        self.assertIn("base URL", stderr.getvalue())
+
     def test_list_profiles_includes_live_registry(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "list-profiles", "--json"],

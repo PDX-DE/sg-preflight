@@ -72,6 +72,23 @@ python -m sg_preflight qa-hero-readiness read --profile G65 --format markdown
 
 These readers are read-only. They do not run BMW tools, do not write SVN or BMW Git, and do not decide whether a car is approved.
 
+### Jira comment posting
+
+```powershell
+python -m sg_preflight jira post --ticket IDCEVODEV-977874 --body-file out\jira-update.txt --format markdown
+python -m sg_preflight jira post --ticket IDCEVODEV-977874 --section 19 --wording-file HANDOVER_WORDING.md --format json
+```
+
+The default is a dry run. It prints the ticket, endpoint preview, source, and comment body but sends no HTTP request. To post, set a base URL and PAT through environment variables and add `--confirm` to that single command:
+
+```powershell
+$env:BMW_JIRA_BASE_URL="https://jira.example"
+$env:BMW_JIRA_PAT="<personal-access-token>"
+python -m sg_preflight jira post --ticket IDCEVODEV-977874 --body-file out\jira-update.txt --confirm
+```
+
+Jira posting is opt-in and confirmation-gated. SGFX does not auto-post, does not transition issues, and does not mark QA approval.
+
 ### Manual review companion
 
 ```powershell

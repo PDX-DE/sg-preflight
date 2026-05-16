@@ -48,6 +48,16 @@ from sg_preflight.export_size_analysis import (
     render_export_size_analysis_markdown,
     render_export_size_analysis_text,
 )
+from sg_preflight.jira_client import (
+    DEFAULT_BASE_URL_ENV,
+    DEFAULT_TOKEN_ENV,
+    JIRA_POSTING_BANNER,
+    JiraPostError,
+    load_jira_comment_source,
+    post_jira_comment,
+    render_jira_post_markdown,
+    render_jira_post_text,
+)
 from sg_preflight.manual_review import (
     VALID_VERDICTS,
     create_manual_review_session,
@@ -705,6 +715,29 @@ def build_parser() -> argparse.ArgumentParser:
     template_delete.add_argument("name", help="Template name")
     template_delete.add_argument("--workspace", help="Workspace root override")
     template_delete.add_argument("--json", action="store_true", help="Print deleted template metadata as JSON")
+
+    jira = sub.add_parser(
+        "jira",
+        help="Prepare or post Jira comments through confirmation-gated REST",
+        description=JIRA_POSTING_BANNER,
+    )
+    jira_sub = jira.add_subparsers(dest="jira_command", required=True)
+    jira_post = jira_sub.add_parser("post", help="Dry-run or confirmation-gated Jira comment post")
+    jira_post.add_argument("--workspace", help="Workspace root override for local wording files")
+    jira_post.add_argument("--ticket", required=True, help="Jira ticket key such as IDCEVODEV-977874")
+    jira_source = jira_post.add_mutually_exclusive_group(required=True)
+    jira_source.add_argument("--body", default="", help="Inline Jira comment body")
+    jira_source.add_argument("--body-file", help="Read Jira comment body from this UTF-8 text file")
+    jira_source.add_argument("--section", help="Read a numbered Markdown section from the wording source")
+    jira_post.add_argument("--wording-file", help="Markdown wording source when --section is used")
+    jira_post.add_argument("--base-url", help=f"Jira base URL override; otherwise uses {DEFAULT_BASE_URL_ENV}")
+    jira_post.add_argument("--base-url-env", default=DEFAULT_BASE_URL_ENV, help="Environment variable containing the Jira base URL")
+    jira_post.add_argument("--token-env", default=DEFAULT_TOKEN_ENV, help="Environment variable containing the Jira PAT")
+    jira_post.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
+    jira_post.add_argument("--dry-run", action="store_true", help="Preview only; this is the default behavior")
+    jira_post.add_argument("--confirm", action="store_true", help="Actually post the comment; requires base URL and PAT")
+    jira_post.add_argument("--json", action="store_true", help="Print Jira post payload as JSON")
+    _add_render_options(jira_post)
 
     ticket_review = sub.add_parser(
         "ticket-review",
@@ -1371,6 +1404,46 @@ def main(argv: list[str] | None = None) -> int:
         except TemplateStoreError as exc:
             print(_console_safe(f"template failed: {exc}"), file=sys.stderr)
             return 1
+
+    if args.command == "jira":
+        jira_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.jira_command == "post":
+                if args.dry_run and args.confirm:
+                    parser.error("--dry-run and --confirm cannot be combined")
+                    return 1
+                source = load_jira_comment_source(
+                    body=args.body,
+                    body_file=Path(args.body_file).resolve() if args.body_file else None,
+                    section=args.section,
+                    wording_file=Path(args.wording_file).resolve() if args.wording_file else None,
+                    workspace=jira_root,
+                )
+                payload = post_jira_comment(
+                    args.ticket,
+                    source.body,
+                    base_url=args.base_url,
+                    base_url_env=args.base_url_env,
+                    token_env=args.token_env,
+                    api_version=args.api_version,
+                    confirm=args.confirm,
+                    source=source.source,
+                    section=source.section,
+                )
+            else:
+                parser.error(f"Unhandled jira command: {args.jira_command}")
+                return 1
+        except JiraPostError as exc:
+            print(_console_safe(f"Jira post failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_jira_post_markdown(payload), args)
+        else:
+            _emit_text(render_jira_post_text(payload), args)
+        return 0
 
     if args.command == "ticket-review":
         review_root = Path(args.workspace).resolve() if args.workspace else root
