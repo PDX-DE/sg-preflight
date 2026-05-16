@@ -15,6 +15,7 @@
   const overlayLogTail = document.getElementById("loading-log-tail");
   const overlayWordmark = document.querySelector(".loading-native-wordmark");
   const themeToggle = document.getElementById("theme-toggle");
+  const uiModeToggle = document.getElementById("ui-mode-toggle");
   const guideToggle = document.getElementById("guide-toggle");
   let selectedStepKey = "";
   let nestedStepRequestId = 0;
@@ -75,6 +76,16 @@
     }
   };
 
+  const applyUiMode = function (mode) {
+    const resolved = mode === "clean" ? "clean" : "cinematic";
+    rootElement.dataset.uiMode = resolved;
+    if (uiModeToggle) {
+      const cleanMode = resolved === "clean";
+      uiModeToggle.setAttribute("aria-pressed", cleanMode ? "true" : "false");
+      uiModeToggle.textContent = cleanMode ? "Cinematic mode" : "Clean mode";
+    }
+  };
+
   const applyGuideMode = function (mode) {
     const resolved = mode === "off" ? "off" : "on";
     document.body.dataset.guideMode = resolved;
@@ -86,10 +97,15 @@
   };
 
   try {
+    const query = new URLSearchParams(window.location.search);
+    const cleanThemeAlias = query.toString().includes("theme=clean") || query.get("theme") === "clean";
+    const requestedUiMode = query.get("ui-mode") || (cleanThemeAlias ? "clean" : "");
     applyTheme(window.localStorage.getItem("sg-theme") || rootElement.dataset.theme || "dark");
+    applyUiMode(requestedUiMode || window.localStorage.getItem("sg-ui-mode") || rootElement.dataset.uiMode || "cinematic");
     applyGuideMode(window.localStorage.getItem("sg-guide-mode") || document.body.dataset.guideMode || "on");
   } catch (_error) {
     applyTheme(rootElement.dataset.theme || "dark");
+    applyUiMode(rootElement.dataset.uiMode || "cinematic");
     applyGuideMode(document.body.dataset.guideMode || "on");
   }
 
@@ -535,6 +551,18 @@
       applyTheme(nextTheme);
       try {
         window.localStorage.setItem("sg-theme", nextTheme);
+      } catch (_error) {
+        return;
+      }
+    });
+  }
+
+  if (uiModeToggle) {
+    uiModeToggle.addEventListener("click", function () {
+      const nextMode = rootElement.dataset.uiMode === "clean" ? "cinematic" : "clean";
+      applyUiMode(nextMode);
+      try {
+        window.localStorage.setItem("sg-ui-mode", nextMode);
       } catch (_error) {
         return;
       }

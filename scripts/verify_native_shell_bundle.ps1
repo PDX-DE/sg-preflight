@@ -139,7 +139,7 @@ try {
 
     Assert-True (Test-Path $bundleIniPath) "Bundled imgui.ini is missing."
     $bundleIniContent = Get-Content -LiteralPath $bundleIniPath -Raw
-    Assert-True ($bundleIniContent -match "(?m)^display_mode=work\r?$") "Bundled imgui.ini did not set work display mode by default."
+    Assert-True ($bundleIniContent -match "(?m)^display_mode=clean\r?$") "Bundled imgui.ini did not set clean display mode by default."
     Assert-True ($bundleIniContent -match "(?m)^music_enabled=0\r?$") "Bundled imgui.ini did not disable music by default."
 
     $log.Add("[assert] manifest exists and safe-default flags are false")

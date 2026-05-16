@@ -252,11 +252,13 @@ std::string g_pending_capture_name;
 PendingManualEvidenceCapture g_pending_manual_capture;
 
 enum class ShellDisplayMode {
-    Work,
+    Clean,
+    Work = Clean,
     Cinematic,
 };
 
-ShellDisplayMode g_shell_display_mode = ShellDisplayMode::Work;
+ShellDisplayMode g_shell_display_mode = ShellDisplayMode::Clean;
+std::optional<ShellDisplayMode> g_startup_display_mode_override;
 
 ShellState* g_live_shell_state = nullptr;
 
@@ -638,7 +640,7 @@ void EnsureShellIniDefaults(const std::filesystem::path& ini_path) {
         }
     };
 
-    ensure_value(L"display_mode", L"work");
+    ensure_value(L"display_mode", L"clean");
     ensure_value(L"music_enabled", L"0");
     ensure_value(L"sfx_enabled", L"1");
 }
@@ -713,7 +715,7 @@ void SaveShellIniFile() {
     }
 
     content += "[sg_preflight_native_shell]\r\n";
-    content += std::string("display_mode=") + (g_shell_display_mode == ShellDisplayMode::Cinematic ? "cinematic" : "work") + "\r\n";
+    content += std::string("display_mode=") + (g_shell_display_mode == ShellDisplayMode::Cinematic ? "cinematic" : "clean") + "\r\n";
     content += std::string("music_enabled=") + (g_shell_audio.music_enabled ? "1" : "0") + "\r\n";
     content += std::string("sfx_enabled=") + (g_shell_audio.sfx_enabled ? "1" : "0") + "\r\n";
 
@@ -728,9 +730,10 @@ void SaveMusicPreferenceToIni(bool enabled);
 void SaveDisplayModePreferenceToIni(ShellDisplayMode mode);
 bool LoadSfxPreferenceFromIni();
 void SaveSfxPreferenceToIni(bool enabled);
+void ApplyStyle();
 
 bool IsWorkDisplayMode() {
-    return g_shell_display_mode == ShellDisplayMode::Work;
+    return g_shell_display_mode == ShellDisplayMode::Clean;
 }
 
 bool IsDenseWorkScreen(ShellScreen screen) {
@@ -757,7 +760,7 @@ ShellDisplayMode LoadDisplayModePreferenceFromIni() {
     GetPrivateProfileStringW(
         L"sg_preflight_native_shell",
         L"display_mode",
-        L"work",
+        L"clean",
         value_buffer,
         static_cast<DWORD>(std::size(value_buffer)),
         ini_path.wstring().c_str()
@@ -769,9 +772,12 @@ ShellDisplayMode LoadDisplayModePreferenceFromIni() {
         value.begin(),
         [](wchar_t character) { return static_cast<wchar_t>(towlower(character)); }
     );
-    const ShellDisplayMode mode = value == L"cinematic" ? ShellDisplayMode::Cinematic : ShellDisplayMode::Work;
-    if (value != L"cinematic" && value != L"work") {
+    const ShellDisplayMode mode = value == L"cinematic" ? ShellDisplayMode::Cinematic : ShellDisplayMode::Clean;
+    if (value != L"cinematic" && value != L"clean" && value != L"work") {
         SaveDisplayModePreferenceToIni(mode);
+    }
+    if (value == L"work") {
+        SaveDisplayModePreferenceToIni(ShellDisplayMode::Clean);
     }
     return mode;
 }
@@ -781,7 +787,7 @@ void SaveDisplayModePreferenceToIni(ShellDisplayMode mode) {
     WritePrivateProfileStringW(
         L"sg_preflight_native_shell",
         L"display_mode",
-        mode == ShellDisplayMode::Cinematic ? L"cinematic" : L"work",
+        mode == ShellDisplayMode::Cinematic ? L"cinematic" : L"clean",
         ini_path.wstring().c_str()
     );
 }
@@ -1471,10 +1477,11 @@ void SetSfxEnabled(bool enabled) {
 void SetDisplayMode(ShellDisplayMode mode) {
     g_shell_display_mode = mode;
     SaveDisplayModePreferenceToIni(mode);
-    if (mode == ShellDisplayMode::Work && g_shell_audio.music_enabled) {
+    ApplyStyle();
+    if (mode == ShellDisplayMode::Clean && g_shell_audio.music_enabled) {
         SetMusicEnabled(false);
     }
-    TraceUi(std::string("display_mode=") + (mode == ShellDisplayMode::Work ? "work" : "cinematic"));
+    TraceUi(mode == ShellDisplayMode::Clean ? "display_mode=clean" : "display_mode=cinematic");
 }
 
 void UpdateMusicEnvelope(const ShellState& state) {
@@ -2606,6 +2613,22 @@ bool StartsWithInsensitive(const std::wstring& lhs, const std::wstring& rhs) {
     return true;
 }
 
+std::optional<ShellDisplayMode> ParseDisplayModeValue(std::wstring value) {
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](wchar_t character) { return static_cast<wchar_t>(towlower(character)); }
+    );
+    if (value == L"clean" || value == L"work") {
+        return ShellDisplayMode::Clean;
+    }
+    if (value == L"cinematic") {
+        return ShellDisplayMode::Cinematic;
+    }
+    return std::nullopt;
+}
+
 std::wstring EnvironmentVariableValue(const wchar_t* name) {
     const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
     if (required == 0) {
@@ -2746,6 +2769,24 @@ BackendConfig ParseArguments() {
         }
         if (StartsWithInsensitive(std::wstring(arg), L"--action=")) {
             config.initial_action_id = sg_preflight::native_shell::ToUtf8(std::wstring(arg.substr(9)));
+            continue;
+        }
+        if ((arg == L"--ui-mode" || arg == L"--display-mode") && index + 1 < __argc) {
+            if (const auto mode = ParseDisplayModeValue(__wargv[++index]); mode.has_value()) {
+                g_startup_display_mode_override = *mode;
+            }
+            continue;
+        }
+        if (StartsWithInsensitive(std::wstring(arg), L"--ui-mode=")) {
+            if (const auto mode = ParseDisplayModeValue(std::wstring(arg.substr(10))); mode.has_value()) {
+                g_startup_display_mode_override = *mode;
+            }
+            continue;
+        }
+        if (StartsWithInsensitive(std::wstring(arg), L"--display-mode=")) {
+            if (const auto mode = ParseDisplayModeValue(std::wstring(arg.substr(15))); mode.has_value()) {
+                g_startup_display_mode_override = *mode;
+            }
             continue;
         }
         if (arg == L"--windowed") {
@@ -4929,6 +4970,17 @@ void ApplyStyle() {
     colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.28f, 0.39f, 0.37f, 1.00f);
     colors[ImGuiCol_CheckMark] = ImVec4(0.25f, 0.83f, 0.58f, 1.00f);
     colors[ImGuiCol_Separator] = ImVec4(0.11f, 0.29f, 0.24f, 0.95f);
+    if (IsWorkDisplayMode()) {
+        style.FramePadding = ImVec2(11.0f, 8.0f);
+        style.ItemSpacing = ImVec2(11.0f, 11.0f);
+        colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.08f, 0.10f, 1.00f);
+        colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.13f, 0.16f, 0.94f);
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.13f, 0.18f, 0.21f, 0.97f);
+        colors[ImGuiCol_Button] = ImVec4(0.12f, 0.18f, 0.22f, 0.00f);
+        colors[ImGuiCol_ButtonHovered] = ImVec4(0.16f, 0.24f, 0.28f, 0.00f);
+        colors[ImGuiCol_Text] = ImVec4(0.90f, 0.94f, 0.97f, 1.00f);
+        colors[ImGuiCol_TextDisabled] = ImVec4(0.62f, 0.69f, 0.74f, 1.00f);
+    }
 }
 
 void DrawInstallerHorizontalBorder(float min_x, float max_x, float y, bool bottom_border) {
@@ -7218,8 +7270,8 @@ void RenderDisplayModeContent(ShellState& state) {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     const std::string display_line = sg_preflight::native_shell::FormatDisplayModeLine(state.language, display.x, display.y, g_using_warp);
     const bool work_mode = IsWorkDisplayMode();
-    if (DrawLanguageOptionButton("display-mode-work", "WORK", work_mode, ImVec2(ImGui::GetContentRegionAvail().x * 0.48f, ShellUi(34.0f)))) {
-        SetDisplayMode(ShellDisplayMode::Work);
+    if (DrawLanguageOptionButton("display-mode-clean", "CLEAN", work_mode, ImVec2(ImGui::GetContentRegionAvail().x * 0.48f, ShellUi(34.0f)))) {
+        SetDisplayMode(ShellDisplayMode::Clean);
         state.status_line = sg_preflight::native_shell::FormatDisplayModeStatus(state.language, true);
     }
     ImGui::SameLine();
@@ -7233,8 +7285,8 @@ void RenderDisplayModeContent(ShellState& state) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
     ImGui::TextUnformatted(
         work_mode
-            ? "Work mode keeps the shell sharp: smaller left art on work screens, lower scanlines, stronger contrast, readable body text, and no background music."
-            : "Cinematic mode keeps the full SGFX: Project Quality-Hero chrome: larger artwork, heavier motion/static treatment, and optional background music."
+            ? "Clean mode keeps the shell sharp: compact work screens, lower scanlines, stronger contrast, readable body text, and no background music."
+            : "Cinematic mode keeps the full SGFX: Project Quality-Hero chrome: larger artwork, heavier motion treatment, and optional background music."
     );
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
@@ -10266,6 +10318,23 @@ void RenderExitFade(const ShellState& state) {
     ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), ImGui::GetIO().DisplaySize, IM_COL32(0, 0, 0, static_cast<int>(255.0f * motion)));
 }
 
+void DrawDisplayModeQuickToggle(ShellState& state) {
+    const bool clean_mode = IsWorkDisplayMode();
+    const float width = ShellUi(178.0f);
+    const float height = ShellUi(30.0f);
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetCursorScreenPos(ImVec2(display.x - width - ShellUi(22.0f), ShellUi(16.0f)));
+    const char* label = clean_mode ? "Cinematic mode" : "Clean mode";
+    if (DrawPanelButton("display-mode-quick-toggle", label, ImVec2(width, height), false, true)) {
+        const ShellDisplayMode next_mode = clean_mode ? ShellDisplayMode::Cinematic : ShellDisplayMode::Clean;
+        SetDisplayMode(next_mode);
+        state.status_line = sg_preflight::native_shell::FormatDisplayModeStatus(state.language, next_mode == ShellDisplayMode::Clean);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", clean_mode ? "Switch to Cinematic mode." : "Switch to Clean mode.");
+    }
+}
+
 void RenderShell(ShellState& state) {
     g_shell_text_visibility = ShellExitTextVisibility(state);
     ImGui::GetIO().FontDefault = CurrentBodyFont();
@@ -10310,6 +10379,7 @@ void RenderShell(ShellState& state) {
         if (BeginLayoutRegionAt("screen-region", 0.0f, 0.0f, 1280.0f, 720.0f)) {
             RenderCurrentScreen(state);
             RenderWizardNavigation(state);
+            DrawDisplayModeQuickToggle(state);
         }
         EndLayoutRegion();
         break;
@@ -10422,12 +10492,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     ImGui_ImplDX12_Init(&init_info);
 
     g_shell_display_mode = LoadDisplayModePreferenceFromIni();
+    if (g_startup_display_mode_override.has_value()) {
+        g_shell_display_mode = *g_startup_display_mode_override;
+        SaveDisplayModePreferenceToIni(g_shell_display_mode);
+    }
+    ApplyStyle();
     const bool music_enabled_preference = LoadMusicPreferenceFromIni();
     const bool sfx_enabled_preference = LoadSfxPreferenceFromIni();
     LoadShellAssets(std::filesystem::path(backend.workspace_root));
     LoadShellAudio(std::filesystem::path(backend.workspace_root));
     g_shell_audio.sfx_enabled = sfx_enabled_preference;
-    g_shell_audio.music_enabled = music_enabled_preference;
+    g_shell_audio.music_enabled = IsWorkDisplayMode() ? false : music_enabled_preference;
     if (g_shell_audio.music_enabled) {
         SetMusicEnabled(true);
     }

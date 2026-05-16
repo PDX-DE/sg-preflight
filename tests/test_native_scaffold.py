@@ -42,6 +42,19 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("export_size_analysis_variant_count", bridge_header)
         self.assertIn("Export-size analysis", main_source)
 
+    def test_native_shell_exposes_clean_ui_mode_without_dropping_cinematic_mode(self) -> None:
+        main_source = (ROOT / "desktop_native" / "src" / "main.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("ShellDisplayMode::Clean", main_source)
+        self.assertIn("ShellDisplayMode::Cinematic", main_source)
+        self.assertIn('L"--ui-mode"', main_source)
+        self.assertIn('L"--display-mode"', main_source)
+        self.assertIn('display_mode=clean', main_source)
+        self.assertIn('value == L"work"', main_source)
+        self.assertIn("DrawDisplayModeQuickToggle", main_source)
+        self.assertIn("Clean mode", main_source)
+        self.assertIn("Cinematic mode", main_source)
+
     def test_native_bundle_script_is_present(self) -> None:
         script_path = ROOT / "scripts" / "package_native_shell_bundle.ps1"
         self.assertTrue(script_path.exists())

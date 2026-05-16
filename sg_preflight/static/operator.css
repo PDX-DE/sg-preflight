@@ -2374,6 +2374,168 @@ details[id] {
   }
 }
 
+/* Clean operator mode: neutral, readable surfaces for day-to-day team review. */
+:root[data-ui-mode="clean"] {
+  --font-display: Aptos, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --bg: #f5f7fa;
+  --bg-alt: #eef2f6;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --surface-muted: #edf2f7;
+  --surface-glass: rgba(255, 255, 255, 0.96);
+  --surface-raised: #ffffff;
+  --surface-emphasis: #ffffff;
+  --chip-bg: rgba(55, 88, 120, 0.08);
+  --input-bg: #ffffff;
+  --border: rgba(91, 111, 132, 0.28);
+  --border-strong: rgba(80, 101, 123, 0.42);
+  --text: #172331;
+  --muted: #5f6f80;
+  --accent: #236c8e;
+  --accent-soft: rgba(35, 108, 142, 0.1);
+  --accent-hot: #88624c;
+  --accent-hot-soft: rgba(136, 98, 76, 0.12);
+  --ok: #266e55;
+  --ok-soft: #dceee7;
+  --warn: #a76048;
+  --warn-soft: #f5e2da;
+  --info: #3f6f9d;
+  --info-soft: #ddeaf6;
+  --shadow: 0 8px 22px rgba(44, 60, 79, 0.08);
+  --radius-xl: 10px;
+  --radius-lg: 8px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+}
+
+:root[data-ui-mode="clean"] body {
+  background: linear-gradient(180deg, #f8fafc 0%, #edf2f7 100%);
+  font-size: clamp(16px, 1.05vw, 18px);
+  letter-spacing: 0;
+}
+
+:root[data-ui-mode="clean"] body::before,
+:root[data-ui-mode="clean"] body::after {
+  display: none;
+}
+
+:root[data-ui-mode="clean"] .shell-header,
+:root[data-ui-mode="clean"] .hero-panel,
+:root[data-ui-mode="clean"] .panel,
+:root[data-ui-mode="clean"] .summary-card,
+:root[data-ui-mode="clean"] .profile-card,
+:root[data-ui-mode="clean"] .finding-group,
+:root[data-ui-mode="clean"] .status-item,
+:root[data-ui-mode="clean"] .audit-item,
+:root[data-ui-mode="clean"] .run-card,
+:root[data-ui-mode="clean"] .checkbox-card,
+:root[data-ui-mode="clean"] .evidence-item,
+:root[data-ui-mode="clean"] .finding-detail,
+:root[data-ui-mode="clean"] .note-block,
+:root[data-ui-mode="clean"] .empty-state,
+:root[data-ui-mode="clean"] .guide-card,
+:root[data-ui-mode="clean"] .quick-start-card,
+:root[data-ui-mode="clean"] .workflow-card,
+:root[data-ui-mode="clean"] .car-choice-card {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow);
+}
+
+:root[data-ui-mode="clean"] .shell-header::after,
+:root[data-ui-mode="clean"] .hero-panel::before,
+:root[data-ui-mode="clean"] .panel::before,
+:root[data-ui-mode="clean"] .summary-card::before,
+:root[data-ui-mode="clean"] .profile-card::before,
+:root[data-ui-mode="clean"] .note-block::before,
+:root[data-ui-mode="clean"] .guide-card::before,
+:root[data-ui-mode="clean"] .quick-start-card::before,
+:root[data-ui-mode="clean"] .workflow-card::before,
+:root[data-ui-mode="clean"] .car-choice-card::before,
+:root[data-ui-mode="clean"] .status-item::before,
+:root[data-ui-mode="clean"] .run-card::before,
+:root[data-ui-mode="clean"] .audit-item::before,
+:root[data-ui-mode="clean"] .evidence-item::before,
+:root[data-ui-mode="clean"] .finding-group::before,
+:root[data-ui-mode="clean"] .empty-state::before {
+  display: none;
+}
+
+:root[data-ui-mode="clean"] .shell-header {
+  backdrop-filter: none;
+}
+
+:root[data-ui-mode="clean"] .hero-panel--home,
+:root[data-ui-mode="clean"] .status-item,
+:root[data-ui-mode="clean"] .audit-item,
+:root[data-ui-mode="clean"] .run-card,
+:root[data-ui-mode="clean"] .car-choice-card,
+:root[data-ui-mode="clean"] .quick-start-card,
+:root[data-ui-mode="clean"] .workflow-card,
+:root[data-ui-mode="clean"] .hero-bullets span {
+  background: var(--surface);
+}
+
+:root[data-ui-mode="clean"] .panel-head {
+  background: var(--surface-muted);
+  border-bottom-color: var(--border);
+}
+
+:root[data-ui-mode="clean"] .panel-head::after {
+  display: none;
+}
+
+:root[data-ui-mode="clean"] .button,
+:root[data-ui-mode="clean"] .button.subtle,
+:root[data-ui-mode="clean"] .foldout summary,
+:root[data-ui-mode="clean"] .inline-help summary,
+:root[data-ui-mode="clean"] .shell-toggle,
+:root[data-ui-mode="clean"] .shell-nav a {
+  clip-path: none;
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-style: normal;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+:root[data-ui-mode="clean"] .guide-step {
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-style: normal;
+  letter-spacing: 0;
+}
+
+:root[data-ui-mode="clean"] .shell-route-list li,
+:root[data-ui-mode="clean"] .shell-route-list li::before {
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+:root[data-ui-mode="clean"] .shell-route-list li:not(:last-child)::after {
+  color: var(--muted);
+}
+
+:root[data-ui-mode="clean"] .loading-native,
+:root[data-ui-mode="clean"] .loading-native-vignette,
+:root[data-ui-mode="clean"] .loading-native-wordmark::before,
+:root[data-ui-mode="clean"] .loading-native-wordmark::after {
+  display: none;
+}
+
+:root[data-ui-mode="clean"] .loading-screen,
+:root[data-ui-mode="clean"] .loading-expanded,
+:root[data-ui-mode="clean"] .loading-step,
+:root[data-ui-mode="clean"] .loading-event {
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
 /* Light-theme chrome overrides: restore readable bright surfaces after the darker mission-control skin */
 :root[data-theme="light"] body {
   background:

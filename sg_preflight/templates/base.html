@@ -7,10 +7,15 @@
   <script>
     (function () {
       try {
+        var params = new URLSearchParams(window.location.search);
         var theme = window.localStorage.getItem("sg-theme") || "dark";
+        var requestedMode = params.get("ui-mode") || (params.get("theme") === "clean" ? "clean" : "");
+        var uiMode = requestedMode || window.localStorage.getItem("sg-ui-mode") || "cinematic";
         document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.uiMode = uiMode === "clean" ? "clean" : "cinematic";
       } catch (_error) {
         document.documentElement.dataset.theme = "dark";
+        document.documentElement.dataset.uiMode = "cinematic";
       }
     })();
   </script>
@@ -46,6 +51,9 @@
       </button>
       <button class="button subtle shell-toggle" id="theme-toggle" type="button" aria-pressed="true">
         Light mode
+      </button>
+      <button class="button subtle shell-toggle" id="ui-mode-toggle" type="button" aria-pressed="false">
+        Clean mode
       </button>
     </nav>
   </header>

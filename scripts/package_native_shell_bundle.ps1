@@ -185,7 +185,7 @@ function Set-ShellIniDefaults {
     )
 
     $iniContent = if (Test-Path $IniPath) { Get-Content -LiteralPath $IniPath -Raw } else { "" }
-    $shellSection = "[sg_preflight_native_shell]`r`ndisplay_mode=work`r`nmusic_enabled=$MusicEnabledValue`r`nsfx_enabled=1`r`n"
+    $shellSection = "[sg_preflight_native_shell]`r`ndisplay_mode=clean`r`nmusic_enabled=$MusicEnabledValue`r`nsfx_enabled=1`r`n"
 
     if ($iniContent -match "(?ms)^\[sg_preflight_native_shell\].*?(?=^\[|\z)") {
         $iniContent = [regex]::Replace(
