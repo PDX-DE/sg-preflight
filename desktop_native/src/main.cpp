@@ -1040,10 +1040,16 @@ std::optional<std::filesystem::path> ResolveDownloadsRoot() {
     return downloads;
 }
 
+bool IsFontFileCandidate(const std::filesystem::path& path) {
+    const std::wstring extension = Lowercase(path.extension().wstring());
+    return extension == L".otf" || extension == L".ttf" || extension == L".ttc";
+}
+
 std::optional<std::filesystem::path> ResolveDownloadedFont(
     const std::vector<std::filesystem::path>& relative_candidates,
     const std::vector<std::wstring>& filename_needles
 ) {
+    (void)filename_needles;
     const auto downloads_root = ResolveDownloadsRoot();
     if (!downloads_root.has_value()) {
         return std::nullopt;
@@ -1051,21 +1057,8 @@ std::optional<std::filesystem::path> ResolveDownloadedFont(
 
     for (const auto& relative : relative_candidates) {
         const std::filesystem::path candidate = *downloads_root / relative;
-        if (PathExists(candidate)) {
+        if (PathExists(candidate) && IsFontFileCandidate(candidate)) {
             return candidate;
-        }
-    }
-
-    std::error_code error;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(*downloads_root, error)) {
-        if (error || !entry.is_regular_file()) {
-            continue;
-        }
-        const std::wstring lowered_name = Lowercase(entry.path().filename().wstring());
-        for (const auto& needle : filename_needles) {
-            if (lowered_name.find(Lowercase(needle)) != std::wstring::npos) {
-                return entry.path();
-            }
         }
     }
     return std::nullopt;
@@ -1086,7 +1079,7 @@ std::optional<std::filesystem::path> ResolveBundledFont(
 
     for (const auto& relative : relative_candidates) {
         const std::filesystem::path candidate = fonts_root / relative;
-        if (PathExists(candidate)) {
+        if (PathExists(candidate) && IsFontFileCandidate(candidate)) {
             return candidate;
         }
     }
@@ -1094,6 +1087,9 @@ std::optional<std::filesystem::path> ResolveBundledFont(
     std::error_code error;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(fonts_root, error)) {
         if (error || !entry.is_regular_file()) {
+            continue;
+        }
+        if (!IsFontFileCandidate(entry.path())) {
             continue;
         }
         const std::wstring lowered_name = Lowercase(entry.path().filename().wstring());
@@ -4847,7 +4843,7 @@ bool EnvFlagEnabled(const wchar_t* name) {
 }
 
 ImFont* TryLoadFont(ImGuiIO& io, const std::filesystem::path& path, float size) {
-    if (!PathExists(path)) {
+    if (!PathExists(path) || !IsFontFileCandidate(path)) {
         return nullptr;
     }
     return io.Fonts->AddFontFromFileTTF(path.string().c_str(), size);

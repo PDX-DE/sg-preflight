@@ -64,6 +64,17 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("resources", text)
         self.assertIn("sg_preflight_native_shell.exe", text)
 
+    def test_native_shell_font_discovery_ignores_archives(self) -> None:
+        main_source = (ROOT / "desktop_native" / "src" / "main.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("bool IsFontFileCandidate", main_source)
+        self.assertIn(".otf", main_source)
+        self.assertIn(".ttf", main_source)
+        self.assertIn("IsFontFileCandidate(entry.path())", main_source)
+        self.assertIn("IsFontFileCandidate(path)", main_source)
+        self.assertGreaterEqual(main_source.count("if (!IsFontFileCandidate(entry.path()))"), 1)
+        self.assertNotIn("recursive_directory_iterator(*downloads_root", main_source)
+
 
 if __name__ == "__main__":
     unittest.main()
