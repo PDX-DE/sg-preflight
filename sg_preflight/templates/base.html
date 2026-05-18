@@ -10,12 +10,12 @@
         var params = new URLSearchParams(window.location.search);
         var theme = window.localStorage.getItem("sg-theme") || "dark";
         var requestedMode = params.get("ui-mode") || (params.get("theme") === "clean" ? "clean" : "");
-        var uiMode = requestedMode || window.localStorage.getItem("sg-ui-mode") || "cinematic";
+        var uiMode = requestedMode || window.localStorage.getItem("sg-ui-mode") || "clean";
         document.documentElement.dataset.theme = theme;
-        document.documentElement.dataset.uiMode = uiMode === "clean" ? "clean" : "cinematic";
+        document.documentElement.dataset.uiMode = uiMode === "sgfx" ? "sgfx" : "clean";
       } catch (_error) {
         document.documentElement.dataset.theme = "dark";
-        document.documentElement.dataset.uiMode = "cinematic";
+        document.documentElement.dataset.uiMode = "clean";
       }
     })();
   </script>

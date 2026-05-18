@@ -254,7 +254,7 @@ PendingManualEvidenceCapture g_pending_manual_capture;
 enum class ShellDisplayMode {
     Clean,
     Work = Clean,
-    Cinematic,
+    Branded,
 };
 
 ShellDisplayMode g_shell_display_mode = ShellDisplayMode::Clean;
@@ -715,7 +715,7 @@ void SaveShellIniFile() {
     }
 
     content += "[sg_preflight_native_shell]\r\n";
-    content += std::string("display_mode=") + (g_shell_display_mode == ShellDisplayMode::Cinematic ? "cinematic" : "clean") + "\r\n";
+    content += std::string("display_mode=") + (g_shell_display_mode == ShellDisplayMode::Branded ? "sgfx" : "clean") + "\r\n";
     content += std::string("music_enabled=") + (g_shell_audio.music_enabled ? "1" : "0") + "\r\n";
     content += std::string("sfx_enabled=") + (g_shell_audio.sfx_enabled ? "1" : "0") + "\r\n";
 
@@ -772,8 +772,8 @@ ShellDisplayMode LoadDisplayModePreferenceFromIni() {
         value.begin(),
         [](wchar_t character) { return static_cast<wchar_t>(towlower(character)); }
     );
-    const ShellDisplayMode mode = value == L"cinematic" ? ShellDisplayMode::Cinematic : ShellDisplayMode::Clean;
-    if (value != L"cinematic" && value != L"clean" && value != L"work") {
+    const ShellDisplayMode mode = value == L"sgfx" ? ShellDisplayMode::Branded : ShellDisplayMode::Clean;
+    if (value != L"sgfx" && value != L"clean" && value != L"work") {
         SaveDisplayModePreferenceToIni(mode);
     }
     if (value == L"work") {
@@ -787,7 +787,7 @@ void SaveDisplayModePreferenceToIni(ShellDisplayMode mode) {
     WritePrivateProfileStringW(
         L"sg_preflight_native_shell",
         L"display_mode",
-        mode == ShellDisplayMode::Cinematic ? L"cinematic" : L"clean",
+        mode == ShellDisplayMode::Branded ? L"sgfx" : L"clean",
         ini_path.wstring().c_str()
     );
 }
@@ -1374,7 +1374,7 @@ void LoadShellAssets(const std::filesystem::path& workspace_root) {
         load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F11.png", "kb_key_F11.png", g_shell_assets.help_key_f11, 32U, 128U);
         load_optional_resource_or_workspace_texture(std::filesystem::path("images") / "common" / "raw" / "kb_key_F12.png", "kb_key_F12.png", g_shell_assets.help_key_f12, 32U, 128U);
         load_optional_workspace_or_resource_texture("debug_icon.png", std::filesystem::path("images") / "common" / "raw" / "pdx-dev.png", g_shell_assets.debug_icon, 0U, 512U);
-        load_optional_workspace_texture_candidates({"framework_sgfx_logo.png", "framework_icon.png"}, g_shell_assets.framework_icon);
+        load_optional_workspace_texture_candidates({"framework_sgfx_logo.png"}, g_shell_assets.framework_icon);
         load_optional_workspace_texture_candidates({"logo_sgfx.png"}, g_shell_assets.game_icon);
         load_optional_resource_texture(std::filesystem::path("images") / "common" / "raw" / "arrow_circle.png", g_shell_assets.arrow_circle);
         load_optional_resource_texture(std::filesystem::path("images") / "common" / "raw" / "pulse_install.png", g_shell_assets.pulse_install);
@@ -1395,13 +1395,13 @@ void LoadShellAudio(const std::filesystem::path& workspace_root) {
         return;
     }
 
-    g_shell_audio.cursor = *resource_root / "sounds" / "raw" / "sys_actstg_pausecursor.wav";
-    g_shell_audio.confirm = *resource_root / "sounds" / "raw" / "sys_worldmap_finaldecide.wav";
-    g_shell_audio.cancel = *resource_root / "sounds" / "raw" / "sys_actstg_pausecansel.wav";
-    g_shell_audio.window = *resource_root / "sounds" / "raw" / "sys_actstg_pausewinopen.wav";
-    g_shell_audio.page = *resource_root / "sounds" / "raw" / "sys_actstg_pausedecide.wav";
-    g_shell_audio.window_close = *resource_root / "sounds" / "raw" / "sys_actstg_pausewinclose.wav";
-    g_shell_audio.music_default = *resource_root / "music" / "raw" / "installer.wav";
+    g_shell_audio.cursor = *resource_root / "sounds" / "ui_cursor.wav";
+    g_shell_audio.confirm = *resource_root / "sounds" / "ui_confirm.wav";
+    g_shell_audio.cancel = *resource_root / "sounds" / "ui_cancel.wav";
+    g_shell_audio.window = *resource_root / "sounds" / "ui_panel_open.wav";
+    g_shell_audio.page = *resource_root / "sounds" / "ui_page.wav";
+    g_shell_audio.window_close = *resource_root / "sounds" / "ui_panel_close.wav";
+    g_shell_audio.music_default = *resource_root / "music" / "sgfx_background.wav";
     g_shell_audio.music = g_shell_audio.music_default;
 
     const std::array<std::filesystem::path, 6> sfx_paths = {
@@ -1481,7 +1481,7 @@ void SetDisplayMode(ShellDisplayMode mode) {
     if (mode == ShellDisplayMode::Clean && g_shell_audio.music_enabled) {
         SetMusicEnabled(false);
     }
-    TraceUi(mode == ShellDisplayMode::Clean ? "display_mode=clean" : "display_mode=cinematic");
+    TraceUi(mode == ShellDisplayMode::Clean ? "display_mode=clean" : "display_mode=sgfx");
 }
 
 void UpdateMusicEnvelope(const ShellState& state) {
@@ -2623,8 +2623,8 @@ std::optional<ShellDisplayMode> ParseDisplayModeValue(std::wstring value) {
     if (value == L"clean" || value == L"work") {
         return ShellDisplayMode::Clean;
     }
-    if (value == L"cinematic") {
-        return ShellDisplayMode::Cinematic;
+    if (value == L"sgfx") {
+        return ShellDisplayMode::Branded;
     }
     return std::nullopt;
 }
@@ -7275,8 +7275,8 @@ void RenderDisplayModeContent(ShellState& state) {
         state.status_line = sg_preflight::native_shell::FormatDisplayModeStatus(state.language, true);
     }
     ImGui::SameLine();
-    if (DrawLanguageOptionButton("display-mode-cinematic", "CINEMATIC", !work_mode, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(34.0f)))) {
-        SetDisplayMode(ShellDisplayMode::Cinematic);
+    if (DrawLanguageOptionButton("display-mode-sgfx", "SGFX", !work_mode, ImVec2(ImGui::GetContentRegionAvail().x, ShellUi(34.0f)))) {
+        SetDisplayMode(ShellDisplayMode::Branded);
         state.status_line = sg_preflight::native_shell::FormatDisplayModeStatus(state.language, false);
     }
     ImGui::Spacing();
@@ -7286,7 +7286,7 @@ void RenderDisplayModeContent(ShellState& state) {
     ImGui::TextUnformatted(
         work_mode
             ? "Clean mode keeps the shell sharp: compact work screens, lower scanlines, stronger contrast, readable body text, and no background music."
-            : "Cinematic mode keeps the full SGFX: Project Quality-Hero chrome: larger artwork, heavier motion treatment, and optional background music."
+            : "SGFX mode keeps the Project Quality-Hero chrome available while clean mode remains the team-facing default."
     );
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
@@ -10324,14 +10324,14 @@ void DrawDisplayModeQuickToggle(ShellState& state) {
     const float height = ShellUi(30.0f);
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     ImGui::SetCursorScreenPos(ImVec2(display.x - width - ShellUi(22.0f), ShellUi(16.0f)));
-    const char* label = clean_mode ? "Cinematic mode" : "Clean mode";
+    const char* label = clean_mode ? "SGFX mode" : "Clean mode";
     if (DrawPanelButton("display-mode-quick-toggle", label, ImVec2(width, height), false, true)) {
-        const ShellDisplayMode next_mode = clean_mode ? ShellDisplayMode::Cinematic : ShellDisplayMode::Clean;
+        const ShellDisplayMode next_mode = clean_mode ? ShellDisplayMode::Branded : ShellDisplayMode::Clean;
         SetDisplayMode(next_mode);
         state.status_line = sg_preflight::native_shell::FormatDisplayModeStatus(state.language, next_mode == ShellDisplayMode::Clean);
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", clean_mode ? "Switch to Cinematic mode." : "Switch to Clean mode.");
+        ImGui::SetTooltip("%s", clean_mode ? "Switch to SGFX mode." : "Switch to Clean mode.");
     }
 }
 

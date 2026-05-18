@@ -1,6 +1,6 @@
 param(
     [string]$BuildDir = "",
-    [string]$BundleDir = "build/sergfx-alpha-0.1.0-bundle",
+    [string]$BundleDir = "build/sgfx-alpha-0.1.0-bundle",
     [string]$Configuration = "Release",
     [switch]$Zip,
     [switch]$IncludeRepoMirror,
@@ -25,7 +25,7 @@ if ($BuildDir) {
     $exePath = (Get-Content $latestPathFile -Raw).Trim()
     $resolvedBuildDir = Split-Path -Parent $exePath
 } else {
-    $resolvedBuildDir = Join-Path $repoRoot "build/sergfx-alpha-0.1.0"
+    $resolvedBuildDir = Join-Path $repoRoot "build/sgfx-alpha-0.1.0"
     $exePath = Join-Path $resolvedBuildDir "$Configuration\sg_preflight_native_shell.exe"
 }
 
@@ -155,7 +155,6 @@ $workspaceItems = @(
     "exe_ico.png",
     "framework_sgfx_logo.png",
     "logo_sgfx.png",
-    "framework_icon.png",
     "kb_key_F1.png",
     "kb_key_F2.png",
     "kb_key_F3.png",

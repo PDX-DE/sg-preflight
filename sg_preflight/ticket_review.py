@@ -44,7 +44,7 @@ _PROCESS_HINTS = (
     "This ticket is partly a process-definition task: evaluate possible test cases, update the DoD, and clarify ownership instead of pretending all BMW-side checks can run locally.",
     "This bundle intentionally separates deterministic SG-side evidence from still-manual visual judgment.",
 )
-_SERGFX_CONFLUENCE_URL = "https://azure.paradoxcat.com/confluence/display/SERGFX/Quality-Hero%3A+How+to+review+the+3D+car"
+_QUALITY_HERO_PROCESS_REFERENCE = "SG Quality-Hero manual-review process reference"
 _BMW_DOC_URLS = (
     "https://confluence.cc.bmwgroup.net/spaces/virtualcar/pages/137035868/SG+Delivery+Documentation",
     "https://confluence.cc.bmwgroup.net/spaces/virtualcar/pages/1340896387/Models",
@@ -3208,8 +3208,7 @@ def _review_protocol_markdown(
         )
     lines.extend(
         [
-            f"- SG Quality-Hero process page: `{_SERGFX_CONFLUENCE_URL}`",
-            "  - Reachable from this machine, but SAML login is still required.",
+            f"- {_QUALITY_HERO_PROCESS_REFERENCE}: local Confluence export/operator notes; live page access still requires login.",
         ]
     )
     for url in _BMW_DOC_URLS:

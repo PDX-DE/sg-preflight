@@ -37,7 +37,7 @@ struct AudioEngine {
     IXAudio2MasteringVoice* mastering_voice = nullptr;
     IXAudio2SourceVoice* music_voice = nullptr;
     bool mci_music_open = false;
-    std::wstring mci_music_alias = L"sergfx_shell_music";
+    std::wstring mci_music_alias = L"sgfx_shell_music";
     std::shared_ptr<LoadedWave> music_wave;
     std::unordered_map<std::wstring, std::shared_ptr<LoadedWave>> wave_cache;
     std::vector<OneShotVoice> one_shots;

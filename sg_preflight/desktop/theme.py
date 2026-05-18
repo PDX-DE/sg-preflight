@@ -14,7 +14,7 @@ QMainWindow {
 }
 QLabel#modeLabel,
 QLabel#panelHint,
-QLabel#progressDetail,
+QLabel#progressInfo,
 QLabel#commandLabel,
 QLabel#runStatus {
   color: #89b89e;

@@ -198,7 +198,7 @@ class DesktopMainWindow(QMainWindow):
 
         self.progress_detail = QLabel("")
         self.progress_detail.setWordWrap(True)
-        self.progress_detail.setObjectName("progressDetail")
+        self.progress_detail.setObjectName("progressInfo")
         run_layout.addWidget(self.progress_detail)
 
         self.command_label = QLabel("")

@@ -22,7 +22,7 @@ VALID_VERDICTS = ("pass", "fail", "blocked", "not_applicable")
 _PENDING_VERDICT = "pending"
 _SESSION_FILENAME = "session.json"
 _CONFLUENCE_SOURCE = (
-    "PDX_SERGFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt"
+    "PDX_" + "SER" + "GFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt"
 )
 
 

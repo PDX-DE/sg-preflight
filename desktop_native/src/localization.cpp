@@ -662,15 +662,15 @@ std::string FormatMusicStatus(ShellLanguage language, bool enabled) {
 std::string FormatDisplayModeStatus(ShellLanguage language, bool work_mode) {
     switch (language) {
     case English:
-        return work_mode ? "Display mode set to Work. Background music stays off." : "Display mode set to Cinematic.";
+        return work_mode ? "Display mode set to Work. Background music stays off." : "Display mode set to SGFX.";
     case Spanish:
-        return work_mode ? "Modo de pantalla cambiado a Trabajo. La musica queda desactivada." : "Modo de pantalla cambiado a Cinematico.";
+        return work_mode ? "Modo de pantalla cambiado a Trabajo. La musica queda desactivada." : "Modo de pantalla cambiado a SGFX.";
     case German:
-        return work_mode ? "Anzeigemodus auf Arbeit gesetzt. Hintergrundmusik bleibt aus." : "Anzeigemodus auf Cinematic gesetzt.";
+        return work_mode ? "Anzeigemodus auf Arbeit gesetzt. Hintergrundmusik bleibt aus." : "Anzeigemodus auf SGFX gesetzt.";
     case Romanian:
-        return work_mode ? "Modul de afisare a fost setat pe Work. Muzica de fundal ramane oprita." : "Modul de afisare a fost setat pe Cinematic.";
+        return work_mode ? "Modul de afisare a fost setat pe Work. Muzica de fundal ramane oprita." : "Modul de afisare a fost setat pe SGFX.";
     }
-    return work_mode ? "Display mode set to Work. Background music stays off." : "Display mode set to Cinematic.";
+    return work_mode ? "Display mode set to Work. Background music stays off." : "Display mode set to SGFX.";
 }
 
 std::string FormatLoadedChromeStatus(ShellLanguage language) {

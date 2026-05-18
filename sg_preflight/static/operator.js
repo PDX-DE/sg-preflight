@@ -77,12 +77,12 @@
   };
 
   const applyUiMode = function (mode) {
-    const resolved = mode === "clean" ? "clean" : "cinematic";
+    const resolved = mode === "sgfx" ? "sgfx" : "clean";
     rootElement.dataset.uiMode = resolved;
     if (uiModeToggle) {
       const cleanMode = resolved === "clean";
       uiModeToggle.setAttribute("aria-pressed", cleanMode ? "true" : "false");
-      uiModeToggle.textContent = cleanMode ? "Cinematic mode" : "Clean mode";
+      uiModeToggle.textContent = cleanMode ? "SGFX mode" : "Clean mode";
     }
   };
 
@@ -101,11 +101,11 @@
     const cleanThemeAlias = query.toString().includes("theme=clean") || query.get("theme") === "clean";
     const requestedUiMode = query.get("ui-mode") || (cleanThemeAlias ? "clean" : "");
     applyTheme(window.localStorage.getItem("sg-theme") || rootElement.dataset.theme || "dark");
-    applyUiMode(requestedUiMode || window.localStorage.getItem("sg-ui-mode") || rootElement.dataset.uiMode || "cinematic");
+    applyUiMode(requestedUiMode || window.localStorage.getItem("sg-ui-mode") || rootElement.dataset.uiMode || "clean");
     applyGuideMode(window.localStorage.getItem("sg-guide-mode") || document.body.dataset.guideMode || "on");
   } catch (_error) {
     applyTheme(rootElement.dataset.theme || "dark");
-    applyUiMode(rootElement.dataset.uiMode || "cinematic");
+    applyUiMode(rootElement.dataset.uiMode || "clean");
     applyGuideMode(document.body.dataset.guideMode || "on");
   }
 
@@ -559,7 +559,7 @@
 
   if (uiModeToggle) {
     uiModeToggle.addEventListener("click", function () {
-      const nextMode = rootElement.dataset.uiMode === "clean" ? "cinematic" : "clean";
+      const nextMode = rootElement.dataset.uiMode === "clean" ? "sgfx" : "clean";
       applyUiMode(nextMode);
       try {
         window.localStorage.setItem("sg-ui-mode", nextMode);
