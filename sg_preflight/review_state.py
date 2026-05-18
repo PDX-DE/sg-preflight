@@ -641,6 +641,16 @@ def verify_sendable_package(zip_path: Path | str, workspace: Path | str | None =
     }
 
 
+def review_board_unavailable_state(ticket_id: str | None, message: str) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "available": False,
+        "ticket_id": ticket_id or "",
+        "message": message,
+        "is_approval": False,
+    }
+
+
 def build_review_board_state(ticket_id: str | None = None, workspace: Path | str | None = None) -> dict[str, Any]:
     workspace_root = _workspace_root(workspace)
     package = load_latest_review_package(ticket_id, workspace_root)

@@ -318,6 +318,23 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("IDCEVODEV-960073 QA status", payload.json()["review_owner_update_text"])
         self.assertEqual(payload.json()["external_findings"]["count"], 1)
 
+    def test_review_board_page_and_api_report_unavailable_without_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]), raise_server_exceptions=False)
+
+            page = client.get("/ui/review-board?ticket_id=IDCEVODEV-960073")
+            payload = client.get("/ui/api/review-board/latest?ticket_id=IDCEVODEV-960073")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("SGFX QA Status Board unavailable", page.text)
+        self.assertIn("No matching review package was found", page.text)
+        self.assertEqual(payload.status_code, 200)
+        self.assertEqual(payload.json()["status"], "unavailable")
+        self.assertFalse(payload.json()["available"])
+        self.assertFalse(payload.json()["is_approval"])
+
     def test_review_board_decision_api_updates_tracked_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

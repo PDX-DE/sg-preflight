@@ -30,7 +30,11 @@ from sg_preflight.qa_actions import (
     load_action_record,
     save_action_record as save_action_task_record,
 )
-from sg_preflight.review_state import build_review_board_state, load_latest_review_package
+from sg_preflight.review_state import (
+    build_review_board_state,
+    load_latest_review_package,
+    review_board_unavailable_state,
+)
 from sg_preflight.review_tracking import add_external_finding, set_review_decision
 from sg_preflight.reporting import build_report_presentation, finding_hint, retheme_html_report
 from sg_preflight.services import (
@@ -2452,7 +2456,18 @@ def create_app(
 
     @app.get("/ui/review-board")
     async def review_board_view(request: Request, ticket_id: str = "") -> Any:
-        state = build_review_board_state(ticket_id or None, app.state.workspace_root)
+        try:
+            state = build_review_board_state(ticket_id or None, app.state.workspace_root)
+        except FileNotFoundError as exc:
+            unavailable = review_board_unavailable_state(ticket_id or None, str(exc))
+            return app.state.templates.TemplateResponse(
+                request,
+                "review_board_unavailable.html",
+                {
+                    "ticket_id": ticket_id,
+                    "unavailable_reason": unavailable["message"],
+                },
+            )
         artifact_refs = state.get("artifact_references", {})
         file_cards = [
             _review_board_file_card("Candidate gallery", artifact_refs.get("candidate_gallery", {})),
@@ -2782,7 +2797,10 @@ def create_app(
 
     @app.get("/ui/api/review-board/latest")
     async def review_board_api(ticket_id: str = "") -> JSONResponse:
-        return JSONResponse(build_review_board_state(ticket_id or None, app.state.workspace_root))
+        try:
+            return JSONResponse(build_review_board_state(ticket_id or None, app.state.workspace_root))
+        except FileNotFoundError as exc:
+            return JSONResponse(review_board_unavailable_state(ticket_id or None, str(exc)))
 
     @app.post("/ui/api/review-decisions")
     async def review_decisions_set_api(request: Request) -> JSONResponse:
