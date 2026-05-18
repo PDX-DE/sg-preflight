@@ -295,7 +295,7 @@ class TestOperatorUI(unittest.TestCase):
             payload = client.get("/ui/api/review-board/latest?ticket_id=IDCEVODEV-960073")
 
         self.assertEqual(page.status_code, 200)
-        self.assertIn("Review board", page.text)
+        self.assertIn("SGFX QA status", page.text)
         self.assertIn("IDCEVODEV-960073", page.text)
         self.assertIn("Copy Review Owner Update", page.text)
         self.assertIn("Copy Morning Digest", page.text)

@@ -22,7 +22,7 @@ Current native-shell milestone:
 
 - Dear ImGui + Win32 + DirectX 12 shell
 - repo-root auto-discovery from the built executable path, so the native shell can launch `python -m sg_preflight` from `build\...\Release` without a manual workspace override
-- Review Board entry for ticket/scope, smoke status, screenshot-battery counts, unresolved families, decisions needed, copy-ready updates, and artifact links
+- SGFX QA Status Board entry for ticket/scope, smoke status, screenshot-battery counts, unresolved families, decisions needed, copy-ready updates, and artifact links
 - live profile list
 - action tabs
 - recent action browsing

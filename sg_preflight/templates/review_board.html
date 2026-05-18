@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Review Board - SG Preflight Operator UI{% endblock %}
+{% block title %}SGFX QA Status Board - SG Preflight Operator UI{% endblock %}
 {% block shell_route %}
 <li>
   <a class="shell-route-link" href="#package-card">
@@ -24,7 +24,7 @@
 {% set board = review_board %}
 <section class="hero-panel hero-panel--simple" id="package-card">
   <div class="hero-copy">
-    <p class="eyebrow">Review board</p>
+    <p class="eyebrow">SGFX QA status</p>
     <h2>{{ board.ticket_id }} - {{ board.scope|join(", ") }}</h2>
     <p class="hero-text">
       Latest structured operator state for the sendable review package, the current daily snapshot, and the remaining review-owner decisions.

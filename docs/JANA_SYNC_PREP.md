@@ -4,12 +4,12 @@ Date: 30 April 2026
 
 ## Short Status
 
-SGFX / Project Quality-Hero is ready to show as a team-feedback alpha, centered on the Review Board. It is useful for status, evidence, screenshot triage, package traceability, manual review support, and decision tracking. It is not ready to claim production integration.
+SGFX / Project Quality-Hero is ready to show as a team-feedback alpha, centered on the SGFX QA Status Board. It is useful for status, evidence, screenshot triage, package traceability, manual review support, and decision tracking. It is not ready to claim production integration.
 
 ## What Is Already Done
 
 - Python backend / CLI for SG QA checks and evidence.
-- Web Review Board for quick status and review.
+- SGFX QA Status Board for quick status and review.
 - Native C++ local operator shell for logs, artifacts, manual review actions, and local-heavy workflows.
 - Ticket package generation.
 - Screenshot battery and candidate review gallery.
@@ -40,7 +40,7 @@ SGFX / Project Quality-Hero is ready to show as a team-feedback alpha, centered 
 ## What I Need
 
 - Jira access.
-- Feedback from 3D colleagues on whether the Review Board workflow matches real QA work.
+- Feedback from 3D colleagues on whether the SGFX QA Status Board workflow matches real QA work.
 - Confirmation on what counts as done for screenshot and RaCo/manual review.
 - Formal tickets so SGFX work can be prioritized correctly.
 
@@ -82,13 +82,13 @@ The C++ shell is the native operator surface. It is useful for local-heavy workf
 
 - Goal: make SGFX safe to show to Jana and selected 3D teammates.
 - Why it matters: avoids confusing SGFX with unrelated R&D and keeps the demo focused on QA workflow value.
-- Acceptance criteria: Review Board is easy to open; docs/UI use SGFX wording; optional local assets/audio are not required; blocked integrations are labeled blocked.
+- Acceptance criteria: SGFX QA Status Board is easy to open; docs/UI use SGFX wording; optional local assets/audio are not required; blocked integrations are labeled blocked.
 - Blockers: final reviewer audience and demo timing.
 - Expected output: demo-safe local build, 3-minute demo plan, and short feedback questions.
 
-### 2. SGFX Quality-Hero: validate Review Board workflow with 3D teammates
+### 2. SGFX Quality-Hero: validate SGFX QA Status Board workflow with 3D teammates
 
-- Goal: test whether the Review Board helps reviewers understand ticket state faster.
+- Goal: test whether the SGFX QA Status Board helps reviewers understand ticket state faster.
 - Why it matters: team adoption depends on trust and reduced repeated status explaining.
 - Acceptance criteria: teammates can identify scope, smoke status, screenshot counts, unresolved family, decisions needed, and artifacts without guidance.
 - Blockers: availability of Jana/Adrian or trusted teammates.

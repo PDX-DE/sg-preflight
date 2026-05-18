@@ -12,13 +12,13 @@ It is not a production deployment, not a delivery package, and not a replacement
 - Manual review companion: Quality Hero review steps surfaced for operator notes and verdict entry. `recorded_by_tool` stays false.
 - Delivery checklist workbook reader: read-only ingestion of operator-local delivery checklist workbook data.
 - Export-size analysis reader: read-only ingestion of operator-local `Cars\size_analysis\<profile>_<date>.xlsx` workbook data.
-- Native and Web evidence surfaces: export-size evidence can be shown in the native operator shell and Review Board.
+- Native and Web evidence surfaces: export-size evidence can be shown in the native operator shell and SGFX QA Status Board.
 - Screenshot test state reader: read-only BMW / MINI screenshot baseline and test-config state from local BMW Git.
 - BMW Git readiness reader: read-only per-profile state from the local `digital-3d-car-models` checkout.
 - QA Hero readiness reader: read-only presence and count checks for documented Quality Hero assets such as LightFX, WelcomeFX, ShadesFX, CarPaint, AnchorPoints, Constants, and Perspectives.
 - CLI uniformity: read/status commands support `--format text|json|markdown` and `--output-path` / `--out` where relevant, while preserving compatible `--json` and `--markdown` aliases.
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
-- Clean-first display mode: native shell and Web Review Board default to a neutral SGFX work view; the SGFX-branded view is optional and does not change backend QA logic.
+- Clean-first display mode: native shell and SGFX QA Status Board default to a neutral SGFX work view; the SGFX-branded view is optional and does not change backend QA logic.
 - Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--confirm`.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
 
@@ -47,7 +47,7 @@ python -m sg_preflight daily-digest latest --format markdown
 
 The daily digest is safe on a fresh checkout. If no review package exists yet, it returns a clean no-package summary and exits successfully.
 
-`review-board latest --json` requires a generated or copied review package. On a fresh checkout it can report that no matching review package was found; that is expected for this surface.
+`review-board latest --json` requires a generated or copied review package. On a fresh checkout it can report that no matching review package was found; that is expected for the SGFX QA Status Board compatibility surface.
 
 ## Real SVN / BMW Git Read-Only Checks
 

@@ -61,12 +61,12 @@ class TestDemoSafeAlpha(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual(risky, [])
 
-    def test_web_home_keeps_review_board_easy_to_reach(self) -> None:
+    def test_web_home_keeps_status_board_easy_to_reach(self) -> None:
         base = (ROOT / "sg_preflight" / "templates" / "base.html").read_text(encoding="utf-8")
         home = (ROOT / "sg_preflight" / "templates" / "home.html").read_text(encoding="utf-8")
 
         self.assertIn('href="/ui/review-board"', base)
-        self.assertIn("Review Board", base)
+        self.assertIn("SGFX QA Status Board", base)
         self.assertIn('href="/ui/review-board"', home)
         self.assertIn("IDCEVODEV-960073", home)
 
@@ -116,7 +116,7 @@ class TestDemoSafeAlpha(unittest.TestCase):
         self.assertIn("SGFX Quality-Hero", status)
         self.assertIn("not production workflow yet", status)
         self.assertIn("Jira access is still missing", status)
-        self.assertIn("Review Board workflow", status)
+        self.assertIn("SGFX QA Status Board workflow", status)
 
     def test_remaining_work_doc_separates_done_next_and_blocked_items(self) -> None:
         remaining = (ROOT / "docs" / "ALPHA_REMAINING_WORK.md").read_text(encoding="utf-8")
@@ -125,7 +125,7 @@ class TestDemoSafeAlpha(unittest.TestCase):
         self.assertIn("Tool-Side Next", remaining)
         self.assertIn("Human Or Access Blocked", remaining)
         self.assertIn("Do Not Start Yet", remaining)
-        self.assertIn("Review Board workflow validation", remaining)
+        self.assertIn("SGFX QA Status Board workflow validation", remaining)
         self.assertIn("Jira access", remaining)
         self.assertIn("Do not resend", remaining)
 

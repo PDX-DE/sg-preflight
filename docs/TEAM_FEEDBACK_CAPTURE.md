@@ -10,12 +10,12 @@ Purpose: collect concrete workflow feedback from trusted teammates before treati
 - Date:
 - Role or review perspective:
 - Ticket or demo scope shown:
-- Demo surface used: Review Board / Web UI / native shell
+- Demo surface used: SGFX QA Status Board / Web UI / native shell
 - Follow-up ticket:
 
 ## Show First
 
-1. Review Board.
+1. SGFX QA Status Board.
 2. Ticket and scope.
 3. Smoke status.
 4. Screenshot-battery counts.
@@ -46,7 +46,7 @@ Purpose: collect concrete workflow feedback from trusted teammates before treati
 ## Rules
 
 - Do not ask whether they like the UI.
-- Do not ask for broad feature wishes before validating the Review Board workflow.
+- Do not ask for broad feature wishes before validating the SGFX QA Status Board workflow.
 - Do not describe blocked Jira/BMW steps as working integration.
 - Do not treat RaCo or Blender review as automated pass/fail.
 - Convert feedback into concrete follow-up tickets or acceptance criteria.

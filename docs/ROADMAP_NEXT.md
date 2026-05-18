@@ -8,7 +8,7 @@ Goal: make SGFX demo-safe and useful for teammate feedback.
 
 Acceptance criteria:
 
-- Review Board is the primary demo entry.
+- SGFX QA Status Board is the primary demo entry.
 - Team-facing docs and UI use SGFX / Quality-Hero wording.
 - No unrelated R&D/prototype assets are required for the demo.
 - Current ticket status shows scope, smoke, screenshot battery, unresolved family, decisions needed, and artifacts.

@@ -10,7 +10,7 @@ Show that SGFX can help a reviewer decide faster by collecting ticket scope, smo
 
 ## Three-Minute Flow
 
-1. Open Review Board.
+1. Open SGFX QA Status Board.
 2. Show ticket `IDCEVODEV-960073` and scope `NA8 / G78 / G50`.
 3. Show factual status:
    - representative smoke: `3/3 passed`

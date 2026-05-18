@@ -17,7 +17,7 @@ outside this bundle.
 - CLI usability updates: consistent `--format text|json|markdown` rendering and `--output-path` / `--out` file output for supported read/status commands.
 - CLI and JSON workflow guides for operators adding or running checks through existing Python-owned SGFX surfaces.
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
-- Clean-first display mode for the native shell and Web Review Board. This is presentation-only and does not change backend QA logic.
+- Clean-first display mode for the native shell and SGFX QA Status Board. This is presentation-only and does not change backend QA logic.
 - Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. A real post requires operator-provided Jira configuration and an explicit `--confirm` flag.
 
 ### Fixed

@@ -1589,7 +1589,7 @@ const char* ScreenTitle(ShellScreen screen) {
     case ShellScreen::Stages:
         return "BLOCKERS / SETTINGS";
     case ShellScreen::ReviewBoard:
-        return "REVIEW BOARD";
+        return "QA STATUS BOARD";
     default:
         return "SCREEN";
     }
@@ -3449,13 +3449,13 @@ void RefreshReviewBoardState(ShellState& state, bool update_status) {
         SyncReviewBoardEditors(state);
         state.last_error.clear();
         if (update_status && state.review_board.has_value()) {
-            state.status_line = "Loaded review board for " + state.review_board->ticket_id + ".";
+            state.status_line = "Loaded SGFX QA Status Board for " + state.review_board->ticket_id + ".";
         }
     } catch (const std::exception& error) {
         state.review_board.reset();
         state.last_error = error.what();
         if (update_status) {
-            state.status_line = "Loading the latest review board failed.";
+            state.status_line = "Loading the latest SGFX QA Status Board failed.";
         }
         PlayCue(UiCue::Error);
     }
@@ -3991,7 +3991,7 @@ bool SaveExternalFindingCapture(ShellState& state) {
 void RenderReviewBoardManualReviewSection(ShellState& state, const sg_preflight::native_shell::ReviewBoardState& board, float wrap_x) {
     InlineSectionLabel("GUIDED MANUAL REVIEW");
     if (board.manual_review_profiles.empty()) {
-        ImGui::TextDisabled("No manual-review package artifacts are available for the current review board.");
+        ImGui::TextDisabled("No manual-review package artifacts are available for the current SGFX QA Status Board.");
         return;
     }
 
@@ -8280,7 +8280,7 @@ void RenderReviewBoardScreen(ShellState& state) {
                 ImGui::PushFont(g_title_font);
             }
             ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextWrapped("%s", "Review Board");
+            ImGui::TextWrapped("%s", "SGFX QA Status Board");
             ImGui::PopTextWrapPos();
             if (g_title_font != nullptr) {
                 ImGui::PopFont();
@@ -8298,7 +8298,7 @@ void RenderReviewBoardScreen(ShellState& state) {
             if (!state.review_board.has_value()) {
                 ImGui::Spacing();
                 ImGui::PushTextWrapPos(wrap_x);
-                ImGui::TextWrapped("%s", "The native shell could not load a review-board state yet. Refresh the board to pull the latest package and daily snapshot state from the Python backend.");
+                ImGui::TextWrapped("%s", "The native shell could not load an SGFX QA Status Board state yet. Refresh the board to pull the latest package and daily snapshot state from the Python backend.");
                 if (!state.last_error.empty()) {
                     ImGui::Spacing();
                     ImGui::TextColored(ImVec4(0.92f, 0.48f, 0.35f, 1.0f), "%s", state.last_error.c_str());

@@ -23,7 +23,7 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("launch-action", text)
         self.assertIn("desktop-state", text)
         self.assertIn("does not replace the Python core", text)
-        self.assertIn("Review Board", text)
+        self.assertIn("SGFX QA Status Board", text)
         self.assertIn("manual review", text)
         self.assertIn("does not run RaCo or Blender automatically", text)
 
