@@ -1096,6 +1096,18 @@ def build_parser() -> argparse.ArgumentParser:
     station_run.add_argument("--no-browser", action="store_true", help="Do not open a browser automatically")
     station_run.add_argument("--once", action="store_true", help="Run once and exit after the station publishes the result")
 
+    dashboard = sub.add_parser("dashboard", help="Run the SGFX NiceGUI operator dashboard")
+    dashboard_sub = dashboard.add_subparsers(dest="dashboard_command", required=True)
+    dashboard_run = dashboard_sub.add_parser("run", help="Start the local SGFX operator dashboard")
+    dashboard_run.add_argument("--profile", required=True, help="Profile id such as G65")
+    dashboard_run.add_argument("--workspace", required=True, help="Workspace root for SGFX read-only checks")
+    dashboard_run.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    dashboard_run.add_argument("--ui-mode", default="clean", choices=("clean", "grafiks"), help="Dashboard presentation mode")
+    dashboard_run.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    dashboard_run.add_argument("--port", type=int, default=0, help="Dashboard port; 0 chooses an available port")
+    dashboard_run.add_argument("--no-native", action="store_true", help="Run in browser/server mode instead of a native window")
+    dashboard_run.add_argument("--reload", action="store_true", help="Reload automatically when local dashboard files change")
+
     ui = sub.add_parser("ui", help="Start the local operator UI")
     ui.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     ui.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
@@ -1991,6 +2003,31 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return 1
         except Exception as exc:
             print(_console_safe(f"station failed: {exc}"), file=sys.stderr)
+            return 1
+
+    if args.command == "dashboard":
+        try:
+            from sg_preflight.dashboard.dependency import NiceGuiUnavailable
+            from sg_preflight.dashboard.main import run_dashboard
+
+            if args.dashboard_command == "run":
+                return run_dashboard(
+                    profile_id=args.profile,
+                    workspace=Path(args.workspace),
+                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+                    ui_mode=args.ui_mode,
+                    host=args.host,
+                    port=args.port,
+                    native=not args.no_native,
+                    reload=args.reload,
+                )
+            parser.error(f"Unhandled dashboard command: {args.dashboard_command}")
+            return 1
+        except NiceGuiUnavailable as exc:
+            print(_console_safe(str(exc)), file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(_console_safe(f"dashboard failed: {exc}"), file=sys.stderr)
             return 1
 
     if args.command == "ui":

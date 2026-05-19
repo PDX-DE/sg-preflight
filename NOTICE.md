@@ -89,6 +89,42 @@ Licensed under the Apache License, Version 2.0.
 You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
 ```
 
+## NiceGUI dependency
+
+SGFX QA Preflight uses [NiceGUI](https://github.com/zauberzeug/nicegui) (MIT License) as the primary operator-dashboard UI framework. The 4 SGFX evidence pages (Delivery Checklist, Screenshot Test State, Daily Digest, Manual Review Companion) render as NiceGUI pages over the existing `sg_preflight/` data layer, launched as a native desktop window via `ui.run(native=True)`.
+
+| Component | Version | License | Upstream | Current use |
+| --- | --- | --- | --- | --- |
+| NiceGUI | `nicegui[native]==3.11.1` | MIT | `https://github.com/zauberzeug/nicegui` | Primary operator-dashboard hosting, 4 evidence-page rendering, and native desktop window support via `ui.run(native=True)`; the `[native]` extra installs `pywebview` for native-window support |
+
+NiceGUI is installed via `pip install nicegui[native]==3.11.1` and pinned in `pyproject.toml`. The upstream source is not vendored, modified, or distributed by SGFX. MIT license terms apply to NiceGUI's portion of the runtime; SGFX-original code (`sg_preflight/` data layer, NiceGUI page wrappers under `sg_preflight/dashboard/`, dashboard launcher CLI) stays under the existing internal proprietary license unless and until a formal codebase-wide license review changes that.
+
+NiceGUI attribution:
+
+```text
+MIT License
+
+Copyright (c) 2021 Zauberzeug GmbH
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### Packaging Rules
 
 - Keep `LICENSE` and this `NOTICE.md` in any internal native-shell bundle.
@@ -96,6 +132,7 @@ You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-
 - Do not bundle mirrored `repositories/` or generated `out/` evidence unless there is a deliberate internal reason and a conscious opt-in.
 - Keep upstream license texts under `desktop_native/assets/LICENSE-*` alongside any adapted Grafiks UI assets they apply to; do not strip license texts from a packaged bundle.
 - If OpenHTF is ever vendored or bundled directly, ship the matching Apache 2.0 license text alongside that component; the current alpha installs OpenHTF from PyPI instead.
+- NiceGUI is a runtime dependency installed via pip. MIT license terms apply to the NiceGUI portion of any packaged bundle. If a bundle vendors NiceGUI for offline operator machines, ship the MIT LICENSE text from the NiceGUI upstream alongside the bundled package.
 - The clean display mode (`--ui-mode clean`, default) does not depend on the adapted Grafiks UI assets and remains usable without them.
 - The Grafiks-mode binary at this snapshot is original SGFX code; it does not bundle sonic3air source files. The upstream license text at `desktop_native/assets/LICENSE-sonic3air` covers the adapted assets. A future Grafiks update may extract sonic3air rendering subsystems; if that happens, this notice will grow to full GPL-3.0 attribution and the license text will cover the additional adapted source.
 
