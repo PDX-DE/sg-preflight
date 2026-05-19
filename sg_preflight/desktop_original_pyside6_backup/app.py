@@ -3,13 +3,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from sg_preflight.assets import runtime_asset_path
 from sg_preflight.services import workspace_root
 
 
 def run_desktop_app(*, workspace: Path | None = None, initial_profile_id: str = "") -> int:
     try:
-        from PySide6.QtGui import QIcon
         from PySide6.QtWidgets import QApplication
     except ImportError as exc:
         raise RuntimeError(
@@ -21,10 +19,7 @@ def run_desktop_app(*, workspace: Path | None = None, initial_profile_id: str = 
     from sg_preflight.desktop.theme import desktop_stylesheet
 
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("SGFX Grafiks Operator Console")
-    icon_path = runtime_asset_path("sgfx_icon.png")
-    if icon_path.is_file():
-        app.setWindowIcon(QIcon(str(icon_path)))
+    app.setApplicationName("SG Preflight Desktop Operator Shell")
     app.setStyleSheet(desktop_stylesheet())
     window = DesktopMainWindow(
         workspace=workspace_root(workspace),

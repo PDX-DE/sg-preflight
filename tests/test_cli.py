@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import importlib
 import json
 import shutil
 import subprocess
@@ -102,6 +103,39 @@ def _write_qa_hero_readiness_state(root: Path) -> None:
 
 
 class TestCLI(unittest.TestCase):
+    def test_frozen_exe_entry_defaults_to_clean_dashboard_when_double_clicked(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=17) as runner:
+            result = module.main([])
+
+        self.assertEqual(result, 17)
+        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "clean"])
+
+    def test_frozen_exe_entry_preserves_full_cli_surface_when_args_are_present(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=23) as runner:
+            result = module.main(["list-profiles", "--format", "json"])
+
+        self.assertEqual(result, 23)
+        runner.assert_called_once_with(["list-profiles", "--format", "json"])
+
+    def test_frozen_exe_entry_attaches_console_for_explicit_cli_args(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=0):
+            with mock.patch.object(module, "attach_parent_console") as attach_console:
+                module.main(["--help"])
+
+        attach_console.assert_called_once_with()
+
+    def test_frozen_exe_entry_restores_inherited_stdout_handles(self) -> None:
+        source = (ROOT / "sg_preflight" / "exe_entry.py").read_text(encoding="utf-8")
+
+        self.assertIn("GetStdHandle", source)
+        self.assertIn("open_osfhandle", source)
+
     def test_template_cli_roundtrip_save_list_show_delete(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -320,6 +354,19 @@ class TestCLI(unittest.TestCase):
         self.assertIn("unused_resources__g65", action_ids)
         self.assertIn("delivery_checklist__g65", action_ids)
         self.assertIn("bmw_screenshot_smoke__g65", action_ids)
+
+    def test_list_actions_text_uses_available_vocab(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "list-actions"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertIn("[available]", result.stdout)
+        self.assertNotIn("[ready]", result.stdout)
 
     def test_list_profiles_accepts_format_and_output_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -757,7 +804,20 @@ class TestCLI(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
-        self.assertIn("experimental desktop operator shell", result.stdout.lower())
+        self.assertIn("grafiks desktop operator shell", result.stdout.lower())
+
+    def test_desktop_state_profiles_help_uses_available_vocab(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "desktop-state", "profiles", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertIn("available desktop profiles", result.stdout.lower())
+        self.assertNotIn("ready desktop profiles", result.stdout.lower())
 
     def test_retro_extract_help_uses_neutral_team_retro_wording(self) -> None:
         result = subprocess.run(
@@ -776,7 +836,23 @@ class TestCLI(unittest.TestCase):
         with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=7) as runner:
             result = main(["desktop", "--profile", "G65"])
         self.assertEqual(result, 7)
-        runner.assert_called_once_with(initial_profile_id="G65")
+        runner.assert_called_once_with(workspace=None, initial_profile_id="G65")
+
+    def test_desktop_state_surfaces_returns_four_grafiks_evidence_cards(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            create_temp_g65_profile(root)
+            _create_checker_files(root)
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(["desktop-state", "surfaces", "G65", "--workspace", str(root), "--json"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            [item["key"] for item in payload],
+            ["delivery-checklist", "screenshot-test-state", "daily-digest", "manual-review"],
+        )
 
     def test_launch_action_spawns_worker_and_returns_queued_record(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

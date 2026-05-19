@@ -9,10 +9,6 @@ import sys
 from typing import Any
 import uuid
 
-from sg_preflight.bmw_delivery import read_bmw_screenshot_state
-from sg_preflight.daily_digest import build_latest_daily_digest
-from sg_preflight.delivery_checklist import read_delivery_checklist
-from sg_preflight.manual_review import QUALITY_HERO_STEPS
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.qa_actions import ActionRecord, list_operator_actions, list_recent_action_records, load_action_record
 from sg_preflight.export_size_analysis import read_export_size_analysis
@@ -97,14 +93,6 @@ class DesktopManualCard:
     state: str
     summary: str
     note: str
-
-
-@dataclass(frozen=True)
-class DesktopSurfaceItem:
-    key: str
-    label: str
-    state: str
-    summary: str
 
 
 @dataclass(frozen=True)
@@ -235,7 +223,7 @@ def _ready_profiles(root: Path, profiles: list[RunProfile] | None = None) -> lis
     return [
         profile
         for profile in live_profiles
-        if profile.source_project_root().exists()
+        if profile.source_project_root().exists() and profile.config_path.exists()
     ]
 
 
@@ -337,14 +325,14 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
     )
     delivery_ready = sum(1 for key in delivery_keys if _ready_from_prereq(key))
     if delivery_ready == len(delivery_keys):
-        delivery_state = "available"
+        delivery_state = "ready"
         delivery_summary = "The mirrored delivery-checklist bridge assets are present locally. This remains SG-side readiness, not BMW execution."
     elif delivery_ready > 0:
         delivery_state = "partial"
         delivery_summary = "Some delivery-checklist bridge assets exist locally, but the mirrored set is incomplete."
     else:
         delivery_state = "blocked"
-        delivery_summary = "The mirrored delivery-checklist bridge assets are not available locally yet."
+        delivery_summary = "The mirrored delivery-checklist bridge assets are not ready locally yet."
 
     bmw_script_keys = (
         "bmw_screenshot_scripts",
@@ -353,7 +341,7 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
     )
     bmw_script_ready = sum(1 for key in bmw_script_keys if _ready_from_prereq(key))
     if bmw_script_ready == len(bmw_script_keys):
-        bmw_scripts_state = "available"
+        bmw_scripts_state = "ready"
         bmw_scripts_summary = "The BMW smoke helper script surface is present locally."
     elif bmw_script_ready > 0:
         bmw_scripts_state = "partial"
@@ -363,9 +351,18 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
         bmw_scripts_summary = "BMW smoke helper scripts are still blocked on repo access and local checkout."
 
     output_root = root / "out" / "operator-ui"
-    output_state = "not_run"
-    output_summary = "Operator output write access is not probed during this read-only desktop overview."
+    output_state = "ready"
+    output_summary = "The operator output root is writable for local evidence, actions, and screenshots."
     output_path = str(output_root)
+    try:
+        output_root.mkdir(parents=True, exist_ok=True)
+        probe_path = output_root / f".env-doctor-write-{uuid.uuid4().hex}.tmp"
+        with probe_path.open("w", encoding="utf-8") as handle:
+            handle.write("ok")
+        probe_path.unlink()
+    except OSError as exc:
+        output_state = "blocked"
+        output_summary = f"The operator output root is not writable on this machine: {exc}"
 
     python_path = str(Path(sys.executable).resolve())
     python_ready = Path(python_path).exists()
@@ -381,7 +378,7 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             key="python_backend",
             category="Python backend",
             label="Python backend",
-            state="available" if python_ready else "missing",
+            state="ready" if python_ready else "missing",
             summary=(
                 "The shell has a concrete Python executable available for backend commands."
                 if python_ready
@@ -394,7 +391,7 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             key="sg_preflight_import",
             category="Python backend",
             label="sg_preflight import",
-            state="available" if sg_module_spec is not None else "blocked",
+            state="ready" if sg_module_spec is not None else "blocked",
             summary=(
                 "The shared SG Preflight backend module can be imported by the active interpreter."
                 if sg_module_spec is not None
@@ -407,7 +404,7 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             key="mirror_root",
             category="SG mirror",
             label="repositories/trunk mirror",
-            state="available" if _ready_from_prereq("mirror_root") else "missing",
+            state="ready" if _ready_from_prereq("mirror_root") else "missing",
             summary=(
                 "The mirrored Seriengrafik working tree is available locally."
                 if _ready_from_prereq("mirror_root")
@@ -420,7 +417,7 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             key="checker_root",
             category="SG mirror",
             label=".pdx/checkers",
-            state="available" if _ready_from_prereq("checker_root") else "missing",
+            state="ready" if _ready_from_prereq("checker_root") else "missing",
             summary=(
                 "The mirrored SG checker root is available."
                 if _ready_from_prereq("checker_root")
@@ -433,7 +430,7 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             key="execute_checks",
             category="SG mirror",
             label="executeChecks.py",
-            state="available" if _ready_from_prereq("execute_checks") else "missing",
+            state="ready" if _ready_from_prereq("execute_checks") else "missing",
             summary=(
                 "The main SG checker dispatcher is available locally."
                 if _ready_from_prereq("execute_checks")
@@ -446,7 +443,7 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             key="unused_resource_checker",
             category="SG mirror",
             label="printNotUsedResources.py",
-            state="available" if _ready_from_prereq("unused_resource_checker") else "missing",
+            state="ready" if _ready_from_prereq("unused_resource_checker") else "missing",
             summary=(
                 "The SG unused-resource checker is available locally."
                 if _ready_from_prereq("unused_resource_checker")
@@ -469,7 +466,7 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             category="Local tools",
             label="RaCoHeadless",
             state=(
-                "available"
+                "ready"
                 if raco_headless_status == "available"
                 else "partial"
                 if raco_headless_status == "incompatible"
@@ -491,14 +488,14 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
                 + (f" Probe scene: {raco_headless_probe}" if raco_headless_probe else "")
             )
             if raco_headless_status == "incompatible"
-            else "Set SG_RACO_HEADLESS or install the standard Ramses Composer build on this machine.",
+            else "Set SG_RACO_HEADLESS or install the approved Ramses Composer build on this machine.",
         ),
         _item(
             key="raco_gui",
             category="Local tools",
             label="Ramses Composer / RaCo GUI",
             state=(
-                "available"
+                "ready"
                 if raco_gui_status == "available" and raco_headless_status != "incompatible"
                 else "partial"
                 if raco_gui_status == "available"
@@ -520,26 +517,26 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
                 + (f" Probe scene: {raco_headless_probe or raco_gui_probe}" if (raco_headless_probe or raco_gui_probe) else "")
             )
             if raco_gui_status == "available" and raco_headless_status == "incompatible"
-            else "Set SG_RACO_GUI or install the standard Ramses Composer GUI build before exposing open-in-RaCo adapters.",
+            else "Set SG_RACO_GUI or install the approved Ramses Composer GUI build before exposing open-in-RaCo adapters.",
         ),
         _item(
             key="blender_executable",
             category="Local tools",
             label="Blender executable",
-            state="available" if _ready_from_prereq("blender_executable") else "missing",
+            state="ready" if _ready_from_prereq("blender_executable") else "missing",
             summary=(
                 "A Blender executable path is available for local opening/adapter flows."
                 if _ready_from_prereq("blender_executable")
                 else "No Blender executable path is configured locally yet."
             ),
             path=str(readiness.get("blender_executable", {}).get("path", "")),
-            next_action="Set SG_BLENDER_EXE or install the standard Blender build before adding Blender-open adapters.",
+            next_action="Set SG_BLENDER_EXE or install the approved Blender build before adding Blender-open adapters.",
         ),
         _item(
             key="bmw_models_repo",
             category="BMW / External",
             label="BMW digital-3d-car repo",
-            state="available" if _ready_from_prereq("bmw_models_repo") else "blocked",
+            state="ready" if _ready_from_prereq("bmw_models_repo") else "blocked",
             summary=(
                 "The BMW models repository is available locally."
                 if _ready_from_prereq("bmw_models_repo")
@@ -562,7 +559,7 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
             category="BMW / External",
             label="Jira / QA Hero",
             state="blocked",
-            summary="Direct Jira or QA Hero integration is not connected here yet. The current product surface is copy export, not API automation.",
+            summary="Direct Jira or QA Hero integration is not connected here yet. The current product surface is copy-ready export, not API automation.",
             path="copy exports only",
             next_action="Keep using the SG-side copy exports until the real ticket integration path is agreed and available.",
         ),
@@ -641,14 +638,14 @@ def desktop_operator_overview(
     blocker_count = sum(
         1
         for item in blockers
-        if item.state.strip().lower() not in {"available", "covered"}
+        if item.state.strip().lower() not in {"ready", "covered"}
     )
     latest_action = recent_action_items[0] if recent_action_items else None
     latest_run = recent_run_items[0] if recent_run_items else None
 
     if selected_profile_id:
         summary_line = (
-            f"{selected_profile_id}: {ready_action_count}/{len(actions)} native actions available; "
+            f"{selected_profile_id}: {ready_action_count}/{len(actions)} native actions ready; "
             f"{blocker_count} blocker card(s); {len(manual_cards)} manual card(s)."
         )
         if latest_action is not None:
@@ -659,7 +656,7 @@ def desktop_operator_overview(
             latest=True,
         )
     else:
-        summary_line = "No available SG profile is available for the native operator overview."
+        summary_line = "No ready SG profile is available for the native operator overview."
         export_size_analysis = {}
 
     export_size_analysis_summary = str(export_size_analysis.get("note", "")).strip()
@@ -763,13 +760,13 @@ def desktop_blocker_items(
 
     def _machine_item(key: str, label: str, summary: str) -> DesktopBlockerItem:
         item = readiness.get(key, {})
-        state = "available" if item.get("status") == "available" else "blocked"
-        blocker = () if state == "available" else (f"{label} is not available locally: {item.get('path', '')}",)
+        state = "ready" if item.get("status") == "available" else "blocked"
+        blocker = () if state == "ready" else (f"{label} is not available locally: {item.get('path', '')}",)
         return DesktopBlockerItem(
             key=key,
             label=label,
             state=state,
-            summary=summary if state == "available" else f"{summary} Missing on this machine.",
+            summary=summary if state == "ready" else f"{summary} Missing on this machine.",
             blockers=blocker,
         )
 
@@ -825,7 +822,7 @@ def desktop_manual_cards(
     bmw = workflow.get("bmw_screenshot_smoke", {})
     bmw_checklist_path = root / "docs" / "bmw-access-integration-checklist.md"
     bmw_checklist_note = (
-        f"Keep the intake steps in {bmw_checklist_path} so BMW access, repo setup, helper discovery, and first dry run are available the moment access lands."
+        f"Keep the intake steps in {bmw_checklist_path} so BMW access, repo setup, helper discovery, and first dry run are ready the moment access lands."
         if bmw_checklist_path.exists()
         else "Add docs/bmw-access-integration-checklist.md so BMW access and smoke setup can be tracked inside the shell flow."
     )
@@ -903,7 +900,7 @@ def desktop_manual_cards(
                 key="tool_entrypoints",
                 label="Tool entry points",
                 state="manual" if (review_prep.raco_scene_path or review_prep.blender_workfile_path) else "blocked",
-                summary="Representative local files are available for first-pass open-in-RaCo / open-in-Blender checks.",
+                summary="Representative local files are ready for first-pass open-in-RaCo / open-in-Blender checks.",
                 note=" | ".join(
                     part
                     for part in (
@@ -964,87 +961,12 @@ def desktop_manual_cards(
             summary=(
                 "After integration, record positive and negative outcomes in Jira or QA Hero with the same evidence links."
                 if str(bmw.get("state", "blocked")) != "blocked"
-                else "BMW-side follow-up is still blocked locally, so keep the SG-side post-integration note visible without pretending the BMW stage ran."
+                else "BMW-side follow-up is still blocked locally, so keep the SG-side post-integration note ready without pretending the BMW stage ran."
             ),
             note="Use the SG-side report links first, then append the BMW-side outcome once access exists.",
         ),
     ])
     return cards
-
-
-def _surface_state(payload: dict[str, Any]) -> str:
-    raw_status = str(payload.get("status", "unknown") or "unknown").strip()
-    if bool(payload.get("data_available", False)):
-        return "available"
-    if raw_status in {"no_workbook", "missing", "not_found", "no_review_package", "no_overview_sheet"}:
-        return "missing"
-    if raw_status in {"error", "failed", "unreadable"}:
-        return "unknown"
-    return raw_status or "unknown"
-
-
-def _abbreviate_workspace_text(text: str, root: Path) -> str:
-    root_text = str(root.resolve())
-    if root_text not in text:
-        return text
-    return text.replace(root_text, root.name or str(root))
-
-
-def _surface_summary(payload: dict[str, Any], fallback: str, root: Path) -> str:
-    raw = payload.get("summary", "")
-    if isinstance(raw, dict):
-        raw = ""
-    text = str(raw or payload.get("no_data_message", "") or payload.get("note", "") or fallback)
-    return _abbreviate_workspace_text(text, root)
-
-
-def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> list[DesktopSurfaceItem]:
-    root = workspace_root(workspace)
-    normalized_profile = profile_id.strip() or "profile"
-
-    def _from_payload(key: str, label: str, payload: dict[str, Any]) -> DesktopSurfaceItem:
-        return DesktopSurfaceItem(
-            key=key,
-            label=label,
-            state=_surface_state(payload),
-            summary=_surface_summary(payload, "No summary available.", root),
-        )
-
-    def _safe_item(key: str, label: str, reader) -> DesktopSurfaceItem:
-        try:
-            payload = reader()
-        except Exception as exc:
-            return DesktopSurfaceItem(
-                key=key,
-                label=label,
-                state="unknown",
-                summary=f"{label} could not be read: {exc}",
-            )
-        return _from_payload(key, label, payload)
-
-    return [
-        _safe_item(
-            "delivery-checklist",
-            "Delivery Checklist",
-            lambda: read_delivery_checklist(profile_id=normalized_profile, workspace=root),
-        ),
-        _safe_item(
-            "screenshot-test-state",
-            "Screenshot Test State",
-            lambda: read_bmw_screenshot_state(normalized_profile, workspace=root, sg_project_root=root),
-        ),
-        _safe_item(
-            "daily-digest",
-            "Daily Digest",
-            lambda: build_latest_daily_digest(workspace=root),
-        ),
-        DesktopSurfaceItem(
-            key="manual-review",
-            label="Manual Review Companion",
-            state="pending",
-            summary=f"{len(QUALITY_HERO_STEPS)} Quality-Hero manual-review steps available for operator notes.",
-        ),
-    ]
 
 
 def desktop_recent_actions(
@@ -1436,7 +1358,7 @@ def _export_copy_items(
         counts_line,
         f"Primary issue: {primary_problem}",
         "",
-        "Evidence available:",
+        "Evidence ready:",
         f"- HTML report: {html_report}",
         f"- Markdown report: {markdown_report}",
         f"- Output root: {output_root}",

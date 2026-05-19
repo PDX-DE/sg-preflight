@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from sg_preflight.assets import runtime_asset_path
 from sg_preflight.desktop.evidence_model import (
     DesktopActionChoice,
     DesktopActionSnapshot,
@@ -30,7 +29,6 @@ from sg_preflight.desktop.evidence_model import (
     desktop_blocker_items,
     desktop_manual_cards,
     desktop_profiles,
-    desktop_surface_items,
     latest_action_snapshot_for_profile,
 )
 from sg_preflight.desktop.file_ops import open_local_path, reveal_in_file_manager
@@ -47,14 +45,6 @@ from sg_preflight.qa_actions import build_action_record, get_operator_action
 from sg_preflight.services import workspace_root
 
 
-GRAFIKS_GUARDRAILS = (
-    "Manual review remains required.",
-    "Decision: not approval - evidence only.",
-    "BMW Git access is read-only. SGFX never modifies BMW source.",
-    "Activity log is local-only - never posted to Jira, SVN, or BMW Git.",
-)
-
-
 class DesktopMainWindow(QMainWindow):
     def __init__(self, *, workspace: Path | None = None, initial_profile_id: str = "") -> None:
         super().__init__()
@@ -66,7 +56,7 @@ class DesktopMainWindow(QMainWindow):
         self._copy_map: dict[str, str] = {}
         self._action_tab_buttons: dict[str, ActionTabButton] = {}
 
-        self.setWindowTitle("SGFX: Project Quality-Hero - Grafiks Operator Console")
+        self.setWindowTitle("SG Preflight - QA Operator Shell")
         self.resize(1640, 950)
         self._build_ui()
         self._poll_timer = QTimer(self)
@@ -80,12 +70,7 @@ class DesktopMainWindow(QMainWindow):
         layout.setContentsMargins(14, 10, 14, 12)
         layout.setSpacing(10)
 
-        self.header_banner = HeaderBanner(
-            "SGFX: Project Quality-Hero",
-            "Grafiks Operator Console",
-            central,
-            logo_path=runtime_asset_path("framework_sgfx_logo.png"),
-        )
+        self.header_banner = HeaderBanner("SG Preflight", "QA Operator Shell", central)
         layout.addWidget(self.header_banner)
 
         self.mode_panel = OperatorPanel("Mode Select", central)
@@ -153,21 +138,10 @@ class DesktopMainWindow(QMainWindow):
         bottom_layout.addWidget(self.copy_handoff_button)
 
         layout.addWidget(bottom)
-
-        guardrail_panel = OperatorPanel("Standing Guardrails", central)
-        guardrail_layout = QVBoxLayout(guardrail_panel)
-        guardrail_layout.setSpacing(2)
-        for guardrail in GRAFIKS_GUARDRAILS:
-            label = QLabel(guardrail, guardrail_panel)
-            label.setObjectName("panelHint")
-            label.setWordWrap(True)
-            guardrail_layout.addWidget(label)
-        layout.addWidget(guardrail_panel)
-
         self.setCentralWidget(central)
 
         status = QStatusBar(self)
-        status.showMessage("Grafiks Operator Console - local evidence only")
+        status.showMessage("Desktop Operator Shell v0")
         self.setStatusBar(status)
 
     def _build_left_column(self) -> QWidget:
@@ -267,12 +241,6 @@ class DesktopMainWindow(QMainWindow):
         evidence_layout.addWidget(self.evidence_list)
         layout.addWidget(evidence_box, stretch=2)
 
-        surfaces_box = OperatorPanel("Evidence Surfaces", widget)
-        surfaces_layout = QVBoxLayout(surfaces_box)
-        self.surface_list = StaticListWidget(parent=surfaces_box)
-        surfaces_layout.addWidget(self.surface_list)
-        layout.addWidget(surfaces_box, stretch=1)
-
         blockers_box = OperatorPanel("Blockers", widget)
         blockers_layout = QVBoxLayout(blockers_box)
         self.blocker_list = StaticListWidget(parent=blockers_box)
@@ -331,7 +299,7 @@ class DesktopMainWindow(QMainWindow):
         self._clear_action_tabs()
         actions = desktop_actions_for_profile(profile_id, self.workspace_root)
         for action in actions:
-            state = "available" if action.ready else "blocked"
+            state = "ready" if action.ready else "blocked"
             item = QListWidgetItem(f"{action.label} [{state}]")
             tooltip = action.description
             if action.blocker_message:
@@ -351,12 +319,6 @@ class DesktopMainWindow(QMainWindow):
             self.action_list.setCurrentRow(0)
 
     def _reload_side_panels(self, profile_id: str) -> None:
-        self.surface_list.clear()
-        for item in desktop_surface_items(profile_id, self.workspace_root):
-            row = QListWidgetItem(f"{item.label} [{item.state}]\n{item.summary}")
-            row.setToolTip(item.summary)
-            self.surface_list.addItem(row)
-
         self.blocker_list.clear()
         for item in desktop_blocker_items(profile_id, self.workspace_root):
             text = f"{item.label} [{item.state}]"
@@ -551,7 +513,7 @@ class DesktopMainWindow(QMainWindow):
     def _copy_text(self, key: str) -> None:
         text = self._copy_map.get(key, "").strip()
         if not text:
-            QMessageBox.information(self, "Copy", "No copy text is available for the current selection.")
+            QMessageBox.information(self, "Copy", "No copy-ready text is available for the current selection.")
             return
         QApplication.clipboard().setText(text)
         self.statusBar().showMessage(f"Copied {key.replace('_', ' ')}")

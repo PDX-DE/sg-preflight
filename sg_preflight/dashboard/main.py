@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from sg_preflight.assets import runtime_asset_path, runtime_asset_root
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.manual_review import QUALITY_HERO_STEPS
+from sg_preflight.profiles import list_run_profiles
 from sg_preflight.utils import ensure_parent
 
 
@@ -27,7 +29,14 @@ DASHBOARD_NAVIGATION = (
     ("manual-review", "Manual Review Companion"),
 )
 DASHBOARD_SHORTCUTS = ("F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit")
-THEME_CHOICES = ["clean", "grafiks"]
+DASHBOARD_SHORTCUT_ACTIONS = (
+    ("F1", "Help: use the sidebar pages to inspect read-only SGFX evidence."),
+    ("F2", "Profile switch: use the Profile selector in the header."),
+    ("F5", "Refresh page: re-read the current profile evidence."),
+    ("F12", "Diagnostic: profile, workspace, and current page are shown in the header."),
+    ("Esc", "Quit: close the native window or browser tab when the local review is done."),
+)
+THEME_CHOICES = ["clean"]
 MANUAL_REVIEW_STATUSES = ["pending", "captured", "blocked"]
 _MISSING_STATUSES = {
     "missing",
@@ -66,9 +75,45 @@ def _path_label(path: Path | str) -> str:
     return value.name or str(value)
 
 
+def _abbreviate_workspace_text(text: str, workspace: Path | str | None) -> str:
+    if workspace is None:
+        return text
+    root = Path(workspace).resolve()
+    root_text = str(root)
+    if root_text not in text:
+        return text
+    return text.replace(root_text, _path_label(root))
+
+
+def _payload_summary(payload: dict[str, Any], fallback: str, *, workspace: Path | str | None = None) -> str:
+    raw = payload.get("summary", "")
+    if isinstance(raw, dict):
+        raw = ""
+    text = str(raw or payload.get("no_data_message", "") or payload.get("note", "") or fallback)
+    return _abbreviate_workspace_text(text, workspace)
+
+
 def _clean_theme(ui_mode: str | None) -> str:
     value = str(ui_mode or "clean").strip().casefold()
     return value if value in THEME_CHOICES else "clean"
+
+
+def dashboard_profile_options() -> list[dict[str, str]]:
+    return [{"id": profile.profile_id, "label": profile.label} for profile in list_run_profiles()]
+
+
+def _resolve_dashboard_profile_id(profile_id: str | None, options: list[dict[str, str]]) -> str:
+    requested = str(profile_id or "").strip()
+    if not requested:
+        return options[0]["id"] if options else ""
+    for option in options:
+        if option["id"].casefold() == requested.casefold():
+            return option["id"]
+    return requested.upper()
+
+
+def _dashboard_profile_known(profile_id: str, options: list[dict[str, str]]) -> bool:
+    return any(option["id"].casefold() == profile_id.casefold() for option in options)
 
 
 def _dashboard_status(raw_status: str, data_available: bool = False) -> str:
@@ -117,6 +162,7 @@ def _reader_page(
     title: str,
     tagline: str,
     reader: Callable[[], dict[str, Any]],
+    workspace: Path | str | None = None,
 ) -> dict[str, Any]:
     try:
         payload = reader()
@@ -140,7 +186,7 @@ def _reader_page(
         "status": _dashboard_status(raw_status, data_available),
         "raw_status": raw_status,
         "data_available": data_available,
-        "summary": str(payload.get("summary", "") or payload.get("note", "") or title),
+        "summary": _payload_summary(payload, title, workspace=workspace),
         "items": _payload_items(payload),
         "payload": _sanitized_payload(payload),
     }
@@ -267,35 +313,46 @@ def build_dashboard_snapshot(
     ui_mode: str | None = None,
 ) -> dict[str, Any]:
     root = _workspace(workspace)
+    profile_options = dashboard_profile_options()
+    resolved_profile_id = _resolve_dashboard_profile_id(profile_id, profile_options)
+    profile_known = _dashboard_profile_known(resolved_profile_id, profile_options)
     theme = _clean_theme(ui_mode or load_dashboard_preference(root))
     return {
         "title": DASHBOARD_TITLE,
         "header": DASHBOARD_HEADER,
-        "profile_id": profile_id.strip(),
+        "profile_id": resolved_profile_id,
+        "profile_known": profile_known,
+        "profile_warning": ""
+        if profile_known
+        else f"Profile {resolved_profile_id} is not in the current profile registry. Select a registered profile or check config.",
+        "profile_options": profile_options,
         "workspace": str(root),
         "workspace_label": _path_label(root),
         "theme": theme,
         "navigation": [{"id": page_id, "label": label} for page_id, label in DASHBOARD_NAVIGATION],
         "shortcuts": list(DASHBOARD_SHORTCUTS),
+        "shortcut_actions": [{"key": key, "message": message} for key, message in DASHBOARD_SHORTCUT_ACTIONS],
         "guardrails": list(DASHBOARD_GUARDRAILS),
         "pages": [
             _reader_page(
                 page_id="delivery-checklist",
                 title="Delivery Checklist",
                 tagline="Workbook evidence per delivery profile (read-only).",
-                reader=lambda: read_delivery_checklist(profile_id=profile_id, workspace=root),
+                reader=lambda: read_delivery_checklist(profile_id=resolved_profile_id, workspace=root),
+                workspace=root,
             ),
             _reader_page(
                 page_id="screenshot-test-state",
                 title="Screenshot Test State",
                 tagline="BMW + MINI baseline / actual / diff counts per brand.",
                 reader=lambda: read_bmw_screenshot_state(
-                    profile_id,
+                    resolved_profile_id,
                     workspace=Path(bmw_root).resolve() if bmw_root else root,
                     sg_project_root=root,
                 ),
+                workspace=root,
             ),
-            _daily_digest_page(root, profile_id),
+            _daily_digest_page(root, resolved_profile_id),
             _manual_review_page(),
         ],
     }
@@ -428,12 +485,24 @@ def _render_selected_page(
             _render_page_panel(ui, pages_by_id[page_id])
 
 
-def _render_dashboard(ui: Any, app: Any, snapshot: dict[str, Any], *, workspace: Path) -> None:
-    theme = str(snapshot.get("theme", "clean"))
+def _render_dashboard(
+    ui: Any,
+    app: Any,
+    *,
+    initial_profile_id: str,
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+    ui_mode: str | None = None,
+) -> None:
     app.add_static_files("/sgfx-dashboard-static", str(Path(__file__).resolve().parent))
+    app.add_static_files("/sgfx-dashboard-assets", str(runtime_asset_root()))
+    base_snapshot = build_dashboard_snapshot(initial_profile_id, workspace, bmw_root=bmw_root, ui_mode=ui_mode)
 
     @ui.page("/")
     def _index() -> None:
+        snapshot = dict(base_snapshot)
+        snapshot["theme"] = _clean_theme(ui_mode or load_dashboard_preference(workspace))
+        theme = str(snapshot.get("theme", "clean"))
         ui.query("body").classes(f"sgfx-dashboard sgfx-theme-{theme}")
         ui.add_head_html(
             """
@@ -450,6 +519,8 @@ def _render_dashboard(ui: Any, app: Any, snapshot: dict[str, Any], *, workspace:
             .sgfx-header { border-bottom: 1px solid #d8dde6; padding-bottom: 12px; }
             .sgfx-title { font-size: 24px; font-weight: 700; letter-spacing: 0; }
             .sgfx-subtitle { color: #5e6b7a; font-size: 14px; }
+            .sgfx-brand-lockup { gap: 12px; }
+            .sgfx-brand-logo { width: 52px; height: 52px; object-fit: contain; flex: 0 0 auto; }
             .sgfx-content { width: 100%; }
             .sgfx-footer { border-top: 1px solid #d8dde6; padding-top: 10px; }
             .sgfx-guardrail { color: #394654; font-size: 13px; }
@@ -457,69 +528,161 @@ def _render_dashboard(ui: Any, app: Any, snapshot: dict[str, Any], *, workspace:
             .sgfx-panel-title { font-size: 18px; font-weight: 650; }
             .sgfx-panel-tagline, .sgfx-muted { color: #657386; font-size: 13px; }
             .sgfx-summary { color: #2f3b48; font-size: 14px; }
+            .sgfx-warning { border: 1px solid #d7a23b; background: #fff8e8; color: #694b12; border-radius: 6px; padding: 8px 10px; }
+            .sgfx-shortcut-feedback { min-height: 22px; color: #2f3b48; font-size: 13px; padding: 2px 0; }
+            .sgfx-profile-select { min-width: 132px; }
             .sgfx-status { text-transform: none; }
             .sgfx-table { width: 100%; }
             .sgfx-step { border: 1px solid #dde3ec; border-radius: 8px; margin: 8px 0; }
             </style>
             """
         )
-        pages_by_id = {str(page["id"]): page for page in snapshot["pages"]}
         first_page_id = str(snapshot["navigation"][0]["id"])
+        state: dict[str, Any] = {"snapshot": snapshot, "active_page_id": first_page_id}
         content_holder: dict[str, Any] = {}
+        controls: dict[str, Any] = {}
+
+        def _pages_by_id() -> dict[str, dict[str, Any]]:
+            return {str(page["id"]): page for page in state["snapshot"]["pages"]}
+
+        def _current_theme() -> str:
+            return str(state["snapshot"].get("theme", "clean"))
+
+        def _header_text() -> str:
+            active = state["snapshot"]
+            return f"Profile: {active['profile_id']} | Workspace: {active['workspace_label']}"
+
+        def _refresh_labels() -> None:
+            profile_label = controls.get("profile_label")
+            if profile_label is not None:
+                profile_label.set_text(_header_text())
+            theme_label = controls.get("theme_label")
+            if theme_label is not None:
+                theme_label.set_text(f"[{_current_theme().title()}]")
+
+        def _render_current_page() -> None:
+            content = content_holder.get("content")
+            if content is None:
+                return
+            content.clear()
+            with content:
+                warning = str(state["snapshot"].get("profile_warning", "") or "")
+                if warning:
+                    ui.label(warning).classes("sgfx-warning")
+                active_page_id = str(state["active_page_id"])
+                if active_page_id == "manual-review":
+                    _render_manual_review_panel(ui, state["snapshot"], workspace)
+                else:
+                    _render_page_panel(ui, _pages_by_id()[active_page_id])
 
         def _open_page(page_id: str) -> None:
-            content = content_holder.get("content")
-            if content is not None:
-                _render_selected_page(ui, content, pages_by_id, page_id, snapshot, workspace)
+            state["active_page_id"] = page_id
+            _render_current_page()
+
+        def _refresh_snapshot(profile_id: str | None = None) -> None:
+            current_profile = profile_id if profile_id is not None else str(state["snapshot"]["profile_id"])
+            state["snapshot"] = build_dashboard_snapshot(
+                current_profile,
+                workspace,
+                bmw_root=bmw_root,
+                ui_mode=_current_theme(),
+            )
+            _refresh_labels()
+            _render_current_page()
+
+        def _refresh_current_page() -> None:
+            _refresh_snapshot()
+            ui.notify("Current page refreshed from read-only sources.")
+
+        def _set_profile(value: str) -> None:
+            _refresh_snapshot(value)
+            ui.notify(f"Profile switched to {state['snapshot']['profile_id']}.")
+
+        def _install_shortcut_script() -> None:
+            messages = {str(item["key"]): str(item["message"]) for item in state["snapshot"]["shortcut_actions"]}
+            ui.run_javascript(
+                f"""
+                (() => {{
+                    const messages = {json.dumps(messages)};
+                    const show = (message) => {{
+                        const target = document.getElementById('sgfx-shortcut-feedback');
+                        if (target) target.textContent = message;
+                    }};
+                    if (window.__sgfxDashboardShortcutsInstalled) return;
+                    window.__sgfxDashboardShortcutsInstalled = true;
+                    document.addEventListener('keydown', (event) => {{
+                        if (!['F1', 'F2', 'F5', 'F12', 'Escape'].includes(event.key)) return;
+                        event.preventDefault();
+                        if (event.key === 'F1') show(messages.F1);
+                        if (event.key === 'F2') {{
+                            show(messages.F2);
+                            const input = document.querySelector('.sgfx-profile-select input');
+                            if (input) input.focus();
+                        }}
+                        if (event.key === 'F5') {{
+                            show(messages.F5);
+                            const refresh = document.querySelector('.sgfx-refresh-button');
+                            if (refresh) refresh.click();
+                        }}
+                        if (event.key === 'F12') show(`${{messages.F12}} Current page: {state["active_page_id"]}.`);
+                        if (event.key === 'Escape') show(messages.Esc);
+                    }});
+                }})();
+                """
+            )
 
         with ui.row().classes("sgfx-shell full-width no-wrap"):
             with ui.column().classes("sgfx-sidebar"):
                 ui.label(DASHBOARD_TITLE).classes("sgfx-sidebar-title")
-                ui.label(f"[{theme.title()}]").classes("sgfx-sidebar-theme")
+                controls["theme_label"] = ui.label(f"[{theme.title()}]").classes("sgfx-sidebar-theme")
                 ui.separator()
-                for nav_item in snapshot["navigation"]:
+                for nav_item in state["snapshot"]["navigation"]:
                     ui.button(
                         str(nav_item["label"]),
                         on_click=lambda page_id=str(nav_item["id"]): _open_page(page_id),
                     ).props("flat no-caps align=left").classes("sgfx-nav-button full-width")
                 ui.separator()
-                for shortcut in snapshot["shortcuts"]:
+                for shortcut in state["snapshot"]["shortcuts"]:
                     ui.label(str(shortcut)).classes("sgfx-shortcut")
                 ui.label("About").classes("sgfx-shortcut")
             with ui.column().classes("sgfx-main"):
                 with ui.row().classes("sgfx-header items-center justify-between full-width"):
-                    with ui.column():
-                        ui.label(DASHBOARD_HEADER).classes("sgfx-title")
-                        ui.label(
-                            f"Profile: {snapshot['profile_id']} | Workspace: {snapshot['workspace_label']}"
-                        ).classes("sgfx-subtitle")
+                    with ui.row().classes("sgfx-brand-lockup items-center"):
+                        ui.image("/sgfx-dashboard-assets/framework_sgfx_logo.png").classes("sgfx-brand-logo")
+                        with ui.column():
+                            ui.label(DASHBOARD_HEADER).classes("sgfx-title")
+                            controls["profile_label"] = ui.label(_header_text()).classes("sgfx-subtitle")
+                            ui.html(
+                                '<div id="sgfx-shortcut-feedback" class="sgfx-shortcut-feedback">'
+                                "Shortcuts available: F1 help, F2 profile, F5 refresh, F12 diagnostic, Esc quit guidance."
+                                "</div>"
+                            )
                     with ui.row().classes("items-center"):
                         ui.label("F1 Help").classes("sgfx-shortcut")
                         ui.label("F12 Diagnostic").classes("sgfx-shortcut")
                         ui.label("Esc Quit").classes("sgfx-shortcut")
-                        theme_toggle = ui.toggle(THEME_CHOICES, value=theme).props("dense")
-
-                def _set_theme() -> None:
-                    selected = _clean_theme(str(theme_toggle.value))
-                    save_dashboard_preference(workspace, selected)
-                    ui.run_javascript(
-                        "document.body.classList.remove('sgfx-theme-clean', 'sgfx-theme-grafiks');"
-                        f"document.body.classList.add('sgfx-theme-{selected}');"
-                    )
-                    ui.notify("Dashboard theme preference saved locally.")
-
-                theme_toggle.on_value_change(lambda _: _set_theme())
+                        controls["profile_select"] = ui.select(
+                            [str(option["id"]) for option in state["snapshot"]["profile_options"]],
+                            value=str(state["snapshot"]["profile_id"]) if state["snapshot"]["profile_known"] else None,
+                            label="Profile",
+                            on_change=lambda event: _set_profile(str(event.value or "")),
+                        ).props("dense outlined").classes("sgfx-profile-select")
+                        ui.button("Refresh", on_click=_refresh_current_page).props("flat dense no-caps").classes(
+                            "sgfx-refresh-button"
+                        )
+                        ui.label("Mode: Clean").classes("sgfx-shortcut")
                 content = ui.column().classes("sgfx-content")
                 content_holder["content"] = content
-                _render_selected_page(ui, content, pages_by_id, first_page_id, snapshot, workspace)
+                _render_current_page()
                 with ui.column().classes("sgfx-footer full-width"):
-                    for guardrail in snapshot["guardrails"]:
+                    for guardrail in state["snapshot"]["guardrails"]:
                         ui.label(str(guardrail)).classes("sgfx-guardrail")
+        _install_shortcut_script()
 
 
 def run_dashboard(
     *,
-    profile_id: str,
+    profile_id: str = "",
     workspace: Path | str,
     bmw_root: Path | str | None = None,
     ui_mode: str | None = None,
@@ -532,7 +695,10 @@ def run_dashboard(
 
     ui, app = require_nicegui()
     root = _workspace(workspace)
-    snapshot = build_dashboard_snapshot(profile_id, root, bmw_root=bmw_root, ui_mode=ui_mode)
-    _render_dashboard(ui, app, snapshot, workspace=root)
-    ui.run(host=host, port=port, native=native, reload=reload, title=DASHBOARD_TITLE)
+    _render_dashboard(ui, app, initial_profile_id=profile_id, workspace=root, bmw_root=bmw_root, ui_mode=ui_mode)
+    favicon_path = runtime_asset_path("sgfx_icon.png")
+    if favicon_path.is_file():
+        ui.run(host=host, port=port, native=native, reload=reload, title=DASHBOARD_TITLE, favicon=str(favicon_path))
+    else:
+        ui.run(host=host, port=port, native=native, reload=reload, title=DASHBOARD_TITLE)
     return 0

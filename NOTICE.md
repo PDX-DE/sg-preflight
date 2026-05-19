@@ -125,6 +125,30 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## PySide6 dependency
+
+SGFX QA Preflight uses [PySide6](https://wiki.qt.io/Qt_for_Python) as the Grafiks-mode operator-dashboard UI framework. PySide6 is the official Python binding for Qt 6, distributed by The Qt Company. The Grafiks-mode desktop shell at `sg_preflight/desktop/` renders the same four SGFX evidence surfaces (Delivery Checklist, Screenshot Test State, Daily Digest, Manual Review Companion) as the NiceGUI Clean-mode dashboard, over the existing `sg_preflight/` data layer.
+
+| Component | Version | License | Upstream | Current use |
+| --- | --- | --- | --- | --- |
+| PySide6 | `6.11.1` observed in the build venv; project constraint `>=6.7,<7` | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, with commercial Qt licensing available | `https://wiki.qt.io/Qt_for_Python` | Grafiks-mode operator-dashboard hosting and four evidence-page rendering via Qt 6 native widgets |
+
+PySide6 is installed through the `desktop` optional dependency group in `pyproject.toml`. The upstream source is not modified by SGFX. LGPL/GPL/commercial license terms apply to PySide6's portion of the runtime; SGFX-original code (`sg_preflight/` data layer, PySide6 widget subclasses under `sg_preflight/desktop/`, dashboard launcher CLI) stays under the existing internal proprietary license unless and until a formal codebase-wide license review changes that.
+
+PySide6 attribution:
+
+```text
+PySide6 is a Python binding for the Qt 6 framework. The community edition is
+available under LGPLv3/GPLv2/GPLv3 licensing, and commercial Qt licensing is
+available from The Qt Company. Full upstream license information is available at:
+https://doc.qt.io/qtforpython-6/commercial/index.html
+https://wiki.qt.io/Qt_for_Python
+```
+
+### LGPL-3.0 packaging note
+
+The source-install path keeps PySide6 as a separate pip dependency. The Windows executable build may package PySide6 runtime files for operator convenience. Before any broader bundle distribution, keep the applicable LGPL/GPL/commercial-license text and upstream source links with the bundle, and route PySide6 replacement/commercial-license questions through the internal license review path.
+
 ### Packaging Rules
 
 - Keep `LICENSE` and this `NOTICE.md` in any internal native-shell bundle.
@@ -133,6 +157,7 @@ SOFTWARE.
 - Keep upstream license texts under `desktop_native/assets/LICENSE-*` alongside any adapted Grafiks UI assets they apply to; do not strip license texts from a packaged bundle.
 - If OpenHTF is ever vendored or bundled directly, ship the matching Apache 2.0 license text alongside that component; the current alpha installs OpenHTF from PyPI instead.
 - NiceGUI is a runtime dependency installed via pip. MIT license terms apply to the NiceGUI portion of any packaged bundle. If a bundle vendors NiceGUI for offline operator machines, ship the MIT LICENSE text from the NiceGUI upstream alongside the bundled package.
+- PySide6 is a runtime dependency installed via pip for source installs and may be included in the Windows executable bundle for operator convenience. LGPL/GPL/commercial Qt license terms apply to the PySide6 portion of any packaged bundle; if PySide6 runtime files are bundled, keep the applicable license text and upstream source links available with the bundle and route replacement/commercial-license questions through internal license review.
 - The clean display mode (`--ui-mode clean`, default) does not depend on the adapted Grafiks UI assets and remains usable without them.
 - The Grafiks-mode binary at this snapshot is original SGFX code; it does not bundle sonic3air source files. The upstream license text at `desktop_native/assets/LICENSE-sonic3air` covers the adapted assets. A future Grafiks update may extract sonic3air rendering subsystems; if that happens, this notice will grow to full GPL-3.0 attribution and the license text will cover the additional adapted source.
 

@@ -37,6 +37,7 @@ from sg_preflight.desktop.evidence_model import (
     desktop_recent_actions,
     desktop_recent_runs,
     desktop_run_snapshot,
+    desktop_surface_items,
 )
 from sg_preflight.daily_digest import (
     build_latest_daily_digest,
@@ -324,7 +325,7 @@ def _console_actions(as_json: bool) -> None:
 
     print("Operator QA actions:")
     for action in actions:
-        state = "ready" if action.ready else "blocked"
+        state = "available" if action.ready else "blocked"
         print(f"- {action.action_id}: {action.label} [{state}]")
         print(f"  {action.description}")
         if action.command_preview:
@@ -666,7 +667,7 @@ def build_parser() -> argparse.ArgumentParser:
     delivery_checklist_sub = delivery_checklist.add_subparsers(dest="delivery_checklist_command", required=True)
     delivery_checklist_read = delivery_checklist_sub.add_parser("read", help="Read delivery checklist evidence for one profile")
     delivery_checklist_read.add_argument("--workspace", help="Workspace root override")
-    delivery_checklist_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    delivery_checklist_read.add_argument("--profile", required=True, help="Profile id such as <profile>")
     delivery_checklist_read.add_argument("--brand", default="BMW", help="Workbook brand label such as BMW or Mini")
     delivery_checklist_read.add_argument("--workbook", help="Explicit delivery checklist workbook path")
     delivery_checklist_read.add_argument("--json", action="store_true", help="Print delivery checklist payload as JSON")
@@ -680,7 +681,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_size_sub = export_size.add_subparsers(dest="export_size_analysis_command", required=True)
     export_size_read = export_size_sub.add_parser("read", help="Read export-size analysis evidence for one profile")
     export_size_read.add_argument("--workspace", help="Workspace root override")
-    export_size_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    export_size_read.add_argument("--profile", required=True, help="Profile id such as <profile>")
     export_size_read.add_argument("--workbook", help="Explicit export-size analysis workbook path")
     export_size_date = export_size_read.add_mutually_exclusive_group()
     export_size_date.add_argument("--date", help="Workbook date as YYYYMMDD (for example: 20251002)")
@@ -699,7 +700,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read screenshot test state for one profile",
     )
     screenshot_state_read.add_argument("--workspace", help="Workspace root override")
-    screenshot_state_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    screenshot_state_read.add_argument("--profile", required=True, help="Profile id such as <profile>")
     screenshot_state_read.add_argument("--json", action="store_true", help="Print screenshot test state as JSON")
     screenshot_state_read.add_argument("--markdown", action="store_true", help="Print screenshot test state as Markdown")
     _add_render_options(screenshot_state_read)
@@ -715,7 +716,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bmw_git_readiness_read.add_argument("--workspace", help="Workspace root override")
     bmw_git_readiness_read.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
-    bmw_git_readiness_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    bmw_git_readiness_read.add_argument("--profile", required=True, help="Profile id such as <profile>")
     bmw_git_readiness_read.add_argument("--json", action="store_true", help="Print BMW Git readiness as JSON")
     bmw_git_readiness_read.add_argument("--markdown", action="store_true", help="Print BMW Git readiness as Markdown")
     _add_render_options(bmw_git_readiness_read)
@@ -731,7 +732,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     qa_hero_readiness_read.add_argument("--workspace", help="Workspace root override")
     qa_hero_readiness_read.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
-    qa_hero_readiness_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    qa_hero_readiness_read.add_argument("--profile", required=True, help="Profile id such as <profile>")
     qa_hero_readiness_read.add_argument("--json", action="store_true", help="Print QA Hero readiness as JSON")
     qa_hero_readiness_read.add_argument("--markdown", action="store_true", help="Print QA Hero readiness as Markdown")
     _add_render_options(qa_hero_readiness_read)
@@ -744,7 +745,7 @@ def build_parser() -> argparse.ArgumentParser:
     activity_log_sub = activity_log.add_subparsers(dest="activity_log_command", required=True)
     activity_read = activity_log_sub.add_parser("read", help="Read operator-local activity log entries")
     activity_read.add_argument("--workspace", required=True, help="Workspace root that owns operator_state/activity_log.jsonl")
-    activity_read.add_argument("--profile", default="", help="Optional profile filter such as G65")
+    activity_read.add_argument("--profile", default="", help="Optional profile filter such as <profile>")
     activity_read.add_argument(
         "--since",
         default="all",
@@ -759,7 +760,7 @@ def build_parser() -> argparse.ArgumentParser:
     activity_append.add_argument("--workspace", required=True, help="Workspace root that owns operator_state/activity_log.jsonl")
     activity_append.add_argument("--verb", required=True, help="Factual verb such as read, ran, refreshed, or opened")
     activity_append.add_argument("--surface", required=True, help="Surface identifier such as daily-digest")
-    activity_append.add_argument("--profile", default="", help="Optional profile id such as G65")
+    activity_append.add_argument("--profile", default="", help="Optional profile id such as <profile>")
     activity_append.add_argument("--outcome", default="ok", help="Outcome: ok, error, empty, or unavailable")
     activity_append.add_argument("--note", default="", help="Short operator-local note")
     activity_append.add_argument("--json", action="store_true", help="Print appended entry as JSON")
@@ -969,7 +970,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     manual_review_sub = manual_review.add_subparsers(dest="manual_review_command", required=True)
     manual_review_session = manual_review_sub.add_parser("session", help="Create a manual-review session")
-    manual_review_session.add_argument("--profile", required=True, help="Profile id such as G65")
+    manual_review_session.add_argument("--profile", required=True, help="Profile id such as <profile>")
     manual_review_session.add_argument("--ticket", required=True, help="Ticket id such as IDCEVODEV-977874")
     manual_review_session.add_argument("--workspace", help="Workspace root override")
     manual_review_session.add_argument("--output-root", help="Optional output root for manual-review sessions")
@@ -1045,7 +1046,7 @@ def build_parser() -> argparse.ArgumentParser:
     external_findings_add.add_argument("--json", action="store_true", help="Print updated findings payload as JSON")
 
     run_profile = sub.add_parser("run-profile", help="Materialize and validate a canonical live profile")
-    run_profile.add_argument("profile_id", help="Canonical profile id such as G70, G65, or G45")
+    run_profile.add_argument("profile_id", help="Canonical profile id such as <profile>")
     run_profile.add_argument(
         "--packs",
         default="all",
@@ -1087,7 +1088,7 @@ def build_parser() -> argparse.ArgumentParser:
     station = sub.add_parser("station", help="Run the SGFX OpenHTF station surface")
     station_sub = station.add_subparsers(dest="station_command", required=True)
     station_run = station_sub.add_parser("run", help="Start the local SGFX station")
-    station_run.add_argument("--profile", required=True, help="Profile id such as G65")
+    station_run.add_argument("--profile", required=True, help="Profile id such as <profile>")
     station_run.add_argument("--workspace", required=True, help="Workspace root for SGFX read-only checks")
     station_run.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
     station_run.add_argument("--ui-mode", default="clean", choices=("clean", "grafiks"), help="Station presentation mode")
@@ -1096,13 +1097,17 @@ def build_parser() -> argparse.ArgumentParser:
     station_run.add_argument("--no-browser", action="store_true", help="Do not open a browser automatically")
     station_run.add_argument("--once", action="store_true", help="Run once and exit after the station publishes the result")
 
-    dashboard = sub.add_parser("dashboard", help="Run the SGFX NiceGUI operator dashboard")
+    dashboard = sub.add_parser("dashboard", help="Run the SGFX operator dashboard")
     dashboard_sub = dashboard.add_subparsers(dest="dashboard_command", required=True)
     dashboard_run = dashboard_sub.add_parser("run", help="Start the local SGFX operator dashboard")
-    dashboard_run.add_argument("--profile", required=True, help="Profile id such as G65")
+    dashboard_run.add_argument(
+        "--profile",
+        default="",
+        help="Optional profile id; defaults to the first registered profile from list-profiles",
+    )
     dashboard_run.add_argument("--workspace", required=True, help="Workspace root for SGFX read-only checks")
     dashboard_run.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
-    dashboard_run.add_argument("--ui-mode", default="clean", choices=("clean", "grafiks"), help="Dashboard presentation mode")
+    dashboard_run.add_argument("--ui-mode", default=None, choices=("clean", "grafiks"), help="Dashboard presentation mode")
     dashboard_run.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     dashboard_run.add_argument("--port", type=int, default=0, help="Dashboard port; 0 chooses an available port")
     dashboard_run.add_argument("--no-native", action="store_true", help="Run in browser/server mode instead of a native window")
@@ -1115,10 +1120,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     desktop = sub.add_parser(
         "desktop",
-        help="Start the experimental desktop operator shell",
-        description="Start the experimental desktop operator shell",
+        help="Start the Grafiks desktop operator shell",
+        description="Start the Grafiks desktop operator shell",
     )
     desktop.add_argument("--profile", help="Optional initial profile id to focus when the shell opens")
+    desktop.add_argument("--workspace", help="Workspace root for SGFX read-only checks")
 
     desktop_state = sub.add_parser(
         "desktop-state",
@@ -1126,7 +1132,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     desktop_state_sub = desktop_state.add_subparsers(dest="desktop_state_command", required=True)
 
-    desktop_profiles_parser = desktop_state_sub.add_parser("profiles", help="List ready desktop profiles")
+    desktop_profiles_parser = desktop_state_sub.add_parser(
+        "profiles",
+        help="List available desktop profiles",
+        description="List available desktop profiles",
+    )
     desktop_profiles_parser.add_argument("--workspace", help="Workspace root override")
     desktop_profiles_parser.add_argument("--json", action="store_true", help="Print profile payload as JSON")
 
@@ -1139,19 +1149,27 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_overview_parser.add_argument("--json", action="store_true", help="Print overview payload as JSON")
 
     desktop_actions_parser = desktop_state_sub.add_parser("actions", help="List desktop actions for one profile")
-    desktop_actions_parser.add_argument("profile_id", help="Profile id such as G65")
+    desktop_actions_parser.add_argument("profile_id", help="Profile id such as <profile>")
     desktop_actions_parser.add_argument("--workspace", help="Workspace root override")
     desktop_actions_parser.add_argument("--json", action="store_true", help="Print action payload as JSON")
 
     desktop_blockers_parser = desktop_state_sub.add_parser("blockers", help="List blocker cards for one profile")
-    desktop_blockers_parser.add_argument("profile_id", help="Profile id such as G65")
+    desktop_blockers_parser.add_argument("profile_id", help="Profile id such as <profile>")
     desktop_blockers_parser.add_argument("--workspace", help="Workspace root override")
     desktop_blockers_parser.add_argument("--json", action="store_true", help="Print blocker payload as JSON")
 
     desktop_manual_parser = desktop_state_sub.add_parser("manual", help="List manual-review cards for one profile")
-    desktop_manual_parser.add_argument("profile_id", help="Profile id such as G65")
+    desktop_manual_parser.add_argument("profile_id", help="Profile id such as <profile>")
     desktop_manual_parser.add_argument("--workspace", help="Workspace root override")
     desktop_manual_parser.add_argument("--json", action="store_true", help="Print manual-card payload as JSON")
+
+    desktop_surfaces_parser = desktop_state_sub.add_parser(
+        "surfaces",
+        help="List Grafiks evidence surfaces for one profile",
+    )
+    desktop_surfaces_parser.add_argument("profile_id", help="Profile id such as <profile>")
+    desktop_surfaces_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_surfaces_parser.add_argument("--json", action="store_true", help="Print surface payload as JSON")
 
     desktop_snapshot_parser = desktop_state_sub.add_parser("snapshot", help="Load one desktop action snapshot")
     desktop_snapshot_parser.add_argument("run_id_or_path", help="Action run id or action.json path")
@@ -2006,6 +2024,17 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return 1
 
     if args.command == "dashboard":
+        if args.dashboard_command == "run" and args.ui_mode == "grafiks":
+            try:
+                from sg_preflight.desktop.app import run_desktop_app
+
+                return run_desktop_app(
+                    workspace=Path(args.workspace),
+                    initial_profile_id=args.profile or "",
+                )
+            except RuntimeError as exc:
+                print(_console_safe(str(exc)), file=sys.stderr)
+                return 1
         try:
             from sg_preflight.dashboard.dependency import NiceGuiUnavailable
             from sg_preflight.dashboard.main import run_dashboard
@@ -2038,7 +2067,10 @@ def _main_impl(argv: list[str] | None = None) -> int:
     if args.command == "desktop":
         try:
             from sg_preflight.desktop.app import run_desktop_app
-            return run_desktop_app(initial_profile_id=args.profile or "")
+            return run_desktop_app(
+                workspace=Path(args.workspace) if args.workspace else None,
+                initial_profile_id=args.profile or "",
+            )
         except RuntimeError as exc:
             print(_console_safe(str(exc)), file=sys.stderr)
             return 1
@@ -2058,6 +2090,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
             payload = desktop_blocker_items(args.profile_id, state_root)
         elif args.desktop_state_command == "manual":
             payload = desktop_manual_cards(args.profile_id, state_root)
+        elif args.desktop_state_command == "surfaces":
+            payload = desktop_surface_items(args.profile_id, state_root)
         elif args.desktop_state_command == "snapshot":
             payload = desktop_action_snapshot(args.run_id_or_path, state_root)
         elif args.desktop_state_command == "recent-actions":

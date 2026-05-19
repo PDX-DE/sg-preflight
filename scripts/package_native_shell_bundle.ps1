@@ -108,6 +108,26 @@ foreach ($dir in @($workspaceDir, $pythonDir, $resourcesDir, $fontsDir)) {
 
 Copy-Tree -Source $exePath -Destination (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe")
 
+$sgfxExePath = Join-Path $repoRoot "dist\sgfx-preflight.exe"
+if (Test-Path $sgfxExePath) {
+    Copy-Tree -Source $sgfxExePath -Destination (Join-Path $resolvedBundleDir "sgfx-preflight.exe")
+}
+
+$bundleAssetItems = @(
+    @{ Source = "sgfx_icon.png"; Destination = "sgfx_icon.png" },
+    @{ Source = "framework_sgfx_logo.png"; Destination = "framework_sgfx_logo.png" },
+    @{ Source = "logo_sgfx.png"; Destination = "logo_sgfx.png" },
+    @{ Source = "exe_ico.png"; Destination = "exe_ico.png" },
+    @{ Source = "desktop_native\resources\exe_ico.ico"; Destination = "exe_ico.ico" },
+    @{ Source = "desktop_native\resources\debug_icon.ico"; Destination = "debug_icon.ico" }
+)
+foreach ($asset in $bundleAssetItems) {
+    $source = Join-Path $repoRoot $asset.Source
+    if (Test-Path $source) {
+        Copy-Tree -Source $source -Destination (Join-Path $resolvedBundleDir $asset.Destination)
+    }
+}
+
 $directxItems = @(
     @{ Source = (Join-Path $repoRoot "D3D12"); Destination = (Join-Path $resolvedBundleDir "D3D12") },
     @{ Source = (Join-Path $repoRoot "dxcompiler.dll"); Destination = (Join-Path $resolvedBundleDir "dxcompiler.dll") },
@@ -155,6 +175,8 @@ $workspaceItems = @(
     "exe_ico.png",
     "framework_sgfx_logo.png",
     "logo_sgfx.png",
+    "desktop_native\resources\debug_icon.ico",
+    "desktop_native\resources\exe_ico.ico",
     "kb_key_F1.png",
     "kb_key_F2.png",
     "kb_key_F3.png",
@@ -268,8 +290,36 @@ set SCRIPT_DIR=%~dp0
 '@
 Set-Content -Path (Join-Path $resolvedBundleDir "run_native_shell.bat") -Value $launchBat -Encoding ASCII
 
+function New-SgfxShortcut {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [string]$Arguments
+    )
+
+    $target = Join-Path $resolvedBundleDir "sgfx-preflight.exe"
+    if (-not (Test-Path $target)) {
+        return
+    }
+
+    $shortcutPath = Join-Path $resolvedBundleDir $Name
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $target
+    $shortcut.Arguments = $Arguments
+    $shortcut.WorkingDirectory = $resolvedBundleDir
+    $shortcut.IconLocation = $target
+    $shortcut.Save()
+}
+
+New-SgfxShortcut -Name "SGFX Preflight - Clean Mode.lnk" -Arguments "dashboard run --ui-mode clean"
+New-SgfxShortcut -Name "SGFX Preflight - Grafiks Mode.lnk" -Arguments "dashboard run --ui-mode grafiks"
+New-SgfxShortcut -Name "SGFX Preflight - Web Review Board.lnk" -Arguments "ui --host 127.0.0.1 --port 8080"
+
 $manifest = [ordered]@{
     exe = (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe")
+    sgfx_preflight_exe = if (Test-Path (Join-Path $resolvedBundleDir "sgfx-preflight.exe")) { (Join-Path $resolvedBundleDir "sgfx-preflight.exe") } else { "" }
     python = $bundledPythonExe
     workspace = $workspaceDir
     resources = if ((Test-Path $resourcesDir) -and ((Get-ChildItem -LiteralPath $resourcesDir -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1))) { $resourcesDir } else { "" }

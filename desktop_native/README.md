@@ -1,5 +1,7 @@
 # Native Operator Shell
 
+> Deprecated 2026-05-19. Python desktop shell at `sg_preflight/desktop/` is the operator UI going forward. This directory is kept as historical reference through alpha.
+
 This is the native local operator shell track for `sg-preflight`.
 
 It does not replace the Python core.

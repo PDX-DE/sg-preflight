@@ -55,6 +55,21 @@ def _checker_fixture(name: str) -> str:
 
 
 class TestOperatorUI(unittest.TestCase):
+    def test_web_ui_serves_sgfx_favicon_and_header_logo(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            favicon = client.get("/favicon.ico")
+            home = client.get("/ui")
+
+        self.assertEqual(favicon.status_code, 200)
+        self.assertIn(favicon.headers.get("content-type", ""), {"image/png", "image/png; charset=utf-8"})
+        self.assertEqual(home.status_code, 200)
+        self.assertIn("/sgfx-assets/framework_sgfx_logo.png", home.text)
+        self.assertIn('rel="icon"', home.text)
+
     def test_home_and_run_pages_render_profile_information(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

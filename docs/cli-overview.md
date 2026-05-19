@@ -1,8 +1,8 @@
 # SG Preflight CLI Overview
 
-This page is the short operator-facing map for running SG Preflight from a terminal.
+This page is the short operator-facing map for running SGFX QA Preflight from a terminal.
 
-SG Preflight is an opt-in local QA support tool. CLI output is evidence and review guidance, not approval. Manual RaCo, Blender, screenshot, rack, and delivery review remain human-owned.
+SGFX QA Preflight is an opt-in local QA support tool. CLI output is evidence and review guidance, not approval. Manual RaCo, Blender, screenshot, rack, and delivery review remain human-owned.
 
 ## Command Shape
 
@@ -48,6 +48,16 @@ python -m sg_preflight daily-digest latest --format json --out out\morning-diges
 
 On a fresh checkout with no review package, `daily-digest latest` exits 0 and prints a clear no-package summary with the setup hint for `ticket-review`.
 
+### Operator dashboard modes
+
+```powershell
+python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode clean
+python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
+python -m sg_preflight desktop --workspace C:\repositories\trunk --profile <profile>
+```
+
+Clean mode launches the NiceGUI dashboard. Grafiks mode launches the PySide6 desktop console. Both modes read the same SGFX backend state and keep manual review human-owned.
+
 ### Operator-local command templates
 
 ```powershell
@@ -63,11 +73,11 @@ Templates are saved as JSON under the current workspace's `templates\` folder. T
 ### SG / BMW evidence readers
 
 ```powershell
-python -m sg_preflight delivery-checklist read --profile G65 --format json
-python -m sg_preflight export-size-analysis read --profile G65 --workspace C:\repositories\trunk --latest --format markdown
-python -m sg_preflight screenshot-test-state read --profile G65 --format json
-python -m sg_preflight bmw-git-readiness read --profile G65 --format markdown
-python -m sg_preflight qa-hero-readiness read --profile G65 --format markdown
+python -m sg_preflight delivery-checklist read --profile <profile> --format json
+python -m sg_preflight export-size-analysis read --profile <profile> --workspace C:\repositories\trunk --latest --format markdown
+python -m sg_preflight screenshot-test-state read --profile <profile> --format json
+python -m sg_preflight bmw-git-readiness read --profile <profile> --format markdown
+python -m sg_preflight qa-hero-readiness read --profile <profile> --format markdown
 ```
 
 These readers are read-only. They do not run BMW tools, do not write SVN or BMW Git, and do not decide whether a car is approved.
@@ -92,7 +102,7 @@ Jira posting is opt-in and confirmation-gated. SGFX does not auto-post, does not
 ### Manual review companion
 
 ```powershell
-python -m sg_preflight manual-review session --profile G65 --ticket IDCEVODEV-977874 --markdown
+python -m sg_preflight manual-review session --profile <profile> --ticket IDCEVODEV-977874 --markdown
 python -m sg_preflight manual-review summary <session-id> --markdown
 ```
 
@@ -101,7 +111,7 @@ Manual-review commands create or render operator-recorded sessions. They do not 
 ### Deterministic preflight
 
 ```powershell
-python -m sg_preflight run-profile G65 --fail-on never --json
+python -m sg_preflight run-profile <profile> --fail-on never --json
 python -m sg_preflight run-action qa_stack__g65 --json
 ```
 

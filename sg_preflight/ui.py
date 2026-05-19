@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from sg_preflight.assets import runtime_asset_path, runtime_asset_root
 from sg_preflight.mirror_audit import (
     MirrorAuditReport,
     load_cached_audit,
@@ -2401,10 +2402,15 @@ def create_app(
     app.state.preview_cache = {}
 
     app.mount("/ui/static", StaticFiles(directory=str(_static_root())), name="ui_static")
+    app.mount("/sgfx-assets", StaticFiles(directory=str(runtime_asset_root())), name="sgfx_assets")
 
     @app.get("/")
     async def root_redirect() -> RedirectResponse:
         return RedirectResponse(url="/ui", status_code=302)
+
+    @app.get("/favicon.ico")
+    async def favicon() -> FileResponse:
+        return FileResponse(runtime_asset_path("sgfx_icon.png"), media_type="image/png")
 
     @app.get("/ui")
     async def home(request: Request) -> Any:

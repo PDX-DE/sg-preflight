@@ -20,6 +20,8 @@ class TestNativeScaffold(unittest.TestCase):
         readme_path = ROOT / "desktop_native" / "README.md"
         self.assertTrue(readme_path.exists())
         text = readme_path.read_text(encoding="utf-8")
+        self.assertIn("Deprecated 2026-05-19", text.splitlines()[2])
+        self.assertIn("Python desktop shell at `sg_preflight/desktop/` is the operator UI going forward.", text)
         self.assertIn("launch-action", text)
         self.assertIn("desktop-state", text)
         self.assertIn("does not replace the Python core", text)
@@ -62,6 +64,49 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("python", text)
         self.assertIn("resources", text)
         self.assertIn("sg_preflight_native_shell.exe", text)
+
+    def test_windows_exe_build_script_and_packaging_extra_are_present(self) -> None:
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        script_path = ROOT / "scripts" / "build_sgfx_exe.py"
+
+        self.assertTrue(script_path.exists())
+        self.assertIn("packaging = [", pyproject)
+        self.assertIn("PyInstaller>=6.20,<7", pyproject)
+
+        text = script_path.read_text(encoding="utf-8")
+        self.assertIn("--onefile", text)
+        self.assertIn("--windowed", text)
+        self.assertIn("sgfx-preflight", text)
+        self.assertIn("desktop_native/resources/exe_ico.ico", text)
+        self.assertIn("sg_preflight/exe_entry.py", text)
+        for asset_name in (
+            "sgfx_icon.png",
+            "framework_sgfx_logo.png",
+            "logo_sgfx.png",
+            "exe_ico.png",
+            "desktop_native/resources/exe_ico.ico",
+            "desktop_native/resources/debug_icon.ico",
+        ):
+            self.assertIn(asset_name, text)
+
+    def test_bundle_script_copies_python_exe_and_sgfx_icon_assets(self) -> None:
+        script_path = ROOT / "scripts" / "package_native_shell_bundle.ps1"
+        text = script_path.read_text(encoding="utf-8")
+
+        self.assertIn("dist\\sgfx-preflight.exe", text)
+        self.assertIn("sgfx-preflight.exe", text)
+        for asset_name in (
+            "sgfx_icon.png",
+            "framework_sgfx_logo.png",
+            "logo_sgfx.png",
+            "exe_ico.png",
+            "desktop_native\\resources\\exe_ico.ico",
+            "desktop_native\\resources\\debug_icon.ico",
+        ):
+            self.assertIn(asset_name, text)
+        self.assertIn("SGFX Preflight - Clean Mode.lnk", text)
+        self.assertIn("SGFX Preflight - Grafiks Mode.lnk", text)
+        self.assertIn("SGFX Preflight - Web Review Board.lnk", text)
 
     def test_native_shell_font_discovery_ignores_archives(self) -> None:
         shell_source = (ROOT / "desktop_native" / "src" / "sgfx_shell" / "sgfx_shared_resources.cpp").read_text(encoding="utf-8")

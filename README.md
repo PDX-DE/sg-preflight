@@ -6,19 +6,19 @@ It is not a production deployment, not a delivery package, and not a replacement
 
 ## What This Alpha Contains
 
-- Native operator observability: a read-only overview panel in the native shell, sourced from Python desktop state.
+- Grafiks operator console: a PySide6 desktop shell over the same Python data layer used by the clean dashboard.
 - Screenshot review prioritization: P0-P3 suggested review order with reasons and signals. No screenshots are hidden or approved by the tool.
 - Daily / morning QA digest: JSON, text, and Markdown summaries for evidence prepared, blockers, manual review pending, waiting-for-owner state, workflow status, and suggested review order.
 - Manual review companion: Quality Hero review steps surfaced for operator notes and verdict entry. `recorded_by_tool` stays false.
 - Delivery checklist workbook reader: read-only ingestion of operator-local delivery checklist workbook data.
 - Export-size analysis reader: read-only ingestion of operator-local `Cars\size_analysis\<profile>_<date>.xlsx` workbook data.
-- Native and Web evidence surfaces: export-size evidence can be shown in the native operator shell and SGFX QA Status Board.
+- Clean and Grafiks evidence surfaces: delivery checklist, screenshot test state, daily digest, and manual review companion render from the same Python readers.
 - Screenshot test state reader: read-only BMW / MINI screenshot baseline and test-config state from local BMW Git.
 - BMW Git readiness reader: read-only per-profile state from the local `digital-3d-car-models` checkout.
 - QA Hero readiness reader: read-only presence and count checks for documented Quality Hero assets such as LightFX, WelcomeFX, ShadesFX, CarPaint, AnchorPoints, Constants, and Perspectives.
 - CLI uniformity: read/status commands support `--format text|json|markdown` and `--output-path` / `--out` where relevant, while preserving compatible `--json` and `--markdown` aliases.
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
-- Clean-first display mode: native shell and SGFX QA Status Board default to a neutral SGFX work view; Grafiks mode is optional and does not change backend QA logic.
+- Clean-first dashboard mode: `dashboard run --ui-mode clean` launches the neutral NiceGUI work view by default. `dashboard run --ui-mode grafiks` launches the PySide6 Grafiks operator console. Both modes are local evidence views and do not change backend QA logic.
 - OpenHTF station MVP: local station surface for delivery checklist, screenshot test state, daily digest, and manual review companion phases. Internal OpenHTF execution state is evidence status only; manual review remains required.
 - Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--confirm`.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
@@ -26,11 +26,16 @@ It is not a production deployment, not a delivery package, and not a replacement
 ## Included Files
 
 - `sg_preflight/` - Python backend, CLI, state readers, digest generation, review support.
-- `desktop_native/` - native C++ operator shell source and CMake files.
+- `sg_preflight/desktop/` - PySide6 Grafiks operator console.
+- `sg_preflight/desktop_original_pyside6_backup/` - preserved copy of the original PySide6 shell source.
+- `desktop_native/` - deprecated C++ operator shell reference source kept in Git history; excluded from the standard SVN-stage alpha bundle.
 - `scripts/` - helper scripts for build, smoke, packaging, and verification.
 - `tests/` - automated tests shipped with the curated bundle.
 - `config/` - SGFX rule and profile configuration.
 - `docs/` - curated team-facing docs only.
+- `sgfx-preflight.exe` - optional packaged Windows executable when the bundle is prepared from a built `dist\sgfx-preflight.exe`.
+- SGFX icons and logos: `sgfx_icon.png`, `framework_sgfx_logo.png`, `logo_sgfx.png`, `exe_ico.png`, `exe_ico.ico`, and `debug_icon.ico` support the Windows executable, Clean dashboard, Grafiks shell, and web favicon.
+- Optional shortcuts: `SGFX Preflight - Clean Mode.lnk`, `SGFX Preflight - Grafiks Mode.lnk`, and `SGFX Preflight - Web Review Board.lnk` can be generated during bundle packaging when the executable exists.
 - Root metadata: `pyproject.toml`, `LICENSE`, `NOTICE.md`, `SECURITY.md`, `CONTRIBUTING.md`, this `README.md`, and a clean local-alpha `CHANGELOG.md`.
 
 Internal coordination notes, research notes, generated `out/` artifacts, build outputs, local-only notes, local-only evidence files, audio files, BMW source content, and unrelated R&D material are intentionally not included.
@@ -42,7 +47,7 @@ Run these commands from the bundle root:
 ```powershell
 python -m sg_preflight --help
 python -m sg_preflight list-profiles --format json
-python -m sg_preflight desktop-state overview --profile-id G65 --json
+python -m sg_preflight desktop-state overview --profile-id <profile> --json
 python -m sg_preflight daily-digest latest --format markdown
 ```
 
@@ -50,12 +55,55 @@ The daily digest is safe on a fresh checkout. If no review package exists yet, i
 
 `review-board latest --json` requires a generated or copied review package. On a fresh checkout it can report that no matching review package was found; that is expected for the SGFX QA Status Board compatibility surface.
 
+## Operator Dashboard Modes
+
+Clean mode is the default local operator dashboard:
+
+```powershell
+python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode clean
+```
+
+Grafiks mode opens the PySide6 desktop console over the same SGFX evidence readers:
+
+```powershell
+python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
+```
+
+The direct alias remains available:
+
+```powershell
+python -m sg_preflight desktop --workspace C:\repositories\trunk --profile <profile>
+```
+
+When `sgfx-preflight.exe` is included in a prepared bundle, the same surfaces are available from one executable:
+
+```powershell
+.\sgfx-preflight.exe
+.\sgfx-preflight.exe dashboard run --workspace C:\repositories\trunk --ui-mode clean
+.\sgfx-preflight.exe dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
+.\sgfx-preflight.exe ui --host 127.0.0.1 --port 8080
+.\sgfx-preflight.exe list-profiles --format json
+```
+
+Double-clicking the executable without arguments opens the Clean dashboard by default. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
+
+## Building the Windows Executable
+
+The executable is built with PyInstaller through the packaging extra:
+
+```powershell
+python -m pip install -e .[packaging,desktop]
+python scripts\build_sgfx_exe.py
+```
+
+The build writes `dist\sgfx-preflight.exe`. The executable embeds the SGFX app icon and includes the SGFX logo assets used by Clean, Grafiks, and the web review board. Generated `dist\` and `build\` folders remain local build outputs and are not source files.
+
 ## Optional OpenHTF Station Smoke
 
 The station command starts a local OpenHTF-backed SGFX surface and opens a browser unless `--no-browser` is set:
 
 ```powershell
-python -m sg_preflight station run --profile G65 --workspace C:\repositories\trunk --port 0 --history out\openhtf-history --no-browser --once
+python -m sg_preflight station run --profile <profile> --workspace C:\repositories\trunk --port 0 --history out\openhtf-history --no-browser --once
 ```
 
 The first MVP station run covers four daily operator phases: delivery checklist, screenshot test state, daily digest, and manual review companion. Missing local inputs can appear as missing execution state in the station; that is not a QA verdict.
@@ -65,11 +113,11 @@ The first MVP station run covers four daily operator phases: delivery checklist,
 These commands read operator-local content only. They do not modify SVN or BMW Git:
 
 ```powershell
-python -m sg_preflight delivery-checklist read --profile G65 --workspace C:\repositories\trunk --format markdown
-python -m sg_preflight export-size-analysis read --profile G65 --workspace C:\repositories\trunk --latest --format markdown
-python -m sg_preflight screenshot-test-state read --profile G65 --format json
-python -m sg_preflight bmw-git-readiness read --profile G65 --format json
-python -m sg_preflight qa-hero-readiness read --profile G65 --format json
+python -m sg_preflight delivery-checklist read --profile <profile> --workspace C:\repositories\trunk --format markdown
+python -m sg_preflight export-size-analysis read --profile <profile> --workspace C:\repositories\trunk --latest --format markdown
+python -m sg_preflight screenshot-test-state read --profile <profile> --format json
+python -m sg_preflight bmw-git-readiness read --profile <profile> --format json
+python -m sg_preflight qa-hero-readiness read --profile <profile> --format json
 ```
 
 If a local dependency is missing, the tool reports the missing state. It should not pretend a check succeeded.
@@ -94,7 +142,9 @@ python -m unittest discover -s tests -v
 
 The curated bundle test count can differ from the source alpha test count because internal guard-only tests are excluded from the team-facing bundle. The latest bundle verification ran successfully with 190 tests OK and 3 skipped; the source alpha verification for the same tip ran 196 tests OK and 3 skipped.
 
-## Optional Native Build
+## Deprecated C++ Reference Build
+
+The `desktop_native/` tree is deprecated as of 2026-05-19. Python dashboard modes are the operator UI going forward. The C++ source remains in Git as historical reference through alpha.
 
 ```powershell
 cmake -S desktop_native -B build/native-downloads -A x64

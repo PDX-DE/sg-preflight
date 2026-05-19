@@ -33,6 +33,9 @@ desktop = [
 native-build = [
   "Pillow>=10,<12",
 ]
+packaging = [
+  "PyInstaller>=6.20,<7",
+]
 
 [project.scripts]
 sg-preflight = "sg_preflight.cli:main"

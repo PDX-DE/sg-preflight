@@ -14,10 +14,13 @@ from sg_preflight.desktop.evidence_model import (
     desktop_action_snapshot,
     desktop_actions_for_profile,
     desktop_blocker_items,
+    desktop_environment_doctor,
     desktop_operator_overview,
+    desktop_profiles,
     desktop_recent_actions,
     desktop_recent_runs,
     desktop_run_snapshot,
+    desktop_surface_items,
     latest_action_snapshot_for_profile,
 )
 from sg_preflight.desktop.file_ops import build_open_command, build_reveal_command, normalize_local_path
@@ -40,6 +43,62 @@ def _write_export_size_analysis_workbook(path: Path, *, profile: str = "G65") ->
 
 
 class TestDesktopEvidenceModel(unittest.TestCase):
+    def test_grafiks_shell_source_carries_sgfx_header_and_guardrails(self) -> None:
+        main_window_source = (ROOT / "sg_preflight" / "desktop" / "main_window.py").read_text(encoding="utf-8")
+
+        self.assertIn("SGFX: Project Quality-Hero", main_window_source)
+        self.assertIn("Grafiks Operator Console", main_window_source)
+        self.assertIn("Manual review remains required.", main_window_source)
+        self.assertIn("Decision: not approval - evidence only.", main_window_source)
+        self.assertIn("BMW Git access is read-only. SGFX never modifies BMW source.", main_window_source)
+        self.assertIn("Activity log is local-only - never posted to Jira, SVN, or BMW Git.", main_window_source)
+        self.assertNotIn('"ready" if action.ready else "blocked"', main_window_source)
+
+    def test_grafiks_shell_sets_window_icon_and_header_logo(self) -> None:
+        app_source = (ROOT / "sg_preflight" / "desktop" / "app.py").read_text(encoding="utf-8")
+        main_window_source = (ROOT / "sg_preflight" / "desktop" / "main_window.py").read_text(encoding="utf-8")
+        widgets_source = (ROOT / "sg_preflight" / "desktop" / "widgets.py").read_text(encoding="utf-8")
+
+        self.assertIn("QIcon", app_source)
+        self.assertIn("setWindowIcon", app_source)
+        self.assertIn("sgfx_icon.png", app_source)
+        self.assertIn("framework_sgfx_logo.png", main_window_source)
+        self.assertIn("QPixmap", widgets_source)
+        self.assertIn("logo_path", widgets_source)
+
+    def test_desktop_surface_items_exposes_clean_mode_evidence_surfaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            _create_checker_files(root)
+
+            surfaces = desktop_surface_items(profile.profile_id, root)
+
+        self.assertEqual(
+            [item.key for item in surfaces],
+            [
+                "delivery-checklist",
+                "screenshot-test-state",
+                "daily-digest",
+                "manual-review",
+            ],
+        )
+        self.assertEqual([item.label for item in surfaces][0], "Delivery Checklist")
+        self.assertTrue(all(item.state for item in surfaces))
+        self.assertTrue(all(item.summary for item in surfaces))
+        self.assertIn("7 Quality-Hero", surfaces[-1].summary)
+        self.assertTrue(all(str(root.resolve()) not in item.summary for item in surfaces))
+        self.assertFalse(any(item.summary.startswith("{") for item in surfaces))
+
+    def test_desktop_profiles_show_real_svn_slices_without_bundle_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "Cars_IDCevo" / "BMW" / "G70").mkdir(parents=True)
+
+            profiles = desktop_profiles(root)
+
+        self.assertIn("G70", [item.profile_id for item in profiles])
+
     def test_desktop_actions_for_profile_exposes_primary_shell_actions(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -91,6 +150,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
                 with mock.patch("sg_preflight.services.shutil.which", return_value=None):
                     overview = desktop_operator_overview(root, profile_id="G65", profiles=[profile])
 
+        self.assertFalse((root / "out").exists())
         self.assertEqual(overview.recommended_profile_id, "G65")
         self.assertEqual(overview.recommended_action_id, "qa_stack__g65")
         self.assertGreaterEqual(overview.ready_profile_count, 1)
@@ -103,8 +163,20 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertEqual(overview.export_size_analysis_variant_count, 2)
         self.assertEqual(overview.export_size_analysis_workbook_date, "2025-10-02")
         self.assertIn("read-only", overview.export_size_analysis_summary.casefold())
-        self.assertIn("ready", overview.environment_state_counts)
+        self.assertIn("available", overview.environment_state_counts)
+        self.assertNotIn("ready", overview.environment_state_counts)
         self.assertIn("G65", overview.summary_line)
+
+    def test_environment_doctor_is_read_only_for_workspace_output_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            items = desktop_environment_doctor(root)
+
+        self.assertFalse((root / "out").exists())
+        output_item = next(item for item in items if item.key == "output_write_access")
+        self.assertEqual(output_item.state, "not_run")
+        self.assertIn("not probed", output_item.summary)
 
     def test_action_snapshot_reads_aggregated_checker_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -176,6 +248,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
             self.assertEqual(recent_runs[0].profile_id, "G65")
             self.assertTrue(recent_runs[0].summary.startswith("Counts:"))
             self.assertTrue(any(item.key == "bmw_screenshot_smoke" for item in blockers))
+            self.assertFalse(any(item.state == "ready" for item in blockers))
 
     def test_run_snapshot_returns_initializing_placeholder_for_transient_missing_nested_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from random import Random
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGroupBox, QPushButton, QWidget, QListWidget
 
 
@@ -89,19 +88,10 @@ class OperatorChrome(QWidget):
 
 
 class HeaderBanner(QWidget):
-    def __init__(
-        self,
-        title: str,
-        subtitle: str,
-        parent: QWidget | None = None,
-        *,
-        logo_path: Path | str | None = None,
-    ) -> None:
+    def __init__(self, title: str, subtitle: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.title = title
         self.subtitle = subtitle
-        self.logo_path = Path(logo_path) if logo_path else None
-        self.logo_pixmap = QPixmap(str(self.logo_path)) if self.logo_path and self.logo_path.is_file() else QPixmap()
         self._phase = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(50)
@@ -153,10 +143,6 @@ class HeaderBanner(QWidget):
         painter.drawLine(int(square_x + square_w + 14), 26, int(rect.width()), 26)
         painter.setPen(QPen(_with_alpha(GREEN_SOFT, 70), 1))
         painter.drawLine(int(square_x + square_w + 14), 56, int(rect.width() * 0.78), 56)
-
-        if not self.logo_pixmap.isNull():
-            logo_rect = QRectF(rect.width() - 78.0, 12.0, 62.0, 62.0)
-            painter.drawPixmap(logo_rect.toRect(), self.logo_pixmap)
 
 
 class OperatorPanel(QGroupBox):
