@@ -72,12 +72,30 @@ Full GPL-3.0 attribution will apply if and when sonic3air rendering subsystems (
 
 If a later Grafiks update extracts sonic3air rendering subsystems, this section will be updated with the specific upstream files, adapted subsystem table, and license implications for that future work.
 
+## OpenHTF dependency
+
+SGFX QA Preflight uses OpenHTF as the local station runtime for phase execution, station UI hosting, and run history. The dependency is installed from PyPI and is not vendored or modified in this repository.
+
+| Component | Version | License | Upstream | Current use |
+| --- | --- | --- | --- | --- |
+| OpenHTF | `1.6.1` | Apache 2.0 | https://github.com/google/openhtf | Operator console hosting, phase execution, station UI, and run history |
+
+OpenHTF attribution:
+
+```text
+Copyright 2014 Google Inc.
+
+Licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+```
+
 ### Packaging Rules
 
 - Keep `LICENSE` and this `NOTICE.md` in any internal native-shell bundle.
 - Do not treat unrelated local reference/resource folders as redistributable bundle inputs by default.
 - Do not bundle mirrored `repositories/` or generated `out/` evidence unless there is a deliberate internal reason and a conscious opt-in.
 - Keep upstream license texts under `desktop_native/assets/LICENSE-*` alongside any adapted Grafiks UI assets they apply to; do not strip license texts from a packaged bundle.
+- If OpenHTF is ever vendored or bundled directly, ship the matching Apache 2.0 license text alongside that component; the current alpha installs OpenHTF from PyPI instead.
 - The clean display mode (`--ui-mode clean`, default) does not depend on the adapted Grafiks UI assets and remains usable without them.
 - The Grafiks-mode binary at this snapshot is original SGFX code; it does not bundle sonic3air source files. The upstream license text at `desktop_native/assets/LICENSE-sonic3air` covers the adapted assets. A future Grafiks update may extract sonic3air rendering subsystems; if that happens, this notice will grow to full GPL-3.0 attribution and the license text will cover the additional adapted source.
 

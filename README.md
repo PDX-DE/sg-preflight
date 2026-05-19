@@ -19,6 +19,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 - CLI uniformity: read/status commands support `--format text|json|markdown` and `--output-path` / `--out` where relevant, while preserving compatible `--json` and `--markdown` aliases.
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
 - Clean-first display mode: native shell and SGFX QA Status Board default to a neutral SGFX work view; Grafiks mode is optional and does not change backend QA logic.
+- OpenHTF station MVP: local station surface for delivery checklist, screenshot test state, daily digest, and manual review companion phases. Internal OpenHTF execution state is evidence status only; manual review remains required.
 - Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--confirm`.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
 
@@ -48,6 +49,16 @@ python -m sg_preflight daily-digest latest --format markdown
 The daily digest is safe on a fresh checkout. If no review package exists yet, it returns a clean no-package summary and exits successfully.
 
 `review-board latest --json` requires a generated or copied review package. On a fresh checkout it can report that no matching review package was found; that is expected for the SGFX QA Status Board compatibility surface.
+
+## Optional OpenHTF Station Smoke
+
+The station command starts a local OpenHTF-backed SGFX surface and opens a browser unless `--no-browser` is set:
+
+```powershell
+python -m sg_preflight station run --profile G65 --workspace C:\repositories\trunk --port 0 --history out\openhtf-history --no-browser --once
+```
+
+The first MVP station run covers four daily operator phases: delivery checklist, screenshot test state, daily digest, and manual review companion. Missing local inputs can appear as missing execution state in the station; that is not a QA verdict.
 
 ## Real SVN / BMW Git Read-Only Checks
 
@@ -101,6 +112,7 @@ This alpha does not ship third-party source, BMW source, or BMW assets. Some che
 - Seriengrafik SVN trunk, usually available under `C:\repositories\trunk` on an operator machine.
 - Ramses Composer / Headless / Logic for RaCo-side workflows.
 - Blender with the SG-Toolkit for Blender visual review.
+- OpenHTF, installed from PyPI through the project dependencies, for the optional station surface.
 - Python 3.11 or later.
 
 Profile configs may reference operator-local paths under `C:\repositories\trunk`. Adjust local configuration if your checkout uses a different path.

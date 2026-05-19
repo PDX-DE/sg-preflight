@@ -1084,6 +1084,18 @@ def build_parser() -> argparse.ArgumentParser:
     run_action_worker.add_argument("--run-id", required=True, help=argparse.SUPPRESS)
     run_action_worker.add_argument("--workspace", required=True, help=argparse.SUPPRESS)
 
+    station = sub.add_parser("station", help="Run the SGFX OpenHTF station surface")
+    station_sub = station.add_subparsers(dest="station_command", required=True)
+    station_run = station_sub.add_parser("run", help="Start the local SGFX station")
+    station_run.add_argument("--profile", required=True, help="Profile id such as G65")
+    station_run.add_argument("--workspace", required=True, help="Workspace root for SGFX read-only checks")
+    station_run.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    station_run.add_argument("--ui-mode", default="clean", choices=("clean", "grafiks"), help="Station presentation mode")
+    station_run.add_argument("--port", type=int, default=0, help="Station port; 0 chooses an available port")
+    station_run.add_argument("--history", default="out/openhtf-history", help="OpenHTF history folder")
+    station_run.add_argument("--no-browser", action="store_true", help="Do not open a browser automatically")
+    station_run.add_argument("--once", action="store_true", help="Run once and exit after the station publishes the result")
+
     ui = sub.add_parser("ui", help="Start the local operator UI")
     ui.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     ui.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
@@ -1955,6 +1967,31 @@ def _main_impl(argv: list[str] | None = None) -> int:
             print(_console_safe(f"run-action-worker failed: {exc}"), file=sys.stderr)
             return 1
         return 0 if result.status in {"completed", "blocked"} else 1
+
+    if args.command == "station":
+        try:
+            from sg_preflight.openhtf_support.dependency import OpenHtfUnavailable
+            from sg_preflight.openhtf_support.station import run_station
+
+            if args.station_command == "run":
+                return run_station(
+                    profile_id=args.profile,
+                    workspace=Path(args.workspace),
+                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+                    ui_mode=args.ui_mode,
+                    port=args.port,
+                    history_path=Path(args.history),
+                    open_browser=not args.no_browser,
+                    once=args.once,
+                )
+            parser.error(f"Unhandled station command: {args.station_command}")
+            return 1
+        except OpenHtfUnavailable as exc:
+            print(_console_safe(str(exc)), file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(_console_safe(f"station failed: {exc}"), file=sys.stderr)
+            return 1
 
     if args.command == "ui":
         from sg_preflight.ui import run_ui
