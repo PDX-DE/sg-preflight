@@ -18,7 +18,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 - QA Hero readiness reader: read-only presence and count checks for documented Quality Hero assets such as LightFX, WelcomeFX, ShadesFX, CarPaint, AnchorPoints, Constants, and Perspectives.
 - CLI uniformity: read/status commands support `--format text|json|markdown` and `--output-path` / `--out` where relevant, while preserving compatible `--json` and `--markdown` aliases.
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
-- Clean-first display mode: native shell and SGFX QA Status Board default to a neutral SGFX work view; the SGFX-branded view is optional and does not change backend QA logic.
+- Clean-first display mode: native shell and SGFX QA Status Board default to a neutral SGFX work view; Grafiks mode is optional and does not change backend QA logic.
 - Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--confirm`.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
 

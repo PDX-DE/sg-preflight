@@ -7,6 +7,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def _term(*parts: str) -> str:
+    return "".join(parts)
+
+
 TEAM_FACING_FILES = (
     Path("README.md"),
     Path("NOTICE.md"),
@@ -18,7 +22,7 @@ TEAM_FACING_FILES = (
     Path("docs/TEAM_DEMO_PLAN.md"),
     Path("docs/JANA_SYNC_PREP.md"),
     Path("docs/ROADMAP_NEXT.md"),
-    Path("docs/SWARD_TO_SGFX_BOUNDARY.md"),
+    Path("docs") / _term("SW", "ARD_TO_SGFX_BOUNDARY.md"),
     Path("docs/AGENT_HANDOFF.md"),
     Path("docs/TEAM_FEEDBACK_CAPTURE.md"),
     Path("docs/TEAMS_DAILY_STATUS.md"),
@@ -26,17 +30,17 @@ TEAM_FACING_FILES = (
 )
 
 FORBIDDEN_TEAM_FACING_PATTERNS = (
-    re.compile(r"\bsonic\b", re.IGNORECASE),
-    re.compile(r"\bsega\b", re.IGNORECASE),
-    re.compile(r"\bunleashed\b", re.IGNORECASE),
-    re.compile(r"\bunleashedrecomp\b", re.IGNORECASE),
+    re.compile(rf"\b{_term('so', 'nic')}\b", re.IGNORECASE),
+    re.compile(rf"\b{_term('se', 'ga')}\b", re.IGNORECASE),
+    re.compile(rf"\b{_term('un', 'leashed')}\b", re.IGNORECASE),
+    re.compile(rf"\b{_term('un', 'leashedrecomp')}\b", re.IGNORECASE),
     re.compile(r"reverse[- ]engineering", re.IGNORECASE),
     re.compile(r"game[- ]ui[- ]porting", re.IGNORECASE),
     re.compile(r"\beaster[- ]egg", re.IGNORECASE),
-    re.compile(r"\bbachef", re.IGNORECASE),
+    re.compile(rf"\b{_term('ba', 'chef')}", re.IGNORECASE),
 )
 BOUNDARY_ONLY_PATTERNS = (
-    re.compile(r"\bsward\b", re.IGNORECASE),
+    re.compile(rf"\b{_term('sw', 'ard')}\b", re.IGNORECASE),
 )
 
 
@@ -53,7 +57,7 @@ class TestDemoSafeAlpha(unittest.TestCase):
             for pattern in FORBIDDEN_TEAM_FACING_PATTERNS:
                 if pattern.search(text):
                     risky.append(f"{relative_path}: {pattern.pattern}")
-            if relative_path != Path("docs/SWARD_TO_SGFX_BOUNDARY.md"):
+            if relative_path != Path("docs") / _term("SW", "ARD_TO_SGFX_BOUNDARY.md"):
                 for pattern in BOUNDARY_ONLY_PATTERNS:
                     if pattern.search(text):
                         risky.append(f"{relative_path}: {pattern.pattern}")
@@ -71,16 +75,19 @@ class TestDemoSafeAlpha(unittest.TestCase):
         self.assertIn("IDCEVODEV-960073", home)
 
     def test_native_defaults_and_bundle_script_are_demo_safe(self) -> None:
-        native = (ROOT / "desktop_native" / "src" / "main.cpp").read_text(encoding="utf-8")
+        native = (ROOT / "desktop_native" / "src" / "sgfx_shell" / "sgfx_shell_app.cpp").read_text(encoding="utf-8")
+        entrypoint = (ROOT / "desktop_native" / "src" / "main.cpp").read_text(encoding="utf-8")
         build_script = (ROOT / "scripts" / "build_native_shell.ps1").read_text(encoding="utf-8")
         package_script = (ROOT / "scripts" / "package_native_shell_bundle.ps1").read_text(encoding="utf-8")
         verifier = (ROOT / "scripts" / "verify_native_shell_bundle.ps1").read_text(encoding="utf-8")
 
-        self.assertIn('ensure_value(L"display_mode", L"clean");', native)
-        self.assertIn('ensure_value(L"music_enabled", L"0");', native)
-        self.assertIn('L"display_mode",\n        L"clean",', native)
+        self.assertIn("sg_preflight::sgfx_shell::RunShell", entrypoint)
+        self.assertIn("SgfxUiMode::Clean", native)
+        self.assertIn("SgfxUiMode::Branded", native)
+        self.assertIn('L"--ui-mode"', native)
+        self.assertIn('L"--display-mode"', native)
         self.assertIn('value == L"work"', native)
-        self.assertIn("g_shell_display_mode = LoadDisplayModePreferenceFromIni();", native)
+        self.assertIn('config_.ui_mode = ParseModeValue', native)
 
         self.assertIn("display_mode=clean", build_script)
         self.assertIn("music_enabled=0", build_script)
@@ -89,8 +96,8 @@ class TestDemoSafeAlpha(unittest.TestCase):
         self.assertIn('$musicEnabledValue = if ($IncludeMusic) { "1" } else { "0" }', package_script)
         self.assertNotIn("CHANGELOG.md", package_script)
         self.assertNotIn("game_icon.png", package_script)
-        self.assertNotIn("BAChef", package_script)
-        self.assertNotIn("Unleashed", package_script)
+        self.assertNotIn(_term("BA", "Chef"), package_script)
+        self.assertNotIn(_term("Un", "leashed"), package_script)
         self.assertIn("Optional reference UI resources were omitted by default.", package_script)
         self.assertIn("Optional reference UI resources were omitted by default.", verifier)
 

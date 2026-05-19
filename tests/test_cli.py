@@ -13,6 +13,7 @@ from unittest import mock
 
 from openpyxl import Workbook
 
+from sg_preflight.activity_log import read_activity_entries
 from sg_preflight.cli import main
 from sg_preflight.qa_actions import build_action_record, get_operator_action, save_action_record
 from sg_preflight.services import RunRequest, execute_profile_run
@@ -219,6 +220,20 @@ class TestCLI(unittest.TestCase):
 
         self.assertEqual(duplicate_result, 1)
         self.assertIn("already exists", stderr.getvalue())
+
+    def test_cli_with_workspace_appends_activity_log_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(["daily-digest", "latest", "--workspace", str(root), "--format", "text"])
+
+            self.assertEqual(result, 0)
+            payload = read_activity_entries(root, since="all")
+            self.assertEqual(payload["count"], 1)
+            self.assertEqual(payload["entries"][0]["surface"], "daily-digest latest")
+            self.assertEqual(payload["entries"][0]["outcome"], "ok")
 
     def test_jira_post_defaults_to_dry_run_from_numbered_section(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -77,12 +77,12 @@
   };
 
   const applyUiMode = function (mode) {
-    const resolved = mode === "sgfx" ? "sgfx" : "clean";
+    const resolved = mode === "grafiks" || mode === "sgfx" ? "grafiks" : "clean";
     rootElement.dataset.uiMode = resolved;
     if (uiModeToggle) {
       const cleanMode = resolved === "clean";
       uiModeToggle.setAttribute("aria-pressed", cleanMode ? "true" : "false");
-      uiModeToggle.textContent = cleanMode ? "SGFX mode" : "Clean mode";
+      uiModeToggle.textContent = cleanMode ? "Grafiks mode" : "Clean mode";
     }
   };
 
@@ -559,7 +559,7 @@
 
   if (uiModeToggle) {
     uiModeToggle.addEventListener("click", function () {
-      const nextMode = rootElement.dataset.uiMode === "clean" ? "sgfx" : "clean";
+      const nextMode = rootElement.dataset.uiMode === "clean" ? "grafiks" : "clean";
       applyUiMode(nextMode);
       try {
         window.localStorage.setItem("sg-ui-mode", nextMode);

@@ -67,6 +67,8 @@ def save_template(
         "description": str(description or ""),
         "created_at": created_at,
         "updated_at": now,
+        "last_run_at": None,
+        "last_run_outcome": "",
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -97,6 +99,16 @@ def delete_template(workspace: Path | str, name: str) -> dict[str, Any]:
     safe_name = _validate_name(name)
     payload = load_template(workspace, safe_name)
     template_path(workspace, safe_name).unlink()
+    return payload
+
+
+def record_template_run(workspace: Path | str, name: str, *, outcome: str) -> dict[str, Any]:
+    safe_name = _validate_name(name)
+    payload = load_template(workspace, safe_name)
+    payload["last_run_at"] = _utc_now()
+    payload["last_run_outcome"] = str(outcome or "").strip() or "unknown"
+    path = template_path(workspace, safe_name)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return payload
 
 
@@ -133,6 +145,8 @@ def _validate_payload(raw: object, expected_name: str) -> dict[str, Any]:
     description = raw.get("description", "")
     created_at = raw.get("created_at")
     updated_at = raw.get("updated_at")
+    last_run_at = raw.get("last_run_at")
+    last_run_outcome = raw.get("last_run_outcome", "")
     if name != expected_name:
         raise TemplateStoreError(f"Malformed template '{expected_name}': name does not match file")
     if not isinstance(command, str) or not command.strip():
@@ -143,6 +157,10 @@ def _validate_payload(raw: object, expected_name: str) -> dict[str, Any]:
         raise TemplateStoreError(f"Malformed template '{expected_name}': description must be a string")
     if not isinstance(created_at, str) or not isinstance(updated_at, str):
         raise TemplateStoreError(f"Malformed template '{expected_name}': timestamps must be strings")
+    if last_run_at is not None and not isinstance(last_run_at, str):
+        raise TemplateStoreError(f"Malformed template '{expected_name}': last run timestamp must be a string or null")
+    if not isinstance(last_run_outcome, str):
+        raise TemplateStoreError(f"Malformed template '{expected_name}': last run outcome must be a string")
     return {
         "name": _validate_name(name),
         "command": _validate_command(command),
@@ -150,6 +168,8 @@ def _validate_payload(raw: object, expected_name: str) -> dict[str, Any]:
         "description": description,
         "created_at": created_at,
         "updated_at": updated_at,
+        "last_run_at": last_run_at,
+        "last_run_outcome": last_run_outcome,
     }
 
 

@@ -218,6 +218,10 @@ if (Test-Path $genericReferenceResources) {
     $resourceCandidates += $genericReferenceResources
 }
 $resourceRoot = $null
+$sgfxAssetRoot = Join-Path $repoRoot "desktop_native\assets"
+if (Test-Path (Join-Path $sgfxAssetRoot "images\common\raw\general_window.png")) {
+    Copy-Tree -Source $sgfxAssetRoot -Destination $resourcesDir
+}
 if ($IncludeReferenceResources) {
     foreach ($candidate in $resourceCandidates) {
         if ((Test-Path $candidate) -and (Test-Path (Join-Path $candidate "images\common\raw\general_window.png")) -and (Test-Path (Join-Path $candidate "images\common\raw\options_static.png"))) {
@@ -268,7 +272,7 @@ $manifest = [ordered]@{
     exe = (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe")
     python = $bundledPythonExe
     workspace = $workspaceDir
-    resources = if ($resourceRoot) { $resourcesDir } else { "" }
+    resources = if ((Test-Path $resourcesDir) -and ((Get-ChildItem -LiteralPath $resourcesDir -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1))) { $resourcesDir } else { "" }
     fonts = if ($IncludeFonts) { $fontsDir } else { "" }
     d3d12 = if (Test-Path (Join-Path $resolvedBundleDir "D3D12")) { (Join-Path $resolvedBundleDir "D3D12") } else { "" }
     dxcompiler = if (Test-Path (Join-Path $resolvedBundleDir "dxcompiler.dll")) { (Join-Path $resolvedBundleDir "dxcompiler.dll") } else { "" }

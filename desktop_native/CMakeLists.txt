@@ -69,6 +69,21 @@ add_executable(
   src/native_shell.rc
   src/prompt.cpp
   src/screenshot_capture.cpp
+  src/sgfx_shell/sgfx_clean_status_menu.cpp
+  src/sgfx_shell/sgfx_diagnostic_overlay.cpp
+  src/sgfx_shell/sgfx_digest_menu.cpp
+  src/sgfx_shell/sgfx_evidence_summary_menu.cpp
+  src/sgfx_shell/sgfx_main_menu.cpp
+  src/sgfx_shell/sgfx_menu_background.cpp
+  src/sgfx_shell/sgfx_menu_base.cpp
+  src/sgfx_shell/sgfx_menu_controls_display.cpp
+  src/sgfx_shell/sgfx_menu_manager.cpp
+  src/sgfx_shell/sgfx_menu_scrolling.cpp
+  src/sgfx_shell/sgfx_quick_actions_menu.cpp
+  src/sgfx_shell/sgfx_settings_menu.cpp
+  src/sgfx_shell/sgfx_shared_resources.cpp
+  src/sgfx_shell/sgfx_shell_app.cpp
+  src/sgfx_shell/sgfx_workflow_menu.cpp
   src/shell_state.cpp
   src/texture_loader.cpp
 )

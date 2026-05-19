@@ -11,6 +11,11 @@ from typing import Callable
 from sg_preflight.adapters.common import write_json as write_adapter_json
 from sg_preflight.adapters.discovery import default_search_roots, probe_workspace
 from sg_preflight.adapters.materialize import materialize_bundle
+from sg_preflight.activity_log import (
+    append_activity_entry,
+    read_activity_entries,
+    render_activity_log_text,
+)
 from sg_preflight.bmw_delivery import (
     read_bmw_screenshot_state,
     render_bmw_screenshot_state_markdown,
@@ -120,6 +125,7 @@ from sg_preflight.template_store import (
     list_templates,
     load_template,
     parse_template_args,
+    record_template_run,
     save_template,
     template_cli_args,
     template_path,
@@ -549,6 +555,9 @@ def _render_template_result(payload: dict[str, object]) -> str:
         description = str(template.get("description") or "").strip()
         if description:
             lines.append(f"Description: {description}")
+        last_run_at = str(template.get("last_run_at") or "").strip()
+        if last_run_at:
+            lines.append(f"Last run: {last_run_at} ({template.get('last_run_outcome', '')})")
     path = str(payload.get("path") or "").strip()
     if path:
         lines.append(f"Path: {path}")
@@ -563,8 +572,57 @@ def _render_template_list(payload: dict[str, object]) -> str:
         return "\n".join(lines)
     for template in templates:
         if isinstance(template, dict):
-            lines.append(f"- {template.get('name', '')}: {_render_template_command(template)}")
+            last_run_at = str(template.get("last_run_at") or "").strip() or "never"
+            lines.append(f"- {template.get('name', '')}: {_render_template_command(template)} | last run: {last_run_at}")
     return "\n".join(lines)
+
+
+def _extract_arg_value(raw_args: list[str], *names: str) -> str:
+    for index, item in enumerate(raw_args):
+        if item in names and index + 1 < len(raw_args):
+            return raw_args[index + 1]
+        for name in names:
+            prefix = f"{name}="
+            if item.startswith(prefix):
+                return item[len(prefix) :]
+    return ""
+
+
+def _activity_surface(raw_args: list[str]) -> str:
+    parts = [item for item in raw_args[:3] if item and not item.startswith("-")]
+    return " ".join(parts[:2] if len(parts) > 1 else parts) or "sg-preflight"
+
+
+def _activity_verb(raw_args: list[str]) -> str:
+    surface = " ".join(raw_args[:3]).lower()
+    if "export" in surface or "materialize" in surface or "package" in surface:
+        return "exported"
+    if "run" in surface:
+        return "ran"
+    if "refresh" in surface:
+        return "refreshed"
+    return "read"
+
+
+def _record_cli_activity(raw_args: list[str], exit_code: int) -> None:
+    if not raw_args or raw_args[0] == "activity-log":
+        return
+    import os
+
+    workspace = _extract_arg_value(raw_args, "--workspace") or os.environ.get("SG_PREFLIGHT_ACTIVITY_WORKSPACE", "")
+    if not workspace:
+        return
+    try:
+        append_activity_entry(
+            Path(workspace),
+            verb=_activity_verb(raw_args),
+            surface=_activity_surface(raw_args),
+            profile=_extract_arg_value(raw_args, "--profile", "--profile-id"),
+            outcome="ok" if exit_code == 0 else "error",
+            note=f"cli exit {exit_code}",
+        )
+    except Exception:
+        return
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -681,6 +739,30 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
     _add_render_options(workflow_list, formats=("text", "json"))
+
+    activity_log = sub.add_parser("activity-log", help="Read or append the operator-local SGFX activity log")
+    activity_log_sub = activity_log.add_subparsers(dest="activity_log_command", required=True)
+    activity_read = activity_log_sub.add_parser("read", help="Read operator-local activity log entries")
+    activity_read.add_argument("--workspace", required=True, help="Workspace root that owns operator_state/activity_log.jsonl")
+    activity_read.add_argument("--profile", default="", help="Optional profile filter such as G65")
+    activity_read.add_argument(
+        "--since",
+        default="all",
+        choices=("today", "yesterday", "this-week", "all"),
+        help="Date filter for activity entries",
+    )
+    activity_read.add_argument("--limit", type=int, default=100, help="Maximum entries to return")
+    activity_read.add_argument("--json", action="store_true", help="Print activity log as JSON")
+    _add_render_options(activity_read, formats=("text", "json"))
+
+    activity_append = activity_log_sub.add_parser("append", help="Append one operator-local activity entry")
+    activity_append.add_argument("--workspace", required=True, help="Workspace root that owns operator_state/activity_log.jsonl")
+    activity_append.add_argument("--verb", required=True, help="Factual verb such as read, ran, refreshed, or opened")
+    activity_append.add_argument("--surface", required=True, help="Surface identifier such as daily-digest")
+    activity_append.add_argument("--profile", default="", help="Optional profile id such as G65")
+    activity_append.add_argument("--outcome", default="ok", help="Outcome: ok, error, empty, or unavailable")
+    activity_append.add_argument("--note", default="", help="Short operator-local note")
+    activity_append.add_argument("--json", action="store_true", help="Print appended entry as JSON")
 
     template = sub.add_parser(
         "template",
@@ -1172,6 +1254,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    exit_code = 1
+    try:
+        exit_code = _main_impl(raw_args)
+        return exit_code
+    finally:
+        _record_cli_activity(raw_args, exit_code)
+
+
+def _main_impl(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -1344,6 +1436,43 @@ def main(argv: list[str] | None = None) -> int:
         _emit_console(lambda: _console_workflow_status(items, as_json=output_format == "json"), args)
         return 0
 
+    if args.command == "activity-log":
+        activity_root = Path(args.workspace).resolve()
+        try:
+            if args.activity_log_command == "read":
+                payload = read_activity_entries(
+                    activity_root,
+                    profile=args.profile,
+                    since=args.since,
+                    limit=args.limit,
+                )
+                output_format = _resolve_render_format(args, parser, formats=("text", "json"))
+                if output_format == "json":
+                    _emit_json(payload, args)
+                else:
+                    _emit_text(render_activity_log_text(payload), args)
+                return 0
+            if args.activity_log_command == "append":
+                entry = append_activity_entry(
+                    activity_root,
+                    verb=args.verb,
+                    surface=args.surface,
+                    profile=args.profile,
+                    outcome=args.outcome,
+                    note=args.note,
+                )
+                payload = {"note": "Activity entry appended locally.", "entry": entry}
+                if args.json:
+                    _emit_json(payload, args)
+                else:
+                    _emit_text(render_activity_log_text({"entries": [entry], "note": payload["note"]}), args)
+                return 0
+            parser.error(f"Unhandled activity-log command: {args.activity_log_command}")
+            return 1
+        except Exception as exc:
+            print(_console_safe(f"activity-log failed: {exc}"), file=sys.stderr)
+            return 1
+
     if args.command == "template":
         template_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
         try:
@@ -1395,10 +1524,17 @@ def main(argv: list[str] | None = None) -> int:
                 run_args = template_cli_args(template_payload, args_override=args.args_override)
                 print(_console_safe(TEMPLATE_BANNER))
                 print(_console_safe(f"Running template '{template_payload['name']}': sg-preflight {' '.join(run_args)}"))
+                outcome = "error"
                 try:
-                    return main(run_args)
+                    exit_code = main(run_args)
+                    outcome = "ok" if exit_code == 0 else "error"
+                    return exit_code
                 except SystemExit as exc:
-                    return int(exc.code or 0)
+                    exit_code = int(exc.code or 0)
+                    outcome = "ok" if exit_code == 0 else "error"
+                    return exit_code
+                finally:
+                    record_template_run(template_root, args.name, outcome=outcome)
             parser.error(f"Unhandled template command: {args.template_command}")
             return 1
         except TemplateStoreError as exc:

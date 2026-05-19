@@ -12,6 +12,7 @@ from sg_preflight.template_store import (
     list_templates,
     load_template,
     parse_template_args,
+    record_template_run,
     save_template,
 )
 
@@ -89,3 +90,15 @@ class TestTemplateStore(unittest.TestCase):
             text = json.dumps({"note": TEMPLATE_BANNER, "template": payload})
 
             self.assertIn("Templates are operator-local saved command configurations", text)
+
+    def test_template_run_metadata_records_last_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            save_template(workspace, "profiles", command="list-profiles")
+
+            payload = record_template_run(workspace, "profiles", outcome="ok")
+
+            self.assertEqual(payload["name"], "profiles")
+            self.assertEqual(payload["last_run_outcome"], "ok")
+            self.assertIn("last_run_at", payload)
+            self.assertEqual(list_templates(workspace)[0]["last_run_outcome"], "ok")

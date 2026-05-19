@@ -12,7 +12,7 @@
         var requestedMode = params.get("ui-mode") || (params.get("theme") === "clean" ? "clean" : "");
         var uiMode = requestedMode || window.localStorage.getItem("sg-ui-mode") || "clean";
         document.documentElement.dataset.theme = theme;
-        document.documentElement.dataset.uiMode = uiMode === "sgfx" ? "sgfx" : "clean";
+        document.documentElement.dataset.uiMode = (uiMode === "grafiks" || uiMode === "sgfx") ? "grafiks" : "clean";
       } catch (_error) {
         document.documentElement.dataset.theme = "dark";
         document.documentElement.dataset.uiMode = "clean";
