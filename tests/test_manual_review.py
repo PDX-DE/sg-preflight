@@ -100,14 +100,14 @@ class TestManualReviewCompanion(unittest.TestCase):
             updated = record_manual_review_step(
                 "manual-001",
                 "blender_visual_check",
-                "pass",
+                "passed",
                 workspace=root,
                 note="Reviewer checked logos, lights, side mirrors, rims and flaps.",
                 screenshot=screenshot,
             )
 
             step = next(item for item in updated["steps"] if item["slug"] == "blender_visual_check")
-            self.assertEqual(step["verdict"], "pass")
+            self.assertEqual(step["verdict"], "passed")
             self.assertEqual(step["note"], "Reviewer checked logos, lights, side mirrors, rims and flaps.")
             self.assertEqual(step["screenshot_path"], str(screenshot.resolve()))
             self.assertFalse(step["recorded_by_tool"])
@@ -115,8 +115,30 @@ class TestManualReviewCompanion(unittest.TestCase):
             self.assertGreaterEqual(updated["summary"]["pending_steps"], 6)
 
             reloaded = load_manual_review_session("manual-001", workspace=root)
-            self.assertEqual(reloaded["steps"][0]["verdict"], "pass")
-            self.assertIn("[pass]", render_manual_review_markdown(reloaded))
+            self.assertEqual(reloaded["steps"][0]["verdict"], "passed")
+            self.assertIn("[passed]", render_manual_review_markdown(reloaded))
+
+    def test_record_step_accepts_legacy_direct_api_aliases_as_canonical_verdicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            create_manual_review_session(
+                profile_id="G65",
+                ticket_id="IDCEVODEV-977874",
+                workspace=root,
+                session_id="manual-001",
+            )
+
+            updated = record_manual_review_step(
+                "manual-001",
+                "blender_visual_check",
+                "pass",
+                workspace=root,
+                note="Legacy caller alias.",
+            )
+
+        step = next(item for item in updated["steps"] if item["slug"] == "blender_visual_check")
+        self.assertEqual(step["verdict"], "passed")
+        self.assertEqual(updated["summary"]["passed"], 1)
 
     def test_all_verdict_values_are_operator_recorded_and_bad_screenshot_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -154,7 +176,7 @@ class TestManualReviewCompanion(unittest.TestCase):
                 record_manual_review_step(
                     "manual-001",
                     "anchor_points_test_raco",
-                    "blocked",
+                    "incomplete",
                     workspace=root,
                     screenshot=root / "missing.png",
                 )
@@ -193,7 +215,7 @@ class TestManualReviewCompanion(unittest.TestCase):
                         "--step",
                         "constants_info_verification",
                         "--verdict",
-                        "blocked",
+                        "incomplete",
                         "--note",
                         "Waiting for epic constants.",
                         "--json",
@@ -219,7 +241,7 @@ class TestManualReviewCompanion(unittest.TestCase):
         payload = json.loads(session_stdout.getvalue())
         self.assertEqual(payload["session_id"], "manual-001")
         self.assertIn("Constants Info Verification", summary_stdout.getvalue())
-        self.assertIn("[blocked]", summary_stdout.getvalue())
+        self.assertIn("[incomplete]", summary_stdout.getvalue())
         self.assertIn("Operator records the verdict per step", summary_stdout.getvalue())
 
     def test_open_tool_commands_fail_clean_when_external_tool_is_not_configured(self) -> None:
@@ -272,6 +294,7 @@ class TestManualReviewCompanion(unittest.TestCase):
         self.assertIn("blender_visual_check", digest["markdown"])
         self.assertIn("Operator verdict required", digest["markdown"])
         blender_item = next(item for item in items if item.get("step_slug") == "blender_visual_check")
+        self.assertEqual(blender_item["status"], "not_run")
         self.assertIn("LightFX", blender_item["review_focus"])
         self.assertIn("Review guidance only", blender_item["note"])
 

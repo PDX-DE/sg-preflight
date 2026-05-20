@@ -75,11 +75,101 @@ def _export_size_workbook_name_for_brand(brand: str | None) -> str:
     return f"{_brand_label(brand)} Export Size.xlsx"
 
 
+def _candidate_profile_ids(profile_id: str) -> tuple[str, ...]:
+    candidates: list[str] = []
+    for item in candidate_bmw_profile_ids(profile_id):
+        normalized = item.strip().upper()
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+        if normalized.endswith("_EVO"):
+            stripped = normalized[:-4]
+            if stripped and stripped not in candidates:
+                candidates.append(stripped)
+    normalized = profile_id.strip().upper()
+    if normalized and normalized not in candidates:
+        candidates.append(normalized)
+    if normalized.endswith("_EVO"):
+        stripped = normalized[:-4]
+        if stripped and stripped not in candidates:
+            candidates.append(stripped)
+    return tuple(candidates)
+
+
+def _size_analysis_dirs(root: Path) -> tuple[Path, ...]:
+    return (
+        root / "Cars" / "size_analysis",
+        root / "repositories" / "trunk" / "Cars" / "size_analysis",
+        root / "size_analysis",
+    )
+
+
+def _filename_date_token(path: Path) -> str:
+    match = re.search(r"_(\d{8})$", path.stem)
+    return match.group(1) if match else ""
+
+
+def _size_analysis_sort_key(path: Path) -> tuple[int, int, str]:
+    date_token = _filename_date_token(path)
+    if date_token:
+        return (3, int(date_token), path.name.casefold())
+    suffix_match = re.search(r"_([^_]+)$", path.stem)
+    suffix = suffix_match.group(1).casefold() if suffix_match else ""
+    version_match = re.fullmatch(r"v(\d+)", suffix)
+    if version_match:
+        return (2, int(version_match.group(1)), path.name.casefold())
+    if suffix == "vx":
+        return (2, 1_000_000, path.name.casefold())
+    return (1, 0, path.name.casefold())
+
+
+def _date_text_from_token(value: str) -> str:
+    token = re.sub(r"[^0-9]", "", value)
+    if len(token) != 8:
+        return ""
+    return f"{token[0:4]}-{token[4:6]}-{token[6:8]}"
+
+
+def _find_latest_size_analysis_workbook(root: Path, profile_id: str) -> Path | None:
+    matches: list[tuple[tuple[int, int, str], str, Path]] = []
+    seen: set[Path] = set()
+    for directory in _size_analysis_dirs(root):
+        if not directory.exists():
+            continue
+        for profile in _candidate_profile_ids(profile_id):
+            for path in directory.glob(f"{profile}_*.xlsx"):
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                matches.append((_size_analysis_sort_key(path), path.name.casefold(), resolved))
+    if not matches:
+        return None
+    return sorted(matches, key=lambda item: (item[0], item[1]))[-1][2]
+
+
+def _profile_common_workbook_candidates(
+    *,
+    root: Path,
+    profile_id: str,
+    brand_label: str,
+    workbook_name: str,
+    export_size_workbook_name: str,
+) -> list[Path]:
+    candidates: list[Path] = []
+    for base in (root / "Cars_IDCevo", root / "repositories" / "trunk" / "Cars_IDCevo"):
+        for profile in _candidate_profile_ids(profile_id):
+            common = base / brand_label / profile / "_Common"
+            candidates.append(common / workbook_name)
+            candidates.append(common / export_size_workbook_name)
+    return candidates
+
+
 def resolve_delivery_checklist_workbook(
     *,
     workspace: Path | str | None = None,
     workbook_path: Path | str | None = None,
     brand: str | None = "BMW",
+    profile_id: str = "",
 ) -> Path:
     if workbook_path is not None:
         return Path(workbook_path).resolve()
@@ -87,13 +177,33 @@ def resolve_delivery_checklist_workbook(
     workbook_name = _workbook_name_for_brand(brand)
     export_size_workbook_name = _export_size_workbook_name_for_brand(brand)
     brand_label = _brand_label(brand)
-    candidates = (
+    candidates = [
         root / "repositories" / "trunk" / "Cars" / brand_label / export_size_workbook_name,
         root / "Cars" / brand_label / export_size_workbook_name,
-        root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist" / workbook_name,
-        root / ".pdx" / "checkers" / "deliveryChecklist" / workbook_name,
-        root / export_size_workbook_name,
-        root / workbook_name,
+    ]
+    latest_size_analysis = _find_latest_size_analysis_workbook(root, profile_id)
+    if latest_size_analysis is not None:
+        candidates.append(latest_size_analysis)
+    candidates.extend(
+        [
+            root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist" / workbook_name,
+            root / ".pdx" / "checkers" / "deliveryChecklist" / workbook_name,
+        ]
+    )
+    candidates.extend(
+        _profile_common_workbook_candidates(
+            root=root,
+            profile_id=profile_id,
+            brand_label=brand_label,
+            workbook_name=workbook_name,
+            export_size_workbook_name=export_size_workbook_name,
+        )
+    )
+    candidates.extend(
+        [
+            root / export_size_workbook_name,
+            root / workbook_name,
+        ]
     )
     for candidate in candidates:
         if candidate.exists():
@@ -116,6 +226,10 @@ def _cell_text(value: object) -> str:
         return value.isoformat(sep=" ", timespec="minutes")
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, float):
+        return format(value, ".12g")
     return str(value).strip()
 
 
@@ -124,10 +238,7 @@ def _profile_token(value: str) -> str:
 
 
 def _candidate_profile_tokens(profile_id: str) -> set[str]:
-    tokens = {_profile_token(item) for item in candidate_bmw_profile_ids(profile_id)}
-    normalized = profile_id.strip()
-    if normalized:
-        tokens.add(_profile_token(normalized))
+    tokens = {_profile_token(item) for item in _candidate_profile_ids(profile_id)}
     return {token for token in tokens if token}
 
 
@@ -234,6 +345,16 @@ def _find_export_size_header(values: tuple[object, ...]) -> dict[int, str]:
     return header if has_evidence and has_context else {}
 
 
+def _overview_total_index(values: tuple[object, ...]) -> int:
+    normalized = [re.sub(r"[^a-z0-9]+", "", _cell_text(value).casefold()) for value in values]
+    if not normalized or normalized[0] != "variant":
+        return -1
+    for index, value in enumerate(normalized):
+        if value == "total":
+            return index
+    return -1
+
+
 def _recorded_check(key: str, label: str, value: object) -> dict[str, str]:
     raw_value = _cell_text(value)
     return {
@@ -241,6 +362,141 @@ def _recorded_check(key: str, label: str, value: object) -> dict[str, str]:
         "label": label,
         "status": _recorded_status(value),
         "raw_value": raw_value,
+    }
+
+
+def _overview_delivery_payload(
+    *,
+    profile: str,
+    workbook: Path,
+    worksheet_title: str,
+    rows: list[tuple[object, ...]],
+    brand: str | None,
+) -> dict[str, Any] | None:
+    if len(rows) < 2:
+        return None
+    workbook_profile = _cell_text(rows[0][0] if rows[0] else "")
+    if _profile_token(workbook_profile) not in _candidate_profile_tokens(profile):
+        return None
+    header_index = -1
+    total_index = -1
+    for index, row in enumerate(rows):
+        total_index = _overview_total_index(row)
+        if total_index >= 0:
+            header_index = index
+            break
+    if header_index < 0:
+        return None
+    variants = [
+        row
+        for row in rows[header_index + 1 :]
+        if _cell_text(row[0] if row else "")
+    ]
+    totals = [_cell_text(row[total_index] if total_index < len(row) else "") for row in variants]
+    total_detail = ", ".join(item for item in totals if item)
+    checks = [
+        _recorded_check("variant_count", "Size Analysis Variants", str(len(variants))),
+    ]
+    if total_detail:
+        checks.append(_recorded_check("variant_totals", "Variant Totals", total_detail))
+    workbook_date = _date_text_from_token(_filename_date_token(workbook))
+    date_text = f" dated {workbook_date}" if workbook_date else ""
+    summary = (
+        f"Delivery checklist {profile}: size-analysis workbook{date_text} found with "
+        f"{len(variants)} variant rows in the Overview sheet."
+    )
+    return {
+        "profile_id": profile,
+        "matched_profile_id": workbook_profile,
+        "status": "available",
+        "data_available": True,
+        "workbook_path": str(workbook),
+        "worksheet": worksheet_title,
+        "row": header_index + 1,
+        "last_tested": workbook_date,
+        "svn_revision": "",
+        "changelog_revision": "",
+        "workbook_metadata": _workbook_metadata(workbook, brand=brand, row_count=len(rows)),
+        "checks": checks,
+        "summary": summary,
+        "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+        "is_approval": False,
+    }
+
+
+def _profile_in_overview_title(profile: str, title: str) -> bool:
+    token = _profile_token(title)
+    return any(token == candidate or token.startswith(candidate) for candidate in _candidate_profile_tokens(profile))
+
+
+def _versioned_overview_delivery_payload(
+    *,
+    profile: str,
+    workbook: Path,
+    worksheet_title: str,
+    rows: list[tuple[object, ...]],
+    brand: str | None,
+) -> dict[str, Any] | None:
+    if len(rows) < 3:
+        return None
+    workbook_profile = _cell_text(rows[0][0] if rows[0] else "")
+    if not _profile_in_overview_title(profile, workbook_profile):
+        return None
+    date_row_index = -1
+    total_row_index = -1
+    for index, row in enumerate(rows):
+        label = re.sub(r"[^a-z0-9]+", "", _cell_text(row[0] if row else "").casefold())
+        if label == "date":
+            date_row_index = index
+        elif label == "total":
+            total_row_index = index
+    if date_row_index <= 0 or total_row_index < 0:
+        return None
+    header = rows[date_row_index - 1]
+    date_row = rows[date_row_index]
+    total_row = rows[total_row_index]
+    variant_totals: list[str] = []
+    tested_dates: list[str] = []
+    for column_index in range(1, max(len(header), len(total_row))):
+        variant = _cell_text(header[column_index] if column_index < len(header) else "")
+        normalized = re.sub(r"[^a-z0-9]+", "", variant.casefold())
+        if not variant or normalized in {"min", "max"}:
+            continue
+        total = _cell_text(total_row[column_index] if column_index < len(total_row) else "")
+        if not total:
+            continue
+        variant_totals.append(f"{variant}={total}")
+        tested = _cell_text(date_row[column_index] if column_index < len(date_row) else "")
+        if tested and tested not in tested_dates:
+            tested_dates.append(tested)
+    if not variant_totals:
+        return None
+    last_tested = tested_dates[0] if tested_dates else ""
+    checks = [
+        _recorded_check("variant_count", "Size Analysis Variants", str(len(variant_totals))),
+        _recorded_check("variant_totals", "Variant Totals", ", ".join(variant_totals)),
+    ]
+    date_text = f" dated {last_tested}" if last_tested else ""
+    summary = (
+        f"Delivery checklist {profile}: size-analysis workbook{date_text} found with "
+        f"{len(variant_totals)} variant columns in the Overview sheet."
+    )
+    return {
+        "profile_id": profile,
+        "matched_profile_id": workbook_profile,
+        "status": "available",
+        "data_available": True,
+        "workbook_path": str(workbook),
+        "worksheet": worksheet_title,
+        "row": date_row_index + 1,
+        "last_tested": last_tested,
+        "svn_revision": "",
+        "changelog_revision": "",
+        "workbook_metadata": _workbook_metadata(workbook, brand=brand, row_count=len(rows)),
+        "checks": checks,
+        "summary": summary,
+        "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+        "is_approval": False,
     }
 
 
@@ -297,8 +553,13 @@ def read_delivery_checklist(
     workbook_path: Path | str | None = None,
     brand: str | None = "BMW",
 ) -> dict[str, Any]:
-    workbook = resolve_delivery_checklist_workbook(workspace=workspace, workbook_path=workbook_path, brand=brand)
     profile = profile_id.strip()
+    workbook = resolve_delivery_checklist_workbook(
+        workspace=workspace,
+        workbook_path=workbook_path,
+        brand=brand,
+        profile_id=profile,
+    )
     if not workbook.exists():
         return _missing_payload(
             profile,
@@ -321,6 +582,26 @@ def read_delivery_checklist(
         )
 
     try:
+        if "Overview" in loaded.sheetnames:
+            overview = loaded["Overview"]
+            overview_rows = [tuple(row) for row in overview.iter_rows(values_only=True)]
+            overview_payload = _overview_delivery_payload(
+                profile=profile,
+                workbook=workbook,
+                worksheet_title=overview.title,
+                rows=overview_rows,
+                brand=brand,
+            )
+            if overview_payload is None:
+                overview_payload = _versioned_overview_delivery_payload(
+                    profile=profile,
+                    workbook=workbook,
+                    worksheet_title=overview.title,
+                    rows=overview_rows,
+                    brand=brand,
+                )
+            if overview_payload is not None:
+                return overview_payload
         workbook_row_count = 0
         for worksheet in loaded.worksheets:
             header: dict[int, str] = {}

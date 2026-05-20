@@ -19,7 +19,13 @@ MANUAL_REVIEW_HEADER = (
 )
 REVIEW_FOCUS_NOTE = "Review guidance only; the operator records the verdict."
 
-VALID_VERDICTS = ("pass", "fail", "blocked", "not_applicable")
+VALID_VERDICTS = ("passed", "failed", "skipped", "incomplete")
+_VERDICT_ALIASES = {
+    "pass": "passed",
+    "fail": "failed",
+    "blocked": "incomplete",
+    "not_applicable": "skipped",
+}
 _PENDING_VERDICT = "not_run"
 _SESSION_FILENAME = "session.json"
 _CONFLUENCE_SOURCE = (
@@ -143,7 +149,7 @@ QUALITY_HERO_STEPS: tuple[ManualReviewStepTemplate, ...] = (
             "Country variants",
             "Trimlines",
         ),
-        evidence_prompt="Record the animation and light combination tested and attach proof for blocked or failing states.",
+        evidence_prompt="Record the animation and light combination tested and attach proof for incomplete or failing states.",
     ),
     ManualReviewStepTemplate(
         slug="anchor_points_test_raco",
@@ -217,6 +223,11 @@ def _slug(value: str) -> str:
     return "_".join(part for part in slug.split("_") if part)
 
 
+def _normalize_verdict(value: object) -> str:
+    clean = str(value or "").strip().lower()
+    return _VERDICT_ALIASES.get(clean, clean)
+
+
 def _session_root(
     *,
     ticket_id: str,
@@ -239,13 +250,13 @@ def _summarize_steps(steps: list[dict[str, Any]]) -> dict[str, Any]:
         "total_steps": len(steps),
         "recorded_steps": 0,
         "pending_steps": 0,
-        "pass": 0,
-        "fail": 0,
-        "blocked": 0,
-        "not_applicable": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "incomplete": 0,
     }
     for step in steps:
-        verdict = str(step.get("verdict", _PENDING_VERDICT)).strip()
+        verdict = _normalize_verdict(step.get("verdict", _PENDING_VERDICT))
         if verdict == _PENDING_VERDICT:
             counts["pending_steps"] += 1
             continue
@@ -256,7 +267,9 @@ def _summarize_steps(steps: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _write_session(session: dict[str, Any]) -> dict[str, Any]:
-    session["summary"] = _summarize_steps(list(session.get("steps", [])))
+    summary = _summarize_steps(list(session.get("steps", [])))
+    session["summary"] = summary
+    session["status"] = "recorded" if summary.get("recorded_steps", 0) else _PENDING_VERDICT
     path = Path(str(session["session_path"]))
     ensure_parent(path)
     markdown_path = path.with_name("manual-review-summary.md")
@@ -294,7 +307,7 @@ def create_manual_review_session(
         "session_id": clean_session,
         "ticket_id": clean_ticket,
         "profile_id": clean_profile,
-        "status": "in_progress",
+        "status": _PENDING_VERDICT,
         "created_at_utc": utc_now(),
         "updated_at_utc": utc_now(),
         "source": _CONFLUENCE_SOURCE,
@@ -348,6 +361,7 @@ def record_manual_review_step(
     screenshot: Path | str | None = None,
 ) -> dict[str, Any]:
     clean_verdict = verdict.strip().lower()
+    clean_verdict = _normalize_verdict(clean_verdict)
     if clean_verdict not in VALID_VERDICTS:
         raise ValueError(f"Unsupported manual review verdict: {verdict}")
     session = load_manual_review_session(session_id_or_path, workspace=workspace)
@@ -370,7 +384,7 @@ def record_manual_review_step(
 def _step_markdown(step: dict[str, Any]) -> list[str]:
     title = str(step.get("title", "")).strip()
     slug = str(step.get("slug", "")).strip()
-    verdict = str(step.get("verdict", _PENDING_VERDICT)).strip() or _PENDING_VERDICT
+    verdict = _normalize_verdict(step.get("verdict", _PENDING_VERDICT)) or _PENDING_VERDICT
     lines = [f"### {title}", f"- Step: `{slug}`", f"- Verdict: [{verdict}]"]
     review_focus = _string_list(step.get("review_focus", []))
     if review_focus:
@@ -415,7 +429,7 @@ def render_manual_review_markdown(session: dict[str, Any]) -> str:
     lines.extend(
         [
             f"- Recorded steps: {summary.get('recorded_steps', 0)}/{summary.get('total_steps', 0)}",
-            f"- Pending steps: {summary.get('pending_steps', 0)}",
+            f"- Not-run steps: {summary.get('pending_steps', 0)}",
             "",
             "## Steps",
         ]
@@ -470,7 +484,7 @@ def manual_review_digest_items(
             items.append(
                 {
                     "label": f"{session.get('profile_id', '')} {session.get('session_id', '')} {step.get('slug', '')}".strip(),
-                    "status": "pending_manual_review",
+                    "status": "not_run",
                     "detail": (
                         f"Operator verdict required for {step.get('title', step.get('slug', 'manual review step'))}."
                         f"{review_focus_detail}"

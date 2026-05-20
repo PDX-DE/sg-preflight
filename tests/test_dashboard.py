@@ -313,14 +313,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 profile_id="G65",
                 workspace=tmp,
                 step_slug="blender_visual_check",
-                status="captured",
+                status="recorded",
                 note="Checked Blender and RaCo side by side.",
             )
             path = Path(tmp) / "operator_state" / "manual_review_G65.json"
 
             self.assertTrue(path.is_file())
             self.assertEqual(payload["profile_id"], "G65")
-            self.assertEqual(payload["steps"]["blender_visual_check"]["status"], "captured")
+            self.assertEqual(payload["steps"]["blender_visual_check"]["status"], "recorded")
             self.assertEqual(payload["steps"]["blender_visual_check"]["recorded_by_tool"], False)
 
             with self.assertRaises(ValueError):
@@ -331,6 +331,39 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                     status="approved",
                     note="bad",
                 )
+
+    def test_manual_review_dashboard_recording_persists_operator_verdict_to_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import (
+                build_dashboard_snapshot,
+                record_manual_review_dashboard_step,
+            )
+
+            updated = record_manual_review_dashboard_step(
+                profile_id="G65",
+                workspace=tmp,
+                step_slug="blender_visual_check",
+                verdict="passed",
+                note="Operator checked logos and lights.",
+            )
+            snapshot = build_dashboard_snapshot("G65", tmp)
+
+        self.assertEqual(updated["status"], "recorded")
+        step = next(item for item in updated["steps"] if item["slug"] == "blender_visual_check")
+        self.assertEqual(step["verdict"], "passed")
+        self.assertEqual(step["note"], "Operator checked logos and lights.")
+        self.assertTrue(step["recorded_at_utc"])
+        self.assertFalse(step["recorded_by_tool"])
+
+        manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
+        self.assertEqual(manual_page["status"], "recorded")
+        self.assertIn("1/7 manual-review steps recorded locally.", manual_page["summary"])
+        item = next(item for item in manual_page["items"] if item["label"] == "Blender Visual Check")
+        self.assertEqual(item["status"], "recorded")
+        self.assertIn("passed", item["detail"])
+        recorded_step = next(item for item in manual_page["payload"]["steps"] if item["slug"] == "blender_visual_check")
+        self.assertEqual(recorded_step["verdict"], "passed")
+        self.assertFalse(recorded_step["recorded_by_tool"])
 
 
 class DashboardDualModeLaunchTests(unittest.TestCase):

@@ -15,7 +15,12 @@ from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_a
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.delivery_checklist import read_delivery_checklist
-from sg_preflight.manual_review import QUALITY_HERO_STEPS
+from sg_preflight.manual_review import (
+    QUALITY_HERO_STEPS,
+    create_manual_review_session,
+    load_manual_review_session,
+    record_manual_review_step,
+)
 from sg_preflight.profiles import list_run_profiles
 from sg_preflight.utils import ensure_parent
 
@@ -48,7 +53,9 @@ DASHBOARD_SHORTCUT_ACTIONS = (
     ("Esc", "Quit: close the native window or browser tab when the local review is done."),
 )
 THEME_CHOICES = ["clean"]
-MANUAL_REVIEW_STATUSES = ["not_run", "captured", "blocked"]
+MANUAL_REVIEW_STATUSES = ["not_run", "recorded", "incomplete"]
+MANUAL_REVIEW_RECORD_VERDICTS = ["passed", "failed", "skipped", "incomplete"]
+MANUAL_REVIEW_DASHBOARD_TICKET_ID = "IDCEVODEV-977874"
 _MISSING_STATUSES = {
     "missing",
     "no_workbook",
@@ -71,6 +78,7 @@ _BLOCKED_MANUAL_STATUSES = {
     "pass",
     "passed",
 }
+_MANUAL_REVIEW_PENDING_VERDICT = "not_run"
 
 
 def _utc_now() -> str:
@@ -435,24 +443,91 @@ def _daily_digest_page(workspace: Path, profile_id: str) -> dict[str, Any]:
     }
 
 
-def _manual_review_page() -> dict[str, Any]:
-    steps = [step.to_session_step() for step in QUALITY_HERO_STEPS]
+def _manual_review_profile_token(profile_id: str) -> str:
+    token = "".join(ch.lower() if ch.isalnum() else "_" for ch in profile_id.strip())
+    token = "_".join(part for part in token.split("_") if part)
+    return token or "profile"
+
+
+def _manual_review_dashboard_session_id(profile_id: str) -> str:
+    return f"dashboard-{_manual_review_profile_token(profile_id)}"
+
+
+def _load_manual_review_dashboard_session(
+    *,
+    profile_id: str,
+    workspace: Path | str,
+) -> dict[str, Any] | None:
+    session_id = _manual_review_dashboard_session_id(profile_id)
+    try:
+        return load_manual_review_session(session_id, workspace=workspace)
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def _ensure_manual_review_dashboard_session(
+    *,
+    profile_id: str,
+    workspace: Path | str,
+) -> dict[str, Any]:
+    session = _load_manual_review_dashboard_session(profile_id=profile_id, workspace=workspace)
+    if session is not None:
+        return session
+    return create_manual_review_session(
+        profile_id=profile_id,
+        ticket_id=MANUAL_REVIEW_DASHBOARD_TICKET_ID,
+        workspace=workspace,
+        session_id=_manual_review_dashboard_session_id(profile_id),
+    )
+
+
+def _manual_review_step_recorded(step: dict[str, Any]) -> bool:
+    return str(step.get("verdict", _MANUAL_REVIEW_PENDING_VERDICT)).strip() != _MANUAL_REVIEW_PENDING_VERDICT
+
+
+def _manual_review_step_detail(step: dict[str, Any]) -> str:
+    if not _manual_review_step_recorded(step):
+        return str(step.get("evidence_prompt", ""))
+    verdict = str(step.get("verdict", "")).strip()
+    recorded_at = str(step.get("recorded_at_utc", "")).strip()
+    note = str(step.get("note", "")).strip()
+    pieces = [item for item in (verdict, recorded_at, note) if item]
+    return " | ".join(pieces)
+
+
+def _manual_review_page(profile_id: str, workspace: Path | str) -> dict[str, Any]:
+    session = _load_manual_review_dashboard_session(profile_id=profile_id, workspace=workspace)
+    steps = (
+        list(session.get("steps", []))
+        if isinstance(session, dict)
+        else [step.to_session_step() for step in QUALITY_HERO_STEPS]
+    )
+    recorded_count = sum(1 for step in steps if isinstance(step, dict) and _manual_review_step_recorded(step))
+    status = "recorded" if recorded_count else _MANUAL_REVIEW_PENDING_VERDICT
+    session_payload = session if isinstance(session, dict) else {}
     return {
         "id": "manual-review",
         "title": "Manual Review Companion",
         "tagline": "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
-        "status": "not_run",
+        "status": status,
         "data_available": True,
-        "summary": f"{len(steps)} manual-review steps available for operator notes.",
+        "summary": f"{recorded_count}/{len(steps)} manual-review steps recorded locally.",
         "items": [
             {
                 "label": str(step.get("title", "")),
-                "status": str(step.get("verdict", "not_run")),
-                "detail": str(step.get("evidence_prompt", "")),
+                "status": "recorded" if _manual_review_step_recorded(step) else _MANUAL_REVIEW_PENDING_VERDICT,
+                "detail": _manual_review_step_detail(step),
             }
             for step in steps
+            if isinstance(step, dict)
         ],
-        "payload": {"steps": steps},
+        "payload": {
+            "session_id": str(session_payload.get("session_id", _manual_review_dashboard_session_id(profile_id))),
+            "ticket_id": str(session_payload.get("ticket_id", MANUAL_REVIEW_DASHBOARD_TICKET_ID)),
+            "session_path": str(session_payload.get("session_path", "")),
+            "markdown_path": str(session_payload.get("markdown_path", "")),
+            "steps": steps,
+        },
     }
 
 
@@ -504,7 +579,7 @@ def build_dashboard_snapshot(
                 workspace=root,
             ),
             _daily_digest_page(root, resolved_profile_id),
-            _manual_review_page(),
+            _manual_review_page(resolved_profile_id, root),
         ],
     }
 
@@ -557,6 +632,26 @@ def save_manual_review_state(
     return payload
 
 
+def record_manual_review_dashboard_step(
+    *,
+    profile_id: str,
+    workspace: Path | str,
+    step_slug: str,
+    verdict: str,
+    note: str = "",
+) -> dict[str, Any]:
+    if verdict.strip().casefold() not in MANUAL_REVIEW_RECORD_VERDICTS:
+        raise ValueError(f"Unsupported manual-review dashboard verdict: {verdict}")
+    session = _ensure_manual_review_dashboard_session(profile_id=profile_id.strip(), workspace=workspace)
+    return record_manual_review_step(
+        session["session_path"],
+        step_slug,
+        verdict,
+        workspace=workspace,
+        note=note,
+    )
+
+
 def _render_status_chip(ui: Any, status: str) -> None:
     ui.badge(status or "unknown").classes("sgfx-status")
 
@@ -594,7 +689,9 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
 def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
     with ui.column().classes("sgfx-page-panel"):
-        ui.label(str(page["title"])).classes("sgfx-panel-title")
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-summary")
         for step in page["payload"]["steps"]:
@@ -604,20 +701,36 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                 if focus:
                     ui.label(f"Review focus: {focus}").classes("sgfx-summary")
                 ui.label(str(step.get("evidence_prompt", ""))).classes("sgfx-muted")
-                status = ui.radio(MANUAL_REVIEW_STATUSES, value="not_run").props("inline")
-                note = ui.textarea(label="Operator note").classes("full-width")
+                current_verdict = str(step.get("verdict", "")).strip()
+                verdict_value = current_verdict if current_verdict in MANUAL_REVIEW_RECORD_VERDICTS else None
+                verdict = ui.select(
+                    MANUAL_REVIEW_RECORD_VERDICTS,
+                    value=verdict_value,
+                    label="Verdict",
+                ).classes("full-width")
+                note = ui.textarea(label="Operator note", value=str(step.get("note", ""))).classes("full-width")
+                recorded_at = str(step.get("recorded_at_utc", "")).strip()
+                if _manual_review_step_recorded(step):
+                    recorded_by_tool = step.get("recorded_by_tool", False)
+                    ui.label(
+                        f"Recorded: {current_verdict} | {recorded_at} | recorded_by_tool: {recorded_by_tool}"
+                    ).classes("sgfx-muted")
 
-                def _save(slug: str = slug, status=status, note=note) -> None:
-                    save_manual_review_state(
+                def _record(slug: str = slug, verdict=verdict, note=note) -> None:
+                    selected = str(verdict.value or "").strip()
+                    if not selected:
+                        ui.notify("Select a manual-review verdict before recording.")
+                        return
+                    record_manual_review_dashboard_step(
                         profile_id=str(snapshot["profile_id"]),
                         workspace=workspace,
                         step_slug=slug,
-                        status=str(status.value),
+                        verdict=selected,
                         note=str(note.value or ""),
                     )
-                    ui.notify("Manual-review note saved locally.")
+                    ui.notify("Manual-review evidence recorded locally.")
 
-                ui.button("Save local note", on_click=_save).props("color=primary")
+                ui.button("Record", on_click=_record).props("color=primary")
 
 
 def _render_selected_page(
