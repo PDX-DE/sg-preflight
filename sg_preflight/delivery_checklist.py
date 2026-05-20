@@ -564,7 +564,7 @@ def read_delivery_checklist(
         return _missing_payload(
             profile,
             workbook,
-            "no_workbook",
+            "unavailable",
             f"delivery-checklist data unavailable: workbook not found for {profile or 'profile'}: {workbook}",
             brand=brand,
         )
@@ -680,7 +680,7 @@ def read_delivery_checklist(
     return _missing_payload(
         profile,
         workbook,
-        "profile_not_found",
+        "unavailable",
         f"delivery-checklist data unavailable: workbook was found, but no row matched {profile}.",
         brand=brand,
     )

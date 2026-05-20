@@ -58,7 +58,6 @@ MANUAL_REVIEW_RECORD_VERDICTS = ["passed", "failed", "skipped", "incomplete"]
 MANUAL_REVIEW_DASHBOARD_TICKET_ID = "IDCEVODEV-977874"
 _MISSING_STATUSES = {
     "missing",
-    "no_workbook",
     "no_review_package",
     "no_overview_sheet",
     "not_found",
@@ -285,7 +284,7 @@ def _dashboard_status(raw_status: str, data_available: bool = False) -> str:
         return "unknown"
     if status in {"not_run", "not-run", "not run", "pending"}:
         return "not_run"
-    if status in {"not_available", "unavailable"}:
+    if status in {"not_available", "unavailable", "no_workbook", "profile_not_found"}:
         return "unavailable"
     return status or "unknown"
 

@@ -147,7 +147,7 @@ class TestDeliveryChecklist(unittest.TestCase):
 
             payload = read_delivery_checklist(profile_id="G65", workspace=root)
 
-        self.assertEqual(payload["status"], "no_workbook")
+        self.assertEqual(payload["status"], "unavailable")
         self.assertFalse(payload["data_available"])
         self.assertEqual(payload["profile_id"], "G65")
         self.assertIn("BMW Export Size.xlsx", payload["workbook_path"])
@@ -362,7 +362,7 @@ class TestDeliveryChecklist(unittest.TestCase):
     def test_daily_digest_does_not_hide_unavailable_delivery_checklist_data(self) -> None:
         checklist_payload = {
             "profile_id": "G65",
-            "status": "no_workbook",
+            "status": "unavailable",
             "data_available": False,
             "summary": "delivery-checklist data unavailable: workbook not found.",
             "workbook_path": "C:/missing/Delivery Data - BMW.xlsx",
@@ -389,7 +389,7 @@ class TestDeliveryChecklist(unittest.TestCase):
         delivery_items = [item for item in evidence_items if item.get("source") == "delivery_checklist"]
 
         self.assertEqual(len(delivery_items), 1)
-        self.assertEqual(delivery_items[0]["status"], "no_workbook")
+        self.assertEqual(delivery_items[0]["status"], "unavailable")
         self.assertIn("data unavailable", delivery_items[0]["detail"])
         self.assertIn("Delivery checklist G65", digest["markdown"])
 

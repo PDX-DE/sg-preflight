@@ -293,6 +293,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             snapshot = build_dashboard_snapshot("G70", tmp)
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
+        self.assertEqual(delivery["status"], "unavailable")
         self.assertNotIn(str(Path(tmp).resolve()), delivery["summary"])
         self.assertIn(Path(tmp).name, delivery["summary"])
 
