@@ -85,7 +85,7 @@ When `sgfx-preflight.exe` is included in a prepared bundle, the same surfaces ar
 .\sgfx-preflight.exe list-profiles --format json
 ```
 
-Double-clicking the executable without arguments opens the Clean dashboard by default. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
+Double-clicking the executable without arguments opens the Grafiks desktop console by default. In the packaged executable, Clean dashboard requests use the desktop fallback unless `--no-native` is explicitly requested for local server checks; server checks do not auto-open a browser. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
 
 ## Building the Windows Executable
 

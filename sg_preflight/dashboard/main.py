@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import socket
 from typing import Any, Callable
 
-from sg_preflight.assets import runtime_asset_path, runtime_asset_root
+from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_asset_root
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.delivery_checklist import read_delivery_checklist
@@ -96,6 +97,23 @@ def _payload_summary(payload: dict[str, Any], fallback: str, *, workspace: Path 
 def _clean_theme(ui_mode: str | None) -> str:
     value = str(ui_mode or "clean").strip().casefold()
     return value if value in THEME_CHOICES else "clean"
+
+
+def _find_open_dashboard_port(start_port: int = 8000, end_port: int = 8999) -> int:
+    for port in range(start_port, end_port + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise OSError("No open SGFX dashboard port found between 8000 and 8999")
+
+
+def _dashboard_run_port(*, native: bool, port: int) -> int:
+    if native or port:
+        return port
+    return _find_open_dashboard_port()
 
 
 def dashboard_profile_options() -> list[dict[str, str]]:
@@ -494,7 +512,7 @@ def _render_dashboard(
     bmw_root: Path | str | None = None,
     ui_mode: str | None = None,
 ) -> None:
-    app.add_static_files("/sgfx-dashboard-static", str(Path(__file__).resolve().parent))
+    app.add_static_files("/sgfx-dashboard-static", str(runtime_asset_dir("sg_preflight/dashboard")))
     app.add_static_files("/sgfx-dashboard-assets", str(runtime_asset_root()))
     base_snapshot = build_dashboard_snapshot(initial_profile_id, workspace, bmw_root=bmw_root, ui_mode=ui_mode)
 
@@ -697,8 +715,18 @@ def run_dashboard(
     root = _workspace(workspace)
     _render_dashboard(ui, app, initial_profile_id=profile_id, workspace=root, bmw_root=bmw_root, ui_mode=ui_mode)
     favicon_path = runtime_asset_path("sgfx_icon.png")
+    run_port = _dashboard_run_port(native=native, port=port)
+    show_browser = False if not native else True
     if favicon_path.is_file():
-        ui.run(host=host, port=port, native=native, reload=reload, title=DASHBOARD_TITLE, favicon=str(favicon_path))
+        ui.run(
+            host=host,
+            port=run_port,
+            native=native,
+            reload=reload,
+            title=DASHBOARD_TITLE,
+            favicon=str(favicon_path),
+            show=show_browser,
+        )
     else:
-        ui.run(host=host, port=port, native=native, reload=reload, title=DASHBOARD_TITLE)
+        ui.run(host=host, port=run_port, native=native, reload=reload, title=DASHBOARD_TITLE, show=show_browser)
     return 0

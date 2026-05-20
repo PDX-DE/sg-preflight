@@ -206,7 +206,12 @@ def _emit_text(text: str, args: argparse.Namespace) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
         return
-    print(_console_safe(text))
+    try:
+        print(_console_safe(text))
+    except OSError as exc:
+        if _is_detached_frozen_stdout_error(exc):
+            return
+        raise
 
 
 def _emit_json(payload: object, args: argparse.Namespace) -> None:
@@ -216,7 +221,12 @@ def _emit_json(payload: object, args: argparse.Namespace) -> None:
 def _emit_console(render: Callable[[], None], args: argparse.Namespace) -> None:
     output_path = str(getattr(args, "output_path", "") or "").strip()
     if not output_path:
-        render()
+        try:
+            render()
+        except OSError as exc:
+            if _is_detached_frozen_stdout_error(exc):
+                return
+            raise
         return
     import io
     from contextlib import redirect_stdout
@@ -225,6 +235,10 @@ def _emit_console(render: Callable[[], None], args: argparse.Namespace) -> None:
     with redirect_stdout(stdout):
         render()
     _emit_text(stdout.getvalue().rstrip("\n"), args)
+
+
+def _is_detached_frozen_stdout_error(exc: OSError) -> bool:
+    return bool(getattr(sys, "frozen", False) and getattr(exc, "errno", None) == 22)
 
 
 def _console_report(report: object) -> None:
@@ -1110,7 +1124,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_run.add_argument("--ui-mode", default=None, choices=("clean", "grafiks"), help="Dashboard presentation mode")
     dashboard_run.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     dashboard_run.add_argument("--port", type=int, default=0, help="Dashboard port; 0 chooses an available port")
-    dashboard_run.add_argument("--no-native", action="store_true", help="Run in browser/server mode instead of a native window")
+    dashboard_run.add_argument("--no-native", action="store_true", help="Run a local server without opening a native window")
     dashboard_run.add_argument("--reload", action="store_true", help="Reload automatically when local dashboard files change")
 
     ui = sub.add_parser("ui", help="Start the local operator UI")

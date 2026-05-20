@@ -37,7 +37,7 @@ class NiceGuiDashboardLazyImportTests(unittest.TestCase):
 
 class NiceGuiDashboardModelTests(unittest.TestCase):
     def test_runtime_asset_helper_finds_sgfx_branding_files(self) -> None:
-        from sg_preflight.assets import runtime_asset_path
+        from sg_preflight.assets import runtime_asset_dir, runtime_asset_path
 
         for asset_name in (
             "sgfx_icon.png",
@@ -49,6 +49,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         ):
             with self.subTest(asset_name=asset_name):
                 self.assertTrue(runtime_asset_path(asset_name).is_file())
+        self.assertTrue(runtime_asset_dir("sg_preflight/dashboard").is_dir())
+        self.assertTrue(runtime_asset_dir("sg_preflight/static").is_dir())
 
     def test_choice_options_are_nicegui_compatible_lists(self) -> None:
         from sg_preflight.dashboard.main import MANUAL_REVIEW_STATUSES, THEME_CHOICES
@@ -123,6 +125,31 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("framework_sgfx_logo.png", source)
         self.assertIn("favicon=", source)
         self.assertIn("/sgfx-dashboard-assets", source)
+
+    def test_non_native_dashboard_defaults_to_free_local_port(self) -> None:
+        from sg_preflight.dashboard.main import _dashboard_run_port
+
+        with mock.patch("sg_preflight.dashboard.main._find_open_dashboard_port", return_value=8123) as finder:
+            self.assertEqual(_dashboard_run_port(native=False, port=0), 8123)
+
+        finder.assert_called_once_with()
+        self.assertEqual(_dashboard_run_port(native=True, port=0), 0)
+        self.assertEqual(_dashboard_run_port(native=False, port=8877), 8877)
+
+    def test_non_native_dashboard_does_not_auto_open_browser(self) -> None:
+        from sg_preflight.dashboard.main import run_dashboard
+
+        ui = mock.Mock()
+        app = object()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("sg_preflight.dashboard.dependency.require_nicegui", return_value=(ui, app)):
+                with mock.patch("sg_preflight.dashboard.main._render_dashboard"):
+                    result = run_dashboard(workspace=Path(temp_dir), native=False, port=8124)
+
+        self.assertEqual(result, 0)
+        ui.run.assert_called_once()
+        self.assertFalse(ui.run.call_args.kwargs["native"])
+        self.assertFalse(ui.run.call_args.kwargs["show"])
 
     def test_dashboard_snapshot_marks_unknown_profile_without_crashing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

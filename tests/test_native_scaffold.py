@@ -86,6 +86,9 @@ class TestNativeScaffold(unittest.TestCase):
             "exe_ico.png",
             "desktop_native/resources/exe_ico.ico",
             "desktop_native/resources/debug_icon.ico",
+            "sg_preflight/static",
+            "sg_preflight/templates",
+            "sg_preflight/dashboard",
         ):
             self.assertIn(asset_name, text)
 

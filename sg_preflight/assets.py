@@ -39,6 +39,17 @@ def runtime_asset_path(relative_path: str | Path) -> Path:
     return _candidate_roots()[0] / relative
 
 
+def runtime_asset_dir(relative_path: str | Path) -> Path:
+    relative = Path(relative_path)
+    if relative.is_absolute():
+        return relative
+    for root in _candidate_roots():
+        candidate = root / relative
+        if candidate.is_dir():
+            return candidate
+    return _candidate_roots()[0] / relative
+
+
 def runtime_asset_root() -> Path:
     icon = runtime_asset_path("sgfx_icon.png")
     if icon.is_file():

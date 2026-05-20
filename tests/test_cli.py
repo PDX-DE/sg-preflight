@@ -103,14 +103,51 @@ def _write_qa_hero_readiness_state(root: Path) -> None:
 
 
 class TestCLI(unittest.TestCase):
-    def test_frozen_exe_entry_defaults_to_clean_dashboard_when_double_clicked(self) -> None:
+    def test_frozen_exe_entry_defaults_to_grafiks_desktop_when_double_clicked(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 
         with mock.patch("sg_preflight.cli.main", return_value=17) as runner:
-            result = module.main([])
+            with mock.patch.object(module, "default_workspace", return_value=r"C:\bundle"):
+                with mock.patch.object(module.sys, "frozen", True, create=True):
+                    result = module.main([])
 
         self.assertEqual(result, 17)
-        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "clean"])
+        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "grafiks", "--workspace", r"C:\bundle"])
+
+    def test_frozen_exe_entry_routes_explicit_clean_to_desktop_fallback(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=29) as runner:
+            with mock.patch.object(module, "default_workspace", return_value=r"C:\bundle"):
+                with mock.patch.object(module.sys, "frozen", True, create=True):
+                    result = module.main(["dashboard", "run", "--ui-mode", "clean"])
+
+        self.assertEqual(result, 29)
+        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "grafiks", "--workspace", r"C:\bundle"])
+
+    def test_frozen_exe_entry_keeps_server_mode_server_only_when_requested(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=31) as runner:
+            with mock.patch.object(module, "default_workspace", return_value=r"C:\bundle"):
+                with mock.patch.object(module.sys, "frozen", True, create=True):
+                    result = module.main(["dashboard", "run", "--ui-mode", "clean", "--no-native"])
+
+        self.assertEqual(result, 31)
+        runner.assert_called_once_with(
+            ["dashboard", "run", "--ui-mode", "clean", "--no-native", "--workspace", r"C:\bundle"]
+        )
+
+    def test_frozen_exe_entry_adds_default_workspace_for_explicit_dashboard_mode(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=19) as runner:
+            with mock.patch.object(module, "default_workspace", return_value=r"C:\bundle"):
+                with mock.patch.object(module.sys, "frozen", True, create=True):
+                    result = module.main(["dashboard", "run", "--ui-mode", "grafiks"])
+
+        self.assertEqual(result, 19)
+        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "grafiks", "--workspace", r"C:\bundle"])
 
     def test_frozen_exe_entry_preserves_full_cli_surface_when_args_are_present(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
@@ -135,6 +172,75 @@ class TestCLI(unittest.TestCase):
 
         self.assertIn("GetStdHandle", source)
         self.assertIn("open_osfhandle", source)
+        self.assertIn("ensure_standard_streams", source)
+        self.assertIn("os.devnull", source)
+        self.assertNotIn("ctypes.get_last_error() != 5", source)
+
+    def test_frozen_exe_entry_replaces_invalid_standard_stream_handles(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        class InvalidStream:
+            closed = False
+
+            def fileno(self) -> int:
+                return -1
+
+        invalid_stdin = InvalidStream()
+        invalid_stdout = InvalidStream()
+        invalid_stderr = InvalidStream()
+        with (
+            mock.patch.object(module.sys, "stdin", invalid_stdin),
+            mock.patch.object(module.sys, "stdout", invalid_stdout),
+            mock.patch.object(module.sys, "stderr", invalid_stderr),
+        ):
+            module.ensure_standard_streams()
+            restored_streams = [module.sys.stdin, module.sys.stdout, module.sys.stderr]
+            try:
+                self.assertIsNot(module.sys.stdin, invalid_stdin)
+                self.assertIsNot(module.sys.stdout, invalid_stdout)
+                self.assertIsNot(module.sys.stderr, invalid_stderr)
+                self.assertFalse(module._stream_needs_replacement(module.sys.stdout))
+                module.sys.stdout.write("")
+            finally:
+                for stream in restored_streams:
+                    stream.close()
+
+    def test_frozen_exe_entry_writes_visible_startup_failure_log(self) -> None:
+        source = (ROOT / "sg_preflight" / "exe_entry.py").read_text(encoding="utf-8")
+
+        self.assertIn("sgfx-preflight-startup-", source)
+        self.assertIn("MessageBoxW", source)
+
+    def test_frozen_exe_entry_shows_startup_dialog_only_for_desktop_routes(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        self.assertTrue(module.should_show_startup_error([]))
+        self.assertTrue(module.should_show_startup_error(["desktop"]))
+        self.assertTrue(module.should_show_startup_error(["dashboard", "run", "--ui-mode", "grafiks"]))
+        self.assertFalse(module.should_show_startup_error(["dashboard", "run", "--ui-mode", "clean", "--no-native"]))
+        self.assertFalse(module.should_show_startup_error(["list-profiles", "--format", "json"]))
+        self.assertFalse(module.should_show_startup_error(["ui", "--host", "127.0.0.1", "--port", "8899"]))
+
+    def test_frozen_cli_discards_detached_stdout_error(self) -> None:
+        module = importlib.import_module("sg_preflight.cli")
+        args = mock.Mock(output_path="")
+
+        def render() -> None:
+            raise OSError(22, "Invalid argument")
+
+        with mock.patch.object(module.sys, "frozen", True, create=True):
+            module._emit_console(render, args)
+
+    def test_source_cli_does_not_hide_stdout_errors(self) -> None:
+        module = importlib.import_module("sg_preflight.cli")
+        args = mock.Mock(output_path="")
+
+        def render() -> None:
+            raise OSError(22, "Invalid argument")
+
+        with mock.patch.object(module.sys, "frozen", False, create=True):
+            with self.assertRaises(OSError):
+                module._emit_console(render, args)
 
     def test_template_cli_roundtrip_save_list_show_delete(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

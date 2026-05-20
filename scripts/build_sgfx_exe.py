@@ -26,6 +26,9 @@ def build_pyinstaller_args() -> list[str]:
         ("exe_ico.png", "."),
         ("desktop_native/resources/exe_ico.ico", "desktop_native/resources"),
         ("desktop_native/resources/debug_icon.ico", "desktop_native/resources"),
+        ("sg_preflight/static", "sg_preflight/static"),
+        ("sg_preflight/templates", "sg_preflight/templates"),
+        ("sg_preflight/dashboard", "sg_preflight/dashboard"),
     )
     args = [
         "--noconfirm",

@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from sg_preflight.assets import runtime_asset_path, runtime_asset_root
+from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_asset_root
 from sg_preflight.mirror_audit import (
     MirrorAuditReport,
     load_cached_audit,
@@ -59,11 +59,11 @@ from sg_preflight.services import (
 
 
 def _templates() -> Jinja2Templates:
-    return Jinja2Templates(directory=str(Path(__file__).with_name("templates")))
+    return Jinja2Templates(directory=str(runtime_asset_dir("sg_preflight/templates")))
 
 
 def _static_root() -> Path:
-    return Path(__file__).with_name("static")
+    return runtime_asset_dir("sg_preflight/static")
 
 
 def _profile_map(profiles: list[RunProfile]) -> dict[str, RunProfile]:
@@ -2947,8 +2947,19 @@ def run_ui(host: str = "127.0.0.1", port: int = 8765, reload: bool = False) -> i
             host=host,
             port=port,
             log_level="warning",
+            http="h11",
+            log_config=None,
+            access_log=False,
             reload=True,
         )
     else:
-        uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+        uvicorn.run(
+            create_app(),
+            host=host,
+            port=port,
+            log_level="warning",
+            http="h11",
+            log_config=None,
+            access_log=False,
+        )
     return 0

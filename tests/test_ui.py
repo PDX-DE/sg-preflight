@@ -70,6 +70,20 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("/sgfx-assets/framework_sgfx_logo.png", home.text)
         self.assertIn('rel="icon"', home.text)
 
+    def test_web_ui_pins_h11_for_packaged_executable_server(self) -> None:
+        from sg_preflight.ui import run_ui
+
+        app = object()
+        with mock.patch("sg_preflight.ui.create_app", return_value=app):
+            with mock.patch("uvicorn.run") as runner:
+                self.assertEqual(run_ui(host="127.0.0.1", port=8123), 0)
+
+        runner.assert_called_once()
+        self.assertIs(runner.call_args.args[0], app)
+        self.assertEqual(runner.call_args.kwargs["http"], "h11")
+        self.assertIsNone(runner.call_args.kwargs["log_config"])
+        self.assertFalse(runner.call_args.kwargs["access_log"])
+
     def test_home_and_run_pages_render_profile_information(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
