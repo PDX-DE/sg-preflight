@@ -29,9 +29,9 @@ BROWSER_FALLBACK_ENV = "SGFX_PREFLIGHT_BROWSER_FALLBACK"
 FORCE_FROZEN_NATIVE_ENV = "SGFX_PREFLIGHT_FORCE_FROZEN_NATIVE"
 DASHBOARD_GUARDRAILS = (
     "Manual review remains required.",
-    "Decision: not approval - evidence only.",
+    "Decision: not approval — evidence only.",
     "BMW Git access is read-only. SGFX never modifies BMW source.",
-    "Activity log is local-only - never posted to Jira, SVN, or BMW Git.",
+    "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
 )
 DASHBOARD_NAVIGATION = (
     ("delivery-checklist", "Delivery Checklist"),
@@ -48,7 +48,7 @@ DASHBOARD_SHORTCUT_ACTIONS = (
     ("Esc", "Quit: close the native window or browser tab when the local review is done."),
 )
 THEME_CHOICES = ["clean"]
-MANUAL_REVIEW_STATUSES = ["pending", "captured", "blocked"]
+MANUAL_REVIEW_STATUSES = ["not_run", "captured", "blocked"]
 _MISSING_STATUSES = {
     "missing",
     "no_workbook",
@@ -441,13 +441,13 @@ def _manual_review_page() -> dict[str, Any]:
         "id": "manual-review",
         "title": "Manual Review Companion",
         "tagline": "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
-        "status": "pending",
+        "status": "not_run",
         "data_available": True,
         "summary": f"{len(steps)} manual-review steps available for operator notes.",
         "items": [
             {
                 "label": str(step.get("title", "")),
-                "status": str(step.get("verdict", "pending")),
+                "status": str(step.get("verdict", "not_run")),
                 "detail": str(step.get("evidence_prompt", "")),
             }
             for step in steps
@@ -596,7 +596,7 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
     with ui.column().classes("sgfx-page-panel"):
         ui.label(str(page["title"])).classes("sgfx-panel-title")
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
-        ui.label("Manual review remains required. Decision: not approval - evidence only.").classes("sgfx-summary")
+        ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-summary")
         for step in page["payload"]["steps"]:
             slug = str(step.get("slug", ""))
             with ui.expansion(str(step.get("title", slug)), icon="fact_check").classes("sgfx-step"):
@@ -604,7 +604,7 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                 if focus:
                     ui.label(f"Review focus: {focus}").classes("sgfx-summary")
                 ui.label(str(step.get("evidence_prompt", ""))).classes("sgfx-muted")
-                status = ui.radio(MANUAL_REVIEW_STATUSES, value="pending").props("inline")
+                status = ui.radio(MANUAL_REVIEW_STATUSES, value="not_run").props("inline")
                 note = ui.textarea(label="Operator note").classes("full-width")
 
                 def _save(slug: str = slug, status=status, note=note) -> None:

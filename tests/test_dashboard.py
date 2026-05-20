@@ -101,9 +101,13 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
         )
         self.assertIn("Manual review remains required.", snapshot["guardrails"])
-        self.assertIn("Decision: not approval - evidence only.", snapshot["guardrails"])
+        self.assertIn("Decision: not approval — evidence only.", snapshot["guardrails"])
         self.assertIn("BMW Git access is read-only. SGFX never modifies BMW source.", snapshot["guardrails"])
-        self.assertIn("Activity log is local-only - never posted to Jira, SVN, or BMW Git.", snapshot["guardrails"])
+        self.assertIn("Activity log is local-only — never posted to Jira, SVN, or BMW Git.", snapshot["guardrails"])
+        manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
+        self.assertEqual(manual_page["status"], "not_run")
+        self.assertTrue(all(item["status"] == "not_run" for item in manual_page["items"]))
+        self.assertTrue(all(step["verdict"] == "not_run" for step in manual_page["payload"]["steps"]))
         for forbidden in ("approved", "cleared", "signed-off", "production-ready"):
             self.assertNotIn(forbidden, json.dumps(snapshot, ensure_ascii=False).casefold())
 
@@ -295,6 +299,15 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
     def test_manual_review_state_save_is_operator_local_and_rejects_approval_words(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import save_manual_review_state
+
+            payload = save_manual_review_state(
+                profile_id="G65",
+                workspace=tmp,
+                step_slug="blender_visual_check",
+                status="not_run",
+                note="Not started yet.",
+            )
+            self.assertEqual(payload["steps"]["blender_visual_check"]["status"], "not_run")
 
             payload = save_manual_review_state(
                 profile_id="G65",

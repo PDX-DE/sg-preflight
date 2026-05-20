@@ -28,7 +28,7 @@ SgfxMainMenu::SgfxMainMenu()
     );
     add_action(
         "Daily Digest",
-        "Open the latest status and evidence summary. Decision: not approval - evidence only.",
+        "Open the latest status and evidence summary. Decision: not approval — evidence only.",
         "daily-digest latest --format markdown",
         "SG daily process"
     );

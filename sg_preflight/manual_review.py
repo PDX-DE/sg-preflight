@@ -20,7 +20,7 @@ MANUAL_REVIEW_HEADER = (
 REVIEW_FOCUS_NOTE = "Review guidance only; the operator records the verdict."
 
 VALID_VERDICTS = ("pass", "fail", "blocked", "not_applicable")
-_PENDING_VERDICT = "pending"
+_PENDING_VERDICT = "not_run"
 _SESSION_FILENAME = "session.json"
 _CONFLUENCE_SOURCE = (
     "PDX_" + "SER" + "GFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt"

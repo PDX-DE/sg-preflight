@@ -86,6 +86,8 @@ When `dist\sgfx-preflight\sgfx-preflight.exe` is included in a prepared bundle, 
 
 Double-clicking the executable without arguments opens the embedded NiceGUI Clean layout in a desktop window. In the packaged executable, Clean and Grafiks dashboard requests stay inside the `.exe`; `--no-native` is reserved for local server diagnostics. The packaged desktop path does not open an external browser. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
 
+The legacy `python -m sg_preflight ui` command and `/ui` routes are deprecated compatibility surfaces. Use the packaged `.exe` Clean window or `dashboard run --ui-mode clean` for operator work.
+
 ## Building the Windows Executable
 
 The executable is built with PyInstaller through the packaging extra:

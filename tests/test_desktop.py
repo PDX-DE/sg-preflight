@@ -53,9 +53,10 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertIn("grafiks_mode_button", main_window_source)
         self.assertIn("_set_presentation_mode", main_window_source)
         self.assertIn("Manual review remains required.", main_window_source)
-        self.assertIn("Decision: not approval - evidence only.", main_window_source)
+        self.assertIn("Decision: not approval — evidence only.", main_window_source)
         self.assertIn("BMW Git access is read-only. SGFX never modifies BMW source.", main_window_source)
-        self.assertIn("Activity log is local-only - never posted to Jira, SVN, or BMW Git.", main_window_source)
+        self.assertIn("Activity log is local-only — never posted to Jira, SVN, or BMW Git.", main_window_source)
+        self.assertIn('"available" if action.ready else "unavailable"', main_window_source)
         self.assertNotIn('"ready" if action.ready else "blocked"', main_window_source)
 
     def test_grafiks_shell_sets_window_icon_and_header_logo(self) -> None:

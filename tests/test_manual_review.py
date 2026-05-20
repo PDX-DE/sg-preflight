@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from sg_preflight.cli import main
 from sg_preflight.daily_digest import build_latest_daily_digest
@@ -36,7 +37,7 @@ class TestManualReviewCompanion(unittest.TestCase):
             self.assertEqual(session["profile_id"], "G65")
             self.assertEqual(session["ticket_id"], "IDCEVODEV-977874")
             self.assertEqual([step["title"] for step in session["steps"]], list(QUALITY_HERO_STEP_TITLES))
-            self.assertTrue(all(step["verdict"] == "pending" for step in session["steps"]))
+            self.assertTrue(all(step["verdict"] == "not_run" for step in session["steps"]))
             self.assertTrue(all(step["recorded_by_tool"] is False for step in session["steps"]))
 
             markdown = render_manual_review_markdown(session)
@@ -72,7 +73,7 @@ class TestManualReviewCompanion(unittest.TestCase):
         self.assertIn("CarPaint / Lackcode", carpaints["review_focus"])
         self.assertIn("Anchor points", anchors["review_focus"])
         self.assertTrue(all(step["recorded_by_tool"] is False for step in session["steps"]))
-        self.assertTrue(all(step["verdict"] == "pending" for step in session["steps"]))
+        self.assertTrue(all(step["verdict"] == "not_run" for step in session["steps"]))
         self.assertTrue(all(step["review_focus_note"].startswith("Review guidance only") for step in session["steps"]))
 
         markdown = render_manual_review_markdown(session)
@@ -232,18 +233,22 @@ class TestManualReviewCompanion(unittest.TestCase):
             )
 
             stderr = io.StringIO()
-            with redirect_stderr(stderr):
-                result = main(
-                    [
-                        "manual-review",
-                        "open-raco",
-                        "manual-001",
-                        "--workspace",
-                        str(root),
-                        "--step",
-                        "functionality_test_raco",
-                    ]
-                )
+            with mock.patch(
+                "sg_preflight.manual_review.prerequisite_status",
+                return_value=[{"key": "raco_gui", "status": "missing", "path": "", "detail": ""}],
+            ):
+                with redirect_stderr(stderr):
+                    result = main(
+                        [
+                            "manual-review",
+                            "open-raco",
+                            "manual-001",
+                            "--workspace",
+                            str(root),
+                            "--step",
+                            "functionality_test_raco",
+                        ]
+                    )
 
         self.assertEqual(result, 1)
         self.assertIn("Ramses Composer / RaCo is not configured", stderr.getvalue())

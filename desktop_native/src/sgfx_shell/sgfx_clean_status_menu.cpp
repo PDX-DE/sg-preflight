@@ -15,7 +15,7 @@ SgfxCleanStatusMenu::SgfxCleanStatusMenu()
     add_action("QA Hero", "qa-hero-readiness read - subsystem presence, not approval.", "qa-hero-readiness read --profile G65 --format json");
     add_action("Export Size", "export-size-analysis read - workbook evidence only.", "export-size-analysis read --profile G65 --workspace C:\\repositories\\trunk --latest --format json");
     add_action("Manual Review", "Manual review remains required.", "desktop-state manual G65 --json");
-    add_action("Status Board", "Decision: not approval - evidence only.", "review-board latest --json");
+    add_action("Status Board", "Decision: not approval — evidence only.", "review-board latest --json");
 }
 
 }  // namespace sg_preflight::sgfx_shell

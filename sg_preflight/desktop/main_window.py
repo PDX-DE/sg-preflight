@@ -50,9 +50,9 @@ from sg_preflight.services import workspace_root
 
 GRAFIKS_GUARDRAILS = (
     "Manual review remains required.",
-    "Decision: not approval - evidence only.",
+    "Decision: not approval — evidence only.",
     "BMW Git access is read-only. SGFX never modifies BMW source.",
-    "Activity log is local-only - never posted to Jira, SVN, or BMW Git.",
+    "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
 )
 
 
@@ -386,7 +386,7 @@ class DesktopMainWindow(QMainWindow):
         self._clear_action_tabs()
         actions = desktop_actions_for_profile(profile_id, self.workspace_root)
         for action in actions:
-            state = "available" if action.ready else "blocked"
+            state = "available" if action.ready else "unavailable"
             item = QListWidgetItem(f"{action.label} [{state}]")
             tooltip = action.description
             if action.blocker_message:

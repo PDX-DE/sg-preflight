@@ -71,7 +71,7 @@ class TestNativeShellReplacement(unittest.TestCase):
                 self.assertIn(command, shell_text)
 
         self.assertIn("Manual review remains required.", shell_text)
-        self.assertIn("Decision: not approval - evidence only.", shell_text)
+        self.assertIn("Decision: not approval — evidence only.", shell_text)
 
     def test_grafiks_mode_replaces_sgfx_mode_label_with_backward_alias(self) -> None:
         shell_source = (SHELL_SRC / "sgfx_shell_app.cpp").read_text(encoding="utf-8")

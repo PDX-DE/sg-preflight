@@ -229,4 +229,4 @@ class OpenHtfStationSmokeTests(unittest.TestCase):
         self.assertIn("<title>SGFX QA Preflight</title>", html)
         self.assertIn("SGFX: Project Quality-Hero", html)
         self.assertIn("Manual review remains required.", html)
-        self.assertIn("Decision: not approval - evidence only.", html)
+        self.assertIn("Decision: not approval — evidence only.", html)

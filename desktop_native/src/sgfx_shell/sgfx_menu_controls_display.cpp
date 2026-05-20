@@ -7,7 +7,7 @@ std::wstring SgfxMenuControlsDisplay::controls_line() const {
 }
 
 std::wstring SgfxMenuControlsDisplay::help_text() const {
-    return L"SGFX reads local evidence and status. Manual review remains required. Decision: not approval - evidence only.";
+    return L"SGFX reads local evidence and status. Manual review remains required. Decision: not approval — evidence only.";
 }
 
 }  // namespace sg_preflight::sgfx_shell

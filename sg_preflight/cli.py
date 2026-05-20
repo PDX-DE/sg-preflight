@@ -1127,7 +1127,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_run.add_argument("--no-native", action="store_true", help="Run a local server without opening a native window")
     dashboard_run.add_argument("--reload", action="store_true", help="Reload automatically when local dashboard files change")
 
-    ui = sub.add_parser("ui", help="Start the local operator UI")
+    ui = sub.add_parser("ui", help="Deprecated legacy UI; use `dashboard run --ui-mode clean` for operator work")
     ui.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     ui.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
     ui.add_argument("--reload", action="store_true", help="Reload automatically when local UI files change")
