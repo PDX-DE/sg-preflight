@@ -8,7 +8,7 @@ import tempfile
 import traceback
 
 
-DEFAULT_DOUBLE_CLICK_ARGS = ["dashboard", "run", "--ui-mode", "grafiks"]
+DEFAULT_DOUBLE_CLICK_ARGS = ["dashboard", "run", "--ui-mode", "clean"]
 
 
 def default_workspace() -> str:
@@ -21,60 +21,13 @@ def _has_option(args: list[str], option: str) -> bool:
     return any(arg == option or arg.startswith(f"{option}=") for arg in args)
 
 
-def _option_value(args: list[str], option: str) -> str | None:
-    for index, arg in enumerate(args):
-        if arg.startswith(f"{option}="):
-            return arg.split("=", 1)[1]
-        if arg == option and index + 1 < len(args):
-            return args[index + 1]
-    return None
-
-
 def _is_dashboard_run(args: list[str]) -> bool:
     return len(args) >= 2 and args[0] == "dashboard" and args[1] == "run"
-
-
-def _is_clean_dashboard(args: list[str]) -> bool:
-    return (_option_value(args, "--ui-mode") or "clean").casefold() == "clean"
-
-
-def _replace_or_append_option(args: list[str], option: str, value: str) -> list[str]:
-    updated: list[str] = []
-    replaced = False
-    skip_next = False
-    for index, arg in enumerate(args):
-        if skip_next:
-            skip_next = False
-            continue
-        if arg.startswith(f"{option}="):
-            updated.append(f"{option}={value}")
-            replaced = True
-            continue
-        if arg == option:
-            updated.extend([option, value])
-            replaced = True
-            skip_next = index + 1 < len(args)
-            continue
-        updated.append(arg)
-    if not replaced:
-        updated.extend([option, value])
-    return updated
 
 
 def _with_default_workspace(args: list[str]) -> list[str]:
     if _is_dashboard_run(args) and not _has_option(args, "--workspace"):
         return [*args, "--workspace", default_workspace()]
-    return args
-
-
-def _with_frozen_clean_desktop_fallback(args: list[str]) -> list[str]:
-    if (
-        getattr(sys, "frozen", False)
-        and _is_dashboard_run(args)
-        and _is_clean_dashboard(args)
-        and not _has_option(args, "--no-native")
-    ):
-        return _replace_or_append_option(args, "--ui-mode", "grafiks")
     return args
 
 
@@ -134,6 +87,14 @@ def attach_parent_console() -> None:
     ensure_standard_streams()
 
 
+def install_frozen_runtime_hooks() -> None:
+    if not getattr(sys, "frozen", False):
+        return
+    from sg_preflight.subprocess_utils import install_no_window_subprocess_patch
+
+    install_no_window_subprocess_patch()
+
+
 def ensure_standard_streams() -> None:
     if _stream_needs_replacement(sys.stdin):
         sys.stdin = open(os.devnull, "r", encoding="utf-8", errors="replace")
@@ -180,12 +141,15 @@ def show_startup_error(exc: BaseException, log_path: Path) -> None:
     try:
         import ctypes
 
+        detail = f"{type(exc).__name__}: {exc}"
+        if len(detail) > 500:
+            detail = detail[:497] + "..."
         message = (
             "SGFX Preflight could not start.\n\n"
-            f"{type(exc).__name__}: {exc}\n\n"
+            f"{detail}\n\n"
             f"Details were written to:\n{log_path}"
         )
-        ctypes.windll.user32.MessageBoxW(None, message, "SGFX Preflight startup error", 0x10)
+        ctypes.windll.user32.MessageBoxW(None, message, "SGFX QA Preflight - Startup Error", 0x10)
     except Exception:
         return
 
@@ -204,13 +168,13 @@ def main(argv: list[str] | None = None) -> int:
     from sg_preflight.cli import main as cli_main
 
     args = list(sys.argv[1:] if argv is None else argv)
+    install_frozen_runtime_hooks()
     ensure_standard_streams()
     if not args:
         args = list(DEFAULT_DOUBLE_CLICK_ARGS)
     else:
         attach_parent_console()
     args = _with_default_workspace(args)
-    args = _with_frozen_clean_desktop_fallback(args)
     return cli_main(args)
 
 

@@ -10,6 +10,7 @@ from typing import Any
 
 from sg_preflight.services import operator_ui_root, prerequisite_status, utc_now
 from sg_preflight.utils import ensure_parent
+from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 
 
 MANUAL_REVIEW_HEADER = (
@@ -514,7 +515,7 @@ def open_manual_review_tool(
     executable = Path(str(status.get("path", ""))).resolve()
     command = [str(executable)]
     if launch:
-        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **hidden_subprocess_kwargs())
     return {
         "session_id": session["session_id"],
         "step": {

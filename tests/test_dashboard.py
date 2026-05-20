@@ -123,7 +123,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("runtime_asset_path", source)
         self.assertIn("sgfx_icon.png", source)
         self.assertIn("framework_sgfx_logo.png", source)
-        self.assertIn("favicon=", source)
+        self.assertIn('kwargs["favicon"]', source)
         self.assertIn("/sgfx-dashboard-assets", source)
 
     def test_non_native_dashboard_defaults_to_free_local_port(self) -> None:
@@ -150,6 +150,99 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         ui.run.assert_called_once()
         self.assertFalse(ui.run.call_args.kwargs["native"])
         self.assertFalse(ui.run.call_args.kwargs["show"])
+
+    def test_native_dashboard_attempts_native_window_when_webview2_is_available(self) -> None:
+        from sg_preflight.dashboard.main import run_dashboard
+
+        ui = mock.Mock()
+        app = object()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("sg_preflight.dashboard.dependency.require_nicegui", return_value=(ui, app)):
+                with mock.patch("sg_preflight.dashboard.main._render_dashboard"):
+                    with mock.patch("sg_preflight.dashboard.main.webview2_runtime_available", return_value=True):
+                        with mock.patch("sg_preflight.dashboard.main.monotonic", side_effect=[0.0, 10.0]):
+                            result = run_dashboard(workspace=Path(temp_dir), native=True, port=0)
+
+        self.assertEqual(result, 0)
+        ui.run.assert_called_once()
+        self.assertTrue(ui.run.call_args.kwargs["native"])
+        self.assertTrue(ui.run.call_args.kwargs["show"])
+
+    def test_native_dashboard_falls_back_to_browser_when_native_returns_immediately(self) -> None:
+        from sg_preflight.dashboard.main import run_dashboard
+
+        ui = mock.Mock()
+        app = object()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("sg_preflight.dashboard.dependency.require_nicegui", return_value=(ui, app)):
+                with mock.patch("sg_preflight.dashboard.main._render_dashboard"):
+                    with mock.patch("sg_preflight.dashboard.main.webview2_runtime_available", return_value=True):
+                        with mock.patch("sg_preflight.dashboard.main._find_open_dashboard_port", return_value=8127):
+                            with mock.patch("sg_preflight.dashboard.main._launch_browser_fallback_process", return_value=0) as fallback:
+                                with mock.patch("sg_preflight.dashboard.main.monotonic", side_effect=[0.0, 0.2]):
+                                    result = run_dashboard(workspace=Path(temp_dir), native=True, port=0)
+
+        self.assertEqual(result, 0)
+        ui.run.assert_called_once()
+        self.assertTrue(ui.run.call_args.kwargs["native"])
+        fallback.assert_called_once()
+        self.assertEqual(fallback.call_args.kwargs["fallback_port"], 8127)
+
+    def test_frozen_native_dashboard_suppresses_browser_fallback_without_native_attempt(self) -> None:
+        import sg_preflight.dashboard.main as dashboard_main
+        from sg_preflight.dashboard.main import run_dashboard
+
+        ui = mock.Mock()
+        app = object()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("sg_preflight.dashboard.dependency.require_nicegui", return_value=(ui, app)):
+                with mock.patch("sg_preflight.dashboard.main._render_dashboard"):
+                    with mock.patch.object(dashboard_main.sys, "frozen", True, create=True):
+                        with mock.patch("sg_preflight.dashboard.main._find_open_dashboard_port", return_value=8128):
+                            with mock.patch("sg_preflight.dashboard.main._launch_browser_fallback_process", return_value=0) as fallback:
+                                with self.assertRaisesRegex(RuntimeError, "embedded Clean desktop shell"):
+                                    run_dashboard(workspace=Path(temp_dir), native=True, port=0)
+
+        ui.run.assert_not_called()
+        fallback.assert_not_called()
+
+    def test_native_dashboard_falls_back_to_browser_when_webview2_is_missing(self) -> None:
+        from sg_preflight.dashboard.main import run_dashboard
+
+        ui = mock.Mock()
+        app = object()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("sg_preflight.dashboard.dependency.require_nicegui", return_value=(ui, app)):
+                with mock.patch("sg_preflight.dashboard.main._render_dashboard"):
+                    with mock.patch("sg_preflight.dashboard.main.webview2_runtime_available", return_value=False):
+                        with mock.patch("sg_preflight.dashboard.main._find_open_dashboard_port", return_value=8125):
+                            result = run_dashboard(workspace=Path(temp_dir), native=True, port=0)
+
+        self.assertEqual(result, 0)
+        ui.run.assert_called_once()
+        self.assertFalse(ui.run.call_args.kwargs["native"])
+        self.assertTrue(ui.run.call_args.kwargs["show"])
+        self.assertEqual(ui.run.call_args.kwargs["port"], 8125)
+
+    def test_native_dashboard_falls_back_to_browser_after_native_error(self) -> None:
+        from sg_preflight.dashboard.main import run_dashboard
+
+        ui = mock.Mock()
+        ui.run.side_effect = [RuntimeError("native failed"), None]
+        app = object()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("sg_preflight.dashboard.dependency.require_nicegui", return_value=(ui, app)):
+                with mock.patch("sg_preflight.dashboard.main._render_dashboard"):
+                    with mock.patch("sg_preflight.dashboard.main.webview2_runtime_available", return_value=True):
+                        with mock.patch("sg_preflight.dashboard.main._find_open_dashboard_port", return_value=8126):
+                            with mock.patch("sg_preflight.dashboard.main._launch_browser_fallback_process", return_value=0) as fallback:
+                                result = run_dashboard(workspace=Path(temp_dir), native=True, port=0)
+
+        self.assertEqual(result, 0)
+        ui.run.assert_called_once()
+        self.assertTrue(ui.run.call_args.kwargs["native"])
+        fallback.assert_called_once()
+        self.assertEqual(fallback.call_args.kwargs["fallback_port"], 8126)
 
     def test_dashboard_snapshot_marks_unknown_profile_without_crashing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -250,7 +343,56 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
 
         self.assertEqual(result, 9)
         clean_runner.assert_not_called()
-        grafiks_runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="NA8")
+        grafiks_runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="NA8", initial_mode="grafiks")
+
+    def test_frozen_clean_dashboard_dispatches_to_desktop_shell(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import sg_preflight.cli as cli
+
+            with mock.patch.object(cli.sys, "frozen", True, create=True):
+                with mock.patch("sg_preflight.dashboard.main.run_dashboard", return_value=11) as clean_runner:
+                    with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=9) as desktop_runner:
+                        result = cli.main(
+                            [
+                                "dashboard",
+                                "run",
+                                "--profile",
+                                "NA8",
+                                "--workspace",
+                                tmp,
+                                "--ui-mode",
+                                "clean",
+                            ]
+                        )
+
+        self.assertEqual(result, 9)
+        clean_runner.assert_not_called()
+        desktop_runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="NA8", initial_mode="clean")
+
+    def test_frozen_clean_dashboard_no_native_keeps_server_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import sg_preflight.cli as cli
+
+            with mock.patch.object(cli.sys, "frozen", True, create=True):
+                with mock.patch("sg_preflight.dashboard.main.run_dashboard", return_value=11) as clean_runner:
+                    with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=9) as desktop_runner:
+                        result = cli.main(
+                            [
+                                "dashboard",
+                                "run",
+                                "--profile",
+                                "NA8",
+                                "--workspace",
+                                tmp,
+                                "--ui-mode",
+                                "clean",
+                                "--no-native",
+                            ]
+                        )
+
+        self.assertEqual(result, 11)
+        desktop_runner.assert_not_called()
+        clean_runner.assert_called_once()
 
     def test_desktop_alias_accepts_workspace_and_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -260,4 +402,4 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
                 result = main(["desktop", "--profile", "G70", "--workspace", tmp])
 
         self.assertEqual(result, 5)
-        runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="G70")
+        runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="G70", initial_mode="clean")

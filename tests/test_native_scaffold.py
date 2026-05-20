@@ -74,7 +74,8 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("PyInstaller>=6.20,<7", pyproject)
 
         text = script_path.read_text(encoding="utf-8")
-        self.assertIn("--onefile", text)
+        self.assertIn("--onedir", text)
+        self.assertNotIn("--onefile", text)
         self.assertIn("--windowed", text)
         self.assertIn("sgfx-preflight", text)
         self.assertIn("desktop_native/resources/exe_ico.ico", text)
@@ -96,7 +97,8 @@ class TestNativeScaffold(unittest.TestCase):
         script_path = ROOT / "scripts" / "package_native_shell_bundle.ps1"
         text = script_path.read_text(encoding="utf-8")
 
-        self.assertIn("dist\\sgfx-preflight.exe", text)
+        self.assertIn("dist\\sgfx-preflight", text)
+        self.assertIn("dist\\sgfx-preflight\\sgfx-preflight.exe", text)
         self.assertIn("sgfx-preflight.exe", text)
         for asset_name in (
             "sgfx_icon.png",
@@ -109,7 +111,7 @@ class TestNativeScaffold(unittest.TestCase):
             self.assertIn(asset_name, text)
         self.assertIn("SGFX Preflight - Clean Mode.lnk", text)
         self.assertIn("SGFX Preflight - Grafiks Mode.lnk", text)
-        self.assertIn("SGFX Preflight - Web Review Board.lnk", text)
+        self.assertNotIn("SGFX Preflight - Web Review Board.lnk", text)
 
     def test_native_shell_font_discovery_ignores_archives(self) -> None:
         shell_source = (ROOT / "desktop_native" / "src" / "sgfx_shell" / "sgfx_shared_resources.cpp").read_text(encoding="utf-8")

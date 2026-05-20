@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
+    QPushButton,
     QSplitter,
     QStatusBar,
     QVBoxLayout,
@@ -55,20 +56,28 @@ GRAFIKS_GUARDRAILS = (
 )
 
 
+def _clean_presentation_mode(value: str | None) -> str:
+    normalized = str(value or "clean").strip().casefold()
+    return normalized if normalized in {"clean", "grafiks"} else "clean"
+
+
 class DesktopMainWindow(QMainWindow):
-    def __init__(self, *, workspace: Path | None = None, initial_profile_id: str = "") -> None:
+    switch_requested = Signal(str)
+
+    def __init__(self, *, workspace: Path | None = None, initial_profile_id: str = "", initial_mode: str = "clean") -> None:
         super().__init__()
         self.workspace_root = workspace_root(workspace)
         self.initial_profile_id = initial_profile_id.strip().upper()
+        self.presentation_mode = _clean_presentation_mode(initial_mode)
         self._runner: ActionRunner | None = None
         self._current_run_id = ""
         self._current_snapshot: DesktopActionSnapshot | None = None
         self._copy_map: dict[str, str] = {}
         self._action_tab_buttons: dict[str, ActionTabButton] = {}
 
-        self.setWindowTitle("SGFX: Project Quality-Hero - Grafiks Operator Console")
         self.resize(1640, 950)
         self._build_ui()
+        self._set_presentation_mode(self.presentation_mode)
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(800)
         self._poll_timer.timeout.connect(self._poll_current_action)
@@ -82,7 +91,7 @@ class DesktopMainWindow(QMainWindow):
 
         self.header_banner = HeaderBanner(
             "SGFX: Project Quality-Hero",
-            "Grafiks Operator Console",
+            "Clean Operator Console",
             central,
             logo_path=runtime_asset_path("framework_sgfx_logo.png"),
         )
@@ -94,6 +103,24 @@ class DesktopMainWindow(QMainWindow):
         mode_label = QLabel("Recommended SG action tabs for the selected live slice.")
         mode_label.setObjectName("modeLabel")
         mode_layout.addWidget(mode_label)
+
+        self.presentation_toggle_host = QWidget(self.mode_panel)
+        presentation_toggle_layout = QHBoxLayout(self.presentation_toggle_host)
+        presentation_toggle_layout.setContentsMargins(0, 0, 0, 0)
+        presentation_toggle_layout.setSpacing(6)
+        self.clean_mode_button = QPushButton("Clean", self.presentation_toggle_host)
+        self.grafiks_mode_button = QPushButton("Grafiks", self.presentation_toggle_host)
+        for button in (self.clean_mode_button, self.grafiks_mode_button):
+            button.setCheckable(True)
+            button.setMinimumHeight(30)
+            button.setMinimumWidth(96)
+            button.setObjectName("presentationToggle")
+        self.clean_mode_button.clicked.connect(lambda: self._request_presentation_mode("clean"))
+        self.grafiks_mode_button.clicked.connect(lambda: self._request_presentation_mode("grafiks"))
+        presentation_toggle_layout.addWidget(self.clean_mode_button)
+        presentation_toggle_layout.addWidget(self.grafiks_mode_button)
+        presentation_toggle_layout.addStretch(1)
+        mode_layout.addWidget(self.presentation_toggle_host)
 
         self.action_tab_host = QWidget(self.mode_panel)
         self.action_tab_layout = QHBoxLayout(self.action_tab_host)
@@ -167,8 +194,36 @@ class DesktopMainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         status = QStatusBar(self)
-        status.showMessage("Grafiks Operator Console - local evidence only")
         self.setStatusBar(status)
+
+    def _request_presentation_mode(self, mode: str) -> None:
+        normalized = _clean_presentation_mode(mode)
+        if normalized == self.presentation_mode:
+            self._set_presentation_mode(normalized)
+            return
+        self.switch_requested.emit(normalized)
+
+    def _set_presentation_mode(self, mode: str) -> None:
+        self.presentation_mode = _clean_presentation_mode(mode)
+        is_clean = self.presentation_mode == "clean"
+        subtitle = "Clean Operator Console" if is_clean else "Grafiks Operator Console"
+        self.setWindowTitle(f"SGFX: Project Quality-Hero - {subtitle}")
+        self.header_banner.subtitle = subtitle
+        self.clean_mode_button.setChecked(is_clean)
+        self.grafiks_mode_button.setChecked(not is_clean)
+        self.statusBar().showMessage(f"{subtitle} - local evidence only")
+        self._apply_presentation_property()
+        self.header_banner.update()
+
+    def _apply_presentation_property(self) -> None:
+        widgets = [self, self.centralWidget(), self.statusBar(), *self.findChildren(QWidget)]
+        for widget in widgets:
+            if widget is None:
+                continue
+            widget.setProperty("sgfxMode", self.presentation_mode)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.update()
 
     def _build_left_column(self) -> QWidget:
         widget = QWidget(self)

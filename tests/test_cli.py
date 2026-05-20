@@ -103,7 +103,7 @@ def _write_qa_hero_readiness_state(root: Path) -> None:
 
 
 class TestCLI(unittest.TestCase):
-    def test_frozen_exe_entry_defaults_to_grafiks_desktop_when_double_clicked(self) -> None:
+    def test_frozen_exe_entry_defaults_to_clean_dashboard_when_double_clicked(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 
         with mock.patch("sg_preflight.cli.main", return_value=17) as runner:
@@ -112,9 +112,9 @@ class TestCLI(unittest.TestCase):
                     result = module.main([])
 
         self.assertEqual(result, 17)
-        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "grafiks", "--workspace", r"C:\bundle"])
+        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "clean", "--workspace", r"C:\bundle"])
 
-    def test_frozen_exe_entry_routes_explicit_clean_to_desktop_fallback(self) -> None:
+    def test_frozen_exe_entry_keeps_explicit_clean_dashboard_mode(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 
         with mock.patch("sg_preflight.cli.main", return_value=29) as runner:
@@ -123,7 +123,59 @@ class TestCLI(unittest.TestCase):
                     result = module.main(["dashboard", "run", "--ui-mode", "clean"])
 
         self.assertEqual(result, 29)
-        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "grafiks", "--workspace", r"C:\bundle"])
+        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "clean", "--workspace", r"C:\bundle"])
+
+    def test_frozen_exe_entry_keeps_inline_clean_dashboard_mode(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=29) as runner:
+            with mock.patch.object(module, "default_workspace", return_value=r"C:\bundle"):
+                with mock.patch.object(module.sys, "frozen", True, create=True):
+                    result = module.main(["dashboard", "run", "--ui-mode=clean"])
+
+        self.assertEqual(result, 29)
+        runner.assert_called_once_with(["dashboard", "run", "--ui-mode=clean", "--workspace", r"C:\bundle"])
+
+    def test_frozen_exe_entry_adds_workspace_for_dashboard_without_ui_mode(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=29) as runner:
+            with mock.patch.object(module, "default_workspace", return_value=r"C:\bundle"):
+                with mock.patch.object(module.sys, "frozen", True, create=True):
+                    result = module.main(["dashboard", "run"])
+
+        self.assertEqual(result, 29)
+        runner.assert_called_once_with(["dashboard", "run", "--workspace", r"C:\bundle"])
+
+    def test_frozen_exe_entry_installs_no_window_subprocess_patch(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=41):
+            with mock.patch("sg_preflight.subprocess_utils.install_no_window_subprocess_patch") as installer:
+                with mock.patch.object(module.sys, "frozen", True, create=True):
+                    result = module.main(["--help"])
+
+        self.assertEqual(result, 41)
+        installer.assert_called_once_with()
+
+    def test_no_window_subprocess_patch_keeps_popen_subclassable(self) -> None:
+        if not hasattr(subprocess, "CREATE_NO_WINDOW"):
+            self.skipTest("Windows-only subprocess creation flag")
+        module = importlib.import_module("sg_preflight.subprocess_utils")
+        original_popen = module.subprocess.Popen
+        original_patched = module._PATCHED
+        try:
+            module.subprocess.Popen = module._ORIGINAL_POPEN
+            module._PATCHED = False
+            module.install_no_window_subprocess_patch()
+
+            class ProbePopen(module.subprocess.Popen):
+                pass
+
+            self.assertTrue(issubclass(ProbePopen, module._ORIGINAL_POPEN))
+        finally:
+            module.subprocess.Popen = original_popen
+            module._PATCHED = original_patched
 
     def test_frozen_exe_entry_keeps_server_mode_server_only_when_requested(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
@@ -754,34 +806,41 @@ class TestCLI(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             _write_screenshot_test_state(root)
+            clean_env = {
+                "SG_BMW_CAR_MODELS_ROOT": "",
+                "SG_CARMODELS_REPO": "",
+                "SG-CarModels-Repo": "",
+                "Digital-3D-Car-Repo": "",
+            }
 
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
-                result = main(
-                    [
-                        "screenshot-test-state",
-                        "read",
-                        "--workspace",
-                        str(root),
-                        "--profile",
-                        "G65",
-                        "--json",
-                    ]
-                )
+            with mock.patch.dict("os.environ", clean_env):
+                with redirect_stdout(stdout):
+                    result = main(
+                        [
+                            "screenshot-test-state",
+                            "read",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G65",
+                            "--json",
+                        ]
+                    )
 
-            markdown_stdout = io.StringIO()
-            with redirect_stdout(markdown_stdout):
-                markdown_result = main(
-                    [
-                        "screenshot-test-state",
-                        "read",
-                        "--workspace",
-                        str(root),
-                        "--profile",
-                        "G65",
-                        "--markdown",
-                    ]
-                )
+                markdown_stdout = io.StringIO()
+                with redirect_stdout(markdown_stdout):
+                    markdown_result = main(
+                        [
+                            "screenshot-test-state",
+                            "read",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G65",
+                            "--markdown",
+                        ]
+                    )
 
         self.assertEqual(result, 0)
         payload = json.loads(stdout.getvalue())
@@ -910,7 +969,8 @@ class TestCLI(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
-        self.assertIn("grafiks desktop operator shell", result.stdout.lower())
+        self.assertIn("desktop operator shell", result.stdout.lower())
+        self.assertIn("--ui-mode", result.stdout)
 
     def test_desktop_state_profiles_help_uses_available_vocab(self) -> None:
         result = subprocess.run(
@@ -942,7 +1002,7 @@ class TestCLI(unittest.TestCase):
         with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=7) as runner:
             result = main(["desktop", "--profile", "G65"])
         self.assertEqual(result, 7)
-        runner.assert_called_once_with(workspace=None, initial_profile_id="G65")
+        runner.assert_called_once_with(workspace=None, initial_profile_id="G65", initial_mode="clean")
 
     def test_desktop_state_surfaces_returns_four_grafiks_evidence_cards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

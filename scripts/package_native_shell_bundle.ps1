@@ -108,9 +108,10 @@ foreach ($dir in @($workspaceDir, $pythonDir, $resourcesDir, $fontsDir)) {
 
 Copy-Tree -Source $exePath -Destination (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe")
 
-$sgfxExePath = Join-Path $repoRoot "dist\sgfx-preflight.exe"
+$sgfxExeDir = Join-Path $repoRoot "dist\sgfx-preflight"
+$sgfxExePath = Join-Path $sgfxExeDir "sgfx-preflight.exe"
 if (Test-Path $sgfxExePath) {
-    Copy-Tree -Source $sgfxExePath -Destination (Join-Path $resolvedBundleDir "sgfx-preflight.exe")
+    Copy-Tree -Source $sgfxExeDir -Destination (Join-Path $resolvedBundleDir "dist\sgfx-preflight")
 }
 
 $bundleAssetItems = @(
@@ -298,7 +299,7 @@ function New-SgfxShortcut {
         [string]$Arguments
     )
 
-    $target = Join-Path $resolvedBundleDir "sgfx-preflight.exe"
+    $target = Join-Path $resolvedBundleDir "dist\sgfx-preflight\sgfx-preflight.exe"
     if (-not (Test-Path $target)) {
         return
     }
@@ -315,11 +316,10 @@ function New-SgfxShortcut {
 
 New-SgfxShortcut -Name "SGFX Preflight - Clean Mode.lnk" -Arguments "dashboard run --ui-mode clean"
 New-SgfxShortcut -Name "SGFX Preflight - Grafiks Mode.lnk" -Arguments "dashboard run --ui-mode grafiks"
-New-SgfxShortcut -Name "SGFX Preflight - Web Review Board.lnk" -Arguments "ui --host 127.0.0.1 --port 8080"
 
 $manifest = [ordered]@{
     exe = (Join-Path $resolvedBundleDir "sg_preflight_native_shell.exe")
-    sgfx_preflight_exe = if (Test-Path (Join-Path $resolvedBundleDir "sgfx-preflight.exe")) { (Join-Path $resolvedBundleDir "sgfx-preflight.exe") } else { "" }
+    sgfx_preflight_exe = if (Test-Path (Join-Path $resolvedBundleDir "dist\sgfx-preflight\sgfx-preflight.exe")) { (Join-Path $resolvedBundleDir "dist\sgfx-preflight\sgfx-preflight.exe") } else { "" }
     python = $bundledPythonExe
     workspace = $workspaceDir
     resources = if ((Test-Path $resourcesDir) -and ((Get-ChildItem -LiteralPath $resourcesDir -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1))) { $resourcesDir } else { "" }

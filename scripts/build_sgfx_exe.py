@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import shutil
 import sys
 
 
@@ -33,7 +34,7 @@ def build_pyinstaller_args() -> list[str]:
     args = [
         "--noconfirm",
         "--clean",
-        "--onefile",
+        "--onedir",
         "--windowed",
         "--name",
         "sgfx-preflight",
@@ -56,6 +57,14 @@ def build_pyinstaller_args() -> list[str]:
     return args
 
 
+def clean_stale_outputs() -> None:
+    for path in (DIST_PATH / "sgfx-preflight.exe", DIST_PATH / "sgfx-preflight"):
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build the SGFX Preflight Windows executable.")
     parser.add_argument("--print-args", action="store_true", help="Print PyInstaller arguments without building")
@@ -72,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     except ImportError as exc:
         raise SystemExit("PyInstaller is required. Install with `pip install -e .[packaging]`.") from exc
 
+    clean_stale_outputs()
     PyInstaller.__main__.run(pyinstaller_args)
     return 0
 

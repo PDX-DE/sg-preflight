@@ -18,7 +18,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 - QA Hero readiness reader: read-only presence and count checks for documented Quality Hero assets such as LightFX, WelcomeFX, ShadesFX, CarPaint, AnchorPoints, Constants, and Perspectives.
 - CLI uniformity: read/status commands support `--format text|json|markdown` and `--output-path` / `--out` where relevant, while preserving compatible `--json` and `--markdown` aliases.
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
-- Clean-first dashboard mode: `dashboard run --ui-mode clean` launches the neutral NiceGUI work view by default. `dashboard run --ui-mode grafiks` launches the PySide6 Grafiks operator console. Both modes are local evidence views and do not change backend QA logic.
+- Clean dashboard mode: `python -m sg_preflight dashboard run --ui-mode clean` launches the neutral NiceGUI work view from source. The packaged Windows executable embeds that NiceGUI Clean layout inside a desktop window by default and lets the operator toggle to Grafiks inside the same `.exe`. Both modes are local evidence views and do not change backend QA logic.
 - OpenHTF station MVP: local station surface for delivery checklist, screenshot test state, daily digest, and manual review companion phases. Internal OpenHTF execution state is evidence status only; manual review remains required.
 - Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--confirm`.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
@@ -33,9 +33,9 @@ It is not a production deployment, not a delivery package, and not a replacement
 - `tests/` - automated tests shipped with the curated bundle.
 - `config/` - SGFX rule and profile configuration.
 - `docs/` - curated team-facing docs only.
-- `sgfx-preflight.exe` - optional packaged Windows executable when the bundle is prepared from a built `dist\sgfx-preflight.exe`.
+- `dist\sgfx-preflight\sgfx-preflight.exe` - optional packaged Windows executable when the bundle is prepared from a built onedir executable folder.
 - SGFX icons and logos: `sgfx_icon.png`, `framework_sgfx_logo.png`, `logo_sgfx.png`, `exe_ico.png`, `exe_ico.ico`, and `debug_icon.ico` support the Windows executable, Clean dashboard, Grafiks shell, and web favicon.
-- Optional shortcuts: `SGFX Preflight - Clean Mode.lnk`, `SGFX Preflight - Grafiks Mode.lnk`, and `SGFX Preflight - Web Review Board.lnk` can be generated during bundle packaging when the executable exists.
+- Optional shortcuts: `SGFX Preflight - Clean Mode.lnk` and `SGFX Preflight - Grafiks Mode.lnk` can be generated during bundle packaging when the executable exists.
 - Root metadata: `pyproject.toml`, `LICENSE`, `NOTICE.md`, `SECURITY.md`, `CONTRIBUTING.md`, this `README.md`, and a clean local-alpha `CHANGELOG.md`.
 
 Internal coordination notes, research notes, generated `out/` artifacts, build outputs, local-only notes, local-only evidence files, audio files, BMW source content, and unrelated R&D material are intentionally not included.
@@ -75,17 +75,16 @@ The direct alias remains available:
 python -m sg_preflight desktop --workspace C:\repositories\trunk --profile <profile>
 ```
 
-When `sgfx-preflight.exe` is included in a prepared bundle, the same surfaces are available from one executable:
+When `dist\sgfx-preflight\sgfx-preflight.exe` is included in a prepared bundle, the same surfaces are available from one executable:
 
 ```powershell
-.\sgfx-preflight.exe
-.\sgfx-preflight.exe dashboard run --workspace C:\repositories\trunk --ui-mode clean
-.\sgfx-preflight.exe dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
-.\sgfx-preflight.exe ui --host 127.0.0.1 --port 8080
-.\sgfx-preflight.exe list-profiles --format json
+.\dist\sgfx-preflight\sgfx-preflight.exe
+.\dist\sgfx-preflight\sgfx-preflight.exe dashboard run --workspace C:\repositories\trunk --ui-mode clean
+.\dist\sgfx-preflight\sgfx-preflight.exe dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
+.\dist\sgfx-preflight\sgfx-preflight.exe list-profiles --format json
 ```
 
-Double-clicking the executable without arguments opens the Grafiks desktop console by default. In the packaged executable, Clean dashboard requests use the desktop fallback unless `--no-native` is explicitly requested for local server checks; server checks do not auto-open a browser. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
+Double-clicking the executable without arguments opens the embedded NiceGUI Clean layout in a desktop window. In the packaged executable, Clean and Grafiks dashboard requests stay inside the `.exe`; `--no-native` is reserved for local server diagnostics. The packaged desktop path does not open an external browser. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
 
 ## Building the Windows Executable
 
@@ -96,7 +95,7 @@ python -m pip install -e .[packaging,desktop]
 python scripts\build_sgfx_exe.py
 ```
 
-The build writes `dist\sgfx-preflight.exe`. The executable embeds the SGFX app icon and includes the SGFX logo assets used by Clean, Grafiks, and the web review board. Generated `dist\` and `build\` folders remain local build outputs and are not source files.
+The build writes the folder `dist\sgfx-preflight\` with `sgfx-preflight.exe` and its support files. This avoids one-file extraction delays on launch. The executable embeds the SGFX app icon and includes the SGFX logo assets used by Clean, Grafiks, and the web review board. Generated `dist\` and `build\` folders remain local build outputs and are not source files.
 
 ## Optional OpenHTF Station Smoke
 

@@ -115,4 +115,97 @@ QSplitter::handle {
   background: rgba(25, 78, 57, 120);
   width: 3px;
 }
+QPushButton#presentationToggle {
+  background: #10181c;
+  color: #dfe9e2;
+  border: 1px solid #225846;
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-family: "Bahnschrift SemiBold", "Segoe UI", sans-serif;
+}
+QPushButton#presentationToggle:checked {
+  background: #146a47;
+  color: #ffffff;
+  border: 1px solid #74f6a6;
+}
+*[sgfxMode="clean"] {
+  color: #17212b;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 12px;
+}
+QLabel[sgfxMode="clean"]#modeLabel,
+QLabel[sgfxMode="clean"]#panelHint,
+QLabel[sgfxMode="clean"]#progressInfo,
+QLabel[sgfxMode="clean"]#commandLabel,
+QLabel[sgfxMode="clean"]#runStatus {
+  color: #596775;
+}
+QLabel[sgfxMode="clean"]#runTitle {
+  color: #16212c;
+  font-family: "Segoe UI Semibold", "Segoe UI", sans-serif;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+QPlainTextEdit[sgfxMode="clean"],
+QListWidget[sgfxMode="clean"] {
+  background: #ffffff;
+  border: 1px solid #d6dde4;
+  border-radius: 4px;
+  selection-background-color: #dbeafe;
+  selection-color: #17212b;
+  color: #17212b;
+}
+QPlainTextEdit[sgfxMode="clean"]#summaryText,
+QPlainTextEdit[sgfxMode="clean"]#logTail {
+  background: #ffffff;
+}
+QListWidget[sgfxMode="clean"]::item {
+  background: transparent;
+  color: #17212b;
+  padding: 6px 7px;
+  margin: 1px 0px;
+  border: 1px solid transparent;
+}
+QListWidget[sgfxMode="clean"]::item:selected {
+  background: #dbeafe;
+  color: #17212b;
+  border: 1px solid #8fb7df;
+}
+QListWidget[sgfxMode="clean"]::item:hover:!selected {
+  background: #f1f5f9;
+}
+QProgressBar[sgfxMode="clean"] {
+  min-height: 16px;
+  background: #ffffff;
+  border: 1px solid #cbd5df;
+  border-radius: 4px;
+  text-align: center;
+  color: #17212b;
+}
+QProgressBar[sgfxMode="clean"]::chunk {
+  background: #4e7aa6;
+  border-radius: 3px;
+}
+QStatusBar[sgfxMode="clean"] {
+  background: #ffffff;
+  color: #41505e;
+  border-top: 1px solid #d6dde4;
+}
+QSplitter[sgfxMode="clean"]::handle {
+  background: #d6dde4;
+  width: 3px;
+}
+QPushButton[sgfxMode="clean"]#presentationToggle {
+  background: #ffffff;
+  color: #25313d;
+  border: 1px solid #cbd5df;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-family: "Segoe UI Semibold", "Segoe UI", sans-serif;
+}
+QPushButton[sgfxMode="clean"]#presentationToggle:checked {
+  background: #dbeafe;
+  color: #17212b;
+  border: 1px solid #7da8d2;
+}
 """

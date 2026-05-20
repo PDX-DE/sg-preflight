@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import socket
+import subprocess
+import sys
+import tempfile
+from time import monotonic
 from typing import Any, Callable
 
 from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_asset_root
@@ -17,6 +22,11 @@ from sg_preflight.utils import ensure_parent
 
 DASHBOARD_TITLE = "SGFX QA Preflight"
 DASHBOARD_HEADER = "SGFX: Project Quality-Hero"
+STARTUP_LOG_NAME = "sgfx-preflight-startup.log"
+WEBVIEW2_RUNTIME_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+NATIVE_RETURN_FALLBACK_SECONDS = 5.0
+BROWSER_FALLBACK_ENV = "SGFX_PREFLIGHT_BROWSER_FALLBACK"
+FORCE_FROZEN_NATIVE_ENV = "SGFX_PREFLIGHT_FORCE_FROZEN_NATIVE"
 DASHBOARD_GUARDRAILS = (
     "Manual review remains required.",
     "Decision: not approval - evidence only.",
@@ -67,6 +77,41 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def startup_log_path() -> Path:
+    return Path(tempfile.gettempdir()) / STARTUP_LOG_NAME
+
+
+def append_startup_log(message: str) -> None:
+    try:
+        with startup_log_path().open("a", encoding="utf-8") as handle:
+            handle.write(f"{datetime.now().isoformat(timespec='seconds')}: {message}\n")
+    except OSError:
+        return
+
+
+def webview2_runtime_available() -> bool:
+    if sys.platform != "win32":
+        return True
+    try:
+        import winreg
+    except ImportError:
+        return False
+    subkeys = (
+        rf"SOFTWARE\Microsoft\EdgeUpdate\ClientState\{WEBVIEW2_RUNTIME_GUID}",
+        rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\ClientState\{WEBVIEW2_RUNTIME_GUID}",
+        rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{WEBVIEW2_RUNTIME_GUID}",
+        rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{WEBVIEW2_RUNTIME_GUID}",
+    )
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for subkey in subkeys:
+            try:
+                with winreg.OpenKey(hive, subkey):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
 def _workspace(workspace: Path | str) -> Path:
     return Path(workspace).resolve()
 
@@ -114,6 +159,94 @@ def _dashboard_run_port(*, native: bool, port: int) -> int:
     if native or port:
         return port
     return _find_open_dashboard_port()
+
+
+def _run_nicegui(
+    ui: Any,
+    *,
+    host: str,
+    port: int,
+    native: bool,
+    reload: bool,
+    show: bool,
+    favicon_path: Path,
+) -> None:
+    kwargs: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "native": native,
+        "reload": reload,
+        "title": DASHBOARD_TITLE,
+        "show": show,
+    }
+    if favicon_path.is_file():
+        kwargs["favicon"] = str(favicon_path)
+    ui.run(**kwargs)
+
+
+def _browser_fallback_show_requested() -> bool:
+    return os.environ.get(BROWSER_FALLBACK_ENV) == "1"
+
+
+def _frozen_native_window_allowed() -> bool:
+    return not getattr(sys, "frozen", False) or os.environ.get(FORCE_FROZEN_NATIVE_ENV) == "1"
+
+
+def _packaged_native_unavailable() -> RuntimeError:
+    return RuntimeError(
+        "Packaged Clean dashboard native mode is hosted by the embedded Clean desktop shell. "
+        "Use the executable default Clean mode, or pass --no-native only for local server diagnostics."
+    )
+
+
+def _launch_browser_fallback_process(
+    *,
+    profile_id: str,
+    workspace: Path,
+    bmw_root: Path | str | None,
+    ui_mode: str | None,
+    host: str,
+    fallback_port: int,
+) -> int:
+    from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
+
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, "dashboard", "run"]
+    else:
+        command = [sys.executable, "-B", "-m", "sg_preflight", "dashboard", "run"]
+    if profile_id:
+        command.extend(["--profile", profile_id])
+    command.extend(
+        [
+            "--workspace",
+            str(workspace),
+            "--ui-mode",
+            _clean_theme(ui_mode),
+            "--host",
+            host,
+            "--port",
+            str(fallback_port),
+            "--no-native",
+        ]
+    )
+    if bmw_root is not None:
+        command.extend(["--bmw-root", str(bmw_root)])
+    env = os.environ.copy()
+    env[BROWSER_FALLBACK_ENV] = "1"
+    append_startup_log(f"launching browser fallback process on {host}:{fallback_port}")
+    child = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        **hidden_subprocess_kwargs(),
+    )
+    try:
+        exit_code = child.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        return 0
+    raise RuntimeError(f"Browser fallback process exited early with code {exit_code}")
 
 
 def dashboard_profile_options() -> list[dict[str, str]]:
@@ -711,22 +844,95 @@ def run_dashboard(
 ) -> int:
     from sg_preflight.dashboard.dependency import require_nicegui
 
-    ui, app = require_nicegui()
+    try:
+        ui, app = require_nicegui()
+    except Exception as exc:
+        append_startup_log(f"NiceGUI import failed: {type(exc).__name__}: {exc!r}")
+        raise
     root = _workspace(workspace)
-    _render_dashboard(ui, app, initial_profile_id=profile_id, workspace=root, bmw_root=bmw_root, ui_mode=ui_mode)
+    try:
+        _render_dashboard(ui, app, initial_profile_id=profile_id, workspace=root, bmw_root=bmw_root, ui_mode=ui_mode)
+    except Exception as exc:
+        append_startup_log(f"dashboard render failed: {type(exc).__name__}: {exc!r}")
+        raise
     favicon_path = runtime_asset_path("sgfx_icon.png")
     run_port = _dashboard_run_port(native=native, port=port)
-    show_browser = False if not native else True
-    if favicon_path.is_file():
-        ui.run(
+    if native:
+        append_startup_log(f"attempting NiceGUI native mode on {host}:{run_port or 'auto'}")
+        if not _frozen_native_window_allowed():
+            append_startup_log("packaged native window is disabled; browser fallback suppressed for desktop builds")
+            raise _packaged_native_unavailable()
+        if webview2_runtime_available():
+            try:
+                native_started_at = monotonic()
+                _run_nicegui(
+                    ui,
+                    host=host,
+                    port=run_port,
+                    native=True,
+                    reload=reload,
+                    show=True,
+                    favicon_path=favicon_path,
+                )
+                native_elapsed = monotonic() - native_started_at
+                if native_elapsed >= NATIVE_RETURN_FALLBACK_SECONDS:
+                    return 0
+                append_startup_log(
+                    f"native returned after {native_elapsed:.1f}s without a durable window; "
+                    "falling back to browser mode"
+                )
+                if getattr(sys, "frozen", False):
+                    append_startup_log("browser fallback suppressed for packaged desktop build")
+                    raise _packaged_native_unavailable()
+                fallback_port = _dashboard_run_port(native=False, port=port)
+                return _launch_browser_fallback_process(
+                    profile_id=profile_id,
+                    workspace=root,
+                    bmw_root=bmw_root,
+                    ui_mode=ui_mode,
+                    host=host,
+                    fallback_port=fallback_port,
+                )
+            except Exception as exc:
+                append_startup_log(f"native failed: {type(exc).__name__}: {exc!r}")
+                if getattr(sys, "frozen", False):
+                    append_startup_log("browser fallback suppressed for packaged desktop build")
+                    raise _packaged_native_unavailable() from exc
+                fallback_port = _dashboard_run_port(native=False, port=port)
+                return _launch_browser_fallback_process(
+                    profile_id=profile_id,
+                    workspace=root,
+                    bmw_root=bmw_root,
+                    ui_mode=ui_mode,
+                    host=host,
+                    fallback_port=fallback_port,
+                )
+        else:
+            append_startup_log("WebView2 runtime not found; falling back to browser mode")
+        if getattr(sys, "frozen", False):
+            append_startup_log("browser fallback suppressed for packaged desktop build")
+            raise _packaged_native_unavailable()
+        fallback_port = _dashboard_run_port(native=False, port=port)
+        append_startup_log(f"falling back to browser mode on {host}:{fallback_port}")
+        _run_nicegui(
+            ui,
             host=host,
-            port=run_port,
-            native=native,
+            port=fallback_port,
+            native=False,
             reload=reload,
-            title=DASHBOARD_TITLE,
-            favicon=str(favicon_path),
-            show=show_browser,
+            show=True,
+            favicon_path=favicon_path,
         )
-    else:
-        ui.run(host=host, port=run_port, native=native, reload=reload, title=DASHBOARD_TITLE, show=show_browser)
+        return 0
+
+    append_startup_log(f"starting dashboard server mode on {host}:{run_port}")
+    _run_nicegui(
+        ui,
+        host=host,
+        port=run_port,
+        native=False,
+        reload=reload,
+        show=_browser_fallback_show_requested(),
+        favicon_path=favicon_path,
+    )
     return 0

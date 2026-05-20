@@ -1134,11 +1134,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     desktop = sub.add_parser(
         "desktop",
-        help="Start the Grafiks desktop operator shell",
-        description="Start the Grafiks desktop operator shell",
+        help="Start the desktop operator shell",
+        description="Start the desktop operator shell",
     )
     desktop.add_argument("--profile", help="Optional initial profile id to focus when the shell opens")
     desktop.add_argument("--workspace", help="Workspace root for SGFX read-only checks")
+    desktop.add_argument("--ui-mode", default="clean", choices=("clean", "grafiks"), help="Desktop presentation mode")
 
     desktop_state = sub.add_parser(
         "desktop-state",
@@ -2038,13 +2039,21 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return 1
 
     if args.command == "dashboard":
-        if args.dashboard_command == "run" and args.ui_mode == "grafiks":
+        use_desktop_shell = (
+            args.dashboard_command == "run"
+            and (
+                args.ui_mode == "grafiks"
+                or (getattr(sys, "frozen", False) and not args.no_native and args.ui_mode in {None, "clean"})
+            )
+        )
+        if use_desktop_shell:
             try:
                 from sg_preflight.desktop.app import run_desktop_app
 
                 return run_desktop_app(
                     workspace=Path(args.workspace),
                     initial_profile_id=args.profile or "",
+                    initial_mode=args.ui_mode or "clean",
                 )
             except RuntimeError as exc:
                 print(_console_safe(str(exc)), file=sys.stderr)
@@ -2070,7 +2079,20 @@ def _main_impl(argv: list[str] | None = None) -> int:
             print(_console_safe(str(exc)), file=sys.stderr)
             return 1
         except Exception as exc:
-            print(_console_safe(f"dashboard failed: {exc}"), file=sys.stderr)
+            log_path = None
+            if getattr(sys, "frozen", False):
+                try:
+                    from sg_preflight.exe_entry import write_startup_error_log
+
+                    log_path = write_startup_error_log(exc)
+                except Exception:
+                    log_path = None
+                if args.dashboard_command == "run" and not args.no_native:
+                    raise
+            message = f"dashboard failed: {exc}"
+            if log_path is not None:
+                message = f"{message}. Details were written to: {log_path}"
+            print(_console_safe(message), file=sys.stderr)
             return 1
 
     if args.command == "ui":
@@ -2084,6 +2106,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return run_desktop_app(
                 workspace=Path(args.workspace) if args.workspace else None,
                 initial_profile_id=args.profile or "",
+                initial_mode=args.ui_mode,
             )
         except RuntimeError as exc:
             print(_console_safe(str(exc)), file=sys.stderr)

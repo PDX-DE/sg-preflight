@@ -43,11 +43,15 @@ def _write_export_size_analysis_workbook(path: Path, *, profile: str = "G65") ->
 
 
 class TestDesktopEvidenceModel(unittest.TestCase):
-    def test_grafiks_shell_source_carries_sgfx_header_and_guardrails(self) -> None:
+    def test_desktop_shell_source_carries_sgfx_header_toggle_and_guardrails(self) -> None:
         main_window_source = (ROOT / "sg_preflight" / "desktop" / "main_window.py").read_text(encoding="utf-8")
 
         self.assertIn("SGFX: Project Quality-Hero", main_window_source)
+        self.assertIn("Clean Operator Console", main_window_source)
         self.assertIn("Grafiks Operator Console", main_window_source)
+        self.assertIn("clean_mode_button", main_window_source)
+        self.assertIn("grafiks_mode_button", main_window_source)
+        self.assertIn("_set_presentation_mode", main_window_source)
         self.assertIn("Manual review remains required.", main_window_source)
         self.assertIn("Decision: not approval - evidence only.", main_window_source)
         self.assertIn("BMW Git access is read-only. SGFX never modifies BMW source.", main_window_source)
@@ -61,10 +65,22 @@ class TestDesktopEvidenceModel(unittest.TestCase):
 
         self.assertIn("QIcon", app_source)
         self.assertIn("setWindowIcon", app_source)
+        self.assertIn('initial_mode: str = "clean"', app_source)
         self.assertIn("sgfx_icon.png", app_source)
         self.assertIn("framework_sgfx_logo.png", main_window_source)
         self.assertIn("QPixmap", widgets_source)
         self.assertIn("logo_path", widgets_source)
+
+    def test_clean_host_embeds_nicegui_without_external_browser(self) -> None:
+        host_source = (ROOT / "sg_preflight" / "desktop" / "clean_host.py").read_text(encoding="utf-8")
+        app_source = (ROOT / "sg_preflight" / "desktop" / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn("QWebEngineView", host_source)
+        self.assertIn("--no-native", host_source)
+        self.assertIn("stdout=subprocess.DEVNULL", host_source)
+        self.assertIn("hidden_subprocess_kwargs", host_source)
+        self.assertIn("switch_requested", host_source)
+        self.assertIn("CleanDashboardWindow", app_source)
 
     def test_desktop_surface_items_exposes_clean_mode_evidence_surfaces(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
