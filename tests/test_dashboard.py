@@ -449,3 +449,194 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
 
         self.assertEqual(result, 5)
         runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="G70", initial_mode="clean")
+
+
+# Phase B-3 + B-4 — Daily Digest action + partial-artifact surfacing + Screenshot Test State ownership note.
+# Appended below the earlier Phase B classes to avoid line-range overlaps with their additions.
+
+
+class TestDailyDigestPage(unittest.TestCase):
+    def test_daily_digest_page_exposes_build_review_package_action(self) -> None:
+        from sg_preflight.dashboard.main import (
+            DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID,
+            DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL,
+            DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
+            _daily_digest_page,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch(
+                "sg_preflight.dashboard.main.build_latest_daily_digest",
+                return_value={"status": "no_review_package", "data_available": False, "sections": {}},
+            ):
+                page = _daily_digest_page(workspace, "G65")
+
+        actions = page.get("actions", [])
+        self.assertEqual(len(actions), 1)
+        action = actions[0]
+        self.assertEqual(action["id"], DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID)
+        self.assertEqual(action["label"], DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL)
+        self.assertTrue(action["requires_ticket_id"])
+        self.assertEqual(action["ticket_id_hint"], DAILY_DIGEST_TICKET_ID_PLACEHOLDER)
+
+    def test_daily_digest_page_action_carries_active_ticket_id_hint(self) -> None:
+        from sg_preflight.dashboard.main import _daily_digest_page
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch(
+                "sg_preflight.dashboard.main.build_latest_daily_digest",
+                return_value={"status": "no_review_package", "data_available": False, "sections": {}},
+            ):
+                page = _daily_digest_page(workspace, "G65", active_ticket_id="IDCEVODEV-1005738")
+
+        self.assertEqual(page["actions"][0]["ticket_id_hint"], "IDCEVODEV-1005738")
+        self.assertEqual(page["payload"]["active_ticket_id"], "IDCEVODEV-1005738")
+
+    def test_daily_digest_page_flips_to_incomplete_when_partial_sections_have_data(self) -> None:
+        from sg_preflight.dashboard.main import _daily_digest_page
+
+        digest = {
+            "status": "no_review_package",
+            "data_available": False,
+            "sections": {
+                "what_landed_today": {"heading": "What landed today", "count": 2, "empty_message": ""},
+                "workflow_status": {"heading": "Workflow status", "count": 6, "empty_message": ""},
+                "evidence_prepared": {"heading": "Evidence prepared", "count": 0, "empty_message": "No evidence."},
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch(
+                "sg_preflight.dashboard.main.build_latest_daily_digest",
+                return_value=digest,
+            ):
+                page = _daily_digest_page(workspace, "G65")
+
+        self.assertEqual(page["status"], "incomplete")
+        self.assertTrue(page["data_available"])
+        items_by_label = {item["label"]: item for item in page["items"]}
+        self.assertEqual(items_by_label["What landed today"]["status"], "2")
+        self.assertEqual(items_by_label["Workflow status"]["status"], "6")
+        self.assertEqual(items_by_label["Evidence prepared"]["status"], "0")
+
+    def test_daily_digest_page_keeps_missing_when_no_review_package_and_no_partial_signal(self) -> None:
+        from sg_preflight.dashboard.main import _daily_digest_page
+
+        digest = {
+            "status": "no_review_package",
+            "data_available": False,
+            "sections": {
+                "what_landed_today": {"heading": "What landed today", "count": 0, "empty_message": "No commits."},
+                "workflow_status": {"heading": "Workflow status", "count": 0, "empty_message": "No items."},
+                "evidence_prepared": {"heading": "Evidence prepared", "count": 0, "empty_message": "No evidence."},
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch(
+                "sg_preflight.dashboard.main.build_latest_daily_digest",
+                return_value=digest,
+            ):
+                page = _daily_digest_page(workspace, "G65")
+
+        self.assertEqual(page["status"], "missing")
+        self.assertFalse(page["data_available"])
+
+
+class TestScreenshotTestStateOwnershipNote(unittest.TestCase):
+    def test_screenshot_test_state_page_renders_ownership_note(self) -> None:
+        from sg_preflight.dashboard.main import (
+            SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE,
+            build_dashboard_snapshot,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            snapshot = build_dashboard_snapshot("G65", workspace)
+
+        screenshot_page = next(
+            page for page in snapshot["pages"] if page["id"] == "screenshot-test-state"
+        )
+        self.assertEqual(screenshot_page["ownership_note"], SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE)
+        self.assertIn("ci/scripts/car_manager.py screenshots", screenshot_page["ownership_note"])
+        self.assertIn("SGFX reads the output", screenshot_page["ownership_note"])
+
+    def test_other_pages_have_empty_ownership_note(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            snapshot = build_dashboard_snapshot("G65", workspace)
+
+        delivery_page = next(
+            page for page in snapshot["pages"] if page["id"] == "delivery-checklist"
+        )
+        self.assertEqual(delivery_page.get("ownership_note", ""), "")
+
+
+class TestBuildDashboardReviewPackage(unittest.TestCase):
+    def test_build_dashboard_review_package_rejects_empty_ticket_id(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_review_package
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                build_dashboard_review_package(
+                    workspace=Path(tmp), profile_id="G65", ticket_id="   "
+                )
+
+    def test_build_dashboard_review_package_rejects_empty_profile_id(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_review_package
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                build_dashboard_review_package(
+                    workspace=Path(tmp), profile_id="", ticket_id="IDCEVODEV-1005738"
+                )
+
+    def test_build_dashboard_review_package_invokes_ticket_review_cli_via_subprocess(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        fake_completed = mock.Mock(returncode=0, stdout='{"ticket_id": "IDCEVODEV-1005738"}', stderr="")
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch.object(dashboard_main.subprocess, "run", return_value=fake_completed) as run_mock:
+                result = dashboard_main.build_dashboard_review_package(
+                    workspace=workspace,
+                    profile_id="G65",
+                    ticket_id="IDCEVODEV-1005738",
+                )
+
+        run_mock.assert_called_once()
+        cmd, _kwargs = run_mock.call_args.args, run_mock.call_args.kwargs
+        command = cmd[0]
+        self.assertIn("ticket-review", command)
+        self.assertIn("IDCEVODEV-1005738", command)
+        self.assertIn("--workspace", command)
+        self.assertIn(str(workspace.resolve()), command)
+        self.assertIn("--profile-ids", command)
+        self.assertIn("G65", command)
+        self.assertIn("--json", command)
+        self.assertEqual(result["outcome"], "recorded")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["ticket_id"], "IDCEVODEV-1005738")
+        self.assertEqual(result["profile_id"], "G65")
+        self.assertTrue(result["recorded_by_tool"])
+
+    def test_build_dashboard_review_package_marks_failed_outcome_on_nonzero_exit(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        fake_completed = mock.Mock(returncode=1, stdout="", stderr="ticket-review failed: example")
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch.object(dashboard_main.subprocess, "run", return_value=fake_completed):
+                result = dashboard_main.build_dashboard_review_package(
+                    workspace=workspace,
+                    profile_id="G65",
+                    ticket_id="IDCEVODEV-1005738",
+                )
+
+        self.assertEqual(result["outcome"], "failed")
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIn("ticket-review failed", result["stderr_tail"])

@@ -315,6 +315,12 @@ def save_dashboard_preference(workspace: Path | str, theme: str) -> dict[str, st
     return payload
 
 
+SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE = (
+    "Screenshot capture runs from the BMW Git pipeline (`ci/scripts/car_manager.py screenshots`); "
+    "SGFX reads the output."
+)
+
+
 def _reader_page(
     *,
     page_id: str,
@@ -322,6 +328,7 @@ def _reader_page(
     tagline: str,
     reader: Callable[[], dict[str, Any]],
     workspace: Path | str | None = None,
+    ownership_note: str = "",
 ) -> dict[str, Any]:
     try:
         payload = reader()
@@ -330,6 +337,7 @@ def _reader_page(
             "id": page_id,
             "title": title,
             "tagline": tagline,
+            "ownership_note": ownership_note,
             "status": "unknown",
             "data_available": False,
             "summary": f"{title} could not be read: {exc}",
@@ -342,6 +350,7 @@ def _reader_page(
         "id": page_id,
         "title": title,
         "tagline": tagline,
+        "ownership_note": ownership_note,
         "status": _dashboard_status(raw_status, data_available),
         "raw_status": raw_status,
         "data_available": data_available,
@@ -398,7 +407,47 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: payload[key] for key in allowed if key in payload}
 
 
-def _daily_digest_page(workspace: Path, profile_id: str) -> dict[str, Any]:
+DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID = "build-review-package"
+DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL = "Build review package for this workspace"
+DAILY_DIGEST_TICKET_ID_PLACEHOLDER = "e.g., IDCEVODEV-1005738"
+_DAILY_DIGEST_PARTIAL_SECTION_KEYS = (
+    "what_landed_today",
+    "workflow_status",
+    "evidence_prepared",
+    "manual_review_pending",
+)
+
+
+def _section_count(section: object) -> int:
+    if not isinstance(section, dict):
+        return 0
+    try:
+        return int(section.get("count", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _daily_digest_has_partial_signal(sections: dict[str, Any]) -> bool:
+    for key in _DAILY_DIGEST_PARTIAL_SECTION_KEYS:
+        if _section_count(sections.get(key)) > 0:
+            return True
+    return False
+
+
+def _daily_digest_page(
+    workspace: Path,
+    profile_id: str,
+    *,
+    active_ticket_id: str = "",
+) -> dict[str, Any]:
+    actions = [
+        {
+            "id": DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID,
+            "label": DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL,
+            "requires_ticket_id": True,
+            "ticket_id_hint": active_ticket_id.strip() or DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
+        }
+    ]
     try:
         digest = build_latest_daily_digest(workspace=workspace)
     except Exception as exc:
@@ -410,7 +459,8 @@ def _daily_digest_page(workspace: Path, profile_id: str) -> dict[str, Any]:
             "data_available": False,
             "summary": f"Daily digest could not be read: {exc}",
             "items": [],
-            "payload": {"profile_id": profile_id},
+            "actions": actions,
+            "payload": {"profile_id": profile_id, "active_ticket_id": active_ticket_id.strip()},
         }
     sections = digest.get("sections", {}) if isinstance(digest, dict) else {}
     items: list[dict[str, str]] = []
@@ -426,19 +476,27 @@ def _daily_digest_page(workspace: Path, profile_id: str) -> dict[str, Any]:
                     "detail": str(section.get("empty_message", "")) if not section.get("count") else "items available",
                 }
             )
+    raw_status = str(digest.get("status", "unknown"))
+    data_available = bool(digest.get("data_available", False))
+    has_partial = isinstance(sections, dict) and _daily_digest_has_partial_signal(sections)
+    status_value = _dashboard_status(raw_status, data_available)
+    if raw_status == "no_review_package" and has_partial:
+        status_value = "incomplete"
     return {
         "id": "daily-digest",
         "title": "Daily Digest",
         "tagline": "Morning status snapshot for the SG Daily standup.",
-        "status": _dashboard_status(str(digest.get("status", "unknown")), bool(digest.get("data_available", False))),
-        "raw_status": str(digest.get("status", "unknown")),
-        "data_available": bool(digest.get("data_available", False)),
+        "status": status_value,
+        "raw_status": raw_status,
+        "data_available": data_available or has_partial,
         "summary": str(digest.get("no_data_message", "Daily digest snapshot loaded.")),
         "items": items,
+        "actions": actions,
         "payload": {
             "status": digest.get("status", "unknown"),
             "scope": digest.get("scope", []),
             "date": digest.get("date", ""),
+            "active_ticket_id": active_ticket_id.strip(),
         },
     }
 
@@ -577,6 +635,7 @@ def build_dashboard_snapshot(
                     sg_project_root=root,
                 ),
                 workspace=root,
+                ownership_note=SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE,
             ),
             _daily_digest_page(root, resolved_profile_id),
             _manual_review_page(resolved_profile_id, root),
@@ -652,11 +711,98 @@ def record_manual_review_dashboard_step(
     )
 
 
+_BUILD_PACKAGE_TIMEOUT_SECONDS = 600
+
+
+def build_dashboard_review_package(
+    *,
+    workspace: Path | str,
+    profile_id: str,
+    ticket_id: str,
+    timeout_seconds: int = _BUILD_PACKAGE_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    clean_ticket = ticket_id.strip()
+    if not clean_ticket:
+        raise ValueError("Ticket ID required to build a review package.")
+    clean_profile = profile_id.strip()
+    if not clean_profile:
+        raise ValueError("Profile ID required to build a review package.")
+    workspace_path = Path(workspace).resolve()
+    from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
+
+    command = [
+        sys.executable,
+        "-B",
+        "-m",
+        "sg_preflight",
+        "ticket-review",
+        clean_ticket,
+        "--workspace",
+        str(workspace_path),
+        "--profile-ids",
+        clean_profile,
+        "--json",
+    ]
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+        **hidden_subprocess_kwargs(),
+    )
+    outcome = "recorded" if completed.returncode == 0 else "failed"
+    return {
+        "ticket_id": clean_ticket,
+        "profile_id": clean_profile,
+        "workspace": str(workspace_path),
+        "exit_code": completed.returncode,
+        "outcome": outcome,
+        "stdout_tail": completed.stdout[-2000:] if completed.stdout else "",
+        "stderr_tail": completed.stderr[-2000:] if completed.stderr else "",
+        "recorded_by_tool": True,
+    }
+
+
 def _render_status_chip(ui: Any, status: str) -> None:
     ui.badge(status or "unknown").classes("sgfx-status")
 
 
 def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        ownership_note = str(page.get("ownership_note", "")).strip()
+        if ownership_note:
+            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
+        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        rows = [
+            {
+                "label": str(item.get("label", "")),
+                "status": str(item.get("status", "")),
+                "detail": str(item.get("detail", "")),
+            }
+            for item in page.get("items", [])
+            if isinstance(item, dict)
+        ]
+        if rows:
+            ui.table(
+                columns=[
+                    {"name": "label", "label": "Item", "field": "label", "align": "left"},
+                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                    {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                ],
+                rows=rows,
+                row_key="label",
+            ).classes("sgfx-table")
+        else:
+            ui.label("No rows loaded for this page.").classes("sgfx-muted")
+
+
+def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(page["title"])).classes("sgfx-panel-title")
@@ -684,6 +830,45 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
             ).classes("sgfx-table")
         else:
             ui.label("No rows loaded for this page.").classes("sgfx-muted")
+        actions = [
+            action for action in page.get("actions", []) if isinstance(action, dict)
+        ]
+        for action in actions:
+            if action.get("id") != DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID:
+                continue
+            ui.label("Build review package").classes("sgfx-panel-tagline")
+            hint = str(action.get("ticket_id_hint", "")).strip() or DAILY_DIGEST_TICKET_ID_PLACEHOLDER
+            ticket_input = ui.input(label="Ticket ID", placeholder=hint).classes("full-width")
+            status_label = ui.label("Local-only: this runs the read-only `ticket-review` CLI in the background.").classes(
+                "sgfx-muted"
+            )
+
+            def _build(ticket_input=ticket_input, status_label=status_label) -> None:
+                ticket_value = str(ticket_input.value or "").strip()
+                if not ticket_value:
+                    ui.notify("Enter a ticket ID before building a review package.")
+                    return
+                status_label.text = f"Building review package for {ticket_value}..."
+                try:
+                    result = build_dashboard_review_package(
+                        workspace=workspace,
+                        profile_id=str(snapshot["profile_id"]),
+                        ticket_id=ticket_value,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    status_label.text = f"Build failed: {exc}"
+                    ui.notify("Build review package failed.")
+                    return
+                outcome = result.get("outcome", "unknown")
+                exit_code = result.get("exit_code", "?")
+                status_label.text = (
+                    f"Build {outcome} (exit {exit_code}) for {ticket_value}. Refresh to reload digest evidence."
+                )
+                ui.notify(f"Build review package {outcome}.")
+
+            ui.button(str(action.get("label", DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL)), on_click=_build).props(
+                "color=primary"
+            )
 
 
 def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
@@ -745,6 +930,8 @@ def _render_selected_page(
     with container:
         if page_id == "manual-review":
             _render_manual_review_panel(ui, snapshot, workspace)
+        elif page_id == "daily-digest":
+            _render_daily_digest_panel(ui, snapshot, workspace)
         else:
             _render_page_panel(ui, pages_by_id[page_id])
 
