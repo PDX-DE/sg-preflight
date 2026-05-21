@@ -127,16 +127,19 @@ def _digital_repo_check(bmw_root: Path | str | None = None) -> tuple[dict[str, s
 
 def _tool_check(executable_name: str, label: str) -> dict[str, str]:
     found = _find_executable(executable_name)
+    key = executable_name.replace(".exe", "").replace("-", "_").casefold()
+    if key == "racoheadless":
+        key = "raco_headless"
     if found:
         return _check(
-            key=executable_name.replace(".exe", "").replace("-", "_"),
+            key=key,
             label=label,
             status="available",
             detail=f"{label} executable is available.",
             path=found,
         )
     return _check(
-        key=executable_name.replace(".exe", "").replace("-", "_"),
+        key=key,
         label=label,
         status="missing",
         detail=f"{label} executable was not found on PATH or App Paths.",
@@ -256,6 +259,7 @@ def check_delivery_workbook_generation_environment(
         repo_check,
         _python_check(),
         _tool_check("raco.exe", "RaCo"),
+        _tool_check("RaCoHeadless.exe", "RaCoHeadless"),
         _tool_check("blender.exe", "Blender"),
         _disk_space_check(workspace_path, min_free_bytes),
     ]

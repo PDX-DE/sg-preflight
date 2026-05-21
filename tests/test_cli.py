@@ -1049,6 +1049,38 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(payload["status"], "queued")
         self.assertTrue(payload["run_id"])
 
+    def test_dependency_setup_worker_invokes_hidden_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            stdout = io.StringIO()
+            with mock.patch(
+                "sg_preflight.dependency_onboarding.run_dependency_setup_action",
+                return_value={"status": "recorded", "summary": "ok", "is_approval": False},
+            ) as runner:
+                with redirect_stdout(stdout):
+                    result = main(
+                        [
+                            "dependency-setup-worker",
+                            "setup-digital-3d-car-repo",
+                            "--workspace",
+                            str(root),
+                            "--target-path",
+                            str(root / "digital-3d-car-models"),
+                        ]
+                    )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "recorded")
+        runner.assert_called_once_with(
+            action_id="setup-digital-3d-car-repo",
+            workspace=root.resolve(),
+            operator_confirmed=True,
+            target_path=str(root / "digital-3d-car-models"),
+            source_path=None,
+            stream_output=True,
+        )
+
     def test_desktop_state_recent_actions_runs_and_snapshots_use_workspace_override(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

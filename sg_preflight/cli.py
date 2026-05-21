@@ -1099,6 +1099,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_action_worker.add_argument("--run-id", required=True, help=argparse.SUPPRESS)
     run_action_worker.add_argument("--workspace", required=True, help=argparse.SUPPRESS)
 
+    dependency_setup_worker = sub.add_parser("dependency-setup-worker", help=argparse.SUPPRESS)
+    dependency_setup_worker.add_argument("action_id", help=argparse.SUPPRESS)
+    dependency_setup_worker.add_argument("--workspace", required=True, help=argparse.SUPPRESS)
+    dependency_setup_worker.add_argument("--target-path", default="", help=argparse.SUPPRESS)
+    dependency_setup_worker.add_argument("--source-path", default="", help=argparse.SUPPRESS)
+
     station = sub.add_parser("station", help="Run the SGFX OpenHTF station surface")
     station_sub = station.add_subparsers(dest="station_command", required=True)
     station_run = station_sub.add_parser("run", help="Start the local SGFX station")
@@ -2012,6 +2018,25 @@ def _main_impl(argv: list[str] | None = None) -> int:
             print(_console_safe(f"run-action-worker failed: {exc}"), file=sys.stderr)
             return 1
         return 0 if result.status in {"completed", "blocked"} else 1
+
+    if args.command == "dependency-setup-worker":
+        action_root = Path(args.workspace).resolve()
+        try:
+            from sg_preflight.dependency_onboarding import run_dependency_setup_action
+
+            payload = run_dependency_setup_action(
+                action_id=args.action_id,
+                workspace=action_root,
+                operator_confirmed=True,
+                target_path=args.target_path or None,
+                source_path=args.source_path or None,
+                stream_output=True,
+            )
+        except Exception as exc:
+            print(_console_safe(f"dependency-setup-worker failed: {exc}"), file=sys.stderr)
+            return 1
+        print(json.dumps(_json_ready(payload), ensure_ascii=False))
+        return 1 if payload.get("status") == "failed" else 0
 
     if args.command == "station":
         try:

@@ -50,6 +50,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertEqual(payload["status"], "failed")
         checks = {item["key"]: item for item in payload["checks"]}
         self.assertEqual(checks["digital_3d_car_repo"]["status"], "missing")
+        self.assertEqual(checks["raco_headless"]["status"], "available")
         self.assertIn("Digital-3D-Car-Repo", checks["digital_3d_car_repo"]["detail"])
 
     def test_preflight_passes_with_bmw_repo_tools_and_disk_headroom(self) -> None:

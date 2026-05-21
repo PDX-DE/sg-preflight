@@ -141,6 +141,57 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("File activity", source)
         self.assertIn("typical 1-10 min", source)
 
+    def test_dashboard_snapshot_exposes_first_run_setup_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            fake_setup = {
+                "status": "incomplete",
+                "summary": "1/4 dependency item(s) available; setup actions require operator confirmation.",
+                "first_run": True,
+                "items": [
+                    {
+                        "key": "raco_headless",
+                        "label": "RaCoHeadless",
+                        "status": "missing",
+                        "detail": "RaCoHeadless.exe is not configured.",
+                        "path": "",
+                    }
+                ],
+                "actions": [
+                    {
+                        "id": "setup-raco-from-shared-tools",
+                        "label": "Set up RaCo",
+                        "requires_confirmation": True,
+                        "effects": [r"Copies or extracts files under C:\dev\software."],
+                    }
+                ],
+                "counts": {"available": 1, "missing": 3, "incomplete": 0},
+            }
+            with mock.patch("sg_preflight.dashboard.main.build_dependency_onboarding_status", return_value=fake_setup):
+                snapshot = build_dashboard_snapshot("G70", tmp)
+
+        self.assertTrue(snapshot["welcome"]["show"])
+        self.assertEqual(snapshot["welcome"]["setup_page_id"], "delivery-checklist")
+        delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
+        self.assertEqual(delivery["setup_status"], fake_setup)
+        self.assertEqual(delivery["setup_status"]["actions"][0]["label"], "Set up RaCo")
+
+    def test_dashboard_source_renders_dependency_setup_consent_panel(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Dependency setup", source)
+        self.assertIn("System changes", source)
+        self.assertIn("Run setup", source)
+        self.assertIn("start_dependency_setup_action", source)
+        self.assertIn("poll_dependency_setup_action", source)
+        self.assertIn("Live setup output", source)
+        self.assertIn("Source path", source)
+        self.assertIn("Target path", source)
+        self.assertIn("update:model-value", source)
+
     def test_non_native_dashboard_defaults_to_free_local_port(self) -> None:
         from sg_preflight.dashboard.main import _dashboard_run_port
 

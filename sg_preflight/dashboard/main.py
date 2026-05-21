@@ -24,6 +24,12 @@ from sg_preflight.delivery_workbook_generation import (
     poll_delivery_workbook_generation,
     start_delivery_workbook_generation,
 )
+from sg_preflight.dependency_onboarding import (
+    build_dependency_onboarding_status,
+    cancel_dependency_setup_action,
+    poll_dependency_setup_action,
+    start_dependency_setup_action,
+)
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
     create_manual_review_session,
@@ -368,7 +374,13 @@ def _reader_page(
     }
 
 
-def _delivery_checklist_page(profile_id: str, workspace: Path) -> dict[str, Any]:
+def _delivery_checklist_page(
+    profile_id: str,
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+    setup_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     page = _reader_page(
         page_id="delivery-checklist",
         title="Delivery Checklist",
@@ -376,6 +388,7 @@ def _delivery_checklist_page(profile_id: str, workspace: Path) -> dict[str, Any]
         reader=lambda: read_delivery_checklist(profile_id=profile_id, workspace=workspace),
         workspace=workspace,
     )
+    page["setup_status"] = setup_status or build_dependency_onboarding_status(workspace=workspace, bmw_root=bmw_root)
     if page.get("status") != "unavailable":
         return page
     preflight = check_delivery_workbook_generation_environment(profile_id=profile_id, workspace=workspace)
@@ -640,6 +653,7 @@ def build_dashboard_snapshot(
     resolved_profile_id = _resolve_dashboard_profile_id(profile_id, profile_options)
     profile_known = _dashboard_profile_known(resolved_profile_id, profile_options)
     theme = _clean_theme(ui_mode or load_dashboard_preference(root))
+    setup_status = build_dependency_onboarding_status(workspace=root, bmw_root=bmw_root)
     return {
         "title": DASHBOARD_TITLE,
         "header": DASHBOARD_HEADER,
@@ -656,8 +670,18 @@ def build_dashboard_snapshot(
         "shortcuts": list(DASHBOARD_SHORTCUTS),
         "shortcut_actions": [{"key": key, "message": message} for key, message in DASHBOARD_SHORTCUT_ACTIONS],
         "guardrails": list(DASHBOARD_GUARDRAILS),
+        "welcome": {
+            "show": bool(setup_status.get("first_run")),
+            "title": "Welcome to SGFX QA Preflight",
+            "summary": (
+                "Use this local tool to collect evidence for SGFX delivery checks. "
+                "Run setup before invoking local BMW pipeline helpers."
+            ),
+            "setup_page_id": "delivery-checklist",
+            "guardrails": list(DASHBOARD_GUARDRAILS),
+        },
         "pages": [
-            _delivery_checklist_page(resolved_profile_id, root),
+            _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _reader_page(
                 page_id="screenshot-test-state",
                 title="Screenshot Test State",
@@ -834,8 +858,248 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
             ui.label("No rows loaded for this page.").classes("sgfx-muted")
 
 
+def _render_first_run_welcome(ui: Any, snapshot: dict[str, Any], open_setup: Callable[[], None] | None = None) -> None:
+    welcome = snapshot.get("welcome", {})
+    if not isinstance(welcome, dict) or not welcome.get("show"):
+        return
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(welcome.get("title", "Welcome"))).classes("sgfx-panel-title")
+            _render_status_chip(ui, "incomplete")
+        ui.label(str(welcome.get("summary", ""))).classes("sgfx-summary")
+        for guardrail in welcome.get("guardrails", []):
+            ui.label(str(guardrail)).classes("sgfx-guardrail")
+        if open_setup is not None:
+            ui.button("Run setup", on_click=open_setup).props("color=primary")
+
+
+def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace: Path) -> None:
+    items = [item for item in setup_status.get("items", []) if isinstance(item, dict)]
+    actions = [action for action in setup_status.get("actions", []) if isinstance(action, dict)]
+    if not items:
+        return
+    ui.separator()
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label("Dependency setup").classes("sgfx-panel-title")
+            _render_status_chip(ui, str(setup_status.get("status", "unknown")))
+        ui.label(str(setup_status.get("summary", ""))).classes("sgfx-summary")
+        ui.label("Setup actions disclose system changes and require operator confirmation.").classes("sgfx-muted")
+        rows = [
+            {
+                "label": str(item.get("label", "")),
+                "status": str(item.get("status", "")),
+                "detail": str(item.get("detail", "")),
+            }
+            for item in items
+        ]
+        ui.table(
+            columns=[
+                {"name": "label", "label": "Dependency", "field": "label", "align": "left"},
+                {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+            ],
+            rows=rows,
+            row_key="label",
+        ).classes("sgfx-table")
+        if not actions:
+            ui.label("All setup dependencies are available.").classes("sgfx-muted")
+            return
+        status_label = ui.label("Local-only setup: no changes run until a confirmation dialog is accepted.").classes(
+            "sgfx-muted"
+        )
+        progress = ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+        progress.visible = False
+        elapsed_label = ui.label("Running 00:00 / typical setup range unknown").classes("sgfx-muted")
+        elapsed_label.visible = False
+        live_output = (
+            ui.textarea(label="Live setup output", value="No output recorded yet.")
+            .props("readonly outlined")
+            .classes("full-width sgfx-live-output")
+        )
+        live_output.visible = False
+        file_activity_label = ui.label("File activity").classes("sgfx-panel-tagline")
+        file_activity_label.visible = False
+        file_activity_host = ui.column().classes("sgfx-file-activity full-width")
+        file_activity_host.visible = False
+        job_state: dict[str, Any] = {"job": None}
+
+        def _show_setup_progress() -> None:
+            elapsed_label.visible = True
+            live_output.visible = True
+            file_activity_label.visible = True
+            file_activity_host.visible = True
+
+        def _reset_setup_progress() -> None:
+            elapsed_label.text = "Running 00:00 / typical setup range unknown"
+            live_output.value = "No output recorded yet."
+            file_activity_host.clear()
+            with file_activity_host:
+                ui.label("No file changes recorded yet.").classes("sgfx-muted")
+
+        def _update_setup_progress(result: dict[str, Any]) -> None:
+            elapsed = str(result.get("elapsed_label", "00:00"))
+            typical = str(result.get("typical_range", "typical setup range unknown"))
+            elapsed_label.text = f"Running {elapsed} / {typical}"
+            stdout_lines = [str(line) for line in result.get("stdout_tail_lines", []) if str(line).strip()]
+            live_output.value = "\n".join(stdout_lines) if stdout_lines else "No output recorded yet."
+            file_activity_host.clear()
+            file_activity = [item for item in result.get("file_activity", []) if isinstance(item, dict)]
+            with file_activity_host:
+                if file_activity:
+                    for item in file_activity:
+                        ui.label(str(item.get("summary", ""))).classes("sgfx-summary")
+                else:
+                    ui.label("No file changes recorded yet.").classes("sgfx-muted")
+
+        def _cancel_setup() -> None:
+            job = job_state.get("job")
+            if job is None:
+                return
+            result = cancel_dependency_setup_action(job)
+            progress.visible = False
+            _show_setup_progress()
+            _update_setup_progress(result)
+            status_label.text = str(result.get("summary", "Dependency setup canceled."))
+            cancel_button.disable()
+            ui.notify("Dependency setup canceled.")
+
+        cancel_button = ui.button("Cancel setup", on_click=_cancel_setup)
+        cancel_button.disable()
+
+        def _poll_setup() -> None:
+            job = job_state.get("job")
+            if job is None:
+                poll_timer.active = False
+                return
+            result = poll_dependency_setup_action(job)
+            if result is None:
+                return
+            _show_setup_progress()
+            _update_setup_progress(result)
+            if not result.get("completed", True):
+                status_label.text = str(result.get("summary", "Dependency setup running."))
+                return
+            poll_timer.active = False
+            progress.visible = False
+            cancel_button.disable()
+            outcome = str(result.get("status", "unknown"))
+            status_label.text = f"Setup {outcome}. {result.get('summary', '')} Refresh to re-read dependency status."
+            ui.notify(f"Dependency setup {outcome}.")
+
+        poll_timer = ui.timer(1.0, _poll_setup, active=False)
+        with ui.row().classes("items-center"):
+            for action in actions:
+                with ui.dialog() as confirm_dialog, ui.card():
+                    ui.label(str(action.get("label", "Set up"))).classes("sgfx-panel-title")
+                    ui.label(str(action.get("confirmation_message", ""))).classes("sgfx-summary")
+                    ui.label("System changes").classes("sgfx-panel-tagline")
+                    for effect in action.get("effects", []):
+                        ui.label(str(effect)).classes("sgfx-muted")
+                    anchor = str(action.get("confluence_anchor", "")).strip()
+                    if anchor:
+                        ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
+                    command_preview = str(action.get("command_preview", "")).strip()
+                    if command_preview:
+                        ui.label(command_preview).classes("sgfx-muted")
+                    if not action.get("can_run_now"):
+                        ui.label(
+                            "This setup step needs operator-selected files, installer UI, or credentials before SGFX can run it."
+                        ).classes("sgfx-muted")
+
+                    action_id = str(action.get("id", ""))
+                    source_required = action_id in {"setup-raco-from-shared-tools", "setup-blender-411"}
+                    target_required = action_id in {
+                        "setup-raco-from-shared-tools",
+                        "clone-digital-3d-car-repo",
+                        "setup-digital-3d-car-repo",
+                    }
+                    source_input = None
+                    target_input = None
+                    if source_required:
+                        source_input = ui.input(
+                            "Source path",
+                            value=str(action.get("source_path", "")),
+                        ).classes("full-width")
+                    if target_required:
+                        target_input = ui.input(
+                            "Target path",
+                            value=str(action.get("target_path", "")),
+                        ).classes("full-width")
+
+                    def _input_value(input_widget: Any, fallback: str = "") -> str:
+                        if input_widget is None:
+                            return fallback
+                        return str(getattr(input_widget, "value", "") or "").strip()
+
+                    def _inputs_ready(
+                        source_widget: Any = source_input,
+                        target_widget: Any = target_input,
+                        source_needed: bool = source_required,
+                        target_needed: bool = target_required,
+                    ) -> bool:
+                        if source_needed and not _input_value(source_widget):
+                            return False
+                        if target_needed and not _input_value(target_widget):
+                            return False
+                        return True
+
+                    def _run(
+                        action_payload: dict[str, Any] = action,
+                        dialog: Any = confirm_dialog,
+                        source_widget: Any = source_input,
+                        target_widget: Any = target_input,
+                    ) -> None:
+                        selected_source = _input_value(source_widget, str(action_payload.get("source_path", "")))
+                        selected_target = _input_value(target_widget, str(action_payload.get("target_path", "")))
+                        try:
+                            job_state["job"] = start_dependency_setup_action(
+                                action_id=str(action_payload.get("id", "")),
+                                workspace=workspace,
+                                operator_confirmed=True,
+                                target_path=selected_target or None,
+                                source_path=selected_source or None,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            status_label.text = f"Setup failed: {exc}"
+                            ui.notify("Dependency setup failed.")
+                            dialog.close()
+                            return
+                        status_label.text = "Dependency setup running..."
+                        progress.visible = True
+                        _show_setup_progress()
+                        _reset_setup_progress()
+                        cancel_button.enable()
+                        poll_timer.active = True
+                        dialog.close()
+
+                    continue_button = ui.button("Continue", on_click=_run).props("color=primary")
+
+                    def _refresh_continue_button(
+                        _event: Any = None,
+                        button: Any = continue_button,
+                        ready: Callable[[], bool] = _inputs_ready,
+                    ) -> None:
+                        if ready():
+                            button.enable()
+                        else:
+                            button.disable()
+
+                    if source_input is not None:
+                        source_input.on("update:model-value", _refresh_continue_button)
+                    if target_input is not None:
+                        target_input.on("update:model-value", _refresh_continue_button)
+                    if not _inputs_ready():
+                        continue_button.disable()
+                    ui.button("Close", on_click=confirm_dialog.close)
+                ui.button(str(action.get("label", "Set up")), on_click=confirm_dialog.open).props("no-caps")
+
+
 def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
+    setup_status = page.get("setup_status", {})
+    if isinstance(setup_status, dict):
+        _render_setup_status_panel(ui, setup_status, workspace)
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(page["title"])).classes("sgfx-panel-title")
@@ -1242,6 +1506,11 @@ def _render_dashboard(
                 if warning:
                     ui.label(warning).classes("sgfx-warning")
                 active_page_id = str(state["active_page_id"])
+                _render_first_run_welcome(
+                    ui,
+                    state["snapshot"],
+                    open_setup=lambda: _open_page("delivery-checklist"),
+                )
                 if active_page_id == "delivery-checklist":
                     _render_delivery_checklist_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "manual-review":
