@@ -145,6 +145,25 @@ class TestBmwDelivery(unittest.TestCase):
         self.assertTrue(any("prespectivesTests output is present" in note for note in payload["notes"]))
         self.assertFalse(payload["is_approval"])
 
+    def test_read_bmw_screenshot_state_returns_zero_when_no_sg_prespectives_folder_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "digital-3d-car-models"
+            tests_root = repo_root / "cars" / "BMW" / "G65_EVO" / "export" / "tests"
+            write_text(tests_root / "expected" / "front.png", "fake\n")
+            write_text(root / "unrelated.png", "fake\n")
+
+            payload = read_bmw_screenshot_state("G65", workspace=root, sg_project_root=root)
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["expected_count"], 1)
+        self.assertEqual(payload["sg_perspectives_screenshot_count"], 0)
+        self.assertEqual(payload["sg_perspectives_comparison_count"], 0)
+        self.assertEqual(payload["sg_perspectives_root"], "")
+        self.assertEqual(payload["sg_perspectives_latest_folder"], "")
+        self.assertNotIn("prespectivesTests latest folder", payload["summary"])
+        self.assertTrue(any("No SG prespectivesTests output" in note for note in payload["notes"]))
+
     def test_prerequisite_status_exposes_repo_local_bmw_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

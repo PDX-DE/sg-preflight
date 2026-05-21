@@ -130,6 +130,17 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn('kwargs["favicon"]', source)
         self.assertIn("/sgfx-dashboard-assets", source)
 
+    def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('active_page_id == "delivery-checklist"', source)
+        self.assertIn("_render_delivery_checklist_panel(ui, state[\"snapshot\"], workspace)", source)
+        self.assertIn("Live output", source)
+        self.assertIn("File activity", source)
+        self.assertIn("typical 1-10 min", source)
+
     def test_non_native_dashboard_defaults_to_free_local_port(self) -> None:
         from sg_preflight.dashboard.main import _dashboard_run_port
 

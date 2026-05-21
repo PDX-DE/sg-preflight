@@ -22,6 +22,9 @@ GENERATE_WORKBOOK_ACTION_LABEL = "Generate delivery workbook"
 GENERATE_WORKBOOK_TIMEOUT_SECONDS = 600
 GENERATE_WORKBOOK_MIN_FREE_BYTES = 100 * 1024 * 1024
 GENERATION_STDOUT_TAIL_BYTES = 2000
+GENERATION_STDOUT_TAIL_LINES = 20
+GENERATION_FILE_ACTIVITY_LIMIT = 20
+GENERATION_TYPICAL_RANGE_LABEL = "typical 1-10 min"
 
 
 def _utc_now() -> str:
@@ -332,9 +335,26 @@ class DeliveryWorkbookGenerationJob:
     stdout_path: Path
     stderr_path: Path
     started_monotonic: float
+    started_wall_time: float
     timeout_seconds: int
     preflight: dict[str, Any]
     completed: bool = False
+
+
+def _elapsed_label(elapsed_seconds: float) -> str:
+    elapsed = max(0, int(elapsed_seconds))
+    minutes, seconds = divmod(elapsed, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def _tail_lines(path: Path, limit: int = GENERATION_STDOUT_TAIL_LINES) -> list[str]:
+    text = _tail_text(path)
+    if not text:
+        return []
+    return text.splitlines()[-limit:]
 
 
 def _tail_text(path: Path, limit: int = GENERATION_STDOUT_TAIL_BYTES) -> str:
@@ -345,6 +365,85 @@ def _tail_text(path: Path, limit: int = GENERATION_STDOUT_TAIL_BYTES) -> str:
     except OSError:
         return ""
     return data[-limit:].decode("utf-8", errors="replace")
+
+
+def _size_label(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    kib = size_bytes / 1024
+    if kib < 1024:
+        return f"{kib:.0f} KB"
+    mib = kib / 1024
+    return f"{mib:.1f} MB"
+
+
+def _delivery_workbook_output_dir(workspace: Path) -> Path:
+    return workspace / "Cars" / "size_analysis"
+
+
+def _file_activity(workspace: Path, started_wall_time: float, limit: int = GENERATION_FILE_ACTIVITY_LIMIT) -> list[dict[str, Any]]:
+    output_dir = _delivery_workbook_output_dir(workspace)
+    if not output_dir.is_dir():
+        return []
+    entries: list[tuple[float, dict[str, Any]]] = []
+    threshold = started_wall_time - 1.0
+    for path in output_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        last_activity = max(stat.st_mtime, stat.st_ctime)
+        if last_activity < threshold:
+            continue
+        event = "created" if stat.st_ctime >= threshold else "modified"
+        relative = str(path.relative_to(output_dir))
+        size_label = _size_label(int(stat.st_size))
+        entries.append(
+            (
+                last_activity,
+                {
+                    "event": event,
+                    "path": str(path),
+                    "relative_path": relative,
+                    "size_bytes": int(stat.st_size),
+                    "size_label": size_label,
+                    "summary": f"{event.title()} `{relative}` ({size_label})",
+                },
+            )
+        )
+    return [item for _timestamp, item in sorted(entries, key=lambda pair: pair[0], reverse=True)[:limit]]
+
+
+def _generation_progress_payload(job: DeliveryWorkbookGenerationJob, *, elapsed_seconds: float) -> dict[str, Any]:
+    return {
+        "profile_id": job.profile_id,
+        "workspace": str(job.workspace),
+        "bmw_root": str(job.bmw_root),
+        "status": "running",
+        "completed": False,
+        "data_available": False,
+        "exit_code": None,
+        "strategy": job.strategy,
+        "command": list(job.command),
+        "timeout_seconds": job.timeout_seconds,
+        "elapsed_seconds": int(max(0, elapsed_seconds)),
+        "elapsed_label": _elapsed_label(elapsed_seconds),
+        "typical_range": GENERATION_TYPICAL_RANGE_LABEL,
+        "timed_out": False,
+        "canceled": False,
+        "summary": "BMW pipeline export running.",
+        "stdout_tail": _tail_text(job.stdout_path),
+        "stdout_tail_lines": _tail_lines(job.stdout_path),
+        "stderr_tail": _tail_text(job.stderr_path),
+        "stdout_path": str(job.stdout_path),
+        "stderr_path": str(job.stderr_path),
+        "file_activity": _file_activity(job.workspace, job.started_wall_time),
+        "preflight": job.preflight,
+        "recorded_by_tool": True,
+        "is_approval": False,
+    }
 
 
 def _generation_result(
@@ -371,23 +470,30 @@ def _generation_result(
                 "BMW pipeline exited 0, but the delivery workbook is still unavailable. "
                 f"{checklist_payload.get('summary', '')}".strip()
             )
+    elapsed_seconds = time.monotonic() - job.started_monotonic
     return {
         "profile_id": job.profile_id,
         "workspace": str(job.workspace),
         "bmw_root": str(job.bmw_root),
         "status": status,
+        "completed": True,
         "data_available": status == "available",
         "exit_code": exit_code,
         "strategy": job.strategy,
         "command": list(job.command),
         "timeout_seconds": job.timeout_seconds,
+        "elapsed_seconds": int(max(0, elapsed_seconds)),
+        "elapsed_label": _elapsed_label(elapsed_seconds),
+        "typical_range": GENERATION_TYPICAL_RANGE_LABEL,
         "timed_out": timed_out,
         "canceled": canceled,
         "summary": summary,
         "stdout_tail": _tail_text(job.stdout_path),
+        "stdout_tail_lines": _tail_lines(job.stdout_path),
         "stderr_tail": _tail_text(job.stderr_path),
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
+        "file_activity": _file_activity(job.workspace, job.started_wall_time),
         "preflight": job.preflight,
         "checklist_status": str(checklist_payload.get("status", "")),
         "checklist_summary": str(checklist_payload.get("summary", "")),
@@ -426,6 +532,8 @@ def start_delivery_workbook_generation(
     ensure_parent(stdout_path)
     env = os.environ.copy()
     env[DIGITAL_3D_CAR_REPO_ENV] = str(repo_root)
+    started_wall_time = time.time()
+    started_monotonic = time.monotonic()
     with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
         process = subprocess.Popen(
             list(command_payload["command"]),
@@ -445,7 +553,8 @@ def start_delivery_workbook_generation(
         strategy=str(command_payload["strategy"]),
         stdout_path=stdout_path,
         stderr_path=stderr_path,
-        started_monotonic=time.monotonic(),
+        started_monotonic=started_monotonic,
+        started_wall_time=started_wall_time,
         timeout_seconds=timeout_seconds,
         preflight=preflight,
     )
@@ -457,7 +566,7 @@ def poll_delivery_workbook_generation(job: DeliveryWorkbookGenerationJob) -> dic
     exit_code = job.process.poll()
     elapsed = time.monotonic() - job.started_monotonic
     if exit_code is None and elapsed < job.timeout_seconds:
-        return None
+        return _generation_progress_payload(job, elapsed_seconds=elapsed)
     if exit_code is None:
         job.process.terminate()
         try:

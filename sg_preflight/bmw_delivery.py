@@ -134,14 +134,14 @@ def _candidate_prespectives_profile_dirs(root: Path, profile_id: str) -> tuple[P
     return tuple(base / candidate / "perspectives_CID_2to1" for base in base_candidates for candidate in candidates)
 
 
-def _latest_prespectives_folder(root: Path, profile_id: str) -> Path:
+def _latest_prespectives_folder(root: Path, profile_id: str) -> Path | None:
     matches: list[Path] = []
     for candidate in _candidate_prespectives_profile_dirs(root, profile_id):
         if not candidate.is_dir():
             continue
         matches.extend(path for path in candidate.iterdir() if path.is_dir())
     if not matches:
-        return Path()
+        return None
     return sorted(matches, key=_natural_sort_key)[-1]
 
 
@@ -217,6 +217,7 @@ def inspect_bmw_screenshot_surface(
     sg_expected_root = (sg_project_root.resolve() / "export" / "tests" / "expected") if sg_project_root else Path()
     test_config_path = _find_test_config(export_tests_root)
     prespectives_root = _latest_prespectives_folder(_workspace_root(workspace_root), profile_id)
+    prespectives_found = prespectives_root is not None
 
     notes: list[str] = []
     if export_tests_root.exists():
@@ -231,7 +232,7 @@ def inspect_bmw_screenshot_surface(
         notes.append("No BMW expected root is visible in the local snapshot for this profile.")
     if not sg_project_root or not sg_expected_root.exists():
         notes.append("No SG expected baseline root is available under the live SVN slice for this profile.")
-    if prespectives_root.exists():
+    if prespectives_found:
         notes.append("SG prespectivesTests output is present locally for this profile.")
     else:
         notes.append("No SG prespectivesTests output is available under the live SVN workspace for this profile.")
@@ -259,10 +260,10 @@ def inspect_bmw_screenshot_surface(
         bmw_expected_count=_image_count(bmw_expected_root),
         actual_count=_image_count(actuals_root),
         diff_count=_image_count(diff_root),
-        sg_perspectives_root=str(prespectives_root.parent) if prespectives_root.exists() else "",
-        sg_perspectives_latest_folder=str(prespectives_root) if prespectives_root.exists() else "",
-        sg_perspectives_screenshot_count=_image_count(prespectives_root),
-        sg_perspectives_comparison_count=_comparison_image_count(prespectives_root),
+        sg_perspectives_root=str(prespectives_root.parent) if prespectives_found else "",
+        sg_perspectives_latest_folder=str(prespectives_root) if prespectives_found else "",
+        sg_perspectives_screenshot_count=_image_count(prespectives_root) if prespectives_found else 0,
+        sg_perspectives_comparison_count=_comparison_image_count(prespectives_root) if prespectives_found else 0,
         notes=tuple(notes),
     )
 

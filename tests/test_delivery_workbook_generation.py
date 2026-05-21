@@ -10,12 +10,12 @@ from tests.operator_helpers import write_text
 
 
 class _FakeProcess:
-    def __init__(self, returncode: int = 0) -> None:
+    def __init__(self, returncode: int | None = 0) -> None:
         self.returncode = returncode
         self.terminated = False
         self.killed = False
 
-    def poll(self) -> int:
+    def poll(self) -> int | None:
         return self.returncode
 
     def terminate(self) -> None:
@@ -26,7 +26,7 @@ class _FakeProcess:
         self.killed = True
         self.returncode = -9
 
-    def wait(self, timeout: int | None = None) -> int:
+    def wait(self, timeout: int | None = None) -> int | None:
         return self.returncode
 
 
@@ -179,6 +179,46 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertFalse(result["is_approval"])
         self.assertTrue(result["recorded_by_tool"])
         self.assertIn("car_manager.py", " ".join(result["command"]))
+
+    def test_poll_generation_reports_live_stdout_tail_and_file_activity(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+
+        fake_process = _FakeProcess(returncode=None)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
+                with mock.patch(
+                    "sg_preflight.delivery_workbook_generation._find_executable",
+                    return_value=r"C:\tools\tool.exe",
+                ):
+                    with mock.patch.object(generation.subprocess, "Popen", return_value=fake_process):
+                        job = generation.start_delivery_workbook_generation(
+                            profile_id="G70",
+                            workspace=root,
+                            operator_confirmed=True,
+                        )
+                        output_file = root / "Cars" / "size_analysis" / "G70_20260521.xlsx"
+                        write_text(output_file, "fake workbook\n")
+                        write_text(
+                            job.stdout_path,
+                            "\n".join(f"line {index:02d}" for index in range(25)) + "\n",
+                        )
+                        result = generation.poll_delivery_workbook_generation(job)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "running")
+        self.assertFalse(result["completed"])
+        self.assertEqual(result["exit_code"], None)
+        self.assertEqual(result["typical_range"], "typical 1-10 min")
+        self.assertEqual(result["stdout_tail_lines"][0], "line 05")
+        self.assertEqual(result["stdout_tail_lines"][-1], "line 24")
+        self.assertEqual(result["file_activity"][0]["relative_path"], "G70_20260521.xlsx")
+        self.assertIn("G70_20260521.xlsx", result["file_activity"][0]["summary"])
+        self.assertFalse(result["is_approval"])
+        self.assertTrue(result["recorded_by_tool"])
 
 
 if __name__ == "__main__":

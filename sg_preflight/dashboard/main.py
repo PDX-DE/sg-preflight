@@ -903,7 +903,47 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
             )
             progress = ui.linear_progress(value=0).props("indeterminate").classes("full-width")
             progress.visible = False
+            elapsed_label = ui.label("Running 00:00 / typical 1-10 min").classes("sgfx-muted")
+            elapsed_label.visible = False
+            live_output = (
+                ui.textarea(label="Live output", value="No output recorded yet.")
+                .props("readonly outlined")
+                .classes("full-width sgfx-live-output")
+            )
+            live_output.visible = False
+            file_activity_label = ui.label("File activity").classes("sgfx-panel-tagline")
+            file_activity_label.visible = False
+            file_activity_host = ui.column().classes("sgfx-file-activity full-width")
+            file_activity_host.visible = False
             job_state: dict[str, Any] = {"job": None}
+
+            def _show_live_progress() -> None:
+                elapsed_label.visible = True
+                live_output.visible = True
+                file_activity_label.visible = True
+                file_activity_host.visible = True
+
+            def _reset_live_progress() -> None:
+                elapsed_label.text = "Running 00:00 / typical 1-10 min"
+                live_output.value = "No output recorded yet."
+                file_activity_host.clear()
+                with file_activity_host:
+                    ui.label("No file changes recorded yet.").classes("sgfx-muted")
+
+            def _update_live_progress(result: dict[str, Any]) -> None:
+                elapsed = str(result.get("elapsed_label", "00:00"))
+                typical = str(result.get("typical_range", "typical 1-10 min"))
+                elapsed_label.text = f"Running {elapsed} / {typical}"
+                stdout_lines = [str(line) for line in result.get("stdout_tail_lines", []) if str(line).strip()]
+                live_output.value = "\n".join(stdout_lines) if stdout_lines else "No output recorded yet."
+                file_activity_host.clear()
+                file_activity = [item for item in result.get("file_activity", []) if isinstance(item, dict)]
+                with file_activity_host:
+                    if file_activity:
+                        for item in file_activity:
+                            ui.label(str(item.get("summary", ""))).classes("sgfx-summary")
+                    else:
+                        ui.label("No file changes recorded yet.").classes("sgfx-muted")
 
             def _cancel() -> None:
                 job = job_state.get("job")
@@ -911,6 +951,8 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                     return
                 result = cancel_delivery_workbook_generation(job)
                 progress.visible = False
+                _show_live_progress()
+                _update_live_progress(result)
                 status_label.text = str(result.get("summary", "Generation canceled."))
                 ui.notify("Delivery workbook generation canceled.")
 
@@ -924,6 +966,11 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                     return
                 result = poll_delivery_workbook_generation(job)
                 if result is None:
+                    return
+                _show_live_progress()
+                _update_live_progress(result)
+                if not result.get("completed", True):
+                    status_label.text = str(result.get("summary", "BMW pipeline export running."))
                     return
                 poll_timer.active = False
                 progress.visible = False
@@ -956,6 +1003,8 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                         return
                     status_label.text = "BMW pipeline export running..."
                     progress.visible = True
+                    _show_live_progress()
+                    _reset_live_progress()
                     cancel_button.enable()
                     poll_timer.active = True
                     confirm_dialog.close()
@@ -1155,6 +1204,8 @@ def _render_dashboard(
             .sgfx-status { text-transform: none; }
             .sgfx-table { width: 100%; }
             .sgfx-step { border: 1px solid #dde3ec; border-radius: 8px; margin: 8px 0; }
+            .sgfx-live-output textarea { min-height: 160px; font-family: Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; }
+            .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid #dde3ec; border-radius: 6px; padding: 8px; }
             </style>
             """
         )
@@ -1191,7 +1242,9 @@ def _render_dashboard(
                 if warning:
                     ui.label(warning).classes("sgfx-warning")
                 active_page_id = str(state["active_page_id"])
-                if active_page_id == "manual-review":
+                if active_page_id == "delivery-checklist":
+                    _render_delivery_checklist_panel(ui, state["snapshot"], workspace)
+                elif active_page_id == "manual-review":
                     _render_manual_review_panel(ui, state["snapshot"], workspace)
                 else:
                     _render_page_panel(ui, _pages_by_id()[active_page_id])
