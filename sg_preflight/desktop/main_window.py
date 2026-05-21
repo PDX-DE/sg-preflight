@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
@@ -44,6 +50,13 @@ from sg_preflight.desktop.widgets import (
     OperatorPanel,
 )
 from sg_preflight.desktop.workers import ActionRunner
+from sg_preflight.dependency_onboarding import (
+    DependencySetupJob,
+    build_dependency_onboarding_status,
+    cancel_dependency_setup_action,
+    poll_dependency_setup_action,
+    start_dependency_setup_action,
+)
 from sg_preflight.qa_actions import build_action_record, get_operator_action
 from sg_preflight.services import workspace_root
 
@@ -54,6 +67,12 @@ GRAFIKS_GUARDRAILS = (
     "BMW Git access is read-only. SGFX never modifies BMW source.",
     "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
 )
+_SETUP_SOURCE_REQUIRED = {"setup-raco-from-shared-tools", "setup-blender-411"}
+_SETUP_TARGET_REQUIRED = {
+    "setup-raco-from-shared-tools",
+    "clone-digital-3d-car-repo",
+    "setup-digital-3d-car-repo",
+}
 
 
 def _clean_presentation_mode(value: str | None) -> str:
@@ -74,6 +93,9 @@ class DesktopMainWindow(QMainWindow):
         self._current_snapshot: DesktopActionSnapshot | None = None
         self._copy_map: dict[str, str] = {}
         self._action_tab_buttons: dict[str, ActionTabButton] = {}
+        self._setup_status: dict[str, Any] = {}
+        self._setup_actions: list[dict[str, Any]] = []
+        self._setup_job: DependencySetupJob | None = None
 
         self.resize(1640, 950)
         self._build_ui()
@@ -81,6 +103,9 @@ class DesktopMainWindow(QMainWindow):
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(800)
         self._poll_timer.timeout.connect(self._poll_current_action)
+        self._setup_poll_timer = QTimer(self)
+        self._setup_poll_timer.setInterval(1000)
+        self._setup_poll_timer.timeout.connect(self._poll_dependency_setup)
         self._reload_profiles()
 
     def _build_ui(self) -> None:
@@ -322,6 +347,37 @@ class DesktopMainWindow(QMainWindow):
         evidence_layout.addWidget(self.evidence_list)
         layout.addWidget(evidence_box, stretch=2)
 
+        setup_box = OperatorPanel("Dependency Setup", widget)
+        setup_layout = QVBoxLayout(setup_box)
+        setup_layout.setSpacing(8)
+        self.setup_status_label = QLabel("Dependency setup status not loaded.", setup_box)
+        self.setup_status_label.setObjectName("panelHint")
+        self.setup_status_label.setWordWrap(True)
+        setup_layout.addWidget(self.setup_status_label)
+        self.setup_list = StaticListWidget(parent=setup_box)
+        self.setup_list.setMinimumHeight(120)
+        setup_layout.addWidget(self.setup_list)
+        self.setup_action_selector = QComboBox(setup_box)
+        self.setup_action_selector.currentIndexChanged.connect(lambda _index: self._refresh_dependency_setup_buttons())
+        setup_layout.addWidget(self.setup_action_selector)
+        setup_buttons = QWidget(setup_box)
+        setup_button_layout = QHBoxLayout(setup_buttons)
+        setup_button_layout.setContentsMargins(0, 0, 0, 0)
+        setup_button_layout.setSpacing(6)
+        self.setup_run_button = QPushButton("Run Setup", setup_buttons)
+        self.setup_run_button.clicked.connect(self._run_selected_dependency_setup)
+        self.setup_cancel_button = QPushButton("Cancel Setup", setup_buttons)
+        self.setup_cancel_button.clicked.connect(self._cancel_dependency_setup)
+        setup_button_layout.addWidget(self.setup_run_button)
+        setup_button_layout.addWidget(self.setup_cancel_button)
+        setup_layout.addWidget(setup_buttons)
+        self.setup_output = QPlainTextEdit(setup_box)
+        self.setup_output.setReadOnly(True)
+        self.setup_output.setObjectName("logTail")
+        self.setup_output.setMaximumHeight(150)
+        setup_layout.addWidget(self.setup_output)
+        layout.addWidget(setup_box, stretch=2)
+
         surfaces_box = OperatorPanel("Evidence Surfaces", widget)
         surfaces_layout = QVBoxLayout(surfaces_box)
         self.surface_list = StaticListWidget(parent=surfaces_box)
@@ -406,6 +462,8 @@ class DesktopMainWindow(QMainWindow):
             self.action_list.setCurrentRow(0)
 
     def _reload_side_panels(self, profile_id: str) -> None:
+        self._reload_dependency_setup_panel()
+
         self.surface_list.clear()
         for item in desktop_surface_items(profile_id, self.workspace_root):
             row = QListWidgetItem(f"{item.label} [{item.state}]\n{item.summary}")
@@ -425,6 +483,240 @@ class DesktopMainWindow(QMainWindow):
             row = QListWidgetItem(f"{item.label} [{item.state}]\n{item.note}")
             row.setToolTip(item.summary)
             self.manual_list.addItem(row)
+
+    def _reload_dependency_setup_panel(self, *, preserve_output: bool = False) -> None:
+        try:
+            status = build_dependency_onboarding_status(workspace=self.workspace_root)
+        except Exception as exc:  # noqa: BLE001
+            self._setup_status = {"status": "unknown", "summary": str(exc), "items": [], "actions": []}
+            self._setup_actions = []
+            self.setup_status_label.setText(f"unknown - Dependency setup status failed: {exc}")
+            self.setup_list.clear()
+            self.setup_action_selector.clear()
+            self.setup_action_selector.addItem("No setup actions available", "")
+            if not preserve_output:
+                self.setup_output.setPlainText("Dependency setup status could not be loaded.")
+            self._refresh_dependency_setup_buttons()
+            return
+
+        self._setup_status = status
+        self._setup_actions = [action for action in status.get("actions", []) if isinstance(action, dict)]
+        self.setup_status_label.setText(f"{status.get('status', 'unknown')} - {status.get('summary', '')}")
+
+        self.setup_list.clear()
+        for item in status.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label", "Dependency"))
+            state = str(item.get("status", "unknown"))
+            detail = str(item.get("detail", ""))
+            row = QListWidgetItem(f"{label} [{state}]\n{detail}")
+            row.setToolTip(detail)
+            self.setup_list.addItem(row)
+
+        self.setup_action_selector.blockSignals(True)
+        self.setup_action_selector.clear()
+        if self._setup_actions:
+            for action in self._setup_actions:
+                label = str(action.get("label", "Run setup"))
+                action_id = str(action.get("id", "")).strip()
+                self.setup_action_selector.addItem(label, action_id)
+        else:
+            self.setup_action_selector.addItem("No setup actions available", "")
+        self.setup_action_selector.blockSignals(False)
+
+        if self._setup_job is None and not preserve_output:
+            self.setup_output.setPlainText("No dependency setup job is running.")
+        self._refresh_dependency_setup_buttons()
+
+    def _selected_setup_action(self) -> dict[str, Any] | None:
+        action_id = str(self.setup_action_selector.currentData() or "").strip()
+        if not action_id:
+            return None
+        for action in self._setup_actions:
+            if str(action.get("id", "")).strip() == action_id:
+                return action
+        return None
+
+    def _refresh_dependency_setup_buttons(self) -> None:
+        running = self._setup_job is not None
+        self.setup_run_button.setEnabled(not running and self._selected_setup_action() is not None)
+        self.setup_cancel_button.setEnabled(running)
+
+    def _confirm_dependency_setup_action(self, action: dict[str, Any]) -> dict[str, str | None] | None:
+        action_id = str(action.get("id", "")).strip()
+        source_required = action_id in _SETUP_SOURCE_REQUIRED
+        target_required = action_id in _SETUP_TARGET_REQUIRED
+        dialog = QDialog(self)
+        dialog.setWindowTitle(str(action.get("label", "Dependency setup")))
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(8)
+
+        summary = QLabel(str(action.get("confirmation_message", "")), dialog)
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        effects = [str(effect) for effect in action.get("effects", []) if str(effect).strip()]
+        if effects:
+            effects_label = QLabel("System changes:\n" + "\n".join(f"- {effect}" for effect in effects), dialog)
+            effects_label.setWordWrap(True)
+            layout.addWidget(effects_label)
+
+        anchor = str(action.get("confluence_anchor", "")).strip()
+        if anchor:
+            anchor_label = QLabel(f"Confluence anchor: {anchor}", dialog)
+            anchor_label.setWordWrap(True)
+            layout.addWidget(anchor_label)
+
+        if not action.get("can_run_now"):
+            input_hint = QLabel(
+                "This setup step needs operator-selected files, installer UI, or credentials before SGFX can run it.",
+                dialog,
+            )
+            input_hint.setWordWrap(True)
+            layout.addWidget(input_hint)
+
+        command_preview = str(action.get("command_preview", "")).strip()
+        if command_preview:
+            command_box = QPlainTextEdit(dialog)
+            command_box.setReadOnly(True)
+            command_box.setPlainText(command_preview)
+            command_box.setMaximumHeight(80)
+            layout.addWidget(command_box)
+
+        form = QFormLayout()
+        source_edit: QLineEdit | None = None
+        target_edit: QLineEdit | None = None
+        if source_required:
+            source_edit = QLineEdit(str(action.get("source_path", "")), dialog)
+            form.addRow("Source path", source_edit)
+        if target_required:
+            target_edit = QLineEdit(str(action.get("target_path", "")), dialog)
+            form.addRow("Target path", target_edit)
+        if source_required or target_required:
+            layout.addLayout(form)
+
+        guardrail = QLabel("Manual review remains required. Decision: not approval — evidence only.", dialog)
+        guardrail.setWordWrap(True)
+        layout.addWidget(guardrail)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            dialog,
+        )
+        continue_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        continue_button.setText("Continue")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        def _input_ready() -> bool:
+            if source_required and source_edit is not None and not source_edit.text().strip():
+                return False
+            if target_required and target_edit is not None and not target_edit.text().strip():
+                return False
+            return True
+
+        def _refresh_continue_button() -> None:
+            continue_button.setEnabled(_input_ready())
+
+        if source_edit is not None:
+            source_edit.textChanged.connect(_refresh_continue_button)
+        if target_edit is not None:
+            target_edit.textChanged.connect(_refresh_continue_button)
+        _refresh_continue_button()
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return {
+            "source_path": source_edit.text().strip() if source_edit is not None else None,
+            "target_path": target_edit.text().strip() if target_edit is not None else None,
+        }
+
+    def _run_selected_dependency_setup(self) -> None:
+        if self._setup_job is not None:
+            return
+        action = self._selected_setup_action()
+        if action is None:
+            QMessageBox.information(self, "Dependency setup", "No setup action is available.")
+            return
+        inputs = self._confirm_dependency_setup_action(action)
+        if inputs is None:
+            return
+        try:
+            self._setup_job = start_dependency_setup_action(
+                action_id=str(action.get("id", "")),
+                workspace=self.workspace_root,
+                operator_confirmed=True,
+                target_path=inputs.get("target_path"),
+                source_path=inputs.get("source_path"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.setup_status_label.setText(f"failed - Dependency setup did not start: {exc}")
+            QMessageBox.warning(self, "Dependency setup", f"Dependency setup did not start: {exc}")
+            self._refresh_dependency_setup_buttons()
+            return
+
+        self.setup_status_label.setText("incomplete - Dependency setup running.")
+        self.setup_output.setPlainText("Dependency setup running.")
+        self._refresh_dependency_setup_buttons()
+        self._setup_poll_timer.start()
+        self._poll_dependency_setup()
+
+    def _apply_dependency_setup_progress(self, result: dict[str, Any]) -> None:
+        status = str(result.get("status", "unknown"))
+        phase = str(result.get("phase", "")).strip()
+        summary = str(result.get("summary", "")).strip()
+        state = status if result.get("completed", True) else phase or status
+        self.setup_status_label.setText(f"{state} - {summary}")
+
+        lines = [
+            f"Action: {result.get('action_id', '')}",
+            f"Status: {status}",
+            f"Elapsed: {result.get('elapsed_label', '00:00')} / {result.get('typical_range', '')}",
+            summary,
+        ]
+        stdout_lines = [str(line) for line in result.get("stdout_tail_lines", []) if str(line).strip()]
+        if stdout_lines:
+            lines.extend(["", "Output:", *stdout_lines])
+        file_activity = [item for item in result.get("file_activity", []) if isinstance(item, dict)]
+        if file_activity:
+            lines.append("")
+            lines.append("File activity:")
+            lines.extend(str(item.get("summary", "")) for item in file_activity if str(item.get("summary", "")).strip())
+        self.setup_output.setPlainText("\n".join(line for line in lines if line is not None).strip())
+
+    def _poll_dependency_setup(self) -> None:
+        if self._setup_job is None:
+            self._setup_poll_timer.stop()
+            self._refresh_dependency_setup_buttons()
+            return
+        try:
+            result = poll_dependency_setup_action(self._setup_job)
+        except Exception as exc:  # noqa: BLE001
+            self._setup_poll_timer.stop()
+            self._setup_job = None
+            self.setup_status_label.setText(f"failed - Dependency setup polling failed: {exc}")
+            self._refresh_dependency_setup_buttons()
+            return
+        if result is None:
+            return
+        self._apply_dependency_setup_progress(result)
+        if result.get("completed", True):
+            self._setup_poll_timer.stop()
+            self._setup_job = None
+            self._reload_dependency_setup_panel(preserve_output=True)
+            self._refresh_dependency_setup_buttons()
+
+    def _cancel_dependency_setup(self) -> None:
+        if self._setup_job is None:
+            return
+        result = cancel_dependency_setup_action(self._setup_job)
+        self._apply_dependency_setup_progress(result)
+        self._setup_poll_timer.stop()
+        self._setup_job = None
+        self._reload_dependency_setup_panel(preserve_output=True)
+        self._refresh_dependency_setup_buttons()
 
     def _select_action_by_id(self, action_id: str) -> None:
         for index in range(self.action_list.count()):

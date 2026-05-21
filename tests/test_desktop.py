@@ -59,6 +59,22 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertIn('"available" if action.ready else "unavailable"', main_window_source)
         self.assertNotIn('"ready" if action.ready else "blocked"', main_window_source)
 
+    def test_grafiks_shell_mirrors_dependency_setup_surface(self) -> None:
+        main_window_source = (ROOT / "sg_preflight" / "desktop" / "main_window.py").read_text(encoding="utf-8")
+
+        self.assertIn("Dependency Setup", main_window_source)
+        self.assertIn("build_dependency_onboarding_status", main_window_source)
+        self.assertIn("start_dependency_setup_action", main_window_source)
+        self.assertIn("poll_dependency_setup_action", main_window_source)
+        self.assertIn("cancel_dependency_setup_action", main_window_source)
+        self.assertIn("setup_action_selector", main_window_source)
+        self.assertIn("setup_run_button", main_window_source)
+        self.assertIn("setup_cancel_button", main_window_source)
+        self.assertIn("QDialogButtonBox", main_window_source)
+        self.assertIn("Source path", main_window_source)
+        self.assertIn("Target path", main_window_source)
+        self.assertIn("operator_confirmed=True", main_window_source)
+
     def test_grafiks_shell_sets_window_icon_and_header_logo(self) -> None:
         app_source = (ROOT / "sg_preflight" / "desktop" / "app.py").read_text(encoding="utf-8")
         main_window_source = (ROOT / "sg_preflight" / "desktop" / "main_window.py").read_text(encoding="utf-8")
