@@ -192,6 +192,19 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Target path", source)
         self.assertIn("update:model-value", source)
 
+    def test_dashboard_source_uses_parentless_poll_timer_for_long_running_jobs(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("from nicegui.timer import Timer", source)
+        self.assertIn("_start_background_poll_timer", source)
+        self.assertIn("_cancel_background_poll_timer", source)
+        self.assertIn("_parent_slot_deleted", source)
+        self.assertIn("except RuntimeError as exc", source)
+        self.assertNotIn("ui.timer(", source)
+        self.assertNotIn("poll_timer.active", source)
+
     def test_non_native_dashboard_defaults_to_free_local_port(self) -> None:
         from sg_preflight.dashboard.main import _dashboard_run_port
 

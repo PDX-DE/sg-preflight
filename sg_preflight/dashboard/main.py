@@ -166,6 +166,28 @@ def _clean_theme(ui_mode: str | None) -> str:
     return value if value in THEME_CHOICES else "clean"
 
 
+def _start_background_poll_timer(interval: float, callback: Callable[[], None]) -> Any:
+    from nicegui.timer import Timer
+
+    return Timer(interval, callback, active=True, immediate=False)
+
+
+def _cancel_background_poll_timer(timer: Any) -> None:
+    if timer is None:
+        return
+    try:
+        timer.cancel(with_current_invocation=True)
+    except TypeError:
+        timer.cancel()
+    except RuntimeError:
+        return
+
+
+def _parent_slot_deleted(error: RuntimeError) -> bool:
+    message = str(error).casefold()
+    return "parent slot" in message and "deleted" in message
+
+
 def _find_open_dashboard_port(start_port: int = 8000, end_port: int = 8999) -> int:
     for port in range(start_port, end_port + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -923,6 +945,11 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
         file_activity_host = ui.column().classes("sgfx-file-activity full-width")
         file_activity_host.visible = False
         job_state: dict[str, Any] = {"job": None}
+        poll_timer_ref: dict[str, Any] = {"timer": None}
+
+        def _stop_setup_poll_timer() -> None:
+            _cancel_background_poll_timer(poll_timer_ref.get("timer"))
+            poll_timer_ref["timer"] = None
 
         def _show_setup_progress() -> None:
             elapsed_label.visible = True
@@ -961,6 +988,7 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
             _show_setup_progress()
             _update_setup_progress(result)
             status_label.text = str(result.get("summary", "Dependency setup canceled."))
+            _stop_setup_poll_timer()
             cancel_button.disable()
             ui.notify("Dependency setup canceled.")
 
@@ -968,26 +996,34 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
         cancel_button.disable()
 
         def _poll_setup() -> None:
-            job = job_state.get("job")
-            if job is None:
-                poll_timer.active = False
-                return
-            result = poll_dependency_setup_action(job)
-            if result is None:
-                return
-            _show_setup_progress()
-            _update_setup_progress(result)
-            if not result.get("completed", True):
-                status_label.text = str(result.get("summary", "Dependency setup running."))
-                return
-            poll_timer.active = False
-            progress.visible = False
-            cancel_button.disable()
-            outcome = str(result.get("status", "unknown"))
-            status_label.text = f"Setup {outcome}. {result.get('summary', '')} Refresh to re-read dependency status."
-            ui.notify(f"Dependency setup {outcome}.")
+            try:
+                job = job_state.get("job")
+                if job is None:
+                    _stop_setup_poll_timer()
+                    return
+                result = poll_dependency_setup_action(job)
+                if result is None:
+                    return
+                _show_setup_progress()
+                _update_setup_progress(result)
+                if not result.get("completed", True):
+                    status_label.text = str(result.get("summary", "Dependency setup running."))
+                    return
+                _stop_setup_poll_timer()
+                progress.visible = False
+                cancel_button.disable()
+                outcome = str(result.get("status", "unknown"))
+                status_label.text = f"Setup {outcome}. {result.get('summary', '')} Refresh to re-read dependency status."
+                ui.notify(f"Dependency setup {outcome}.")
+            except RuntimeError as exc:
+                if not _parent_slot_deleted(exc):
+                    raise
+                _stop_setup_poll_timer()
 
-        poll_timer = ui.timer(1.0, _poll_setup, active=False)
+        def _start_setup_poll_timer() -> None:
+            _stop_setup_poll_timer()
+            poll_timer_ref["timer"] = _start_background_poll_timer(1.0, _poll_setup)
+
         with ui.row().classes("items-center"):
             for action in actions:
                 with ui.dialog() as confirm_dialog, ui.card():
@@ -1070,7 +1106,7 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
                         _show_setup_progress()
                         _reset_setup_progress()
                         cancel_button.enable()
-                        poll_timer.active = True
+                        _start_setup_poll_timer()
                         dialog.close()
 
                     continue_button = ui.button("Continue", on_click=_run).props("color=primary")
@@ -1180,6 +1216,11 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
             file_activity_host = ui.column().classes("sgfx-file-activity full-width")
             file_activity_host.visible = False
             job_state: dict[str, Any] = {"job": None}
+            poll_timer_ref: dict[str, Any] = {"timer": None}
+
+            def _stop_delivery_poll_timer() -> None:
+                _cancel_background_poll_timer(poll_timer_ref.get("timer"))
+                poll_timer_ref["timer"] = None
 
             def _show_live_progress() -> None:
                 elapsed_label.visible = True
@@ -1218,34 +1259,42 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                 _show_live_progress()
                 _update_live_progress(result)
                 status_label.text = str(result.get("summary", "Generation canceled."))
+                _stop_delivery_poll_timer()
                 ui.notify("Delivery workbook generation canceled.")
 
             cancel_button = ui.button("Cancel", on_click=_cancel)
             cancel_button.disable()
 
             def _poll() -> None:
-                job = job_state.get("job")
-                if job is None:
-                    poll_timer.active = False
-                    return
-                result = poll_delivery_workbook_generation(job)
-                if result is None:
-                    return
-                _show_live_progress()
-                _update_live_progress(result)
-                if not result.get("completed", True):
-                    status_label.text = str(result.get("summary", "BMW pipeline export running."))
-                    return
-                poll_timer.active = False
-                progress.visible = False
-                cancel_button.disable()
-                outcome = str(result.get("status", "unknown"))
-                status_label.text = (
-                    f"Generation {outcome}. {result.get('summary', '')} Refresh to re-read workbook evidence."
-                )
-                ui.notify(f"Delivery workbook generation {outcome}.")
+                try:
+                    job = job_state.get("job")
+                    if job is None:
+                        _stop_delivery_poll_timer()
+                        return
+                    result = poll_delivery_workbook_generation(job)
+                    if result is None:
+                        return
+                    _show_live_progress()
+                    _update_live_progress(result)
+                    if not result.get("completed", True):
+                        status_label.text = str(result.get("summary", "BMW pipeline export running."))
+                        return
+                    _stop_delivery_poll_timer()
+                    progress.visible = False
+                    cancel_button.disable()
+                    outcome = str(result.get("status", "unknown"))
+                    status_label.text = (
+                        f"Generation {outcome}. {result.get('summary', '')} Refresh to re-read workbook evidence."
+                    )
+                    ui.notify(f"Delivery workbook generation {outcome}.")
+                except RuntimeError as exc:
+                    if not _parent_slot_deleted(exc):
+                        raise
+                    _stop_delivery_poll_timer()
 
-            poll_timer = ui.timer(1.0, _poll, active=False)
+            def _start_delivery_poll_timer() -> None:
+                _stop_delivery_poll_timer()
+                poll_timer_ref["timer"] = _start_background_poll_timer(1.0, _poll)
 
             with ui.dialog() as confirm_dialog, ui.card():
                 ui.label(str(action.get("confirmation_message", ""))).classes("sgfx-summary")
@@ -1270,7 +1319,7 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                     _show_live_progress()
                     _reset_live_progress()
                     cancel_button.enable()
-                    poll_timer.active = True
+                    _start_delivery_poll_timer()
                     confirm_dialog.close()
 
                 confirm_button = ui.button("Continue", on_click=_start).props("color=primary")
