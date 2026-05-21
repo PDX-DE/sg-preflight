@@ -109,6 +109,42 @@ class TestBmwDelivery(unittest.TestCase):
             self.assertFalse(payload["is_approval"])
             self.assertNotIn("approved", payload["note"].lower())
 
+    def test_read_bmw_screenshot_state_discovers_latest_sg_prespectives_tests_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            old_root = (
+                root
+                / ".pdx"
+                / "checkers"
+                / "prespectivesTests"
+                / "G70"
+                / "perspectives_CID_2to1"
+                / "20260401"
+            )
+            latest_root = (
+                root
+                / ".pdx"
+                / "checkers"
+                / "prespectivesTests"
+                / "G70"
+                / "perspectives_CID_2to1"
+                / "20260520"
+            )
+            write_text(old_root / "old.png", "fake\n")
+            write_text(latest_root / "front.png", "fake\n")
+            write_text(latest_root / "rear.jpg", "fake\n")
+            write_text(latest_root / "comparison" / "front_diff.png", "fake\n")
+
+            payload = read_bmw_screenshot_state("G70", workspace=root)
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["sg_perspectives_screenshot_count"], 3)
+        self.assertEqual(payload["sg_perspectives_comparison_count"], 1)
+        self.assertTrue(payload["sg_perspectives_latest_folder"].endswith("20260520"))
+        self.assertIn("SG prespectivesTests latest folder", payload["summary"])
+        self.assertTrue(any("prespectivesTests output is present" in note for note in payload["notes"]))
+        self.assertFalse(payload["is_approval"])
+
     def test_prerequisite_status_exposes_repo_local_bmw_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

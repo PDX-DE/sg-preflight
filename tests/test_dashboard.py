@@ -297,6 +297,45 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn(str(Path(tmp).resolve()), delivery["summary"])
         self.assertIn(Path(tmp).name, delivery["summary"])
 
+    def test_delivery_unavailable_page_exposes_generation_action_with_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+            from sg_preflight.delivery_workbook_generation import GENERATE_WORKBOOK_ACTION_ID
+
+            snapshot = build_dashboard_snapshot("G70", tmp)
+
+        delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
+        self.assertEqual(delivery["status"], "unavailable")
+        self.assertEqual(len(delivery["actions"]), 1)
+        action = delivery["actions"][0]
+        self.assertEqual(action["id"], GENERATE_WORKBOOK_ACTION_ID)
+        self.assertTrue(action["requires_confirmation"])
+        self.assertTrue(action["disabled"])
+        self.assertFalse(action["preflight"]["can_run"])
+        self.assertIn("This will run the BMW pipeline for G70", action["confirmation_message"])
+        checks = {item["key"]: item for item in action["preflight"]["checks"]}
+        self.assertIn("digital_3d_car_repo", checks)
+
+    def test_delivery_available_page_does_not_offer_generation_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            with mock.patch(
+                "sg_preflight.dashboard.main.read_delivery_checklist",
+                return_value={
+                    "status": "available",
+                    "data_available": True,
+                    "summary": "Delivery checklist G70: workbook found.",
+                    "checks": [],
+                    "is_approval": False,
+                },
+            ):
+                snapshot = build_dashboard_snapshot("G70", tmp)
+
+        delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
+        self.assertEqual(delivery["status"], "available")
+        self.assertEqual(delivery.get("actions", []), [])
+
     def test_manual_review_state_save_is_operator_local_and_rejects_approval_words(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import save_manual_review_state

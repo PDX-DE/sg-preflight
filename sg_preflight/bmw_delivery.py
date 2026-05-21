@@ -37,14 +37,18 @@ def _candidate_repo_paths(root: Path) -> tuple[Path, ...]:
 
 def discover_bmw_models_repo(workspace_root: Path | None = None) -> Path:
     root = _workspace_root(workspace_root)
-    for key in ("SG_BMW_CAR_MODELS_ROOT", "SG_CARMODELS_REPO", "SG-CarModels-Repo", "Digital-3D-Car-Repo"):
+    candidates = _candidate_repo_paths(root)
+    for candidate in candidates[:3]:
+        if candidate.exists():
+            return candidate
+    for key in ("Digital-3D-Car-Repo", "SG_BMW_CAR_MODELS_ROOT", "SG_CARMODELS_REPO", "SG-CarModels-Repo"):
         raw = os.environ.get(key, "").strip()
         if raw:
             return Path(raw)
-    for candidate in _candidate_repo_paths(root):
+    for candidate in candidates[3:]:
         if candidate.exists():
             return candidate
-    return _candidate_repo_paths(root)[0]
+    return candidates[0]
 
 
 def candidate_bmw_profile_ids(profile_id: str) -> tuple[str, ...]:
@@ -95,6 +99,52 @@ def _image_count(root: Path) -> int:
     return sum(1 for path in root.rglob("*") if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES)
 
 
+def _natural_sort_key(path: Path) -> tuple[Any, ...]:
+    parts: list[Any] = []
+    for chunk in re.split(r"(\d+)", path.name.casefold()):
+        if not chunk:
+            continue
+        parts.append(int(chunk) if chunk.isdigit() else chunk)
+    return tuple(parts)
+
+
+def _comparison_image_count(root: Path) -> int:
+    if not root.exists() or not root.is_dir():
+        return 0
+    count = 0
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in _IMAGE_SUFFIXES:
+            continue
+        haystack = " ".join(part.casefold() for part in (*path.parts, path.stem))
+        if "comparison" in haystack or "compare" in haystack or "diff" in haystack:
+            count += 1
+    return count
+
+
+def _candidate_prespectives_profile_dirs(root: Path, profile_id: str) -> tuple[Path, ...]:
+    profile = profile_id.strip().upper()
+    candidates = []
+    for item in (profile, f"{profile}_EVO"):
+        if item and item not in candidates:
+            candidates.append(item)
+    base_candidates = (
+        root / ".pdx" / "checkers" / "prespectivesTests",
+        root / "repositories" / "trunk" / ".pdx" / "checkers" / "prespectivesTests",
+    )
+    return tuple(base / candidate / "perspectives_CID_2to1" for base in base_candidates for candidate in candidates)
+
+
+def _latest_prespectives_folder(root: Path, profile_id: str) -> Path:
+    matches: list[Path] = []
+    for candidate in _candidate_prespectives_profile_dirs(root, profile_id):
+        if not candidate.is_dir():
+            continue
+        matches.extend(path for path in candidate.iterdir() if path.is_dir())
+    if not matches:
+        return Path()
+    return sorted(matches, key=_natural_sort_key)[-1]
+
+
 def _find_test_config(tests_root: Path) -> Path:
     direct = tests_root / "test_config.lua"
     if direct.exists():
@@ -138,6 +188,10 @@ class BmwScreenshotSurface:
     bmw_expected_count: int = 0
     actual_count: int = 0
     diff_count: int = 0
+    sg_perspectives_root: str = ""
+    sg_perspectives_latest_folder: str = ""
+    sg_perspectives_screenshot_count: int = 0
+    sg_perspectives_comparison_count: int = 0
     notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -162,6 +216,7 @@ def inspect_bmw_screenshot_surface(
     car_manager_path = ci_scripts_root / "car_manager.py"
     sg_expected_root = (sg_project_root.resolve() / "export" / "tests" / "expected") if sg_project_root else Path()
     test_config_path = _find_test_config(export_tests_root)
+    prespectives_root = _latest_prespectives_folder(_workspace_root(workspace_root), profile_id)
 
     notes: list[str] = []
     if export_tests_root.exists():
@@ -176,6 +231,10 @@ def inspect_bmw_screenshot_surface(
         notes.append("No BMW expected root is visible in the local snapshot for this profile.")
     if not sg_project_root or not sg_expected_root.exists():
         notes.append("No SG expected baseline root is available under the live SVN slice for this profile.")
+    if prespectives_root.exists():
+        notes.append("SG prespectivesTests output is present locally for this profile.")
+    else:
+        notes.append("No SG prespectivesTests output is available under the live SVN workspace for this profile.")
     if test_config_path.exists() and test_config_path.name != "test_config.lua":
         notes.append(f"BMW uses `{test_config_path.name}` in this snapshot instead of `test_config.lua`.")
 
@@ -200,6 +259,10 @@ def inspect_bmw_screenshot_surface(
         bmw_expected_count=_image_count(bmw_expected_root),
         actual_count=_image_count(actuals_root),
         diff_count=_image_count(diff_root),
+        sg_perspectives_root=str(prespectives_root.parent) if prespectives_root.exists() else "",
+        sg_perspectives_latest_folder=str(prespectives_root) if prespectives_root.exists() else "",
+        sg_perspectives_screenshot_count=_image_count(prespectives_root),
+        sg_perspectives_comparison_count=_comparison_image_count(prespectives_root),
         notes=tuple(notes),
     )
 
@@ -212,7 +275,7 @@ _SCREENSHOT_STATE_NOTE = "Read-only screenshot test state; manual review remains
 
 
 def _surface_status(surface: BmwScreenshotSurface) -> str:
-    if surface.bmw_expected_count > 0:
+    if surface.bmw_expected_count > 0 or surface.sg_perspectives_screenshot_count > 0:
         return "available"
     if surface.export_tests_root:
         return "no_expected_baselines"
@@ -241,6 +304,11 @@ def read_bmw_screenshot_state(
         if surface.bmw_expected_count or surface.actual_count or surface.diff_count
         else f"screenshot test state unavailable for {profile_id.strip() or 'profile'}"
     )
+    if surface.sg_perspectives_screenshot_count:
+        summary += (
+            f"; SG prespectivesTests latest folder has {surface.sg_perspectives_screenshot_count} screenshot file(s)"
+            f" and {surface.sg_perspectives_comparison_count} comparison file(s)"
+        )
     return {
         "profile_id": surface.profile_id,
         "matched_profile_id": surface.bmw_profile_id,
@@ -253,10 +321,14 @@ def read_bmw_screenshot_state(
         "expected_root": surface.bmw_expected_root,
         "actuals_root": surface.actuals_root,
         "diff_root": surface.diff_root,
+        "sg_perspectives_root": surface.sg_perspectives_root,
+        "sg_perspectives_latest_folder": surface.sg_perspectives_latest_folder,
         "test_config_path": surface.test_config_path,
         "expected_count": surface.bmw_expected_count,
         "actual_count": surface.actual_count,
         "diff_count": surface.diff_count,
+        "sg_perspectives_screenshot_count": surface.sg_perspectives_screenshot_count,
+        "sg_perspectives_comparison_count": surface.sg_perspectives_comparison_count,
         "disabled_test_count": disabled_count,
         "sg_expected_count": surface.sg_expected_count,
         "notes": list(surface.notes),
@@ -300,9 +372,12 @@ def bmw_screenshot_state_digest_items(state: dict[str, Any]) -> list[dict[str, A
         actual = int(payload.get("actual_count", 0) or 0)
         diff = int(payload.get("diff_count", 0) or 0)
         disabled = int(payload.get("disabled_test_count", 0) or 0)
+        sg_perspectives = int(payload.get("sg_perspectives_screenshot_count", 0) or 0)
         detail = f"{expected} expected / {actual} actual / {diff} diff"
         if disabled:
             detail += f" / {disabled} disabled in test_config"
+        if sg_perspectives:
+            detail += f" / {sg_perspectives} SG prespectivesTests screenshots"
         items.append(
             {
                 "source": "bmw_screenshot_state",
@@ -325,10 +400,16 @@ def render_bmw_screenshot_state_text(payload: dict[str, Any]) -> str:
         f"Profile: {payload.get('profile_id', '')} ({payload.get('brand', 'BMW')} {payload.get('matched_profile_id', '')})",
         f"Status: {payload.get('status', '')}",
         f"Counts: {payload.get('expected_count', 0)} expected / {payload.get('actual_count', 0)} actual / {payload.get('diff_count', 0)} diff",
+        (
+            "SG prespectivesTests: "
+            f"{payload.get('sg_perspectives_screenshot_count', 0)} screenshot / "
+            f"{payload.get('sg_perspectives_comparison_count', 0)} comparison"
+        ),
         f"Disabled tests in config: {payload.get('disabled_test_count', 0)}",
         f"Expected root: {payload.get('expected_root', '') or 'not found'}",
         f"Actuals root: {payload.get('actuals_root', '') or 'not found'}",
         f"Diff root: {payload.get('diff_root', '') or 'not found'}",
+        f"SG prespectivesTests root: {payload.get('sg_perspectives_latest_folder', '') or 'not found'}",
         str(payload.get("note", _SCREENSHOT_STATE_NOTE)),
     ]
     return "\n".join(lines)
@@ -345,10 +426,13 @@ def render_bmw_screenshot_state_markdown(payload: dict[str, Any]) -> str:
         f"- Expected baselines: `{payload.get('expected_count', 0)}`",
         f"- Actual screenshots: `{payload.get('actual_count', 0)}`",
         f"- Diff screenshots: `{payload.get('diff_count', 0)}`",
+        f"- SG prespectivesTests screenshots: `{payload.get('sg_perspectives_screenshot_count', 0)}`",
+        f"- SG prespectivesTests comparisons: `{payload.get('sg_perspectives_comparison_count', 0)}`",
         f"- Disabled tests in config: `{payload.get('disabled_test_count', 0)}`",
         f"- Expected root: `{payload.get('expected_root', '') or 'not found'}`",
         f"- Actuals root: `{payload.get('actuals_root', '') or 'not found'}`",
         f"- Diff root: `{payload.get('diff_root', '') or 'not found'}`",
+        f"- SG prespectivesTests root: `{payload.get('sg_perspectives_latest_folder', '') or 'not found'}`",
         "",
         f"> {payload.get('note', _SCREENSHOT_STATE_NOTE)}",
         f"> {payload.get('guidance', 'Suggested screenshot review input only; reviewer verdict required.')}",

@@ -15,6 +15,15 @@ from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_a
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.delivery_checklist import read_delivery_checklist
+from sg_preflight.delivery_workbook_generation import (
+    GENERATE_WORKBOOK_ACTION_ID,
+    GENERATE_WORKBOOK_ACTION_LABEL,
+    GENERATE_WORKBOOK_TIMEOUT_SECONDS,
+    cancel_delivery_workbook_generation,
+    check_delivery_workbook_generation_environment,
+    poll_delivery_workbook_generation,
+    start_delivery_workbook_generation,
+)
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
     create_manual_review_session,
@@ -359,6 +368,31 @@ def _reader_page(
     }
 
 
+def _delivery_checklist_page(profile_id: str, workspace: Path) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="delivery-checklist",
+        title="Delivery Checklist",
+        tagline="Workbook evidence per delivery profile (read-only).",
+        reader=lambda: read_delivery_checklist(profile_id=profile_id, workspace=workspace),
+        workspace=workspace,
+    )
+    if page.get("status") != "unavailable":
+        return page
+    preflight = check_delivery_workbook_generation_environment(profile_id=profile_id, workspace=workspace)
+    page["actions"] = [
+        {
+            "id": GENERATE_WORKBOOK_ACTION_ID,
+            "label": GENERATE_WORKBOOK_ACTION_LABEL,
+            "requires_confirmation": True,
+            "timeout_seconds": GENERATE_WORKBOOK_TIMEOUT_SECONDS,
+            "preflight": preflight,
+            "disabled": not bool(preflight.get("can_run", False)),
+            "confirmation_message": str(preflight.get("confirmation_message", "")),
+        }
+    ]
+    return page
+
+
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
     checks = payload.get("checks", [])
     if isinstance(checks, list) and checks:
@@ -380,6 +414,8 @@ def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
         ("actual_count", "Actual"),
         ("diff_count", "Diff"),
         ("disabled_test_count", "Disabled"),
+        ("sg_perspectives_screenshot_count", "SG Perspectives"),
+        ("sg_perspectives_comparison_count", "SG Comparisons"),
     ):
         if key in payload:
             counts.append({"label": label, "status": str(payload.get(key, 0)), "detail": ""})
@@ -402,6 +438,10 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "expected_root",
         "actuals_root",
         "diff_root",
+        "sg_perspectives_root",
+        "sg_perspectives_latest_folder",
+        "sg_perspectives_screenshot_count",
+        "sg_perspectives_comparison_count",
     )
     return {key: payload[key] for key in allowed if key in payload}
 
@@ -617,13 +657,7 @@ def build_dashboard_snapshot(
         "shortcut_actions": [{"key": key, "message": message} for key, message in DASHBOARD_SHORTCUT_ACTIONS],
         "guardrails": list(DASHBOARD_GUARDRAILS),
         "pages": [
-            _reader_page(
-                page_id="delivery-checklist",
-                title="Delivery Checklist",
-                tagline="Workbook evidence per delivery profile (read-only).",
-                reader=lambda: read_delivery_checklist(profile_id=resolved_profile_id, workspace=root),
-                workspace=root,
-            ),
+            _delivery_checklist_page(resolved_profile_id, root),
             _reader_page(
                 page_id="screenshot-test-state",
                 title="Screenshot Test State",
@@ -800,6 +834,141 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
             ui.label("No rows loaded for this page.").classes("sgfx-muted")
 
 
+def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        rows = [
+            {
+                "label": str(item.get("label", "")),
+                "status": str(item.get("status", "")),
+                "detail": str(item.get("detail", "")),
+            }
+            for item in page.get("items", [])
+            if isinstance(item, dict)
+        ]
+        if rows:
+            ui.table(
+                columns=[
+                    {"name": "label", "label": "Item", "field": "label", "align": "left"},
+                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                    {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                ],
+                rows=rows,
+                row_key="label",
+            ).classes("sgfx-table")
+        else:
+            ui.label("No rows loaded for this page.").classes("sgfx-muted")
+
+        actions = [
+            action for action in page.get("actions", []) if isinstance(action, dict)
+        ]
+        for action in actions:
+            if action.get("id") != GENERATE_WORKBOOK_ACTION_ID:
+                continue
+            preflight = action.get("preflight", {}) if isinstance(action.get("preflight"), dict) else {}
+            checks = [
+                {
+                    "label": str(item.get("label", "")),
+                    "status": str(item.get("status", "")),
+                    "detail": str(item.get("detail", "")),
+                }
+                for item in preflight.get("checks", [])
+                if isinstance(item, dict)
+            ]
+            ui.separator()
+            ui.label("Generate delivery workbook").classes("sgfx-panel-tagline")
+            ui.label("Environment pre-flight must pass before SGFX can invoke the BMW pipeline.").classes(
+                "sgfx-muted"
+            )
+            if checks:
+                ui.table(
+                    columns=[
+                        {"name": "label", "label": "Check", "field": "label", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                    ],
+                    rows=checks,
+                    row_key="label",
+                ).classes("sgfx-table")
+            disabled_reason = str(preflight.get("disabled_reason", "")).strip()
+            if disabled_reason:
+                ui.label(disabled_reason).classes("sgfx-muted")
+            status_label = ui.label("Local-only: this action runs only after operator confirmation.").classes(
+                "sgfx-muted"
+            )
+            progress = ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+            progress.visible = False
+            job_state: dict[str, Any] = {"job": None}
+
+            def _cancel() -> None:
+                job = job_state.get("job")
+                if job is None:
+                    return
+                result = cancel_delivery_workbook_generation(job)
+                progress.visible = False
+                status_label.text = str(result.get("summary", "Generation canceled."))
+                ui.notify("Delivery workbook generation canceled.")
+
+            cancel_button = ui.button("Cancel", on_click=_cancel)
+            cancel_button.disable()
+
+            def _poll() -> None:
+                job = job_state.get("job")
+                if job is None:
+                    poll_timer.active = False
+                    return
+                result = poll_delivery_workbook_generation(job)
+                if result is None:
+                    return
+                poll_timer.active = False
+                progress.visible = False
+                cancel_button.disable()
+                outcome = str(result.get("status", "unknown"))
+                status_label.text = (
+                    f"Generation {outcome}. {result.get('summary', '')} Refresh to re-read workbook evidence."
+                )
+                ui.notify(f"Delivery workbook generation {outcome}.")
+
+            poll_timer = ui.timer(1.0, _poll, active=False)
+
+            with ui.dialog() as confirm_dialog, ui.card():
+                ui.label(str(action.get("confirmation_message", ""))).classes("sgfx-summary")
+                ui.label("Manual review remains required. Decision: not approval — evidence only.").classes(
+                    "sgfx-muted"
+                )
+
+                def _start() -> None:
+                    try:
+                        job_state["job"] = start_delivery_workbook_generation(
+                            profile_id=str(snapshot["profile_id"]),
+                            workspace=workspace,
+                            operator_confirmed=True,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        status_label.text = f"Generation failed to start: {exc}"
+                        ui.notify("Delivery workbook generation failed to start.")
+                        confirm_dialog.close()
+                        return
+                    status_label.text = "BMW pipeline export running..."
+                    progress.visible = True
+                    cancel_button.enable()
+                    poll_timer.active = True
+                    confirm_dialog.close()
+
+                confirm_button = ui.button("Continue", on_click=_start).props("color=primary")
+                if action.get("disabled"):
+                    confirm_button.disable()
+                ui.button("Close", on_click=confirm_dialog.close)
+            run_button = ui.button(str(action.get("label", GENERATE_WORKBOOK_ACTION_LABEL)), on_click=confirm_dialog.open)
+            if action.get("disabled"):
+                run_button.disable()
+
+
 def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
     with ui.column().classes("sgfx-page-panel"):
@@ -927,7 +1096,9 @@ def _render_selected_page(
 ) -> None:
     container.clear()
     with container:
-        if page_id == "manual-review":
+        if page_id == "delivery-checklist":
+            _render_delivery_checklist_panel(ui, snapshot, workspace)
+        elif page_id == "manual-review":
             _render_manual_review_panel(ui, snapshot, workspace)
         elif page_id == "daily-digest":
             _render_daily_digest_panel(ui, snapshot, workspace)
