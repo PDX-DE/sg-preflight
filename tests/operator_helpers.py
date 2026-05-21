@@ -1,14 +1,55 @@
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 import json
 import hashlib
+import os
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from sg_preflight.profiles import RunProfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BMW_REPO_ENV_KEYS = (
+    "Digital-3D-Car-Repo",
+    "SG_BMW_CAR_MODELS_ROOT",
+    "SG_CARMODELS_REPO",
+    "SG-CarModels-Repo",
+)
+TOOL_ENV_KEYS = (
+    "SG_RACO_HEADLESS",
+    "RACO_HEADLESS_EXE",
+    "SG_RACO_GUI",
+    "SG_RACO_EDITOR",
+    "RACO_GUI_EXE",
+    "SG_BLENDER_EXE",
+    "BLENDER_EXE",
+)
+
+
+@contextmanager
+def isolated_missing_external_dependencies(temp_root: Path):
+    missing_root = temp_root / "missing"
+    missing_tool_paths = {
+        "SG_RACO_HEADLESS": missing_root / "RaCoHeadless.exe",
+        "RACO_HEADLESS_EXE": missing_root / "RaCoHeadless.exe",
+        "SG_RACO_GUI": missing_root / "RamsesComposer.exe",
+        "SG_RACO_EDITOR": missing_root / "RamsesComposer.exe",
+        "RACO_GUI_EXE": missing_root / "RamsesComposer.exe",
+        "SG_BLENDER_EXE": missing_root / "blender.exe",
+        "BLENDER_EXE": missing_root / "blender.exe",
+    }
+    env_values = {
+        **{key: str(missing_root / "digital-3d-car-models") for key in BMW_REPO_ENV_KEYS},
+        **{key: str(missing_tool_paths[key]) for key in TOOL_ENV_KEYS},
+    }
+    with ExitStack() as stack:
+        stack.enter_context(mock.patch.dict(os.environ, env_values, clear=False))
+        stack.enter_context(mock.patch("sg_preflight.checker_catalog.shutil.which", return_value=None))
+        stack.enter_context(mock.patch("sg_preflight.services.shutil.which", return_value=None))
+        yield
 
 
 def write_json(path: Path, payload: object) -> None:

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 import unittest
-from unittest import mock
 
 from sg_preflight.services import (
     RunRequest,
@@ -13,7 +11,7 @@ from sg_preflight.services import (
     preview_profile_sources,
     qa_workflow_status,
 )
-from tests.operator_helpers import create_temp_g65_profile
+from tests.operator_helpers import create_temp_g65_profile, isolated_missing_external_dependencies
 
 
 class TestServices(unittest.TestCase):
@@ -58,11 +56,8 @@ class TestServices(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
-            missing_bmw_repo = root / "missing" / "digital-3d-car-models"
-
-            with mock.patch.dict(os.environ, {"SG_CARMODELS_REPO": str(missing_bmw_repo)}, clear=False):
-                with mock.patch("sg_preflight.services.shutil.which", return_value=None):
-                    steps = qa_workflow_status(root, profiles=[profile])
+            with isolated_missing_external_dependencies(root):
+                steps = qa_workflow_status(root, profiles=[profile])
 
         step_map = {step["key"]: step for step in steps}
         self.assertEqual(step_map["deterministic_preflight"]["state"], "covered")

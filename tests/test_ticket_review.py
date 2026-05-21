@@ -16,7 +16,7 @@ from sg_preflight.qa_actions import (
     save_action_record,
 )
 from sg_preflight.ticket_review import materialize_ticket_review_bundle
-from tests.operator_helpers import write_text
+from tests.operator_helpers import isolated_missing_external_dependencies, write_text
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "checkers"
@@ -519,42 +519,43 @@ class TestTicketReview(unittest.TestCase):
             _create_checker_files(root)
             _create_visual_review_files(root, profile.project_root)
 
-            scene_action = get_operator_action("scene_check__g65", root, profiles=[profile])
-            scene_record = execute_operator_action(scene_action, root)
-            self.assertEqual(scene_record.status, "blocked")
+            with isolated_missing_external_dependencies(root):
+                scene_action = get_operator_action("scene_check__g65", root, profiles=[profile])
+                scene_record = execute_operator_action(scene_action, root)
+                self.assertEqual(scene_record.status, "blocked")
 
-            screenshot_source = root / "notes" / "g65-manual-shot.png"
-            _write_png_fixture(screenshot_source)
-            attach_manual_evidence(
-                scene_record.run_id,
-                root,
-                kind="screenshot",
-                label="G65 manual screenshot",
-                source_path=str(screenshot_source),
-            )
-            attach_manual_evidence(
-                scene_record.run_id,
-                root,
-                kind="raco_note",
-                label="G65 RaCo note",
-                note="Scene checked: welcome light carpet",
-            )
-            attach_manual_evidence(
-                scene_record.run_id,
-                root,
-                kind="visual_review_checklist",
-                label="G65 visual checklist",
-                note="Project changelog reviewed: [x]",
-            )
+                screenshot_source = root / "notes" / "g65-manual-shot.png"
+                _write_png_fixture(screenshot_source)
+                attach_manual_evidence(
+                    scene_record.run_id,
+                    root,
+                    kind="screenshot",
+                    label="G65 manual screenshot",
+                    source_path=str(screenshot_source),
+                )
+                attach_manual_evidence(
+                    scene_record.run_id,
+                    root,
+                    kind="raco_note",
+                    label="G65 RaCo note",
+                    note="Scene checked: welcome light carpet",
+                )
+                attach_manual_evidence(
+                    scene_record.run_id,
+                    root,
+                    kind="visual_review_checklist",
+                    label="G65 visual checklist",
+                    note="Project changelog reviewed: [x]",
+                )
 
-            result = materialize_ticket_review_bundle(
-                "IDCEVODEV-960073",
-                title="Quality-Hero: How to review the 3D car",
-                profile_ids=("G65",),
-                workspace=root,
-                output_root=root / "out" / "IDCEVODEV-960073-review-package",
-                scope_note="G65 is only the first concrete live-SVN slice, not confirmed final scope.",
-            )
+                result = materialize_ticket_review_bundle(
+                    "IDCEVODEV-960073",
+                    title="Quality-Hero: How to review the 3D car",
+                    profile_ids=("G65",),
+                    workspace=root,
+                    output_root=root / "out" / "IDCEVODEV-960073-review-package",
+                    scope_note="G65 is only the first concrete live-SVN slice, not confirmed final scope.",
+                )
 
             item_map = {item.key: item for item in result.bundle.dod_items}
             self.assertEqual(item_map["screenshot_tests_bmws"].status, "partial")

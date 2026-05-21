@@ -113,6 +113,37 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("SGFX Preflight - Grafiks Mode.lnk", text)
         self.assertNotIn("SGFX Preflight - Web Review Board.lnk", text)
 
+    def test_walkthrough_harness_reattaches_to_dependency_setup_panel(self) -> None:
+        harness_path = ROOT / "scripts" / "walkthrough_harness" / "uia_readiness.ps1"
+        probe_path = ROOT / "scripts" / "walkthrough_harness" / "probe_grafiks_setup_uia.ps1"
+        self.assertTrue(harness_path.exists())
+        self.assertTrue(probe_path.exists())
+        text = harness_path.read_text(encoding="utf-8")
+        probe_text = probe_path.read_text(encoding="utf-8")
+
+        self.assertIn("Wait-SgfxUiElement", text)
+        self.assertIn("AutomationIdProperty", text)
+        self.assertIn("NameProperty", text)
+        self.assertIn("Wait-SgfxDependencySetupPanel", text)
+        self.assertIn("Wait-SgfxSetupControlsAfterDialogClose", text)
+        self.assertIn("Get-SgfxProcessWindowElement", text)
+        self.assertIn("Wait-SgfxSetupControlsAfterDialogClose", probe_text)
+        self.assertIn("grafiks", probe_text)
+        self.assertIn('"Dependency Setup"', text)
+        self.assertNotIn("failed_to_switch_by_automation_coordinates", text)
+
+    def test_clean_playwright_harness_waits_for_dashboard_readiness(self) -> None:
+        harness_path = ROOT / "scripts" / "walkthrough_harness" / "capture_clean_pages.py"
+        self.assertTrue(harness_path.exists())
+        text = harness_path.read_text(encoding="utf-8")
+
+        self.assertIn("wait_for_clean_dashboard_ready", text)
+        self.assertIn("wait_for_dashboard_page", text)
+        self.assertIn("page.get_by_role", text)
+        self.assertIn("page.get_by_text", text)
+        self.assertIn("wait_for_load_state", text)
+        self.assertNotIn("wait_for_timeout", text)
+
     def test_native_shell_font_discovery_ignores_archives(self) -> None:
         shell_source = (ROOT / "desktop_native" / "src" / "sgfx_shell" / "sgfx_shared_resources.cpp").read_text(encoding="utf-8")
 

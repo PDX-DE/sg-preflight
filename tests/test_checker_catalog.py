@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 import unittest
-from unittest import mock
 
 from sg_preflight.checker_catalog import list_checker_catalog
-from tests.operator_helpers import create_temp_g65_profile, write_text
+from tests.operator_helpers import create_temp_g65_profile, isolated_missing_external_dependencies, write_text
 
 
 def _create_catalog_files(root: Path) -> None:
@@ -35,16 +33,8 @@ class TestCheckerCatalog(unittest.TestCase):
             profile = create_temp_g65_profile(root)
             _create_catalog_files(root)
 
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "SG_RACO_HEADLESS": str(root / "missing" / "RaCoHeadless.exe"),
-                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
-                },
-                clear=False,
-            ):
-                with mock.patch("sg_preflight.checker_catalog.shutil.which", return_value=None):
-                    items = list_checker_catalog(root, profiles=[profile])
+            with isolated_missing_external_dependencies(root):
+                items = list_checker_catalog(root, profiles=[profile])
 
         item_map = {item.key: item for item in items}
         self.assertEqual(item_map["style_checker"].coverage, "direct")
