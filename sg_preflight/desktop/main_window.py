@@ -3,14 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QTimer, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer, Qt, Signal
+from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGraphicsOpacityEffect,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -70,6 +71,13 @@ GRAFIKS_GUARDRAILS = (
 
 GRAFIKS_WIP_NOTICE = "Grafiks mode is experimental — recommend Clean mode for daily work."
 DESKTOP_WINDOW_TITLE = "SGFX"
+GRAFIKS_HOTKEY_MESSAGES = {
+    Qt.Key_F1: ("F1", "Help: inspect local evidence surfaces, setup status, and guardrails."),
+    Qt.Key_F2: ("F2", "Profile switch: focus the profile list."),
+    Qt.Key_F5: ("F5", "Refresh: re-read setup status and current profile evidence."),
+    Qt.Key_F12: ("F12", "Diagnostic: current profile, mode, and workspace stay local."),
+    Qt.Key_Escape: ("Esc", "Quit guidance: close the window when the local review is done."),
+}
 _SETUP_SOURCE_REQUIRED = {"setup-raco-from-shared-tools", "setup-blender-411"}
 _SETUP_TARGET_REQUIRED = {
     "setup-raco-from-shared-tools",
@@ -99,7 +107,17 @@ class DesktopMainWindow(QMainWindow):
         self._setup_status: dict[str, Any] = {}
         self._setup_actions: list[dict[str, Any]] = []
         self._setup_job: DependencySetupJob | None = None
+        self._hotkey_animation: QPropertyAnimation | None = None
+        self._hotkey_popup: QWidget | None = None
+        self._hotkey_icon_label: QLabel | None = None
+        self._hotkey_text_label: QLabel | None = None
+        self._hotkey_opacity: QGraphicsOpacityEffect | None = None
+        self._hotkey_icon_pixmap = QPixmap(str(runtime_asset_path("debug_icon.png")))
+        self._hotkey_pulse_step = 0
 
+        icon_path = runtime_asset_path("desktop_native/resources/exe_ico.ico")
+        if icon_path.is_file():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1640, 950)
         self._build_ui()
         self._set_presentation_mode(self.presentation_mode)
@@ -213,6 +231,10 @@ class DesktopMainWindow(QMainWindow):
         self.copy_handoff_button.clicked.connect(lambda: self._copy_text("handoff"))
         bottom_layout.addWidget(self.copy_handoff_button)
 
+        self.about_button = GuideButton("F1", "About", bottom)
+        self.about_button.clicked.connect(self._show_about_dialog)
+        bottom_layout.addWidget(self.about_button)
+
         layout.addWidget(bottom)
 
         guardrail_panel = OperatorPanel("Standing Guardrails", central)
@@ -229,6 +251,169 @@ class DesktopMainWindow(QMainWindow):
 
         status = QStatusBar(self)
         self.setStatusBar(status)
+        self._install_static_tooltips()
+        self._build_hotkey_popup()
+
+    def _install_static_tooltips(self) -> None:
+        self.header_banner.setToolTip("Current SGFX profile context and local evidence workspace.")
+        self.wip_notice.setToolTip("Grafiks is experimental; Clean mode remains recommended for daily work.")
+        self.mode_panel.setToolTip("Switch between Clean embedded dashboard and Grafiks shell.")
+        self.clean_mode_button.setToolTip("Open the embedded Clean view.")
+        self.grafiks_mode_button.setToolTip("Stay in the experimental Grafiks shell.")
+        self.profile_list.setToolTip("Select the local delivery profile to inspect.")
+        self.action_list.setToolTip("Choose the operator action for the selected profile.")
+        self.run_button.setToolTip("Run the selected local action.")
+        self.open_file_button.setToolTip("Open the selected evidence file.")
+        self.reveal_button.setToolTip("Reveal the selected evidence path in the file manager.")
+        self.open_log_button.setToolTip("Open the latest action log for the current run.")
+        self.open_report_button.setToolTip("Open the latest HTML report when available.")
+        self.open_evidence_button.setToolTip("Open the latest evidence bundle folder when available.")
+        self.copy_jira_button.setToolTip("Copy the prepared Jira note text to the clipboard.")
+        self.copy_qa_hero_button.setToolTip("Copy the prepared QA Hero note text to the clipboard.")
+        self.copy_handoff_button.setToolTip("Copy the local handoff text to the clipboard.")
+        self.about_button.setToolTip("Open the About panel and documented local-evidence guardrails.")
+        self.evidence_list.setToolTip("Evidence paths from the current action snapshot.")
+        self.setup_list.setToolTip("Dependency status rows prefer detected local installs before fallback setup.")
+        self.setup_action_selector.setToolTip("Select a confirmation-gated setup action.")
+        self.setup_run_button.setToolTip("Run setup only after reviewing the confirmation dialog.")
+        self.setup_cancel_button.setToolTip("Cancel the currently running setup worker.")
+        self.setup_output.setToolTip("Live setup output and file activity from the local worker.")
+        self.surface_list.setToolTip("Evidence surfaces available for the selected profile.")
+        self.blocker_list.setToolTip("Local blockers that require operator attention.")
+        self.manual_list.setToolTip("Manual-review companion status; review remains required.")
+
+    def _build_hotkey_popup(self) -> None:
+        popup = QWidget(self)
+        popup.setObjectName("hotkeyPopup")
+        popup.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        popup.setStyleSheet(
+            """
+QWidget#hotkeyPopup {
+  background: rgba(18, 27, 31, 245);
+  border: 1px solid #4ec9b0;
+  border-radius: 8px;
+}
+QLabel#hotkeyText {
+  color: #d4d4d4;
+  font-family: "Segoe UI", "Bahnschrift", sans-serif;
+  font-size: 13px;
+}
+"""
+        )
+        popup_layout = QHBoxLayout(popup)
+        popup_layout.setContentsMargins(14, 12, 16, 12)
+        popup_layout.setSpacing(14)
+
+        icon_label = QLabel(popup)
+        icon_label.setFixedSize(104, 104)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        popup_layout.addWidget(icon_label)
+
+        text_label = QLabel("F1\nShortcuts available.", popup)
+        text_label.setObjectName("hotkeyText")
+        text_label.setWordWrap(True)
+        text_label.setMinimumWidth(240)
+        popup_layout.addWidget(text_label)
+
+        opacity = QGraphicsOpacityEffect(popup)
+        opacity.setOpacity(0.0)
+        popup.setGraphicsEffect(opacity)
+        popup.hide()
+
+        self._hotkey_popup = popup
+        self._hotkey_icon_label = icon_label
+        self._hotkey_text_label = text_label
+        self._hotkey_opacity = opacity
+        self._hotkey_hide_timer = QTimer(self)
+        self._hotkey_hide_timer.setSingleShot(True)
+        self._hotkey_hide_timer.timeout.connect(self._fade_hotkey_popup)
+        self._hotkey_pulse_timer = QTimer(self)
+        self._hotkey_pulse_timer.setInterval(110)
+        self._hotkey_pulse_timer.timeout.connect(self._pulse_hotkey_icon)
+
+    def _place_hotkey_popup(self) -> None:
+        if self._hotkey_popup is None:
+            return
+        self._hotkey_popup.adjustSize()
+        margin = 32
+        x = max(margin, self.width() - self._hotkey_popup.width() - margin)
+        self._hotkey_popup.move(x, 82)
+
+    def _set_hotkey_icon_size(self, size: int) -> None:
+        if self._hotkey_icon_label is None or self._hotkey_icon_pixmap.isNull():
+            return
+        pixmap = self._hotkey_icon_pixmap.scaled(
+            size,
+            size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._hotkey_icon_label.setPixmap(pixmap)
+
+    def _pulse_hotkey_icon(self) -> None:
+        self._hotkey_pulse_step = (self._hotkey_pulse_step + 1) % 12
+        distance = abs(6 - self._hotkey_pulse_step)
+        self._set_hotkey_icon_size(88 + (6 - distance) * 2)
+
+    def _animate_hotkey_opacity(self, start: float, end: float, duration: int) -> QPropertyAnimation | None:
+        if self._hotkey_opacity is None:
+            return None
+        if self._hotkey_animation is not None:
+            self._hotkey_animation.stop()
+        animation = QPropertyAnimation(self._hotkey_opacity, b"opacity", self)
+        animation.setDuration(duration)
+        animation.setStartValue(start)
+        animation.setEndValue(end)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._hotkey_animation = animation
+        animation.start()
+        return animation
+
+    def _show_hotkey_popup(self, key_label: str, message: str) -> None:
+        if self._hotkey_popup is None or self._hotkey_text_label is None:
+            return
+        self._hotkey_text_label.setText(f"{key_label}\n{message}")
+        self._set_hotkey_icon_size(96)
+        self._place_hotkey_popup()
+        self._hotkey_popup.show()
+        self._hotkey_popup.raise_()
+        self._hotkey_pulse_timer.start()
+        self._animate_hotkey_opacity(0.0, 1.0, 150)
+        self._hotkey_hide_timer.start(1100)
+
+    def _fade_hotkey_popup(self) -> None:
+        animation = self._animate_hotkey_opacity(1.0, 0.0, 250)
+        if animation is None or self._hotkey_popup is None:
+            return
+
+        def _hide() -> None:
+            if self._hotkey_popup is not None:
+                self._hotkey_popup.hide()
+            self._hotkey_pulse_timer.stop()
+
+        animation.finished.connect(_hide)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self._hotkey_popup is not None and self._hotkey_popup.isVisible():
+            self._place_hotkey_popup()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        hotkey = GRAFIKS_HOTKEY_MESSAGES.get(event.key())
+        if hotkey is None:
+            super().keyPressEvent(event)
+            return
+        key_label, message = hotkey
+        if event.key() == Qt.Key_F2:
+            self.profile_list.setFocus()
+        elif event.key() == Qt.Key_F5:
+            profile_id = self._current_profile_id()
+            self._reload_side_panels(profile_id)
+            self._load_latest_snapshot(profile_id)
+        elif event.key() == Qt.Key_F12:
+            message = f"{message} Profile: {self._current_profile_id() or 'unknown'}; mode: {self.presentation_mode}."
+        self._show_hotkey_popup(key_label, message)
+        event.accept()
 
     def _request_presentation_mode(self, mode: str) -> None:
         normalized = _clean_presentation_mode(mode)
@@ -461,6 +646,7 @@ class DesktopMainWindow(QMainWindow):
             self.action_list.addItem(item)
 
             button = ActionTabButton(action.action_id, self._action_tab_text(action), action.ready, self.action_tab_host)
+            button.setToolTip(tooltip)
             button.selected.connect(self._select_action_by_id)
             self.action_tab_layout.addWidget(button)
             self._action_tab_buttons[action.action_id] = button
@@ -818,6 +1004,7 @@ class DesktopMainWindow(QMainWindow):
                 line += f"\n{item.message}"
             row = QListWidgetItem(line)
             row.setData(Qt.UserRole, item)
+            row.setToolTip(item.message or item.path)
             self.evidence_list.addItem(row)
         self._sync_action_tabs(snapshot.action_id)
         self._refresh_buttons()
@@ -910,6 +1097,60 @@ class DesktopMainWindow(QMainWindow):
             return
         QApplication.clipboard().setText(text)
         self.statusBar().showMessage(f"Copied {key.replace('_', ' ')}")
+
+    def _show_about_dialog(self) -> None:
+        from sg_preflight.dashboard.main import ABOUT_CONTENT
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("About")
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(10)
+
+        logo = QLabel(dialog)
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_pixmap = QPixmap(str(runtime_asset_path("framework_sgfx_logo.png")))
+        if not logo_pixmap.isNull():
+            logo.setPixmap(
+                logo_pixmap.scaled(
+                    160,
+                    160,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        layout.addWidget(logo)
+
+        heading = QLabel(str(ABOUT_CONTENT.get("heading", "About")), dialog)
+        heading.setObjectName("runTitle")
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(heading)
+
+        description = QLabel(str(ABOUT_CONTENT.get("description", "")), dialog)
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        version = QLabel(str(ABOUT_CONTENT.get("version_placeholder", "")), dialog)
+        version.setObjectName("panelHint")
+        layout.addWidget(version)
+
+        anchors = ABOUT_CONTENT.get("confluence_anchors", ())
+        if anchors:
+            anchor_text = "\n".join(f"{label} - {anchor}" for label, anchor in anchors)
+            anchors_label = QLabel(f"Confluence anchors\n{anchor_text}", dialog)
+            anchors_label.setWordWrap(True)
+            anchors_label.setObjectName("panelHint")
+            layout.addWidget(anchors_label)
+
+        guardrails = QLabel("\n".join(GRAFIKS_GUARDRAILS), dialog)
+        guardrails.setWordWrap(True)
+        guardrails.setObjectName("panelHint")
+        layout.addWidget(guardrails)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.resize(560, 520)
+        dialog.exec()
 
     def _refresh_buttons(self) -> None:
         has_snapshot = self._current_snapshot is not None

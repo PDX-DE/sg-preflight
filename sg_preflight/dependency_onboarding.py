@@ -389,7 +389,12 @@ def _raco_status(state: dict[str, Any], workspace: Path) -> tuple[dict[str, Any]
         key="raco_gui",
         label="Ramses Composer GUI",
         status="available" if gui is not None else "missing",
-        detail=f"RamsesComposer.exe is available. {source_detail}" if gui is not None else source_detail,
+        detail=(
+            "RamsesComposer.exe is available from an existing local install; "
+            "the documented OneDrive Tools folder is only a fallback for missing installs."
+        )
+        if gui is not None
+        else source_detail,
         path=gui,
         confluence_anchor=RACO_CONFLUENCE_ANCHOR,
         setup_action={} if gui is not None else action,
@@ -401,7 +406,12 @@ def _raco_status(state: dict[str, Any], workspace: Path) -> tuple[dict[str, Any]
         key="raco_headless",
         label="RaCoHeadless",
         status="available" if headless is not None else "missing",
-        detail="RaCoHeadless.exe is available for script execution." if headless is not None else source_detail,
+        detail=(
+            "RaCoHeadless.exe is available from an existing local install; "
+            "the documented OneDrive Tools folder is only a fallback for missing installs."
+        )
+        if headless is not None
+        else source_detail,
         path=headless,
         confluence_anchor=RACO_HEADLESS_CONFLUENCE_ANCHOR,
         setup_action={} if headless is not None else headless_action,
@@ -506,6 +516,7 @@ def _bmw_repo_status(state: dict[str, Any], workspace: Path, bmw_root: Path | st
     ]
     action_id = "setup-digital-3d-car-repo" if candidate is not None else "clone-digital-3d-car-repo"
     action_label = "Set up BMW Git env" if candidate is not None else "Clone BMW Git checkout"
+    clone_can_run = candidate is None and git_path is not None and lfs_path is not None
     command_preview = (
         f'setx {DIGITAL_3D_CAR_REPO_ENV} "{candidate}"'
         if candidate is not None
@@ -516,14 +527,14 @@ def _bmw_repo_status(state: dict[str, Any], workspace: Path, bmw_root: Path | st
         action_id=action_id,
         label=action_label,
         dependency_key="digital_3d_car_repo",
-        status="available" if (candidate is not None or git_path is not None) else "incomplete",
+        status="available" if (candidate is not None or clone_can_run) else "incomplete",
         confirmation_message=(
             f"Configure {DIGITAL_3D_CAR_REPO_ENV} for the local digital-3d-car-models checkout. "
             "If the checkout is missing, clone only after BMW Git access and credentials are available."
         ),
         effects=effects,
         confluence_anchor=BMW_ENV_CONFLUENCE_ANCHOR,
-        can_run_now=candidate is not None and sys.platform == "win32",
+        can_run_now=(candidate is not None and sys.platform == "win32") or clone_can_run,
         command_preview=command_preview,
         target_path=default_target,
         operator_inputs=["Choose the local clone folder if no checkout is detected."],
@@ -552,21 +563,14 @@ def _bmw_repo_status(state: dict[str, Any], workspace: Path, bmw_root: Path | st
             confluence_anchor=BMW_ENV_CONFLUENCE_ANCHOR,
             setup_action=action,
         )
+    detail = "BMW Git models checkout is available for read-only local evidence."
     if not explicit_env:
-        return _status_item(
-            key="digital_3d_car_repo",
-            label=f"{DIGITAL_3D_CAR_REPO_ENV}",
-            status="incomplete",
-            detail=f"Checkout exists at {candidate}, but {DIGITAL_3D_CAR_REPO_ENV} is not set.",
-            path=candidate,
-            confluence_anchor=BMW_ENV_CONFLUENCE_ANCHOR,
-            setup_action=action,
-        )
+        detail += f" Existing checkout detected; {DIGITAL_3D_CAR_REPO_ENV} setup is optional for future shells."
     return _status_item(
         key="digital_3d_car_repo",
         label=f"{DIGITAL_3D_CAR_REPO_ENV}",
         status="available",
-        detail="BMW Git models checkout is configured for read-only local evidence.",
+        detail=detail,
         path=candidate,
         confluence_anchor=BMW_ENV_CONFLUENCE_ANCHOR,
         setup_action={},

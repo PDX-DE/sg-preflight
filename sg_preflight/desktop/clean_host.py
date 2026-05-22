@@ -2,16 +2,29 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import urllib.error
 import urllib.request
 
 from PySide6.QtCore import QTimer, QUrl, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
 
-from sg_preflight.dashboard.main import _find_open_dashboard_port
+from sg_preflight.assets import runtime_asset_path
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
+
+
+def _find_open_dashboard_port(start_port: int = 8000, end_port: int = 8999) -> int:
+    for port in range(start_port, end_port + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise OSError("No open SGFX dashboard port found between 8000 and 8999")
 
 
 class CleanDashboardWindow(QMainWindow):
@@ -31,7 +44,10 @@ class CleanDashboardWindow(QMainWindow):
         except ImportError as exc:
             raise RuntimeError("Clean mode requires the PySide6 QtWebEngineWidgets runtime.") from exc
 
-        self.setWindowTitle("SGFX: Project Quality-Hero - Clean Operator Console")
+        icon_path = runtime_asset_path("desktop_native/resources/exe_ico.ico")
+        if icon_path.is_file():
+            self.setWindowIcon(QIcon(str(icon_path)))
+        self.setWindowTitle("SGFX")
         self.resize(1440, 900)
 
         central = QWidget(self)
@@ -59,7 +75,7 @@ class CleanDashboardWindow(QMainWindow):
         bar_layout.addWidget(self.clean_button)
         bar_layout.addWidget(self.grafiks_button)
 
-        self.status_label = QLabel("Starting Clean dashboard...", bar)
+        self.status_label = QLabel("Starting embedded dashboard...", bar)
         self.status_label.setObjectName("panelHint")
         self.status_label.setProperty("sgfxMode", "clean")
         bar_layout.addWidget(self.status_label, stretch=1)
@@ -72,7 +88,7 @@ class CleanDashboardWindow(QMainWindow):
 
         self._start_server()
         self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(350)
+        self._poll_timer.setInterval(150)
         self._poll_timer.timeout.connect(self._poll_server)
         self._poll_timer.start()
 
@@ -117,7 +133,7 @@ class CleanDashboardWindow(QMainWindow):
         self._poll_count += 1
         if self._server is not None and self._server.poll() is not None:
             self._poll_timer.stop()
-            self.status_label.setText(f"Clean dashboard exited early with code {self._server.returncode}.")
+            self.status_label.setText(f"Embedded dashboard exited early with code {self._server.returncode}.")
             return
         url = f"http://127.0.0.1:{self.port}/"
         try:
@@ -125,13 +141,13 @@ class CleanDashboardWindow(QMainWindow):
                 if response.status != 200:
                     raise urllib.error.URLError(f"HTTP {response.status}")
         except Exception:
-            if self._poll_count > 90:
+            if self._poll_count > 200:
                 self._poll_timer.stop()
-                self.status_label.setText("Clean dashboard did not become ready.")
+                self.status_label.setText("Embedded dashboard did not become ready.")
             return
         self._ready = True
         self._poll_timer.stop()
-        self.status_label.setText("Clean dashboard")
+        self.status_label.setText("Dashboard ready")
         self.web_view.setUrl(QUrl(url))
 
     def closeEvent(self, event) -> None:  # noqa: N802

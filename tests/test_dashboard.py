@@ -44,6 +44,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             "framework_sgfx_logo.png",
             "logo_sgfx.png",
             "exe_ico.png",
+            "debug_icon.png",
             "desktop_native/resources/exe_ico.ico",
             "desktop_native/resources/debug_icon.ico",
         ):
@@ -87,6 +88,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "screenshot-test-state", "label": "Screenshot Test State"},
                 {"id": "daily-digest", "label": "Daily Digest"},
                 {"id": "manual-review", "label": "Manual Review Companion"},
+                {"id": "about", "label": "About"},
             ],
         )
         self.assertEqual(
@@ -145,8 +147,13 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("--sgfx-bg:", source)
         self.assertIn("ABOUT_CONTENT", source)
         self.assertIn("_render_about_panel", source)
+        self.assertIn('elif active_page_id == "about"', source)
         self.assertIn("Confluence anchors", source)
         self.assertIn("sgfx-sidebar-logo", source)
+        self.assertIn("sgfx-about-logo", source)
+        self.assertIn("debug_icon.png", source)
+        self.assertIn("sgfx-hotkey-popup", source)
+        self.assertIn("sgfx-thinking-tooltip", source)
 
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

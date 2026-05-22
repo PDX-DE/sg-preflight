@@ -43,6 +43,7 @@ from sg_preflight.utils import ensure_parent
 DASHBOARD_TITLE = "SGFX"
 DASHBOARD_BRAND_LOGO_ASSET = "framework_sgfx_logo.png"
 DASHBOARD_BRAND_ICON_ASSET = "sgfx_icon.png"
+DASHBOARD_DEBUG_ICON_ASSET = "debug_icon.png"
 STARTUP_LOG_NAME = "sgfx-preflight-startup.log"
 WEBVIEW2_RUNTIME_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 NATIVE_RETURN_FALLBACK_SECONDS = 5.0
@@ -59,6 +60,7 @@ DASHBOARD_NAVIGATION = (
     ("screenshot-test-state", "Screenshot Test State"),
     ("daily-digest", "Daily Digest"),
     ("manual-review", "Manual Review Companion"),
+    ("about", "About"),
 )
 DASHBOARD_SHORTCUTS = ("F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit")
 DASHBOARD_SHORTCUT_ACTIONS = (
@@ -93,14 +95,13 @@ ABOUT_CONTENT: dict[str, Any] = {
     ),
 }
 
-# Logo placement spec (Mercedes E-1; Aston implements sizing in E-2):
+# Logo placement spec:
 #   sidebar header (Clean):        sgfx_icon.png        ~132 x auto  px
 #   main header (Clean):           framework_sgfx_logo.png  ~72 x 72 px (currently 52 px — too small)
 #   Grafiks shell HeaderBanner:    framework_sgfx_logo.png  62 x 62 px (existing)
 #   About panel hero (Clean):      framework_sgfx_logo.png  ~160 x auto px
-#   Window taskbar (.ico):         exe_ico.ico              — Grafiks lost this; Aston wires
-#                                                             setWindowIcon(QIcon(exe_ico.ico)) in E-2
-#   Hotkey popup (Clean + Grafiks): debug_icon.png          ~96 x 96 px animated overlay (Aston E-2)
+#   Window taskbar (.ico):         exe_ico.ico              setWindowIcon(QIcon(exe_ico.ico))
+#   Hotkey popup (Clean + Grafiks): debug_icon.png          ~96 x 96 px animated overlay
 MANUAL_REVIEW_STATUSES = ["not_run", "recorded", "incomplete"]
 MANUAL_REVIEW_RECORD_VERDICTS = ["passed", "failed", "skipped", "incomplete"]
 MANUAL_REVIEW_DASHBOARD_TICKET_ID = "IDCEVODEV-977874"
@@ -879,8 +880,18 @@ def _render_status_chip(ui: Any, status: str) -> None:
     ui.badge(status or "unknown").classes("sgfx-status")
 
 
+def _attach_tooltip(ui: Any, element: Any, text: str) -> Any:
+    with element:
+        ui.tooltip(text).classes("sgfx-thinking-tooltip")
+    return element
+
+
 def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
-    with ui.column().classes("sgfx-page-panel"):
+    with _attach_tooltip(
+        ui,
+        ui.column().classes("sgfx-page-panel"),
+        "Read-only evidence card for the selected local workspace and profile.",
+    ):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(page["title"])).classes("sgfx-panel-title")
             _render_status_chip(ui, str(page.get("status", "unknown")))
@@ -899,15 +910,19 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
             if isinstance(item, dict)
         ]
         if rows:
-            ui.table(
-                columns=[
-                    {"name": "label", "label": "Item", "field": "label", "align": "left"},
-                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                    {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
-                ],
-                rows=rows,
-                row_key="label",
-            ).classes("sgfx-table")
+            _attach_tooltip(
+                ui,
+                ui.table(
+                    columns=[
+                        {"name": "label", "label": "Item", "field": "label", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="label",
+                ).classes("sgfx-table"),
+                "Evidence rows are read from local files only.",
+            )
         else:
             ui.label("No rows loaded for this page.").classes("sgfx-muted")
 
@@ -924,14 +939,22 @@ def _render_first_run_welcome(ui: Any, snapshot: dict[str, Any], open_setup: Cal
         for guardrail in welcome.get("guardrails", []):
             ui.label(str(guardrail)).classes("sgfx-guardrail")
         if open_setup is not None:
-            ui.button("Run setup", on_click=open_setup).props("color=primary")
+            _attach_tooltip(
+                ui,
+                ui.button("Run setup", on_click=open_setup).props("color=primary"),
+                "Open the dependency setup card; no system changes run without confirmation.",
+            )
 
 
 def _render_about_panel(ui: Any, content: dict[str, Any] | None = None) -> None:
     payload = content if isinstance(content, dict) else ABOUT_CONTENT
-    with ui.column().classes("sgfx-page-panel"):
+    with _attach_tooltip(
+        ui,
+        ui.column().classes("sgfx-page-panel"),
+        "About this local-only preflight surface and its documented evidence anchors.",
+    ):
         with ui.row().classes("items-center sgfx-brand-lockup"):
-            ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_BRAND_LOGO_ASSET}").classes("sgfx-brand-logo")
+            ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_BRAND_LOGO_ASSET}").classes("sgfx-about-logo")
             ui.label(str(payload.get("heading", "About"))).classes("sgfx-panel-title")
         ui.label(str(payload.get("description", ""))).classes("sgfx-summary")
         ui.label(str(payload.get("version_placeholder", ""))).classes("sgfx-muted")
@@ -964,15 +987,19 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
             }
             for item in items
         ]
-        ui.table(
-            columns=[
-                {"name": "label", "label": "Dependency", "field": "label", "align": "left"},
-                {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
-            ],
-            rows=rows,
-            row_key="label",
-        ).classes("sgfx-table")
+        _attach_tooltip(
+            ui,
+            ui.table(
+                columns=[
+                    {"name": "label", "label": "Dependency", "field": "label", "align": "left"},
+                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                    {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                ],
+                rows=rows,
+                row_key="label",
+            ).classes("sgfx-table"),
+            "Detected installs are preferred; OneDrive setup is a fallback for missing tools.",
+        )
         if not actions:
             ui.label("All setup dependencies are available.").classes("sgfx-muted")
             return
@@ -1041,7 +1068,11 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
             cancel_button.disable()
             ui.notify("Dependency setup canceled.")
 
-        cancel_button = ui.button("Cancel setup", on_click=_cancel_setup)
+        cancel_button = _attach_tooltip(
+            ui,
+            ui.button("Cancel setup", on_click=_cancel_setup),
+            "Stop the currently running local setup worker.",
+        )
         cancel_button.disable()
 
         def _poll_setup() -> None:
@@ -1102,15 +1133,23 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
                     source_input = None
                     target_input = None
                     if source_required:
-                        source_input = ui.input(
-                            "Source path",
-                            value=str(action.get("source_path", "")),
-                        ).classes("full-width")
+                        source_input = _attach_tooltip(
+                            ui,
+                            ui.input(
+                                "Source path",
+                                value=str(action.get("source_path", "")),
+                            ).classes("full-width"),
+                            "Select the operator-approved local source for this setup action.",
+                        )
                     if target_required:
-                        target_input = ui.input(
-                            "Target path",
-                            value=str(action.get("target_path", "")),
-                        ).classes("full-width")
+                        target_input = _attach_tooltip(
+                            ui,
+                            ui.input(
+                                "Target path",
+                                value=str(action.get("target_path", "")),
+                            ).classes("full-width"),
+                            "Select the local folder SGFX should use for setup output or registration.",
+                        )
 
                     def _input_value(input_widget: Any, fallback: str = "") -> str:
                         if input_widget is None:
@@ -1158,7 +1197,11 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
                         _start_setup_poll_timer()
                         dialog.close()
 
-                    continue_button = ui.button("Continue", on_click=_run).props("color=primary")
+                    continue_button = _attach_tooltip(
+                        ui,
+                        ui.button("Continue", on_click=_run).props("color=primary"),
+                        "Run this setup action after the confirmation dialog is accepted.",
+                    )
 
                     def _refresh_continue_button(
                         _event: Any = None,
@@ -1177,7 +1220,11 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
                     if not _inputs_ready():
                         continue_button.disable()
                     ui.button("Close", on_click=confirm_dialog.close)
-                ui.button(str(action.get("label", "Set up")), on_click=confirm_dialog.open).props("no-caps")
+                _attach_tooltip(
+                    ui,
+                    ui.button(str(action.get("label", "Set up")), on_click=confirm_dialog.open).props("no-caps"),
+                    "Review required inputs and system changes before running this setup action.",
+                )
 
 
 def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
@@ -1201,15 +1248,19 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
             if isinstance(item, dict)
         ]
         if rows:
-            ui.table(
-                columns=[
-                    {"name": "label", "label": "Item", "field": "label", "align": "left"},
-                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                    {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
-                ],
-                rows=rows,
-                row_key="label",
-            ).classes("sgfx-table")
+            _attach_tooltip(
+                ui,
+                ui.table(
+                    columns=[
+                        {"name": "label", "label": "Item", "field": "label", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="label",
+                ).classes("sgfx-table"),
+                "Workbook evidence read from the selected local workspace.",
+            )
         else:
             ui.label("No rows loaded for this page.").classes("sgfx-muted")
 
@@ -1235,15 +1286,19 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                 "sgfx-muted"
             )
             if checks:
-                ui.table(
-                    columns=[
-                        {"name": "label", "label": "Check", "field": "label", "align": "left"},
-                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
-                    ],
-                    rows=checks,
-                    row_key="label",
-                ).classes("sgfx-table")
+                _attach_tooltip(
+                    ui,
+                    ui.table(
+                        columns=[
+                            {"name": "label", "label": "Check", "field": "label", "align": "left"},
+                            {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                            {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                        ],
+                        rows=checks,
+                        row_key="label",
+                    ).classes("sgfx-table"),
+                    "Pre-flight checks gate local workbook generation.",
+                )
             disabled_reason = str(preflight.get("disabled_reason", "")).strip()
             if disabled_reason:
                 ui.label(disabled_reason).classes("sgfx-muted")
@@ -1311,7 +1366,11 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                 _stop_delivery_poll_timer()
                 ui.notify("Delivery workbook generation canceled.")
 
-            cancel_button = ui.button("Cancel", on_click=_cancel)
+            cancel_button = _attach_tooltip(
+                ui,
+                ui.button("Cancel", on_click=_cancel),
+                "Stop the local workbook-generation worker.",
+            )
             cancel_button.disable()
 
             def _poll() -> None:
@@ -1371,11 +1430,19 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                     _start_delivery_poll_timer()
                     confirm_dialog.close()
 
-                confirm_button = ui.button("Continue", on_click=_start).props("color=primary")
+                confirm_button = _attach_tooltip(
+                    ui,
+                    ui.button("Continue", on_click=_start).props("color=primary"),
+                    "Start local workbook generation after this confirmation.",
+                )
                 if action.get("disabled"):
                     confirm_button.disable()
                 ui.button("Close", on_click=confirm_dialog.close)
-            run_button = ui.button(str(action.get("label", GENERATE_WORKBOOK_ACTION_LABEL)), on_click=confirm_dialog.open)
+            run_button = _attach_tooltip(
+                ui,
+                ui.button(str(action.get("label", GENERATE_WORKBOOK_ACTION_LABEL)), on_click=confirm_dialog.open),
+                "Generate workbook evidence locally after the environment pre-flight passes.",
+            )
             if action.get("disabled"):
                 run_button.disable()
 
@@ -1398,15 +1465,19 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             if isinstance(item, dict)
         ]
         if rows:
-            ui.table(
-                columns=[
-                    {"name": "label", "label": "Item", "field": "label", "align": "left"},
-                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                    {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
-                ],
-                rows=rows,
-                row_key="label",
-            ).classes("sgfx-table")
+            _attach_tooltip(
+                ui,
+                ui.table(
+                    columns=[
+                        {"name": "label", "label": "Item", "field": "label", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="label",
+                ).classes("sgfx-table"),
+                "Digest rows summarize local evidence prepared for review.",
+            )
         else:
             ui.label("No rows loaded for this page.").classes("sgfx-muted")
         actions = [
@@ -1445,8 +1516,12 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                 )
                 ui.notify(f"Build review package {outcome}.")
 
-            ui.button(str(action.get("label", DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL)), on_click=_build).props(
-                "color=primary"
+            _attach_tooltip(
+                ui,
+                ui.button(str(action.get("label", DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL)), on_click=_build).props(
+                    "color=primary"
+                ),
+                "Build a local review package; nothing is posted externally.",
             )
 
 
@@ -1494,7 +1569,11 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                     )
                     ui.notify("Manual-review evidence recorded locally.")
 
-                ui.button("Record", on_click=_record).props("color=primary")
+                _attach_tooltip(
+                    ui,
+                    ui.button("Record", on_click=_record).props("color=primary"),
+                    "Record the operator verdict locally for this manual-review step.",
+                )
 
 
 def _render_selected_page(
@@ -1513,6 +1592,8 @@ def _render_selected_page(
             _render_manual_review_panel(ui, snapshot, workspace)
         elif page_id == "daily-digest":
             _render_daily_digest_panel(ui, snapshot, workspace)
+        elif page_id == "about":
+            _render_about_panel(ui, ABOUT_CONTENT)
         else:
             _render_page_panel(ui, pages_by_id[page_id])
 
@@ -1569,6 +1650,7 @@ def _render_dashboard(
             .sgfx-subtitle { color: var(--sgfx-fg-muted); font-size: 13px; }
             .sgfx-brand-lockup { gap: 14px; }
             .sgfx-brand-logo { width: 72px; height: 72px; object-fit: contain; flex: 0 0 auto; }
+            .sgfx-about-logo { width: 160px; max-width: 34vw; height: auto; object-fit: contain; flex: 0 0 auto; }
             .sgfx-content { width: 100%; }
             .sgfx-footer { border-top: 1px solid var(--sgfx-border); padding-top: 12px; margin-top: 12px; }
             .sgfx-guardrail { color: var(--sgfx-fg-muted); font-size: 13px; line-height: 1.55; }
@@ -1584,6 +1666,16 @@ def _render_dashboard(
             .sgfx-step { border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; background: var(--sgfx-bg-elev); }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
             .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid var(--sgfx-border); border-radius: 6px; padding: 8px; background: var(--sgfx-bg-elev); }
+            .sgfx-thinking-tooltip { background: #121b1f !important; color: #f4fbf7 !important; border: 1px solid var(--sgfx-accent) !important; border-radius: 8px !important; padding: 8px 10px !important; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32); animation: sgfx-tooltip-pop 150ms ease-out; }
+            .sgfx-thinking-tooltip::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: var(--sgfx-accent); animation: sgfx-tooltip-pulse 900ms ease-in-out infinite; vertical-align: middle; }
+            .sgfx-hotkey-popup { position: fixed; top: 82px; right: 36px; z-index: 9000; min-width: 280px; max-width: 380px; display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--sgfx-accent); border-radius: 8px; background: rgba(18, 27, 31, 0.96); color: var(--sgfx-fg); opacity: 0; transform: translateY(-8px) scale(0.98); pointer-events: none; transition: opacity 150ms ease-out, transform 150ms ease-out; box-shadow: 0 16px 42px rgba(0, 0, 0, 0.38); }
+            .sgfx-hotkey-popup.show { opacity: 1; transform: translateY(0) scale(1); }
+            .sgfx-hotkey-popup img { width: 96px; height: 96px; object-fit: contain; animation: sgfx-hotkey-pulse 900ms ease-in-out infinite; flex: 0 0 auto; }
+            .sgfx-hotkey-key { color: var(--sgfx-fg-strong); font-size: 14px; font-weight: 650; }
+            .sgfx-hotkey-message { color: var(--sgfx-fg-muted); font-size: 13px; line-height: 1.45; }
+            @keyframes sgfx-tooltip-pop { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+            @keyframes sgfx-tooltip-pulse { 0%, 100% { transform: scale(0.78); opacity: 0.58; } 50% { transform: scale(1.22); opacity: 1; } }
+            @keyframes sgfx-hotkey-pulse { 0%, 100% { transform: scale(0.96) rotate(0deg); opacity: 0.82; } 50% { transform: scale(1.04) rotate(3deg); opacity: 1; } }
             </style>
             """
         )
@@ -1624,13 +1716,18 @@ def _render_dashboard(
                 )
                 if active_page_id == "delivery-checklist":
                     _render_delivery_checklist_panel(ui, state["snapshot"], workspace)
+                elif active_page_id == "daily-digest":
+                    _render_daily_digest_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "manual-review":
                     _render_manual_review_panel(ui, state["snapshot"], workspace)
+                elif active_page_id == "about":
+                    _render_about_panel(ui, ABOUT_CONTENT)
                 else:
                     _render_page_panel(ui, _pages_by_id()[active_page_id])
 
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
+            ui.run_javascript(f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
             _render_current_page()
 
         def _refresh_snapshot(profile_id: str | None = None) -> None:
@@ -1658,46 +1755,75 @@ def _render_dashboard(
                 f"""
                 (() => {{
                     const messages = {json.dumps(messages)};
-                    const show = (message) => {{
+                    let hideTimer = null;
+                    document.body.dataset.sgfxActivePage = {json.dumps(state["active_page_id"])};
+                    const show = (key, message) => {{
                         const target = document.getElementById('sgfx-shortcut-feedback');
                         if (target) target.textContent = message;
+                        const popup = document.getElementById('sgfx-hotkey-popup');
+                        if (!popup) return;
+                        const keyTarget = popup.querySelector('[data-sgfx-hotkey-key]');
+                        const messageTarget = popup.querySelector('[data-sgfx-hotkey-message]');
+                        if (keyTarget) keyTarget.textContent = key;
+                        if (messageTarget) messageTarget.textContent = message;
+                        popup.classList.add('show');
+                        if (hideTimer) window.clearTimeout(hideTimer);
+                        hideTimer = window.setTimeout(() => popup.classList.remove('show'), 1250);
                     }};
                     if (window.__sgfxDashboardShortcutsInstalled) return;
                     window.__sgfxDashboardShortcutsInstalled = true;
                     document.addEventListener('keydown', (event) => {{
                         if (!['F1', 'F2', 'F5', 'F12', 'Escape'].includes(event.key)) return;
                         event.preventDefault();
-                        if (event.key === 'F1') show(messages.F1);
+                        if (event.key === 'F1') show('F1', messages.F1);
                         if (event.key === 'F2') {{
-                            show(messages.F2);
+                            show('F2', messages.F2);
                             const input = document.querySelector('.sgfx-profile-select input');
                             if (input) input.focus();
                         }}
                         if (event.key === 'F5') {{
-                            show(messages.F5);
+                            show('F5', messages.F5);
                             const refresh = document.querySelector('.sgfx-refresh-button');
                             if (refresh) refresh.click();
                         }}
-                        if (event.key === 'F12') show(`${{messages.F12}} Current page: {state["active_page_id"]}.`);
-                        if (event.key === 'Escape') show(messages.Esc);
+                        if (event.key === 'F12') {{
+                            const currentPage = document.body.dataset.sgfxActivePage || 'unknown';
+                            show('F12', `${{messages.F12}} Current page: ${{currentPage}}.`);
+                        }}
+                        if (event.key === 'Escape') show('Esc', messages.Esc);
                     }});
                 }})();
                 """
             )
+
+        ui.html(
+            f"""
+            <div id="sgfx-hotkey-popup" class="sgfx-hotkey-popup" aria-live="polite">
+              <img src="/sgfx-dashboard-assets/{DASHBOARD_DEBUG_ICON_ASSET}" alt="">
+              <div>
+                <div class="sgfx-hotkey-key" data-sgfx-hotkey-key>F1</div>
+                <div class="sgfx-hotkey-message" data-sgfx-hotkey-message>Shortcuts available.</div>
+              </div>
+            </div>
+            """
+        )
 
         with ui.row().classes("sgfx-shell full-width no-wrap"):
             with ui.column().classes("sgfx-sidebar"):
                 ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_BRAND_ICON_ASSET}").classes("sgfx-sidebar-logo")
                 ui.separator()
                 for nav_item in state["snapshot"]["navigation"]:
-                    ui.button(
-                        str(nav_item["label"]),
-                        on_click=lambda page_id=str(nav_item["id"]): _open_page(page_id),
-                    ).props("flat no-caps align=left").classes("sgfx-nav-button full-width")
+                    _attach_tooltip(
+                        ui,
+                        ui.button(
+                            str(nav_item["label"]),
+                            on_click=lambda page_id=str(nav_item["id"]): _open_page(page_id),
+                        ).props("flat no-caps align=left").classes("sgfx-nav-button full-width"),
+                        f"Open {nav_item['label']} for the selected local profile.",
+                    )
                 ui.separator()
                 for shortcut in state["snapshot"]["shortcuts"]:
                     ui.label(str(shortcut)).classes("sgfx-shortcut")
-                ui.label("About").classes("sgfx-shortcut")
             with ui.column().classes("sgfx-main"):
                 with ui.row().classes("sgfx-header items-center justify-between full-width"):
                     with ui.row().classes("sgfx-brand-lockup items-center"):
@@ -1713,14 +1839,22 @@ def _render_dashboard(
                         ui.label("F1 Help").classes("sgfx-shortcut")
                         ui.label("F12 Diagnostic").classes("sgfx-shortcut")
                         ui.label("Esc Quit").classes("sgfx-shortcut")
-                        controls["profile_select"] = ui.select(
-                            [str(option["id"]) for option in state["snapshot"]["profile_options"]],
-                            value=str(state["snapshot"]["profile_id"]) if state["snapshot"]["profile_known"] else None,
-                            label="Profile",
-                            on_change=lambda event: _set_profile(str(event.value or "")),
-                        ).props("dense outlined").classes("sgfx-profile-select")
-                        ui.button("Refresh", on_click=_refresh_current_page).props("flat dense no-caps").classes(
-                            "sgfx-refresh-button"
+                        controls["profile_select"] = _attach_tooltip(
+                            ui,
+                            ui.select(
+                                [str(option["id"]) for option in state["snapshot"]["profile_options"]],
+                                value=str(state["snapshot"]["profile_id"]) if state["snapshot"]["profile_known"] else None,
+                                label="Profile",
+                                on_change=lambda event: _set_profile(str(event.value or "")),
+                            ).props("dense outlined").classes("sgfx-profile-select"),
+                            "Switch the local delivery profile without changing source files.",
+                        )
+                        _attach_tooltip(
+                            ui,
+                            ui.button("Refresh", on_click=_refresh_current_page).props("flat dense no-caps").classes(
+                                "sgfx-refresh-button"
+                            ),
+                            "Re-read local evidence for the current profile and page.",
                         )
                 content = ui.column().classes("sgfx-content")
                 content_holder["content"] = content

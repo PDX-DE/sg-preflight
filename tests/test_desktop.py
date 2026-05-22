@@ -86,8 +86,17 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertIn("QIcon", app_source)
         self.assertIn("setWindowIcon", app_source)
         self.assertIn('initial_mode: str = "clean"', app_source)
-        self.assertIn("sgfx_icon.png", app_source)
+        self.assertIn("desktop_native/resources/exe_ico.ico", app_source)
+        self.assertIn("_desktop_tooltip_stylesheet", app_source)
+        self.assertIn("_windows", app_source)
+        self.assertIn("prewarm", app_source)
+        self.assertIn("hide()", app_source)
         self.assertIn("framework_sgfx_logo.png", main_window_source)
+        self.assertIn("debug_icon.png", main_window_source)
+        self.assertIn("GRAFIKS_HOTKEY_MESSAGES", main_window_source)
+        self.assertIn("keyPressEvent", main_window_source)
+        self.assertIn("_show_about_dialog", main_window_source)
+        self.assertIn("setToolTip", main_window_source)
         self.assertIn("QPixmap", widgets_source)
         self.assertIn("logo_path", widgets_source)
 
@@ -100,7 +109,12 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertIn("stdout=subprocess.DEVNULL", host_source)
         self.assertIn("hidden_subprocess_kwargs", host_source)
         self.assertIn("switch_requested", host_source)
+        self.assertNotIn("sg_preflight.dashboard.main", host_source)
         self.assertIn("CleanDashboardWindow", app_source)
+        self.assertIn("desktop_native/resources/exe_ico.ico", host_source)
+        self.assertIn("Dashboard ready", host_source)
+        self.assertNotIn("Clean " + "dashboard", host_source)
+        self.assertNotIn("Clean Operator " + "Console", host_source)
 
     def test_desktop_surface_items_exposes_clean_mode_evidence_surfaces(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
