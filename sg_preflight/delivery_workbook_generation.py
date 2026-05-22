@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from sg_preflight.delivery_checklist import read_delivery_checklist
+from sg_preflight.dependency_onboarding import load_dependency_onboarding_state
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
 
@@ -25,6 +26,14 @@ GENERATION_STDOUT_TAIL_BYTES = 2000
 GENERATION_STDOUT_TAIL_LINES = 20
 GENERATION_FILE_ACTIVITY_LIMIT = 20
 GENERATION_TYPICAL_RANGE_LABEL = "typical 1-10 min"
+_TOOL_REGISTRATION_KEYS = {
+    "raco": "raco_gui",
+    "racoheadless": "raco_headless",
+    "raco_headless": "raco_headless",
+    "blender": "blender",
+}
+_PYTHON_REGISTRATION_KEYS = ("bmw_pipeline_python", "python", "python_executable")
+_DIGITAL_REPO_REGISTRATION_KEYS = ("digital_3d_car_repo",)
 
 
 def _utc_now() -> str:
@@ -84,8 +93,50 @@ def _check(
     }
 
 
-def _digital_repo_check(bmw_root: Path | str | None = None) -> tuple[dict[str, str], Path | None]:
+def _registered_path_candidates(workspace: Path | str | None, keys: tuple[str, ...]) -> list[Path]:
+    if workspace is None:
+        return []
+    state = load_dependency_onboarding_state(workspace)
+    registered_paths = state.get("registered_paths", {})
+    if not isinstance(registered_paths, dict):
+        return []
+    candidates: list[Path] = []
+    for key in keys:
+        raw = str(registered_paths.get(key, "")).strip()
+        if not raw:
+            continue
+        try:
+            candidate = Path(raw).expanduser()
+        except RuntimeError:
+            continue
+        candidates.append(candidate)
+    return candidates
+
+
+def _registered_file(workspace: Path | str | None, keys: tuple[str, ...]) -> Path | None:
+    for candidate in _registered_path_candidates(workspace, keys):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _registered_dir(workspace: Path | str | None, keys: tuple[str, ...]) -> Path | None:
+    for candidate in _registered_path_candidates(workspace, keys):
+        if candidate.is_dir():
+            return candidate.resolve()
+    return None
+
+
+def _digital_repo_check(
+    bmw_root: Path | str | None = None,
+    *,
+    workspace: Path | str | None = None,
+) -> tuple[dict[str, str], Path | None]:
     raw = str(bmw_root or os.environ.get(DIGITAL_3D_CAR_REPO_ENV, "")).strip()
+    if not raw:
+        registered = _registered_dir(workspace, _DIGITAL_REPO_REGISTRATION_KEYS)
+        if registered is not None:
+            raw = str(registered)
     if not raw:
         return (
             _check(
@@ -125,11 +176,29 @@ def _digital_repo_check(bmw_root: Path | str | None = None) -> tuple[dict[str, s
     )
 
 
-def _tool_check(executable_name: str, label: str) -> dict[str, str]:
-    found = _find_executable(executable_name)
-    key = executable_name.replace(".exe", "").replace("-", "_").casefold()
+def _tool_key(executable_name: str) -> str:
+    key = executable_name.strip()
+    if key.casefold().endswith(".exe"):
+        key = key[:-4]
+    key = key.replace("-", "_").casefold()
     if key == "racoheadless":
         key = "raco_headless"
+    return key
+
+
+def _tool_check(executable_name: str, label: str, *, workspace: Path | str | None = None) -> dict[str, str]:
+    key = _tool_key(executable_name)
+    registered_key = _TOOL_REGISTRATION_KEYS.get(key)
+    registered = _registered_file(workspace, (registered_key,)) if registered_key else None
+    if registered is not None:
+        return _check(
+            key=key,
+            label=label,
+            status="available",
+            detail=f"{label} executable is available from dependency setup registration.",
+            path=registered,
+        )
+    found = _find_executable(executable_name)
     if found:
         return _check(
             key=key,
@@ -142,12 +211,20 @@ def _tool_check(executable_name: str, label: str) -> dict[str, str]:
         key=key,
         label=label,
         status="missing",
-        detail=f"{label} executable was not found on PATH or App Paths.",
-        remediation=f"Install {label} or add {executable_name} to PATH before running export.",
+        detail=f"{label} executable was not found in dependency setup registration, PATH, or App Paths.",
+        remediation=f"Install {label}, register it in Dependency Setup, or add {executable_name} to PATH before running export.",
     )
 
 
-def _python_command_payload() -> dict[str, Any]:
+def _python_command_payload(workspace: Path | str | None = None) -> dict[str, Any]:
+    registered = _registered_file(workspace, _PYTHON_REGISTRATION_KEYS)
+    if registered is not None:
+        return {
+            "status": "available",
+            "command": [str(registered)],
+            "path": str(registered),
+            "detail": "BMW pipeline Python is available from dependency setup registration.",
+        }
     override = os.environ.get(BMW_PIPELINE_PYTHON_ENV, "").strip()
     if override:
         override_path = Path(override).expanduser()
@@ -192,8 +269,8 @@ def _python_command_payload() -> dict[str, Any]:
     }
 
 
-def _python_check() -> dict[str, str]:
-    payload = _python_command_payload()
+def _python_check(workspace: Path | str | None = None) -> dict[str, str]:
+    payload = _python_command_payload(workspace)
     if payload["status"] == "available":
         return _check(
             key="bmw_pipeline_python",
@@ -254,13 +331,13 @@ def check_delivery_workbook_generation_environment(
 ) -> dict[str, Any]:
     workspace_path = Path(workspace).resolve()
     clean_profile = _clean_profile(profile_id)
-    repo_check, repo_root = _digital_repo_check(bmw_root)
+    repo_check, repo_root = _digital_repo_check(bmw_root, workspace=workspace_path)
     checks = [
         repo_check,
-        _python_check(),
-        _tool_check("raco.exe", "RaCo"),
-        _tool_check("RaCoHeadless.exe", "RaCoHeadless"),
-        _tool_check("blender.exe", "Blender"),
+        _python_check(workspace_path),
+        _tool_check("raco.exe", "RaCo", workspace=workspace_path),
+        _tool_check("RaCoHeadless.exe", "RaCoHeadless", workspace=workspace_path),
+        _tool_check("blender.exe", "Blender", workspace=workspace_path),
         _disk_space_check(workspace_path, min_free_bytes),
     ]
     can_run = all(check["status"] == "available" for check in checks)

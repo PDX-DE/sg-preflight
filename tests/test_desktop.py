@@ -91,7 +91,8 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertIn("_windows", app_source)
         self.assertIn("prewarm", app_source)
         self.assertIn("hide()", app_source)
-        self.assertIn("framework_sgfx_logo.png", main_window_source)
+        self.assertIn('runtime_asset_path("logo_sgfx.png")', main_window_source)
+        self.assertIn("scaledToWidth(240", main_window_source)
         self.assertIn("debug_icon.png", main_window_source)
         self.assertIn("GRAFIKS_HOTKEY_MESSAGES", main_window_source)
         self.assertIn("keyPressEvent", main_window_source)
@@ -99,6 +100,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertIn("setToolTip", main_window_source)
         self.assertIn("QPixmap", widgets_source)
         self.assertIn("logo_path", widgets_source)
+        self.assertIn("scaledToWidth(\n                100", widgets_source)
 
     def test_clean_host_embeds_nicegui_without_external_browser(self) -> None:
         host_source = (ROOT / "sg_preflight" / "desktop" / "clean_host.py").read_text(encoding="utf-8")
@@ -136,7 +138,9 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertEqual([item.label for item in surfaces][0], "Delivery Checklist")
         self.assertTrue(all(item.state for item in surfaces))
         self.assertTrue(all(item.summary for item in surfaces))
-        self.assertIn("7 Quality-Hero", surfaces[-1].summary)
+        self.assertIn("Quality-Hero", surfaces[-1].summary)
+        self.assertEqual(surfaces[-1].state, "not_run")
+        self.assertIn("Manual review session not started", surfaces[-1].summary)
         self.assertTrue(all(str(root.resolve()) not in item.summary for item in surfaces))
         self.assertFalse(any(item.summary.startswith("{") for item in surfaces))
 

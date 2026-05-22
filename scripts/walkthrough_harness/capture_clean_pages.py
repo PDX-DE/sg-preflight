@@ -56,7 +56,7 @@ def wait_for_dashboard_page(page: Any, label: str, *, timeout_ms: int = 30000) -
     button.wait_for(state="visible", timeout=timeout_ms)
     button.click(timeout=timeout_ms)
     page.wait_for_load_state("networkidle", timeout=timeout_ms)
-    page.get_by_text(label, exact=False).first.wait_for(timeout=timeout_ms)
+    page.locator(".sgfx-content .sgfx-panel-title").filter(has_text=label).first.wait_for(timeout=timeout_ms)
     body_text = page.locator("body").inner_text(timeout=timeout_ms)
     return body_text
 
@@ -100,8 +100,12 @@ def capture_clean_pages(base_url: str, evidence_dir: Path, workspace: Path, prof
             )
             if page_id == "delivery-checklist":
                 page.get_by_text("Dependency setup", exact=False).wait_for(timeout=30000)
-                page.get_by_text("Local-only setup", exact=False).wait_for(timeout=30000)
-                setup_visible = "Dependency setup" in body_now and "Local-only setup" in body_now
+                if "Local-only setup" in body_now:
+                    page.get_by_text("Local-only setup", exact=False).wait_for(timeout=30000)
+                    setup_visible = "Dependency setup" in body_now
+                else:
+                    page.get_by_text("All setup dependencies are available.", exact=False).wait_for(timeout=30000)
+                    setup_visible = "Dependency setup" in body_now and "All setup dependencies are available." in body_now
 
         body_text = page.locator("body").inner_text(timeout=30000)
         html_text = page.content()
@@ -140,8 +144,11 @@ def capture_clean_pages(base_url: str, evidence_dir: Path, workspace: Path, prof
             "welcome_show_actual": bool(welcome.get("show")),
             "setup_surface_visible_in_browser": setup_visible,
             "setup_items_count": len(setup_items),
-            "setup_actions_confirmation_gated": bool(setup_actions)
-            and all(action.get("requires_confirmation") is True for action in setup_actions),
+            "existing_install_fast_path": bool(setup_items)
+            and not setup_actions
+            and all(item.get("status") == "available" for item in setup_items if isinstance(item, dict)),
+            "setup_actions_confirmation_gated": not setup_actions
+            or all(action.get("requires_confirmation") is True for action in setup_actions),
         },
         "browser_page_capture": {
             "pages": page_results,

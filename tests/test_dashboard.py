@@ -108,6 +108,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Activity log is local-only — never posted to Jira, SVN, or BMW Git.", snapshot["guardrails"])
         manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
         self.assertEqual(manual_page["status"], "not_run")
+        self.assertIn("Manual review session not started", manual_page["empty_state_note"])
         self.assertTrue(all(item["status"] == "not_run" for item in manual_page["items"]))
         self.assertTrue(all(step["verdict"] == "not_run" for step in manual_page["payload"]["steps"]))
         for forbidden in ("approved", "cleared", "signed-off", "production-ready"):
@@ -128,7 +129,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         self.assertIn("runtime_asset_path", source)
         self.assertIn("sgfx_icon.png", source)
-        self.assertIn("framework_sgfx_logo.png", source)
+        self.assertIn('DASHBOARD_BRAND_LOGO_ASSET = "logo_sgfx.png"', source)
+        self.assertIn(".sgfx-sidebar-logo { width: 200px;", source)
+        self.assertIn(".sgfx-brand-logo { height: 96px;", source)
+        self.assertIn(".sgfx-about-logo { width: 240px;", source)
         self.assertIn('kwargs["favicon"]', source)
         self.assertIn("/sgfx-dashboard-assets", source)
 
@@ -201,6 +205,28 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["setup_status"], fake_setup)
         self.assertEqual(delivery["setup_status"]["actions"][0]["label"], "Set up RaCo")
+
+    def test_dashboard_snapshot_suppresses_welcome_setup_action_when_none_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            fake_setup = {
+                "status": "available",
+                "summary": "4/4 dependency item(s) available; setup actions require operator confirmation.",
+                "first_run": True,
+                "items": [],
+                "actions": [],
+                "counts": {"available": 4, "missing": 0, "incomplete": 0},
+            }
+            with mock.patch("sg_preflight.dashboard.main.build_dependency_onboarding_status", return_value=fake_setup):
+                snapshot = build_dashboard_snapshot("G70", tmp)
+
+        self.assertTrue(snapshot["welcome"]["show"])
+        self.assertEqual(snapshot["welcome"]["setup_action_count"], 0)
+        self.assertEqual(
+            snapshot["welcome"]["setup_complete_note"],
+            "Setup complete — go to evidence pages to start your QA Hero workflow.",
+        )
 
     def test_dashboard_source_renders_dependency_setup_consent_panel(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -406,6 +432,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["status"], "unavailable")
+        self.assertIn("No size-analysis workbook yet", delivery["empty_state_note"])
         self.assertEqual(len(delivery["actions"]), 1)
         action = delivery["actions"][0]
         self.assertEqual(action["id"], GENERATE_WORKBOOK_ACTION_ID)
@@ -415,6 +442,27 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("This will run the BMW pipeline for G70", action["confirmation_message"])
         checks = {item["key"]: item for item in action["preflight"]["checks"]}
         self.assertIn("digital_3d_car_repo", checks)
+
+    def test_dashboard_snapshot_adds_empty_state_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            with mock.patch(
+                "sg_preflight.dashboard.main.read_bmw_screenshot_state",
+                return_value={
+                    "status": "available",
+                    "data_available": True,
+                    "summary": "0 expected / 0 actual / 0 diff screenshot file(s)",
+                    "actual_count": 0,
+                    "diff_count": 0,
+                },
+            ):
+                snapshot = build_dashboard_snapshot("G70", tmp)
+
+        pages = {page["id"]: page for page in snapshot["pages"]}
+        self.assertIn("No captured screenshots yet", pages["screenshot-test-state"]["empty_state_note"])
+        self.assertIn("No review package on this workspace yet", pages["daily-digest"]["empty_state_note"])
+        self.assertIn("Manual review session not started", pages["manual-review"]["empty_state_note"])
 
     def test_delivery_available_page_does_not_offer_generation_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -31,6 +32,67 @@ class _FakeProcess:
 
 
 class TestDeliveryWorkbookGeneration(unittest.TestCase):
+    def test_tool_check_prefers_registered_raco_path_when_not_on_path(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            registered = root / "tools" / "RamsesComposer.exe"
+            write_text(registered, "fixture\n")
+            state_path = root / "operator_state" / "dependency_onboarding.json"
+            write_text(
+                state_path,
+                json.dumps({"registered_paths": {"raco_gui": str(registered)}}),
+            )
+
+            with mock.patch("sg_preflight.delivery_workbook_generation._find_executable", return_value=""):
+                payload = generation._tool_check("raco", "RaCo", workspace=root)
+
+        self.assertEqual(payload["key"], "raco")
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["path"], str(registered.resolve()))
+        self.assertIn("dependency setup registration", payload["detail"])
+
+    def test_preflight_prefers_registered_dependency_paths(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            registered_paths = {
+                "digital_3d_car_repo": bmw_root,
+                "bmw_pipeline_python": root / "tools" / "python.exe",
+                "raco_gui": root / "tools" / "RamsesComposer.exe",
+                "raco_headless": root / "tools" / "RaCoHeadless.exe",
+                "blender": root / "tools" / "blender.exe",
+            }
+            for path in registered_paths.values():
+                if path.suffix:
+                    write_text(path, "fixture\n")
+            state_path = root / "operator_state" / "dependency_onboarding.json"
+            write_text(
+                state_path,
+                json.dumps({"registered_paths": {key: str(path) for key, path in registered_paths.items()}}),
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch("sg_preflight.delivery_workbook_generation._find_executable", return_value=""):
+                    with mock.patch.object(generation.shutil, "which", return_value=""):
+                        payload = generation.check_delivery_workbook_generation_environment(
+                            profile_id="G70",
+                            workspace=root,
+                            min_free_bytes=1,
+                        )
+
+        checks = {item["key"]: item for item in payload["checks"]}
+        self.assertTrue(payload["can_run"])
+        self.assertEqual(checks["digital_3d_car_repo"]["status"], "available")
+        self.assertEqual(checks["bmw_pipeline_python"]["status"], "available")
+        self.assertEqual(checks["raco"]["status"], "available")
+        self.assertEqual(checks["raco_headless"]["status"], "available")
+        self.assertEqual(checks["blender"]["status"], "available")
+
     def test_preflight_blocks_when_digital_3d_car_repo_env_var_is_missing(self) -> None:
         from sg_preflight.delivery_workbook_generation import check_delivery_workbook_generation_environment
 

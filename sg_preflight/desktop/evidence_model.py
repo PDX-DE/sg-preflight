@@ -38,6 +38,18 @@ PRIMARY_ACTION_TEMPLATE = (
     "unused_resources__{profile}",
     "delivery_checklist__{profile}",
 )
+DELIVERY_CHECKLIST_EMPTY_NOTE = (
+    "No size-analysis workbook yet for this profile. Click Generate to invoke the BMW pipeline export step."
+)
+SCREENSHOT_TEST_STATE_EMPTY_NOTE = (
+    "No captured screenshots yet — run `ci/scripts/car_manager.py screenshots <PROFILE>` from your BMW Git checkout to generate."
+)
+DAILY_DIGEST_EMPTY_NOTE = (
+    "No review package on this workspace yet. Click Build to generate one for the active ticket."
+)
+MANUAL_REVIEW_EMPTY_NOTE = (
+    "Manual review session not started. Click Start Session below to begin, then Record evidence on each Quality-Hero step as you complete it."
+)
 
 
 @dataclass(frozen=True)
@@ -976,7 +988,11 @@ def _surface_state(payload: dict[str, Any]) -> str:
     raw_status = str(payload.get("status", "unknown") or "unknown").strip()
     if bool(payload.get("data_available", False)):
         return "available"
-    if raw_status in {"no_workbook", "missing", "not_found", "no_review_package", "no_overview_sheet"}:
+    if raw_status == "no_review_package":
+        return "incomplete"
+    if raw_status in {"no_workbook", "unavailable", "profile_not_found"}:
+        return "unavailable"
+    if raw_status in {"missing", "not_found", "no_overview_sheet"}:
         return "missing"
     if raw_status in {"error", "failed", "unreadable"}:
         return "unknown"
@@ -990,11 +1006,31 @@ def _abbreviate_workspace_text(text: str, root: Path) -> str:
     return text.replace(root_text, root.name or str(root))
 
 
-def _surface_summary(payload: dict[str, Any], fallback: str, root: Path) -> str:
+def _surface_empty_note(key: str, payload: dict[str, Any]) -> str:
+    if key == "delivery-checklist" and _surface_state(payload) == "unavailable":
+        return DELIVERY_CHECKLIST_EMPTY_NOTE
+    if key == "daily-digest" and str(payload.get("status", "")) == "no_review_package":
+        return DAILY_DIGEST_EMPTY_NOTE
+    if key == "screenshot-test-state":
+        try:
+            actual_count = int(payload.get("actual_count", 0) or 0)
+            diff_count = int(payload.get("diff_count", 0) or 0)
+        except (TypeError, ValueError):
+            actual_count = 0
+            diff_count = 0
+        if actual_count == 0 and diff_count == 0:
+            return SCREENSHOT_TEST_STATE_EMPTY_NOTE
+    return ""
+
+
+def _surface_summary(key: str, payload: dict[str, Any], fallback: str, root: Path) -> str:
     raw = payload.get("summary", "")
     if isinstance(raw, dict):
         raw = ""
     text = str(raw or payload.get("no_data_message", "") or payload.get("note", "") or fallback)
+    note = _surface_empty_note(key, payload)
+    if note and note not in text:
+        text = f"{text} {note}"
     return _abbreviate_workspace_text(text, root)
 
 
@@ -1007,7 +1043,7 @@ def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> lis
             key=key,
             label=label,
             state=_surface_state(payload),
-            summary=_surface_summary(payload, "No summary available.", root),
+            summary=_surface_summary(key, payload, "No summary available.", root),
         )
 
     def _safe_item(key: str, label: str, reader) -> DesktopSurfaceItem:
@@ -1041,8 +1077,8 @@ def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> lis
         DesktopSurfaceItem(
             key="manual-review",
             label="Manual Review Companion",
-            state="pending",
-            summary=f"{len(QUALITY_HERO_STEPS)} Quality-Hero manual-review steps available for operator notes.",
+            state="not_run",
+            summary=MANUAL_REVIEW_EMPTY_NOTE,
         ),
     ]
 

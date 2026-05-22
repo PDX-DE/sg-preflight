@@ -41,7 +41,7 @@ from sg_preflight.utils import ensure_parent
 
 
 DASHBOARD_TITLE = "SGFX"
-DASHBOARD_BRAND_LOGO_ASSET = "framework_sgfx_logo.png"
+DASHBOARD_BRAND_LOGO_ASSET = "logo_sgfx.png"
 DASHBOARD_BRAND_ICON_ASSET = "sgfx_icon.png"
 DASHBOARD_DEBUG_ICON_ASSET = "debug_icon.png"
 STARTUP_LOG_NAME = "sgfx-preflight-startup.log"
@@ -82,8 +82,8 @@ ABOUT_CONTENT: dict[str, Any] = {
     ),
     "version_placeholder": "version: alpha (local handover bundle)",
     "logo_assets": (
-        ("framework_sgfx_logo.png", "primary brand lockup, header surface"),
-        ("logo_sgfx.png", "compact brand mark, alternate panels"),
+        ("logo_sgfx.png", "primary brand lockup, header and About surfaces"),
+        ("framework_sgfx_logo.png", "alternate compact mark"),
         ("sgfx_icon.png", "square icon, sidebar header"),
     ),
     "confluence_anchors": (
@@ -96,10 +96,10 @@ ABOUT_CONTENT: dict[str, Any] = {
 }
 
 # Logo placement spec:
-#   sidebar header (Clean):        sgfx_icon.png        ~132 x auto  px
-#   main header (Clean):           framework_sgfx_logo.png  ~72 x 72 px (currently 52 px — too small)
-#   Grafiks shell HeaderBanner:    framework_sgfx_logo.png  62 x 62 px (existing)
-#   About panel hero (Clean):      framework_sgfx_logo.png  ~160 x auto px
+#   sidebar header (Clean):        sgfx_icon.png        ~200 x auto px
+#   main header (Clean):           logo_sgfx.png        ~96 x auto px
+#   Grafiks shell HeaderBanner:    logo_sgfx.png        ~100 x auto px
+#   About panel hero (Clean):      logo_sgfx.png        ~240 x auto px
 #   Window taskbar (.ico):         exe_ico.ico              setWindowIcon(QIcon(exe_ico.ico))
 #   Hotkey popup (Clean + Grafiks): debug_icon.png          ~96 x 96 px animated overlay
 MANUAL_REVIEW_STATUSES = ["not_run", "recorded", "incomplete"]
@@ -127,6 +127,19 @@ _BLOCKED_MANUAL_STATUSES = {
     "passed",
 }
 _MANUAL_REVIEW_PENDING_VERDICT = "not_run"
+DELIVERY_CHECKLIST_EMPTY_NOTE = (
+    "No size-analysis workbook yet for this profile. Click Generate to invoke the BMW pipeline export step."
+)
+SCREENSHOT_TEST_STATE_EMPTY_NOTE = (
+    "No captured screenshots yet — run `ci/scripts/car_manager.py screenshots <PROFILE>` from your BMW Git checkout to generate."
+)
+DAILY_DIGEST_EMPTY_NOTE = (
+    "No review package on this workspace yet. Click Build to generate one for the active ticket."
+)
+MANUAL_REVIEW_EMPTY_NOTE = (
+    "Manual review session not started. Click Start Session below to begin, then Record evidence on each Quality-Hero step as you complete it."
+)
+SETUP_COMPLETE_NOTE = "Setup complete — go to evidence pages to start your QA Hero workflow."
 
 
 def _utc_now() -> str:
@@ -391,6 +404,19 @@ SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE = (
 )
 
 
+def _int_payload_value(payload: dict[str, Any], key: str) -> int:
+    try:
+        return int(payload.get(key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _screenshot_empty_note(payload: dict[str, Any]) -> str:
+    if _int_payload_value(payload, "actual_count") == 0 and _int_payload_value(payload, "diff_count") == 0:
+        return SCREENSHOT_TEST_STATE_EMPTY_NOTE
+    return ""
+
+
 def _reader_page(
     *,
     page_id: str,
@@ -416,7 +442,7 @@ def _reader_page(
         }
     raw_status = str(payload.get("status", "unknown") or "unknown")
     data_available = bool(payload.get("data_available", False))
-    return {
+    page = {
         "id": page_id,
         "title": title,
         "tagline": tagline,
@@ -428,6 +454,9 @@ def _reader_page(
         "items": _payload_items(payload),
         "payload": _sanitized_payload(payload),
     }
+    if page_id == "screenshot-test-state":
+        page["empty_state_note"] = _screenshot_empty_note(payload)
+    return page
 
 
 def _delivery_checklist_page(
@@ -447,7 +476,12 @@ def _delivery_checklist_page(
     page["setup_status"] = setup_status or build_dependency_onboarding_status(workspace=workspace, bmw_root=bmw_root)
     if page.get("status") != "unavailable":
         return page
-    preflight = check_delivery_workbook_generation_environment(profile_id=profile_id, workspace=workspace)
+    page["empty_state_note"] = DELIVERY_CHECKLIST_EMPTY_NOTE
+    preflight = check_delivery_workbook_generation_environment(
+        profile_id=profile_id,
+        workspace=workspace,
+        bmw_root=bmw_root,
+    )
     page["actions"] = [
         {
             "id": GENERATE_WORKBOOK_ACTION_ID,
@@ -590,7 +624,7 @@ def _daily_digest_page(
     status_value = _dashboard_status(raw_status, data_available)
     if raw_status == "no_review_package" and has_partial:
         status_value = "incomplete"
-    return {
+    page = {
         "id": "daily-digest",
         "title": "Daily Digest",
         "tagline": "Morning status snapshot for the SG Daily standup.",
@@ -607,6 +641,9 @@ def _daily_digest_page(
             "active_ticket_id": active_ticket_id.strip(),
         },
     }
+    if raw_status == "no_review_package" or status_value == "incomplete":
+        page["empty_state_note"] = DAILY_DIGEST_EMPTY_NOTE
+    return page
 
 
 def _manual_review_profile_token(profile_id: str) -> str:
@@ -671,7 +708,7 @@ def _manual_review_page(profile_id: str, workspace: Path | str) -> dict[str, Any
     recorded_count = sum(1 for step in steps if isinstance(step, dict) and _manual_review_step_recorded(step))
     status = "recorded" if recorded_count else _MANUAL_REVIEW_PENDING_VERDICT
     session_payload = session if isinstance(session, dict) else {}
-    return {
+    page = {
         "id": "manual-review",
         "title": "Manual Review Companion",
         "tagline": "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
@@ -695,6 +732,9 @@ def _manual_review_page(profile_id: str, workspace: Path | str) -> dict[str, Any
             "steps": steps,
         },
     }
+    if status == _MANUAL_REVIEW_PENDING_VERDICT:
+        page["empty_state_note"] = MANUAL_REVIEW_EMPTY_NOTE
+    return page
 
 
 def build_dashboard_snapshot(
@@ -733,6 +773,10 @@ def build_dashboard_snapshot(
                 "Run setup before invoking local BMW pipeline helpers."
             ),
             "setup_page_id": "delivery-checklist",
+            "setup_action_count": len(
+                [action for action in setup_status.get("actions", []) if isinstance(action, dict)]
+            ),
+            "setup_complete_note": SETUP_COMPLETE_NOTE,
             "guardrails": list(DASHBOARD_GUARDRAILS),
         },
         "pages": [
@@ -900,6 +944,7 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
         if ownership_note:
             ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
         ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        _render_empty_state_note(ui, page)
         rows = [
             {
                 "label": str(item.get("label", "")),
@@ -927,6 +972,12 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
             ui.label("No rows loaded for this page.").classes("sgfx-muted")
 
 
+def _render_empty_state_note(ui: Any, page: dict[str, Any]) -> None:
+    note = str(page.get("empty_state_note", "")).strip()
+    if note:
+        ui.label(note).classes("sgfx-warning")
+
+
 def _render_first_run_welcome(ui: Any, snapshot: dict[str, Any], open_setup: Callable[[], None] | None = None) -> None:
     welcome = snapshot.get("welcome", {})
     if not isinstance(welcome, dict) or not welcome.get("show"):
@@ -938,12 +989,15 @@ def _render_first_run_welcome(ui: Any, snapshot: dict[str, Any], open_setup: Cal
         ui.label(str(welcome.get("summary", ""))).classes("sgfx-summary")
         for guardrail in welcome.get("guardrails", []):
             ui.label(str(guardrail)).classes("sgfx-guardrail")
-        if open_setup is not None:
+        setup_action_count = int(welcome.get("setup_action_count", 0) or 0)
+        if open_setup is not None and setup_action_count > 0:
             _attach_tooltip(
                 ui,
                 ui.button("Run setup", on_click=open_setup).props("color=primary"),
                 "Open the dependency setup card; no system changes run without confirmation.",
             )
+        elif setup_action_count == 0:
+            ui.label(str(welcome.get("setup_complete_note", SETUP_COMPLETE_NOTE))).classes("sgfx-muted")
 
 
 def _render_about_panel(ui: Any, content: dict[str, Any] | None = None) -> None:
@@ -1238,6 +1292,7 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        _render_empty_state_note(ui, page)
         rows = [
             {
                 "label": str(item.get("label", "")),
@@ -1455,6 +1510,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        _render_empty_state_note(ui, page)
         rows = [
             {
                 "label": str(item.get("label", "")),
@@ -1533,6 +1589,20 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-summary")
+        _render_empty_state_note(ui, page)
+        if page.get("status") == _MANUAL_REVIEW_PENDING_VERDICT:
+            def _start_session() -> None:
+                _ensure_manual_review_dashboard_session(
+                    profile_id=str(snapshot["profile_id"]),
+                    workspace=workspace,
+                )
+                ui.notify("Manual-review session started locally.")
+
+            _attach_tooltip(
+                ui,
+                ui.button("Start Session", on_click=_start_session).props("flat no-caps"),
+                "Create the local manual-review session before recording step evidence.",
+            )
         for step in page["payload"]["steps"]:
             slug = str(step.get("slug", ""))
             with ui.expansion(str(step.get("title", slug)), icon="fact_check").classes("sgfx-step"):
@@ -1640,8 +1710,8 @@ def _render_dashboard(
             .sgfx-dashboard { background: var(--sgfx-bg); color: var(--sgfx-fg); font-family: 'Segoe UI', 'Cascadia Code', Arial, sans-serif; }
             .sgfx-theme-grafiks { background: var(--sgfx-bg); }
             .sgfx-shell { min-height: 100vh; gap: 0; }
-            .sgfx-sidebar { width: 268px; min-height: 100vh; padding: 22px 16px; background: var(--sgfx-bg-elev); border-right: 1px solid var(--sgfx-border); gap: 10px; }
-            .sgfx-sidebar-logo { width: 132px; height: auto; object-fit: contain; margin: 4px 0 14px 0; }
+            .sgfx-sidebar { width: 292px; min-height: 100vh; padding: 22px 16px; background: var(--sgfx-bg-elev); border-right: 1px solid var(--sgfx-border); gap: 10px; }
+            .sgfx-sidebar-logo { width: 200px; max-width: 100%; height: auto; object-fit: contain; margin: 4px 0 14px 0; }
             .sgfx-nav-button { justify-content: flex-start; border-radius: 6px; color: var(--sgfx-fg) !important; }
             .sgfx-nav-button:hover { background: var(--sgfx-accent-soft) !important; }
             .sgfx-shortcut { color: var(--sgfx-fg-muted); font-size: 12px; line-height: 1.5; }
@@ -1649,8 +1719,8 @@ def _render_dashboard(
             .sgfx-header { border-bottom: 1px solid var(--sgfx-border); padding-bottom: 14px; }
             .sgfx-subtitle { color: var(--sgfx-fg-muted); font-size: 13px; }
             .sgfx-brand-lockup { gap: 14px; }
-            .sgfx-brand-logo { width: 72px; height: 72px; object-fit: contain; flex: 0 0 auto; }
-            .sgfx-about-logo { width: 160px; max-width: 34vw; height: auto; object-fit: contain; flex: 0 0 auto; }
+            .sgfx-brand-logo { height: 96px; max-width: 360px; width: auto; object-fit: contain; flex: 0 0 auto; }
+            .sgfx-about-logo { width: 240px; max-width: 42vw; height: auto; object-fit: contain; flex: 0 0 auto; }
             .sgfx-content { width: 100%; }
             .sgfx-footer { border-top: 1px solid var(--sgfx-border); padding-top: 12px; margin-top: 12px; }
             .sgfx-guardrail { color: var(--sgfx-fg-muted); font-size: 13px; line-height: 1.55; }

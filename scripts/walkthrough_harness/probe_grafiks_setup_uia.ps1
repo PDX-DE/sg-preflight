@@ -8,6 +8,23 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "uia_readiness.ps1")
 
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class SgfxProbeWindow {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+
 function Stop-SgfxProcessTree {
     param([Parameter(Mandatory=$true)][int]$RootId)
 
@@ -67,20 +84,52 @@ function Wait-SgfxWindowTitle {
     throw "Timed out waiting for title '$Text'; last title '$($Process.MainWindowTitle)'."
 }
 
+function Save-SgfxWindowScreenshot {
+    param(
+        [Parameter(Mandatory=$true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory=$true)][string]$Path
+    )
+
+    $Process.Refresh()
+    if ($Process.MainWindowHandle -eq 0) {
+        throw "Process $($Process.Id) has no main window handle for screenshot capture."
+    }
+    [void][SgfxProbeWindow]::SetForegroundWindow([IntPtr]$Process.MainWindowHandle)
+    Start-Sleep -Milliseconds 500
+    $rect = New-Object SgfxProbeWindow+RECT
+    if (-not [SgfxProbeWindow]::GetWindowRect([IntPtr]$Process.MainWindowHandle, [ref]$rect)) {
+        throw "GetWindowRect failed for process $($Process.Id)."
+    }
+    $width = [Math]::Max(1, $rect.Right - $rect.Left)
+    $height = [Math]::Max(1, $rect.Bottom - $rect.Top)
+    $bitmap = [System.Drawing.Bitmap]::new($width, $height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+        $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+        $graphics.Dispose()
+        $bitmap.Dispose()
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $Evidence | Out-Null
 $process = $null
 try {
     $args = @("dashboard", "run", "--profile", $Profile, "--workspace", $Workspace, "--ui-mode", "grafiks")
     $process = Start-Process -FilePath $Exe -ArgumentList $args -WorkingDirectory (Split-Path $Exe) -PassThru
-    $title = Wait-SgfxWindowTitle -Process $process -Text "Grafiks Operator Console" -TimeoutSeconds 150
+    $title = Wait-SgfxWindowTitle -Process $process -Text "SGFX" -TimeoutSeconds 150
     $controls = Wait-SgfxSetupControlsReady -ProcessId $process.Id -TimeoutSeconds 90
     $postDialogReady = Wait-SgfxSetupControlsAfterDialogClose -ProcessId $process.Id -TimeoutSeconds 30
+    $screenshotPath = Join-Path $Evidence "grafiks-setup-uia.png"
+    Save-SgfxWindowScreenshot -Process $process -Path $screenshotPath
     $manifest = [ordered]@{
         recorded_at = [DateTimeOffset]::Now.ToString("yyyy-MM-dd HH:mm:ss zzz", [System.Globalization.CultureInfo]::InvariantCulture)
         profile = $Profile
         workspace = $Workspace
         window_title = $title
         process_id = $process.Id
+        screenshot = $screenshotPath
         dependency_setup_visible = $true
         run_setup_visible = $null -ne $controls.RunSetup
         cancel_setup_visible = $null -ne $controls.CancelSetup

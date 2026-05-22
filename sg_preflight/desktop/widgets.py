@@ -189,8 +189,17 @@ class HeaderBanner(QWidget):
         painter.drawLine(int(square_x + square_w + 14), 56, int(rect.width() * 0.78), 56)
 
         if not self.logo_pixmap.isNull():
-            logo_rect = QRectF(rect.width() - 78.0, 12.0, 62.0, 62.0)
-            painter.drawPixmap(logo_rect.toRect(), self.logo_pixmap)
+            logo = self.logo_pixmap.scaledToWidth(
+                100,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            logo_rect = QRectF(
+                rect.width() - float(logo.width()) - 16.0,
+                max(8.0, (rect.height() - float(logo.height())) / 2.0 - 4.0),
+                float(logo.width()),
+                float(logo.height()),
+            )
+            painter.drawPixmap(logo_rect.toRect(), logo)
 
 
 class OperatorPanel(QGroupBox):

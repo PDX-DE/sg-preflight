@@ -139,7 +139,7 @@ class DesktopMainWindow(QMainWindow):
             "",
             "",
             central,
-            logo_path=runtime_asset_path("framework_sgfx_logo.png"),
+            logo_path=runtime_asset_path("logo_sgfx.png"),
         )
         layout.addWidget(self.header_banner)
 
@@ -1108,15 +1108,10 @@ QLabel#hotkeyText {
 
         logo = QLabel(dialog)
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo_pixmap = QPixmap(str(runtime_asset_path("framework_sgfx_logo.png")))
+        logo_pixmap = QPixmap(str(runtime_asset_path("logo_sgfx.png")))
         if not logo_pixmap.isNull():
             logo.setPixmap(
-                logo_pixmap.scaled(
-                    160,
-                    160,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+                logo_pixmap.scaledToWidth(240, Qt.TransformationMode.SmoothTransformation)
             )
         layout.addWidget(logo)
 
