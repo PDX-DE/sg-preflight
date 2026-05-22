@@ -67,6 +67,9 @@ GRAFIKS_GUARDRAILS = (
     "BMW Git access is read-only. SGFX never modifies BMW source.",
     "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
 )
+
+GRAFIKS_WIP_NOTICE = "Grafiks mode is experimental — recommend Clean mode for daily work."
+DESKTOP_WINDOW_TITLE = "SGFX"
 _SETUP_SOURCE_REQUIRED = {"setup-raco-from-shared-tools", "setup-blender-411"}
 _SETUP_TARGET_REQUIRED = {
     "setup-raco-from-shared-tools",
@@ -115,12 +118,18 @@ class DesktopMainWindow(QMainWindow):
         layout.setSpacing(10)
 
         self.header_banner = HeaderBanner(
-            "SGFX: Project Quality-Hero",
-            "Clean Operator Console",
+            "",
+            "",
             central,
             logo_path=runtime_asset_path("framework_sgfx_logo.png"),
         )
         layout.addWidget(self.header_banner)
+
+        self.wip_notice = QLabel(GRAFIKS_WIP_NOTICE, central)
+        self.wip_notice.setObjectName("grafiksWipNotice")
+        self.wip_notice.setWordWrap(True)
+        self.wip_notice.setVisible(False)
+        layout.addWidget(self.wip_notice)
 
         self.mode_panel = OperatorPanel("Mode Select", central)
         mode_layout = QVBoxLayout(self.mode_panel)
@@ -231,12 +240,11 @@ class DesktopMainWindow(QMainWindow):
     def _set_presentation_mode(self, mode: str) -> None:
         self.presentation_mode = _clean_presentation_mode(mode)
         is_clean = self.presentation_mode == "clean"
-        subtitle = "Clean Operator Console" if is_clean else "Grafiks Operator Console"
-        self.setWindowTitle(f"SGFX: Project Quality-Hero - {subtitle}")
-        self.header_banner.subtitle = subtitle
+        self.setWindowTitle(DESKTOP_WINDOW_TITLE)
         self.clean_mode_button.setChecked(is_clean)
         self.grafiks_mode_button.setChecked(not is_clean)
-        self.statusBar().showMessage(f"{subtitle} - local evidence only")
+        self.wip_notice.setVisible(not is_clean)
+        self.statusBar().showMessage("local evidence only")
         self._apply_presentation_property()
         self.header_banner.update()
 

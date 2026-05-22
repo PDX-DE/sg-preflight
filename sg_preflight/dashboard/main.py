@@ -40,8 +40,9 @@ from sg_preflight.profiles import list_run_profiles
 from sg_preflight.utils import ensure_parent
 
 
-DASHBOARD_TITLE = "SGFX QA Preflight"
-DASHBOARD_HEADER = "SGFX: Project Quality-Hero"
+DASHBOARD_TITLE = "SGFX"
+DASHBOARD_BRAND_LOGO_ASSET = "framework_sgfx_logo.png"
+DASHBOARD_BRAND_ICON_ASSET = "sgfx_icon.png"
 STARTUP_LOG_NAME = "sgfx-preflight-startup.log"
 WEBVIEW2_RUNTIME_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 NATIVE_RETURN_FALLBACK_SECONDS = 5.0
@@ -68,6 +69,38 @@ DASHBOARD_SHORTCUT_ACTIONS = (
     ("Esc", "Quit: close the native window or browser tab when the local review is done."),
 )
 THEME_CHOICES = ["clean"]
+
+ABOUT_CONTENT: dict[str, Any] = {
+    "heading": "About",
+    "description": (
+        "Local-only QA preflight tool for the SGFX Seriengrafik delivery workflow. "
+        "Reads operator-local evidence (delivery checklists, screenshot test state, BMW pipeline "
+        "outputs, manual-review verdicts) and surfaces it for the morning Quality-Hero standup. "
+        "Never modifies BMW source; never posts to Jira, SVN, or BMW Git."
+    ),
+    "version_placeholder": "version: alpha (local handover bundle)",
+    "logo_assets": (
+        ("framework_sgfx_logo.png", "primary brand lockup, header surface"),
+        ("logo_sgfx.png", "compact brand mark, alternate panels"),
+        ("sgfx_icon.png", "square icon, sidebar header"),
+    ),
+    "confluence_anchors": (
+        ("PDX Seriengrafik onboarding (laptop setup)", "003_Onboarding/005_How-to-set-up-your-Laptop"),
+        ("BMW Git access", "003_Onboarding/013_How-to-access-BMW-GIT"),
+        ("Git workflow", "003_Onboarding/015_How-to-Git"),
+        ("Blender 4 + SGToolkit setup", "139_3D-Car/.../266_How-to-Setup-Blender-4-and-SGToolkit-1.0"),
+        ("Delivery checklist (env var)", "311_Delivery-process/.../315_How-to-3D-Cars-Delivery-Checklist----v0"),
+    ),
+}
+
+# Logo placement spec (Mercedes E-1; Aston implements sizing in E-2):
+#   sidebar header (Clean):        sgfx_icon.png        ~132 x auto  px
+#   main header (Clean):           framework_sgfx_logo.png  ~72 x 72 px (currently 52 px — too small)
+#   Grafiks shell HeaderBanner:    framework_sgfx_logo.png  62 x 62 px (existing)
+#   About panel hero (Clean):      framework_sgfx_logo.png  ~160 x auto px
+#   Window taskbar (.ico):         exe_ico.ico              — Grafiks lost this; Aston wires
+#                                                             setWindowIcon(QIcon(exe_ico.ico)) in E-2
+#   Hotkey popup (Clean + Grafiks): debug_icon.png          ~96 x 96 px animated overlay (Aston E-2)
 MANUAL_REVIEW_STATUSES = ["not_run", "recorded", "incomplete"]
 MANUAL_REVIEW_RECORD_VERDICTS = ["passed", "failed", "skipped", "incomplete"]
 MANUAL_REVIEW_DASHBOARD_TICKET_ID = "IDCEVODEV-977874"
@@ -238,8 +271,8 @@ def _frozen_native_window_allowed() -> bool:
 
 def _packaged_native_unavailable() -> RuntimeError:
     return RuntimeError(
-        "Packaged Clean dashboard native mode is hosted by the embedded Clean desktop shell. "
-        "Use the executable default Clean mode, or pass --no-native only for local server diagnostics."
+        "Packaged native mode is hosted by the embedded desktop shell. "
+        "Use the executable default mode, or pass --no-native only for local server diagnostics."
     )
 
 
@@ -678,7 +711,6 @@ def build_dashboard_snapshot(
     setup_status = build_dependency_onboarding_status(workspace=root, bmw_root=bmw_root)
     return {
         "title": DASHBOARD_TITLE,
-        "header": DASHBOARD_HEADER,
         "profile_id": resolved_profile_id,
         "profile_known": profile_known,
         "profile_warning": ""
@@ -694,9 +726,9 @@ def build_dashboard_snapshot(
         "guardrails": list(DASHBOARD_GUARDRAILS),
         "welcome": {
             "show": bool(setup_status.get("first_run")),
-            "title": "Welcome to SGFX QA Preflight",
+            "title": "Welcome",
             "summary": (
-                "Use this local tool to collect evidence for SGFX delivery checks. "
+                "Local-only tool for collecting SGFX delivery evidence. "
                 "Run setup before invoking local BMW pipeline helpers."
             ),
             "setup_page_id": "delivery-checklist",
@@ -893,6 +925,23 @@ def _render_first_run_welcome(ui: Any, snapshot: dict[str, Any], open_setup: Cal
             ui.label(str(guardrail)).classes("sgfx-guardrail")
         if open_setup is not None:
             ui.button("Run setup", on_click=open_setup).props("color=primary")
+
+
+def _render_about_panel(ui: Any, content: dict[str, Any] | None = None) -> None:
+    payload = content if isinstance(content, dict) else ABOUT_CONTENT
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center sgfx-brand-lockup"):
+            ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_BRAND_LOGO_ASSET}").classes("sgfx-brand-logo")
+            ui.label(str(payload.get("heading", "About"))).classes("sgfx-panel-title")
+        ui.label(str(payload.get("description", ""))).classes("sgfx-summary")
+        ui.label(str(payload.get("version_placeholder", ""))).classes("sgfx-muted")
+        anchors = payload.get("confluence_anchors", ())
+        if anchors:
+            ui.label("Confluence anchors").classes("sgfx-panel-title")
+            for label, anchor in anchors:
+                ui.label(f"{label} — {anchor}").classes("sgfx-shortcut")
+        for guardrail in DASHBOARD_GUARDRAILS:
+            ui.label(str(guardrail)).classes("sgfx-guardrail")
 
 
 def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace: Path) -> None:
@@ -1486,39 +1535,55 @@ def _render_dashboard(
         snapshot = dict(base_snapshot)
         snapshot["theme"] = _clean_theme(ui_mode or load_dashboard_preference(workspace))
         theme = str(snapshot.get("theme", "clean"))
+        ui.dark_mode().enable()
         ui.query("body").classes(f"sgfx-dashboard sgfx-theme-{theme}")
         ui.add_head_html(
             """
             <style>
-            .sgfx-dashboard { background: #f7f8fa; color: #17202a; font-family: Segoe UI, Arial, sans-serif; }
-            .sgfx-theme-grafiks { background: #eef2f5; }
+            :root {
+              --sgfx-bg: #1e1e1e;
+              --sgfx-bg-elev: #252526;
+              --sgfx-bg-panel: #2b2b2b;
+              --sgfx-border: #3c3c3c;
+              --sgfx-border-soft: #333333;
+              --sgfx-fg: #d4d4d4;
+              --sgfx-fg-muted: #9da3a8;
+              --sgfx-fg-strong: #ececec;
+              --sgfx-accent: #4ec9b0;
+              --sgfx-accent-soft: #264f44;
+              --sgfx-warning-fg: #e8c07d;
+              --sgfx-warning-bg: #3a2f18;
+              --sgfx-warning-border: #6b5024;
+            }
+            html, body { background: var(--sgfx-bg); color: var(--sgfx-fg); }
+            .sgfx-dashboard { background: var(--sgfx-bg); color: var(--sgfx-fg); font-family: 'Segoe UI', 'Cascadia Code', Arial, sans-serif; }
+            .sgfx-theme-grafiks { background: var(--sgfx-bg); }
             .sgfx-shell { min-height: 100vh; gap: 0; }
-            .sgfx-sidebar { width: 268px; min-height: 100vh; padding: 18px 14px; background: #ffffff; border-right: 1px solid #d8dde6; }
-            .sgfx-sidebar-title { font-size: 18px; font-weight: 700; letter-spacing: 0; }
-            .sgfx-sidebar-theme { color: #5e6b7a; font-size: 13px; margin-bottom: 8px; }
-            .sgfx-nav-button { justify-content: flex-start; border-radius: 6px; }
-            .sgfx-shortcut { color: #657386; font-size: 12px; line-height: 1.4; }
-            .sgfx-main { flex: 1; min-width: 0; padding: 20px 24px; gap: 16px; }
-            .sgfx-header { border-bottom: 1px solid #d8dde6; padding-bottom: 12px; }
-            .sgfx-title { font-size: 24px; font-weight: 700; letter-spacing: 0; }
-            .sgfx-subtitle { color: #5e6b7a; font-size: 14px; }
-            .sgfx-brand-lockup { gap: 12px; }
-            .sgfx-brand-logo { width: 52px; height: 52px; object-fit: contain; flex: 0 0 auto; }
+            .sgfx-sidebar { width: 268px; min-height: 100vh; padding: 22px 16px; background: var(--sgfx-bg-elev); border-right: 1px solid var(--sgfx-border); gap: 10px; }
+            .sgfx-sidebar-logo { width: 132px; height: auto; object-fit: contain; margin: 4px 0 14px 0; }
+            .sgfx-nav-button { justify-content: flex-start; border-radius: 6px; color: var(--sgfx-fg) !important; }
+            .sgfx-nav-button:hover { background: var(--sgfx-accent-soft) !important; }
+            .sgfx-shortcut { color: var(--sgfx-fg-muted); font-size: 12px; line-height: 1.5; }
+            .sgfx-main { flex: 1; min-width: 0; padding: 24px 28px; gap: 18px; background: var(--sgfx-bg); }
+            .sgfx-header { border-bottom: 1px solid var(--sgfx-border); padding-bottom: 14px; }
+            .sgfx-subtitle { color: var(--sgfx-fg-muted); font-size: 13px; }
+            .sgfx-brand-lockup { gap: 14px; }
+            .sgfx-brand-logo { width: 72px; height: 72px; object-fit: contain; flex: 0 0 auto; }
             .sgfx-content { width: 100%; }
-            .sgfx-footer { border-top: 1px solid #d8dde6; padding-top: 10px; }
-            .sgfx-guardrail { color: #394654; font-size: 13px; }
-            .sgfx-page-panel { border-radius: 8px; box-shadow: none; border: 1px solid #dbe1ea; width: 100%; padding: 16px; background: #ffffff; }
-            .sgfx-panel-title { font-size: 18px; font-weight: 650; }
-            .sgfx-panel-tagline, .sgfx-muted { color: #657386; font-size: 13px; }
-            .sgfx-summary { color: #2f3b48; font-size: 14px; }
-            .sgfx-warning { border: 1px solid #d7a23b; background: #fff8e8; color: #694b12; border-radius: 6px; padding: 8px 10px; }
-            .sgfx-shortcut-feedback { min-height: 22px; color: #2f3b48; font-size: 13px; padding: 2px 0; }
-            .sgfx-profile-select { min-width: 132px; }
+            .sgfx-footer { border-top: 1px solid var(--sgfx-border); padding-top: 12px; margin-top: 12px; }
+            .sgfx-guardrail { color: var(--sgfx-fg-muted); font-size: 13px; line-height: 1.55; }
+            .sgfx-page-panel { border-radius: 8px; box-shadow: none; border: 1px solid var(--sgfx-border); width: 100%; padding: 18px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); margin-bottom: 14px; }
+            .sgfx-panel-title { font-size: 18px; font-weight: 650; color: var(--sgfx-fg-strong); }
+            .sgfx-panel-tagline, .sgfx-muted { color: var(--sgfx-fg-muted); font-size: 13px; }
+            .sgfx-summary { color: var(--sgfx-fg); font-size: 14px; line-height: 1.55; }
+            .sgfx-warning { border: 1px solid var(--sgfx-warning-border); background: var(--sgfx-warning-bg); color: var(--sgfx-warning-fg); border-radius: 6px; padding: 9px 12px; }
+            .sgfx-shortcut-feedback { min-height: 22px; color: var(--sgfx-fg-muted); font-size: 13px; padding: 2px 0; }
+            .sgfx-profile-select { min-width: 144px; }
             .sgfx-status { text-transform: none; }
-            .sgfx-table { width: 100%; }
-            .sgfx-step { border: 1px solid #dde3ec; border-radius: 8px; margin: 8px 0; }
-            .sgfx-live-output textarea { min-height: 160px; font-family: Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; }
-            .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid #dde3ec; border-radius: 6px; padding: 8px; }
+            .sgfx-table { width: 100%; color: var(--sgfx-fg); }
+            .sgfx-step { border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; background: var(--sgfx-bg-elev); }
+            .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
+            .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid var(--sgfx-border); border-radius: 6px; padding: 8px; background: var(--sgfx-bg-elev); }
             </style>
             """
         )
@@ -1541,9 +1606,6 @@ def _render_dashboard(
             profile_label = controls.get("profile_label")
             if profile_label is not None:
                 profile_label.set_text(_header_text())
-            theme_label = controls.get("theme_label")
-            if theme_label is not None:
-                theme_label.set_text(f"[{_current_theme().title()}]")
 
         def _render_current_page() -> None:
             content = content_holder.get("content")
@@ -1625,8 +1687,7 @@ def _render_dashboard(
 
         with ui.row().classes("sgfx-shell full-width no-wrap"):
             with ui.column().classes("sgfx-sidebar"):
-                ui.label(DASHBOARD_TITLE).classes("sgfx-sidebar-title")
-                controls["theme_label"] = ui.label(f"[{theme.title()}]").classes("sgfx-sidebar-theme")
+                ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_BRAND_ICON_ASSET}").classes("sgfx-sidebar-logo")
                 ui.separator()
                 for nav_item in state["snapshot"]["navigation"]:
                     ui.button(
@@ -1640,9 +1701,8 @@ def _render_dashboard(
             with ui.column().classes("sgfx-main"):
                 with ui.row().classes("sgfx-header items-center justify-between full-width"):
                     with ui.row().classes("sgfx-brand-lockup items-center"):
-                        ui.image("/sgfx-dashboard-assets/framework_sgfx_logo.png").classes("sgfx-brand-logo")
+                        ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_BRAND_LOGO_ASSET}").classes("sgfx-brand-logo")
                         with ui.column():
-                            ui.label(DASHBOARD_HEADER).classes("sgfx-title")
                             controls["profile_label"] = ui.label(_header_text()).classes("sgfx-subtitle")
                             ui.html(
                                 '<div id="sgfx-shortcut-feedback" class="sgfx-shortcut-feedback">'
@@ -1662,7 +1722,6 @@ def _render_dashboard(
                         ui.button("Refresh", on_click=_refresh_current_page).props("flat dense no-caps").classes(
                             "sgfx-refresh-button"
                         )
-                        ui.label("Mode: Clean").classes("sgfx-shortcut")
                 content = ui.column().classes("sgfx-content")
                 content_holder["content"] = content
                 _render_current_page()

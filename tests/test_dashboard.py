@@ -130,6 +130,24 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn('kwargs["favicon"]', source)
         self.assertIn("/sgfx-dashboard-assets", source)
 
+    def test_dashboard_source_removes_redundant_headers_and_enables_dark_mode(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("SGFX: Project Quality-Hero", source)
+        self.assertNotIn("Welcome to SGFX QA Preflight", source)
+        self.assertNotIn('ui.label("Mode: Clean")', source)
+        self.assertNotIn('ui.label("Mode: Grafiks")', source)
+        self.assertNotIn("DASHBOARD_HEADER", source)
+        self.assertIn('DASHBOARD_TITLE = "SGFX"', source)
+        self.assertIn("ui.dark_mode().enable()", source)
+        self.assertIn("--sgfx-bg:", source)
+        self.assertIn("ABOUT_CONTENT", source)
+        self.assertIn("_render_about_panel", source)
+        self.assertIn("Confluence anchors", source)
+        self.assertIn("sgfx-sidebar-logo", source)
+
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"
@@ -279,7 +297,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                     with mock.patch.object(dashboard_main.sys, "frozen", True, create=True):
                         with mock.patch("sg_preflight.dashboard.main._find_open_dashboard_port", return_value=8128):
                             with mock.patch("sg_preflight.dashboard.main._launch_browser_fallback_process", return_value=0) as fallback:
-                                with self.assertRaisesRegex(RuntimeError, "embedded Clean desktop shell"):
+                                with self.assertRaisesRegex(RuntimeError, "embedded desktop shell"):
                                     run_dashboard(workspace=Path(temp_dir), native=True, port=0)
 
         ui.run.assert_not_called()
