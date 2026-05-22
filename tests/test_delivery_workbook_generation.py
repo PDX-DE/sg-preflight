@@ -194,6 +194,31 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertNotEqual(payload["command"][0], r"C:\bundle\sgfx-preflight.exe")
         self.assertEqual(payload["command"][-2:], ["export", "G70"])
 
+    def test_generation_command_prefers_registered_python_path(self) -> None:
+        from sg_preflight.delivery_workbook_generation import resolve_delivery_workbook_generation_command
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            script = bmw_root / "ci" / "scripts" / "car_manager.py"
+            python_path = root / "tools" / "python.exe"
+            write_text(script, "print('fixture')\n")
+            write_text(python_path, "fixture\n")
+            write_text(
+                root / "operator_state" / "dependency_onboarding.json",
+                json.dumps({"registered_paths": {"bmw_pipeline_python": str(python_path)}}),
+            )
+
+            payload = resolve_delivery_workbook_generation_command(
+                profile_id="G70",
+                bmw_root=bmw_root,
+                workspace=root,
+            )
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["command"][0], str(python_path.resolve()))
+        self.assertEqual(payload["command"][-2:], ["export", "G70"])
+
     def test_start_generation_requires_operator_confirmation(self) -> None:
         from sg_preflight.delivery_workbook_generation import start_delivery_workbook_generation
 

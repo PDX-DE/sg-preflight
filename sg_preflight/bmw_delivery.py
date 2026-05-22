@@ -203,8 +203,9 @@ def inspect_bmw_screenshot_surface(
     *,
     workspace_root: Path | None = None,
     sg_project_root: Path | None = None,
+    bmw_root: Path | str | None = None,
 ) -> BmwScreenshotSurface:
-    repo_root = discover_bmw_models_repo(workspace_root).resolve()
+    repo_root = Path(bmw_root).resolve() if bmw_root is not None else discover_bmw_models_repo(workspace_root).resolve()
     brand, bmw_profile_id, cars_root, car_root = _resolve_car_root(repo_root, profile_id)
     export_tests_root = car_root / "export" / "tests"
     actuals_root = export_tests_root / "actuals"
@@ -289,6 +290,7 @@ def read_bmw_screenshot_state(
     profile_id: str,
     *,
     workspace: Path | str | None = None,
+    bmw_root: Path | str | None = None,
     sg_project_root: Path | str | None = None,
 ) -> dict[str, Any]:
     workspace_path = Path(workspace).resolve() if workspace is not None else None
@@ -297,6 +299,7 @@ def read_bmw_screenshot_state(
         profile_id,
         workspace_root=workspace_path,
         sg_project_root=sg_root,
+        bmw_root=bmw_root,
     )
     status = _surface_status(surface)
     disabled_count = _disabled_test_count(Path(surface.test_config_path)) if surface.test_config_path else 0

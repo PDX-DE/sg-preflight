@@ -38,6 +38,15 @@ from sg_preflight.manual_review import (
     record_manual_review_step,
 )
 from sg_preflight.profiles import list_run_profiles
+from sg_preflight.screenshot_capture import (
+    SCREENSHOT_CAPTURE_ACTION_ID,
+    SCREENSHOT_CAPTURE_ACTION_LABEL,
+    SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
+    cancel_screenshot_capture,
+    check_screenshot_capture_environment,
+    poll_screenshot_capture,
+    start_screenshot_capture,
+)
 from sg_preflight.utils import ensure_parent
 
 
@@ -133,7 +142,7 @@ DELIVERY_CHECKLIST_EMPTY_NOTE = (
     "No size-analysis workbook yet for this profile. Click Generate to invoke the BMW pipeline export step."
 )
 SCREENSHOT_TEST_STATE_EMPTY_NOTE = (
-    "No captured screenshots yet — run `ci/scripts/car_manager.py screenshots <PROFILE>` from your BMW Git checkout to generate."
+    "No captured screenshots yet. Click Capture to invoke the BMW pipeline screenshot step after pre-flight passes."
 )
 DAILY_DIGEST_EMPTY_NOTE = (
     "No review package on this workspace yet. Click Build to generate one for the active ticket."
@@ -478,8 +487,8 @@ def save_dashboard_preference(workspace: Path | str, theme: str) -> dict[str, An
 
 
 SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE = (
-    "Screenshot capture runs from the BMW Git pipeline (`ci/scripts/car_manager.py screenshots`); "
-    "SGFX reads the output."
+    "Screenshot capture runs from the BMW Git pipeline (`ci/scripts/car_manager.py screenshots`) after confirmation; "
+    "SGFX reads the output as evidence."
 )
 
 
@@ -567,6 +576,44 @@ def _delivery_checklist_page(
             "label": GENERATE_WORKBOOK_ACTION_LABEL,
             "requires_confirmation": True,
             "timeout_seconds": GENERATE_WORKBOOK_TIMEOUT_SECONDS,
+            "preflight": preflight,
+            "disabled": not bool(preflight.get("can_run", False)),
+            "confirmation_message": str(preflight.get("confirmation_message", "")),
+        }
+    ]
+    return page
+
+
+def _screenshot_test_state_page(
+    profile_id: str,
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="screenshot-test-state",
+        title="Screenshot Test State",
+        tagline="BMW + MINI baseline / actual / diff counts per brand.",
+        reader=lambda: read_bmw_screenshot_state(
+            profile_id,
+            workspace=workspace,
+            bmw_root=bmw_root,
+            sg_project_root=workspace,
+        ),
+        workspace=workspace,
+        ownership_note=SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE,
+    )
+    preflight = check_screenshot_capture_environment(
+        profile_id=profile_id,
+        workspace=workspace,
+        bmw_root=bmw_root,
+    )
+    page["actions"] = [
+        {
+            "id": SCREENSHOT_CAPTURE_ACTION_ID,
+            "label": SCREENSHOT_CAPTURE_ACTION_LABEL,
+            "requires_confirmation": True,
+            "timeout_seconds": SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
             "preflight": preflight,
             "disabled": not bool(preflight.get("can_run", False)),
             "confirmation_message": str(preflight.get("confirmation_message", "")),
@@ -868,18 +915,7 @@ def build_dashboard_snapshot(
         },
         "pages": [
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
-            _reader_page(
-                page_id="screenshot-test-state",
-                title="Screenshot Test State",
-                tagline="BMW + MINI baseline / actual / diff counts per brand.",
-                reader=lambda: read_bmw_screenshot_state(
-                    resolved_profile_id,
-                    workspace=Path(bmw_root).resolve() if bmw_root else root,
-                    sg_project_root=root,
-                ),
-                workspace=root,
-                ownership_note=SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE,
-            ),
+            _screenshot_test_state_page(resolved_profile_id, root, bmw_root=bmw_root),
             _daily_digest_page(root, resolved_profile_id, active_ticket_id=active_ticket_id),
             _manual_review_page(resolved_profile_id, root, active_ticket_id=active_ticket_id),
         ],
@@ -1589,6 +1625,233 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                 run_button.disable()
 
 
+def _render_screenshot_test_state_panel(
+    ui: Any,
+    snapshot: dict[str, Any],
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "screenshot-test-state")
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        _render_empty_state_note(ui, page)
+        ownership_note = str(page.get("ownership_note", "")).strip()
+        if ownership_note:
+            ui.label(ownership_note).classes("sgfx-muted")
+        rows = [
+            {
+                "label": str(item.get("label", "")),
+                "status": str(item.get("status", "")),
+                "detail": str(item.get("detail", "")),
+            }
+            for item in page.get("items", [])
+            if isinstance(item, dict)
+        ]
+        if rows:
+            _attach_tooltip(
+                ui,
+                ui.table(
+                    columns=[
+                        {"name": "label", "label": "Item", "field": "label", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="label",
+                ).classes("sgfx-table"),
+                "Screenshot evidence counts are read from local BMW and SVN folders.",
+            )
+        else:
+            ui.label("No rows loaded for this page.").classes("sgfx-muted")
+
+        actions = [action for action in page.get("actions", []) if isinstance(action, dict)]
+        for action in actions:
+            if action.get("id") != SCREENSHOT_CAPTURE_ACTION_ID:
+                continue
+            preflight = action.get("preflight", {}) if isinstance(action.get("preflight"), dict) else {}
+            checks = [
+                {
+                    "label": str(item.get("label", "")),
+                    "status": str(item.get("status", "")),
+                    "detail": str(item.get("detail", "")),
+                }
+                for item in preflight.get("checks", [])
+                if isinstance(item, dict)
+            ]
+            ui.separator()
+            ui.label("Capture screenshots").classes("sgfx-panel-tagline")
+            ui.label("Environment pre-flight must pass before SGFX can invoke the BMW screenshot helper.").classes(
+                "sgfx-muted"
+            )
+            if checks:
+                _attach_tooltip(
+                    ui,
+                    ui.table(
+                        columns=[
+                            {"name": "label", "label": "Check", "field": "label", "align": "left"},
+                            {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                            {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                        ],
+                        rows=checks,
+                        row_key="label",
+                    ).classes("sgfx-table"),
+                    "Pre-flight checks gate local screenshot capture.",
+                )
+            disabled_reason = str(preflight.get("disabled_reason", "")).strip()
+            if disabled_reason:
+                ui.label(disabled_reason).classes("sgfx-muted")
+            status_label = ui.label("Local-only: this action runs only after operator confirmation.").classes(
+                "sgfx-muted"
+            )
+            progress = ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+            progress.visible = False
+            elapsed_label = ui.label("Running 00:00 / typical 2-10 min").classes("sgfx-muted")
+            elapsed_label.visible = False
+            live_output = (
+                ui.textarea(label="Live output", value="No output recorded yet.")
+                .props("readonly outlined")
+                .classes("full-width sgfx-live-output")
+            )
+            live_output.visible = False
+            file_activity_label = ui.label("File activity").classes("sgfx-panel-tagline")
+            file_activity_label.visible = False
+            file_activity_host = ui.column().classes("sgfx-file-activity full-width")
+            file_activity_host.visible = False
+            job_state: dict[str, Any] = {"job": None}
+            poll_timer_ref: dict[str, Any] = {"timer": None}
+
+            def _stop_screenshot_poll_timer() -> None:
+                _cancel_background_poll_timer(poll_timer_ref.get("timer"))
+                poll_timer_ref["timer"] = None
+
+            def _show_live_progress() -> None:
+                elapsed_label.visible = True
+                live_output.visible = True
+                file_activity_label.visible = True
+                file_activity_host.visible = True
+
+            def _reset_live_progress() -> None:
+                elapsed_label.text = "Running 00:00 / typical 2-10 min"
+                live_output.value = "No output recorded yet."
+                file_activity_host.clear()
+                with file_activity_host:
+                    ui.label("No file changes recorded yet.").classes("sgfx-muted")
+
+            def _update_live_progress(result: dict[str, Any]) -> None:
+                elapsed = str(result.get("elapsed_label", "00:00"))
+                typical = str(result.get("typical_range", "typical 2-10 min"))
+                elapsed_label.text = f"Running {elapsed} / {typical}"
+                stdout_lines = [str(line) for line in result.get("stdout_tail_lines", []) if str(line).strip()]
+                live_output.value = "\n".join(stdout_lines) if stdout_lines else "No output recorded yet."
+                file_activity_host.clear()
+                file_activity = [item for item in result.get("file_activity", []) if isinstance(item, dict)]
+                with file_activity_host:
+                    if file_activity:
+                        for item in file_activity:
+                            ui.label(str(item.get("summary", ""))).classes("sgfx-summary")
+                    else:
+                        ui.label("No file changes recorded yet.").classes("sgfx-muted")
+
+            def _cancel() -> None:
+                job = job_state.get("job")
+                if job is None:
+                    return
+                result = cancel_screenshot_capture(job)
+                progress.visible = False
+                _show_live_progress()
+                _update_live_progress(result)
+                status_label.text = str(result.get("summary", "Screenshot capture canceled."))
+                _stop_screenshot_poll_timer()
+                ui.notify("Screenshot capture canceled.")
+
+            cancel_button = _attach_tooltip(
+                ui,
+                ui.button("Cancel", on_click=_cancel),
+                "Stop the local screenshot-capture worker.",
+            )
+            cancel_button.disable()
+
+            def _poll() -> None:
+                try:
+                    job = job_state.get("job")
+                    if job is None:
+                        _stop_screenshot_poll_timer()
+                        return
+                    result = poll_screenshot_capture(job)
+                    if result is None:
+                        return
+                    _show_live_progress()
+                    _update_live_progress(result)
+                    if not result.get("completed", True):
+                        status_label.text = str(result.get("summary", "BMW screenshot capture running."))
+                        return
+                    _stop_screenshot_poll_timer()
+                    progress.visible = False
+                    cancel_button.disable()
+                    outcome = str(result.get("status", "unknown"))
+                    status_label.text = (
+                        f"Screenshot capture {outcome}. {result.get('summary', '')} "
+                        "Refresh to re-read screenshot evidence."
+                    )
+                    ui.notify(f"Screenshot capture {outcome}.")
+                except RuntimeError as exc:
+                    if not _parent_slot_deleted(exc):
+                        raise
+                    _stop_screenshot_poll_timer()
+
+            def _start_screenshot_poll_timer() -> None:
+                _stop_screenshot_poll_timer()
+                poll_timer_ref["timer"] = _start_background_poll_timer(1.0, _poll)
+
+            with ui.dialog() as confirm_dialog, ui.card():
+                ui.label(str(action.get("confirmation_message", ""))).classes("sgfx-summary")
+                ui.label("Manual review remains required. Decision: not approval — evidence only.").classes(
+                    "sgfx-muted"
+                )
+
+                def _start() -> None:
+                    try:
+                        job_state["job"] = start_screenshot_capture(
+                            profile_id=str(snapshot["profile_id"]),
+                            workspace=workspace,
+                            bmw_root=bmw_root,
+                            operator_confirmed=True,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        status_label.text = f"Screenshot capture failed to start: {exc}"
+                        ui.notify("Screenshot capture failed to start.")
+                        confirm_dialog.close()
+                        return
+                    status_label.text = "BMW screenshot capture running..."
+                    progress.visible = True
+                    _show_live_progress()
+                    _reset_live_progress()
+                    cancel_button.enable()
+                    _start_screenshot_poll_timer()
+                    confirm_dialog.close()
+
+                confirm_button = _attach_tooltip(
+                    ui,
+                    ui.button("Continue", on_click=_start).props("color=primary"),
+                    "Start local screenshot capture after this confirmation.",
+                )
+                if action.get("disabled"):
+                    confirm_button.disable()
+                ui.button("Close", on_click=confirm_dialog.close)
+            run_button = _attach_tooltip(
+                ui,
+                ui.button(str(action.get("label", SCREENSHOT_CAPTURE_ACTION_LABEL)), on_click=confirm_dialog.open),
+                "Capture screenshot evidence locally after the environment pre-flight passes.",
+            )
+            if action.get("disabled"):
+                run_button.disable()
+
+
 def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
     with ui.column().classes("sgfx-page-panel"):
@@ -1745,6 +2008,8 @@ def _render_selected_page(
     with container:
         if page_id == "delivery-checklist":
             _render_delivery_checklist_panel(ui, snapshot, workspace)
+        elif page_id == "screenshot-test-state":
+            _render_screenshot_test_state_panel(ui, snapshot, workspace)
         elif page_id == "manual-review":
             _render_manual_review_panel(ui, snapshot, workspace)
         elif page_id == "daily-digest":
@@ -1873,6 +2138,8 @@ def _render_dashboard(
                 )
                 if active_page_id == "delivery-checklist":
                     _render_delivery_checklist_panel(ui, state["snapshot"], workspace)
+                elif active_page_id == "screenshot-test-state":
+                    _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
                 elif active_page_id == "daily-digest":
                     _render_daily_digest_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "manual-review":

@@ -492,6 +492,34 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         checks = {item["key"]: item for item in action["preflight"]["checks"]}
         self.assertIn("digital_3d_car_repo", checks)
 
+    def test_screenshot_page_exposes_capture_action_with_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+            from sg_preflight.screenshot_capture import SCREENSHOT_CAPTURE_ACTION_ID
+
+            fake_preflight = {
+                "can_run": False,
+                "checks": [{"key": "bmw_screenshot_script", "status": "missing"}],
+                "confirmation_message": "This will run BMW pipeline screenshot capture for G70.",
+            }
+            with mock.patch(
+                "sg_preflight.dashboard.main.check_screenshot_capture_environment",
+                return_value=fake_preflight,
+            ):
+                snapshot = build_dashboard_snapshot("G70", tmp)
+
+        screenshot_page = next(page for page in snapshot["pages"] if page["id"] == "screenshot-test-state")
+        self.assertIn("No captured screenshots yet", screenshot_page["empty_state_note"])
+        self.assertEqual(len(screenshot_page["actions"]), 1)
+        action = screenshot_page["actions"][0]
+        self.assertEqual(action["id"], SCREENSHOT_CAPTURE_ACTION_ID)
+        self.assertTrue(action["requires_confirmation"])
+        self.assertTrue(action["disabled"])
+        self.assertFalse(action["preflight"]["can_run"])
+        self.assertIn("screenshot capture for G70", action["confirmation_message"])
+        checks = {item["key"]: item for item in action["preflight"]["checks"]}
+        self.assertIn("bmw_screenshot_script", checks)
+
     def test_dashboard_snapshot_adds_empty_state_guidance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot

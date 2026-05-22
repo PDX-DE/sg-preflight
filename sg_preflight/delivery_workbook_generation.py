@@ -363,10 +363,11 @@ def resolve_delivery_workbook_generation_command(
     *,
     profile_id: str,
     bmw_root: Path | str,
+    workspace: Path | str | None = None,
 ) -> dict[str, Any]:
     root = Path(bmw_root).resolve()
     clean_profile = _clean_profile(profile_id)
-    python_payload = _python_command_payload()
+    python_payload = _python_command_payload(workspace)
     if python_payload["status"] != "available":
         return {
             "status": "missing",
@@ -603,7 +604,11 @@ def start_delivery_workbook_generation(
     if not preflight["can_run"]:
         raise RuntimeError("Environment pre-flight checks must pass before running BMW pipeline export.")
     repo_root = Path(str(preflight["bmw_root"])).resolve()
-    command_payload = resolve_delivery_workbook_generation_command(profile_id=clean_profile, bmw_root=repo_root)
+    command_payload = resolve_delivery_workbook_generation_command(
+        profile_id=clean_profile,
+        bmw_root=repo_root,
+        workspace=workspace_path,
+    )
     if command_payload["status"] != "available":
         raise FileNotFoundError(str(command_payload.get("summary", "No supported BMW pipeline export script was found.")))
     log_root = workspace_path / "operator_state" / "delivery_workbook_generation"
