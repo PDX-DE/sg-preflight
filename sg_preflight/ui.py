@@ -283,10 +283,9 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
                 "Runs the widest useful SG-side flow on this machine",
                 "Best first stop before review, rack, or handoff",
             ),
-            "best_profiles": ("G70", "G65", "G45"),
+            "best_profiles": ("G70", "G45"),
             "profile_help": {
                 "G70": "Best first stop when you touched general delivery files and want broad sanity checks.",
-                "G65": "Best first stop when you touched one car and also want constants evidence.",
                 "G45": "Best first stop when you touched a classic slice and want low-noise anchor sanity.",
             },
         },
@@ -302,10 +301,9 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
                 "Checks expected vs exported engineering values",
                 "Best when you want hard evidence for a value mismatch",
             ),
-            "best_profiles": ("G65",),
+            "best_profiles": ("G70",),
             "profile_help": {
-                "G65": "Best current live slice for constants drift and engineering-value evidence.",
-                "G70": "Useful if you changed G70 constants and want a fast value-only pass.",
+                "G70": "Useful if you changed a profile's constants and want a fast value-only pass.",
                 "G45": "Useful if you changed classic constants and only want the constants pack.",
             },
         },
@@ -325,7 +323,6 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
             "profile_help": {
                 "G45": "Best current live slice for classic anchor-family sanity.",
                 "G70": "Useful if you changed the G70 anchor scene and want a quick structure pass.",
-                "G65": "Useful if you changed the G65 anchor scene and want a quick structure pass.",
             },
         },
         {
@@ -340,10 +337,9 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
                 "Checks duplicate IDs and normalized paint data",
                 "Best before any rack-side paint review",
             ),
-            "best_profiles": ("G70", "G65", "G45"),
+            "best_profiles": ("G70", "G45"),
             "profile_help": {
                 "G70": "Good first stop for shared BMW CarPaint issues on the live IDCevo side.",
-                "G65": "Good first stop if you want shared BMW CarPaint issues plus the G65 live slice.",
                 "G45": "Good first stop if you want the same shared BMW catalog checked from the classic side.",
             },
         },
@@ -362,7 +358,6 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
             "best_profiles": ("G70",),
             "profile_help": {
                 "G70": "Best current live slice for cross-car references and unused-Lua signal.",
-                "G65": "Useful if you changed G65 project files and want a project-sanity-only pass.",
                 "G45": "Useful if you changed classic project files and want legacy sanity only.",
             },
         },

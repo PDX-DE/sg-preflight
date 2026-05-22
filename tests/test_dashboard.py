@@ -121,6 +121,46 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         self.assertIn("Shortcuts available", source)
         self.assertNotIn("Shortcuts ready", source)
+        self.assertNotIn("MANUAL_REVIEW_DASHBOARD_TICKET_ID", source)
+        self.assertIn("_dashboard_active_ticket_id", source)
+
+    def test_dashboard_snapshot_uses_operator_state_profile_and_ticket_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            state_root = Path(tmp) / "operator_state"
+            state_root.mkdir(parents=True)
+            (state_root / "dashboard_preferences.json").write_text(
+                json.dumps({"theme": "clean", "profile_id": "NA8"}),
+                encoding="utf-8",
+            )
+            (state_root / "dashboard_context.json").write_text(
+                json.dumps({"active_ticket_id": "IDCEVODEV-1005738"}),
+                encoding="utf-8",
+            )
+            snapshot = build_dashboard_snapshot("", tmp)
+
+        self.assertEqual(snapshot["profile_id"], "NA8")
+        daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
+        manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
+        self.assertEqual(daily_page["actions"][0]["ticket_id_hint"], "IDCEVODEV-1005738")
+        self.assertEqual(daily_page["payload"]["active_ticket_id"], "IDCEVODEV-1005738")
+        self.assertEqual(manual_page["payload"]["ticket_id"], "IDCEVODEV-1005738")
+
+    def test_dashboard_snapshot_is_profile_agnostic_for_phase_f_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            snapshots = {
+                profile_id: build_dashboard_snapshot(profile_id, tmp)
+                for profile_id in ("G70", "NA8", "F70", "U10", "G65")
+            }
+
+        for profile_id, snapshot in snapshots.items():
+            with self.subTest(profile_id=profile_id):
+                self.assertEqual(snapshot["profile_id"], profile_id)
+                self.assertTrue(snapshot["profile_known"])
+                self.assertEqual(len(snapshot["pages"]), 4)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -428,7 +468,16 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             from sg_preflight.dashboard.main import build_dashboard_snapshot
             from sg_preflight.delivery_workbook_generation import GENERATE_WORKBOOK_ACTION_ID
 
-            snapshot = build_dashboard_snapshot("G70", tmp)
+            fake_preflight = {
+                "can_run": False,
+                "checks": [{"key": "digital_3d_car_repo", "status": "missing"}],
+                "confirmation_message": "This will run the BMW pipeline for G70.",
+            }
+            with mock.patch(
+                "sg_preflight.dashboard.main.check_delivery_workbook_generation_environment",
+                return_value=fake_preflight,
+            ):
+                snapshot = build_dashboard_snapshot("G70", tmp)
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["status"], "unavailable")

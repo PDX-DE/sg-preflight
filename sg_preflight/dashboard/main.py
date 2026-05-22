@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -104,7 +105,8 @@ ABOUT_CONTENT: dict[str, Any] = {
 #   Hotkey popup (Clean + Grafiks): debug_icon.png          ~96 x 96 px animated overlay
 MANUAL_REVIEW_STATUSES = ["not_run", "recorded", "incomplete"]
 MANUAL_REVIEW_RECORD_VERDICTS = ["passed", "failed", "skipped", "incomplete"]
-MANUAL_REVIEW_DASHBOARD_TICKET_ID = "IDCEVODEV-977874"
+_DASHBOARD_TICKET_FALLBACK = "IDCEVODEV-977874"
+_TICKET_ID_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 _MISSING_STATUSES = {
     "missing",
     "no_review_package",
@@ -344,9 +346,17 @@ def dashboard_profile_options() -> list[dict[str, str]]:
     return [{"id": profile.profile_id, "label": profile.label} for profile in list_run_profiles()]
 
 
-def _resolve_dashboard_profile_id(profile_id: str | None, options: list[dict[str, str]]) -> str:
+def _resolve_dashboard_profile_id(
+    profile_id: str | None,
+    options: list[dict[str, str]],
+    *,
+    workspace: Path | str | None = None,
+) -> str:
     requested = str(profile_id or "").strip()
     if not requested:
+        preferred = _dashboard_preferred_profile_id(workspace, options) if workspace is not None else ""
+        if preferred:
+            return preferred
         return options[0]["id"] if options else ""
     for option in options:
         if option["id"].casefold() == requested.casefold():
@@ -377,21 +387,90 @@ def _operator_state_path(workspace: Path | str, filename: str) -> Path:
     return _workspace(workspace) / "operator_state" / filename
 
 
-def load_dashboard_preference(workspace: Path | str) -> str:
-    path = _operator_state_path(workspace, "dashboard_preferences.json")
+def _read_operator_state_json(workspace: Path | str, filename: str) -> dict[str, Any]:
+    path = _operator_state_path(workspace, filename)
     if not path.is_file():
-        return "clean"
+        return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
-        return "clean"
-    if not isinstance(payload, dict):
-        return "clean"
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _dashboard_preferred_profile_id(workspace: Path | str | None, options: list[dict[str, str]]) -> str:
+    if workspace is None:
+        return ""
+    option_ids = {str(option["id"]).casefold(): str(option["id"]) for option in options}
+    for filename in ("dashboard_preferences.json", "dashboard_context.json", "operator_context.json"):
+        payload = _read_operator_state_json(workspace, filename)
+        for key in ("profile_id", "active_profile_id", "selected_profile_id", "last_profile_id"):
+            raw = str(payload.get(key, "")).strip()
+            if raw and raw.casefold() in option_ids:
+                return option_ids[raw.casefold()]
+    return ""
+
+
+def _ticket_id_from_payload(payload: dict[str, Any]) -> str:
+    for key in ("active_ticket_id", "ticket_id", "jira_ticket", "jira_ticket_id", "ticket"):
+        raw = str(payload.get(key, "")).strip().upper()
+        if raw and _TICKET_ID_PATTERN.fullmatch(raw):
+            return raw
+    return ""
+
+
+def _dashboard_ticket_from_operator_state(workspace: Path | str) -> str:
+    for filename in ("dashboard_context.json", "operator_context.json", "active_ticket.json"):
+        ticket_id = _ticket_id_from_payload(_read_operator_state_json(workspace, filename))
+        if ticket_id:
+            return ticket_id
+    return ""
+
+
+def _dashboard_ticket_from_git_branch(workspace: Path | str) -> str:
+    from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
+
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(_workspace(workspace)), "rev-parse", "--abbrev-ref", "HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+            **hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    match = _TICKET_ID_PATTERN.search(str(completed.stdout or "").upper())
+    return match.group(0) if match else ""
+
+
+def _dashboard_active_ticket_id(workspace: Path | str) -> str:
+    state_ticket = _dashboard_ticket_from_operator_state(workspace)
+    if state_ticket:
+        return state_ticket
+    for key in ("SGFX_ACTIVE_TICKET_ID", "SGFX_DASHBOARD_TICKET_ID"):
+        raw = os.environ.get(key, "").strip().upper()
+        if raw and _TICKET_ID_PATTERN.fullmatch(raw):
+            return raw
+    branch_ticket = _dashboard_ticket_from_git_branch(workspace)
+    if branch_ticket:
+        return branch_ticket
+    return _DASHBOARD_TICKET_FALLBACK
+
+
+def load_dashboard_preference(workspace: Path | str) -> str:
+    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
     return _clean_theme(str(payload.get("theme", "clean")))
 
 
-def save_dashboard_preference(workspace: Path | str, theme: str) -> dict[str, str]:
-    payload = {"theme": _clean_theme(theme), "updated_at_utc": _utc_now()}
+def save_dashboard_preference(workspace: Path | str, theme: str) -> dict[str, Any]:
+    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
+    payload["theme"] = _clean_theme(theme)
+    payload["updated_at_utc"] = _utc_now()
     path = _operator_state_path(workspace, "dashboard_preferences.json")
     ensure_parent(path)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -672,13 +751,14 @@ def _ensure_manual_review_dashboard_session(
     *,
     profile_id: str,
     workspace: Path | str,
+    ticket_id: str | None = None,
 ) -> dict[str, Any]:
     session = _load_manual_review_dashboard_session(profile_id=profile_id, workspace=workspace)
     if session is not None:
         return session
     return create_manual_review_session(
         profile_id=profile_id,
-        ticket_id=MANUAL_REVIEW_DASHBOARD_TICKET_ID,
+        ticket_id=(ticket_id or _dashboard_active_ticket_id(workspace)),
         workspace=workspace,
         session_id=_manual_review_dashboard_session_id(profile_id),
     )
@@ -698,7 +778,12 @@ def _manual_review_step_detail(step: dict[str, Any]) -> str:
     return " | ".join(pieces)
 
 
-def _manual_review_page(profile_id: str, workspace: Path | str) -> dict[str, Any]:
+def _manual_review_page(
+    profile_id: str,
+    workspace: Path | str,
+    *,
+    active_ticket_id: str = "",
+) -> dict[str, Any]:
     session = _load_manual_review_dashboard_session(profile_id=profile_id, workspace=workspace)
     steps = (
         list(session.get("steps", []))
@@ -708,6 +793,7 @@ def _manual_review_page(profile_id: str, workspace: Path | str) -> dict[str, Any
     recorded_count = sum(1 for step in steps if isinstance(step, dict) and _manual_review_step_recorded(step))
     status = "recorded" if recorded_count else _MANUAL_REVIEW_PENDING_VERDICT
     session_payload = session if isinstance(session, dict) else {}
+    ticket_id = active_ticket_id.strip() or _dashboard_active_ticket_id(workspace)
     page = {
         "id": "manual-review",
         "title": "Manual Review Companion",
@@ -726,7 +812,7 @@ def _manual_review_page(profile_id: str, workspace: Path | str) -> dict[str, Any
         ],
         "payload": {
             "session_id": str(session_payload.get("session_id", _manual_review_dashboard_session_id(profile_id))),
-            "ticket_id": str(session_payload.get("ticket_id", MANUAL_REVIEW_DASHBOARD_TICKET_ID)),
+            "ticket_id": str(session_payload.get("ticket_id", ticket_id)),
             "session_path": str(session_payload.get("session_path", "")),
             "markdown_path": str(session_payload.get("markdown_path", "")),
             "steps": steps,
@@ -746,10 +832,11 @@ def build_dashboard_snapshot(
 ) -> dict[str, Any]:
     root = _workspace(workspace)
     profile_options = dashboard_profile_options()
-    resolved_profile_id = _resolve_dashboard_profile_id(profile_id, profile_options)
+    resolved_profile_id = _resolve_dashboard_profile_id(profile_id, profile_options, workspace=root)
     profile_known = _dashboard_profile_known(resolved_profile_id, profile_options)
     theme = _clean_theme(ui_mode or load_dashboard_preference(root))
     setup_status = build_dependency_onboarding_status(workspace=root, bmw_root=bmw_root)
+    active_ticket_id = _dashboard_active_ticket_id(root)
     return {
         "title": DASHBOARD_TITLE,
         "profile_id": resolved_profile_id,
@@ -793,8 +880,8 @@ def build_dashboard_snapshot(
                 workspace=root,
                 ownership_note=SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE,
             ),
-            _daily_digest_page(root, resolved_profile_id),
-            _manual_review_page(resolved_profile_id, root),
+            _daily_digest_page(root, resolved_profile_id, active_ticket_id=active_ticket_id),
+            _manual_review_page(resolved_profile_id, root, active_ticket_id=active_ticket_id),
         ],
     }
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from sg_preflight.manual_review import MANUAL_REVIEW_HEADER, QUALITY_HERO_STEPS
+from sg_preflight.profiles import list_run_profiles
 
 from .dependency import require_openhtf
 
@@ -31,7 +32,12 @@ class SgfxStationContext:
         }
 
 
-_ACTIVE_CONTEXT = SgfxStationContext(profile_id="G65", workspace=Path.cwd())
+def _default_profile_id() -> str:
+    profiles = list_run_profiles()
+    return profiles[0].profile_id if profiles else ""
+
+
+_ACTIVE_CONTEXT = SgfxStationContext(profile_id=_default_profile_id(), workspace=Path.cwd())
 
 
 def configure_sgfx_context(context: SgfxStationContext) -> None:

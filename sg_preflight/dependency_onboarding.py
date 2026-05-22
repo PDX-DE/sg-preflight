@@ -117,6 +117,16 @@ def load_dependency_onboarding_state(workspace: Path | str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _write_dependency_onboarding_state(workspace: Path | str, state: dict[str, Any]) -> dict[str, Any]:
+    state["updated_at_utc"] = _utc_now()
+    output_path = dependency_onboarding_state_path(workspace)
+    ensure_parent(output_path)
+    temp_path = output_path.with_name(f".{output_path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    temp_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_path.replace(output_path)
+    return state
+
+
 def record_dependency_path(*, workspace: Path | str, key: str, path: Path | str) -> dict[str, Any]:
     clean_key = key.strip()
     if clean_key not in _KNOWN_REGISTERED_PATHS:
@@ -128,12 +138,45 @@ def record_dependency_path(*, workspace: Path | str, key: str, path: Path | str)
         registered_paths = {}
         state["registered_paths"] = registered_paths
     registered_paths[clean_key] = str(target)
-    state["updated_at_utc"] = _utc_now()
     state["source"] = "dependency onboarding"
-    output_path = dependency_onboarding_state_path(workspace)
-    ensure_parent(output_path)
-    output_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-    return state
+    return _write_dependency_onboarding_state(workspace, state)
+
+
+def _same_registered_path(current: Path | None, target: Path) -> bool:
+    if current is None:
+        return False
+    try:
+        return os.path.normcase(str(current.expanduser().resolve())) == os.path.normcase(str(target.resolve()))
+    except (OSError, RuntimeError):
+        try:
+            current_text = str(current.expanduser())
+        except RuntimeError:
+            current_text = str(current)
+        return os.path.normcase(current_text) == os.path.normcase(str(target))
+
+
+def _auto_register_dependency_path(
+    state: dict[str, Any],
+    *,
+    workspace: Path | str,
+    key: str,
+    path: Path | str | None,
+) -> bool:
+    clean_key = key.strip()
+    if clean_key not in _KNOWN_REGISTERED_PATHS or path is None:
+        return False
+    target = Path(path).expanduser().resolve()
+    if _same_registered_path(_registered_path(state, clean_key), target):
+        return False
+    registered_paths = state.setdefault("registered_paths", {})
+    if not isinstance(registered_paths, dict):
+        registered_paths = {}
+        state["registered_paths"] = registered_paths
+    registered_paths[clean_key] = str(target)
+    state["source"] = str(state.get("source") or "dependency onboarding fast-path")
+    state["last_auto_registered_key"] = clean_key
+    _write_dependency_onboarding_state(workspace, state)
+    return True
 
 
 def _registered_path(state: dict[str, Any], key: str) -> Path | None:
@@ -232,9 +275,14 @@ def _raco_install_roots(workspace: Path) -> list[Path]:
     return roots
 
 
-def _raco_executable_candidates(workspace: Path, executable_name: str, registered: Path | None) -> list[Path | None]:
+def _raco_executable_candidates(
+    workspace: Path,
+    executable_name: str,
+    preferred: Path | None,
+    registered: Path | None = None,
+) -> list[Path | None]:
     roots = _raco_install_roots(workspace)
-    candidates: list[Path | None] = [registered, _find_executable(executable_name)]
+    candidates: list[Path | None] = [preferred, _find_executable(executable_name)]
     for root in roots:
         candidates.extend(
             [
@@ -242,6 +290,7 @@ def _raco_executable_candidates(workspace: Path, executable_name: str, registere
                 root / executable_name,
             ]
         )
+    candidates.append(registered)
     return candidates
 
 
@@ -348,17 +397,21 @@ def _raco_status(state: dict[str, Any], workspace: Path) -> tuple[dict[str, Any]
         _raco_executable_candidates(
             workspace,
             "RamsesComposer.exe",
-            _registered_path(state, "raco_gui") or _env_path(("SG_RACO_GUI", "SG_RACO_EDITOR", "RACO_GUI_EXE")),
+            _env_path(("SG_RACO_GUI", "SG_RACO_EDITOR", "RACO_GUI_EXE")),
+            _registered_path(state, "raco_gui"),
         )
     )
     headless = _existing_file(
         _raco_executable_candidates(
             workspace,
             "RaCoHeadless.exe",
-            _registered_path(state, "raco_headless") or _env_path(("SG_RACO_HEADLESS", "RACO_HEADLESS_EXE")),
+            _env_path(("SG_RACO_HEADLESS", "RACO_HEADLESS_EXE")),
+            _registered_path(state, "raco_headless"),
         )
     )
     source_detail, source_path = _raco_source_detail()
+    _auto_register_dependency_path(state, workspace=workspace, key="raco_gui", path=gui)
+    _auto_register_dependency_path(state, workspace=workspace, key="raco_headless", path=headless)
     action_status = "available" if source_path is not None else "incomplete"
     action = _setup_action(
         action_id="setup-raco-from-shared-tools",
@@ -420,8 +473,9 @@ def _raco_status(state: dict[str, Any], workspace: Path) -> tuple[dict[str, Any]
 
 
 def _blender_path_candidates(state: dict[str, Any], workspace: Path) -> list[Path | None]:
+    registered = _registered_path(state, "blender")
     candidates: list[Path | None] = [
-        _registered_path(state, "blender") or _env_path(("SG_BLENDER_EXE", "BLENDER_EXE")),
+        _env_path(("SG_BLENDER_EXE", "BLENDER_EXE")),
         _find_executable("blender.exe"),
         workspace / "external" / "blender" / "blender.exe",
         workspace.parent / "Blender" / "blender.exe",
@@ -430,6 +484,7 @@ def _blender_path_candidates(state: dict[str, Any], workspace: Path) -> list[Pat
     foundation = Path(r"C:\Program Files\Blender Foundation")
     for child in _glob_dirs(foundation, "Blender 4.*"):
         candidates.append(child / "blender.exe")
+    candidates.append(registered)
     return candidates
 
 
@@ -479,6 +534,7 @@ def _blender_status(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
             confluence_anchor=BLENDER_CONFLUENCE_ANCHOR,
             setup_action=action,
         )
+    _auto_register_dependency_path(state, workspace=workspace, key="blender", path=candidate)
     return _status_item(
         key="blender",
         label="Blender",
@@ -493,13 +549,13 @@ def _blender_status(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
 def _candidate_bmw_repo_paths(workspace: Path, state: dict[str, Any], bmw_root: Path | str | None) -> list[Path | None]:
     candidates: list[Path | None] = [
         Path(bmw_root).expanduser() if bmw_root else None,
-        _registered_path(state, "digital_3d_car_repo"),
         _env_path((DIGITAL_3D_CAR_REPO_ENV, "SG_BMW_CAR_MODELS_ROOT", "SG_CARMODELS_REPO", "SG-CarModels-Repo")),
         workspace / "digital-3d-car-models",
         workspace / "external" / "digital-3d-car-models",
         workspace.parent / "digital-3d-car-models",
         Path(r"C:\3D Car git\digital-3d-car-models"),
         Path(r"C:\repos\digital-3d-car-models"),
+        _registered_path(state, "digital_3d_car_repo"),
     ]
     return candidates
 
@@ -563,6 +619,7 @@ def _bmw_repo_status(state: dict[str, Any], workspace: Path, bmw_root: Path | st
             confluence_anchor=BMW_ENV_CONFLUENCE_ANCHOR,
             setup_action=action,
         )
+    _auto_register_dependency_path(state, workspace=workspace, key="digital_3d_car_repo", path=candidate)
     detail = "BMW Git models checkout is available for read-only local evidence."
     if not explicit_env:
         detail += f" Existing checkout detected; {DIGITAL_3D_CAR_REPO_ENV} setup is optional for future shells."
@@ -583,6 +640,7 @@ def build_dependency_onboarding_status(
     bmw_root: Path | str | None = None,
 ) -> dict[str, Any]:
     root = _workspace(workspace)
+    first_run = not has_operator_state(root)
     state = load_dependency_onboarding_state(root)
     raco_gui, raco_headless = _raco_status(state, root)
     dependencies = {
@@ -615,7 +673,7 @@ def build_dependency_onboarding_status(
         ),
         "workspace": str(root),
         "state_path": str(dependency_onboarding_state_path(root)),
-        "first_run": not has_operator_state(root),
+        "first_run": first_run,
         "baseline_source_note": _BASELINE_SOURCE_NOTE,
         "items": items,
         "actions": actions,

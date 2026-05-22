@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Evidence,
     [Parameter(Mandatory=$true)][string]$Exe,
     [Parameter(Mandatory=$true)][string]$Workspace,
-    [string]$Profile = "G65"
+    [string]$Profile = "G70"
 )
 
 $ErrorActionPreference = "Stop"

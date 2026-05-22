@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -64,6 +65,99 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["counts"]["available"], 4)
         self.assertFalse(payload["actions"])
+
+    def test_fast_path_detection_auto_registers_paths_for_g70_generation_preflight(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+        from sg_preflight import delivery_workbook_generation as generation
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            raco_root = root / "external" / "ramses" / "bin" / "RelWithDebInfo"
+            gui = raco_root / "RamsesComposer.exe"
+            headless = raco_root / "RaCoHeadless.exe"
+            blender = root / "external" / "blender" / "blender.exe"
+            bmw_root = root / "digital-3d-car-models"
+            for path in (gui, headless, blender):
+                write_text(path, "fixture\n")
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
+                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                        setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
+            state = onboarding.load_dependency_onboarding_state(root)
+            state_path = onboarding.dependency_onboarding_state_path(root)
+            state_text = state_path.read_text(encoding="utf-8")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
+                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                        second_setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
+            second_state_text = state_path.read_text(encoding="utf-8")
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(generation, "_find_executable", return_value=""):
+                    with mock.patch.object(generation.sys, "frozen", False, create=True):
+                        with mock.patch.object(generation.sys, "executable", sys.executable):
+                            with mock.patch.object(generation.shutil, "which", return_value=""):
+                                preflight = generation.check_delivery_workbook_generation_environment(
+                                    profile_id="G70",
+                                    workspace=root,
+                                    min_free_bytes=1,
+                                )
+
+        registered_paths = state["registered_paths"]
+        self.assertEqual(setup_payload["status"], "available")
+        self.assertTrue(setup_payload["first_run"])
+        self.assertEqual(second_setup_payload["status"], "available")
+        self.assertFalse(second_setup_payload["first_run"])
+        self.assertEqual(second_state_text, state_text)
+        self.assertEqual(Path(registered_paths["raco_gui"]), gui.resolve())
+        self.assertEqual(Path(registered_paths["raco_headless"]), headless.resolve())
+        self.assertEqual(Path(registered_paths["blender"]), blender.resolve())
+        self.assertEqual(Path(registered_paths["digital_3d_car_repo"]), bmw_root.resolve())
+        checks = {item["key"]: item for item in preflight["checks"]}
+        self.assertTrue(preflight["can_run"])
+        self.assertEqual(preflight["profile_id"], "G70")
+        self.assertEqual(checks["digital_3d_car_repo"]["status"], "available")
+        self.assertEqual(checks["raco"]["status"], "available")
+        self.assertEqual(checks["raco_headless"]["status"], "available")
+        self.assertEqual(checks["blender"]["status"], "available")
+
+    def test_fast_path_detection_prefers_newly_detected_paths_over_old_registrations(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            old_gui = root / "old-tools" / "RamsesComposer.exe"
+            old_headless = root / "old-tools" / "RaCoHeadless.exe"
+            old_blender = root / "old-tools" / "blender.exe"
+            old_bmw_root = root / "old-digital-3d-car-models"
+            new_raco_root = root / "external" / "ramses" / "bin" / "RelWithDebInfo"
+            new_gui = new_raco_root / "RamsesComposer.exe"
+            new_headless = new_raco_root / "RaCoHeadless.exe"
+            new_blender = root / "external" / "blender" / "blender.exe"
+            new_bmw_root = root / "digital-3d-car-models"
+            for path in (old_gui, old_headless, old_blender, new_gui, new_headless, new_blender):
+                write_text(path, "fixture\n")
+            (old_bmw_root / "cars" / "BMW").mkdir(parents=True)
+            (new_bmw_root / "cars" / "BMW").mkdir(parents=True)
+            onboarding.record_dependency_path(workspace=root, key="raco_gui", path=old_gui)
+            onboarding.record_dependency_path(workspace=root, key="raco_headless", path=old_headless)
+            onboarding.record_dependency_path(workspace=root, key="blender", path=old_blender)
+            onboarding.record_dependency_path(workspace=root, key="digital_3d_car_repo", path=old_bmw_root)
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
+                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                        payload = onboarding.build_dependency_onboarding_status(workspace=root)
+            state = onboarding.load_dependency_onboarding_state(root)
+
+        registered_paths = state["registered_paths"]
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(Path(registered_paths["raco_gui"]), new_gui.resolve())
+        self.assertEqual(Path(registered_paths["raco_headless"]), new_headless.resolve())
+        self.assertEqual(Path(registered_paths["blender"]), new_blender.resolve())
+        self.assertEqual(Path(registered_paths["digital_3d_car_repo"]), new_bmw_root.resolve())
 
     def test_detected_bmw_checkout_without_env_var_uses_existing_install_fast_path(self) -> None:
         from sg_preflight import dependency_onboarding as onboarding

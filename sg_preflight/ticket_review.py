@@ -2101,7 +2101,7 @@ def _repo_topology_reference_markdown(
         f"| .pdx | `{pdx_root}` | {_path_status(pdx_root)} | Team scripts for testing, Blender, and Ramses Composer. |",
         f"| Cars | `{cars_root}` | {_path_status(cars_root)} | 3D car assets and Ramses Composer scenes/setups. |",
         f"| Classic BMW shared | `{classic_shared_root}` | {_path_status(classic_shared_root)} | Shared classic BMW logic/material/environment dependencies. |",
-        f"| IDCEVO BMW shared | `{idcevo_shared_root}` | {_path_status(idcevo_shared_root)} | Shared IDCEVO BMW dependencies for live slices like G70/G65/NAx. |",
+        f"| IDCEVO BMW shared | `{idcevo_shared_root}` | {_path_status(idcevo_shared_root)} | Shared IDCEVO BMW dependencies for live slices like G70/NAx/etc. |",
         f"| Historical G05 legacy branch | `{g05_legacy_root}` | {_path_status(g05_legacy_root)} | Historical placeholder/legacy context only; not active ticket scope by default. |",
         "",
         "## Checkout and scene-loading notes",
