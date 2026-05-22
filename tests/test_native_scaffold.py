@@ -142,6 +142,8 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("page.get_by_role", text)
         self.assertIn("page.get_by_text", text)
         self.assertIn("wait_for_load_state", text)
+        self.assertIn('action.get("requires_confirmation") is True', text)
+        self.assertNotIn('action.get("confirmation_required")', text)
         self.assertNotIn("wait_for_timeout", text)
 
     def test_native_shell_font_discovery_ignores_archives(self) -> None:

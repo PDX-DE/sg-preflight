@@ -141,7 +141,7 @@ def capture_clean_pages(base_url: str, evidence_dir: Path, workspace: Path, prof
             "setup_surface_visible_in_browser": setup_visible,
             "setup_items_count": len(setup_items),
             "setup_actions_confirmation_gated": bool(setup_actions)
-            and all(action.get("confirmation_required") is True for action in setup_actions),
+            and all(action.get("requires_confirmation") is True for action in setup_actions),
         },
         "browser_page_capture": {
             "pages": page_results,
