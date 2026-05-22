@@ -25,6 +25,7 @@ def build_pyinstaller_args() -> list[str]:
         ("framework_sgfx_logo.png", "."),
         ("logo_sgfx.png", "."),
         ("exe_ico.png", "."),
+        ("debug_icon.png", "."),
         ("desktop_native/resources/exe_ico.ico", "desktop_native/resources"),
         ("desktop_native/resources/debug_icon.ico", "desktop_native/resources"),
         ("sg_preflight/static", "sg_preflight/static"),

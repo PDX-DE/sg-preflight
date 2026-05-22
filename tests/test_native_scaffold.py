@@ -85,6 +85,7 @@ class TestNativeScaffold(unittest.TestCase):
             "framework_sgfx_logo.png",
             "logo_sgfx.png",
             "exe_ico.png",
+            "debug_icon.png",
             "desktop_native/resources/exe_ico.ico",
             "desktop_native/resources/debug_icon.ico",
             "sg_preflight/static",
