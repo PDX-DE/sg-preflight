@@ -10,6 +10,7 @@ import sys
 import time
 from typing import Any
 
+from sg_preflight.bmw_delivery import resolve_bmw_profile_id
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.dependency_onboarding import load_dependency_onboarding_state
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
@@ -367,6 +368,7 @@ def resolve_delivery_workbook_generation_command(
 ) -> dict[str, Any]:
     root = Path(bmw_root).resolve()
     clean_profile = _clean_profile(profile_id)
+    bmw_profile = resolve_bmw_profile_id(clean_profile, root)
     python_payload = _python_command_payload(workspace)
     if python_payload["status"] != "available":
         return {
@@ -383,18 +385,22 @@ def resolve_delivery_workbook_generation_command(
         return {
             "status": "available",
             "strategy": "car_manager_export",
-            "command": [*python_command, str(car_manager), "export", clean_profile],
+            "command": [*python_command, str(car_manager), "export", bmw_profile],
             "cwd": str(root),
             "script_path": str(car_manager),
+            "profile_id": clean_profile,
+            "bmw_profile_id": bmw_profile,
         }
     legacy = root / "ci" / "scripts" / "test" / "main.py"
     if legacy.is_file():
         return {
             "status": "available",
             "strategy": "legacy_test_main_export",
-            "command": [*python_command, str(legacy), "export", clean_profile],
+            "command": [*python_command, str(legacy), "export", bmw_profile],
             "cwd": str(root),
             "script_path": str(legacy),
+            "profile_id": clean_profile,
+            "bmw_profile_id": bmw_profile,
         }
     return {
         "status": "missing",

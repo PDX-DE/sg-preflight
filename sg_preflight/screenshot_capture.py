@@ -9,7 +9,7 @@ import subprocess
 import time
 from typing import Any
 
-from sg_preflight.bmw_delivery import candidate_bmw_profile_ids, read_bmw_screenshot_state
+from sg_preflight.bmw_delivery import candidate_bmw_profile_ids, read_bmw_screenshot_state, resolve_bmw_profile_id
 from sg_preflight.delivery_workbook_generation import (
     DIGITAL_3D_CAR_REPO_ENV,
     _check,
@@ -95,6 +95,7 @@ def resolve_screenshot_capture_command(
 ) -> dict[str, Any]:
     root = Path(bmw_root).resolve()
     clean_profile = _clean_profile(profile_id)
+    bmw_profile = resolve_bmw_profile_id(clean_profile, root)
     python_payload = _python_command_payload(workspace)
     if python_payload["status"] != "available":
         return {
@@ -111,18 +112,22 @@ def resolve_screenshot_capture_command(
         return {
             "status": "available",
             "strategy": "car_manager_screenshots",
-            "command": [*python_command, str(car_manager), "screenshots", "--diff", clean_profile],
+            "command": [*python_command, str(car_manager), "screenshots", "--diff", bmw_profile],
             "cwd": str(root),
             "script_path": str(car_manager),
+            "profile_id": clean_profile,
+            "bmw_profile_id": bmw_profile,
         }
     legacy = root / "ci" / "scripts" / "test" / "main.py"
     if legacy.is_file():
         return {
             "status": "available",
             "strategy": "legacy_test_main_screenshots",
-            "command": [*python_command, str(legacy), "screenshots", "--diff", clean_profile],
+            "command": [*python_command, str(legacy), "screenshots", "--diff", bmw_profile],
             "cwd": str(root),
             "script_path": str(legacy),
+            "profile_id": clean_profile,
+            "bmw_profile_id": bmw_profile,
         }
     return {
         "status": "missing",
@@ -312,7 +317,7 @@ def _capture_result(
     canceled: bool = False,
 ) -> dict[str, Any]:
     screenshot_payload: dict[str, Any] = {}
-    if exit_code == 0 and not timed_out and not canceled:
+    if not timed_out and not canceled:
         try:
             screenshot_payload = read_bmw_screenshot_state(
                 profile_id=job.profile_id,
@@ -326,7 +331,14 @@ def _capture_result(
         diff_count = int(screenshot_payload.get("diff_count", 0) or 0)
         if actual_count or diff_count:
             status = "available"
-            summary = str(screenshot_payload.get("summary", "Screenshot capture output is available."))
+            summary = (
+                str(screenshot_payload.get("summary", "Screenshot capture output is available."))
+                if exit_code == 0
+                else (
+                    f"BMW screenshot capture produced actual/diff evidence with exit code {exit_code}. "
+                    "Manual review remains required."
+                )
+            )
         elif status == "available":
             status = "incomplete"
             summary = (

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -152,7 +153,9 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
 
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["strategy"], "car_manager_export")
-        self.assertEqual(payload["command"][-2:], ["export", "G70"])
+        self.assertEqual(payload["profile_id"], "G70")
+        self.assertEqual(payload["bmw_profile_id"], "G70_EVO")
+        self.assertEqual(payload["command"][-2:], ["export", "G70_EVO"])
         self.assertEqual(Path(payload["script_path"]).name, "car_manager.py")
 
     def test_generation_command_falls_back_to_legacy_test_main_export(self) -> None:
@@ -167,8 +170,25 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
 
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["strategy"], "legacy_test_main_export")
-        self.assertEqual(payload["command"][-2:], ["export", "NA8"])
+        self.assertEqual(payload["profile_id"], "NA8")
+        self.assertEqual(payload["bmw_profile_id"], "NA8_EVO")
+        self.assertEqual(payload["command"][-2:], ["export", "NA8_EVO"])
         self.assertEqual(Path(payload["script_path"]).name, "main.py")
+
+    def test_generation_command_preserves_short_valid_bmw_profile(self) -> None:
+        from sg_preflight.delivery_workbook_generation import resolve_delivery_workbook_generation_command
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bmw_root = Path(temp_dir) / "digital-3d-car-models"
+            script = bmw_root / "ci" / "scripts" / "car_manager.py"
+            write_text(script, "print('fixture')\n")
+            (bmw_root / "cars" / "BMW" / "F70").mkdir(parents=True)
+
+            payload = resolve_delivery_workbook_generation_command(profile_id="F70", bmw_root=bmw_root)
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["bmw_profile_id"], "F70")
+        self.assertEqual(payload["command"][-2:], ["export", "F70"])
 
     def test_generation_command_uses_python_launcher_when_frozen(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation
@@ -192,7 +212,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["command"][0], r"C:\Windows\py.exe")
         self.assertNotEqual(payload["command"][0], r"C:\bundle\sgfx-preflight.exe")
-        self.assertEqual(payload["command"][-2:], ["export", "G70"])
+        self.assertEqual(payload["command"][-2:], ["export", "G70_EVO"])
 
     def test_generation_command_prefers_registered_python_path(self) -> None:
         from sg_preflight.delivery_workbook_generation import resolve_delivery_workbook_generation_command
@@ -217,7 +237,36 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
 
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["command"][0], str(python_path.resolve()))
-        self.assertEqual(payload["command"][-2:], ["export", "G70"])
+        self.assertEqual(payload["command"][-2:], ["export", "G70_EVO"])
+
+    @unittest.skipUnless(
+        os.environ.get("SGFX_REAL_BMW_PIPELINE_AVAILABLE") == "1",
+        "real BMW pipeline smoke skipped; set SGFX_REAL_BMW_PIPELINE_AVAILABLE=1 to run",
+    )
+    def test_real_bmw_pipeline_export_dry_run_uses_resolved_profile(self) -> None:
+        from sg_preflight.delivery_workbook_generation import resolve_delivery_workbook_generation_command
+
+        bmw_root = Path(os.environ.get("Digital-3D-Car-Repo", r"C:\3D Car git\digital-3d-car-models"))
+        if not (bmw_root / "ci" / "scripts" / "car_manager.py").is_file():
+            self.skipTest(f"BMW car_manager.py not found under {bmw_root}")
+
+        payload = resolve_delivery_workbook_generation_command(profile_id="G65", bmw_root=bmw_root)
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["bmw_profile_id"], "G65_EVO")
+        command = list(payload["command"])
+        command.insert(-1, "--dry-run")
+        completed = subprocess.run(
+            command,
+            cwd=str(payload["cwd"]),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=(completed.stdout or "") + "\n" + (completed.stderr or ""),
+        )
 
     def test_start_generation_requires_operator_confirmation(self) -> None:
         from sg_preflight.delivery_workbook_generation import start_delivery_workbook_generation
@@ -233,6 +282,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
     def test_poll_generation_marks_available_only_after_delivery_reader_returns_available(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation
 
+        # wrapper-layer-only: subprocess.Popen is mocked; the real subprocess smoke is gated above.
         fake_process = _FakeProcess(returncode=0)
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -267,10 +317,12 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertFalse(result["is_approval"])
         self.assertTrue(result["recorded_by_tool"])
         self.assertIn("car_manager.py", " ".join(result["command"]))
+        self.assertEqual(result["command"][-1], "G70_EVO")
 
     def test_poll_generation_reports_live_stdout_tail_and_file_activity(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation
 
+        # wrapper-layer-only: subprocess.Popen is mocked; the real subprocess smoke is gated above.
         fake_process = _FakeProcess(returncode=None)
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
