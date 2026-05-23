@@ -8,6 +8,7 @@ import subprocess
 import uuid
 from typing import Any
 
+from sg_preflight.profiles import get_run_profile
 from sg_preflight.services import operator_ui_root, prerequisite_status, utc_now
 from sg_preflight.utils import ensure_parent
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
@@ -51,6 +52,11 @@ class ManualReviewStepTemplate:
             "review_focus": list(self.review_focus),
             "review_focus_note": REVIEW_FOCUS_NOTE,
             "evidence_prompt": self.evidence_prompt,
+            "suggested_verdict": "",
+            "suggestion_status": "not_run",
+            "suggestion_reason": "",
+            "suggestion_paths": [],
+            "operator_verdict": "",
             "verdict": _PENDING_VERDICT,
             "note": "",
             "screenshot_path": "",
@@ -223,6 +229,251 @@ def _slug(value: str) -> str:
     return "_".join(part for part in slug.split("_") if part)
 
 
+def _profile_project_roots(profile_id: str, workspace: Path | str | None) -> list[Path]:
+    root = _workspace(workspace)
+    clean_profile = profile_id.strip()
+    direct_candidates = [
+        root / "Cars_IDCevo" / "BMW" / clean_profile,
+        root / "Cars" / "BMW" / clean_profile,
+        root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / clean_profile,
+        root / "repositories" / "trunk" / "Cars" / "BMW" / clean_profile,
+    ]
+    direct_existing = [path.resolve() for path in direct_candidates if path.exists()]
+    if direct_existing:
+        return direct_existing
+    candidates = list(direct_candidates)
+    try:
+        profile = get_run_profile(clean_profile, root)
+    except KeyError:
+        profile = None
+    if profile is not None:
+        candidates.extend([profile.project_root, profile.source_project_root()])
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        key = str(resolved).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(resolved)
+    existing = [path for path in ordered if path.exists()]
+    return existing or ordered[:1]
+
+
+def _first_existing(candidates: list[Path]) -> Path | None:
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _first_glob(root: Path, patterns: tuple[str, ...]) -> Path | None:
+    if not root.exists():
+        return None
+    for pattern in patterns:
+        matches = sorted(path for path in root.glob(pattern) if path.exists())
+        if matches:
+            return matches[0]
+    return None
+
+
+def _manual_suggestion_marker(workspace: Path | str | None, profile_id: str, slug: str) -> Path | None:
+    root = _workspace(workspace)
+    profile = _slug(profile_id)
+    step = _slug(slug)
+    candidates = [
+        root / "operator_state" / "manual_review_suggestions" / profile / f"{step}.passed",
+        root / "operator_state" / "manual_review_suggestions" / profile / f"{step}.ok",
+        root / "operator_state" / "manual_review_suggestions" / f"{profile}_{step}.passed",
+        root / "operator_state" / "manual_review_suggestions" / f"{profile}_{step}.ok",
+    ]
+    return _first_existing(candidates)
+
+
+def _suggestion(verdict: str, reason: str, paths: list[Path] | None = None) -> dict[str, Any]:
+    clean_verdict = _normalize_verdict(verdict)
+    if clean_verdict not in VALID_VERDICTS:
+        clean_verdict = "incomplete"
+    return {
+        "suggested_verdict": clean_verdict,
+        "suggestion_status": "available",
+        "suggestion_reason": reason,
+        "suggestion_paths": [str(path) for path in (paths or []) if path],
+        "recorded_by_tool": True,
+        "is_approval": False,
+    }
+
+
+def _missing_suggestion(reason: str, paths: list[Path] | None = None) -> dict[str, Any]:
+    return {
+        "suggested_verdict": "incomplete",
+        "suggestion_status": "missing",
+        "suggestion_reason": reason,
+        "suggestion_paths": [str(path) for path in (paths or []) if path],
+        "recorded_by_tool": True,
+        "is_approval": False,
+    }
+
+
+def _blender_suggestion(profile_id: str, workspace: Path | str | None, roots: list[Path]) -> dict[str, Any]:
+    for root in roots:
+        blend = _first_glob(root, ("_WorkFiles/**/*.blend", "_Workfiles/**/*.blend", "**/*.blend"))
+        if blend is not None:
+            return _suggestion("passed", "Blender scene file found; operator still confirms the visual review.", [blend])
+    return _missing_suggestion("No Blender scene file was found for this profile.", roots[:1])
+
+
+def _constants_suggestion(profile_id: str, workspace: Path | str | None, roots: list[Path]) -> dict[str, Any]:
+    clean = profile_id.strip()
+    for root in roots:
+        pivot = _first_glob(
+            root,
+            (
+                f"_WorkFiles/json/*{clean}*Pivot_Master*.json",
+                f"_Workfiles/json/*{clean}*Pivot_Master*.json",
+                "_WorkFiles/json/*Pivot_Master*.json",
+                "_Workfiles/json/*Pivot_Master*.json",
+            ),
+        )
+        module = _first_glob(
+            root,
+            (
+                f"_Common/constants/scripts/*{clean}*.lua",
+                "_Common/constants/scripts/Module_constants*.lua",
+                "_Common/constants/**/*.lua",
+            ),
+        )
+        if pivot is not None and module is not None:
+            return _suggestion(
+                "passed",
+                "Pivot_Master and Module_constants files are present; operator still checks values against Epic.",
+                [pivot, module],
+            )
+        if pivot is not None or module is not None:
+            found = [path for path in (pivot, module) if path is not None]
+            return _missing_suggestion("Only one constants source was found; operator should complete the comparison.", found)
+    return _missing_suggestion("No Pivot_Master or Module_constants source was found for this profile.", roots[:1])
+
+
+def _final_look_suggestion(profile_id: str, workspace: Path | str | None, roots: list[Path]) -> dict[str, Any]:
+    for root in roots:
+        blend = _first_glob(root, ("_WorkFiles/**/*.blend", "_Workfiles/**/*.blend", "**/*.blend"))
+        expected = _first_glob(root, ("export/tests/expected/*", "export/tests/**/*.png", "export/tests/**/*.jpg"))
+        if blend is not None and expected is not None:
+            return _suggestion(
+                "passed",
+                "Blender scene and screenshot baseline output are present; operator still compares final look.",
+                [blend, expected],
+            )
+        if blend is not None or expected is not None:
+            found = [path for path in (blend, expected) if path is not None]
+            return _missing_suggestion("Only partial final-look evidence was found; operator should compare RaCo, Blender, and Epic.", found)
+    return _missing_suggestion("No final-look comparison evidence was found for this profile.", roots[:1])
+
+
+def _marker_suggestion(
+    *,
+    profile_id: str,
+    workspace: Path | str | None,
+    slug: str,
+    found_reason: str,
+    missing_reason: str,
+) -> dict[str, Any]:
+    marker = _manual_suggestion_marker(workspace, profile_id, slug)
+    if marker is not None:
+        return _suggestion("passed", found_reason, [marker])
+    return _missing_suggestion(missing_reason, [_workspace(workspace) / "operator_state" / "manual_review_suggestions"])
+
+
+def _documentation_suggestion(profile_id: str, workspace: Path | str | None, roots: list[Path]) -> dict[str, Any]:
+    for root in roots:
+        changelog = _first_existing([root / "CHANGELOG.md", root / "Changelog.md", root / "changelog.md"])
+        readme = _first_existing([root / "README.md", root / "Readme.md", root / "readme.md"])
+        if changelog is not None and readme is not None:
+            return _suggestion(
+                "passed",
+                "README and changelog files are present; operator still reviews wording against the ticket scope.",
+                [readme, changelog],
+            )
+        if changelog is not None or readme is not None:
+            found = [path for path in (readme, changelog) if path is not None]
+            return _missing_suggestion("Only partial documentation evidence was found; operator should review scope manually.", found)
+    return _missing_suggestion("No README or changelog was found for this profile.", roots[:1])
+
+
+def suggest_manual_review_verdicts(
+    profile_id: str,
+    *,
+    workspace: Path | str | None = None,
+) -> dict[str, Any]:
+    roots = _profile_project_roots(profile_id, workspace)
+    suggestions = {
+        "blender_visual_check": _blender_suggestion(profile_id, workspace, roots),
+        "constants_info_verification": _constants_suggestion(profile_id, workspace, roots),
+        "final_look_comparison_raco_blender_epic": _final_look_suggestion(profile_id, workspace, roots),
+        "functionality_test_raco": _marker_suggestion(
+            profile_id=profile_id,
+            workspace=workspace,
+            slug="functionality_test_raco",
+            found_reason="Functionality test marker found; operator still confirms RaCo behavior.",
+            missing_reason="No functionality-test marker was found for this profile.",
+        ),
+        "anchor_points_test_raco": _marker_suggestion(
+            profile_id=profile_id,
+            workspace=workspace,
+            slug="anchor_points_test_raco",
+            found_reason="Anchor-points test marker found; operator still confirms anchor placement.",
+            missing_reason="No anchor-points test marker was found for this profile.",
+        ),
+        "carpaints_test_raco": _marker_suggestion(
+            profile_id=profile_id,
+            workspace=workspace,
+            slug="carpaints_test_raco",
+            found_reason="CarPaints test marker found; operator still confirms material output.",
+            missing_reason="No CarPaints test marker was found for this profile.",
+        ),
+        "documentation_review": _documentation_suggestion(profile_id, workspace, roots),
+    }
+    return {
+        "profile_id": profile_id.strip(),
+        "status": "available",
+        "project_roots": [str(root) for root in roots],
+        "suggestions": suggestions,
+        "note": "Suggested verdicts are evidence hints only; the operator confirms or overrides each manual-review verdict.",
+        "recorded_by_tool": True,
+        "is_approval": False,
+    }
+
+
+def apply_manual_review_suggestions(
+    steps: list[dict[str, Any]],
+    *,
+    profile_id: str,
+    workspace: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    payload = suggest_manual_review_verdicts(profile_id, workspace=workspace)
+    suggestions = payload.get("suggestions", {}) if isinstance(payload, dict) else {}
+    decorated: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        copy = dict(step)
+        slug = str(copy.get("slug", "")).strip()
+        suggestion = suggestions.get(slug, {}) if isinstance(suggestions, dict) else {}
+        if isinstance(suggestion, dict) and str(copy.get("verdict", _PENDING_VERDICT)).strip() == _PENDING_VERDICT:
+            copy["suggested_verdict"] = str(suggestion.get("suggested_verdict", "")).strip()
+            copy["suggestion_status"] = str(suggestion.get("suggestion_status", "")).strip()
+            copy["suggestion_reason"] = str(suggestion.get("suggestion_reason", "")).strip()
+            copy["suggestion_paths"] = list(suggestion.get("suggestion_paths", []))
+            copy["suggestion_is_approval"] = False
+        decorated.append(copy)
+    return decorated
+
+
 def _normalize_verdict(value: object) -> str:
     clean = str(value or "").strip().lower()
     return _VERDICT_ALIASES.get(clean, clean)
@@ -359,6 +610,7 @@ def record_manual_review_step(
     workspace: Path | str | None = None,
     note: str = "",
     screenshot: Path | str | None = None,
+    suggested_verdict: str = "",
 ) -> dict[str, Any]:
     clean_verdict = verdict.strip().lower()
     clean_verdict = _normalize_verdict(clean_verdict)
@@ -373,6 +625,10 @@ def record_manual_review_step(
             raise FileNotFoundError(f"Manual review screenshot does not exist: {candidate}")
         screenshot_path = str(candidate)
     step["verdict"] = clean_verdict
+    clean_suggestion = _normalize_verdict(suggested_verdict)
+    if clean_suggestion in VALID_VERDICTS:
+        step["suggested_verdict"] = clean_suggestion
+    step["operator_verdict"] = clean_verdict
     step["note"] = note.strip()
     step["screenshot_path"] = screenshot_path
     step["recorded_at_utc"] = utc_now()
@@ -395,6 +651,15 @@ def _step_markdown(step: dict[str, Any]) -> list[str]:
     review_focus_note = str(step.get("review_focus_note", "")).strip()
     if review_focus_note:
         lines.append(f"- Review focus note: {review_focus_note}")
+    suggested = _normalize_verdict(step.get("suggested_verdict", ""))
+    if suggested in VALID_VERDICTS:
+        lines.append(f"- Suggested verdict: [{suggested}]")
+        reason = str(step.get("suggestion_reason", "")).strip()
+        if reason:
+            lines.append(f"- Suggestion reason: {reason}")
+    operator_verdict = _normalize_verdict(step.get("operator_verdict", ""))
+    if operator_verdict in VALID_VERDICTS:
+        lines.append(f"- Operator verdict: [{operator_verdict}]")
     if step.get("note"):
         lines.append(f"- Reviewer note: {step['note']}")
     if step.get("screenshot_path"):

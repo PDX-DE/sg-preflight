@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.operator_helpers import write_text
+
 
 class NiceGuiDashboardLazyImportTests(unittest.TestCase):
     def test_cli_import_and_parser_do_not_import_nicegui(self) -> None:
@@ -144,8 +146,29 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
         self.assertEqual(daily_page["actions"][0]["ticket_id_hint"], "IDCEVODEV-1005738")
+        self.assertEqual(daily_page["actions"][0]["ticket_id_default"], "IDCEVODEV-1005738")
+        self.assertEqual(daily_page["actions"][0]["ticket_id_source"], "operator_state")
         self.assertEqual(daily_page["payload"]["active_ticket_id"], "IDCEVODEV-1005738")
         self.assertEqual(manual_page["payload"]["ticket_id"], "IDCEVODEV-1005738")
+
+    def test_dashboard_snapshot_prefers_active_ticket_file_for_daily_digest_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            state_root = Path(tmp) / "operator_state"
+            state_root.mkdir(parents=True)
+            (state_root / "active_ticket.json").write_text(
+                json.dumps({"active_ticket_id": "IDCEVODEV-1005738"}),
+                encoding="utf-8",
+            )
+            snapshot = build_dashboard_snapshot("G70", tmp)
+
+        daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
+        action = daily_page["actions"][0]
+        self.assertEqual(action["ticket_id_default"], "IDCEVODEV-1005738")
+        self.assertEqual(action["ticket_id_hint"], "IDCEVODEV-1005738")
+        self.assertEqual(action["ticket_id_source"], "active_ticket_file")
+        self.assertEqual(daily_page["payload"]["active_ticket_id"], "IDCEVODEV-1005738")
 
     def test_dashboard_snapshot_is_profile_agnostic_for_phase_f_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -630,6 +653,43 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(recorded_step["verdict"], "passed")
         self.assertFalse(recorded_step["recorded_by_tool"])
 
+    def test_manual_review_page_prepopulates_suggested_verdicts_without_recording_them(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            root = Path(tmp)
+            project = root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / "G70"
+            write_text(project / "_WorkFiles" / "scene.blend", "blend fixture\n")
+
+            snapshot = build_dashboard_snapshot("G70", root)
+
+        manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
+        blender_step = next(item for item in manual_page["payload"]["steps"] if item["slug"] == "blender_visual_check")
+        self.assertEqual(blender_step["verdict"], "not_run")
+        self.assertEqual(blender_step["suggested_verdict"], "passed")
+        self.assertFalse(blender_step["suggestion_is_approval"])
+        item = next(item for item in manual_page["items"] if item["label"] == "Blender Visual Check")
+        self.assertIn("Suggested: passed", item["detail"])
+
+    def test_manual_review_dashboard_recording_stores_suggested_and_operator_verdicts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import record_manual_review_dashboard_step
+
+            updated = record_manual_review_dashboard_step(
+                profile_id="G70",
+                workspace=tmp,
+                step_slug="blender_visual_check",
+                verdict="incomplete",
+                suggested_verdict="passed",
+                note="Operator saw missing trimline coverage.",
+            )
+
+        step = next(item for item in updated["steps"] if item["slug"] == "blender_visual_check")
+        self.assertEqual(step["verdict"], "incomplete")
+        self.assertEqual(step["operator_verdict"], "incomplete")
+        self.assertEqual(step["suggested_verdict"], "passed")
+        self.assertFalse(step["recorded_by_tool"])
+
 
 class DashboardDualModeLaunchTests(unittest.TestCase):
     def test_dashboard_grafiks_mode_dispatches_to_pyside_shell(self) -> None:
@@ -757,7 +817,52 @@ class TestDailyDigestPage(unittest.TestCase):
                 page = _daily_digest_page(workspace, "G65", active_ticket_id="IDCEVODEV-1005738")
 
         self.assertEqual(page["actions"][0]["ticket_id_hint"], "IDCEVODEV-1005738")
+        self.assertEqual(page["actions"][0]["ticket_id_default"], "IDCEVODEV-1005738")
         self.assertEqual(page["payload"]["active_ticket_id"], "IDCEVODEV-1005738")
+
+    def test_daily_digest_ticket_context_prefers_git_branch_before_activity_log(self) -> None:
+        from sg_preflight.dashboard.main import _daily_digest_ticket_context
+        from sg_preflight.activity_log import append_activity_entry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            append_activity_entry(
+                workspace,
+                verb="ran",
+                surface="daily-digest",
+                profile="G70",
+                outcome="ok",
+                note="Build review package for IDCEVODEV-1005738",
+            )
+            with mock.patch(
+                "sg_preflight.dashboard.main._dashboard_ticket_from_git_branch",
+                return_value="IDCEVODEV-2000001",
+            ):
+                context = _daily_digest_ticket_context(workspace)
+
+        self.assertEqual(context["active_ticket_id"], "IDCEVODEV-2000001")
+        self.assertEqual(context["ticket_id_source"], "git_branch")
+        self.assertIn("IDCEVODEV-1005738", context["recent_ticket_ids"])
+
+    def test_daily_digest_ticket_context_uses_last_activity_ticket_when_no_state_or_branch(self) -> None:
+        from sg_preflight.dashboard.main import _daily_digest_ticket_context
+        from sg_preflight.activity_log import append_activity_entry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            append_activity_entry(
+                workspace,
+                verb="ran",
+                surface="daily-digest",
+                profile="G70",
+                outcome="ok",
+                note="Build review package for IDCEVODEV-1005738",
+            )
+            with mock.patch("sg_preflight.dashboard.main._dashboard_ticket_from_git_branch", return_value=""):
+                context = _daily_digest_ticket_context(workspace)
+
+        self.assertEqual(context["active_ticket_id"], "IDCEVODEV-1005738")
+        self.assertEqual(context["ticket_id_source"], "activity_log")
 
     def test_daily_digest_page_flips_to_incomplete_when_partial_sections_have_data(self) -> None:
         from sg_preflight.dashboard.main import _daily_digest_page
@@ -872,6 +977,10 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
                     profile_id="G65",
                     ticket_id="IDCEVODEV-1005738",
                 )
+            active_ticket = json.loads(
+                (workspace / "operator_state" / "active_ticket.json").read_text(encoding="utf-8")
+            )
+            activity_log = (workspace / "operator_state" / "activity_log.jsonl").read_text(encoding="utf-8")
 
         run_mock.assert_called_once()
         cmd, _kwargs = run_mock.call_args.args, run_mock.call_args.kwargs
@@ -888,6 +997,8 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertEqual(result["ticket_id"], "IDCEVODEV-1005738")
         self.assertEqual(result["profile_id"], "G65")
         self.assertTrue(result["recorded_by_tool"])
+        self.assertEqual(active_ticket["active_ticket_id"], "IDCEVODEV-1005738")
+        self.assertIn("IDCEVODEV-1005738", activity_log)
 
     def test_build_dashboard_review_package_marks_failed_outcome_on_nonzero_exit(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main

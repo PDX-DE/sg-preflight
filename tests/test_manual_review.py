@@ -13,11 +13,14 @@ from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEP_TITLES,
     VALID_VERDICTS,
+    apply_manual_review_suggestions,
     create_manual_review_session,
     load_manual_review_session,
     record_manual_review_step,
     render_manual_review_markdown,
+    suggest_manual_review_verdicts,
 )
+from tests.operator_helpers import write_text
 
 
 class TestManualReviewCompanion(unittest.TestCase):
@@ -84,6 +87,58 @@ class TestManualReviewCompanion(unittest.TestCase):
         self.assertIn("Review guidance only", markdown)
         self.assertNotIn("approved", markdown.lower())
 
+    def test_manual_review_suggestions_are_profile_agnostic_guidance_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project = root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / "G70"
+            write_text(project / "_WorkFiles" / "scene.blend", "blend fixture\n")
+            write_text(project / "_WorkFiles" / "json" / "G70_Pivot_Master.json", "{}\n")
+            write_text(project / "_Common" / "constants" / "scripts" / "Module_constants_G70.lua", "return {}\n")
+            write_text(project / "export" / "tests" / "expected" / "front.png", "fake\n")
+            write_text(project / "README.md", "# G70\n")
+            write_text(project / "CHANGELOG.md", "# Changes\n")
+            write_text(
+                root
+                / "operator_state"
+                / "manual_review_suggestions"
+                / "g70"
+                / "functionality_test_raco.passed",
+                "ok\n",
+            )
+
+            payload = suggest_manual_review_verdicts("G70", workspace=root)
+
+        suggestions = payload["suggestions"]
+        self.assertEqual(suggestions["blender_visual_check"]["suggested_verdict"], "passed")
+        self.assertEqual(suggestions["constants_info_verification"]["suggested_verdict"], "passed")
+        self.assertEqual(suggestions["final_look_comparison_raco_blender_epic"]["suggested_verdict"], "passed")
+        self.assertEqual(suggestions["functionality_test_raco"]["suggested_verdict"], "passed")
+        self.assertEqual(suggestions["anchor_points_test_raco"]["suggested_verdict"], "incomplete")
+        self.assertEqual(suggestions["documentation_review"]["suggested_verdict"], "passed")
+        self.assertFalse(payload["is_approval"])
+        self.assertIn("operator confirms or overrides", payload["note"])
+
+    def test_apply_manual_review_suggestions_does_not_overwrite_recorded_verdicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project = root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / "G70"
+            write_text(project / "_WorkFiles" / "scene.blend", "blend fixture\n")
+            session = create_manual_review_session(
+                profile_id="G70",
+                ticket_id="IDCEVODEV-977874",
+                workspace=root,
+                session_id="manual-001",
+            )
+            session["steps"][0]["verdict"] = "failed"
+
+            decorated = apply_manual_review_suggestions(session["steps"], profile_id="G70", workspace=root)
+
+        self.assertEqual(decorated[0]["verdict"], "failed")
+        self.assertEqual(decorated[0]["suggested_verdict"], "")
+        constants = next(item for item in decorated if item["slug"] == "constants_info_verification")
+        self.assertEqual(constants["suggested_verdict"], "incomplete")
+        self.assertFalse(constants["suggestion_is_approval"])
+
     def test_record_step_captures_explicit_reviewer_verdict_note_and_screenshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -104,10 +159,13 @@ class TestManualReviewCompanion(unittest.TestCase):
                 workspace=root,
                 note="Reviewer checked logos, lights, side mirrors, rims and flaps.",
                 screenshot=screenshot,
+                suggested_verdict="passed",
             )
 
             step = next(item for item in updated["steps"] if item["slug"] == "blender_visual_check")
             self.assertEqual(step["verdict"], "passed")
+            self.assertEqual(step["operator_verdict"], "passed")
+            self.assertEqual(step["suggested_verdict"], "passed")
             self.assertEqual(step["note"], "Reviewer checked logos, lights, side mirrors, rims and flaps.")
             self.assertEqual(step["screenshot_path"], str(screenshot.resolve()))
             self.assertFalse(step["recorded_by_tool"])

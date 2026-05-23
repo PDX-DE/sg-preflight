@@ -12,6 +12,7 @@ import tempfile
 from time import monotonic
 from typing import Any, Callable
 
+from sg_preflight.activity_log import append_activity_entry
 from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_asset_root
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.daily_digest import build_latest_daily_digest
@@ -34,6 +35,7 @@ from sg_preflight.dependency_onboarding import (
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
     create_manual_review_session,
+    apply_manual_review_suggestions,
     load_manual_review_session,
     record_manual_review_step,
 )
@@ -457,6 +459,90 @@ def _dashboard_ticket_from_git_branch(workspace: Path | str) -> str:
     return match.group(0) if match else ""
 
 
+def _ticket_ids_from_activity_log(workspace: Path | str, *, limit: int = 6) -> list[str]:
+    path = _workspace(workspace) / "operator_state" / "activity_log.jsonl"
+    if not path.is_file():
+        return []
+    tickets: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in reversed(lines):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            payload = {"note": line}
+        haystack = json.dumps(payload, ensure_ascii=False) if isinstance(payload, dict) else str(payload)
+        for match in _TICKET_ID_PATTERN.finditer(haystack.upper()):
+            ticket_id = match.group(0)
+            if ticket_id not in tickets:
+                tickets.append(ticket_id)
+                if len(tickets) >= limit:
+                    return tickets
+    return tickets
+
+
+def _write_active_ticket_state(workspace: Path | str, ticket_id: str, *, source: str) -> dict[str, Any]:
+    clean_ticket = ticket_id.strip().upper()
+    if not _TICKET_ID_PATTERN.fullmatch(clean_ticket):
+        raise ValueError(f"Unsupported ticket ID: {ticket_id}")
+    path = _operator_state_path(workspace, "active_ticket.json")
+    payload = _read_operator_state_json(workspace, "active_ticket.json")
+    payload.update(
+        {
+            "active_ticket_id": clean_ticket,
+            "ticket_id": clean_ticket,
+            "source": source.strip() or "operator",
+            "updated_at_utc": _utc_now(),
+        }
+    )
+    ensure_parent(path)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return payload
+
+
+def _daily_digest_ticket_context(workspace: Path | str) -> dict[str, Any]:
+    active_ticket = _ticket_id_from_payload(_read_operator_state_json(workspace, "active_ticket.json"))
+    recent_ticket_ids = _ticket_ids_from_activity_log(workspace)
+    if active_ticket:
+        return {
+            "active_ticket_id": active_ticket,
+            "ticket_id_hint": active_ticket,
+            "ticket_id_source": "active_ticket_file",
+            "recent_ticket_ids": recent_ticket_ids,
+        }
+    operator_ticket = _dashboard_ticket_from_operator_state(workspace)
+    if operator_ticket:
+        return {
+            "active_ticket_id": operator_ticket,
+            "ticket_id_hint": operator_ticket,
+            "ticket_id_source": "operator_state",
+            "recent_ticket_ids": recent_ticket_ids,
+        }
+    branch_ticket = _dashboard_ticket_from_git_branch(workspace)
+    if branch_ticket:
+        return {
+            "active_ticket_id": branch_ticket,
+            "ticket_id_hint": branch_ticket,
+            "ticket_id_source": "git_branch",
+            "recent_ticket_ids": recent_ticket_ids,
+        }
+    if recent_ticket_ids:
+        return {
+            "active_ticket_id": recent_ticket_ids[0],
+            "ticket_id_hint": recent_ticket_ids[0],
+            "ticket_id_source": "activity_log",
+            "recent_ticket_ids": recent_ticket_ids,
+        }
+    return {
+        "active_ticket_id": "",
+        "ticket_id_hint": DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
+        "ticket_id_source": "manual_entry",
+        "recent_ticket_ids": [],
+    }
+
+
 def _dashboard_active_ticket_id(workspace: Path | str) -> str:
     state_ticket = _dashboard_ticket_from_operator_state(workspace)
     if state_ticket:
@@ -707,13 +793,20 @@ def _daily_digest_page(
     profile_id: str,
     *,
     active_ticket_id: str = "",
+    ticket_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    context = dict(ticket_context or {})
+    default_ticket = str(context.get("active_ticket_id", active_ticket_id)).strip()
+    ticket_hint = str(context.get("ticket_id_hint", default_ticket or DAILY_DIGEST_TICKET_ID_PLACEHOLDER)).strip()
     actions = [
         {
             "id": DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID,
             "label": DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL,
             "requires_ticket_id": True,
-            "ticket_id_hint": active_ticket_id.strip() or DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
+            "ticket_id_hint": ticket_hint or DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
+            "ticket_id_default": default_ticket,
+            "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
+            "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
         }
     ]
     try:
@@ -728,7 +821,12 @@ def _daily_digest_page(
             "summary": f"Daily digest could not be read: {exc}",
             "items": [],
             "actions": actions,
-            "payload": {"profile_id": profile_id, "active_ticket_id": active_ticket_id.strip()},
+            "payload": {
+                "profile_id": profile_id,
+                "active_ticket_id": default_ticket,
+                "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
+                "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
+            },
         }
     sections = digest.get("sections", {}) if isinstance(digest, dict) else {}
     items: list[dict[str, str]] = []
@@ -764,7 +862,9 @@ def _daily_digest_page(
             "status": digest.get("status", "unknown"),
             "scope": digest.get("scope", []),
             "date": digest.get("date", ""),
-            "active_ticket_id": active_ticket_id.strip(),
+            "active_ticket_id": default_ticket,
+            "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
+            "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
         },
     }
     if raw_status == "no_review_package" or status_value == "incomplete":
@@ -817,6 +917,10 @@ def _manual_review_step_recorded(step: dict[str, Any]) -> bool:
 
 def _manual_review_step_detail(step: dict[str, Any]) -> str:
     if not _manual_review_step_recorded(step):
+        suggested = str(step.get("suggested_verdict", "")).strip()
+        reason = str(step.get("suggestion_reason", "")).strip()
+        if suggested:
+            return f"Suggested: {suggested}. {reason}".strip()
         return str(step.get("evidence_prompt", ""))
     verdict = str(step.get("verdict", "")).strip()
     recorded_at = str(step.get("recorded_at_utc", "")).strip()
@@ -837,6 +941,7 @@ def _manual_review_page(
         if isinstance(session, dict)
         else [step.to_session_step() for step in QUALITY_HERO_STEPS]
     )
+    steps = apply_manual_review_suggestions(steps, profile_id=profile_id, workspace=workspace)
     recorded_count = sum(1 for step in steps if isinstance(step, dict) and _manual_review_step_recorded(step))
     status = "recorded" if recorded_count else _MANUAL_REVIEW_PENDING_VERDICT
     session_payload = session if isinstance(session, dict) else {}
@@ -884,6 +989,7 @@ def build_dashboard_snapshot(
     theme = _clean_theme(ui_mode or load_dashboard_preference(root))
     setup_status = build_dependency_onboarding_status(workspace=root, bmw_root=bmw_root)
     active_ticket_id = _dashboard_active_ticket_id(root)
+    daily_ticket_context = _daily_digest_ticket_context(root)
     return {
         "title": DASHBOARD_TITLE,
         "profile_id": resolved_profile_id,
@@ -916,7 +1022,12 @@ def build_dashboard_snapshot(
         "pages": [
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _screenshot_test_state_page(resolved_profile_id, root, bmw_root=bmw_root),
-            _daily_digest_page(root, resolved_profile_id, active_ticket_id=active_ticket_id),
+            _daily_digest_page(
+                root,
+                resolved_profile_id,
+                active_ticket_id=active_ticket_id,
+                ticket_context=daily_ticket_context,
+            ),
             _manual_review_page(resolved_profile_id, root, active_ticket_id=active_ticket_id),
         ],
     }
@@ -977,6 +1088,7 @@ def record_manual_review_dashboard_step(
     step_slug: str,
     verdict: str,
     note: str = "",
+    suggested_verdict: str = "",
 ) -> dict[str, Any]:
     if verdict.strip().casefold() not in MANUAL_REVIEW_RECORD_VERDICTS:
         raise ValueError(f"Unsupported manual-review dashboard verdict: {verdict}")
@@ -987,6 +1099,7 @@ def record_manual_review_dashboard_step(
         verdict,
         workspace=workspace,
         note=note,
+        suggested_verdict=suggested_verdict,
     )
 
 
@@ -1031,6 +1144,16 @@ def build_dashboard_review_package(
         **hidden_subprocess_kwargs(),
     )
     outcome = "recorded" if completed.returncode == 0 else "failed"
+    if completed.returncode == 0:
+        _write_active_ticket_state(workspace_path, clean_ticket, source="build-review-package")
+    append_activity_entry(
+        workspace_path,
+        verb="ran",
+        surface="daily-digest",
+        profile=clean_profile,
+        outcome="ok" if completed.returncode == 0 else "error",
+        note=f"Build review package for {clean_ticket}",
+    )
     return {
         "ticket_id": clean_ticket,
         "profile_id": clean_profile,
@@ -1894,7 +2017,17 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                 continue
             ui.label("Build review package").classes("sgfx-panel-tagline")
             hint = str(action.get("ticket_id_hint", "")).strip() or DAILY_DIGEST_TICKET_ID_PLACEHOLDER
-            ticket_input = ui.input(label="Ticket ID", placeholder=hint).classes("full-width")
+            ticket_input = ui.input(
+                label="Ticket ID",
+                value=str(action.get("ticket_id_default", "")).strip(),
+                placeholder=hint,
+            ).classes("full-width")
+            source = str(action.get("ticket_id_source", "")).strip()
+            if source and source != "manual_entry":
+                ui.label(f"Detected ticket source: {source}.").classes("sgfx-muted")
+            recent_tickets = [str(item).strip() for item in action.get("recent_ticket_ids", []) if str(item).strip()]
+            if recent_tickets:
+                ui.label("Recent tickets: " + ", ".join(recent_tickets[:5])).classes("sgfx-muted")
             status_label = ui.label("Local-only: this runs the read-only `ticket-review` CLI in the background.").classes(
                 "sgfx-muted"
             )
@@ -1961,7 +2094,17 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                     ui.label(f"Review focus: {focus}").classes("sgfx-summary")
                 ui.label(str(step.get("evidence_prompt", ""))).classes("sgfx-muted")
                 current_verdict = str(step.get("verdict", "")).strip()
-                verdict_value = current_verdict if current_verdict in MANUAL_REVIEW_RECORD_VERDICTS else None
+                suggested_verdict = str(step.get("suggested_verdict", "")).strip()
+                suggestion_reason = str(step.get("suggestion_reason", "")).strip()
+                if suggested_verdict:
+                    ui.label(
+                        f"Suggested: {suggested_verdict}. Operator confirms or overrides. {suggestion_reason}".strip()
+                    ).classes("sgfx-muted")
+                verdict_value = (
+                    current_verdict
+                    if current_verdict in MANUAL_REVIEW_RECORD_VERDICTS
+                    else suggested_verdict if suggested_verdict in MANUAL_REVIEW_RECORD_VERDICTS else None
+                )
                 verdict = ui.select(
                     MANUAL_REVIEW_RECORD_VERDICTS,
                     value=verdict_value,
@@ -1975,7 +2118,12 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                         f"Recorded: {current_verdict} | {recorded_at} | recorded_by_tool: {recorded_by_tool}"
                     ).classes("sgfx-muted")
 
-                def _record(slug: str = slug, verdict=verdict, note=note) -> None:
+                def _record(
+                    slug: str = slug,
+                    verdict=verdict,
+                    note=note,
+                    suggested_verdict: str = suggested_verdict,
+                ) -> None:
                     selected = str(verdict.value or "").strip()
                     if not selected:
                         ui.notify("Select a manual-review verdict before recording.")
@@ -1986,6 +2134,7 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                         step_slug=slug,
                         verdict=selected,
                         note=str(note.value or ""),
+                        suggested_verdict=suggested_verdict,
                     )
                     ui.notify("Manual-review evidence recorded locally.")
 
