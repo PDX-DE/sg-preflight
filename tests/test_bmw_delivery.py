@@ -5,15 +5,58 @@ import tempfile
 import unittest
 
 from sg_preflight.bmw_delivery import (
+    detect_lane,
     discover_bmw_models_repo,
     inspect_bmw_screenshot_surface,
     read_bmw_screenshot_state,
+    resolve_svn_profile_id,
 )
 from sg_preflight.services import prerequisite_status
 from tests.operator_helpers import write_text
 
 
 class TestBmwDelivery(unittest.TestCase):
+    def test_detect_lane_reads_bmw_model_config_source_of_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = root / "ci" / "scripts" / "common" / "models_build_config.yaml"
+            write_text(
+                config,
+                """
+- name: F70
+  brand: BMW
+  type: build
+  hmi:
+    interface_version: 12
+
+- name: PINT
+  brand: BMW
+  type: build
+  hmi:
+    interface_version: 24
+
+- name: G58_EVO
+  brand: BMW
+  type: retarget
+  target: PINT
+""".strip()
+                + "\n",
+            )
+
+            self.assertEqual(detect_lane("F70", bmw_root=root), "idc_23")
+            self.assertEqual(detect_lane("PINT", bmw_root=root), "idc_evo")
+            self.assertEqual(detect_lane("G58", bmw_root=root), "idc_evo")
+            self.assertEqual(detect_lane("UNKNOWN", bmw_root=root), "unknown")
+
+    def test_detect_lane_returns_unknown_when_model_config_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.assertEqual(detect_lane("F70", bmw_root=Path(temp_dir)), "unknown")
+
+    def test_resolve_svn_profile_id_strips_evo_suffix_only_for_svn_paths(self) -> None:
+        self.assertEqual(resolve_svn_profile_id("G65_EVO"), "G65")
+        self.assertEqual(resolve_svn_profile_id("g70"), "G70")
+        self.assertEqual(resolve_svn_profile_id("PINT_SUV"), "PINT_SUV")
+
     def test_discover_bmw_models_repo_prefers_repo_local_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

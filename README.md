@@ -123,6 +123,8 @@ python -m sg_preflight qa-hero-readiness read --profile <profile> --format json
 
 If a local dependency is missing, the tool reports the missing state. It should not pretend a check succeeded.
 
+BMW pipeline execution uses lane-specific local roots: `Digital-3D-Car-Repo` points at the master BMW Git checkout for IDC_EVO, and `Digital-3D-Car-Repo-IDC23` points at a separate `assets/idc23` worktree for IDC_23. The IDC_23 worktree must include `ci/scripts/test/main.py` and `cars/BMW/_Shared`. If the default Python launcher is not the BMW pipeline environment, set `SG_BMW_PYTHON_EXE` or register `bmw_pipeline_python` in Dependency Setup.
+
 ## Optional Jira Dry Run
 
 Jira posting is opt-in and confirmation-gated. A dry run is the default:

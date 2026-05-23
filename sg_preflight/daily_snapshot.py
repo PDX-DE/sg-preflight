@@ -17,6 +17,7 @@ from sg_preflight.bmw_delivery import (
     discover_bmw_models_repo,
     inspect_bmw_screenshot_surface,
     resolve_bmw_profile_id,
+    resolve_svn_profile_id,
 )
 
 
@@ -176,11 +177,12 @@ def _resolve_svn_trunk_root(workspace_root: Path) -> Path:
 
 def _resolve_sg_project_root(profile_id: str, workspace_root: Path) -> Path:
     trunk_root = _resolve_svn_trunk_root(workspace_root)
+    svn_profile = resolve_svn_profile_id(profile_id)
     candidates = (
-        trunk_root / "Cars_IDCevo" / "BMW" / profile_id,
-        trunk_root / "Cars" / "BMW" / profile_id,
-        workspace_root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / profile_id,
-        workspace_root / "repositories" / "trunk" / "Cars" / "BMW" / profile_id,
+        trunk_root / "Cars_IDCevo" / "BMW" / svn_profile,
+        trunk_root / "Cars" / "BMW" / svn_profile,
+        workspace_root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / svn_profile,
+        workspace_root / "repositories" / "trunk" / "Cars" / "BMW" / svn_profile,
     )
     for candidate in candidates:
         if candidate.exists():

@@ -42,7 +42,7 @@ DELIVERY_CHECKLIST_EMPTY_NOTE = (
     "No size-analysis workbook yet for this profile. Click Generate to invoke the BMW pipeline export step."
 )
 SCREENSHOT_TEST_STATE_EMPTY_NOTE = (
-    "No captured screenshots yet — run `ci/scripts/car_manager.py screenshots <PROFILE>` from your BMW Git checkout to generate."
+    "No captured screenshots yet — run the lane-correct BMW Git screenshot command for this profile to generate."
 )
 DAILY_DIGEST_EMPTY_NOTE = (
     "No review package on this workspace yet. Click Build to generate one for the active ticket."

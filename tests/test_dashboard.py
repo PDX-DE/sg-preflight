@@ -953,7 +953,7 @@ class TestScreenshotTestStateOwnershipNote(unittest.TestCase):
             page for page in snapshot["pages"] if page["id"] == "screenshot-test-state"
         )
         self.assertEqual(screenshot_page["ownership_note"], SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE)
-        self.assertIn("ci/scripts/car_manager.py screenshots", screenshot_page["ownership_note"])
+        self.assertIn("lane-correct BMW Git pipeline script", screenshot_page["ownership_note"])
         self.assertIn("SGFX reads the output", screenshot_page["ownership_note"])
 
     def test_other_pages_have_empty_ownership_note(self) -> None:

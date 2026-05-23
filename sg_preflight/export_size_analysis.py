@@ -7,7 +7,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
-from sg_preflight.bmw_delivery import candidate_bmw_profile_ids
+from sg_preflight.bmw_delivery import candidate_bmw_profile_ids, resolve_svn_profile_id
 
 
 READ_ONLY_BANNER = (
@@ -43,7 +43,7 @@ def _profile_token(value: str) -> str:
 
 def _candidate_profile_ids(profile_id: str) -> tuple[str, ...]:
     candidates: list[str] = []
-    for item in candidate_bmw_profile_ids(profile_id):
+    for item in (resolve_svn_profile_id(profile_id), *candidate_bmw_profile_ids(profile_id)):
         if item and item not in candidates:
             candidates.append(item)
         if item.upper().endswith("_EVO"):

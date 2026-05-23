@@ -578,8 +578,7 @@ def save_dashboard_preference(workspace: Path | str, theme: str) -> dict[str, An
 
 
 SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE = (
-    "Screenshot capture runs from the BMW Git pipeline (`ci/scripts/car_manager.py screenshots`) after confirmation; "
-    "SGFX reads the output as evidence."
+    "Screenshot capture runs from the lane-correct BMW Git pipeline script after confirmation; SGFX reads the output as evidence."
 )
 
 

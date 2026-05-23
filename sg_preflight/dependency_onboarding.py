@@ -54,6 +54,8 @@ _KNOWN_REGISTERED_PATHS = {
     "raco_headless",
     "blender",
     "digital_3d_car_repo",
+    "digital_3d_car_repo_idc23",
+    "digital_3d_car_repo_assets_idc23",
 }
 _BASELINE_SOURCE_NOTE = (
     "Re-read the Confluence dump before changing dependency baselines; versions can move during daily sync."

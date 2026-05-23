@@ -80,6 +80,15 @@ class TestDependencyOnboarding(unittest.TestCase):
             for path in (gui, headless, blender):
                 write_text(path, "fixture\n")
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            write_text(
+                bmw_root / "ci" / "scripts" / "common" / "models_build_config.yaml",
+                """allCars:
+  - name: G70_EVO
+    type: build
+    interface_version: 24
+""",
+            )
 
             with mock.patch.dict(os.environ, {}, clear=True):
                 with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):

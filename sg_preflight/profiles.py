@@ -236,11 +236,11 @@ def _profile_specs() -> tuple[dict[str, Any], ...]:
 
     idcevo_additional = tuple(
         _generic_idcevo_profile_spec(profile_id)
-        for profile_id in ("G50", "G78", "NA0", "NA5", "NA6", "NA7", "NA8")
+        for profile_id in ("G50", "G58", "G78", "NA0", "NA5", "NA6", "NA7", "NA8", "PINT", "PINT_RUEKO")
     )
     classic_additional = tuple(
         _generic_classic_profile_spec(profile_id)
-        for profile_id in ("F70", "F74", "F78", "G48", "G68", "U06", "U10", "U11", "U12")
+        for profile_id in ("F70", "F74", "F78", "G48", "G68", "PINT_SUV", "U06", "U10", "U11", "U12")
     )
     return canonical + idcevo_additional + classic_additional
 

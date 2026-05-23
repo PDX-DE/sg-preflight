@@ -3,12 +3,20 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 
+DIGITAL_3D_CAR_REPO_ENV = "Digital-3D-Car-Repo"
+DIGITAL_3D_CAR_REPO_IDC23_ENV = "Digital-3D-Car-Repo-IDC23"
+BMW_MODEL_CONFIG_RELATIVE = Path("ci") / "scripts" / "common" / "models_build_config.yaml"
+LANE_IDC23 = "idc_23"
+LANE_IDCEVO = "idc_evo"
+LANE_UNKNOWN = "unknown"
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 _BMW_PROFILE_OVERRIDES = {
+    "G58": "G58_EVO",
     "G50": "G50_EVO",
     "G65": "G65_EVO",
     "G70": "G70_EVO",
@@ -19,6 +27,16 @@ _BMW_PROFILE_OVERRIDES = {
     "NA8": "NA8_EVO",
 }
 _SCREENSHOT_BRANDS = ("BMW", "MINI")
+
+
+@dataclass(frozen=True)
+class BmwModelConfigRecord:
+    name: str
+    brand: str = ""
+    model_type: str = ""
+    hmi_interface_version: int | None = None
+    additional_interface_version: int | None = None
+    target: str = ""
 
 
 def _workspace_root(explicit_root: Path | None = None) -> Path:
@@ -41,7 +59,7 @@ def discover_bmw_models_repo(workspace_root: Path | None = None) -> Path:
     for candidate in candidates[:3]:
         if candidate.exists():
             return candidate
-    for key in ("Digital-3D-Car-Repo", "SG_BMW_CAR_MODELS_ROOT", "SG_CARMODELS_REPO", "SG-CarModels-Repo"):
+    for key in (DIGITAL_3D_CAR_REPO_ENV, "SG_BMW_CAR_MODELS_ROOT", "SG_CARMODELS_REPO", "SG-CarModels-Repo"):
         raw = os.environ.get(key, "").strip()
         if raw:
             return Path(raw)
@@ -49,6 +67,113 @@ def discover_bmw_models_repo(workspace_root: Path | None = None) -> Path:
         if candidate.exists():
             return candidate
     return candidates[0]
+
+
+def _yaml_scalar(value: str) -> str:
+    cleaned = value.strip()
+    if cleaned.startswith(("'", '"')) and cleaned.endswith(("'", '"')) and len(cleaned) >= 2:
+        return cleaned[1:-1]
+    return cleaned
+
+
+def _int_scalar(value: str) -> int | None:
+    try:
+        return int(_yaml_scalar(value))
+    except ValueError:
+        return None
+
+
+def _parse_models_build_config(text: str) -> tuple[BmwModelConfigRecord, ...]:
+    records: list[BmwModelConfigRecord] = []
+    current: dict[str, Any] | None = None
+    section = ""
+
+    def flush() -> None:
+        if current and current.get("name"):
+            records.append(
+                BmwModelConfigRecord(
+                    name=str(current.get("name", "")).strip().upper(),
+                    brand=str(current.get("brand", "")).strip().upper(),
+                    model_type=str(current.get("type", "")).strip().casefold(),
+                    hmi_interface_version=current.get("hmi_interface_version"),
+                    additional_interface_version=current.get("additional_interface_version"),
+                    target=str(current.get("target", "")).strip().upper(),
+                )
+            )
+
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped == "---" or stripped.startswith("#"):
+            continue
+        if stripped.startswith("- name:"):
+            flush()
+            current = {"name": _yaml_scalar(stripped.split(":", 1)[1])}
+            section = ""
+            continue
+        if current is None:
+            continue
+        if stripped.endswith(":"):
+            section = stripped[:-1].strip().casefold()
+            continue
+        if ":" not in stripped:
+            continue
+        key, raw_value = (part.strip() for part in stripped.split(":", 1))
+        value = _yaml_scalar(raw_value)
+        key = key.casefold()
+        if section == "hmi" and key == "interface_version":
+            current["hmi_interface_version"] = _int_scalar(value)
+        elif section == "additional_build" and key == "interface_version":
+            current["additional_interface_version"] = _int_scalar(value)
+        elif not section:
+            current[key] = value
+    flush()
+    return tuple(records)
+
+
+@lru_cache(maxsize=16)
+def _load_model_config_records_cached(repo_root: str) -> tuple[BmwModelConfigRecord, ...]:
+    config_path = Path(repo_root) / BMW_MODEL_CONFIG_RELATIVE
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    return _parse_models_build_config(text)
+
+
+def load_bmw_model_config_records(repo_root: Path | str) -> tuple[BmwModelConfigRecord, ...]:
+    return _load_model_config_records_cached(str(Path(repo_root).resolve()))
+
+
+def _model_config_by_name(repo_root: Path | str) -> dict[str, BmwModelConfigRecord]:
+    return {record.name: record for record in load_bmw_model_config_records(repo_root)}
+
+
+def _lane_for_model(record: BmwModelConfigRecord) -> str:
+    if record.model_type == "retarget" or record.name.endswith("_EVO"):
+        return LANE_IDCEVO
+    if record.hmi_interface_version is None:
+        return LANE_UNKNOWN
+    if record.hmi_interface_version >= 24:
+        return LANE_IDCEVO
+    return LANE_IDC23
+
+
+def detect_lane(profile_id: str, *, bmw_root: Path | str | None) -> str:
+    if bmw_root is None:
+        return LANE_UNKNOWN
+    records = _model_config_by_name(bmw_root)
+    if not records:
+        return LANE_UNKNOWN
+    for candidate in candidate_bmw_profile_ids(profile_id):
+        record = records.get(candidate.upper())
+        if record is not None:
+            return _lane_for_model(record)
+    return LANE_UNKNOWN
+
+
+def resolve_svn_profile_id(profile_id: str) -> str:
+    normalized = profile_id.strip().upper()
+    return normalized[:-4] if normalized.endswith("_EVO") else normalized
 
 
 def candidate_bmw_profile_ids(profile_id: str) -> tuple[str, ...]:
@@ -122,9 +247,9 @@ def _comparison_image_count(root: Path) -> int:
 
 
 def _candidate_prespectives_profile_dirs(root: Path, profile_id: str) -> tuple[Path, ...]:
-    profile = profile_id.strip().upper()
+    profile = resolve_svn_profile_id(profile_id)
     candidates = []
-    for item in (profile, f"{profile}_EVO"):
+    for item in (profile_id.strip().upper(), profile):
         if item and item not in candidates:
             candidates.append(item)
     base_candidates = (

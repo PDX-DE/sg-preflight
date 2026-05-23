@@ -11,6 +11,35 @@ from unittest import mock
 from tests.operator_helpers import write_text
 
 
+def _write_model_config(root: Path, body: str) -> None:
+    write_text(root / "ci" / "scripts" / "common" / "models_build_config.yaml", body.strip() + "\n")
+
+
+def _idcevo_config(*names: str) -> str:
+    return "\n".join(
+        f"""
+- name: {name}
+  brand: BMW
+  type: retarget
+  target: PINT
+""".strip()
+        for name in names
+    )
+
+
+def _idc23_config(*names: str) -> str:
+    return "\n".join(
+        f"""
+- name: {name}
+  brand: BMW
+  type: build
+  hmi:
+    interface_version: 12
+""".strip()
+        for name in names
+    )
+
+
 class _FakeProcess:
     def __init__(self, returncode: int | None = 0) -> None:
         self.returncode = returncode
@@ -40,32 +69,42 @@ class TestScreenshotCapture(unittest.TestCase):
             bmw_root = Path(temp_dir) / "digital-3d-car-models"
             script = bmw_root / "ci" / "scripts" / "car_manager.py"
             write_text(script, "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
 
             payload = resolve_screenshot_capture_command(profile_id="G70", bmw_root=bmw_root)
 
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["strategy"], "car_manager_screenshots")
+        self.assertEqual(payload["lane"], "idc_evo")
         self.assertEqual(payload["profile_id"], "G70")
         self.assertEqual(payload["bmw_profile_id"], "G70_EVO")
         self.assertEqual(payload["command"][-3:], ["screenshots", "--diff", "G70_EVO"])
         self.assertEqual(Path(payload["script_path"]).name, "car_manager.py")
 
-    def test_capture_command_falls_back_to_legacy_main_screenshots(self) -> None:
+    def test_capture_command_routes_idc23_to_assets_worktree_main_screenshots(self) -> None:
         from sg_preflight.screenshot_capture import resolve_screenshot_capture_command
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            bmw_root = Path(temp_dir) / "digital-3d-car-models"
-            script = bmw_root / "ci" / "scripts" / "test" / "main.py"
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models-master"
+            idc23_root = root / "digital-3d-car-models-idc23"
+            _write_model_config(bmw_root, _idc23_config("F70"))
+            script = idc23_root / "ci" / "scripts" / "test" / "main.py"
             write_text(script, "print('fixture')\n")
+            (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
+            (idc23_root / "cars" / "BMW" / "F70").mkdir(parents=True)
 
-            payload = resolve_screenshot_capture_command(profile_id="NA8", bmw_root=bmw_root)
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo-IDC23": str(idc23_root)}):
+                payload = resolve_screenshot_capture_command(profile_id="F70", bmw_root=bmw_root)
 
         self.assertEqual(payload["status"], "available")
-        self.assertEqual(payload["strategy"], "legacy_test_main_screenshots")
-        self.assertEqual(payload["profile_id"], "NA8")
-        self.assertEqual(payload["bmw_profile_id"], "NA8_EVO")
-        self.assertEqual(payload["command"][-3:], ["screenshots", "--diff", "NA8_EVO"])
+        self.assertEqual(payload["strategy"], "idc23_test_main_screenshots")
+        self.assertEqual(payload["lane"], "idc_23")
+        self.assertEqual(payload["profile_id"], "F70")
+        self.assertEqual(payload["bmw_profile_id"], "F70")
+        self.assertEqual(payload["command"][-3:], ["screenshots", "--diff", "F70"])
         self.assertEqual(Path(payload["script_path"]).name, "main.py")
+        self.assertEqual(Path(payload["cwd"]).resolve(), idc23_root.resolve())
 
     def test_capture_command_prefers_registered_python_path(self) -> None:
         from sg_preflight.screenshot_capture import resolve_screenshot_capture_command
@@ -76,13 +115,19 @@ class TestScreenshotCapture(unittest.TestCase):
             script = bmw_root / "ci" / "scripts" / "car_manager.py"
             python_path = root / "tools" / "python.exe"
             write_text(script, "print('fixture')\n")
+            _write_model_config(bmw_root, _idc23_config("F70"))
+            idc23_root = root / "digital-3d-car-models-idc23"
+            write_text(idc23_root / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
+            (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
+            (idc23_root / "cars" / "BMW" / "F70").mkdir(parents=True)
             write_text(python_path, "fixture\n")
             write_text(
                 root / "operator_state" / "dependency_onboarding.json",
                 json.dumps({"registered_paths": {"bmw_pipeline_python": str(python_path)}}),
             )
 
-            payload = resolve_screenshot_capture_command(profile_id="F70", bmw_root=bmw_root, workspace=root)
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo-IDC23": str(idc23_root)}):
+                payload = resolve_screenshot_capture_command(profile_id="F70", bmw_root=bmw_root, workspace=root)
 
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["command"][0], str(python_path.resolve()))
@@ -124,6 +169,7 @@ class TestScreenshotCapture(unittest.TestCase):
             root = Path(temp_dir)
             bmw_root = root / "digital-3d-car-models"
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
             (bmw_root / "cars" / "BMW" / "G70_EVO" / "export" / "tests").mkdir(parents=True)
             registered_paths = {
                 "digital_3d_car_repo": bmw_root,
@@ -177,6 +223,7 @@ class TestScreenshotCapture(unittest.TestCase):
             bmw_root = root / "digital-3d-car-models"
             tests_root = bmw_root / "cars" / "BMW" / "G70_EVO" / "export" / "tests"
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
             write_text(tests_root / "actuals" / "front.png", "fake\n")
             with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
                 with mock.patch(
@@ -210,6 +257,7 @@ class TestScreenshotCapture(unittest.TestCase):
             bmw_root = root / "digital-3d-car-models"
             tests_root = bmw_root / "cars" / "BMW" / "G65_EVO" / "export" / "tests"
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G65_EVO"))
             write_text(tests_root / "expected" / "front.png", "fake\n")
             write_text(tests_root / "actuals" / "front.png", "fake\n")
             write_text(tests_root / "diff" / "front_color.png", "fake\n")
@@ -246,6 +294,7 @@ class TestScreenshotCapture(unittest.TestCase):
             bmw_root = root / "digital-3d-car-models"
             tests_root = bmw_root / "cars" / "BMW" / "G70_EVO" / "export" / "tests"
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
             (tests_root / "actuals").mkdir(parents=True)
             with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
                 with mock.patch(

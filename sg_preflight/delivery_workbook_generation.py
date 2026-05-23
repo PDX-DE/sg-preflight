@@ -10,14 +10,21 @@ import sys
 import time
 from typing import Any
 
-from sg_preflight.bmw_delivery import resolve_bmw_profile_id
+from sg_preflight.bmw_delivery import (
+    DIGITAL_3D_CAR_REPO_ENV,
+    DIGITAL_3D_CAR_REPO_IDC23_ENV,
+    LANE_IDC23,
+    LANE_IDCEVO,
+    LANE_UNKNOWN,
+    detect_lane,
+    resolve_bmw_profile_id,
+)
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.dependency_onboarding import load_dependency_onboarding_state
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
 
 
-DIGITAL_3D_CAR_REPO_ENV = "Digital-3D-Car-Repo"
 BMW_PIPELINE_PYTHON_ENV = "SG_BMW_PYTHON_EXE"
 GENERATE_WORKBOOK_ACTION_ID = "generate-delivery-workbook"
 GENERATE_WORKBOOK_ACTION_LABEL = "Generate delivery workbook"
@@ -35,6 +42,7 @@ _TOOL_REGISTRATION_KEYS = {
 }
 _PYTHON_REGISTRATION_KEYS = ("bmw_pipeline_python", "python", "python_executable")
 _DIGITAL_REPO_REGISTRATION_KEYS = ("digital_3d_car_repo",)
+_DIGITAL_REPO_IDC23_REGISTRATION_KEYS = ("digital_3d_car_repo_idc23", "digital_3d_car_repo_assets_idc23")
 
 
 def _utc_now() -> str:
@@ -177,6 +185,72 @@ def _digital_repo_check(
     )
 
 
+def _configured_idc23_repo_root(workspace: Path | str | None = None) -> Path | None:
+    raw = os.environ.get(DIGITAL_3D_CAR_REPO_IDC23_ENV, "").strip()
+    if not raw:
+        registered = _registered_dir(workspace, _DIGITAL_REPO_IDC23_REGISTRATION_KEYS)
+        if registered is not None:
+            raw = str(registered)
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve()
+
+
+def _idc23_repo_check(workspace: Path | str | None = None) -> tuple[dict[str, str], Path | None]:
+    root = _configured_idc23_repo_root(workspace)
+    if root is None:
+        return (
+            _check(
+                key="digital_3d_car_repo_idc23",
+                label=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} environment variable",
+                status="missing",
+                detail=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} is not set.",
+                remediation=(
+                    "IDC_23 execution requires a separate assets/idc23 worktree. "
+                    f"Run `git worktree add <path> assets/idc23` from BMW Git root, then set {DIGITAL_3D_CAR_REPO_IDC23_ENV} to that path. "
+                    "Confluence anchor: 3D Cars Delivery Checklist, lines 81-82."
+                ),
+            ),
+            None,
+        )
+    script = root / "ci" / "scripts" / "test" / "main.py"
+    shared = root / "cars" / "BMW" / "_Shared"
+    if not script.is_file():
+        return (
+            _check(
+                key="digital_3d_car_repo_idc23",
+                label=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} worktree",
+                status="missing",
+                detail="The configured IDC_23 worktree does not expose ci/scripts/test/main.py.",
+                path=root,
+                remediation="Point the IDC_23 path at a digital-3d-car-models worktree checked out on assets/idc23.",
+            ),
+            root,
+        )
+    if not shared.is_dir():
+        return (
+            _check(
+                key="digital_3d_car_repo_idc23",
+                label=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} worktree",
+                status="missing",
+                detail="The configured IDC_23 worktree is missing cars/BMW/_Shared.",
+                path=shared,
+                remediation="Ensure cars/BMW/_Shared is checked out in the assets/idc23 worktree before running IDC_23 pipeline commands.",
+            ),
+            root,
+        )
+    return (
+        _check(
+            key="digital_3d_car_repo_idc23",
+            label=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} worktree",
+            status="available",
+            detail="IDC_23 assets/idc23 worktree is available for read-only script invocation.",
+            path=root,
+        ),
+        root,
+    )
+
+
 def _tool_key(executable_name: str) -> str:
     key = executable_name.strip()
     if key.casefold().endswith(".exe"):
@@ -244,12 +318,12 @@ def _python_command_payload(workspace: Path | str | None = None) -> dict[str, An
         }
 
     candidates: list[str] = []
-    if not getattr(sys, "frozen", False):
-        candidates.append(str(Path(sys.executable).resolve()))
     for executable_name in ("py.exe", "python.exe", "python3.exe", "py", "python", "python3"):
         found = shutil.which(executable_name)
         if found:
             candidates.append(found)
+    if not getattr(sys, "frozen", False):
+        candidates.append(str(Path(sys.executable).resolve()))
     seen: set[str] = set()
     for candidate in candidates:
         normalized = candidate.casefold()
@@ -333,6 +407,7 @@ def check_delivery_workbook_generation_environment(
     workspace_path = Path(workspace).resolve()
     clean_profile = _clean_profile(profile_id)
     repo_check, repo_root = _digital_repo_check(bmw_root, workspace=workspace_path)
+    lane = detect_lane(clean_profile, bmw_root=repo_root) if repo_root is not None else LANE_UNKNOWN
     checks = [
         repo_check,
         _python_check(workspace_path),
@@ -341,12 +416,36 @@ def check_delivery_workbook_generation_environment(
         _tool_check("blender.exe", "Blender", workspace=workspace_path),
         _disk_space_check(workspace_path, min_free_bytes),
     ]
+    if repo_root is not None and repo_check["status"] == "available":
+        if lane == LANE_IDC23:
+            idc23_check, _idc23_root = _idc23_repo_check(workspace_path)
+            checks.append(idc23_check)
+        command_payload = resolve_delivery_workbook_generation_command(
+            profile_id=clean_profile,
+            bmw_root=repo_root,
+            workspace=workspace_path,
+        )
+        checks.append(
+            _check(
+                key="bmw_export_script",
+                label="BMW export script",
+                status="available" if command_payload["status"] == "available" else "missing",
+                detail=(
+                    f"Using {command_payload['strategy']} for {command_payload.get('lane', lane)}."
+                    if command_payload["status"] == "available"
+                    else str(command_payload.get("summary", "No supported BMW pipeline export script was found."))
+                ),
+                path=str(command_payload.get("script_path", "")),
+                remediation=str(command_payload.get("remediation", "")),
+            )
+        )
     can_run = all(check["status"] == "available" for check in checks)
     target_path = workspace_path / "Cars" / "size_analysis"
     return {
         "profile_id": clean_profile,
         "workspace": str(workspace_path),
         "bmw_root": str(repo_root or ""),
+        "lane": lane,
         "target_write_path": str(target_path),
         "estimated_size_bytes": min_free_bytes,
         "status": "available" if can_run else "failed",
@@ -368,7 +467,7 @@ def resolve_delivery_workbook_generation_command(
 ) -> dict[str, Any]:
     root = Path(bmw_root).resolve()
     clean_profile = _clean_profile(profile_id)
-    bmw_profile = resolve_bmw_profile_id(clean_profile, root)
+    lane = detect_lane(clean_profile, bmw_root=root)
     python_payload = _python_command_payload(workspace)
     if python_payload["status"] != "available":
         return {
@@ -377,11 +476,58 @@ def resolve_delivery_workbook_generation_command(
             "command": [],
             "cwd": str(root),
             "script_path": "",
+            "lane": lane,
             "summary": str(python_payload.get("detail", "No Python launcher was found.")),
         }
     python_command = list(python_payload["command"])
+    if lane == LANE_UNKNOWN:
+        return {
+            "status": "missing",
+            "strategy": "none",
+            "command": [],
+            "cwd": str(root),
+            "script_path": "",
+            "profile_id": clean_profile,
+            "bmw_profile_id": "",
+            "lane": LANE_UNKNOWN,
+            "summary": (
+                f"Lane could not be determined for profile {clean_profile}. "
+                "Confirm BMW Git checkout includes ci/scripts/common/models_build_config.yaml and the profile is registered."
+            ),
+            "remediation": "Use the BMW Git source-of-truth checkout for lane detection before running export.",
+        }
+    if lane == LANE_IDC23:
+        idc23_check, idc23_root = _idc23_repo_check(workspace)
+        if idc23_root is None or idc23_check["status"] != "available":
+            return {
+                "status": "missing",
+                "strategy": "none",
+                "command": [],
+                "cwd": str(root),
+                "script_path": "",
+                "profile_id": clean_profile,
+                "bmw_profile_id": "",
+                "lane": lane,
+                "summary": idc23_check["detail"],
+                "remediation": idc23_check.get("remediation", ""),
+            }
+        legacy = idc23_root / "ci" / "scripts" / "test" / "main.py"
+        bmw_profile = resolve_bmw_profile_id(clean_profile, idc23_root)
+        return {
+            "status": "available",
+            "strategy": "idc23_test_main_export",
+            "command": [*python_command, str(legacy), "export", bmw_profile],
+            "cwd": str(idc23_root),
+            "script_path": str(legacy),
+            "profile_id": clean_profile,
+            "bmw_profile_id": bmw_profile,
+            "lane": lane,
+            "source_bmw_root": str(root),
+            "execution_bmw_root": str(idc23_root),
+        }
     car_manager = root / "ci" / "scripts" / "car_manager.py"
-    if car_manager.is_file():
+    if lane == LANE_IDCEVO and car_manager.is_file():
+        bmw_profile = resolve_bmw_profile_id(clean_profile, root)
         return {
             "status": "available",
             "strategy": "car_manager_export",
@@ -390,17 +536,9 @@ def resolve_delivery_workbook_generation_command(
             "script_path": str(car_manager),
             "profile_id": clean_profile,
             "bmw_profile_id": bmw_profile,
-        }
-    legacy = root / "ci" / "scripts" / "test" / "main.py"
-    if legacy.is_file():
-        return {
-            "status": "available",
-            "strategy": "legacy_test_main_export",
-            "command": [*python_command, str(legacy), "export", bmw_profile],
-            "cwd": str(root),
-            "script_path": str(legacy),
-            "profile_id": clean_profile,
-            "bmw_profile_id": bmw_profile,
+            "lane": lane,
+            "source_bmw_root": str(root),
+            "execution_bmw_root": str(root),
         }
     return {
         "status": "missing",
@@ -408,7 +546,11 @@ def resolve_delivery_workbook_generation_command(
         "command": [],
         "cwd": str(root),
         "script_path": "",
-        "summary": "No supported BMW pipeline export script was found.",
+        "profile_id": clean_profile,
+        "bmw_profile_id": "",
+        "lane": lane,
+        "summary": "No supported BMW pipeline export script was found for the detected lane.",
+        "remediation": "IDC_EVO requires ci/scripts/car_manager.py on master; IDC_23 requires ci/scripts/test/main.py on an assets/idc23 worktree.",
     }
 
 
@@ -617,13 +759,16 @@ def start_delivery_workbook_generation(
     )
     if command_payload["status"] != "available":
         raise FileNotFoundError(str(command_payload.get("summary", "No supported BMW pipeline export script was found.")))
+    execution_root = Path(str(command_payload.get("execution_bmw_root") or command_payload["cwd"])).resolve()
     log_root = workspace_path / "operator_state" / "delivery_workbook_generation"
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     stdout_path = log_root / f"{clean_profile}-{stamp}.stdout.log"
     stderr_path = log_root / f"{clean_profile}-{stamp}.stderr.log"
     ensure_parent(stdout_path)
     env = os.environ.copy()
-    env[DIGITAL_3D_CAR_REPO_ENV] = str(repo_root)
+    env[DIGITAL_3D_CAR_REPO_ENV] = str(execution_root)
+    if command_payload.get("lane") == LANE_IDC23:
+        env[DIGITAL_3D_CAR_REPO_IDC23_ENV] = str(execution_root)
     started_wall_time = time.time()
     started_monotonic = time.monotonic()
     with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
@@ -639,7 +784,7 @@ def start_delivery_workbook_generation(
     return DeliveryWorkbookGenerationJob(
         profile_id=clean_profile,
         workspace=workspace_path,
-        bmw_root=repo_root,
+        bmw_root=execution_root,
         process=process,
         command=list(command_payload["command"]),
         strategy=str(command_payload["strategy"]),

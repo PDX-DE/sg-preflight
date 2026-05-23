@@ -16,9 +16,7 @@ class TestProfiles(unittest.TestCase):
         profile_ids = {profile.profile_id for profile in list_run_profiles(ROOT)}
 
         self.assertTrue({"G70", "G65", "G45"}.issubset(profile_ids))
-        self.assertTrue({"G50", "G78", "NA5", "F70", "U10", "G68"}.issubset(profile_ids))
-        self.assertNotIn("G58", profile_ids)
-        self.assertNotIn("PINT_SUV", profile_ids)
+        self.assertTrue({"G50", "G58", "G78", "NA5", "PINT", "PINT_RUEKO", "F70", "PINT_SUV", "U10", "G68"}.issubset(profile_ids))
 
 
 if __name__ == "__main__":

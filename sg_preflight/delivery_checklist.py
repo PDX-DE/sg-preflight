@@ -7,7 +7,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
-from sg_preflight.bmw_delivery import candidate_bmw_profile_ids
+from sg_preflight.bmw_delivery import candidate_bmw_profile_ids, resolve_svn_profile_id
 
 
 WORKBOOK_NAME = "Delivery Data - BMW.xlsx"
@@ -77,7 +77,7 @@ def _export_size_workbook_name_for_brand(brand: str | None) -> str:
 
 def _candidate_profile_ids(profile_id: str) -> tuple[str, ...]:
     candidates: list[str] = []
-    for item in candidate_bmw_profile_ids(profile_id):
+    for item in (resolve_svn_profile_id(profile_id), *candidate_bmw_profile_ids(profile_id)):
         normalized = item.strip().upper()
         if normalized and normalized not in candidates:
             candidates.append(normalized)
