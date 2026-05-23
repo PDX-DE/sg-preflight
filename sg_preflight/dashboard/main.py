@@ -41,7 +41,11 @@ from sg_preflight.manual_review import (
     load_manual_review_session,
     record_manual_review_step,
 )
-from sg_preflight.profiles import list_run_profiles
+from sg_preflight.profiles import (
+    PROFILE_REGISTRY_DYNAMIC_SOURCE,
+    PROFILE_SCOPE_DEFAULT,
+    list_run_profiles,
+)
 from sg_preflight.screenshot_capture import (
     SCREENSHOT_CAPTURE_ACTION_ID,
     SCREENSHOT_CAPTURE_ACTION_LABEL,
@@ -356,8 +360,41 @@ def _launch_browser_fallback_process(
     raise RuntimeError(f"Browser fallback process exited early with code {exit_code}")
 
 
-def dashboard_profile_options() -> list[dict[str, str]]:
-    return [{"id": profile.profile_id, "label": profile.label} for profile in list_run_profiles()]
+def _profile_option_label(option: dict[str, Any]) -> str:
+    brand = str(option.get("brand", "BMW") or "BMW")
+    lane = str(option.get("lane", "unknown") or "unknown")
+    model_type = str(option.get("type", "build") or "build")
+    label = f"{brand} / {lane} / {option['id']}"
+    target = str(option.get("retarget_target", "") or "")
+    if model_type == "retarget" and target:
+        label = f"{label} -> {target}"
+    elif model_type and model_type != "build":
+        label = f"{label} ({model_type})"
+    return label
+
+
+def dashboard_profile_options(
+    *,
+    bmw_root: Path | str | None = None,
+    profile_scope: str = PROFILE_SCOPE_DEFAULT,
+) -> list[dict[str, Any]]:
+    options: list[dict[str, Any]] = []
+    for profile in list_run_profiles(bmw_root=bmw_root, profile_scope=profile_scope):
+        option: dict[str, Any] = {
+            "id": profile.profile_id,
+            "label": profile.label,
+            "bmw_profile_id": profile.bmw_profile_id,
+            "lane": profile.lane,
+            "brand": profile.brand,
+            "type": profile.model_type,
+            "interface_version": profile.interface_version,
+            "retarget_target": profile.retarget_target,
+            "active_build": profile.active_build,
+            "registry_source": profile.registry_source,
+        }
+        option["select_label"] = _profile_option_label(option)
+        options.append(option)
+    return options
 
 
 def _resolve_dashboard_profile_id(
@@ -365,13 +402,15 @@ def _resolve_dashboard_profile_id(
     options: list[dict[str, str]],
     *,
     workspace: Path | str | None = None,
+    fallback_options: list[dict[str, str]] | None = None,
 ) -> str:
     requested = str(profile_id or "").strip()
     if not requested:
         preferred = _dashboard_preferred_profile_id(workspace, options) if workspace is not None else ""
         if preferred:
             return preferred
-        return options[0]["id"] if options else ""
+        fallbacks = fallback_options or options
+        return fallbacks[0]["id"] if fallbacks else options[0]["id"] if options else ""
     for option in options:
         if option["id"].casefold() == requested.casefold():
             return option["id"]
@@ -423,6 +462,18 @@ def _dashboard_preferred_profile_id(workspace: Path | str | None, options: list[
             if raw and raw.casefold() in option_ids:
                 return option_ids[raw.casefold()]
     return ""
+
+
+def _write_dashboard_profile_preference(workspace: Path | str, profile_id: str) -> dict[str, Any]:
+    clean_profile = profile_id.strip()
+    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
+    payload["profile_id"] = clean_profile
+    payload["last_profile_id"] = clean_profile
+    payload["updated_at_utc"] = _utc_now()
+    path = _operator_state_path(workspace, "dashboard_preferences.json")
+    ensure_parent(path)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return payload
 
 
 def _ticket_id_from_payload(payload: dict[str, Any]) -> str:
@@ -987,9 +1038,21 @@ def build_dashboard_snapshot(
     ui_mode: str | None = None,
 ) -> dict[str, Any]:
     root = _workspace(workspace)
-    profile_options = dashboard_profile_options()
-    resolved_profile_id = _resolve_dashboard_profile_id(profile_id, profile_options, workspace=root)
-    profile_known = _dashboard_profile_known(resolved_profile_id, profile_options)
+    profile_options = dashboard_profile_options(bmw_root=bmw_root, profile_scope=PROFILE_SCOPE_DEFAULT)
+    profile_options_all = dashboard_profile_options(bmw_root=bmw_root, profile_scope="all")
+    profile_registry_status = (
+        "available"
+        if any(option.get("registry_source") == PROFILE_REGISTRY_DYNAMIC_SOURCE for option in profile_options_all)
+        else "unavailable"
+    )
+    resolved_profile_id = _resolve_dashboard_profile_id(
+        profile_id,
+        profile_options_all,
+        workspace=root,
+        fallback_options=profile_options,
+    )
+    profile_known = _dashboard_profile_known(resolved_profile_id, profile_options_all)
+    profile_in_default_view = _dashboard_profile_known(resolved_profile_id, profile_options)
     theme = _clean_theme(ui_mode or load_dashboard_preference(root))
     setup_status = build_dependency_onboarding_status(workspace=root, bmw_root=bmw_root)
     active_ticket_id = _dashboard_active_ticket_id(root)
@@ -1002,6 +1065,20 @@ def build_dashboard_snapshot(
         if profile_known
         else f"Profile {resolved_profile_id} is not in the current profile registry. Select a registered profile or check config.",
         "profile_options": profile_options,
+        "profile_options_all": profile_options_all,
+        "profile_show_all": bool(profile_known and not profile_in_default_view),
+        "profile_registry": {
+            "status": profile_registry_status,
+            "source": PROFILE_REGISTRY_DYNAMIC_SOURCE if profile_registry_status == "available" else "fallback_static_23",
+            "default_count": len(profile_options),
+            "total_count": len(profile_options_all),
+            "summary": (
+                f"{len(profile_options)} active build profile(s) shown by default; "
+                f"{len(profile_options_all)} registered profile(s) available."
+                if profile_registry_status == "available"
+                else "BMW registry source unavailable; using the static fallback profile list."
+            ),
+        },
         "workspace": str(root),
         "workspace_label": _path_label(root),
         "theme": theme,
@@ -2703,10 +2780,72 @@ def _render_dashboard(
             active = state["snapshot"]
             return f"Profile: {active['profile_id']} | Workspace: {active['workspace_label']}"
 
+        def _all_profile_options() -> list[dict[str, Any]]:
+            return [option for option in state["snapshot"].get("profile_options_all", []) if isinstance(option, dict)]
+
+        def _default_profile_options() -> list[dict[str, Any]]:
+            return [option for option in state["snapshot"].get("profile_options", []) if isinstance(option, dict)]
+
+        def _profile_option_for_id(profile_id: str) -> dict[str, Any] | None:
+            requested = profile_id.strip().casefold()
+            for option in _all_profile_options():
+                if str(option.get("id", "")).casefold() == requested:
+                    return option
+            return None
+
+        def _select_label_for_profile(profile_id: str) -> str:
+            option = _profile_option_for_id(profile_id)
+            return str(option.get("select_label", profile_id)) if option else profile_id
+
+        def _profile_id_from_select_value(value: str) -> str:
+            selected = value.strip()
+            for option in _all_profile_options():
+                if selected in {str(option.get("id", "")), str(option.get("select_label", ""))}:
+                    return str(option.get("id", selected))
+            return selected
+
+        def _filtered_profile_options() -> list[dict[str, Any]]:
+            show_all_control = controls.get("profile_show_all")
+            search_control = controls.get("profile_search")
+            show_all = bool(getattr(show_all_control, "value", state["snapshot"].get("profile_show_all", False)))
+            query = str(getattr(search_control, "value", "") or "").strip().casefold()
+            options = _all_profile_options() if show_all else _default_profile_options()
+            if not query:
+                return options
+            filtered = []
+            for option in options:
+                haystack = " ".join(
+                    str(option.get(key, ""))
+                    for key in ("id", "label", "select_label", "bmw_profile_id", "brand", "lane", "type", "retarget_target")
+                ).casefold()
+                if query in haystack:
+                    filtered.append(option)
+            return filtered
+
+        def _sync_profile_select() -> None:
+            profile_select = controls.get("profile_select")
+            if profile_select is None:
+                return
+            options = _filtered_profile_options()
+            labels = [str(option.get("select_label", option.get("id", ""))) for option in options]
+            profile_select.options = labels
+            current_id = str(state["snapshot"].get("profile_id", ""))
+            current_label = _select_label_for_profile(current_id)
+            profile_select.value = current_label if current_label in labels else None
+            profile_select.update()
+
         def _refresh_labels() -> None:
             profile_label = controls.get("profile_label")
             if profile_label is not None:
                 profile_label.set_text(_header_text())
+            registry_label = controls.get("profile_registry_label")
+            if registry_label is not None:
+                registry = state["snapshot"].get("profile_registry", {})
+                registry_label.set_text(str(registry.get("summary", "")) if isinstance(registry, dict) else "")
+            show_all_control = controls.get("profile_show_all")
+            if show_all_control is not None and bool(state["snapshot"].get("profile_show_all", False)):
+                show_all_control.value = True
+            _sync_profile_select()
 
         def _render_current_page() -> None:
             content = content_holder.get("content")
@@ -2757,7 +2896,10 @@ def _render_dashboard(
             ui.notify("Current page refreshed from read-only sources.")
 
         def _set_profile(value: str) -> None:
-            _refresh_snapshot(value)
+            profile_id = _profile_id_from_select_value(value)
+            if profile_id:
+                _write_dashboard_profile_preference(workspace, profile_id)
+            _refresh_snapshot(profile_id)
             ui.notify(f"Profile switched to {state['snapshot']['profile_id']}.")
 
         def _install_shortcut_script() -> None:
@@ -2846,15 +2988,39 @@ def _render_dashboard(
                                 "Shortcuts available: F1 help, F2 profile, F5 refresh, F12 diagnostic, Esc quit guidance."
                                 "</div>"
                             )
+                            registry = state["snapshot"].get("profile_registry", {})
+                            controls["profile_registry_label"] = ui.label(
+                                str(registry.get("summary", "")) if isinstance(registry, dict) else ""
+                            ).classes("sgfx-subtitle")
                     with ui.row().classes("items-center"):
                         ui.label("F1 Help").classes("sgfx-shortcut")
                         ui.label("F12 Diagnostic").classes("sgfx-shortcut")
                         ui.label("Esc Quit").classes("sgfx-shortcut")
+                        controls["profile_show_all"] = ui.switch(
+                            "Show all profiles",
+                            value=bool(state["snapshot"].get("profile_show_all", False)),
+                            on_change=lambda _event: _sync_profile_select(),
+                        ).props("dense")
+                        controls["profile_search"] = ui.input(
+                            "Profile search",
+                            on_change=lambda _event: _sync_profile_select(),
+                        ).props("dense outlined clearable")
                         controls["profile_select"] = _attach_tooltip(
                             ui,
                             ui.select(
-                                [str(option["id"]) for option in state["snapshot"]["profile_options"]],
-                                value=str(state["snapshot"]["profile_id"]) if state["snapshot"]["profile_known"] else None,
+                                [
+                                    str(option.get("select_label", option.get("id", "")))
+                                    for option in (
+                                        state["snapshot"]["profile_options_all"]
+                                        if state["snapshot"].get("profile_show_all", False)
+                                        else state["snapshot"]["profile_options"]
+                                    )
+                                ],
+                                value=(
+                                    _select_label_for_profile(str(state["snapshot"]["profile_id"]))
+                                    if state["snapshot"]["profile_known"]
+                                    else None
+                                ),
                                 label="Profile",
                                 on_change=lambda event: _set_profile(str(event.value or "")),
                             ).props("dense outlined").classes("sgfx-profile-select"),

@@ -92,6 +92,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
             _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
             registered_paths = {
                 "digital_3d_car_repo": bmw_root,
                 "bmw_pipeline_python": root / "tools" / "python.exe",
@@ -141,7 +142,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
                     )
 
         self.assertFalse(payload["can_run"])
-        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["status"], "unavailable")
         checks = {item["key"]: item for item in payload["checks"]}
         self.assertEqual(checks["digital_3d_car_repo"]["status"], "missing")
         self.assertEqual(checks["raco_headless"]["status"], "available")
@@ -156,6 +157,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
             _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
             with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
                 with mock.patch(
                     "sg_preflight.delivery_workbook_generation._find_executable",
@@ -182,6 +184,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             script = bmw_root / "ci" / "scripts" / "car_manager.py"
             write_text(script, "print('fixture')\n")
             _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
 
             payload = resolve_delivery_workbook_generation_command(profile_id="G70", bmw_root=bmw_root)
 
@@ -253,9 +256,40 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             with mock.patch.dict(os.environ, {}, clear=True):
                 payload = resolve_delivery_workbook_generation_command(profile_id="F70", bmw_root=bmw_root)
 
-        self.assertEqual(payload["status"], "missing")
+        self.assertEqual(payload["status"], "unavailable")
         self.assertEqual(payload["lane"], "idc_23")
         self.assertIn("Digital-3D-Car-Repo-IDC23", payload["summary"])
+        self.assertIn("assets/idc23", payload["remediation"])
+
+    def test_generation_command_reports_registered_car_missing_from_lane_worktree(self) -> None:
+        from sg_preflight.delivery_workbook_generation import resolve_delivery_workbook_generation_command
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models-master"
+            idc23_root = root / "digital-3d-car-models-idc23"
+            _write_model_config(
+                bmw_root,
+                """
+- name: U25
+  brand: MINI
+  type: build
+  hmi:
+    interface_version: 12
+""",
+            )
+            write_text(idc23_root / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
+            (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
+
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo-IDC23": str(idc23_root)}):
+                payload = resolve_delivery_workbook_generation_command(profile_id="MINI_U25", bmw_root=bmw_root)
+
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertEqual(payload["lane"], "idc_23")
+        self.assertEqual(payload["bmw_profile_id"], "U25")
+        self.assertIn("cars", payload["summary"])
+        self.assertIn("MINI", payload["summary"])
+        self.assertIn("Data-prep team operation", payload["summary"])
 
     def test_generation_command_uses_python_launcher_when_frozen(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation
@@ -265,6 +299,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             script = bmw_root / "ci" / "scripts" / "car_manager.py"
             write_text(script, "print('fixture')\n")
             _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
 
             def fake_which(executable_name: str) -> str:
                 return r"C:\Windows\py.exe" if executable_name == "py.exe" else ""
@@ -290,6 +325,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             script = bmw_root / "ci" / "scripts" / "car_manager.py"
             write_text(script, "print('fixture')\n")
             _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
 
             def fake_which(executable_name: str) -> str:
                 return r"C:\Windows\py.exe" if executable_name == "py.exe" else ""
@@ -317,6 +353,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             python_path = root / "tools" / "python.exe"
             write_text(script, "print('fixture')\n")
             _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
             write_text(python_path, "fixture\n")
             write_text(
                 root / "operator_state" / "dependency_onboarding.json",
@@ -384,6 +421,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
             _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
             with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
                 with mock.patch(
                     "sg_preflight.delivery_workbook_generation._find_executable",
@@ -425,6 +463,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
             _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
             with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
                 with mock.patch(
                     "sg_preflight.delivery_workbook_generation._find_executable",

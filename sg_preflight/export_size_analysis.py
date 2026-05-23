@@ -239,8 +239,11 @@ def read_export_size_analysis(
         return _missing_payload(
             profile,
             workbook,
-            "no_workbook",
-            f"export-size analysis data unavailable: workbook not found for {profile or 'profile'}: {workbook}",
+            "unavailable",
+            (
+                f"export-size analysis data unavailable: workbook not found for {profile or 'profile'}: {workbook}. "
+                "BMW export may be complete, but workbook generation is a CI team operation."
+            ),
             workbook_date=workbook_date,
         )
 

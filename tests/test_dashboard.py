@@ -79,9 +79,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "manual-review",
             ],
         )
-        self.assertEqual(snapshot["profile_id"], "G70")
-        self.assertEqual(snapshot["profile_options"][0]["id"], "G70")
+        self.assertEqual(snapshot["profile_id"], snapshot["profile_options"][0]["id"])
         self.assertTrue(snapshot["profile_known"])
+        self.assertIn("profile_options_all", snapshot)
+        self.assertIn("profile_registry", snapshot)
+        self.assertGreaterEqual(snapshot["profile_registry"]["total_count"], len(snapshot["profile_options"]))
         self.assertEqual(snapshot["theme"], "clean")
         self.assertEqual(snapshot["workspace_label"], Path(tmp).name)
         self.assertEqual(
@@ -116,6 +118,75 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertTrue(all(step["verdict"] == "not_run" for step in manual_page["payload"]["steps"]))
         for forbidden in ("approved", "cleared", "signed-off", "production-ready"):
             self.assertNotIn(forbidden, json.dumps(snapshot, ensure_ascii=False).casefold())
+
+    def test_dashboard_snapshot_exposes_default_and_show_all_profile_sets_from_bmw_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import _write_dashboard_profile_preference, build_dashboard_snapshot
+
+            root = Path(tmp)
+            bmw_root = root / "digital-3d-car-models"
+            records = []
+            for name in ["F70", *[f"B{index:02d}" for index in range(16)]]:
+                records.append(
+                    f"""
+- name: {name}
+  brand: BMW
+  type: build
+  hmi:
+    interface_version: 12
+""".strip()
+                )
+            for name in ["G50_EVO", *[f"E{index:02d}_EVO" for index in range(8)]]:
+                records.append(
+                    f"""
+- name: {name}
+  brand: BMW
+  type: build
+  hmi:
+    interface_version: 24
+""".strip()
+                )
+            for name in ["U25", "F66"]:
+                records.append(
+                    f"""
+- name: {name}
+  brand: MINI
+  type: build
+  hmi:
+    interface_version: 12
+""".strip()
+                )
+            for name in ["G58_EVO", *[f"R{index:02d}_EVO" for index in range(47)]]:
+                records.append(
+                    f"""
+- name: {name}
+  brand: BMW
+  type: retarget
+  target: PINT
+""".strip()
+                )
+            write_text(bmw_root / "ci" / "scripts" / "common" / "models_build_config.yaml", "\n\n".join(records) + "\n")
+
+            default_snapshot = build_dashboard_snapshot("", root, bmw_root=bmw_root)
+            retarget_snapshot = build_dashboard_snapshot("G58", root, bmw_root=bmw_root)
+            _write_dashboard_profile_preference(root, "G58")
+            persisted_snapshot = build_dashboard_snapshot("", root, bmw_root=bmw_root)
+
+        self.assertEqual(default_snapshot["profile_registry"]["status"], "available")
+        self.assertEqual(default_snapshot["profile_registry"]["default_count"], 28)
+        self.assertEqual(default_snapshot["profile_registry"]["total_count"], 76)
+        self.assertEqual(len(default_snapshot["profile_options"]), 28)
+        self.assertEqual(len(default_snapshot["profile_options_all"]), 76)
+        default_ids = {option["id"] for option in default_snapshot["profile_options"]}
+        all_options = {option["id"]: option for option in default_snapshot["profile_options_all"]}
+        self.assertIn("MINI_U25", default_ids)
+        self.assertIn("G58", all_options)
+        self.assertNotIn("G58", default_ids)
+        self.assertEqual(all_options["G58"]["select_label"], "BMW / idc_evo / G58 -> PINT")
+        self.assertTrue(retarget_snapshot["profile_known"])
+        self.assertTrue(retarget_snapshot["profile_show_all"])
+        self.assertEqual(persisted_snapshot["profile_id"], "G58")
+        self.assertTrue(persisted_snapshot["profile_show_all"])
 
     def test_dashboard_source_uses_available_vocab_for_shortcut_status(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

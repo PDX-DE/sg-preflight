@@ -11,12 +11,15 @@ import time
 from typing import Any
 
 from sg_preflight.bmw_delivery import (
+    BMW_MODEL_CONFIG_RELATIVE,
     DIGITAL_3D_CAR_REPO_ENV,
     DIGITAL_3D_CAR_REPO_IDC23_ENV,
     LANE_IDC23,
     LANE_IDCEVO,
     LANE_UNKNOWN,
     detect_lane,
+    find_bmw_registry_entry,
+    load_bmw_model_config_records,
     resolve_bmw_profile_id,
 )
 from sg_preflight.delivery_checklist import read_delivery_checklist
@@ -43,6 +46,16 @@ _TOOL_REGISTRATION_KEYS = {
 _PYTHON_REGISTRATION_KEYS = ("bmw_pipeline_python", "python", "python_executable")
 _DIGITAL_REPO_REGISTRATION_KEYS = ("digital_3d_car_repo",)
 _DIGITAL_REPO_IDC23_REGISTRATION_KEYS = ("digital_3d_car_repo_idc23", "digital_3d_car_repo_assets_idc23")
+_MODEL_ONBOARDING_CONTACT = "Confluence anchor: Adding a new model derivative to system assembly process."
+_DELIVERY_CHECKLIST_CONTACT = "Confluence anchor: 3D Cars Delivery Checklist, lines 67-69 and 100-102."
+_IDC23_CONTACT = "Confluence anchor: 3D Cars Delivery Checklist, lines 81-82."
+_BRAND_FOLDERS = {
+    "BMW": "BMW",
+    "MINI": "MINI",
+    "Alpina": "Alpina",
+    "MGmbH": "MGmbH",
+    "RollsRoyce": "RollsRoyce",
+}
 
 
 def _utc_now() -> str:
@@ -203,12 +216,12 @@ def _idc23_repo_check(workspace: Path | str | None = None) -> tuple[dict[str, st
             _check(
                 key="digital_3d_car_repo_idc23",
                 label=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} environment variable",
-                status="missing",
+                status="unavailable",
                 detail=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} is not set.",
                 remediation=(
                     "IDC_23 execution requires a separate assets/idc23 worktree. "
                     f"Run `git worktree add <path> assets/idc23` from BMW Git root, then set {DIGITAL_3D_CAR_REPO_IDC23_ENV} to that path. "
-                    "Confluence anchor: 3D Cars Delivery Checklist, lines 81-82."
+                    + _IDC23_CONTACT
                 ),
             ),
             None,
@@ -220,10 +233,10 @@ def _idc23_repo_check(workspace: Path | str | None = None) -> tuple[dict[str, st
             _check(
                 key="digital_3d_car_repo_idc23",
                 label=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} worktree",
-                status="missing",
+                status="unavailable",
                 detail="The configured IDC_23 worktree does not expose ci/scripts/test/main.py.",
                 path=root,
-                remediation="Point the IDC_23 path at a digital-3d-car-models worktree checked out on assets/idc23.",
+                remediation=f"Point the IDC_23 path at a digital-3d-car-models worktree checked out on assets/idc23. {_IDC23_CONTACT}",
             ),
             root,
         )
@@ -232,10 +245,10 @@ def _idc23_repo_check(workspace: Path | str | None = None) -> tuple[dict[str, st
             _check(
                 key="digital_3d_car_repo_idc23",
                 label=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} worktree",
-                status="missing",
+                status="unavailable",
                 detail="The configured IDC_23 worktree is missing cars/BMW/_Shared.",
                 path=shared,
-                remediation="Ensure cars/BMW/_Shared is checked out in the assets/idc23 worktree before running IDC_23 pipeline commands.",
+                remediation=f"Ensure cars/BMW/_Shared is checked out in the assets/idc23 worktree before running IDC_23 pipeline commands. {_IDC23_CONTACT}",
             ),
             root,
         )
@@ -397,6 +410,77 @@ def _disk_space_check(workspace: Path, min_free_bytes: int) -> dict[str, str]:
     )
 
 
+def _overall_preflight_status(checks: list[dict[str, str]]) -> str:
+    if all(check["status"] == "available" for check in checks):
+        return "available"
+    if any(check["status"] == "failed" for check in checks):
+        return "failed"
+    return "unavailable"
+
+
+def _unavailable_model_summary(profile_id: str, root: Path) -> str:
+    config_path = root / BMW_MODEL_CONFIG_RELATIVE
+    if not load_bmw_model_config_records(root):
+        return (
+            f"BMW registry source unavailable for {profile_id}: {config_path} could not be read. "
+            "Use the BMW Git source-of-truth checkout before running pipeline actions."
+        )
+    if find_bmw_registry_entry(profile_id, root) is None:
+        return (
+            f"Car {profile_id} is not onboarded in BMW Git models_build_config.yaml. "
+            f"Data-prep team operation. {_MODEL_ONBOARDING_CONTACT}"
+        )
+    return f"Lane could not be determined for profile {profile_id} from BMW models_build_config.yaml."
+
+
+def _registered_car_root(
+    *,
+    profile_id: str,
+    source_root: Path,
+    execution_root: Path,
+    resolved_bmw_profile_id: str,
+) -> tuple[str, Path]:
+    entry = find_bmw_registry_entry(profile_id, source_root)
+    brand = entry.brand if entry is not None else "BMW"
+    bmw_profile = entry.bmw_profile_id if entry is not None else resolved_bmw_profile_id
+    brand_folder = _BRAND_FOLDERS.get(brand, brand or "BMW")
+    return bmw_profile, execution_root / "cars" / brand_folder / bmw_profile
+
+
+def _requires_registered_car_folder(profile_id: str, source_root: Path) -> bool:
+    entry = find_bmw_registry_entry(profile_id, source_root)
+    return entry is None or entry.model_type != "retarget"
+
+
+def _missing_car_payload(
+    *,
+    clean_profile: str,
+    lane: str,
+    root: Path,
+    execution_root: Path,
+    bmw_profile: str,
+    car_root: Path,
+    action: str,
+) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "strategy": "none",
+        "command": [],
+        "cwd": str(execution_root),
+        "script_path": "",
+        "profile_id": clean_profile,
+        "bmw_profile_id": bmw_profile,
+        "lane": lane,
+        "source_bmw_root": str(root),
+        "execution_bmw_root": str(execution_root),
+        "summary": (
+            f"BMW Git car data for {clean_profile} is unavailable in the lane-correct checkout: {car_root}. "
+            f"Data-prep team operation before {action} can run. {_MODEL_ONBOARDING_CONTACT}"
+        ),
+        "remediation": "Use a BMW Git checkout/worktree that contains the registered car folder for this lane.",
+    }
+
+
 def check_delivery_workbook_generation_environment(
     *,
     profile_id: str,
@@ -429,7 +513,9 @@ def check_delivery_workbook_generation_environment(
             _check(
                 key="bmw_export_script",
                 label="BMW export script",
-                status="available" if command_payload["status"] == "available" else "missing",
+                status=str(command_payload.get("status", "unavailable"))
+                if command_payload["status"] != "available"
+                else "available",
                 detail=(
                     f"Using {command_payload['strategy']} for {command_payload.get('lane', lane)}."
                     if command_payload["status"] == "available"
@@ -441,6 +527,7 @@ def check_delivery_workbook_generation_environment(
         )
     can_run = all(check["status"] == "available" for check in checks)
     target_path = workspace_path / "Cars" / "size_analysis"
+    status = _overall_preflight_status(checks)
     return {
         "profile_id": clean_profile,
         "workspace": str(workspace_path),
@@ -448,7 +535,7 @@ def check_delivery_workbook_generation_environment(
         "lane": lane,
         "target_write_path": str(target_path),
         "estimated_size_bytes": min_free_bytes,
-        "status": "available" if can_run else "failed",
+        "status": status,
         "can_run": can_run,
         "checks": checks,
         "confirmation_message": (
@@ -471,7 +558,7 @@ def resolve_delivery_workbook_generation_command(
     python_payload = _python_command_payload(workspace)
     if python_payload["status"] != "available":
         return {
-            "status": "missing",
+            "status": "unavailable",
             "strategy": "none",
             "command": [],
             "cwd": str(root),
@@ -482,7 +569,7 @@ def resolve_delivery_workbook_generation_command(
     python_command = list(python_payload["command"])
     if lane == LANE_UNKNOWN:
         return {
-            "status": "missing",
+            "status": "unavailable",
             "strategy": "none",
             "command": [],
             "cwd": str(root),
@@ -490,17 +577,14 @@ def resolve_delivery_workbook_generation_command(
             "profile_id": clean_profile,
             "bmw_profile_id": "",
             "lane": LANE_UNKNOWN,
-            "summary": (
-                f"Lane could not be determined for profile {clean_profile}. "
-                "Confirm BMW Git checkout includes ci/scripts/common/models_build_config.yaml and the profile is registered."
-            ),
+            "summary": _unavailable_model_summary(clean_profile, root),
             "remediation": "Use the BMW Git source-of-truth checkout for lane detection before running export.",
         }
     if lane == LANE_IDC23:
         idc23_check, idc23_root = _idc23_repo_check(workspace)
         if idc23_root is None or idc23_check["status"] != "available":
             return {
-                "status": "missing",
+                "status": "unavailable",
                 "strategy": "none",
                 "command": [],
                 "cwd": str(root),
@@ -513,6 +597,22 @@ def resolve_delivery_workbook_generation_command(
             }
         legacy = idc23_root / "ci" / "scripts" / "test" / "main.py"
         bmw_profile = resolve_bmw_profile_id(clean_profile, idc23_root)
+        bmw_profile, car_root = _registered_car_root(
+            profile_id=clean_profile,
+            source_root=root,
+            execution_root=idc23_root,
+            resolved_bmw_profile_id=bmw_profile,
+        )
+        if _requires_registered_car_folder(clean_profile, root) and not car_root.is_dir():
+            return _missing_car_payload(
+                clean_profile=clean_profile,
+                lane=lane,
+                root=root,
+                execution_root=idc23_root,
+                bmw_profile=bmw_profile,
+                car_root=car_root,
+                action="export",
+            )
         return {
             "status": "available",
             "strategy": "idc23_test_main_export",
@@ -528,6 +628,22 @@ def resolve_delivery_workbook_generation_command(
     car_manager = root / "ci" / "scripts" / "car_manager.py"
     if lane == LANE_IDCEVO and car_manager.is_file():
         bmw_profile = resolve_bmw_profile_id(clean_profile, root)
+        bmw_profile, car_root = _registered_car_root(
+            profile_id=clean_profile,
+            source_root=root,
+            execution_root=root,
+            resolved_bmw_profile_id=bmw_profile,
+        )
+        if _requires_registered_car_folder(clean_profile, root) and not car_root.is_dir():
+            return _missing_car_payload(
+                clean_profile=clean_profile,
+                lane=lane,
+                root=root,
+                execution_root=root,
+                bmw_profile=bmw_profile,
+                car_root=car_root,
+                action="export",
+            )
         return {
             "status": "available",
             "strategy": "car_manager_export",
@@ -541,7 +657,7 @@ def resolve_delivery_workbook_generation_command(
             "execution_bmw_root": str(root),
         }
     return {
-        "status": "missing",
+        "status": "unavailable",
         "strategy": "none",
         "command": [],
         "cwd": str(root),
@@ -695,11 +811,14 @@ def _generation_result(
             status = "available"
             summary = str(checklist_payload.get("summary", "Delivery workbook generated and available."))
         elif status == "available":
-            status = "incomplete"
+            status = "unavailable"
+            checklist_summary = str(checklist_payload.get("summary", "")).strip()
             summary = (
-                "BMW pipeline exited 0, but the delivery workbook is still unavailable. "
-                f"{checklist_payload.get('summary', '')}".strip()
+                "BMW export completed, but the delivery workbook is not available yet. "
+                f"CI team operation. {_DELIVERY_CHECKLIST_CONTACT}"
             )
+            if checklist_summary:
+                summary = f"{summary} {checklist_summary}"
     elapsed_seconds = time.monotonic() - job.started_monotonic
     return {
         "profile_id": job.profile_id,

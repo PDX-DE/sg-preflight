@@ -70,6 +70,7 @@ class TestScreenshotCapture(unittest.TestCase):
             script = bmw_root / "ci" / "scripts" / "car_manager.py"
             write_text(script, "print('fixture')\n")
             _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
 
             payload = resolve_screenshot_capture_command(profile_id="G70", bmw_root=bmw_root)
 

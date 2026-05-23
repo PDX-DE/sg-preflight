@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -26,7 +27,20 @@ _BMW_PROFILE_OVERRIDES = {
     "NA6": "NA6_EVO",
     "NA8": "NA8_EVO",
 }
-_SCREENSHOT_BRANDS = ("BMW", "MINI")
+_BRAND_FOLDERS = {
+    "BMW": "BMW",
+    "MINI": "MINI",
+    "ALPINA": "Alpina",
+    "MGMBH": "MGmbH",
+    "ROLLSROYCE": "RollsRoyce",
+}
+_BRAND_PROFILE_PREFIXES = {
+    "MINI": "MINI",
+    "ALPINA": "ALPINA",
+    "MGMBH": "MGMBH",
+    "ROLLSROYCE": "ROLLSROYCE",
+}
+_SCREENSHOT_BRANDS = tuple(_BRAND_FOLDERS.values())
 
 
 @dataclass(frozen=True)
@@ -37,6 +51,32 @@ class BmwModelConfigRecord:
     hmi_interface_version: int | None = None
     additional_interface_version: int | None = None
     target: str = ""
+
+
+@dataclass(frozen=True)
+class BmwRegistryEntry:
+    profile_id: str
+    bmw_profile_id: str
+    lane: str
+    model_type: str
+    brand: str
+    interface_version: int | None = None
+    target: str = ""
+    active_build: bool = False
+    registry_source: str = "models_build_config.yaml"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile_id": self.profile_id,
+            "bmw_profile_id": self.bmw_profile_id,
+            "lane": self.lane,
+            "type": self.model_type,
+            "brand": self.brand,
+            "interface_version": self.interface_version,
+            "target": self.target,
+            "active_build": self.active_build,
+            "registry_source": self.registry_source,
+        }
 
 
 def _workspace_root(explicit_root: Path | None = None) -> Path:
@@ -83,6 +123,43 @@ def _int_scalar(value: str) -> int | None:
         return None
 
 
+def _brand_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _canonical_brand(value: str) -> str:
+    compact = _brand_key(value)
+    return {
+        "bmw": "BMW",
+        "mini": "MINI",
+        "alpina": "Alpina",
+        "mgmbh": "MGmbH",
+        "rollsroyce": "RollsRoyce",
+    }.get(compact, value.strip() or "BMW")
+
+
+def _brand_folder(value: str) -> str:
+    return _BRAND_FOLDERS.get(_canonical_brand(value).upper(), _canonical_brand(value))
+
+
+def _brand_profile_prefix(value: str) -> str:
+    return _BRAND_PROFILE_PREFIXES.get(_canonical_brand(value).upper(), "")
+
+
+def _strip_evo_suffix(value: str) -> str:
+    normalized = value.strip().upper()
+    return normalized[:-4] if normalized.endswith("_EVO") else normalized
+
+
+def _strip_known_brand_prefix(value: str) -> tuple[str, str]:
+    normalized = value.strip().upper()
+    for brand_key, prefix in _BRAND_PROFILE_PREFIXES.items():
+        token = f"{prefix}_"
+        if normalized.startswith(token):
+            return _canonical_brand(brand_key), normalized[len(token) :]
+    return "", normalized
+
+
 def _parse_models_build_config(text: str) -> tuple[BmwModelConfigRecord, ...]:
     records: list[BmwModelConfigRecord] = []
     current: dict[str, Any] | None = None
@@ -93,7 +170,7 @@ def _parse_models_build_config(text: str) -> tuple[BmwModelConfigRecord, ...]:
             records.append(
                 BmwModelConfigRecord(
                     name=str(current.get("name", "")).strip().upper(),
-                    brand=str(current.get("brand", "")).strip().upper(),
+                    brand=_canonical_brand(str(current.get("brand", "")).strip()),
                     model_type=str(current.get("type", "")).strip().casefold(),
                     hmi_interface_version=current.get("hmi_interface_version"),
                     additional_interface_version=current.get("additional_interface_version"),
@@ -158,43 +235,63 @@ def _lane_for_model(record: BmwModelConfigRecord) -> str:
     return LANE_IDC23
 
 
+def _matching_model_config_record(profile_id: str, repo_root: Path | str) -> BmwModelConfigRecord | None:
+    brand_hint, _base_profile = _strip_known_brand_prefix(profile_id)
+    records = load_bmw_model_config_records(repo_root)
+    for candidate in candidate_bmw_profile_ids(profile_id):
+        for record in records:
+            if record.name != candidate.upper():
+                continue
+            if brand_hint and _canonical_brand(record.brand) != brand_hint:
+                continue
+            return record
+    return None
+
+
 def detect_lane(profile_id: str, *, bmw_root: Path | str | None) -> str:
     if bmw_root is None:
         return LANE_UNKNOWN
-    records = _model_config_by_name(bmw_root)
-    if not records:
+    if not load_bmw_model_config_records(bmw_root):
         return LANE_UNKNOWN
-    for candidate in candidate_bmw_profile_ids(profile_id):
-        record = records.get(candidate.upper())
-        if record is not None:
-            return _lane_for_model(record)
-    return LANE_UNKNOWN
+    record = _matching_model_config_record(profile_id, bmw_root)
+    return _lane_for_model(record) if record is not None else LANE_UNKNOWN
 
 
 def resolve_svn_profile_id(profile_id: str) -> str:
-    normalized = profile_id.strip().upper()
-    return normalized[:-4] if normalized.endswith("_EVO") else normalized
+    _brand_hint, normalized = _strip_known_brand_prefix(profile_id)
+    return _strip_evo_suffix(normalized)
 
 
 def candidate_bmw_profile_ids(profile_id: str) -> tuple[str, ...]:
-    normalized = profile_id.strip().upper()
+    _brand_hint, normalized = _strip_known_brand_prefix(profile_id)
     if not normalized:
         return ()
     candidates: list[str] = []
-    for item in (
-        _BMW_PROFILE_OVERRIDES.get(normalized, ""),
-        normalized,
-        f"{normalized}_EVO",
-    ):
+    stripped = _strip_evo_suffix(normalized)
+    items = [normalized]
+    if normalized.endswith("_EVO"):
+        items.append(stripped)
+    else:
+        items.insert(0, _BMW_PROFILE_OVERRIDES.get(stripped, ""))
+        items.append(f"{stripped}_EVO")
+    for item in items:
         if item and item not in candidates:
             candidates.append(item)
     return tuple(candidates)
 
 
+def _brand_search_order(profile_id: str) -> tuple[str, ...]:
+    brand_hint, _base_profile = _strip_known_brand_prefix(profile_id)
+    if not brand_hint:
+        return _SCREENSHOT_BRANDS
+    preferred = _brand_folder(brand_hint)
+    return (preferred, *tuple(brand for brand in _SCREENSHOT_BRANDS if brand != preferred))
+
+
 def resolve_bmw_profile_id(profile_id: str, repo_root: Path | None = None) -> str:
     repo = (repo_root or Path()).resolve() if repo_root else Path()
     if repo:
-        for brand in _SCREENSHOT_BRANDS:
+        for brand in _brand_search_order(profile_id):
             brand_root = repo / "cars" / brand
             for candidate in candidate_bmw_profile_ids(profile_id):
                 if (brand_root / candidate).exists():
@@ -205,17 +302,83 @@ def resolve_bmw_profile_id(profile_id: str, repo_root: Path | None = None) -> st
 
 def _resolve_car_root(repo_root: Path, profile_id: str) -> tuple[str, str, Path, Path]:
     candidates = candidate_bmw_profile_ids(profile_id)
-    for brand in _SCREENSHOT_BRANDS:
+    for brand in _brand_search_order(profile_id):
         brand_root = repo_root / "cars" / brand
         for candidate in candidates:
             car_root = brand_root / candidate
             if car_root.exists():
                 return brand, candidate, brand_root, car_root
 
+    record = _matching_model_config_record(profile_id, repo_root)
+    if record is not None and record.model_type == "retarget" and record.target:
+        brand = _brand_folder(record.brand)
+        brand_root = repo_root / "cars" / brand
+        target_root = brand_root / record.target
+        if target_root.exists():
+            return brand, record.name, brand_root, target_root
+
     fallback_brand = "BMW"
     matched = candidates[0] if candidates else profile_id.strip()
     brand_root = repo_root / "cars" / fallback_brand
     return fallback_brand, matched, brand_root, brand_root / matched
+
+
+def _registry_base_profile_id(record: BmwModelConfigRecord) -> str:
+    base = _strip_evo_suffix(record.name)
+    prefix = _brand_profile_prefix(record.brand)
+    return f"{prefix}_{base}" if prefix else base
+
+
+def _registry_exact_profile_id(record: BmwModelConfigRecord) -> str:
+    prefix = _brand_profile_prefix(record.brand)
+    return f"{prefix}_{record.name}" if prefix else record.name
+
+
+def _registry_entry_from_record(
+    record: BmwModelConfigRecord,
+    *,
+    base_counts: Counter[str],
+) -> BmwRegistryEntry:
+    base_profile_id = _registry_base_profile_id(record)
+    profile_id = base_profile_id
+    if base_counts[base_profile_id] > 1 and record.name.endswith("_EVO"):
+        profile_id = _registry_exact_profile_id(record)
+    interface_version = record.hmi_interface_version
+    if interface_version is None:
+        interface_version = record.additional_interface_version
+    model_type = record.model_type or "unknown"
+    return BmwRegistryEntry(
+        profile_id=profile_id,
+        bmw_profile_id=record.name,
+        lane=_lane_for_model(record),
+        model_type=model_type,
+        brand=_canonical_brand(record.brand),
+        interface_version=interface_version,
+        target=record.target,
+        active_build=model_type == "build",
+    )
+
+
+def load_bmw_registry(repo_root: Path | str) -> tuple[BmwRegistryEntry, ...]:
+    records = load_bmw_model_config_records(repo_root)
+    base_counts = Counter(_registry_base_profile_id(record) for record in records)
+    return tuple(_registry_entry_from_record(record, base_counts=base_counts) for record in records)
+
+
+def find_bmw_registry_entry(profile_id: str, repo_root: Path | str) -> BmwRegistryEntry | None:
+    requested = profile_id.strip().casefold()
+    if not requested:
+        return None
+    for entry in load_bmw_registry(repo_root):
+        aliases = {
+            entry.profile_id.casefold(),
+            entry.bmw_profile_id.casefold(),
+            resolve_svn_profile_id(entry.profile_id).casefold(),
+            resolve_svn_profile_id(entry.bmw_profile_id).casefold(),
+        }
+        if requested in aliases:
+            return entry
+    return None
 
 
 def _image_count(root: Path) -> int:
@@ -408,7 +571,7 @@ def _surface_status(surface: BmwScreenshotSurface) -> str:
         return "no_expected_baselines"
     if surface.car_root:
         return "no_export_tests"
-    return "not_available"
+    return "unavailable"
 
 
 def read_bmw_screenshot_state(

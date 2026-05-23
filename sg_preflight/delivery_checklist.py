@@ -565,7 +565,10 @@ def read_delivery_checklist(
             profile,
             workbook,
             "unavailable",
-            f"delivery-checklist data unavailable: workbook not found for {profile or 'profile'}: {workbook}",
+            (
+                f"delivery-checklist data unavailable: workbook not found for {profile or 'profile'}: {workbook}. "
+                "BMW export may be complete, but workbook generation is a CI team operation."
+            ),
             brand=brand,
         )
 

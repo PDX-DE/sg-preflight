@@ -15,6 +15,7 @@ from sg_preflight.bmw_delivery import (
     LANE_UNKNOWN,
     candidate_bmw_profile_ids,
     detect_lane,
+    find_bmw_registry_entry,
     read_bmw_screenshot_state,
     resolve_bmw_profile_id,
 )
@@ -27,6 +28,11 @@ from sg_preflight.delivery_workbook_generation import (
     _elapsed_label,
     _idc23_repo_check,
     _existing_parent,
+    _missing_car_payload,
+    _overall_preflight_status,
+    _registered_car_root,
+    _requires_registered_car_folder,
+    _unavailable_model_summary,
     _python_check,
     _python_command_payload,
     _size_label,
@@ -44,7 +50,7 @@ SCREENSHOT_CAPTURE_TIMEOUT_SECONDS = 900
 SCREENSHOT_CAPTURE_MIN_FREE_BYTES = 100 * 1024 * 1024
 SCREENSHOT_CAPTURE_TYPICAL_RANGE_LABEL = "typical 2-10 min"
 SCREENSHOT_CAPTURE_FILE_ACTIVITY_LIMIT = 24
-_SCREENSHOT_BRANDS = ("BMW", "MINI")
+_SCREENSHOT_BRANDS = ("BMW", "MINI", "Alpina", "MGmbH", "RollsRoyce")
 
 
 def _capture_tests_root(bmw_root: Path, profile_id: str) -> Path:
@@ -55,6 +61,12 @@ def _capture_tests_root(bmw_root: Path, profile_id: str) -> Path:
             car_root = brand_root / candidate
             if car_root.exists():
                 return car_root / "export" / "tests"
+    entry = find_bmw_registry_entry(profile_id, bmw_root)
+    if entry is not None and entry.model_type == "retarget" and entry.target:
+        for brand in _SCREENSHOT_BRANDS:
+            target_root = bmw_root / "cars" / brand / entry.target
+            if target_root.exists():
+                return target_root / "export" / "tests"
     fallback_profile = candidates[0] if candidates else _clean_profile(profile_id)
     return bmw_root / "cars" / "BMW" / fallback_profile / "export" / "tests"
 
@@ -109,7 +121,7 @@ def resolve_screenshot_capture_command(
     python_payload = _python_command_payload(workspace)
     if python_payload["status"] != "available":
         return {
-            "status": "missing",
+            "status": "unavailable",
             "strategy": "none",
             "command": [],
             "cwd": str(root),
@@ -120,7 +132,7 @@ def resolve_screenshot_capture_command(
     python_command = list(python_payload["command"])
     if lane == LANE_UNKNOWN:
         return {
-            "status": "missing",
+            "status": "unavailable",
             "strategy": "none",
             "command": [],
             "cwd": str(root),
@@ -128,17 +140,14 @@ def resolve_screenshot_capture_command(
             "profile_id": clean_profile,
             "bmw_profile_id": "",
             "lane": LANE_UNKNOWN,
-            "summary": (
-                f"Lane could not be determined for profile {clean_profile}. "
-                "Confirm BMW Git checkout includes ci/scripts/common/models_build_config.yaml and the profile is registered."
-            ),
+            "summary": _unavailable_model_summary(clean_profile, root),
             "remediation": "Use the BMW Git source-of-truth checkout for lane detection before running screenshot capture.",
         }
     if lane == LANE_IDC23:
         idc23_check, idc23_root = _idc23_repo_check(workspace)
         if idc23_root is None or idc23_check["status"] != "available":
             return {
-                "status": "missing",
+                "status": "unavailable",
                 "strategy": "none",
                 "command": [],
                 "cwd": str(root),
@@ -151,6 +160,22 @@ def resolve_screenshot_capture_command(
             }
         legacy = idc23_root / "ci" / "scripts" / "test" / "main.py"
         bmw_profile = resolve_bmw_profile_id(clean_profile, idc23_root)
+        bmw_profile, car_root = _registered_car_root(
+            profile_id=clean_profile,
+            source_root=root,
+            execution_root=idc23_root,
+            resolved_bmw_profile_id=bmw_profile,
+        )
+        if _requires_registered_car_folder(clean_profile, root) and not car_root.is_dir():
+            return _missing_car_payload(
+                clean_profile=clean_profile,
+                lane=lane,
+                root=root,
+                execution_root=idc23_root,
+                bmw_profile=bmw_profile,
+                car_root=car_root,
+                action="screenshot capture",
+            )
         return {
             "status": "available",
             "strategy": "idc23_test_main_screenshots",
@@ -166,6 +191,22 @@ def resolve_screenshot_capture_command(
     car_manager = root / "ci" / "scripts" / "car_manager.py"
     if lane == LANE_IDCEVO and car_manager.is_file():
         bmw_profile = resolve_bmw_profile_id(clean_profile, root)
+        bmw_profile, car_root = _registered_car_root(
+            profile_id=clean_profile,
+            source_root=root,
+            execution_root=root,
+            resolved_bmw_profile_id=bmw_profile,
+        )
+        if _requires_registered_car_folder(clean_profile, root) and not car_root.is_dir():
+            return _missing_car_payload(
+                clean_profile=clean_profile,
+                lane=lane,
+                root=root,
+                execution_root=root,
+                bmw_profile=bmw_profile,
+                car_root=car_root,
+                action="screenshot capture",
+            )
         return {
             "status": "available",
             "strategy": "car_manager_screenshots",
@@ -179,7 +220,7 @@ def resolve_screenshot_capture_command(
             "execution_bmw_root": str(root),
         }
     return {
-        "status": "missing",
+        "status": "unavailable",
         "strategy": "none",
         "command": [],
         "cwd": str(root),
@@ -233,7 +274,7 @@ def check_screenshot_capture_environment(
                 _check(
                     key="bmw_screenshot_script",
                     label="BMW screenshot script",
-                    status="missing",
+                    status=str(command_payload.get("status", "unavailable")),
                     detail=str(command_payload.get("summary", "No supported screenshot script was found.")),
                     remediation=str(
                         command_payload.get(
@@ -248,7 +289,7 @@ def check_screenshot_capture_environment(
             _check(
                 key="bmw_screenshot_script",
                 label="BMW screenshot script",
-                status="missing",
+                status="unavailable",
                 detail="BMW Git checkout was not resolved, so screenshot script discovery did not run.",
             )
         )
@@ -259,6 +300,7 @@ def check_screenshot_capture_environment(
     )
     checks.append(_screenshot_disk_space_check(execution_root, clean_profile, min_free_bytes))
     can_run = all(check["status"] == "available" for check in checks)
+    status = _overall_preflight_status(checks)
     target_path = _capture_tests_root(execution_root, clean_profile) if execution_root is not None else Path()
     return {
         "profile_id": clean_profile,
@@ -268,7 +310,7 @@ def check_screenshot_capture_environment(
         "lane": lane,
         "target_write_path": str(target_path),
         "estimated_size_bytes": min_free_bytes,
-        "status": "available" if can_run else "failed",
+        "status": status,
         "can_run": can_run,
         "checks": checks,
         "confirmation_message": (

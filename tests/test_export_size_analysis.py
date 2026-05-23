@@ -64,18 +64,19 @@ class TestExportSizeAnalysis(unittest.TestCase):
         self.assertIn("2 variant", payload["summary"])
         self.assertIn("read-only", payload["note"].lower())
 
-    def test_read_export_size_analysis_returns_no_workbook_when_missing(self) -> None:
+    def test_read_export_size_analysis_returns_unavailable_when_workbook_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
 
             payload = read_export_size_analysis(profile_id="G65", workspace=root, latest=True)
 
-        self.assertEqual(payload["status"], "no_workbook")
+        self.assertEqual(payload["status"], "unavailable")
         self.assertFalse(payload["data_available"])
         self.assertEqual(payload["profile_id"], "G65")
         self.assertIn("Cars", payload["workbook_path"])
         self.assertIn("size_analysis", payload["workbook_path"])
         self.assertIn("workbook not found", payload["summary"].lower())
+        self.assertIn("CI team operation", payload["summary"])
         self.assertEqual(payload["variants"], [])
 
     def test_read_export_size_analysis_returns_no_overview_sheet_when_overview_missing(self) -> None:

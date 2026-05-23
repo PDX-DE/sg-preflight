@@ -8,6 +8,7 @@ from sg_preflight.bmw_delivery import (
     detect_lane,
     discover_bmw_models_repo,
     inspect_bmw_screenshot_surface,
+    load_bmw_registry,
     read_bmw_screenshot_state,
     resolve_svn_profile_id,
 )
@@ -16,6 +17,71 @@ from tests.operator_helpers import write_text
 
 
 class TestBmwDelivery(unittest.TestCase):
+    def _write_registry_snapshot(self, root: Path) -> None:
+        records: list[str] = []
+        for name in ["F70", *[f"B{index:02d}" for index in range(16)]]:
+            records.append(
+                f"""
+- name: {name}
+  brand: BMW
+  type: build
+  hmi:
+    interface_version: 12
+""".strip()
+            )
+        for name in ["G50_EVO", *[f"E{index:02d}_EVO" for index in range(8)]]:
+            records.append(
+                f"""
+- name: {name}
+  brand: BMW
+  type: build
+  hmi:
+    interface_version: 24
+""".strip()
+            )
+        for name in ["U25", "F66"]:
+            records.append(
+                f"""
+- name: {name}
+  brand: MINI
+  type: build
+  hmi:
+    interface_version: 12
+""".strip()
+            )
+        for name in ["G58_EVO", *[f"R{index:02d}_EVO" for index in range(47)]]:
+            records.append(
+                f"""
+- name: {name}
+  brand: BMW
+  type: retarget
+  target: PINT
+""".strip()
+            )
+        write_text(root / "ci" / "scripts" / "common" / "models_build_config.yaml", "\n\n".join(records) + "\n")
+
+    def test_load_bmw_registry_parses_76_model_snapshot_with_lanes_and_brands(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._write_registry_snapshot(root)
+
+            entries = load_bmw_registry(root)
+
+        self.assertEqual(len(entries), 76)
+        self.assertEqual(len({entry.profile_id for entry in entries}), 76)
+        by_id = {entry.profile_id: entry for entry in entries}
+        self.assertEqual(by_id["F70"].bmw_profile_id, "F70")
+        self.assertEqual(by_id["F70"].lane, "idc_23")
+        self.assertTrue(by_id["F70"].active_build)
+        self.assertEqual(by_id["G50"].bmw_profile_id, "G50_EVO")
+        self.assertEqual(by_id["G50"].lane, "idc_evo")
+        self.assertEqual(by_id["G58"].bmw_profile_id, "G58_EVO")
+        self.assertEqual(by_id["G58"].model_type, "retarget")
+        self.assertEqual(by_id["G58"].target, "PINT")
+        self.assertFalse(by_id["G58"].active_build)
+        self.assertEqual(by_id["MINI_U25"].brand, "MINI")
+        self.assertEqual(by_id["MINI_U25"].bmw_profile_id, "U25")
+
     def test_detect_lane_reads_bmw_model_config_source_of_truth(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -151,6 +217,34 @@ class TestBmwDelivery(unittest.TestCase):
             self.assertTrue(any("MINI export/tests surface" in note for note in payload["notes"]))
             self.assertFalse(payload["is_approval"])
             self.assertNotIn("approved", payload["note"].lower())
+
+    def test_read_bmw_screenshot_state_uses_retarget_target_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "digital-3d-car-models"
+            write_text(
+                repo_root / "ci" / "scripts" / "common" / "models_build_config.yaml",
+                """
+- name: G58_EVO
+  brand: BMW
+  type: retarget
+  target: PINT
+""".strip()
+                + "\n",
+            )
+            tests_root = repo_root / "cars" / "BMW" / "PINT" / "export" / "tests"
+            write_text(tests_root / "expected" / "front.png", "fake\n")
+            write_text(tests_root / "actuals" / "front.png", "fake\n")
+            write_text(tests_root / "diff" / "front.png", "fake\n")
+
+            payload = read_bmw_screenshot_state("G58", workspace=root, bmw_root=repo_root)
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["matched_profile_id"], "G58_EVO")
+        self.assertTrue(payload["car_root"].endswith(str(Path("cars") / "BMW" / "PINT")))
+        self.assertEqual(payload["expected_count"], 1)
+        self.assertEqual(payload["actual_count"], 1)
+        self.assertEqual(payload["diff_count"], 1)
 
     def test_read_bmw_screenshot_state_discovers_latest_sg_prespectives_tests_folder(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -79,7 +79,7 @@ class TestDependencyOnboarding(unittest.TestCase):
             bmw_root = root / "digital-3d-car-models"
             for path in (gui, headless, blender):
                 write_text(path, "fixture\n")
-            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
             write_text(
                 bmw_root / "ci" / "scripts" / "common" / "models_build_config.yaml",
