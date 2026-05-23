@@ -142,9 +142,11 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("wait_for_dashboard_page", text)
         self.assertIn("page.get_by_role", text)
         self.assertIn("page.get_by_text", text)
+        self.assertIn('locator(".sgfx-panel-title").filter(has_text="Dependency setup").first', text)
         self.assertIn("wait_for_load_state", text)
         self.assertIn('action.get("requires_confirmation") is True', text)
         self.assertNotIn('action.get("confirmation_required")', text)
+        self.assertNotIn('get_by_text("Dependency setup", exact=False)', text)
         self.assertNotIn("wait_for_timeout", text)
 
     def test_native_shell_font_discovery_ignores_archives(self) -> None:

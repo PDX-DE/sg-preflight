@@ -99,7 +99,7 @@ def capture_clean_pages(base_url: str, evidence_dir: Path, workspace: Path, prof
                 }
             )
             if page_id == "delivery-checklist":
-                page.get_by_text("Dependency setup", exact=False).wait_for(timeout=30000)
+                page.locator(".sgfx-panel-title").filter(has_text="Dependency setup").first.wait_for(timeout=30000)
                 if "Local-only setup" in body_now:
                     page.get_by_text("Local-only setup", exact=False).wait_for(timeout=30000)
                     setup_visible = "Dependency setup" in body_now
