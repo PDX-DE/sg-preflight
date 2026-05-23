@@ -223,6 +223,15 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("sgfx-hotkey-popup", source)
         self.assertIn("sgfx-thinking-tooltip", source)
 
+    def test_dashboard_source_accepts_profile_query_for_walkthrough_harness(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('def _index(profile: str = "")', source)
+        self.assertIn('query_profile = str(profile or "").strip()', source)
+        self.assertIn("build_dashboard_snapshot(query_profile, workspace, bmw_root=bmw_root, ui_mode=ui_mode)", source)
+
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"

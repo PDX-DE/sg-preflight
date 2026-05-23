@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Evidence,
     [Parameter(Mandatory=$true)][string]$Exe,
     [Parameter(Mandatory=$true)][string]$Workspace,
-    [string]$Profile = "G70"
+    [string]$Profile = "G70",
+    [string[]]$Profiles = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -113,35 +114,108 @@ function Save-SgfxWindowScreenshot {
     }
 }
 
-New-Item -ItemType Directory -Force -Path $Evidence | Out-Null
-$process = $null
-try {
-    $args = @("dashboard", "run", "--profile", $Profile, "--workspace", $Workspace, "--ui-mode", "grafiks")
-    $process = Start-Process -FilePath $Exe -ArgumentList $args -WorkingDirectory (Split-Path $Exe) -PassThru
-    $title = Wait-SgfxWindowTitle -Process $process -Text "SGFX" -TimeoutSeconds 150
-    $controls = Wait-SgfxSetupControlsReady -ProcessId $process.Id -TimeoutSeconds 90
-    $postDialogReady = Wait-SgfxSetupControlsAfterDialogClose -ProcessId $process.Id -TimeoutSeconds 30
-    $screenshotPath = Join-Path $Evidence "grafiks-setup-uia.png"
-    Save-SgfxWindowScreenshot -Process $process -Path $screenshotPath
-    $manifest = [ordered]@{
-        recorded_at = [DateTimeOffset]::Now.ToString("yyyy-MM-dd HH:mm:ss zzz", [System.Globalization.CultureInfo]::InvariantCulture)
-        profile = $Profile
-        workspace = $Workspace
-        window_title = $title
-        process_id = $process.Id
-        screenshot = $screenshotPath
-        dependency_setup_visible = $true
-        run_setup_visible = $null -ne $controls.RunSetup
-        cancel_setup_visible = $null -ne $controls.CancelSetup
-        run_setup_enabled = $controls.RunSetupEnabled
-        cancel_setup_enabled = $controls.CancelSetupEnabled
-        post_dialog_reattach_ready = $null -ne $postDialogReady.Panel
+function Get-SgfxProbeProfiles {
+    param(
+        [string]$Primary,
+        [string[]]$Requested
+    )
+
+    $phaseFMinimum = @("G65", "G70", "NA8", "F70", "U10")
+    $ordered = New-Object System.Collections.Generic.List[string]
+    $rawProfiles = New-Object System.Collections.Generic.List[string]
+    if ($Requested -and $Requested.Count -gt 0) {
+        foreach ($item in $Requested) {
+            foreach ($part in ($item -split ",")) {
+                $rawProfiles.Add($part)
+            }
+        }
+    } elseif ($Primary) {
+        $rawProfiles.Add($Primary)
     }
-    $path = Join-Path $Evidence "grafiks-setup-uia-probe.json"
-    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $path -Encoding UTF8
-    Write-Output $path
-} finally {
-    if ($process) {
-        Stop-SgfxProcessTree -RootId $process.Id
+    $combined = @()
+    $combined += $rawProfiles.ToArray()
+    $combined += $phaseFMinimum
+    foreach ($item in $combined) {
+        $clean = ($item -as [string]).Trim().ToUpperInvariant()
+        if ($clean -and -not $ordered.Contains($clean)) {
+            $ordered.Add($clean)
+        }
+    }
+    return $ordered.ToArray()
+}
+
+function Invoke-SgfxGrafiksProfileProbe {
+    param(
+        [Parameter(Mandatory=$true)][string]$CurrentProfile,
+        [Parameter(Mandatory=$true)][string]$EvidenceRoot,
+        [Parameter(Mandatory=$true)][string]$ExePath,
+        [Parameter(Mandatory=$true)][string]$WorkspaceRoot,
+        [bool]$MirrorRoot = $false
+    )
+
+    $profileEvidence = Join-Path (Join-Path $EvidenceRoot "profiles") $CurrentProfile
+    New-Item -ItemType Directory -Force -Path $profileEvidence | Out-Null
+    $process = $null
+    try {
+        $args = @("dashboard", "run", "--profile", $CurrentProfile, "--workspace", $WorkspaceRoot, "--ui-mode", "grafiks")
+        $process = Start-Process -FilePath $ExePath -ArgumentList $args -WorkingDirectory (Split-Path $ExePath) -PassThru
+        $title = Wait-SgfxWindowTitle -Process $process -Text "SGFX" -TimeoutSeconds 150
+        $controls = Wait-SgfxSetupControlsReady -ProcessId $process.Id -TimeoutSeconds 90
+        $postDialogReady = Wait-SgfxSetupControlsAfterDialogClose -ProcessId $process.Id -TimeoutSeconds 30
+        $screenshotPath = Join-Path $profileEvidence "grafiks-setup-uia.png"
+        Save-SgfxWindowScreenshot -Process $process -Path $screenshotPath
+        $manifest = [ordered]@{
+            recorded_at = [DateTimeOffset]::Now.ToString("yyyy-MM-dd HH:mm:ss zzz", [System.Globalization.CultureInfo]::InvariantCulture)
+            profile = $CurrentProfile
+            workspace = $WorkspaceRoot
+            window_title = $title
+            process_id = $process.Id
+            screenshot = $screenshotPath
+            dependency_setup_visible = $true
+            run_setup_visible = $null -ne $controls.RunSetup
+            cancel_setup_visible = $null -ne $controls.CancelSetup
+            run_setup_enabled = $controls.RunSetupEnabled
+            cancel_setup_enabled = $controls.CancelSetupEnabled
+            post_dialog_reattach_ready = $null -ne $postDialogReady.Panel
+        }
+        $profileManifestPath = Join-Path $profileEvidence "grafiks-setup-uia-probe.json"
+        $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $profileManifestPath -Encoding UTF8
+        if ($MirrorRoot) {
+            Copy-Item -LiteralPath $screenshotPath -Destination (Join-Path $EvidenceRoot "grafiks-setup-uia.png") -Force
+            $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceRoot "grafiks-setup-uia-probe.json") -Encoding UTF8
+        }
+        return $manifest
+    } finally {
+        if ($process) {
+            Stop-SgfxProcessTree -RootId $process.Id
+        }
     }
 }
+
+New-Item -ItemType Directory -Force -Path $Evidence | Out-Null
+$profileList = @(Get-SgfxProbeProfiles -Primary $Profile -Requested $Profiles)
+$results = New-Object System.Collections.Generic.List[object]
+for ($index = 0; $index -lt $profileList.Count; $index++) {
+    $currentProfile = $profileList[$index]
+    $results.Add((Invoke-SgfxGrafiksProfileProbe -CurrentProfile $currentProfile -EvidenceRoot $Evidence -ExePath $Exe -WorkspaceRoot $Workspace -MirrorRoot ($index -eq 0)))
+}
+
+$minimumProfiles = @("G65", "G70", "NA8", "F70", "U10")
+$buggyProfiles = @("G70", "NA8")
+$aggregate = [ordered]@{
+    recorded_at = [DateTimeOffset]::Now.ToString("yyyy-MM-dd HH:mm:ss zzz", [System.Globalization.CultureInfo]::InvariantCulture)
+    workspace = $Workspace
+    profiles = $profileList
+    minimum_profiles = $minimumProfiles
+    results = $results.ToArray()
+    assertions = [ordered]@{
+        minimum_profile_set_covered = @($minimumProfiles | Where-Object { $profileList -contains $_ }).Count -eq $minimumProfiles.Count
+        buggy_profile_covered = @($buggyProfiles | Where-Object { $profileList -contains $_ }).Count -gt 0
+        dependency_setup_visible_all_profiles = @($results | Where-Object { -not $_.dependency_setup_visible }).Count -eq 0
+        setup_controls_visible_all_profiles = @($results | Where-Object { -not ($_.run_setup_visible -and $_.cancel_setup_visible) }).Count -eq 0
+        post_dialog_reattach_ready_all_profiles = @($results | Where-Object { -not $_.post_dialog_reattach_ready }).Count -eq 0
+    }
+}
+$aggregatePath = Join-Path $Evidence "grafiks-setup-uia-probes.json"
+$aggregate | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $aggregatePath -Encoding UTF8
+Write-Output $aggregatePath

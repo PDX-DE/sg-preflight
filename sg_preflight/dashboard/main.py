@@ -2617,8 +2617,13 @@ def _render_dashboard(
     base_snapshot = build_dashboard_snapshot(initial_profile_id, workspace, bmw_root=bmw_root, ui_mode=ui_mode)
 
     @ui.page("/")
-    def _index() -> None:
-        snapshot = dict(base_snapshot)
+    def _index(profile: str = "") -> None:
+        query_profile = str(profile or "").strip()
+        snapshot = (
+            build_dashboard_snapshot(query_profile, workspace, bmw_root=bmw_root, ui_mode=ui_mode)
+            if query_profile
+            else dict(base_snapshot)
+        )
         snapshot["theme"] = _clean_theme(ui_mode or load_dashboard_preference(workspace))
         theme = str(snapshot.get("theme", "clean"))
         ui.dark_mode().enable()
