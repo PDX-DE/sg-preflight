@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from typing import Any
+import urllib.request
 import zipfile
 
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
@@ -20,6 +21,8 @@ DIGITAL_3D_CAR_REPO_ENV = "Digital-3D-Car-Repo"
 ONBOARDING_STATE_FILENAME = "dependency_onboarding.json"
 RACO_BASELINE_VERSION = "2.3.1"
 BLENDER_BASELINE_VERSION = "4.1.1"
+BLENDER_INSTALLER_URL = "https://download.blender.org/release/Blender4.1/blender-4.1.1-windows-x64.msi"
+BLENDER_INSTALLER_FILENAME = "blender-4.1.1-windows-x64.msi"
 BMW_MODELS_REPO_URL = "https://cc-github.bmwgroup.net/apinext/digital-3d-car-models.git"
 DEPENDENCY_SETUP_TIMEOUT_SECONDS = 900
 DEPENDENCY_SETUP_STDOUT_TAIL_LINES = 20
@@ -511,9 +514,12 @@ def _blender_status(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
             "Records blender.exe in operator_state/dependency_onboarding.json.",
         ],
         confluence_anchor=BLENDER_CONFLUENCE_ANCHOR,
-        command_preview=f'run visible Blender {BLENDER_BASELINE_VERSION} installer, then register "blender.exe"',
+        command_preview=f'download {BLENDER_INSTALLER_URL}, run visible installer, then register "blender.exe"',
         requires_admin=admin_status == "missing",
-        operator_inputs=["Confirm IT/admin approval when the installer requests it."],
+        operator_inputs=[
+            "Optional: select a local installer or blender.exe; leave blank to download the pinned official installer.",
+            "Confirm IT/admin approval when the installer requests it.",
+        ],
     )
     if candidate is None:
         return _status_item(
@@ -748,6 +754,29 @@ def _safe_extract_zip(source: Path, destination: Path) -> None:
         archive.extractall(destination)
 
 
+def _download_blender_installer(workspace: Path, *, stream_output: bool) -> Path:
+    download_root = operator_state_root(workspace) / "dependency_setup" / "downloads"
+    destination = download_root / BLENDER_INSTALLER_FILENAME
+    if destination.is_file():
+        if stream_output:
+            print(f"Using cached Blender installer: {destination}", flush=True)
+        return destination.resolve()
+    ensure_parent(destination)
+    temp_path = destination.with_name(f".{destination.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    if stream_output:
+        print(f"Downloading Blender installer from {BLENDER_INSTALLER_URL}", flush=True)
+    try:
+        urllib.request.urlretrieve(BLENDER_INSTALLER_URL, str(temp_path))
+        temp_path.replace(destination)
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+    return destination.resolve()
+
+
 def _resolve_raco_install_root(source: Path, target_root: Path) -> Path:
     if source.is_file():
         return target_root / source.stem
@@ -846,13 +875,19 @@ def _run_blender_setup(
 ) -> dict[str, Any]:
     del action, target_path
     raw_source = str(source_path or "").strip()
-    if not raw_source:
-        return _setup_result(
-            status="incomplete",
-            action_id=action_id,
-            summary="Select the official Blender installer or installed blender.exe before running Blender setup.",
-        )
-    source = Path(raw_source).expanduser().resolve()
+    if raw_source:
+        source = Path(raw_source).expanduser().resolve()
+    else:
+        try:
+            source = _download_blender_installer(workspace, stream_output=stream_output)
+        except Exception as exc:  # noqa: BLE001
+            return _setup_result(
+                status="failed",
+                action_id=action_id,
+                summary=f"Blender installer download failed: {exc}",
+                path=operator_state_root(workspace) / "dependency_setup" / "downloads" / BLENDER_INSTALLER_FILENAME,
+                download_url=BLENDER_INSTALLER_URL,
+            )
     if not source.is_file():
         return _setup_result(
             status="missing",
@@ -942,6 +977,7 @@ def _run_blender_setup(
         summary="Recorded blender.exe for future pre-flight checks.",
         path=blender,
         exit_code=completed.returncode,
+        download_url=BLENDER_INSTALLER_URL if not raw_source else "",
     )
 
 

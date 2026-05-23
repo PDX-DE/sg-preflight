@@ -307,6 +307,38 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertEqual(command[:2], ["msiexec", "/i"])
         self.assertIn("creationflags", run_mock.call_args.kwargs)
 
+    def test_blender_setup_downloads_official_installer_when_source_is_blank(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installed = root / "Program Files" / "Blender Foundation" / "Blender 4.1" / "blender.exe"
+            write_text(installed, "blender\n")
+            completed = subprocess.CompletedProcess(args=["msiexec"], returncode=0, stdout="", stderr="")
+
+            def _download(_url: str, filename: str) -> tuple[str, object | None]:
+                write_text(Path(filename), "installer\n")
+                return filename, None
+
+            with mock.patch.object(onboarding.sys, "platform", "win32"):
+                with mock.patch.object(onboarding.urllib.request, "urlretrieve", side_effect=_download) as download:
+                    with mock.patch.object(onboarding.subprocess, "run", return_value=completed) as run_mock:
+                        with mock.patch.object(onboarding, "_blender_path_candidates", return_value=[installed]):
+                            result = onboarding.run_dependency_setup_action(
+                                action_id="setup-blender-411",
+                                workspace=root,
+                                operator_confirmed=True,
+                            )
+
+        self.assertEqual(result["status"], "recorded")
+        self.assertEqual(result["path"], str(installed.resolve()))
+        self.assertEqual(result["download_url"], onboarding.BLENDER_INSTALLER_URL)
+        download.assert_called_once()
+        self.assertEqual(download.call_args.args[0], onboarding.BLENDER_INSTALLER_URL)
+        command = run_mock.call_args.args[0]
+        self.assertEqual(command[:2], ["msiexec", "/i"])
+        self.assertIn(onboarding.BLENDER_INSTALLER_FILENAME, command[2])
+
     def test_missing_bmw_checkout_clone_action_runs_git_lfs_and_records_env(self) -> None:
         from sg_preflight import dependency_onboarding as onboarding
 

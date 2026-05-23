@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -305,6 +306,19 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Source path", source)
         self.assertIn("Target path", source)
         self.assertIn("update:model-value", source)
+        self.assertIn("leave optional installer sources blank", source)
+
+    def test_dashboard_source_renders_build_review_package_progress_panel(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("start_dashboard_review_package_build", source)
+        self.assertIn("poll_dashboard_review_package_build", source)
+        self.assertIn("cancel_dashboard_review_package_build", source)
+        self.assertIn("Live package output", source)
+        self.assertIn("Build review package running.", source)
+        self.assertIn("typical 1-5 min", source)
 
     def test_dashboard_source_uses_parentless_poll_timer_for_long_running_jobs(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1016,3 +1030,66 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertEqual(result["outcome"], "failed")
         self.assertEqual(result["exit_code"], 1)
         self.assertIn("ticket-review failed", result["stderr_tail"])
+
+    def test_start_build_review_package_reports_progress_tail(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        class FakeProcess:
+            returncode = None
+
+            def poll(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            fake_process = FakeProcess()
+            with mock.patch.object(dashboard_main.subprocess, "Popen", return_value=fake_process) as popen_mock:
+                job = dashboard_main.start_dashboard_review_package_build(
+                    workspace=workspace,
+                    profile_id="G70",
+                    ticket_id="IDCEVODEV-1005738",
+                    operator_confirmed=True,
+                )
+            write_text(job.stdout_path, "\n".join(f"line {index:02d}" for index in range(25)))
+            result = dashboard_main.poll_dashboard_review_package_build(job)
+
+        self.assertEqual(result["status"], "running")
+        self.assertFalse(result["completed"])
+        self.assertEqual(result["typical_range"], "typical 1-5 min")
+        self.assertEqual(result["stdout_tail_lines"][0], "line 05")
+        self.assertEqual(result["stdout_tail_lines"][-1], "line 24")
+        command = popen_mock.call_args.args[0]
+        self.assertIn("ticket-review", command)
+        self.assertIn("IDCEVODEV-1005738", command)
+        self.assertEqual(popen_mock.call_args.kwargs["stdin"], subprocess.DEVNULL)
+
+    def test_poll_build_review_package_persists_ticket_on_success(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        class FakeProcess:
+            returncode = 0
+
+            def poll(self) -> int:
+                return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch.object(dashboard_main.subprocess, "Popen", return_value=FakeProcess()):
+                job = dashboard_main.start_dashboard_review_package_build(
+                    workspace=workspace,
+                    profile_id="G70",
+                    ticket_id="IDCEVODEV-1005738",
+                    operator_confirmed=True,
+                )
+            write_text(workspace / "out" / "IDCEVODEV-1005738-review-package" / "manifest.md", "fixture\n")
+            result = dashboard_main.poll_dashboard_review_package_build(job)
+            active_ticket = json.loads(
+                (workspace / "operator_state" / "active_ticket.json").read_text(encoding="utf-8")
+            )
+            activity_log = (workspace / "operator_state" / "activity_log.jsonl").read_text(encoding="utf-8")
+
+        self.assertTrue(result["completed"])
+        self.assertEqual(result["outcome"], "recorded")
+        self.assertEqual(active_ticket["active_ticket_id"], "IDCEVODEV-1005738")
+        self.assertIn("IDCEVODEV-1005738", activity_log)
+        self.assertTrue(any("manifest.md" in item["relative_path"] for item in result["file_activity"]))

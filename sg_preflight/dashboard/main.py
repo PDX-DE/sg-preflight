@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import os
@@ -9,6 +10,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from time import monotonic
 from typing import Any, Callable
 
@@ -49,6 +51,7 @@ from sg_preflight.screenshot_capture import (
     poll_screenshot_capture,
     start_screenshot_capture,
 )
+from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
 
 
@@ -498,7 +501,9 @@ def _write_active_ticket_state(workspace: Path | str, ticket_id: str, *, source:
         }
     )
     ensure_parent(path)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    temp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_path.replace(path)
     return payload
 
 
@@ -1104,6 +1109,317 @@ def record_manual_review_dashboard_step(
 
 
 _BUILD_PACKAGE_TIMEOUT_SECONDS = 600
+_BUILD_PACKAGE_STDOUT_TAIL_LINES = 20
+_BUILD_PACKAGE_STDOUT_TAIL_BYTES = 2000
+_BUILD_PACKAGE_FILE_ACTIVITY_LIMIT = 20
+_BUILD_PACKAGE_TYPICAL_RANGE_LABEL = "typical 1-5 min"
+
+
+@dataclass
+class ReviewPackageBuildJob:
+    ticket_id: str
+    profile_id: str
+    workspace: Path
+    process: subprocess.Popen[bytes]
+    command: list[str]
+    stdout_path: Path
+    stderr_path: Path
+    started_monotonic: float
+    started_wall_time: float
+    timeout_seconds: int
+    completed: bool = False
+    result_payload: dict[str, Any] | None = None
+
+
+def _validate_review_package_inputs(workspace: Path | str, profile_id: str, ticket_id: str) -> tuple[Path, str, str]:
+    clean_ticket = ticket_id.strip()
+    if not clean_ticket:
+        raise ValueError("Ticket ID required to build a review package.")
+    clean_profile = profile_id.strip()
+    if not clean_profile:
+        raise ValueError("Profile ID required to build a review package.")
+    return Path(workspace).resolve(), clean_profile, clean_ticket
+
+
+def _dashboard_review_package_command(*, workspace: Path, profile_id: str, ticket_id: str) -> list[str]:
+    return [
+        sys.executable,
+        "-B",
+        "-m",
+        "sg_preflight",
+        "ticket-review",
+        ticket_id,
+        "--workspace",
+        str(workspace),
+        "--profile-ids",
+        profile_id,
+        "--json",
+    ]
+
+
+def _build_tail_text(path: Path, limit: int = _BUILD_PACKAGE_STDOUT_TAIL_BYTES) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    return data[-limit:].decode("utf-8", errors="replace")
+
+
+def _build_tail_lines(path: Path, limit: int = _BUILD_PACKAGE_STDOUT_TAIL_LINES) -> list[str]:
+    text = _build_tail_text(path)
+    if not text:
+        return []
+    return text.splitlines()[-limit:]
+
+
+def _build_combined_tail_lines(stdout_path: Path, stderr_path: Path) -> list[str]:
+    lines = list(_build_tail_lines(stdout_path))
+    lines.extend(f"stderr: {line}" for line in _build_tail_lines(stderr_path))
+    return lines[-_BUILD_PACKAGE_STDOUT_TAIL_LINES:]
+
+
+def _size_label(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    kib = size_bytes / 1024
+    if kib < 1024:
+        return f"{kib:.0f} KB"
+    mib = kib / 1024
+    return f"{mib:.1f} MB"
+
+
+def _build_package_file_activity(
+    workspace: Path,
+    started_wall_time: float,
+    limit: int = _BUILD_PACKAGE_FILE_ACTIVITY_LIMIT,
+) -> list[dict[str, Any]]:
+    roots = [workspace / "out", workspace / "operator_state" / "review_package_build"]
+    entries: list[tuple[float, dict[str, Any]]] = []
+    threshold = started_wall_time - 1.0
+    seen: set[str] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        candidates = [root]
+        if root.is_dir():
+            try:
+                candidates.extend(path for path in root.rglob("*") if path.is_file())
+            except OSError:
+                continue
+        for path in candidates:
+            normalized = str(path).casefold()
+            if normalized in seen or not path.exists():
+                continue
+            seen.add(normalized)
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            last_activity = max(stat.st_mtime, stat.st_ctime)
+            if last_activity < threshold:
+                continue
+            event = "created" if stat.st_ctime >= threshold else "modified"
+            size_label = _size_label(int(stat.st_size)) if path.is_file() else "folder"
+            try:
+                relative = str(path.relative_to(workspace))
+            except ValueError:
+                relative = path.name
+            entries.append(
+                (
+                    last_activity,
+                    {
+                        "event": event,
+                        "path": str(path),
+                        "relative_path": relative,
+                        "size_bytes": int(stat.st_size),
+                        "size_label": size_label,
+                        "summary": f"{event.title()} `{relative}` ({size_label})",
+                    },
+                )
+            )
+    return [item for _timestamp, item in sorted(entries, key=lambda pair: pair[0], reverse=True)[:limit]]
+
+
+def _elapsed_label(elapsed_seconds: float) -> str:
+    elapsed = max(0, int(elapsed_seconds))
+    minutes, seconds = divmod(elapsed, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def _review_build_progress_payload(job: ReviewPackageBuildJob, *, elapsed_seconds: float) -> dict[str, Any]:
+    return {
+        "ticket_id": job.ticket_id,
+        "profile_id": job.profile_id,
+        "workspace": str(job.workspace),
+        "status": "running",
+        "outcome": "running",
+        "completed": False,
+        "exit_code": None,
+        "command": list(job.command),
+        "timeout_seconds": job.timeout_seconds,
+        "elapsed_seconds": int(max(0, elapsed_seconds)),
+        "elapsed_label": _elapsed_label(elapsed_seconds),
+        "typical_range": _BUILD_PACKAGE_TYPICAL_RANGE_LABEL,
+        "timed_out": False,
+        "canceled": False,
+        "summary": "Build review package running.",
+        "stdout_tail": _build_tail_text(job.stdout_path),
+        "stdout_tail_lines": _build_combined_tail_lines(job.stdout_path, job.stderr_path),
+        "stderr_tail": _build_tail_text(job.stderr_path),
+        "stdout_path": str(job.stdout_path),
+        "stderr_path": str(job.stderr_path),
+        "file_activity": _build_package_file_activity(job.workspace, job.started_wall_time),
+        "recorded_by_tool": True,
+        "is_approval": False,
+    }
+
+
+def _complete_review_package_build(
+    job: ReviewPackageBuildJob,
+    *,
+    exit_code: int,
+    timed_out: bool = False,
+    canceled: bool = False,
+) -> dict[str, Any]:
+    elapsed_seconds = time.monotonic() - job.started_monotonic
+    outcome = "recorded" if exit_code == 0 and not timed_out and not canceled else "failed"
+    if exit_code == 0 and not timed_out and not canceled:
+        _write_active_ticket_state(job.workspace, job.ticket_id, source="build-review-package")
+    append_activity_entry(
+        job.workspace,
+        verb="ran",
+        surface="daily-digest",
+        profile=job.profile_id,
+        outcome="ok" if outcome == "recorded" else "error",
+        note=f"Build review package for {job.ticket_id}",
+    )
+    if timed_out:
+        summary = f"Build review package timed out after {job.timeout_seconds} seconds."
+    elif canceled:
+        summary = "Build review package canceled by operator."
+    elif exit_code == 0:
+        summary = "Build review package completed. Refresh to reload digest evidence."
+    else:
+        summary = f"Build review package failed with exit code {exit_code}."
+    payload = {
+        "ticket_id": job.ticket_id,
+        "profile_id": job.profile_id,
+        "workspace": str(job.workspace),
+        "status": outcome,
+        "outcome": outcome,
+        "completed": True,
+        "exit_code": exit_code,
+        "command": list(job.command),
+        "timeout_seconds": job.timeout_seconds,
+        "elapsed_seconds": int(max(0, elapsed_seconds)),
+        "elapsed_label": _elapsed_label(elapsed_seconds),
+        "typical_range": _BUILD_PACKAGE_TYPICAL_RANGE_LABEL,
+        "timed_out": timed_out,
+        "canceled": canceled,
+        "summary": summary,
+        "stdout_tail": _build_tail_text(job.stdout_path),
+        "stdout_tail_lines": _build_combined_tail_lines(job.stdout_path, job.stderr_path),
+        "stderr_tail": _build_tail_text(job.stderr_path),
+        "stdout_path": str(job.stdout_path),
+        "stderr_path": str(job.stderr_path),
+        "file_activity": _build_package_file_activity(job.workspace, job.started_wall_time),
+        "recorded_by_tool": True,
+        "is_approval": False,
+    }
+    job.completed = True
+    job.result_payload = payload
+    return payload
+
+
+def start_dashboard_review_package_build(
+    *,
+    workspace: Path | str,
+    profile_id: str,
+    ticket_id: str,
+    operator_confirmed: bool,
+    timeout_seconds: int = _BUILD_PACKAGE_TIMEOUT_SECONDS,
+) -> ReviewPackageBuildJob:
+    if not operator_confirmed:
+        raise ValueError("Operator confirmation is required before building a review package.")
+    workspace_path, clean_profile, clean_ticket = _validate_review_package_inputs(workspace, profile_id, ticket_id)
+    command = _dashboard_review_package_command(
+        workspace=workspace_path,
+        profile_id=clean_profile,
+        ticket_id=clean_ticket,
+    )
+    log_root = workspace_path / "operator_state" / "review_package_build"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stdout_path = log_root / f"{clean_ticket}-{clean_profile}-{stamp}.stdout.log"
+    stderr_path = log_root / f"{clean_ticket}-{clean_profile}-{stamp}.stderr.log"
+    ensure_parent(stdout_path)
+    started_wall_time = time.time()
+    started_monotonic = time.monotonic()
+    with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
+        process = subprocess.Popen(
+            command,
+            cwd=workspace_path,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            **hidden_subprocess_kwargs(),
+        )
+    return ReviewPackageBuildJob(
+        ticket_id=clean_ticket,
+        profile_id=clean_profile,
+        workspace=workspace_path,
+        process=process,
+        command=command,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        started_monotonic=started_monotonic,
+        started_wall_time=started_wall_time,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def poll_dashboard_review_package_build(job: ReviewPackageBuildJob) -> dict[str, Any] | None:
+    if job.completed:
+        return job.result_payload or _complete_review_package_build(
+            job,
+            exit_code=job.process.returncode or 0,
+        )
+    exit_code = job.process.poll()
+    elapsed = time.monotonic() - job.started_monotonic
+    if exit_code is None and elapsed < job.timeout_seconds:
+        return _review_build_progress_payload(job, elapsed_seconds=elapsed)
+    if exit_code is None:
+        job.process.terminate()
+        try:
+            job.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            job.process.kill()
+            job.process.wait(timeout=5)
+        return _complete_review_package_build(
+            job,
+            exit_code=job.process.returncode if job.process.returncode is not None else -1,
+            timed_out=True,
+        )
+    return _complete_review_package_build(job, exit_code=exit_code)
+
+
+def cancel_dashboard_review_package_build(job: ReviewPackageBuildJob) -> dict[str, Any]:
+    if job.process.poll() is None:
+        job.process.terminate()
+        try:
+            job.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            job.process.kill()
+            job.process.wait(timeout=5)
+    return _complete_review_package_build(
+        job,
+        exit_code=job.process.returncode if job.process.returncode is not None else -1,
+        canceled=True,
+    )
 
 
 def build_dashboard_review_package(
@@ -1120,21 +1436,11 @@ def build_dashboard_review_package(
     if not clean_profile:
         raise ValueError("Profile ID required to build a review package.")
     workspace_path = Path(workspace).resolve()
-    from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
-
-    command = [
-        sys.executable,
-        "-B",
-        "-m",
-        "sg_preflight",
-        "ticket-review",
-        clean_ticket,
-        "--workspace",
-        str(workspace_path),
-        "--profile-ids",
-        clean_profile,
-        "--json",
-    ]
+    command = _dashboard_review_package_command(
+        workspace=workspace_path,
+        profile_id=clean_profile,
+        ticket_id=clean_ticket,
+    )
     completed = subprocess.run(
         command,
         capture_output=True,
@@ -1424,7 +1730,8 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
                         ).classes("sgfx-muted")
 
                     action_id = str(action.get("id", ""))
-                    source_required = action_id in {"setup-raco-from-shared-tools", "setup-blender-411"}
+                    source_supported = action_id in {"setup-raco-from-shared-tools", "setup-blender-411"}
+                    source_required = action_id == "setup-raco-from-shared-tools"
                     target_required = action_id in {
                         "setup-raco-from-shared-tools",
                         "clone-digital-3d-car-repo",
@@ -1432,14 +1739,14 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
                     }
                     source_input = None
                     target_input = None
-                    if source_required:
+                    if source_supported:
                         source_input = _attach_tooltip(
                             ui,
                             ui.input(
                                 "Source path",
                                 value=str(action.get("source_path", "")),
                             ).classes("full-width"),
-                            "Select the operator-approved local source for this setup action.",
+                            "Select an operator-approved local source, or leave optional installer sources blank.",
                         )
                     if target_required:
                         target_input = _attach_tooltip(
@@ -2031,35 +2338,162 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             status_label = ui.label("Local-only: this runs the read-only `ticket-review` CLI in the background.").classes(
                 "sgfx-muted"
             )
+            progress = ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+            progress.visible = False
+            elapsed_label = ui.label(f"Running 00:00 / {_BUILD_PACKAGE_TYPICAL_RANGE_LABEL}").classes("sgfx-muted")
+            elapsed_label.visible = False
+            live_output = (
+                ui.textarea(label="Live package output", value="No output recorded yet.")
+                .props("readonly outlined")
+                .classes("full-width sgfx-live-output")
+            )
+            live_output.visible = False
+            file_activity_label = ui.label("File activity").classes("sgfx-panel-tagline")
+            file_activity_label.visible = False
+            file_activity_host = ui.column().classes("sgfx-file-activity full-width")
+            file_activity_host.visible = False
+            job_state: dict[str, Any] = {"job": None}
+            poll_timer_ref: dict[str, Any] = {"timer": None}
 
-            def _build(ticket_input=ticket_input, status_label=status_label) -> None:
+            def _stop_build_poll_timer() -> None:
+                _cancel_background_poll_timer(poll_timer_ref.get("timer"))
+                poll_timer_ref["timer"] = None
+
+            def _show_build_progress() -> None:
+                elapsed_label.visible = True
+                live_output.visible = True
+                file_activity_label.visible = True
+                file_activity_host.visible = True
+
+            def _reset_build_progress() -> None:
+                elapsed_label.text = f"Running 00:00 / {_BUILD_PACKAGE_TYPICAL_RANGE_LABEL}"
+                live_output.value = "No output recorded yet."
+                file_activity_host.clear()
+                with file_activity_host:
+                    ui.label("No file changes recorded yet.").classes("sgfx-muted")
+
+            def _update_build_progress(result: dict[str, Any]) -> None:
+                elapsed = str(result.get("elapsed_label", "00:00"))
+                typical = str(result.get("typical_range", _BUILD_PACKAGE_TYPICAL_RANGE_LABEL))
+                elapsed_label.text = f"Running {elapsed} / {typical}"
+                stdout_lines = [str(line) for line in result.get("stdout_tail_lines", []) if str(line).strip()]
+                live_output.value = "\n".join(stdout_lines) if stdout_lines else "No output recorded yet."
+                file_activity_host.clear()
+                file_activity = [item for item in result.get("file_activity", []) if isinstance(item, dict)]
+                with file_activity_host:
+                    if file_activity:
+                        for item in file_activity:
+                            ui.label(str(item.get("summary", ""))).classes("sgfx-summary")
+                    else:
+                        ui.label("No file changes recorded yet.").classes("sgfx-muted")
+
+            def _cancel_build() -> None:
+                job = job_state.get("job")
+                if job is None:
+                    return
+                result = cancel_dashboard_review_package_build(job)
+                progress.visible = False
+                _show_build_progress()
+                _update_build_progress(result)
+                status_label.text = str(result.get("summary", "Build review package canceled."))
+                _stop_build_poll_timer()
+                cancel_button.disable()
+                ui.notify("Build review package canceled.")
+
+            cancel_button = _attach_tooltip(
+                ui,
+                ui.button("Cancel build", on_click=_cancel_build),
+                "Stop the local review-package build worker.",
+            )
+            cancel_button.disable()
+
+            def _poll_build() -> None:
+                try:
+                    job = job_state.get("job")
+                    if job is None:
+                        _stop_build_poll_timer()
+                        return
+                    result = poll_dashboard_review_package_build(job)
+                    if result is None:
+                        return
+                    _show_build_progress()
+                    _update_build_progress(result)
+                    if not result.get("completed", True):
+                        status_label.text = str(result.get("summary", "Build review package running."))
+                        return
+                    _stop_build_poll_timer()
+                    progress.visible = False
+                    cancel_button.disable()
+                    outcome = str(result.get("outcome", "unknown"))
+                    exit_code = result.get("exit_code", "?")
+                    status_label.text = (
+                        f"Build {outcome} (exit {exit_code}) for {result.get('ticket_id', '')}. "
+                        "Refresh to reload digest evidence."
+                    )
+                    ui.notify(f"Build review package {outcome}.")
+                except RuntimeError as exc:
+                    if not _parent_slot_deleted(exc):
+                        raise
+                    _stop_build_poll_timer()
+
+            def _start_build_poll_timer() -> None:
+                _stop_build_poll_timer()
+                poll_timer_ref["timer"] = _start_background_poll_timer(1.0, _poll_build)
+
+            with ui.dialog() as confirm_dialog, ui.card():
+                ui.label("Build review package").classes("sgfx-panel-title")
+                ui.label(
+                    "This builds a local evidence package from current workspace data; nothing is posted externally."
+                ).classes("sgfx-summary")
+                ui.label("Manual review remains required. Decision: not approval — evidence only.").classes(
+                    "sgfx-muted"
+                )
+
+                def _build(ticket_input=ticket_input, status_label=status_label) -> None:
+                    ticket_value = str(ticket_input.value or "").strip()
+                    if not ticket_value:
+                        ui.notify("Enter a ticket ID before building a review package.")
+                        return
+                    try:
+                        job_state["job"] = start_dashboard_review_package_build(
+                            workspace=workspace,
+                            profile_id=str(snapshot["profile_id"]),
+                            ticket_id=ticket_value,
+                            operator_confirmed=True,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        status_label.text = f"Build failed to start: {exc}"
+                        ui.notify("Build review package failed to start.")
+                        confirm_dialog.close()
+                        return
+                    status_label.text = f"Build review package running for {ticket_value}..."
+                    progress.visible = True
+                    _show_build_progress()
+                    _reset_build_progress()
+                    cancel_button.enable()
+                    _start_build_poll_timer()
+                    confirm_dialog.close()
+
+                _attach_tooltip(
+                    ui,
+                    ui.button("Continue", on_click=_build).props("color=primary"),
+                    "Start the local review-package build after this confirmation.",
+                )
+                ui.button("Close", on_click=confirm_dialog.close)
+
+            def _open_build_dialog(ticket_input=ticket_input) -> None:
                 ticket_value = str(ticket_input.value or "").strip()
                 if not ticket_value:
                     ui.notify("Enter a ticket ID before building a review package.")
                     return
-                status_label.text = f"Building review package for {ticket_value}..."
-                try:
-                    result = build_dashboard_review_package(
-                        workspace=workspace,
-                        profile_id=str(snapshot["profile_id"]),
-                        ticket_id=ticket_value,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    status_label.text = f"Build failed: {exc}"
-                    ui.notify("Build review package failed.")
-                    return
-                outcome = result.get("outcome", "unknown")
-                exit_code = result.get("exit_code", "?")
-                status_label.text = (
-                    f"Build {outcome} (exit {exit_code}) for {ticket_value}. Refresh to reload digest evidence."
-                )
-                ui.notify(f"Build review package {outcome}.")
+                confirm_dialog.open()
 
             _attach_tooltip(
                 ui,
-                ui.button(str(action.get("label", DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL)), on_click=_build).props(
-                    "color=primary"
-                ),
+                ui.button(
+                    str(action.get("label", DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL)),
+                    on_click=_open_build_dialog,
+                ).props("color=primary"),
                 "Build a local review package; nothing is posted externally.",
             )
 
