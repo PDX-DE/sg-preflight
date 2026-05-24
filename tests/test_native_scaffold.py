@@ -140,6 +140,7 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("Get-SgfxProcessWindowElement", text)
         self.assertIn("Wait-SgfxSetupControlsAfterDialogClose", probe_text)
         self.assertIn("grafiks", probe_text)
+        self.assertIn('"Seriengrafik: Project Quality-Hero"', probe_text)
         self.assertIn("[string[]]$Profiles", probe_text)
         self.assertIn("Get-SgfxProbeProfiles", probe_text)
         self.assertIn('"G65", "G70", "NA8", "F70", "U10"', probe_text)

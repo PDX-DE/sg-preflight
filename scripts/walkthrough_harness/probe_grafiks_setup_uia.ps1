@@ -159,7 +159,7 @@ function Invoke-SgfxGrafiksProfileProbe {
     try {
         $args = @("dashboard", "run", "--profile", $CurrentProfile, "--workspace", $WorkspaceRoot, "--ui-mode", "grafiks")
         $process = Start-Process -FilePath $ExePath -ArgumentList $args -WorkingDirectory (Split-Path $ExePath) -PassThru
-        $title = Wait-SgfxWindowTitle -Process $process -Text "SGFX" -TimeoutSeconds 150
+        $title = Wait-SgfxWindowTitle -Process $process -Text "Seriengrafik: Project Quality-Hero" -TimeoutSeconds 150
         $controls = Wait-SgfxSetupControlsReady -ProcessId $process.Id -TimeoutSeconds 90
         $postDialogReady = Wait-SgfxSetupControlsAfterDialogClose -ProcessId $process.Id -TimeoutSeconds 30
         $screenshotPath = Join-Path $profileEvidence "grafiks-setup-uia.png"
