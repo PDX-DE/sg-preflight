@@ -44,7 +44,9 @@ function Copy-Tree {
     $item = Get-Item -LiteralPath $Source
     if ($item.PSIsContainer) {
         New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-        $robocopyArgs = @($Source, $Destination, "/E", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP", "/XD", ".svn", ".git")
+        $excludedDirs = @(".svn", ".git", "operator_state")
+        $excludedFiles = @("jira_pat.json", "*credentials*.json", "*pat*.json", "*token*.json")
+        $robocopyArgs = @($Source, $Destination, "/E", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP") + @("/XD") + $excludedDirs + @("/XF") + $excludedFiles
         robocopy @robocopyArgs | Out-Null
         if ($LASTEXITCODE -ge 8) {
             throw "robocopy failed while copying '$Source' to '$Destination' (exit $LASTEXITCODE)."

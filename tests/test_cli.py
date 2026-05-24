@@ -481,6 +481,115 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Jira post failed", stderr.getvalue())
         self.assertIn("base URL", stderr.getvalue())
 
+    def test_jira_status_cli_reports_operator_local_loader_state(self) -> None:
+        with mock.patch(
+            "sg_preflight.cli.jira_status",
+            return_value={
+                "status": "available",
+                "connection_status": "available",
+                "ticket_status": "available",
+                "credential": {"pat_loaded": True, "pat_length": 29, "pat_fingerprint": "****real"},
+                "is_approval": False,
+            },
+        ) as status_mock:
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(["jira", "status", "--ticket", "IDCEVODEV-1009244", "--format", "json"])
+
+        self.assertEqual(result, 0)
+        status_mock.assert_called_once_with(ticket="IDCEVODEV-1009244", api_version="2")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertNotIn("test-pat-placeholder-not-real", stdout.getvalue())
+
+    def test_jira_post_comment_cli_uses_auto_confirm_gate(self) -> None:
+        with mock.patch(
+            "sg_preflight.cli.post_jira_comment_action",
+            return_value={
+                "status": "skipped",
+                "ticket": "IDCEVODEV-1009244",
+                "action": "add-comment",
+                "dry_run": True,
+                "confirm_required": True,
+                "is_approval": False,
+            },
+        ) as post_mock:
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "jira",
+                        "post-comment",
+                        "--ticket",
+                        "IDCEVODEV-1009244",
+                        "--body",
+                        "Status update",
+                        "--format",
+                        "json",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "skipped")
+        post_mock.assert_called_once()
+        self.assertFalse(post_mock.call_args.kwargs["auto_confirm"])
+
+    def test_jira_register_cli_writes_redacted_operator_local_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pat_file = root / "pat.txt"
+            pat_file.write_text("test-pat-placeholder-not-real\n", encoding="utf-8")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "jira",
+                        "register",
+                        "--jira-url",
+                        "https://jira.example/",
+                        "--pat-file",
+                        str(pat_file),
+                        "--state-dir",
+                        str(root / "state"),
+                        "--format",
+                        "json",
+                    ]
+                )
+            credential_path = root / "state" / "jira_pat.json"
+            saved = json.loads(credential_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(saved["jira_url"], "https://jira.example")
+        self.assertEqual(saved["pat"], "test-pat-placeholder-not-real")
+        self.assertNotIn("test-pat-placeholder-not-real", stdout.getvalue())
+
+    def test_jira_update_issue_cli_parses_fields_json(self) -> None:
+        with mock.patch(
+            "sg_preflight.cli.update_jira_issue_action",
+            return_value={"status": "skipped", "ticket": "IDCEVODEV-1009244", "action": "update-issue"},
+        ) as update_mock:
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "jira",
+                        "update-issue",
+                        "--ticket",
+                        "IDCEVODEV-1009244",
+                        "--fields",
+                        '{"summary":"Updated summary"}',
+                        "--format",
+                        "json",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["action"], "update-issue")
+        update_mock.assert_called_once()
+        self.assertEqual(update_mock.call_args.args[1], {"summary": "Updated summary"})
+
     def test_list_profiles_includes_live_registry(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "list-profiles", "--json"],

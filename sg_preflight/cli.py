@@ -58,11 +58,19 @@ from sg_preflight.jira_client import (
     DEFAULT_BASE_URL_ENV,
     DEFAULT_TOKEN_ENV,
     JIRA_POSTING_BANNER,
+    ConfigError,
     JiraPostError,
+    attach_jira_file_action,
+    jira_status,
     load_jira_comment_source,
     post_jira_comment,
+    post_jira_comment_action,
     render_jira_post_markdown,
     render_jira_post_text,
+    render_jira_action_markdown,
+    render_jira_action_text,
+    update_jira_issue_action,
+    write_jira_credentials,
 )
 from sg_preflight.manual_review import (
     VALID_VERDICTS,
@@ -819,6 +827,41 @@ def build_parser() -> argparse.ArgumentParser:
         description=JIRA_POSTING_BANNER,
     )
     jira_sub = jira.add_subparsers(dest="jira_command", required=True)
+    jira_register = jira_sub.add_parser("register", help="Store operator-local Jira URL and PAT")
+    jira_register.add_argument("--jira-url", default="", help="Jira base URL")
+    jira_register.add_argument("--pat-file", help="Read the PAT from this local text file")
+    jira_register.add_argument("--state-dir", help="Credential directory override; defaults to the operator profile")
+    jira_register.add_argument("--force", action="store_true", help="Replace an existing credential file")
+    _add_render_options(jira_register, formats=("text", "json", "markdown"))
+
+    jira_status_parser = jira_sub.add_parser("status", help="Verify operator-local Jira credentials and connection")
+    jira_status_parser.add_argument("--ticket", default="", help="Optional Jira ticket key to verify with a GET")
+    jira_status_parser.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
+    _add_render_options(jira_status_parser, formats=("text", "json", "markdown"))
+
+    jira_post_comment = jira_sub.add_parser("post-comment", help="Preview or post one Jira comment")
+    jira_post_comment.add_argument("--ticket", required=True, help="Jira ticket key such as IDCEVODEV-1009244")
+    jira_post_source = jira_post_comment.add_mutually_exclusive_group(required=True)
+    jira_post_source.add_argument("--body", default="", help="Inline Jira comment body")
+    jira_post_source.add_argument("--body-file", help="Read Jira comment body from this UTF-8 text file")
+    jira_post_comment.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
+    jira_post_comment.add_argument("--auto-confirm", action="store_true", help="Post after the preview contract has been satisfied")
+    _add_render_options(jira_post_comment, formats=("text", "json", "markdown"))
+
+    jira_update_issue = jira_sub.add_parser("update-issue", help="Preview or update Jira issue fields")
+    jira_update_issue.add_argument("--ticket", required=True, help="Jira ticket key such as IDCEVODEV-1009244")
+    jira_update_issue.add_argument("--fields", required=True, help="JSON object of issue fields or {'fields': ...}")
+    jira_update_issue.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
+    jira_update_issue.add_argument("--auto-confirm", action="store_true", help="Update after the preview contract has been satisfied")
+    _add_render_options(jira_update_issue, formats=("text", "json", "markdown"))
+
+    jira_attach_file = jira_sub.add_parser("attach-file", help="Preview or attach one file to Jira")
+    jira_attach_file.add_argument("--ticket", required=True, help="Jira ticket key such as IDCEVODEV-1009244")
+    jira_attach_file.add_argument("--file", required=True, help="Local file to attach")
+    jira_attach_file.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
+    jira_attach_file.add_argument("--auto-confirm", action="store_true", help="Attach after the preview contract has been satisfied")
+    _add_render_options(jira_attach_file, formats=("text", "json", "markdown"))
+
     jira_post = jira_sub.add_parser("post", help="Dry-run or confirmation-gated Jira comment post")
     jira_post.add_argument("--workspace", help="Workspace root override for local wording files")
     jira_post.add_argument("--ticket", required=True, help="Jira ticket key such as IDCEVODEV-977874")
@@ -1607,7 +1650,57 @@ def _main_impl(argv: list[str] | None = None) -> int:
     if args.command == "jira":
         jira_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
         try:
-            if args.jira_command == "post":
+            if args.jira_command == "register":
+                import getpass
+
+                jira_url = str(args.jira_url or "").strip() or input("Jira URL: ").strip()
+                if args.pat_file:
+                    pat = Path(args.pat_file).expanduser().read_text(encoding="utf-8").strip()
+                else:
+                    pat = getpass.getpass("Jira PAT: ").strip()
+                payload = write_jira_credentials(
+                    jira_url=jira_url,
+                    pat=pat,
+                    state_dir=Path(args.state_dir).expanduser() if args.state_dir else None,
+                    overwrite=args.force,
+                )
+            elif args.jira_command == "status":
+                payload = jira_status(
+                    ticket=args.ticket,
+                    api_version=args.api_version,
+                )
+            elif args.jira_command == "post-comment":
+                source = load_jira_comment_source(
+                    body=args.body,
+                    body_file=Path(args.body_file).resolve() if args.body_file else None,
+                )
+                payload = post_jira_comment_action(
+                    args.ticket,
+                    source.body,
+                    api_version=args.api_version,
+                    auto_confirm=args.auto_confirm,
+                    source=source.source,
+                    section=source.section,
+                )
+            elif args.jira_command == "update-issue":
+                try:
+                    fields = json.loads(args.fields)
+                except json.JSONDecodeError as exc:
+                    raise JiraPostError(f"--fields must be valid JSON: {exc}") from exc
+                payload = update_jira_issue_action(
+                    args.ticket,
+                    fields,
+                    api_version=args.api_version,
+                    auto_confirm=args.auto_confirm,
+                )
+            elif args.jira_command == "attach-file":
+                payload = attach_jira_file_action(
+                    args.ticket,
+                    Path(args.file),
+                    api_version=args.api_version,
+                    auto_confirm=args.auto_confirm,
+                )
+            elif args.jira_command == "post":
                 if args.dry_run and args.confirm:
                     parser.error("--dry-run and --confirm cannot be combined")
                     return 1
@@ -1632,16 +1725,19 @@ def _main_impl(argv: list[str] | None = None) -> int:
             else:
                 parser.error(f"Unhandled jira command: {args.jira_command}")
                 return 1
-        except JiraPostError as exc:
-            print(_console_safe(f"Jira post failed: {exc}"), file=sys.stderr)
+        except (ConfigError, JiraPostError) as exc:
+            label = "Jira post failed" if args.jira_command == "post" else "Jira REST failed"
+            print(_console_safe(f"{label}: {exc}"), file=sys.stderr)
             return 1
         output_format = _resolve_render_format(args, parser)
         if output_format == "json":
             _emit_json(payload, args)
         elif output_format == "markdown":
-            _emit_text(render_jira_post_markdown(payload), args)
+            renderer = render_jira_post_markdown if args.jira_command == "post" else render_jira_action_markdown
+            _emit_text(renderer(payload), args)
         else:
-            _emit_text(render_jira_post_text(payload), args)
+            renderer = render_jira_post_text if args.jira_command == "post" else render_jira_action_text
+            _emit_text(renderer(payload), args)
         return 0
 
     if args.command == "ticket-review":

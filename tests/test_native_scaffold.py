@@ -123,6 +123,11 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("SGFX Preflight - Clean Mode.lnk", text)
         self.assertIn("SGFX Preflight - Grafiks Mode.lnk", text)
         self.assertNotIn("SGFX Preflight - Web Review Board.lnk", text)
+        self.assertIn('"operator_state"', text)
+        self.assertIn('"jira_pat.json"', text)
+        self.assertIn('"*credentials*.json"', text)
+        self.assertIn('"*pat*.json"', text)
+        self.assertIn('"*token*.json"', text)
 
     def test_walkthrough_harness_reattaches_to_dependency_setup_panel(self) -> None:
         harness_path = ROOT / "scripts" / "walkthrough_harness" / "uia_readiness.ps1"

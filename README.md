@@ -125,15 +125,30 @@ If a local dependency is missing, the tool reports the missing state. It should 
 
 BMW pipeline execution uses lane-specific local roots: `Digital-3D-Car-Repo` points at the master BMW Git checkout for IDC_EVO, and `Digital-3D-Car-Repo-IDC23` points at a separate `assets/idc23` worktree for IDC_23. The IDC_23 worktree must include `ci/scripts/test/main.py` and `cars/BMW/_Shared`. If the default Python launcher is not the BMW pipeline environment, set `SG_BMW_PYTHON_EXE` or register `bmw_pipeline_python` in Dependency Setup.
 
-## Optional Jira Dry Run
+## Optional Jira REST
 
-Jira posting is opt-in and confirmation-gated. A dry run is the default:
+Jira REST access is opt-in and confirmation-gated. Credentials are operator-local and are loaded from `SGFX_OPERATOR_STATE_DIR\jira_pat.json`, `~/sgfx_operator_state/jira_pat.json`, or `.\operator_state\jira_pat.json` in that order. The JSON shape is:
 
-```powershell
-python -m sg_preflight jira post --ticket IDCEVODEV-977874 --body "Dry run smoke." --format json
+```json
+{
+  "jira_url": "https://jira.cc.bmwgroup.net",
+  "pat": "<token>"
+}
 ```
 
-The command prints what would be posted and does not send a network request. A real post requires operator-provided Jira configuration and an explicit `--confirm` flag in that invocation.
+Check the local credential and ticket visibility with a read-only request:
+
+```powershell
+python -m sg_preflight jira status --ticket IDCEVODEV-1009244 --format json
+```
+
+Mutating commands preview first and do not send a Jira write request unless the operator reruns the exact action with `--auto-confirm`:
+
+```powershell
+python -m sg_preflight jira post-comment --ticket IDCEVODEV-1009244 --body "Preview smoke." --format json
+```
+
+The legacy `jira post` dry-run command remains available for wording-file previews; new Jira write actions use `post-comment`, `update-issue`, and `attach-file`.
 
 ## Tests
 
