@@ -38,6 +38,11 @@ outside this bundle.
 - Multi-profile walkthrough harness for Clean Playwright and Grafiks UIA evidence across the five-profile set.
 - BMW pipeline copy-on-completion output: generated workbook evidence and screenshot actual/diff evidence are copied into `workspace/out/<profile>/` while the native BMW working path remains visible in the evidence payload.
 
+### AI use
+- Runtime AI: none. The shipped tool calls no language model, image model, or third-party AI service. No telemetry. No inference. Operator-recorded verdicts.
+- Development AI: yes — this alpha was built with operator + AI-agent pair-coding (code, tests, docs, review). The shipped tool embeds no agents and phones home to no AI service.
+- Future opt-in: any AI-assisted feature added later lands behind an explicit operator toggle and an explicit Confluence-anchored consent flow.
+
 ### Fixed
 - `daily-digest latest --markdown` is safe on a fresh checkout and returns a clear no-review-package summary instead of failing.
 - Native shell resource discovery uses generic SGFX resource roots and skips generated/build folders.
