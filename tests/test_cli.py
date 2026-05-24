@@ -85,7 +85,7 @@ def _write_bmw_git_readiness_state(root: Path) -> None:
     write_text(car_root / "lids.json", "{}\n")
     subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
     _git(repo, "config", "user.name", "David Erik Garcia Arena")
-    _git(repo, "config", "user.email", "88119698+Hawaiiiiii@users.noreply.github.com")
+    _git(repo, "config", "user.email", "operator@example.invalid")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "fixture profile")
 

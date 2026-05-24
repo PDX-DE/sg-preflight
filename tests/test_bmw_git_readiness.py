@@ -33,7 +33,7 @@ def _init_bmw_repo(root: Path, *, brand: str = "BMW", profile: str = "G65_EVO") 
     write_text(car_root / "lids.json", "{}\n")
     subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
     _git(repo, "config", "user.name", "David Erik Garcia Arena")
-    _git(repo, "config", "user.email", "88119698+Hawaiiiiii@users.noreply.github.com")
+    _git(repo, "config", "user.email", "operator@example.invalid")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "fixture profile")
     return repo
@@ -109,7 +109,7 @@ class TestBmwGitReadiness(unittest.TestCase):
             write_text(repo / "cars" / "MINI" / "F67" / ".keep", "\n")
             subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
             _git(repo, "config", "user.name", "David Erik Garcia Arena")
-            _git(repo, "config", "user.email", "88119698+Hawaiiiiii@users.noreply.github.com")
+            _git(repo, "config", "user.email", "operator@example.invalid")
             _git(repo, "add", ".")
             _git(repo, "commit", "-m", "fixture minimal profile")
 
