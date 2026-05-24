@@ -34,6 +34,101 @@ _SESSION_FILENAME = "session.json"
 _CONFLUENCE_SOURCE = (
     "PDX_" + "SER" + "GFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt"
 )
+_DELIVERY_CONFLUENCE_SOURCE = (
+    "PDX_" + "SER" + "GFX/311_Delivery-process/312_3D-Car---Delivery-and-Integration/"
+    "315_How-to-3D-Cars-Delivery-Checklist----v0/page.txt"
+)
+_BMW_SCRIPT_CONFLUENCE_SOURCE = (
+    "PDX_" + "SER" + "GFX/139_3D-Car/225_3D-Car---RaCo-Implementation/"
+    "249_How-to-use-the-various-python-scripts-fo/page.txt"
+)
+
+
+@dataclass(frozen=True)
+class CarReviewTemplate:
+    family_id: str
+    title: str
+    brand: str
+    lane: str
+    description: str
+    profile_examples: tuple[str, ...]
+    evidence_checklist: tuple[str, ...]
+    confluence_anchors: tuple[str, ...]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "family_id": self.family_id,
+            "title": self.title,
+            "brand": self.brand,
+            "lane": self.lane,
+            "description": self.description,
+            "profile_examples": list(self.profile_examples),
+            "evidence_checklist": [
+                {
+                    "slug": _slug(item),
+                    "label": item,
+                    "status": "not_run",
+                    "manual_review_required": True,
+                }
+                for item in self.evidence_checklist
+            ],
+            "confluence_anchors": list(self.confluence_anchors),
+        }
+
+
+CAR_REVIEW_TEMPLATES: tuple[CarReviewTemplate, ...] = (
+    CarReviewTemplate(
+        family_id="bmw_idcevo",
+        title="BMW IDC_EVO Quality-Hero review",
+        brand="BMW",
+        lane="IDC_EVO",
+        description="Default BMW IDC_EVO review setup with delivery workbook, screenshot, and manual Quality-Hero evidence prompts.",
+        profile_examples=("G65", "G70", "G58"),
+        evidence_checklist=(
+            "Confirm IDC_EVO BMW Git master checkout and profile folder are visible.",
+            "Read or generate the delivery checklist workbook evidence.",
+            "Read screenshot expected / actual / diff state.",
+            "Run visual diff triage when actual PNGs are present.",
+            "Record each Quality-Hero manual-review step verdict locally.",
+            "Keep Jira writeback confirmation-gated if a review package is shared.",
+        ),
+        confluence_anchors=(_CONFLUENCE_SOURCE, _DELIVERY_CONFLUENCE_SOURCE, _BMW_SCRIPT_CONFLUENCE_SOURCE),
+    ),
+    CarReviewTemplate(
+        family_id="bmw_idc23",
+        title="BMW IDC_23 Quality-Hero review",
+        brand="BMW",
+        lane="IDC_23",
+        description="Default BMW IDC_23 review setup with the lane-correct assets/idc23 script path and the same manual review steps.",
+        profile_examples=("F70", "U10"),
+        evidence_checklist=(
+            "Confirm the IDC_23 assets worktree and BMW shared data are visible.",
+            "Read or generate the delivery checklist workbook evidence for the resolved SVN profile.",
+            "Read screenshot expected / actual / diff state from the IDC_23 lane.",
+            "Run visual diff triage when actual PNGs are present.",
+            "Record each Quality-Hero manual-review step verdict locally.",
+            "Keep Jira writeback confirmation-gated if a review package is shared.",
+        ),
+        confluence_anchors=(_CONFLUENCE_SOURCE, _DELIVERY_CONFLUENCE_SOURCE, _BMW_SCRIPT_CONFLUENCE_SOURCE),
+    ),
+    CarReviewTemplate(
+        family_id="mini",
+        title="MINI Quality-Hero review",
+        brand="MINI",
+        lane="IDC_23",
+        description="Default MINI review setup with MINI screenshot roots plus the shared manual Quality-Hero evidence prompts.",
+        profile_examples=("F66", "F67", "U25"),
+        evidence_checklist=(
+            "Confirm the MINI brand folder and resolved profile folder are visible.",
+            "Read or generate the delivery checklist workbook evidence for the MINI profile.",
+            "Read MINI screenshot expected / actual / diff state.",
+            "Run visual diff triage when actual PNGs are present.",
+            "Record each Quality-Hero manual-review step verdict locally.",
+            "Keep Jira writeback confirmation-gated if a review package is shared.",
+        ),
+        confluence_anchors=(_CONFLUENCE_SOURCE, _DELIVERY_CONFLUENCE_SOURCE, _BMW_SCRIPT_CONFLUENCE_SOURCE),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -266,6 +361,50 @@ def _profile_project_roots(profile_id: str, workspace: Path | str | None) -> lis
         ordered.append(resolved)
     existing = [path for path in ordered if path.exists()]
     return existing or ordered[:1]
+
+
+def list_car_review_templates() -> tuple[dict[str, Any], ...]:
+    return tuple(template.to_payload() for template in CAR_REVIEW_TEMPLATES)
+
+
+def get_car_review_template(family_id: str) -> dict[str, Any]:
+    clean_family = str(family_id or "").strip().casefold().replace("-", "_")
+    aliases = {
+        "bmw_idc_evo": "bmw_idcevo",
+        "idcevo": "bmw_idcevo",
+        "idc_evo": "bmw_idcevo",
+        "bmw_idc_23": "bmw_idc23",
+        "idc23": "bmw_idc23",
+        "idc_23": "bmw_idc23",
+        "mini_idc23": "mini",
+        "mini_idc_23": "mini",
+    }
+    clean_family = aliases.get(clean_family, clean_family)
+    for template in CAR_REVIEW_TEMPLATES:
+        if template.family_id == clean_family:
+            return template.to_payload()
+    known = ", ".join(template.family_id for template in CAR_REVIEW_TEMPLATES)
+    raise ValueError(f"Unknown car review template family: {family_id}. Known families: {known}")
+
+
+def review_template_for_profile(
+    profile_id: str,
+    *,
+    workspace: Path | str | None = None,
+) -> dict[str, Any]:
+    clean_profile = profile_id.strip()
+    try:
+        profile = get_run_profile(clean_profile, _workspace(workspace))
+    except KeyError:
+        profile = None
+    if profile is not None:
+        if str(profile.brand).strip().casefold() == "mini":
+            return get_car_review_template("mini")
+        if str(profile.lane).strip().casefold() == "idc_23":
+            return get_car_review_template("bmw_idc23")
+    if clean_profile.upper().startswith("MINI_"):
+        return get_car_review_template("mini")
+    return get_car_review_template("bmw_idcevo")
 
 
 def _first_existing(candidates: list[Path]) -> Path | None:
@@ -575,6 +714,37 @@ def create_manual_review_session(
     return _write_session(session)
 
 
+def create_manual_review_session_from_template(
+    *,
+    profile_id: str,
+    ticket_id: str,
+    family_id: str = "",
+    workspace: Path | str | None = None,
+    output_root: Path | str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    template = (
+        get_car_review_template(family_id)
+        if str(family_id or "").strip()
+        else review_template_for_profile(profile_id, workspace=workspace)
+    )
+    session = create_manual_review_session(
+        profile_id=profile_id,
+        ticket_id=ticket_id,
+        workspace=workspace,
+        output_root=output_root,
+        session_id=session_id,
+    )
+    anchors = list(dict.fromkeys([_CONFLUENCE_SOURCE, *template.get("confluence_anchors", [])]))
+    session["car_family_template"] = template
+    session["family_id"] = str(template.get("family_id", ""))
+    session["evidence_checklist"] = list(template.get("evidence_checklist", []))
+    session["confluence_anchors"] = anchors
+    session["manual_review_required"] = True
+    session["is_approval"] = False
+    return _write_session(session)
+
+
 def _candidate_session_paths(session_id_or_path: str | Path, workspace: Path | str | None) -> list[Path]:
     raw = Path(str(session_id_or_path))
     if raw.exists():
@@ -689,6 +859,9 @@ def _string_list(values: object) -> list[str]:
 
 
 def render_manual_review_markdown(session: dict[str, Any]) -> str:
+    template = session.get("car_family_template", {})
+    checklist = session.get("evidence_checklist", [])
+    anchors = session.get("confluence_anchors", [session.get("source", _CONFLUENCE_SOURCE)])
     lines = [
         f"# Manual review session - {session.get('ticket_id', '')} / {session.get('profile_id', '')}",
         "",
@@ -707,9 +880,31 @@ def render_manual_review_markdown(session: dict[str, Any]) -> str:
             f"- Recorded steps: {summary.get('recorded_steps', 0)}/{summary.get('total_steps', 0)}",
             f"- Not-run steps: {summary.get('pending_steps', 0)}",
             "",
-            "## Steps",
         ]
     )
+    if isinstance(template, dict) and template:
+        lines.extend(
+            [
+                "",
+                "## Review Template",
+                f"- Family: `{template.get('family_id', '')}`",
+                f"- Title: {template.get('title', '')}",
+                f"- Brand / lane: {template.get('brand', '')} / {template.get('lane', '')}",
+                f"- Description: {template.get('description', '')}",
+            ]
+        )
+    if isinstance(checklist, list) and checklist:
+        lines.extend(["", "## Evidence Checklist"])
+        for item in checklist:
+            if isinstance(item, dict):
+                lines.append(
+                    f"- [{item.get('status', 'not_run')}] {item.get('label', '')} "
+                    f"(manual review required: {item.get('manual_review_required', True)})"
+                )
+    if isinstance(anchors, list) and anchors:
+        lines.extend(["", "## Confluence Anchors"])
+        lines.extend(f"- `{anchor}`" for anchor in anchors if str(anchor).strip())
+    lines.extend(["", "## Steps"])
     for step in session.get("steps", []):
         if isinstance(step, dict):
             lines.extend(_step_markdown(step))

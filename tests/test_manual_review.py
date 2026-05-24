@@ -15,9 +15,12 @@ from sg_preflight.manual_review import (
     VALID_VERDICTS,
     apply_manual_review_suggestions,
     create_manual_review_session,
+    create_manual_review_session_from_template,
+    list_car_review_templates,
     load_manual_review_session,
     record_manual_review_step,
     render_manual_review_markdown,
+    review_template_for_profile,
     suggest_manual_review_verdicts,
 )
 from tests.operator_helpers import write_text
@@ -86,6 +89,37 @@ class TestManualReviewCompanion(unittest.TestCase):
         self.assertIn("CarPaint / Lackcode", markdown)
         self.assertIn("Review guidance only", markdown)
         self.assertNotIn("approved", markdown.lower())
+
+    def test_family_templates_bootstrap_evidence_checklist_without_verdicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            session = create_manual_review_session_from_template(
+                profile_id="F66",
+                ticket_id="IDCEVODEV-1009244",
+                family_id="mini",
+                workspace=root,
+                session_id="manual-mini",
+            )
+
+        self.assertEqual(session["family_id"], "mini")
+        self.assertEqual(session["car_family_template"]["brand"], "MINI")
+        self.assertTrue(session["evidence_checklist"])
+        self.assertTrue(all(item["status"] == "not_run" for item in session["evidence_checklist"]))
+        self.assertTrue(all(item["manual_review_required"] for item in session["evidence_checklist"]))
+        self.assertTrue(all(step["verdict"] == "not_run" for step in session["steps"]))
+        self.assertTrue(session["manual_review_required"])
+        self.assertFalse(session["is_approval"])
+        markdown = render_manual_review_markdown(session)
+        self.assertIn("## Evidence Checklist", markdown)
+        self.assertIn("MINI Quality-Hero review", markdown)
+        self.assertIn("Confluence Anchors", markdown)
+
+    def test_family_template_selection_uses_profile_metadata_and_aliases(self) -> None:
+        templates = {item["family_id"]: item for item in list_car_review_templates()}
+
+        self.assertEqual(set(templates), {"bmw_idcevo", "bmw_idc23", "mini"})
+        self.assertEqual(review_template_for_profile("MINI_U25")["family_id"], "mini")
 
     def test_manual_review_suggestions_are_profile_agnostic_guidance_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

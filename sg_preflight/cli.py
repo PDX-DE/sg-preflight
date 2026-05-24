@@ -75,6 +75,8 @@ from sg_preflight.jira_client import (
 from sg_preflight.manual_review import (
     VALID_VERDICTS,
     create_manual_review_session,
+    create_manual_review_session_from_template,
+    list_car_review_templates,
     load_manual_review_session,
     open_manual_review_tool,
     record_manual_review_step,
@@ -1088,8 +1090,16 @@ def build_parser() -> argparse.ArgumentParser:
     manual_review_session.add_argument("--workspace", help="Workspace root override")
     manual_review_session.add_argument("--output-root", help="Optional output root for manual-review sessions")
     manual_review_session.add_argument("--session-id", help="Optional deterministic session id")
+    manual_review_session.add_argument(
+        "--family",
+        default="",
+        help="Optional review template family: bmw_idcevo, bmw_idc23, or mini",
+    )
     manual_review_session.add_argument("--json", action="store_true", help="Print session as JSON")
     manual_review_session.add_argument("--markdown", action="store_true", help="Print session summary as Markdown")
+
+    manual_review_templates = manual_review_sub.add_parser("templates", help="List built-in car review templates")
+    manual_review_templates.add_argument("--json", action="store_true", help="Print templates as JSON")
 
     manual_review_record = manual_review_sub.add_parser("record-step", help="Record one reviewer verdict")
     manual_review_record.add_argument("session_id", help="Manual-review session id or session.json path")
@@ -1982,13 +1992,30 @@ def _main_impl(argv: list[str] | None = None) -> int:
         review_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
         try:
             if args.manual_review_command == "session":
-                payload = create_manual_review_session(
-                    profile_id=args.profile,
-                    ticket_id=args.ticket,
-                    workspace=review_root,
-                    output_root=Path(args.output_root).resolve() if args.output_root else None,
-                    session_id=args.session_id,
-                )
+                if str(args.family or "").strip():
+                    payload = create_manual_review_session_from_template(
+                        profile_id=args.profile,
+                        ticket_id=args.ticket,
+                        family_id=args.family,
+                        workspace=review_root,
+                        output_root=Path(args.output_root).resolve() if args.output_root else None,
+                        session_id=args.session_id,
+                    )
+                else:
+                    payload = create_manual_review_session(
+                        profile_id=args.profile,
+                        ticket_id=args.ticket,
+                        workspace=review_root,
+                        output_root=Path(args.output_root).resolve() if args.output_root else None,
+                        session_id=args.session_id,
+                    )
+            elif args.manual_review_command == "templates":
+                payload = {
+                    "status": "available",
+                    "templates": list(list_car_review_templates()),
+                    "manual_review_required": True,
+                    "note": "Templates bootstrap local evidence checklists only; operator verdicts remain manual.",
+                }
             elif args.manual_review_command == "record-step":
                 payload = record_manual_review_step(
                     args.session_id,
@@ -2014,6 +2041,11 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _console_desktop_payload(payload)
         elif getattr(args, "markdown", False) or args.manual_review_command == "summary":
             print(_console_safe(render_manual_review_markdown(payload)))
+        elif args.manual_review_command == "templates":
+            print("Built-in car review templates:")
+            for item in payload.get("templates", []):
+                if isinstance(item, dict):
+                    print(_console_safe(f"- {item.get('family_id', '')}: {item.get('title', '')}"))
         else:
             print(_console_safe(f"Manual review session: {payload.get('session_id', '')}"))
             if payload.get("session_path"):

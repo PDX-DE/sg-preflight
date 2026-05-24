@@ -36,10 +36,12 @@ from sg_preflight.dependency_onboarding import (
 )
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
-    create_manual_review_session,
     apply_manual_review_suggestions,
+    create_manual_review_session_from_template,
+    list_car_review_templates,
     load_manual_review_session,
     record_manual_review_step,
+    review_template_for_profile,
 )
 from sg_preflight.profiles import (
     PROFILE_REGISTRY_DYNAMIC_SOURCE,
@@ -981,13 +983,15 @@ def _ensure_manual_review_dashboard_session(
     profile_id: str,
     workspace: Path | str,
     ticket_id: str | None = None,
+    family_id: str = "",
 ) -> dict[str, Any]:
     session = _load_manual_review_dashboard_session(profile_id=profile_id, workspace=workspace)
     if session is not None:
         return session
-    return create_manual_review_session(
+    return create_manual_review_session_from_template(
         profile_id=profile_id,
         ticket_id=(ticket_id or _dashboard_active_ticket_id(workspace)),
+        family_id=family_id,
         workspace=workspace,
         session_id=_manual_review_dashboard_session_id(profile_id),
     )
@@ -1029,6 +1033,9 @@ def _manual_review_page(
     status = "recorded" if recorded_count else _MANUAL_REVIEW_PENDING_VERDICT
     session_payload = session if isinstance(session, dict) else {}
     ticket_id = active_ticket_id.strip() or _dashboard_active_ticket_id(workspace)
+    default_template = review_template_for_profile(profile_id, workspace=workspace)
+    review_templates = list(list_car_review_templates())
+    template_anchors = list(session_payload.get("confluence_anchors", default_template.get("confluence_anchors", [])))
     page = {
         "id": "manual-review",
         "title": "Manual Review Companion",
@@ -1051,9 +1058,13 @@ def _manual_review_page(
             "session_path": str(session_payload.get("session_path", "")),
             "markdown_path": str(session_payload.get("markdown_path", "")),
             "steps": steps,
-            "confluence_anchors": [QUALITY_HERO_CONFLUENCE_ANCHOR],
+            "review_templates": review_templates,
+            "default_family_id": str(default_template.get("family_id", "")),
+            "family_id": str(session_payload.get("family_id", default_template.get("family_id", ""))),
+            "evidence_checklist": list(session_payload.get("evidence_checklist", default_template.get("evidence_checklist", []))),
+            "confluence_anchors": template_anchors or [QUALITY_HERO_CONFLUENCE_ANCHOR],
         },
-        "confluence_anchors": [QUALITY_HERO_CONFLUENCE_ANCHOR],
+        "confluence_anchors": template_anchors or [QUALITY_HERO_CONFLUENCE_ANCHOR],
     }
     if status == _MANUAL_REVIEW_PENDING_VERDICT:
         page["empty_state_note"] = MANUAL_REVIEW_EMPTY_NOTE
@@ -2645,18 +2656,45 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
         ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-summary")
         _render_empty_state_note(ui, page)
         if page.get("status") == _MANUAL_REVIEW_PENDING_VERDICT:
+            templates = [
+                item for item in page.get("payload", {}).get("review_templates", [])
+                if isinstance(item, dict) and str(item.get("family_id", "")).strip()
+            ]
+            template_options = [str(item.get("family_id", "")) for item in templates]
+            family_select = ui.select(
+                template_options,
+                value=str(page.get("payload", {}).get("default_family_id", "")),
+                label="Family",
+            ).classes("full-width")
+            selected_template = next(
+                (
+                    item for item in templates
+                    if str(item.get("family_id", "")) == str(page.get("payload", {}).get("default_family_id", ""))
+                ),
+                {},
+            )
+            if selected_template:
+                ui.label(str(selected_template.get("title", ""))).classes("sgfx-muted")
+
             def _start_session() -> None:
                 _ensure_manual_review_dashboard_session(
                     profile_id=str(snapshot["profile_id"]),
                     workspace=workspace,
+                    family_id=str(family_select.value or ""),
                 )
-                ui.notify("Manual-review session started locally.")
+                ui.notify("Car review session started locally.")
 
             _attach_tooltip(
                 ui,
-                ui.button("Start Session", on_click=_start_session).props("flat no-caps"),
-                "Create the local manual-review session before recording step evidence.",
+                ui.button("Start new car review", on_click=_start_session).props("flat no-caps"),
+                "Create the local family-template review session before recording step evidence.",
             )
+        checklist = page.get("payload", {}).get("evidence_checklist", [])
+        if isinstance(checklist, list) and checklist:
+            with ui.expansion("Evidence checklist", icon="checklist").classes("sgfx-step"):
+                for item in checklist:
+                    if isinstance(item, dict):
+                        ui.label(f"{item.get('status', 'not_run')} · {item.get('label', '')}").classes("sgfx-muted")
         for step in page["payload"]["steps"]:
             slug = str(step.get("slug", ""))
             with ui.expansion(str(step.get("title", slug)), icon="fact_check").classes("sgfx-step"):

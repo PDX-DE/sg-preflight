@@ -660,6 +660,9 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("No captured screenshots yet", pages["screenshot-test-state"]["empty_state_note"])
         self.assertIn("No review package on this workspace yet", pages["daily-digest"]["empty_state_note"])
         self.assertIn("Manual review session not started", pages["manual-review"]["empty_state_note"])
+        self.assertIn("review_templates", pages["manual-review"]["payload"])
+        self.assertIn("evidence_checklist", pages["manual-review"]["payload"])
+        self.assertEqual(pages["manual-review"]["payload"]["default_family_id"], "bmw_idcevo")
 
     def test_delivery_available_page_does_not_offer_generation_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

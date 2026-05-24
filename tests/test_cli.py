@@ -413,6 +413,45 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(duplicate_result, 1)
         self.assertIn("already exists", stderr.getvalue())
 
+    def test_manual_review_cli_lists_and_uses_family_templates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            templates_stdout = io.StringIO()
+            templates_stderr = io.StringIO()
+            with redirect_stdout(templates_stdout), redirect_stderr(templates_stderr):
+                templates_result = main(["manual-review", "templates", "--json"])
+
+            session_stdout = io.StringIO()
+            session_stderr = io.StringIO()
+            with redirect_stdout(session_stdout), redirect_stderr(session_stderr):
+                session_result = main(
+                    [
+                        "manual-review",
+                        "session",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "F66",
+                        "--ticket",
+                        "IDCEVODEV-1009244",
+                        "--session-id",
+                        "manual-mini",
+                        "--family",
+                        "mini",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(templates_result, 0, msg=templates_stderr.getvalue())
+        self.assertEqual(session_result, 0, msg=session_stderr.getvalue())
+        templates_payload = json.loads(templates_stdout.getvalue())
+        session_payload = json.loads(session_stdout.getvalue())
+        self.assertIn("mini", {item["family_id"] for item in templates_payload["templates"]})
+        self.assertEqual(session_payload["family_id"], "mini")
+        self.assertTrue(session_payload["evidence_checklist"])
+        self.assertTrue(all(step["verdict"] == "not_run" for step in session_payload["steps"]))
+
     def test_cli_with_workspace_appends_activity_log_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
