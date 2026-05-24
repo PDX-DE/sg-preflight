@@ -97,6 +97,7 @@ from sg_preflight.qa_actions import (
     load_action_record,
     save_action_record,
 )
+from sg_preflight.quality_hero_report import build_quality_hero_report
 from sg_preflight.review_messages import build_review_owner_update
 from sg_preflight.review_tracking import (
     add_external_finding,
@@ -1030,6 +1031,26 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot_review_viewer_build.add_argument("--max-items", type=int, default=80, help="Maximum viewer rows")
     screenshot_review_viewer_build.add_argument("--json", action="store_true", help="Print viewer payload as JSON")
 
+    quality_hero_report = sub.add_parser(
+        "quality-hero-report",
+        help="Generate a Markdown Quality-Hero review report from local evidence",
+    )
+    quality_hero_report_sub = quality_hero_report.add_subparsers(dest="quality_hero_report_command", required=True)
+    quality_hero_report_generate = quality_hero_report_sub.add_parser(
+        "generate",
+        help="Build the review report bundle",
+    )
+    quality_hero_report_generate.add_argument("--profile", required=True, help="Profile id such as G70")
+    quality_hero_report_generate.add_argument("--workspace", help="Workspace root for evidence reads")
+    quality_hero_report_generate.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    quality_hero_report_generate.add_argument("--ticket", default="", help="Optional Jira ticket id for report context")
+    quality_hero_report_generate.add_argument("--screenshot-viewer-json", help="Reuse an existing viewer JSON payload")
+    quality_hero_report_generate.add_argument("--output-root", help="Directory to write report artifacts")
+    quality_hero_report_generate.add_argument("--thumbnail-limit", type=int, default=4, help="Embedded screenshot thumbnail limit")
+    quality_hero_report_generate.add_argument("--attach-ticket", default="", help="Optional Jira ticket id to attach the Markdown report")
+    quality_hero_report_generate.add_argument("--auto-confirm", action="store_true", help="Attach the report after confirmation")
+    _add_render_options(quality_hero_report_generate, formats=("text", "json", "markdown"))
+
     daily_snapshot = sub.add_parser(
         "daily-qa-snapshot",
         help="Run the local BMW+SG daily QA snapshot for confirmed delivery cars",
@@ -1949,6 +1970,59 @@ def _main_impl(argv: list[str] | None = None) -> int:
             print(_console_safe(f"screenshot-review-viewer failed: {exc}"), file=sys.stderr)
             return 1
         _console_screenshot_review_viewer(bundle, as_json=args.json)
+        return 0
+
+    if args.command == "quality-hero-report":
+        report_root = Path(args.workspace).resolve() if args.workspace else root
+        if args.quality_hero_report_command != "generate":
+            parser.error(f"Unhandled quality-hero-report command: {args.quality_hero_report_command}")
+            return 1
+        output_root = (
+            Path(args.output_root).resolve()
+            if args.output_root
+            else report_root / "out" / f"{str(args.profile).strip().lower()}-quality-hero-report"
+        )
+        try:
+            bundle = build_quality_hero_report(
+                profile_id=args.profile,
+                workspace=report_root,
+                output_root=output_root,
+                ticket_id=args.ticket,
+                bmw_root=args.bmw_root,
+                screenshot_viewer_json=args.screenshot_viewer_json,
+                thumbnail_limit=args.thumbnail_limit,
+            )
+            payload = dict(bundle.payload)
+            attach_ticket = str(args.attach_ticket or "").strip()
+            if attach_ticket:
+                attachment = attach_jira_file_action(
+                    attach_ticket,
+                    bundle.markdown_path,
+                    auto_confirm=bool(args.auto_confirm),
+                )
+                payload["jira_attachment"] = attachment
+                bundle.json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:
+            print(_console_safe(f"quality-hero-report failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(bundle.markdown_path.read_text(encoding="utf-8"), args)
+        else:
+            lines = [
+                f"Quality-Hero report: {payload.get('profile_id', args.profile)}",
+                f"Markdown: {bundle.markdown_path}",
+                f"JSON: {bundle.json_path}",
+            ]
+            if payload.get("jira_attachment"):
+                attachment = payload["jira_attachment"]
+                lines.append(
+                    f"Jira attachment: {attachment.get('status', 'unknown')} "
+                    f"for {attachment.get('ticket', attach_ticket)}"
+                )
+            _emit_text("\n".join(lines), args)
         return 0
 
     if args.command == "daily-qa-snapshot":
