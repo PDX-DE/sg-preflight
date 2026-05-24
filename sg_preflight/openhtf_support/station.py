@@ -13,8 +13,8 @@ from .dependency import require_openhtf, require_openhtf_module
 from .phases import make_openhtf_phases
 
 
-SGFX_STATION_TITLE = "SGFX QA Preflight"
-SGFX_STATION_HEADER = "SGFX: Project Quality-Hero"
+SGFX_STATION_TITLE = "Seriengrafik: Project Quality-Hero"
+SGFX_STATION_HEADER = "Seriengrafik: Project Quality-Hero"
 SGFX_STATION_FOOTER = "Manual review remains required. Decision: not approval — evidence only."
 
 

@@ -109,14 +109,21 @@ class TestManualReviewCompanion(unittest.TestCase):
             payload = suggest_manual_review_verdicts("G70", workspace=root)
 
         suggestions = payload["suggestions"]
-        self.assertEqual(suggestions["blender_visual_check"]["suggested_verdict"], "passed")
-        self.assertEqual(suggestions["constants_info_verification"]["suggested_verdict"], "passed")
-        self.assertEqual(suggestions["final_look_comparison_raco_blender_epic"]["suggested_verdict"], "passed")
-        self.assertEqual(suggestions["functionality_test_raco"]["suggested_verdict"], "passed")
-        self.assertEqual(suggestions["anchor_points_test_raco"]["suggested_verdict"], "incomplete")
-        self.assertEqual(suggestions["documentation_review"]["suggested_verdict"], "passed")
+        self.assertEqual(suggestions["blender_visual_check"]["suggested_verdict"], "")
+        self.assertEqual(suggestions["blender_visual_check"]["evidence_status"], "available")
+        self.assertEqual(suggestions["constants_info_verification"]["suggested_verdict"], "")
+        self.assertEqual(suggestions["constants_info_verification"]["evidence_status"], "available")
+        self.assertEqual(suggestions["final_look_comparison_raco_blender_epic"]["suggested_verdict"], "")
+        self.assertEqual(suggestions["final_look_comparison_raco_blender_epic"]["evidence_status"], "available")
+        self.assertEqual(suggestions["functionality_test_raco"]["suggested_verdict"], "")
+        self.assertEqual(suggestions["functionality_test_raco"]["evidence_status"], "available")
+        self.assertEqual(suggestions["anchor_points_test_raco"]["suggested_verdict"], "")
+        self.assertEqual(suggestions["anchor_points_test_raco"]["evidence_status"], "missing")
+        self.assertEqual(suggestions["documentation_review"]["suggested_verdict"], "")
+        self.assertEqual(suggestions["documentation_review"]["evidence_status"], "available")
+        self.assertTrue(suggestions["blender_visual_check"]["manual_review_required"])
         self.assertFalse(payload["is_approval"])
-        self.assertIn("operator confirms or overrides", payload["note"])
+        self.assertIn("Evidence hints never select", payload["note"])
 
     def test_apply_manual_review_suggestions_does_not_overwrite_recorded_verdicts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -136,7 +143,9 @@ class TestManualReviewCompanion(unittest.TestCase):
         self.assertEqual(decorated[0]["verdict"], "failed")
         self.assertEqual(decorated[0]["suggested_verdict"], "")
         constants = next(item for item in decorated if item["slug"] == "constants_info_verification")
-        self.assertEqual(constants["suggested_verdict"], "incomplete")
+        self.assertEqual(constants["suggested_verdict"], "")
+        self.assertEqual(constants["evidence_status"], "missing")
+        self.assertTrue(constants["manual_review_required"])
         self.assertFalse(constants["suggestion_is_approval"])
 
     def test_record_step_captures_explicit_reviewer_verdict_note_and_screenshot(self) -> None:

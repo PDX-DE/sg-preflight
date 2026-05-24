@@ -70,7 +70,7 @@ GRAFIKS_GUARDRAILS = (
 )
 
 GRAFIKS_WIP_NOTICE = "Grafiks mode is experimental — recommend Clean mode for daily work."
-DESKTOP_WINDOW_TITLE = "SGFX"
+DESKTOP_WINDOW_TITLE = "Seriengrafik: Project Quality-Hero"
 GRAFIKS_HOTKEY_MESSAGES = {
     Qt.Key_F1: ("F1", "Help: inspect local evidence surfaces, setup status, and guardrails."),
     Qt.Key_F2: ("F2", "Profile switch: focus the profile list."),

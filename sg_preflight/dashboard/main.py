@@ -55,11 +55,12 @@ from sg_preflight.screenshot_capture import (
     poll_screenshot_capture,
     start_screenshot_capture,
 )
+from sg_preflight.services import operator_ui_root
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
 
 
-DASHBOARD_TITLE = "SGFX"
+DASHBOARD_TITLE = "Seriengrafik: Project Quality-Hero"
 DASHBOARD_BRAND_LOGO_ASSET = "logo_sgfx.png"
 DASHBOARD_BRAND_ICON_ASSET = "sgfx_icon.png"
 DASHBOARD_DEBUG_ICON_ASSET = "debug_icon.png"
@@ -90,6 +91,22 @@ DASHBOARD_SHORTCUT_ACTIONS = (
     ("Esc", "Quit: close the native window or browser tab when the local review is done."),
 )
 THEME_CHOICES = ["clean"]
+QUALITY_HERO_CONFLUENCE_ANCHOR = (
+    "PDX_" + "SER" + "GFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt"
+)
+DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR = (
+    "311_Delivery-process/312_3D-Car---Delivery-and-Integration/"
+    "315_How-to-3D-Cars-Delivery-Checklist----v0:50-54,67-69,81-82,100-102"
+)
+BMW_PIPELINE_PYTHON_CONFLUENCE_ANCHOR = (
+    "139_3D-Car/225_3D-Car---RaCo-Implementation/"
+    "249_How-to-use-the-various-python-scripts-fo:170-190"
+)
+SG_DAILY_CONFLUENCE_ANCHOR = (
+    "PDX_"
+    + "SER"
+    + "GFX/016_Project-Management/024_How-to...-Seriesgraphics/029_Regular-Meetings/030_SG-Daily/page.txt"
+)
 
 ABOUT_CONTENT: dict[str, Any] = {
     "heading": "About",
@@ -106,11 +123,14 @@ ABOUT_CONTENT: dict[str, Any] = {
         ("sgfx_icon.png", "square icon, sidebar header"),
     ),
     "confluence_anchors": (
+        ("Quality-Hero manual review workflow", QUALITY_HERO_CONFLUENCE_ANCHOR),
         ("PDX Seriengrafik onboarding (laptop setup)", "003_Onboarding/005_How-to-set-up-your-Laptop"),
         ("BMW Git access", "003_Onboarding/013_How-to-access-BMW-GIT"),
         ("Git workflow", "003_Onboarding/015_How-to-Git"),
         ("Blender 4 + SGToolkit setup", "139_3D-Car/.../266_How-to-Setup-Blender-4-and-SGToolkit-1.0"),
         ("Delivery checklist (env var)", "311_Delivery-process/.../315_How-to-3D-Cars-Delivery-Checklist----v0"),
+        ("BMW pipeline Python scripts", BMW_PIPELINE_PYTHON_CONFLUENCE_ANCHOR),
+        ("SG Daily", SG_DAILY_CONFLUENCE_ANCHOR),
     ),
 }
 
@@ -702,6 +722,7 @@ def _delivery_checklist_page(
         reader=lambda: read_delivery_checklist(profile_id=profile_id, workspace=workspace),
         workspace=workspace,
     )
+    page["confluence_anchors"] = [DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR]
     page["setup_status"] = setup_status or build_dependency_onboarding_status(workspace=workspace, bmw_root=bmw_root)
     if page.get("status") != "unavailable":
         return page
@@ -720,6 +741,7 @@ def _delivery_checklist_page(
             "preflight": preflight,
             "disabled": not bool(preflight.get("can_run", False)),
             "confirmation_message": str(preflight.get("confirmation_message", "")),
+            "confluence_anchor": DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR,
         }
     ]
     return page
@@ -744,6 +766,7 @@ def _screenshot_test_state_page(
         workspace=workspace,
         ownership_note=SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE,
     )
+    page["confluence_anchors"] = [QUALITY_HERO_CONFLUENCE_ANCHOR, BMW_PIPELINE_PYTHON_CONFLUENCE_ANCHOR]
     preflight = check_screenshot_capture_environment(
         profile_id=profile_id,
         workspace=workspace,
@@ -758,6 +781,7 @@ def _screenshot_test_state_page(
             "preflight": preflight,
             "disabled": not bool(preflight.get("can_run", False)),
             "confirmation_message": str(preflight.get("confirmation_message", "")),
+            "confluence_anchor": BMW_PIPELINE_PYTHON_CONFLUENCE_ANCHOR,
         }
     ]
     return page
@@ -862,6 +886,7 @@ def _daily_digest_page(
             "ticket_id_default": default_ticket,
             "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
             "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
+            "confluence_anchor": SG_DAILY_CONFLUENCE_ANCHOR,
         }
     ]
     try:
@@ -876,6 +901,7 @@ def _daily_digest_page(
             "summary": f"Daily digest could not be read: {exc}",
             "items": [],
             "actions": actions,
+            "confluence_anchors": [SG_DAILY_CONFLUENCE_ANCHOR],
             "payload": {
                 "profile_id": profile_id,
                 "active_ticket_id": default_ticket,
@@ -913,6 +939,7 @@ def _daily_digest_page(
         "summary": str(digest.get("no_data_message", "Daily digest snapshot loaded.")),
         "items": items,
         "actions": actions,
+        "confluence_anchors": [SG_DAILY_CONFLUENCE_ANCHOR],
         "payload": {
             "status": digest.get("status", "unknown"),
             "scope": digest.get("scope", []),
@@ -972,10 +999,11 @@ def _manual_review_step_recorded(step: dict[str, Any]) -> bool:
 
 def _manual_review_step_detail(step: dict[str, Any]) -> str:
     if not _manual_review_step_recorded(step):
-        suggested = str(step.get("suggested_verdict", "")).strip()
+        evidence_status = str(step.get("evidence_status", step.get("suggestion_status", ""))).strip()
         reason = str(step.get("suggestion_reason", "")).strip()
-        if suggested:
-            return f"Suggested: {suggested}. {reason}".strip()
+        if evidence_status in {"available", "missing"}:
+            label = "Evidence available" if evidence_status == "available" else "Evidence missing"
+            return f"{label}. Manual review remains required. {reason}".strip()
         return str(step.get("evidence_prompt", ""))
     verdict = str(step.get("verdict", "")).strip()
     recorded_at = str(step.get("recorded_at_utc", "")).strip()
@@ -1023,7 +1051,9 @@ def _manual_review_page(
             "session_path": str(session_payload.get("session_path", "")),
             "markdown_path": str(session_payload.get("markdown_path", "")),
             "steps": steps,
+            "confluence_anchors": [QUALITY_HERO_CONFLUENCE_ANCHOR],
         },
+        "confluence_anchors": [QUALITY_HERO_CONFLUENCE_ANCHOR],
     }
     if status == _MANUAL_REVIEW_PENDING_VERDICT:
         page["empty_state_note"] = MANUAL_REVIEW_EMPTY_NOTE
@@ -1057,6 +1087,7 @@ def build_dashboard_snapshot(
     setup_status = build_dependency_onboarding_status(workspace=root, bmw_root=bmw_root)
     active_ticket_id = _dashboard_active_ticket_id(root)
     daily_ticket_context = _daily_digest_ticket_context(root)
+    output_root = operator_ui_root(root)
     return {
         "title": DASHBOARD_TITLE,
         "profile_id": resolved_profile_id,
@@ -1081,6 +1112,8 @@ def build_dashboard_snapshot(
         },
         "workspace": str(root),
         "workspace_label": _path_label(root),
+        "output_root": str(output_root),
+        "output_root_label": _path_label(output_root),
         "theme": theme,
         "navigation": [{"id": page_id, "label": label} for page_id, label in DASHBOARD_NAVIGATION],
         "shortcuts": list(DASHBOARD_SHORTCUTS),
@@ -1552,6 +1585,20 @@ def _render_status_chip(ui: Any, status: str) -> None:
     ui.badge(status or "unknown").classes("sgfx-status")
 
 
+def _page_confluence_anchors(page: dict[str, Any]) -> list[str]:
+    anchors = page.get("confluence_anchors", [])
+    if isinstance(anchors, str):
+        anchors = [anchors]
+    if not isinstance(anchors, list):
+        return []
+    return [str(anchor).strip() for anchor in anchors if str(anchor).strip()]
+
+
+def _render_page_confluence_anchors(ui: Any, page: dict[str, Any]) -> None:
+    for anchor in _page_confluence_anchors(page):
+        ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
+
+
 def _attach_tooltip(ui: Any, element: Any, text: str) -> Any:
     with element:
         ui.tooltip(text).classes("sgfx-thinking-tooltip")
@@ -1568,6 +1615,7 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
             ui.label(str(page["title"])).classes("sgfx-panel-title")
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
         ownership_note = str(page.get("ownership_note", "")).strip()
         if ownership_note:
             ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
@@ -1920,6 +1968,7 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
             ui.label(str(page["title"])).classes("sgfx-panel-title")
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
         ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
         _render_empty_state_note(ui, page)
         rows = [
@@ -1969,6 +2018,9 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
             ui.label("Environment pre-flight must pass before SGFX can invoke the BMW pipeline.").classes(
                 "sgfx-muted"
             )
+            anchor = str(action.get("confluence_anchor", "")).strip()
+            if anchor:
+                ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
             if checks:
                 _attach_tooltip(
                     ui,
@@ -2144,6 +2196,7 @@ def _render_screenshot_test_state_panel(
             ui.label(str(page["title"])).classes("sgfx-panel-title")
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
         ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
         _render_empty_state_note(ui, page)
         ownership_note = str(page.get("ownership_note", "")).strip()
@@ -2194,6 +2247,9 @@ def _render_screenshot_test_state_panel(
             ui.label("Environment pre-flight must pass before SGFX can invoke the BMW screenshot helper.").classes(
                 "sgfx-muted"
             )
+            anchor = str(action.get("confluence_anchor", "")).strip()
+            if anchor:
+                ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
             if checks:
                 _attach_tooltip(
                     ui,
@@ -2365,6 +2421,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             ui.label(str(page["title"])).classes("sgfx-panel-title")
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
         ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
         _render_empty_state_note(ui, page)
         rows = [
@@ -2399,6 +2456,9 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             if action.get("id") != DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID:
                 continue
             ui.label("Build review package").classes("sgfx-panel-tagline")
+            anchor = str(action.get("confluence_anchor", "")).strip()
+            if anchor:
+                ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
             hint = str(action.get("ticket_id_hint", "")).strip() or DAILY_DIGEST_TICKET_ID_PLACEHOLDER
             ticket_input = ui.input(
                 label="Ticket ID",
@@ -2581,6 +2641,7 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
             ui.label(str(page["title"])).classes("sgfx-panel-title")
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
         ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-summary")
         _render_empty_state_note(ui, page)
         if page.get("status") == _MANUAL_REVIEW_PENDING_VERDICT:
@@ -2604,16 +2665,17 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                     ui.label(f"Review focus: {focus}").classes("sgfx-summary")
                 ui.label(str(step.get("evidence_prompt", ""))).classes("sgfx-muted")
                 current_verdict = str(step.get("verdict", "")).strip()
-                suggested_verdict = str(step.get("suggested_verdict", "")).strip()
+                evidence_status = str(step.get("evidence_status", step.get("suggestion_status", ""))).strip()
                 suggestion_reason = str(step.get("suggestion_reason", "")).strip()
-                if suggested_verdict:
+                if evidence_status in {"available", "missing"}:
+                    evidence_label = "Evidence available" if evidence_status == "available" else "Evidence missing"
                     ui.label(
-                        f"Suggested: {suggested_verdict}. Operator confirms or overrides. {suggestion_reason}".strip()
+                        f"{evidence_label}. Manual review remains required. {suggestion_reason}".strip()
                     ).classes("sgfx-muted")
                 verdict_value = (
                     current_verdict
                     if current_verdict in MANUAL_REVIEW_RECORD_VERDICTS
-                    else suggested_verdict if suggested_verdict in MANUAL_REVIEW_RECORD_VERDICTS else None
+                    else None
                 )
                 verdict = ui.select(
                     MANUAL_REVIEW_RECORD_VERDICTS,
@@ -2632,7 +2694,6 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                     slug: str = slug,
                     verdict=verdict,
                     note=note,
-                    suggested_verdict: str = suggested_verdict,
                 ) -> None:
                     selected = str(verdict.value or "").strip()
                     if not selected:
@@ -2644,7 +2705,7 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                         step_slug=slug,
                         verdict=selected,
                         note=str(note.value or ""),
-                        suggested_verdict=suggested_verdict,
+                        suggested_verdict="",
                     )
                     ui.notify("Manual-review evidence recorded locally.")
 
@@ -2778,7 +2839,10 @@ def _render_dashboard(
 
         def _header_text() -> str:
             active = state["snapshot"]
-            return f"Profile: {active['profile_id']} | Workspace: {active['workspace_label']}"
+            return (
+                f"Profile: {active['profile_id']} | Workspace: {active['workspace_label']} "
+                f"| Output: {active.get('output_root_label', '')}"
+            )
 
         def _all_profile_options() -> list[dict[str, Any]]:
             return [option for option in state["snapshot"].get("profile_options_all", []) if isinstance(option, dict)]

@@ -86,6 +86,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertGreaterEqual(snapshot["profile_registry"]["total_count"], len(snapshot["profile_options"]))
         self.assertEqual(snapshot["theme"], "clean")
         self.assertEqual(snapshot["workspace_label"], Path(tmp).name)
+        self.assertEqual(snapshot["output_root"], str(Path(tmp).resolve() / "out" / "operator-ui"))
+        self.assertEqual(snapshot["output_root_label"], "operator-ui")
         self.assertEqual(
             snapshot["navigation"],
             [
@@ -114,6 +116,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
         self.assertEqual(manual_page["status"], "not_run")
         self.assertIn("Manual review session not started", manual_page["empty_state_note"])
+        self.assertTrue(manual_page["confluence_anchors"])
         self.assertTrue(all(item["status"] == "not_run" for item in manual_page["items"]))
         self.assertTrue(all(step["verdict"] == "not_run" for step in manual_page["payload"]["steps"]))
         for forbidden in ("approved", "cleared", "signed-off", "production-ready"):
@@ -281,7 +284,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn('ui.label("Mode: Clean")', source)
         self.assertNotIn('ui.label("Mode: Grafiks")', source)
         self.assertNotIn("DASHBOARD_HEADER", source)
-        self.assertIn('DASHBOARD_TITLE = "SGFX"', source)
+        self.assertIn('DASHBOARD_TITLE = "Seriengrafik: Project Quality-Hero"', source)
         self.assertIn("ui.dark_mode().enable()", source)
         self.assertIn("--sgfx-bg:", source)
         self.assertIn("ABOUT_CONTENT", source)
@@ -747,7 +750,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(recorded_step["verdict"], "passed")
         self.assertFalse(recorded_step["recorded_by_tool"])
 
-    def test_manual_review_page_prepopulates_suggested_verdicts_without_recording_them(self) -> None:
+    def test_manual_review_page_surfaces_evidence_without_preselecting_verdicts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -760,10 +763,13 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
         blender_step = next(item for item in manual_page["payload"]["steps"] if item["slug"] == "blender_visual_check")
         self.assertEqual(blender_step["verdict"], "not_run")
-        self.assertEqual(blender_step["suggested_verdict"], "passed")
+        self.assertEqual(blender_step["suggested_verdict"], "")
+        self.assertEqual(blender_step["evidence_status"], "available")
+        self.assertTrue(blender_step["manual_review_required"])
         self.assertFalse(blender_step["suggestion_is_approval"])
         item = next(item for item in manual_page["items"] if item["label"] == "Blender Visual Check")
-        self.assertIn("Suggested: passed", item["detail"])
+        self.assertIn("Evidence available", item["detail"])
+        self.assertIn("Manual review remains required", item["detail"])
 
     def test_manual_review_dashboard_recording_stores_suggested_and_operator_verdicts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1026,6 +1032,8 @@ class TestScreenshotTestStateOwnershipNote(unittest.TestCase):
         self.assertEqual(screenshot_page["ownership_note"], SCREENSHOT_TEST_STATE_OWNERSHIP_NOTE)
         self.assertIn("lane-correct BMW Git pipeline script", screenshot_page["ownership_note"])
         self.assertIn("SGFX reads the output", screenshot_page["ownership_note"])
+        self.assertTrue(screenshot_page["confluence_anchors"])
+        self.assertTrue(screenshot_page["actions"][0]["confluence_anchor"])
 
     def test_other_pages_have_empty_ownership_note(self) -> None:
         from sg_preflight.dashboard.main import build_dashboard_snapshot

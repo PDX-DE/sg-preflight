@@ -226,7 +226,7 @@ class OpenHtfStationSmokeTests(unittest.TestCase):
                 with urllib.request.urlopen(started.sgfx_url, timeout=5) as response:
                     html = response.read().decode("utf-8")
 
-        self.assertIn("<title>SGFX QA Preflight</title>", html)
-        self.assertIn("SGFX: Project Quality-Hero", html)
+        self.assertIn("<title>Seriengrafik: Project Quality-Hero</title>", html)
+        self.assertIn("Seriengrafik: Project Quality-Hero", html)
         self.assertIn("Manual review remains required.", html)
         self.assertIn("Decision: not approval — evidence only.", html)

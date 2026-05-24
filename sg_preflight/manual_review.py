@@ -28,6 +28,8 @@ _VERDICT_ALIASES = {
     "not_applicable": "skipped",
 }
 _PENDING_VERDICT = "not_run"
+_EVIDENCE_AVAILABLE = "available"
+_EVIDENCE_MISSING = "missing"
 _SESSION_FILENAME = "session.json"
 _CONFLUENCE_SOURCE = (
     "PDX_" + "SER" + "GFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt"
@@ -54,8 +56,10 @@ class ManualReviewStepTemplate:
             "evidence_prompt": self.evidence_prompt,
             "suggested_verdict": "",
             "suggestion_status": "not_run",
+            "evidence_status": "not_run",
             "suggestion_reason": "",
             "suggestion_paths": [],
+            "manual_review_required": True,
             "operator_verdict": "",
             "verdict": _PENDING_VERDICT,
             "note": "",
@@ -294,15 +298,14 @@ def _manual_suggestion_marker(workspace: Path | str | None, profile_id: str, slu
     return _first_existing(candidates)
 
 
-def _suggestion(verdict: str, reason: str, paths: list[Path] | None = None) -> dict[str, Any]:
-    clean_verdict = _normalize_verdict(verdict)
-    if clean_verdict not in VALID_VERDICTS:
-        clean_verdict = "incomplete"
+def _suggestion(reason: str, paths: list[Path] | None = None) -> dict[str, Any]:
     return {
-        "suggested_verdict": clean_verdict,
-        "suggestion_status": "available",
+        "suggested_verdict": "",
+        "suggestion_status": _EVIDENCE_AVAILABLE,
+        "evidence_status": _EVIDENCE_AVAILABLE,
         "suggestion_reason": reason,
         "suggestion_paths": [str(path) for path in (paths or []) if path],
+        "manual_review_required": True,
         "recorded_by_tool": True,
         "is_approval": False,
     }
@@ -310,10 +313,12 @@ def _suggestion(verdict: str, reason: str, paths: list[Path] | None = None) -> d
 
 def _missing_suggestion(reason: str, paths: list[Path] | None = None) -> dict[str, Any]:
     return {
-        "suggested_verdict": "incomplete",
-        "suggestion_status": "missing",
+        "suggested_verdict": "",
+        "suggestion_status": _EVIDENCE_MISSING,
+        "evidence_status": _EVIDENCE_MISSING,
         "suggestion_reason": reason,
         "suggestion_paths": [str(path) for path in (paths or []) if path],
+        "manual_review_required": True,
         "recorded_by_tool": True,
         "is_approval": False,
     }
@@ -323,7 +328,7 @@ def _blender_suggestion(profile_id: str, workspace: Path | str | None, roots: li
     for root in roots:
         blend = _first_glob(root, ("_WorkFiles/**/*.blend", "_Workfiles/**/*.blend", "**/*.blend"))
         if blend is not None:
-            return _suggestion("passed", "Blender scene file found; operator still confirms the visual review.", [blend])
+            return _suggestion("Blender scene file found; manual visual review remains required.", [blend])
     return _missing_suggestion("No Blender scene file was found for this profile.", roots[:1])
 
 
@@ -349,8 +354,7 @@ def _constants_suggestion(profile_id: str, workspace: Path | str | None, roots: 
         )
         if pivot is not None and module is not None:
             return _suggestion(
-                "passed",
-                "Pivot_Master and Module_constants files are present; operator still checks values against Epic.",
+                "Pivot_Master and Module_constants files are present; manual value review remains required.",
                 [pivot, module],
             )
         if pivot is not None or module is not None:
@@ -365,8 +369,7 @@ def _final_look_suggestion(profile_id: str, workspace: Path | str | None, roots:
         expected = _first_glob(root, ("export/tests/expected/*", "export/tests/**/*.png", "export/tests/**/*.jpg"))
         if blend is not None and expected is not None:
             return _suggestion(
-                "passed",
-                "Blender scene and screenshot baseline output are present; operator still compares final look.",
+                "Blender scene and screenshot baseline output are present; manual final-look review remains required.",
                 [blend, expected],
             )
         if blend is not None or expected is not None:
@@ -385,7 +388,7 @@ def _marker_suggestion(
 ) -> dict[str, Any]:
     marker = _manual_suggestion_marker(workspace, profile_id, slug)
     if marker is not None:
-        return _suggestion("passed", found_reason, [marker])
+        return _suggestion(found_reason, [marker])
     return _missing_suggestion(missing_reason, [_workspace(workspace) / "operator_state" / "manual_review_suggestions"])
 
 
@@ -395,8 +398,7 @@ def _documentation_suggestion(profile_id: str, workspace: Path | str | None, roo
         readme = _first_existing([root / "README.md", root / "Readme.md", root / "readme.md"])
         if changelog is not None and readme is not None:
             return _suggestion(
-                "passed",
-                "README and changelog files are present; operator still reviews wording against the ticket scope.",
+                "README and changelog files are present; manual documentation review remains required.",
                 [readme, changelog],
             )
         if changelog is not None or readme is not None:
@@ -443,7 +445,7 @@ def suggest_manual_review_verdicts(
         "status": "available",
         "project_roots": [str(root) for root in roots],
         "suggestions": suggestions,
-        "note": "Suggested verdicts are evidence hints only; the operator confirms or overrides each manual-review verdict.",
+        "note": "Evidence hints never select a manual-review verdict; the operator records each verdict.",
         "recorded_by_tool": True,
         "is_approval": False,
     }
@@ -467,8 +469,10 @@ def apply_manual_review_suggestions(
         if isinstance(suggestion, dict) and str(copy.get("verdict", _PENDING_VERDICT)).strip() == _PENDING_VERDICT:
             copy["suggested_verdict"] = str(suggestion.get("suggested_verdict", "")).strip()
             copy["suggestion_status"] = str(suggestion.get("suggestion_status", "")).strip()
+            copy["evidence_status"] = str(suggestion.get("evidence_status", "")).strip()
             copy["suggestion_reason"] = str(suggestion.get("suggestion_reason", "")).strip()
             copy["suggestion_paths"] = list(suggestion.get("suggestion_paths", []))
+            copy["manual_review_required"] = True
             copy["suggestion_is_approval"] = False
         decorated.append(copy)
     return decorated
@@ -657,6 +661,13 @@ def _step_markdown(step: dict[str, Any]) -> list[str]:
         reason = str(step.get("suggestion_reason", "")).strip()
         if reason:
             lines.append(f"- Suggestion reason: {reason}")
+    evidence_status = str(step.get("evidence_status", "")).strip()
+    if evidence_status in {_EVIDENCE_AVAILABLE, _EVIDENCE_MISSING}:
+        lines.append(f"- Evidence status: `{evidence_status}`")
+        reason = str(step.get("suggestion_reason", "")).strip()
+        if reason:
+            lines.append(f"- Evidence note: {reason}")
+        lines.append("- Manual review required: yes")
     operator_verdict = _normalize_verdict(step.get("operator_verdict", ""))
     if operator_verdict in VALID_VERDICTS:
         lines.append(f"- Operator verdict: [{operator_verdict}]")

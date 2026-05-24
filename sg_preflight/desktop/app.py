@@ -45,7 +45,7 @@ def run_desktop_app(*, workspace: Path | None = None, initial_profile_id: str = 
     from sg_preflight.desktop.theme import desktop_stylesheet
 
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("SGFX Desktop Operator Console")
+    app.setApplicationName("Seriengrafik Project Quality-Hero")
     icon_path = _desktop_taskbar_icon_path()
     window_icon = QIcon(str(icon_path)) if icon_path.is_file() else QIcon()
     if not window_icon.isNull():

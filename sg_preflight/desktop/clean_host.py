@@ -15,6 +15,8 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QPushButton, QVB
 from sg_preflight.assets import runtime_asset_path
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 
+CLEAN_WINDOW_TITLE = "Seriengrafik: Project Quality-Hero"
+
 
 def _find_open_dashboard_port(start_port: int = 8000, end_port: int = 8999) -> int:
     for port in range(start_port, end_port + 1):
@@ -47,7 +49,7 @@ class CleanDashboardWindow(QMainWindow):
         icon_path = runtime_asset_path("desktop_native/resources/exe_ico.ico")
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
-        self.setWindowTitle("SGFX")
+        self.setWindowTitle(CLEAN_WINDOW_TITLE)
         self.resize(1440, 900)
 
         central = QWidget(self)

@@ -49,7 +49,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertNotIn("SGFX: Project Quality-Hero", main_window_source)
         self.assertNotIn("Clean Operator Console", main_window_source)
         self.assertNotIn("Grafiks Operator Console", main_window_source)
-        self.assertIn('DESKTOP_WINDOW_TITLE = "SGFX"', main_window_source)
+        self.assertIn('DESKTOP_WINDOW_TITLE = "Seriengrafik: Project Quality-Hero"', main_window_source)
         self.assertIn("GRAFIKS_WIP_NOTICE", main_window_source)
         self.assertIn("Grafiks mode is experimental — recommend Clean mode for daily work.", main_window_source)
         self.assertIn("clean_mode_button", main_window_source)
