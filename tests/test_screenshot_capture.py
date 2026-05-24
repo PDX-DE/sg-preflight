@@ -202,6 +202,10 @@ class TestScreenshotCapture(unittest.TestCase):
         self.assertEqual(checks["blender"]["status"], "available")
         self.assertEqual(checks["bmw_screenshot_script"]["status"], "available")
         self.assertIn("actual/diff", payload["confirmation_message"])
+        self.assertIn("out", payload["target_write_path"])
+        self.assertIn("screenshot-capture", payload["target_write_path"])
+        self.assertIn("export", payload["native_output_path"])
+        self.assertIn("copies review evidence", payload["confirmation_message"])
 
     def test_start_capture_requires_operator_confirmation(self) -> None:
         from sg_preflight.screenshot_capture import start_screenshot_capture
@@ -243,6 +247,8 @@ class TestScreenshotCapture(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["actual_count"], 1)
+        self.assertIn("screenshot-capture", result["sgfx_output_root"])
+        self.assertIn("export", result["native_output_path"])
         self.assertFalse(result["is_approval"])
         self.assertTrue(result["recorded_by_tool"])
         self.assertIn("car_manager.py", " ".join(result["command"]))
@@ -283,6 +289,12 @@ class TestScreenshotCapture(unittest.TestCase):
         self.assertTrue(result["data_available"])
         self.assertIn("actual/diff evidence", result["summary"])
         self.assertIn("Manual review remains required", result["summary"])
+        self.assertEqual(result["copied_evidence"]["status"], "recorded")
+        copied = {item["relative_path"]: Path(item["path"]) for item in result["copied_evidence"]["files"]}
+        self.assertIn("out", copied["actuals/front.png"].parts)
+        self.assertIn("screenshot-capture", copied["actuals/front.png"].parts)
+        self.assertIn("out", copied["diff/front_color.png"].parts)
+        self.assertIn("screenshot-capture", copied["diff/front_color.png"].parts)
         self.assertNotIn("approval", result["summary"].lower())
 
     def test_poll_capture_reports_live_stdout_tail_and_file_activity(self) -> None:

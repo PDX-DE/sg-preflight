@@ -173,7 +173,10 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["profile_id"], "G70")
         self.assertIn("This will run the BMW pipeline for G70", payload["confirmation_message"])
-        self.assertIn("Cars", payload["target_write_path"])
+        self.assertIn("out", payload["target_write_path"])
+        self.assertIn("delivery-workbook", payload["target_write_path"])
+        self.assertIn("Cars", payload["native_output_path"])
+        self.assertIn("copies the generated workbook evidence", payload["confirmation_message"])
         self.assertTrue(all(item["status"] == "available" for item in payload["checks"]))
 
     def test_generation_command_prefers_car_manager_export(self) -> None:
@@ -447,10 +450,59 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["checklist_status"], "available")
+        self.assertEqual(result["copied_evidence"]["status"], "recorded")
+        self.assertEqual(result["copied_evidence"]["file_count"], 2)
+        self.assertIn("delivery-workbook", result["sgfx_output_root"])
+        self.assertIn("Cars", result["native_output_path"])
         self.assertFalse(result["is_approval"])
         self.assertTrue(result["recorded_by_tool"])
         self.assertIn("car_manager.py", " ".join(result["command"]))
         self.assertEqual(result["command"][-1], "G70_EVO")
+
+    def test_poll_generation_copies_workbook_evidence_to_sgfx_output_root(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+
+        fake_process = _FakeProcess(returncode=0)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            workbook = root / "Cars" / "size_analysis" / "G70_20260524.xlsx"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
+            write_text(workbook, "fake workbook\n")
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
+                with mock.patch(
+                    "sg_preflight.delivery_workbook_generation._find_executable",
+                    return_value=r"C:\tools\tool.exe",
+                ):
+                    with mock.patch.object(generation.subprocess, "Popen", return_value=fake_process):
+                        with mock.patch.object(
+                            generation,
+                            "read_delivery_checklist",
+                            return_value={
+                                "status": "available",
+                                "summary": "Delivery checklist G70: generated workbook found.",
+                                "workbook_path": str(workbook),
+                            },
+                        ):
+                            job = generation.start_delivery_workbook_generation(
+                                profile_id="G70",
+                                workspace=root,
+                                operator_confirmed=True,
+                            )
+                            write_text(job.stdout_path, "stdout\n")
+                            write_text(job.stderr_path, "")
+                            result = generation.poll_delivery_workbook_generation(job)
+
+        self.assertEqual(result["status"], "available")
+        copied = result["copied_evidence"]
+        self.assertEqual(copied["status"], "recorded")
+        self.assertEqual(copied["file_count"], 3)
+        copied_paths = [Path(item["path"]) for item in copied["files"]]
+        self.assertTrue(any(path.name == "G70_20260524.xlsx" for path in copied_paths))
+        self.assertTrue(any("out" in path.parts and "delivery-workbook" in path.parts for path in copied_paths))
 
     def test_poll_generation_reports_live_stdout_tail_and_file_activity(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation

@@ -32,6 +32,7 @@ from sg_preflight.delivery_workbook_generation import (
     _overall_preflight_status,
     _registered_car_root,
     _requires_registered_car_folder,
+    _sgfx_pipeline_output_root,
     _unavailable_model_summary,
     _python_check,
     _python_command_payload,
@@ -50,6 +51,7 @@ SCREENSHOT_CAPTURE_TIMEOUT_SECONDS = 900
 SCREENSHOT_CAPTURE_MIN_FREE_BYTES = 100 * 1024 * 1024
 SCREENSHOT_CAPTURE_TYPICAL_RANGE_LABEL = "typical 2-10 min"
 SCREENSHOT_CAPTURE_FILE_ACTIVITY_LIMIT = 24
+SCREENSHOT_CAPTURE_COPIED_EVIDENCE_LIMIT = 80
 _SCREENSHOT_BRANDS = ("BMW", "MINI", "Alpina", "MGmbH", "RollsRoyce")
 
 
@@ -74,6 +76,10 @@ def _capture_tests_root(bmw_root: Path, profile_id: str) -> Path:
 def _capture_activity_roots(bmw_root: Path, profile_id: str) -> list[Path]:
     tests_root = _capture_tests_root(bmw_root, profile_id)
     return [tests_root / "actuals", tests_root / "diff"]
+
+
+def _screenshot_sgfx_output_dir(workspace: Path, profile_id: str) -> Path:
+    return _sgfx_pipeline_output_root(workspace, profile_id, "screenshot-capture")
 
 
 def _screenshot_disk_space_check(bmw_root: Path | None, profile_id: str, min_free_bytes: int) -> dict[str, str]:
@@ -301,7 +307,8 @@ def check_screenshot_capture_environment(
     checks.append(_screenshot_disk_space_check(execution_root, clean_profile, min_free_bytes))
     can_run = all(check["status"] == "available" for check in checks)
     status = _overall_preflight_status(checks)
-    target_path = _capture_tests_root(execution_root, clean_profile) if execution_root is not None else Path()
+    native_target_path = _capture_tests_root(execution_root, clean_profile) if execution_root is not None else Path()
+    target_path = _screenshot_sgfx_output_dir(workspace_path, clean_profile)
     return {
         "profile_id": clean_profile,
         "workspace": str(workspace_path),
@@ -309,13 +316,15 @@ def check_screenshot_capture_environment(
         "execution_bmw_root": str(execution_root or ""),
         "lane": lane,
         "target_write_path": str(target_path),
+        "native_output_path": str(native_target_path),
+        "sgfx_output_root": str(target_path),
         "estimated_size_bytes": min_free_bytes,
         "status": status,
         "can_run": can_run,
         "checks": checks,
         "confirmation_message": (
-            f"This will run BMW pipeline screenshot capture for {clean_profile}. It writes local actual/diff output "
-            f"under `{target_path}` and records evidence only. Continue?"
+            f"This will run BMW pipeline screenshot capture for {clean_profile}. It may write native actual/diff "
+            f"output under `{native_target_path}`; SGFX copies review evidence to `{target_path}`. Continue?"
         ),
         "disabled_reason": "" if can_run else "One or more environment pre-flight checks failed.",
     }
@@ -388,6 +397,67 @@ def _capture_file_activity(
     return [item for _timestamp, item in sorted(entries, key=lambda pair: pair[0], reverse=True)[:limit]]
 
 
+def _copy_screenshot_capture_evidence(job: ScreenshotCaptureJob) -> dict[str, Any]:
+    output_root = _screenshot_sgfx_output_dir(job.workspace, job.profile_id)
+    copied_files: list[dict[str, Any]] = []
+    for root in _capture_activity_roots(job.bmw_root, job.profile_id):
+        if not root.is_dir():
+            continue
+        group = root.name or "screenshots"
+        for source in root.rglob("*"):
+            if not source.is_file():
+                continue
+            try:
+                relative = source.relative_to(root)
+            except ValueError:
+                relative = Path(source.name)
+            destination = output_root / group / relative
+            ensure_parent(destination)
+            shutil.copy2(source, destination)
+            try:
+                stat = destination.stat()
+            except OSError:
+                size_bytes = 0
+            else:
+                size_bytes = int(stat.st_size)
+            copied_files.append(
+                {
+                    "source_path": str(source),
+                    "path": str(destination),
+                    "relative_path": str(Path(group) / relative).replace("\\", "/"),
+                    "size_bytes": size_bytes,
+                    "size_label": _size_label(size_bytes),
+                }
+            )
+    for source, name in ((job.stdout_path, "stdout.log"), (job.stderr_path, "stderr.log")):
+        if not source.is_file():
+            continue
+        destination = output_root / "logs" / name
+        ensure_parent(destination)
+        shutil.copy2(source, destination)
+        try:
+            stat = destination.stat()
+        except OSError:
+            size_bytes = 0
+        else:
+            size_bytes = int(stat.st_size)
+        copied_files.append(
+            {
+                "source_path": str(source),
+                "path": str(destination),
+                "relative_path": str(Path("logs") / name).replace("\\", "/"),
+                "size_bytes": size_bytes,
+                "size_label": _size_label(size_bytes),
+            }
+        )
+    return {
+        "status": "recorded" if copied_files else "missing",
+        "output_root": str(output_root),
+        "files": copied_files[:SCREENSHOT_CAPTURE_COPIED_EVIDENCE_LIMIT],
+        "file_count": len(copied_files),
+    }
+
+
 def _capture_progress_payload(job: ScreenshotCaptureJob, *, elapsed_seconds: float) -> dict[str, Any]:
     return {
         "profile_id": job.profile_id,
@@ -412,6 +482,8 @@ def _capture_progress_payload(job: ScreenshotCaptureJob, *, elapsed_seconds: flo
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _capture_file_activity(job.bmw_root, job.profile_id, job.started_wall_time),
+        "sgfx_output_root": str(_screenshot_sgfx_output_dir(job.workspace, job.profile_id)),
+        "native_output_path": str(_capture_tests_root(job.bmw_root, job.profile_id)),
         "preflight": job.preflight,
         "recorded_by_tool": True,
         "is_approval": False,
@@ -456,6 +528,7 @@ def _capture_result(
                 "BMW screenshot capture exited 0, but no actual or diff screenshot files were detected. "
                 f"{screenshot_payload.get('summary', '')}".strip()
             )
+    copied_evidence = _copy_screenshot_capture_evidence(job)
     elapsed_seconds = time.monotonic() - job.started_monotonic
     return {
         "profile_id": job.profile_id,
@@ -480,6 +553,9 @@ def _capture_result(
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _capture_file_activity(job.bmw_root, job.profile_id, job.started_wall_time),
+        "copied_evidence": copied_evidence,
+        "sgfx_output_root": copied_evidence["output_root"],
+        "native_output_path": str(_capture_tests_root(job.bmw_root, job.profile_id)),
         "preflight": job.preflight,
         "screenshot_state_status": str(screenshot_payload.get("status", "")),
         "actual_count": int(screenshot_payload.get("actual_count", 0) or 0),

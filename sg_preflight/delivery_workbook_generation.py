@@ -37,6 +37,7 @@ GENERATION_STDOUT_TAIL_BYTES = 2000
 GENERATION_STDOUT_TAIL_LINES = 20
 GENERATION_FILE_ACTIVITY_LIMIT = 20
 GENERATION_TYPICAL_RANGE_LABEL = "typical 1-10 min"
+GENERATION_COPIED_EVIDENCE_LIMIT = 40
 _TOOL_REGISTRATION_KEYS = {
     "raco": "raco_gui",
     "racoheadless": "raco_headless",
@@ -526,7 +527,8 @@ def check_delivery_workbook_generation_environment(
             )
         )
     can_run = all(check["status"] == "available" for check in checks)
-    target_path = workspace_path / "Cars" / "size_analysis"
+    native_target_path = workspace_path / "Cars" / "size_analysis"
+    target_path = _delivery_workbook_sgfx_output_dir(workspace_path, clean_profile)
     status = _overall_preflight_status(checks)
     return {
         "profile_id": clean_profile,
@@ -534,13 +536,15 @@ def check_delivery_workbook_generation_environment(
         "bmw_root": str(repo_root or ""),
         "lane": lane,
         "target_write_path": str(target_path),
+        "native_output_path": str(native_target_path),
+        "sgfx_output_root": str(target_path),
         "estimated_size_bytes": min_free_bytes,
         "status": status,
         "can_run": can_run,
         "checks": checks,
         "confirmation_message": (
-            f"This will run the BMW pipeline for {clean_profile}. May take several minutes and writes to your "
-            f"local SVN working copy at `{target_path}`. Continue?"
+            f"This will run the BMW pipeline for {clean_profile}. It may write native pipeline output under "
+            f"`{native_target_path}`; SGFX copies the generated workbook evidence to `{target_path}`. Continue?"
         ),
         "disabled_reason": "" if can_run else "One or more environment pre-flight checks failed.",
     }
@@ -723,8 +727,45 @@ def _size_label(size_bytes: int) -> str:
     return f"{mib:.1f} MB"
 
 
+def _profile_output_token(profile_id: str) -> str:
+    token = "".join(ch.lower() if ch.isalnum() else "-" for ch in _clean_profile(profile_id))
+    return "-".join(part for part in token.split("-") if part) or "profile"
+
+
+def _sgfx_profile_output_root(workspace: Path, profile_id: str) -> Path:
+    return workspace / "out" / _profile_output_token(profile_id)
+
+
+def _sgfx_pipeline_output_root(workspace: Path, profile_id: str, action: str) -> Path:
+    return _sgfx_profile_output_root(workspace, profile_id) / action
+
+
+def _copy_file_evidence(source: Path, destination: Path) -> dict[str, Any] | None:
+    if not source.is_file():
+        return None
+    ensure_parent(destination)
+    shutil.copy2(source, destination)
+    try:
+        stat = destination.stat()
+    except OSError:
+        size_bytes = 0
+    else:
+        size_bytes = int(stat.st_size)
+    return {
+        "source_path": str(source),
+        "path": str(destination),
+        "relative_path": destination.name,
+        "size_bytes": size_bytes,
+        "size_label": _size_label(size_bytes),
+    }
+
+
 def _delivery_workbook_output_dir(workspace: Path) -> Path:
     return workspace / "Cars" / "size_analysis"
+
+
+def _delivery_workbook_sgfx_output_dir(workspace: Path, profile_id: str) -> Path:
+    return _sgfx_pipeline_output_root(workspace, profile_id, "delivery-workbook")
 
 
 def _file_activity(workspace: Path, started_wall_time: float, limit: int = GENERATION_FILE_ACTIVITY_LIMIT) -> list[dict[str, Any]]:
@@ -762,6 +803,29 @@ def _file_activity(workspace: Path, started_wall_time: float, limit: int = GENER
     return [item for _timestamp, item in sorted(entries, key=lambda pair: pair[0], reverse=True)[:limit]]
 
 
+def _copy_delivery_workbook_evidence(
+    job: DeliveryWorkbookGenerationJob,
+    checklist_payload: dict[str, Any],
+) -> dict[str, Any]:
+    output_root = _delivery_workbook_sgfx_output_dir(job.workspace, job.profile_id)
+    copied_files: list[dict[str, Any]] = []
+    workbook_path = Path(str(checklist_payload.get("workbook_path", "")).strip())
+    if workbook_path.is_file():
+        copied = _copy_file_evidence(workbook_path, output_root / workbook_path.name)
+        if copied is not None:
+            copied_files.append(copied)
+    for source, name in ((job.stdout_path, "stdout.log"), (job.stderr_path, "stderr.log")):
+        copied = _copy_file_evidence(source, output_root / "logs" / name)
+        if copied is not None:
+            copied_files.append(copied)
+    return {
+        "status": "recorded" if copied_files else "missing",
+        "output_root": str(output_root),
+        "files": copied_files[:GENERATION_COPIED_EVIDENCE_LIMIT],
+        "file_count": len(copied_files),
+    }
+
+
 def _generation_progress_payload(job: DeliveryWorkbookGenerationJob, *, elapsed_seconds: float) -> dict[str, Any]:
     return {
         "profile_id": job.profile_id,
@@ -786,6 +850,8 @@ def _generation_progress_payload(job: DeliveryWorkbookGenerationJob, *, elapsed_
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _file_activity(job.workspace, job.started_wall_time),
+        "sgfx_output_root": str(_delivery_workbook_sgfx_output_dir(job.workspace, job.profile_id)),
+        "native_output_path": str(_delivery_workbook_output_dir(job.workspace)),
         "preflight": job.preflight,
         "recorded_by_tool": True,
         "is_approval": False,
@@ -819,6 +885,7 @@ def _generation_result(
             )
             if checklist_summary:
                 summary = f"{summary} {checklist_summary}"
+    copied_evidence = _copy_delivery_workbook_evidence(job, checklist_payload)
     elapsed_seconds = time.monotonic() - job.started_monotonic
     return {
         "profile_id": job.profile_id,
@@ -843,6 +910,9 @@ def _generation_result(
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _file_activity(job.workspace, job.started_wall_time),
+        "copied_evidence": copied_evidence,
+        "sgfx_output_root": copied_evidence["output_root"],
+        "native_output_path": str(_delivery_workbook_output_dir(job.workspace)),
         "preflight": job.preflight,
         "checklist_status": str(checklist_payload.get("status", "")),
         "checklist_summary": str(checklist_payload.get("summary", "")),
