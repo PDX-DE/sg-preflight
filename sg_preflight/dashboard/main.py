@@ -13,6 +13,7 @@ import tempfile
 import time
 from time import monotonic
 from typing import Any, Callable
+from urllib.parse import quote
 
 from sg_preflight.activity_log import append_activity_entry
 from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_asset_root
@@ -46,8 +47,10 @@ from sg_preflight.manual_review import (
 from sg_preflight.profiles import (
     PROFILE_REGISTRY_DYNAMIC_SOURCE,
     PROFILE_SCOPE_DEFAULT,
+    get_run_profile,
     list_run_profiles,
 )
+from sg_preflight.screenshot_review_viewer import build_screenshot_review_viewer
 from sg_preflight.screenshot_capture import (
     SCREENSHOT_CAPTURE_ACTION_ID,
     SCREENSHOT_CAPTURE_ACTION_LABEL,
@@ -60,6 +63,7 @@ from sg_preflight.screenshot_capture import (
 from sg_preflight.services import operator_ui_root
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
+from sg_preflight.visual_review import build_visual_review_prep
 
 
 DASHBOARD_TITLE = "Seriengrafik: Project Quality-Hero"
@@ -787,6 +791,56 @@ def _screenshot_test_state_page(
         }
     ]
     return page
+
+
+def _screenshot_review_viewer_output_root(workspace: Path, profile_id: str) -> Path:
+    safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
+    return operator_ui_root(workspace) / "screenshot-review-viewer" / safe_profile
+
+
+def _screenshot_review_viewer_url(profile_id: str, item_key: str = "") -> str:
+    safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
+    url = f"/sgfx-operator-ui/screenshot-review-viewer/{safe_profile}/screenshot-review-viewer.html"
+    if item_key:
+        url += f"#{quote(item_key, safe='')}"
+    return url
+
+
+def _materialize_screenshot_review_viewer_for_dashboard(
+    profile_id: str,
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+) -> Any:
+    profile = get_run_profile(profile_id, workspace, bmw_root=bmw_root)
+    project_root = profile.source_project_root()
+    prep = build_visual_review_prep(profile.profile_id, project_root)
+    state = read_bmw_screenshot_state(
+        profile.profile_id,
+        workspace=workspace,
+        bmw_root=bmw_root,
+        sg_project_root=project_root,
+    )
+    candidate_roots = tuple(
+        Path(value).resolve()
+        for value in (str(state.get("actuals_root", "")).strip(),)
+        if value and Path(value).is_dir()
+    )
+    diff_roots = tuple(
+        Path(value).resolve()
+        for value in (str(state.get("diff_root", "")).strip(),)
+        if value and Path(value).is_dir()
+    )
+    expected_root_value = str(state.get("expected_root", "")).strip()
+    return build_screenshot_review_viewer(
+        profile.profile_id,
+        project_root,
+        _screenshot_review_viewer_output_root(workspace, profile.profile_id),
+        expected_root=Path(expected_root_value).resolve() if expected_root_value else None,
+        candidate_roots=candidate_roots,
+        diff_reference_roots=diff_roots,
+        priority_names=tuple(str(item) for item in prep.priority_screenshots),
+    )
 
 
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
@@ -2239,6 +2293,63 @@ def _render_screenshot_test_state_panel(
         else:
             ui.label("No rows loaded for this page.").classes("sgfx-muted")
 
+        ui.separator()
+        ui.label("Side-by-side screenshot review").classes("sgfx-panel-tagline")
+        ui.label(
+            "Build a local expected / actual / diff viewer with synchronized zoom and pan. "
+            "Manual review remains required."
+        ).classes("sgfx-muted")
+        viewer_status = ui.label("Viewer not generated in this session.").classes("sgfx-muted")
+        viewer_links = ui.column().classes("full-width")
+
+        def _open_viewer_url(url: str) -> None:
+            ui.run_javascript(f"window.open({json.dumps(url)}, '_blank', 'noopener,noreferrer');")
+
+        def _render_viewer_links(bundle: Any) -> None:
+            viewer_links.clear()
+            with viewer_links:
+                items = [item for item in bundle.viewer.items if item.diff_uri or item.actual_uri or item.expected_uri]
+                if not items:
+                    ui.label("No screenshot pairs were available for the viewer.").classes("sgfx-muted")
+                    return
+                ui.label("Open a diff row in the side-by-side viewer.").classes("sgfx-muted")
+                for item in items[:12]:
+                    target_url = _screenshot_review_viewer_url(str(snapshot["profile_id"]), item.key)
+                    button = _attach_tooltip(
+                        ui,
+                        ui.button(
+                            f"{item.key} [{item.classification} / {item.visual_classification}]",
+                            on_click=lambda url=target_url: _open_viewer_url(url),
+                        ),
+                        "Open this screenshot in the synchronized expected / actual / diff viewer.",
+                    )
+                    button.classes("sgfx-nav-button")
+
+        def _build_and_open_viewer() -> None:
+            try:
+                bundle = _materialize_screenshot_review_viewer_for_dashboard(
+                    str(snapshot["profile_id"]),
+                    workspace,
+                    bmw_root=bmw_root,
+                )
+            except Exception as exc:  # noqa: BLE001
+                viewer_status.text = f"Viewer generation failed: {exc}"
+                ui.notify("Screenshot review viewer generation failed.")
+                return
+            viewer_status.text = (
+                f"Viewer generated with {bundle.viewer.item_count} screenshot item(s). "
+                f"JSON: {bundle.json_path.name}"
+            )
+            _render_viewer_links(bundle)
+            _open_viewer_url(_screenshot_review_viewer_url(str(snapshot["profile_id"])))
+            ui.notify("Screenshot review viewer generated locally.")
+
+        _attach_tooltip(
+            ui,
+            ui.button("Build viewer", on_click=_build_and_open_viewer),
+            "Build and open the local side-by-side screenshot review viewer.",
+        )
+
         actions = [action for action in page.get("actions", []) if isinstance(action, dict)]
         for action in actions:
             if action.get("id") != SCREENSHOT_CAPTURE_ACTION_ID:
@@ -2789,6 +2900,9 @@ def _render_dashboard(
 ) -> None:
     app.add_static_files("/sgfx-dashboard-static", str(runtime_asset_dir("sg_preflight/dashboard")))
     app.add_static_files("/sgfx-dashboard-assets", str(runtime_asset_root()))
+    operator_ui_static_root = operator_ui_root(workspace)
+    operator_ui_static_root.mkdir(parents=True, exist_ok=True)
+    app.add_static_files("/sgfx-operator-ui", str(operator_ui_static_root))
     base_snapshot = build_dashboard_snapshot(initial_profile_id, workspace, bmw_root=bmw_root, ui_mode=ui_mode)
 
     @ui.page("/")

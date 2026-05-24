@@ -105,6 +105,7 @@ from sg_preflight.review_tracking import (
     set_review_decision,
 )
 from sg_preflight.retro import parse_retro_export, write_retro_json, write_retro_markdown
+from sg_preflight.screenshot_review_viewer import build_screenshot_review_viewer
 from sg_preflight.services import (
     VALID_PACKS,
     RunRequest,
@@ -524,6 +525,21 @@ def _console_screenshot_triage(bundle: object, *, as_json: bool = False) -> None
     print(f"Markdown: {bundle.markdown_path}")
     print(f"HTML: {bundle.html_path}")
     print(f"JSON: {bundle.json_path}")
+
+
+def _console_screenshot_review_viewer(bundle: object, *, as_json: bool = False) -> None:
+    viewer = bundle.viewer
+    if as_json:
+        print(json.dumps(viewer.to_dict(), indent=2, ensure_ascii=False))
+        return
+
+    print(f"Screenshot review viewer: {viewer.profile_id}")
+    print(f"Project root: {viewer.project_root}")
+    print(f"Expected root: {viewer.expected_root or 'not found'}")
+    print(f"Items: {viewer.item_count}")
+    print(f"HTML: {bundle.html_path}")
+    print(f"JSON: {bundle.json_path}")
+    print(f"Triage JSON: {bundle.triage_json_path}")
 
 
 def _screenshot_triage_thresholds(args: argparse.Namespace) -> VisualDiffThresholds:
@@ -980,6 +996,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Record an explicit external-vision opt-in request; this local build does not call an external provider",
     )
     screenshot_triage.add_argument("--json", action="store_true", help="Print triage payload as JSON")
+
+    screenshot_review_viewer = sub.add_parser(
+        "screenshot-review-viewer",
+        help="Build a side-by-side expected/actual/diff screenshot review viewer",
+    )
+    screenshot_review_viewer_sub = screenshot_review_viewer.add_subparsers(
+        dest="screenshot_review_viewer_command",
+        required=True,
+    )
+    screenshot_review_viewer_build = screenshot_review_viewer_sub.add_parser(
+        "build",
+        help="Materialize the local screenshot review viewer",
+    )
+    screenshot_review_viewer_build.add_argument("--profile", help="Canonical profile id such as G70")
+    screenshot_review_viewer_build.add_argument("--project-root", help="Explicit project root override")
+    screenshot_review_viewer_build.add_argument("--workspace", help="Workspace root override")
+    screenshot_review_viewer_build.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    screenshot_review_viewer_build.add_argument("--expected-root", help="Explicit expected screenshot root")
+    screenshot_review_viewer_build.add_argument(
+        "--candidate-root",
+        action="append",
+        default=[],
+        help="Explicit actual/candidate screenshot root (repeatable)",
+    )
+    screenshot_review_viewer_build.add_argument(
+        "--diff-root",
+        action="append",
+        default=[],
+        help="Explicit diff screenshot root (repeatable)",
+    )
+    screenshot_review_viewer_build.add_argument("--output-root", help="Directory to write viewer artifacts")
+    screenshot_review_viewer_build.add_argument("--max-items", type=int, default=80, help="Maximum viewer rows")
+    screenshot_review_viewer_build.add_argument("--json", action="store_true", help="Print viewer payload as JSON")
 
     daily_snapshot = sub.add_parser(
         "daily-qa-snapshot",
@@ -1862,6 +1911,44 @@ def _main_impl(argv: list[str] | None = None) -> int:
             print(_console_safe(f"screenshot-triage failed: {exc}"), file=sys.stderr)
             return 1
         _console_screenshot_triage(bundle, as_json=args.json)
+        return 0
+
+    if args.command == "screenshot-review-viewer":
+        viewer_root = Path(args.workspace).resolve() if args.workspace else root
+        if args.screenshot_review_viewer_command != "build":
+            parser.error(f"Unhandled screenshot-review-viewer command: {args.screenshot_review_viewer_command}")
+            return 1
+        if not args.profile and not args.project_root:
+            parser.error("screenshot-review-viewer build needs either --profile or --project-root")
+            return 1
+        try:
+            if args.profile:
+                profile = get_run_profile(args.profile, viewer_root, bmw_root=args.bmw_root)
+                profile_id = profile.profile_id
+                project_root = profile.source_project_root()
+            else:
+                project_root = Path(args.project_root).resolve()
+                profile_id = project_root.name
+            prep = build_visual_review_prep(profile_id, project_root)
+            output_root = (
+                Path(args.output_root).resolve()
+                if args.output_root
+                else viewer_root / "out" / f"{profile_id.lower()}-screenshot-review-viewer"
+            )
+            bundle = build_screenshot_review_viewer(
+                profile_id,
+                project_root,
+                output_root,
+                expected_root=Path(args.expected_root).resolve() if args.expected_root else None,
+                candidate_roots=tuple(Path(item).resolve() for item in args.candidate_root if str(item).strip()),
+                diff_reference_roots=tuple(Path(item).resolve() for item in args.diff_root if str(item).strip()),
+                priority_names=tuple(str(item) for item in prep.priority_screenshots),
+                max_items=max(1, int(args.max_items or 80)),
+            )
+        except Exception as exc:
+            print(_console_safe(f"screenshot-review-viewer failed: {exc}"), file=sys.stderr)
+            return 1
+        _console_screenshot_review_viewer(bundle, as_json=args.json)
         return 0
 
     if args.command == "daily-qa-snapshot":

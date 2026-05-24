@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from sg_preflight.assets import runtime_asset_path
+from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.desktop.evidence_model import (
     DesktopActionChoice,
     DesktopActionSnapshot,
@@ -58,8 +59,11 @@ from sg_preflight.dependency_onboarding import (
     poll_dependency_setup_action,
     start_dependency_setup_action,
 )
+from sg_preflight.profiles import get_run_profile
 from sg_preflight.qa_actions import build_action_record, get_operator_action
-from sg_preflight.services import workspace_root
+from sg_preflight.screenshot_review_viewer import build_screenshot_review_viewer
+from sg_preflight.services import operator_ui_root, workspace_root
+from sg_preflight.visual_review import build_visual_review_prep
 
 
 GRAFIKS_GUARDRAILS = (
@@ -114,6 +118,7 @@ class DesktopMainWindow(QMainWindow):
         self._hotkey_opacity: QGraphicsOpacityEffect | None = None
         self._hotkey_icon_pixmap = QPixmap(str(runtime_asset_path("debug_icon.png")))
         self._hotkey_pulse_step = 0
+        self._screenshot_review_dialog: QDialog | None = None
 
         icon_path = runtime_asset_path("desktop_native/resources/exe_ico.ico")
         if icon_path.is_file():
@@ -219,6 +224,10 @@ class DesktopMainWindow(QMainWindow):
         self.open_evidence_button.clicked.connect(self._open_latest_evidence)
         bottom_layout.addWidget(self.open_evidence_button)
 
+        self.screenshot_review_button = GuideButton("LT", "Diff Viewer", bottom)
+        self.screenshot_review_button.clicked.connect(self._open_screenshot_review_viewer)
+        bottom_layout.addWidget(self.screenshot_review_button)
+
         self.copy_jira_button = GuideButton("J", "Copy Jira", bottom)
         self.copy_jira_button.clicked.connect(lambda: self._copy_text("jira"))
         bottom_layout.addWidget(self.copy_jira_button)
@@ -268,6 +277,7 @@ class DesktopMainWindow(QMainWindow):
         self.open_log_button.setToolTip("Open the latest action log for the current run.")
         self.open_report_button.setToolTip("Open the latest HTML report when available.")
         self.open_evidence_button.setToolTip("Open the latest evidence bundle folder when available.")
+        self.screenshot_review_button.setToolTip("Build and open the synchronized expected / actual / diff screenshot viewer.")
         self.copy_jira_button.setToolTip("Copy the prepared Jira note text to the clipboard.")
         self.copy_qa_hero_button.setToolTip("Copy the prepared QA Hero note text to the clipboard.")
         self.copy_handoff_button.setToolTip("Copy the local handoff text to the clipboard.")
@@ -1089,6 +1099,84 @@ QLabel#hotkeyText {
     def _open_latest_evidence(self) -> None:
         if self._current_snapshot is None or not open_local_path(self._current_snapshot.latest_run_links.output_root):
             QMessageBox.information(self, "Open evidence", "No evidence bundle is available for the selected profile yet.")
+
+    def _screenshot_review_output_root(self, profile_id: str) -> Path:
+        safe_profile = "".join(
+            character if character.isalnum() or character in "._-" else "_"
+            for character in (profile_id.strip().lower() or "profile")
+        )
+        return operator_ui_root(self.workspace_root) / "screenshot-review-viewer" / safe_profile
+
+    def _build_screenshot_review_viewer_bundle(self) -> Any:
+        profile_id = self._current_profile_id() or self.initial_profile_id
+        if not profile_id:
+            raise ValueError("Select a profile before opening the screenshot review viewer.")
+        profile = get_run_profile(profile_id, self.workspace_root)
+        project_root = profile.source_project_root()
+        prep = build_visual_review_prep(profile.profile_id, project_root)
+        state = read_bmw_screenshot_state(
+            profile.profile_id,
+            workspace=self.workspace_root,
+            sg_project_root=project_root,
+        )
+        candidate_roots = tuple(
+            Path(value).resolve()
+            for value in (str(state.get("actuals_root", "")).strip(),)
+            if value and Path(value).is_dir()
+        )
+        diff_roots = tuple(
+            Path(value).resolve()
+            for value in (str(state.get("diff_root", "")).strip(),)
+            if value and Path(value).is_dir()
+        )
+        expected_root_value = str(state.get("expected_root", "")).strip()
+        return build_screenshot_review_viewer(
+            profile.profile_id,
+            project_root,
+            self._screenshot_review_output_root(profile.profile_id),
+            expected_root=Path(expected_root_value).resolve() if expected_root_value else None,
+            candidate_roots=candidate_roots,
+            diff_reference_roots=diff_roots,
+            priority_names=tuple(str(item) for item in prep.priority_screenshots),
+        )
+
+    def _open_screenshot_review_viewer(self) -> None:
+        try:
+            bundle = self._build_screenshot_review_viewer_bundle()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Screenshot review viewer", str(exc))
+            return
+
+        html_path = bundle.html_path.resolve()
+        try:
+            from PySide6.QtWebEngineWidgets import QWebEngineView
+        except Exception:  # pragma: no cover - exercised only when WebEngine is unavailable
+            if not open_local_path(str(html_path)):
+                QMessageBox.information(self, "Screenshot review viewer", "Viewer HTML could not be opened.")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Screenshot review viewer - {bundle.viewer.profile_id}")
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(8)
+
+        note = QLabel("Manual review remains required. Decision: not approval — evidence only.", dialog)
+        note.setObjectName("panelHint")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        view = QWebEngineView(dialog)
+        view.setUrl(QUrl.fromLocalFile(str(html_path)))
+        layout.addWidget(view, stretch=1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dialog)
+        buttons.rejected.connect(dialog.close)
+        layout.addWidget(buttons)
+
+        dialog.resize(1280, 840)
+        self._screenshot_review_dialog = dialog
+        dialog.show()
+        self.statusBar().showMessage(f"Screenshot viewer generated with {bundle.viewer.item_count} item(s)")
 
     def _copy_text(self, key: str) -> None:
         text = self._copy_map.get(key, "").strip()
