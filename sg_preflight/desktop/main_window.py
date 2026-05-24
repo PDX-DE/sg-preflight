@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from sg_preflight.assets import runtime_asset_path
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
+from sg_preflight.desktop_notifications import notify_desktop_completion
 from sg_preflight.desktop.evidence_model import (
     DesktopActionChoice,
     DesktopActionSnapshot,
@@ -911,6 +912,11 @@ QLabel#hotkeyText {
             self._setup_job = None
             self._reload_dependency_setup_panel(preserve_output=True)
             self._refresh_dependency_setup_buttons()
+            self._notify_completion(
+                title="SGFX setup finished",
+                message=str(result.get("summary", "Dependency setup completed.")),
+                action_id=str(result.get("action_id", "dependency-setup")),
+            )
 
     def _cancel_dependency_setup(self) -> None:
         if self._setup_job is None:
@@ -1052,11 +1058,33 @@ QLabel#hotkeyText {
         self._current_run_id = run_id
         self._poll_current_action()
         self.statusBar().showMessage(f"Completed {run_id}")
+        self._notify_completion(
+            title="SGFX action finished",
+            message=f"Local action completed: {run_id}",
+            action_id=run_id,
+        )
 
     def _runner_failed(self, message: str) -> None:
         self._poll_current_action()
         self.statusBar().showMessage("Action failed")
+        self._notify_completion(
+            title="SGFX action failed",
+            message=message,
+            action_id=self._current_run_id or "action",
+        )
         QMessageBox.warning(self, "Action failed", message)
+
+    def _notify_completion(self, *, title: str, message: str, action_id: str) -> None:
+        try:
+            notify_desktop_completion(
+                title=title,
+                message=message,
+                workspace=self.workspace_root,
+                action_id=action_id,
+                profile_id=self._current_profile_id(),
+            )
+        except Exception:
+            return
 
     def _poll_current_action(self) -> None:
         if not self._current_run_id:

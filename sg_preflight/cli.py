@@ -39,6 +39,7 @@ from sg_preflight.desktop.evidence_model import (
     desktop_run_snapshot,
     desktop_surface_items,
 )
+from sg_preflight.desktop_notifications import notification_text, notify_desktop_completion
 from sg_preflight.daily_digest import (
     build_latest_daily_digest,
     render_daily_digest_markdown,
@@ -1051,6 +1052,21 @@ def build_parser() -> argparse.ArgumentParser:
     quality_hero_report_generate.add_argument("--auto-confirm", action="store_true", help="Attach the report after confirmation")
     _add_render_options(quality_hero_report_generate, formats=("text", "json", "markdown"))
 
+    desktop_notification = sub.add_parser(
+        "desktop-notification",
+        help="Record or show a desktop notification for completed local work",
+    )
+    desktop_notification_sub = desktop_notification.add_subparsers(dest="desktop_notification_command", required=True)
+    desktop_notification_send = desktop_notification_sub.add_parser("send", help="Show one desktop notification")
+    desktop_notification_send.add_argument("--workspace", help="Workspace root for the notification record")
+    desktop_notification_send.add_argument("--title", required=True, help="Notification title")
+    desktop_notification_send.add_argument("--message", required=True, help="Notification message")
+    desktop_notification_send.add_argument("--action-id", default="", help="Related local action id")
+    desktop_notification_send.add_argument("--profile", default="", help="Related profile id")
+    desktop_notification_send.add_argument("--evidence-path", default="", help="Optional local evidence path")
+    desktop_notification_send.add_argument("--dry-run", action="store_true", help="Record without showing a desktop message")
+    _add_render_options(desktop_notification_send, formats=("text", "json"))
+
     daily_snapshot = sub.add_parser(
         "daily-qa-snapshot",
         help="Run the local BMW+SG daily QA snapshot for confirmed delivery cars",
@@ -2023,6 +2039,31 @@ def _main_impl(argv: list[str] | None = None) -> int:
                     f"for {attachment.get('ticket', attach_ticket)}"
                 )
             _emit_text("\n".join(lines), args)
+        return 0
+
+    if args.command == "desktop-notification":
+        notification_root = Path(args.workspace).resolve() if args.workspace else root
+        if args.desktop_notification_command != "send":
+            parser.error(f"Unhandled desktop-notification command: {args.desktop_notification_command}")
+            return 1
+        try:
+            payload = notify_desktop_completion(
+                title=args.title,
+                message=args.message,
+                workspace=notification_root,
+                action_id=args.action_id,
+                profile_id=args.profile,
+                evidence_path=args.evidence_path,
+                dry_run=bool(args.dry_run),
+            )
+        except Exception as exc:
+            print(_console_safe(f"desktop-notification failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser, formats=("text", "json"))
+        if output_format == "json":
+            _emit_json(payload, args)
+        else:
+            _emit_text(notification_text(payload), args)
         return 0
 
     if args.command == "daily-qa-snapshot":

@@ -29,6 +29,7 @@ from sg_preflight.delivery_workbook_generation import (
     poll_delivery_workbook_generation,
     start_delivery_workbook_generation,
 )
+from sg_preflight.desktop_notifications import notify_desktop_completion
 from sg_preflight.dependency_onboarding import (
     build_dependency_onboarding_status,
     cancel_dependency_setup_action,
@@ -841,6 +842,28 @@ def _materialize_screenshot_review_viewer_for_dashboard(
         diff_reference_roots=diff_roots,
         priority_names=tuple(str(item) for item in prep.priority_screenshots),
     )
+
+
+def _notify_completion_safe(
+    *,
+    title: str,
+    message: str,
+    workspace: Path,
+    action_id: str,
+    profile_id: str,
+    evidence_path: str = "",
+) -> None:
+    try:
+        notify_desktop_completion(
+            title=title,
+            message=message,
+            workspace=workspace,
+            action_id=action_id,
+            profile_id=profile_id,
+            evidence_path=evidence_path,
+        )
+    except Exception:
+        return
 
 
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
@@ -2196,6 +2219,14 @@ def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspac
                         f"Generation {outcome}. {result.get('summary', '')} Refresh to re-read workbook evidence."
                     )
                     ui.notify(f"Delivery workbook generation {outcome}.")
+                    _notify_completion_safe(
+                        title="SGFX delivery workbook finished",
+                        message=f"Delivery workbook generation {outcome}.",
+                        workspace=workspace,
+                        action_id=GENERATE_WORKBOOK_ACTION_ID,
+                        profile_id=str(snapshot["profile_id"]),
+                        evidence_path=str(result.get("output_root", "")),
+                    )
                 except RuntimeError as exc:
                     if not _parent_slot_deleted(exc):
                         raise
@@ -2483,6 +2514,14 @@ def _render_screenshot_test_state_panel(
                         "Refresh to re-read screenshot evidence."
                     )
                     ui.notify(f"Screenshot capture {outcome}.")
+                    _notify_completion_safe(
+                        title="SGFX screenshot capture finished",
+                        message=f"Screenshot capture {outcome}.",
+                        workspace=workspace,
+                        action_id=SCREENSHOT_CAPTURE_ACTION_ID,
+                        profile_id=str(snapshot["profile_id"]),
+                        evidence_path=str(result.get("output_root", "")),
+                    )
                 except RuntimeError as exc:
                     if not _parent_slot_deleted(exc):
                         raise
@@ -2689,6 +2728,14 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                         "Refresh to reload digest evidence."
                     )
                     ui.notify(f"Build review package {outcome}.")
+                    _notify_completion_safe(
+                        title="SGFX review package finished",
+                        message=f"Build review package {outcome} for {result.get('ticket_id', '')}.",
+                        workspace=workspace,
+                        action_id=DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID,
+                        profile_id=str(snapshot["profile_id"]),
+                        evidence_path=str(result.get("output_root", "")),
+                    )
                 except RuntimeError as exc:
                     if not _parent_slot_deleted(exc):
                         raise
