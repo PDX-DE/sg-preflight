@@ -1706,6 +1706,9 @@ class TestCLI(unittest.TestCase):
                                 str(root),
                                 "--candidate-root",
                                 str(candidate_root),
+                                "--structural-min-review-score",
+                                "99",
+                                "--external-vision",
                             ]
                         )
 
@@ -1715,6 +1718,8 @@ class TestCLI(unittest.TestCase):
             materialize.call_args.kwargs["candidate_roots"],
             (candidate_root.resolve(),),
         )
+        self.assertEqual(materialize.call_args.kwargs["visual_thresholds"].structural_min_review_score, 99.0)
+        self.assertTrue(materialize.call_args.kwargs["external_classifier_requested"])
 
     def test_daily_qa_snapshot_cli_forwards_profiles_and_smoke_options(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

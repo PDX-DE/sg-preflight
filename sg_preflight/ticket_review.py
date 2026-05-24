@@ -1658,7 +1658,10 @@ def _item_status_summary(
         f"{report.pair_count} baseline image(s) are already available locally. "
         f"Triage currently sees {report.missing_candidate_count} missing candidate pair(s), "
         f"{report.near_identical_count} near-identical pair(s), {report.needs_review_count} changed pair(s), "
-        f"and {report.dimension_mismatch_count} dimension mismatch pair(s)."
+        f"and {report.dimension_mismatch_count} dimension mismatch pair(s). Visual labels: "
+        f"{report.cosmetic_likely_pass_count} cosmetic likely pass, "
+        f"{report.structural_likely_review_count} structural likely review, "
+        f"{report.unclear_manual_review_count} unclear manual review."
     )
 
 
@@ -1677,7 +1680,11 @@ def _screenshot_surface_summary(contexts: tuple[_ProfileContext, ...]) -> str:
             if surface.actual_count == 0 and surface.diff_count == 0:
                 part += "; BMW screenshot surface exists but currently contains no screenshot payload"
             else:
-                part += f"; triage pairs {report.pair_count}, needs review {report.needs_review_count}"
+                part += (
+                    f"; triage pairs {report.pair_count}, needs review {report.needs_review_count}, "
+                    f"structural labels {report.structural_likely_review_count}, "
+                    f"unclear labels {report.unclear_manual_review_count}"
+                )
         else:
             part += "; BMW export/tests surface not present locally"
         parts.append(part)
@@ -1891,7 +1898,27 @@ def _possible_test_case_lines(context: _ProfileContext) -> list[str]:
             for pair in report.pairs
             if _test_case_area(pair.key) == area and pair.classification == "needs_review"
         )
-        state = f"{missing} missing candidate" if missing else f"{needs_review} needs review" if needs_review else "triage ready"
+        structural = sum(
+            1
+            for pair in report.pairs
+            if _test_case_area(pair.key) == area and pair.visual_classification == "structural_likely_review"
+        )
+        unclear = sum(
+            1
+            for pair in report.pairs
+            if _test_case_area(pair.key) == area and pair.visual_classification == "unclear_manual_review"
+        )
+        state = (
+            f"{missing} missing candidate"
+            if missing
+            else f"{structural} structural review signal"
+            if structural
+            else f"{unclear} unclear manual review"
+            if unclear
+            else f"{needs_review} needs review"
+            if needs_review
+            else "triage ready"
+        )
         lines.append(f"| {area} | {len(names)} | {state} | {', '.join(names[:3])} |")
     lines.append("")
     return lines

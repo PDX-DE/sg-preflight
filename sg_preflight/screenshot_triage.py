@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from html import escape
 import json
@@ -29,6 +29,12 @@ _CANDIDATE_DIR_NAMES = (
     "result",
     "results",
 )
+_DIFF_DIR_NAMES = (
+    "diff",
+    "diffs",
+    "difference",
+    "differences",
+)
 _CLASSIFICATION_PRIORITY = {
     "needs_review": 0,
     "dimension_mismatch": 1,
@@ -42,6 +48,18 @@ _NEAR_IDENTICAL_MEAN = 1.0
 
 
 @dataclass(frozen=True)
+class VisualDiffThresholds:
+    cosmetic_max_changed_ratio: float = 0.001
+    cosmetic_max_mean_abs_diff: float = 1.0
+    structural_min_changed_ratio: float = 0.08
+    structural_min_mean_abs_diff: float = 8.0
+    structural_min_review_score: float = 45.0
+
+
+DEFAULT_VISUAL_DIFF_THRESHOLDS = VisualDiffThresholds()
+
+
+@dataclass(frozen=True)
 class ScreenshotRoot:
     kind: str
     path: str
@@ -52,7 +70,9 @@ class ScreenshotRoot:
 class ScreenshotPair:
     key: str
     classification: str
+    visual_classification: str
     summary: str
+    visual_summary: str = ""
     baseline_path: str = ""
     candidate_path: str = ""
     baseline_size: tuple[int, int] | tuple[()] = ()
@@ -81,6 +101,11 @@ class ScreenshotTriageReport:
     missing_candidate_count: int = 0
     missing_baseline_count: int = 0
     dimension_mismatch_count: int = 0
+    cosmetic_likely_pass_count: int = 0
+    structural_likely_review_count: int = 0
+    unclear_manual_review_count: int = 0
+    visual_thresholds: VisualDiffThresholds = field(default_factory=lambda: DEFAULT_VISUAL_DIFF_THRESHOLDS)
+    external_classifier_status: str = "disabled"
     image_backend: str = "none"
     priority_keys: tuple[str, ...] = ()
     pairs: tuple[ScreenshotPair, ...] = ()
@@ -145,6 +170,41 @@ def _discover_candidate_roots(
             if expected_root is not None and child.resolve() == expected_root:
                 continue
             if lowered in _CANDIDATE_DIR_NAMES or any(token in lowered for token in ("candidate", "result", "output", "actual")):
+                consider(child, "auto-detected")
+    return tuple(matches)
+
+
+def _discover_diff_roots(
+    project_root: Path,
+    explicit_roots: tuple[Path, ...] = (),
+) -> tuple[tuple[Path, str], ...]:
+    matches: list[tuple[Path, str]] = []
+    seen: set[Path] = set()
+
+    def consider(path: Path, kind: str, *, allow_empty: bool = False) -> None:
+        if not path.exists() or not path.is_dir():
+            return
+        resolved = path.resolve()
+        if resolved in seen:
+            return
+        image_count = sum(1 for item in resolved.rglob("*") if item.is_file() and item.suffix.lower() in _IMAGE_SUFFIXES)
+        if image_count <= 0 and not allow_empty:
+            return
+        seen.add(resolved)
+        matches.append((resolved, kind))
+
+    for path in explicit_roots:
+        consider(path, "operator-supplied", allow_empty=True)
+
+    tests_root = project_root / "export" / "tests"
+    if tests_root.exists():
+        for name in _DIFF_DIR_NAMES:
+            consider(tests_root / name, "auto-detected")
+        for child in sorted(tests_root.iterdir()):
+            if not child.is_dir():
+                continue
+            lowered = child.name.lower()
+            if lowered in _DIFF_DIR_NAMES or "diff" in lowered:
                 consider(child, "auto-detected")
     return tuple(matches)
 
@@ -257,6 +317,64 @@ def _auto_review_signals(
     return round(score, 2), tuple(dict.fromkeys(hints))
 
 
+def _visual_diff_classification(
+    classification: str,
+    *,
+    changed_ratio: float | None,
+    mean_abs_diff: float | None,
+    review_score: float | None,
+    anomaly_hints: tuple[str, ...],
+    thresholds: VisualDiffThresholds,
+) -> tuple[str, str]:
+    if classification in {"unchanged", "near_identical"}:
+        return (
+            "cosmetic_likely_pass",
+            "Pixel delta is absent or below the cosmetic threshold; manual review remains required.",
+        )
+    if classification in {"missing_candidate", "missing_baseline"}:
+        return (
+            "unclear_manual_review",
+            "Required image evidence is missing, so the screenshot needs operator review.",
+        )
+    if classification == "dimension_mismatch":
+        return (
+            "structural_likely_review",
+            "Image dimensions differ, which is treated as a structural review signal.",
+        )
+    if changed_ratio is None or mean_abs_diff is None:
+        return (
+            "unclear_manual_review",
+            "Image comparison metrics are unavailable, so the screenshot needs operator review.",
+        )
+    if (
+        changed_ratio <= thresholds.cosmetic_max_changed_ratio
+        and mean_abs_diff <= thresholds.cosmetic_max_mean_abs_diff
+    ):
+        return (
+            "cosmetic_likely_pass",
+            "Pixel delta is within the cosmetic threshold; manual review remains required.",
+        )
+    structural_hint = any(
+        token in hint.lower()
+        for hint in anomaly_hints
+        for token in ("geometry", "camera", "normal", "state mismatch")
+    )
+    if (
+        changed_ratio >= thresholds.structural_min_changed_ratio
+        or mean_abs_diff >= thresholds.structural_min_mean_abs_diff
+        or (review_score or 0.0) >= thresholds.structural_min_review_score
+        or structural_hint
+    ):
+        return (
+            "structural_likely_review",
+            "Pixel delta crosses structural-review thresholds or carries a geometry/camera signal.",
+        )
+    return (
+        "unclear_manual_review",
+        "Pixel delta is above cosmetic tolerance but below structural thresholds; operator review is required.",
+    )
+
+
 def _diff_metrics(
     baseline_path: Path,
     candidate_path: Path,
@@ -361,11 +479,13 @@ def build_screenshot_triage(
     diff_reference_roots: tuple[Path, ...] = (),
     priority_names: tuple[str, ...] = (),
     diff_root: Path | None = None,
+    visual_thresholds: VisualDiffThresholds = DEFAULT_VISUAL_DIFF_THRESHOLDS,
+    external_classifier_requested: bool = False,
 ) -> ScreenshotTriageReport:
     resolved_project_root = project_root.resolve()
     resolved_expected_root = _find_expected_root(resolved_project_root, expected_root)
     discovered_candidates = _discover_candidate_roots(resolved_project_root, candidate_roots)
-    discovered_diff_roots = _discover_candidate_roots(resolved_project_root, diff_reference_roots)
+    discovered_diff_roots = _discover_diff_roots(resolved_project_root, diff_reference_roots)
     baseline_map = _image_map(resolved_expected_root) if resolved_expected_root is not None else {}
 
     candidate_map: dict[str, Path] = {}
@@ -400,6 +520,11 @@ def build_screenshot_triage(
         "missing_baseline": 0,
         "dimension_mismatch": 0,
     }
+    visual_counts = {
+        "cosmetic_likely_pass": 0,
+        "structural_likely_review": 0,
+        "unclear_manual_review": 0,
+    }
 
     ordered_keys = _ordered_keys(baseline_map, candidate_map, priority_names)
     normalized_priority = {Path(item).with_suffix("").name.lower() for item in priority_names}
@@ -411,20 +536,40 @@ def build_screenshot_triage(
         if baseline_path is None:
             classification = "missing_baseline"
             summary = "Candidate exists but no matching baseline was found."
+            visual_classification, visual_summary = _visual_diff_classification(
+                classification,
+                changed_ratio=None,
+                mean_abs_diff=None,
+                review_score=None,
+                anomaly_hints=(),
+                thresholds=visual_thresholds,
+            )
             pair = ScreenshotPair(
                 key=key,
                 classification=classification,
+                visual_classification=visual_classification,
                 summary=summary,
+                visual_summary=visual_summary,
                 candidate_path=str(candidate_path) if candidate_path else "",
                 priority=priority,
             )
         elif candidate_path is None:
             classification = "missing_candidate"
             summary = "Baseline exists but no candidate image was found."
+            visual_classification, visual_summary = _visual_diff_classification(
+                classification,
+                changed_ratio=None,
+                mean_abs_diff=None,
+                review_score=None,
+                anomaly_hints=(),
+                thresholds=visual_thresholds,
+            )
             pair = ScreenshotPair(
                 key=key,
                 classification=classification,
+                visual_classification=visual_classification,
                 summary=summary,
+                visual_summary=visual_summary,
                 baseline_path=str(baseline_path),
                 priority=priority,
             )
@@ -446,10 +591,20 @@ def build_screenshot_triage(
                 diff_root=diff_root or Path(),
                 key=key,
             )
+            visual_classification, visual_summary = _visual_diff_classification(
+                classification,
+                changed_ratio=changed_ratio,
+                mean_abs_diff=mean_abs_diff,
+                review_score=review_score,
+                anomaly_hints=anomaly_hints,
+                thresholds=visual_thresholds,
+            )
             pair = ScreenshotPair(
                 key=key,
                 classification=classification,
+                visual_classification=visual_classification,
                 summary=summary,
+                visual_summary=visual_summary,
                 baseline_path=str(baseline_path),
                 candidate_path=str(candidate_path),
                 baseline_size=baseline_size,
@@ -464,6 +619,7 @@ def build_screenshot_triage(
             )
 
         counts[classification] += 1
+        visual_counts[pair.visual_classification] += 1
         pairs.append(pair)
 
     pairs.sort(
@@ -495,7 +651,18 @@ def build_screenshot_triage(
         if not any(item.image_count > 0 for item in diff_root_items):
             notes.append("Reference diff roots are present, but they currently contain no diff image payload.")
     notes.append("Classifications are conservative. `needs_review` is not a regression verdict.")
+    notes.append(
+        "Visual diff labels are conservative evidence buckets. Manual review remains required."
+    )
     notes.append("Auto anomaly hints are heuristic triage signals, not defect verdicts.")
+    external_classifier_status = "disabled"
+    if external_classifier_requested:
+        external_classifier_status = "unavailable"
+        notes.append(
+            "External vision classifier was requested, but no provider is configured in this local build; no external service call was made."
+        )
+    else:
+        notes.append("External vision classifier is disabled by default; no external service call was made.")
     if Image is None:
         notes.append("Pillow is not available, so only byte-level fallback comparison can run.")
 
@@ -513,6 +680,11 @@ def build_screenshot_triage(
         missing_candidate_count=counts["missing_candidate"],
         missing_baseline_count=counts["missing_baseline"],
         dimension_mismatch_count=counts["dimension_mismatch"],
+        cosmetic_likely_pass_count=visual_counts["cosmetic_likely_pass"],
+        structural_likely_review_count=visual_counts["structural_likely_review"],
+        unclear_manual_review_count=visual_counts["unclear_manual_review"],
+        visual_thresholds=visual_thresholds,
+        external_classifier_status=external_classifier_status,
         image_backend="pillow" if Image is not None else "none",
         priority_keys=tuple(item for item in priority_names if item),
         pairs=tuple(pairs),
@@ -537,6 +709,18 @@ def _markdown(report: ScreenshotTriageReport) -> str:
         f"- Missing candidate: {report.missing_candidate_count}",
         f"- Missing baseline: {report.missing_baseline_count}",
         f"- Dimension mismatch: {report.dimension_mismatch_count}",
+        f"- Visual cosmetic likely pass: {report.cosmetic_likely_pass_count}",
+        f"- Visual structural likely review: {report.structural_likely_review_count}",
+        f"- Visual unclear manual review: {report.unclear_manual_review_count}",
+        f"- External classifier status: `{report.external_classifier_status}`",
+        (
+            "- Visual thresholds: "
+            f"cosmetic <= {report.visual_thresholds.cosmetic_max_changed_ratio:.6f} changed ratio / "
+            f"{report.visual_thresholds.cosmetic_max_mean_abs_diff:.3f} mean diff; "
+            f"structural >= {report.visual_thresholds.structural_min_changed_ratio:.6f} changed ratio / "
+            f"{report.visual_thresholds.structural_min_mean_abs_diff:.3f} mean diff / "
+            f"{report.visual_thresholds.structural_min_review_score:.2f} review score"
+        ),
         "",
         "## Candidate roots",
     ]
@@ -559,8 +743,10 @@ def _markdown(report: ScreenshotTriageReport) -> str:
     lines.extend(["", "## Pair results"])
     if report.pairs:
         for pair in report.pairs[:40]:
-            lines.append(f"- {pair.key} [{pair.classification}]")
+            lines.append(f"- {pair.key} [{pair.classification} / {pair.visual_classification}]")
             lines.append(f"  - {pair.summary}")
+            if pair.visual_summary:
+                lines.append(f"  - Visual label: `{pair.visual_classification}` - {pair.visual_summary}")
             if pair.review_score:
                 lines.append(f"  - Review score: `{pair.review_score:.2f}`")
             if pair.anomaly_hints:
@@ -600,8 +786,13 @@ def _html(report: ScreenshotTriageReport) -> str:
         rows.append(
             (
                 "<article class='pair'>"
-                f"<h2>{escape(pair.key)} [{escape(pair.classification)}]</h2>"
+                f"<h2>{escape(pair.key)} [{escape(pair.classification)} / {escape(pair.visual_classification)}]</h2>"
                 f"<p>{escape(pair.summary)}</p>"
+                + (
+                    f"<p><strong>Visual label:</strong> {escape(pair.visual_classification)} - {escape(pair.visual_summary)}</p>"
+                    if pair.visual_summary
+                    else ""
+                )
                 + (
                     f"<p><strong>Review score:</strong> {pair.review_score:.2f}</p>"
                     if pair.review_score
@@ -642,6 +833,7 @@ def _html(report: ScreenshotTriageReport) -> str:
   <p><strong>Project root:</strong> <code>{escape(report.project_root)}</code></p>
   <p><strong>Expected root:</strong> <code>{escape(report.expected_root or "not found")}</code></p>
   <p><strong>Summary:</strong> {report.pair_count} pair(s), {report.needs_review_count} needs review, {report.missing_candidate_count} missing candidate, {report.dimension_mismatch_count} dimension mismatch.</p>
+  <p><strong>Visual labels:</strong> {report.cosmetic_likely_pass_count} cosmetic likely pass, {report.structural_likely_review_count} structural likely review, {report.unclear_manual_review_count} unclear manual review. External classifier: {escape(report.external_classifier_status)}.</p>
   <ul>{notes}</ul>
   {''.join(rows) if rows else '<p>No screenshot pairs were generated.</p>'}
 </body>
@@ -658,6 +850,8 @@ def materialize_screenshot_triage(
     candidate_roots: tuple[Path, ...] = (),
     diff_reference_roots: tuple[Path, ...] = (),
     priority_names: tuple[str, ...] = (),
+    visual_thresholds: VisualDiffThresholds = DEFAULT_VISUAL_DIFF_THRESHOLDS,
+    external_classifier_requested: bool = False,
 ) -> ScreenshotTriageBundle:
     output_root.mkdir(parents=True, exist_ok=True)
     diff_root = output_root / "diffs"
@@ -669,6 +863,8 @@ def materialize_screenshot_triage(
         diff_reference_roots=diff_reference_roots,
         priority_names=priority_names,
         diff_root=diff_root,
+        visual_thresholds=visual_thresholds,
+        external_classifier_requested=external_classifier_requested,
     )
     json_path = output_root / "screenshot-triage.json"
     markdown_path = output_root / "screenshot-triage.md"

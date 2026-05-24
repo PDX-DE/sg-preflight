@@ -122,7 +122,11 @@ from sg_preflight.review_state import (
     load_review_priority,
     verify_sendable_package,
 )
-from sg_preflight.screenshot_triage import materialize_screenshot_triage
+from sg_preflight.screenshot_triage import (
+    DEFAULT_VISUAL_DIFF_THRESHOLDS,
+    VisualDiffThresholds,
+    materialize_screenshot_triage,
+)
 from sg_preflight.ticket_review import (
     default_ticket_review_output_root,
     materialize_ticket_review_bundle,
@@ -508,9 +512,26 @@ def _console_screenshot_triage(bundle: object, *, as_json: bool = False) -> None
         f"missing baseline: {report.missing_baseline_count} | "
         f"dimension mismatch: {report.dimension_mismatch_count}"
     )
+    print(
+        "Visual labels -> "
+        f"cosmetic_likely_pass: {report.cosmetic_likely_pass_count} | "
+        f"structural_likely_review: {report.structural_likely_review_count} | "
+        f"unclear_manual_review: {report.unclear_manual_review_count} | "
+        f"external classifier: {report.external_classifier_status}"
+    )
     print(f"Markdown: {bundle.markdown_path}")
     print(f"HTML: {bundle.html_path}")
     print(f"JSON: {bundle.json_path}")
+
+
+def _screenshot_triage_thresholds(args: argparse.Namespace) -> VisualDiffThresholds:
+    return VisualDiffThresholds(
+        cosmetic_max_changed_ratio=args.cosmetic_max_changed_ratio,
+        cosmetic_max_mean_abs_diff=args.cosmetic_max_mean_diff,
+        structural_min_changed_ratio=args.structural_min_changed_ratio,
+        structural_min_mean_abs_diff=args.structural_min_mean_diff,
+        structural_min_review_score=args.structural_min_review_score,
+    )
 
 
 def _console_daily_snapshot(result: object, *, as_json: bool = False) -> None:
@@ -921,6 +942,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     screenshot_triage.add_argument("--workspace", help="Workspace root override")
     screenshot_triage.add_argument("--output-root", help="Directory to write triage artifacts")
+    screenshot_triage.add_argument(
+        "--cosmetic-max-changed-ratio",
+        type=float,
+        default=DEFAULT_VISUAL_DIFF_THRESHOLDS.cosmetic_max_changed_ratio,
+        help="Changed-pixel ratio at or below this value is treated as cosmetic in the visual label",
+    )
+    screenshot_triage.add_argument(
+        "--cosmetic-max-mean-diff",
+        type=float,
+        default=DEFAULT_VISUAL_DIFF_THRESHOLDS.cosmetic_max_mean_abs_diff,
+        help="Mean absolute diff at or below this value is treated as cosmetic in the visual label",
+    )
+    screenshot_triage.add_argument(
+        "--structural-min-changed-ratio",
+        type=float,
+        default=DEFAULT_VISUAL_DIFF_THRESHOLDS.structural_min_changed_ratio,
+        help="Changed-pixel ratio at or above this value is treated as structural in the visual label",
+    )
+    screenshot_triage.add_argument(
+        "--structural-min-mean-diff",
+        type=float,
+        default=DEFAULT_VISUAL_DIFF_THRESHOLDS.structural_min_mean_abs_diff,
+        help="Mean absolute diff at or above this value is treated as structural in the visual label",
+    )
+    screenshot_triage.add_argument(
+        "--structural-min-review-score",
+        type=float,
+        default=DEFAULT_VISUAL_DIFF_THRESHOLDS.structural_min_review_score,
+        help="Review score at or above this value is treated as structural in the visual label",
+    )
+    screenshot_triage.add_argument(
+        "--external-vision",
+        action="store_true",
+        help="Record an explicit external-vision opt-in request; this local build does not call an external provider",
+    )
     screenshot_triage.add_argument("--json", action="store_true", help="Print triage payload as JSON")
 
     daily_snapshot = sub.add_parser(
@@ -1789,6 +1845,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
                 output_root,
                 candidate_roots=tuple(Path(item).resolve() for item in args.candidate_root if str(item).strip()),
                 priority_names=tuple(str(item) for item in prep.priority_screenshots),
+                visual_thresholds=_screenshot_triage_thresholds(args),
+                external_classifier_requested=args.external_vision,
             )
         except Exception as exc:
             print(_console_safe(f"screenshot-triage failed: {exc}"), file=sys.stderr)

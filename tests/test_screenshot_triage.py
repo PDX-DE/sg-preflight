@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from sg_preflight.screenshot_triage import materialize_screenshot_triage
+from sg_preflight.screenshot_triage import VisualDiffThresholds, materialize_screenshot_triage
 from tests.operator_helpers import write_text
 
 
@@ -59,6 +59,10 @@ class TestScreenshotTriage(unittest.TestCase):
             self.assertEqual(report.dimension_mismatch_count, 1)
             self.assertEqual(report.missing_candidate_count, 1)
             self.assertEqual(report.missing_baseline_count, 1)
+            self.assertEqual(report.cosmetic_likely_pass_count, 2)
+            self.assertEqual(report.structural_likely_review_count, 2)
+            self.assertEqual(report.unclear_manual_review_count, 2)
+            self.assertEqual(report.external_classifier_status, "disabled")
             self.assertEqual(report.candidate_roots[0].kind, "auto-detected")
             self.assertTrue(bundle.json_path.exists())
             self.assertTrue(bundle.markdown_path.exists())
@@ -68,7 +72,10 @@ class TestScreenshotTriage(unittest.TestCase):
             self.assertEqual(pair_map["same"].classification, "unchanged")
             self.assertEqual(pair_map["tiny_drift"].classification, "near_identical")
             self.assertEqual(pair_map["changed"].classification, "needs_review")
+            self.assertEqual(pair_map["changed"].visual_classification, "structural_likely_review")
             self.assertEqual(pair_map["mismatch"].classification, "dimension_mismatch")
+            self.assertEqual(pair_map["tiny_drift"].visual_classification, "cosmetic_likely_pass")
+            self.assertEqual(pair_map["missing_candidate"].visual_classification, "unclear_manual_review")
             self.assertEqual(pair_map["missing_candidate"].classification, "missing_candidate")
             self.assertEqual(pair_map["extra_candidate"].classification, "missing_baseline")
             self.assertIsNotNone(pair_map["changed"].review_score)
@@ -76,6 +83,41 @@ class TestScreenshotTriage(unittest.TestCase):
             self.assertTrue(pair_map["changed"].anomaly_hints)
             self.assertTrue(Path(pair_map["tiny_drift"].diff_image_path).exists())
             self.assertTrue(Path(pair_map["changed"].diff_image_path).exists())
+
+    def test_materialize_screenshot_triage_accepts_visual_threshold_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "G70"
+            expected_root = project_root / "export" / "tests" / "expected"
+            candidate_root = project_root / "export" / "tests" / "results"
+
+            self._write_png(expected_root / "changed.png", (32, 32), (30, 40, 50, 255))
+            self._write_png(candidate_root / "changed.png", (32, 32), (30, 40, 50, 255))
+            with Image.open(candidate_root / "changed.png") as image:
+                for x in range(3):
+                    image.putpixel((x, 0), (90, 40, 50, 255))
+                image.save(candidate_root / "changed.png")
+
+            bundle = materialize_screenshot_triage(
+                "G70",
+                project_root,
+                root / "out" / "triage",
+                visual_thresholds=VisualDiffThresholds(
+                    cosmetic_max_changed_ratio=0.0,
+                    cosmetic_max_mean_abs_diff=0.0,
+                    structural_min_changed_ratio=2.0,
+                    structural_min_mean_abs_diff=255.0,
+                    structural_min_review_score=999.0,
+                ),
+                external_classifier_requested=True,
+            )
+
+            pair = bundle.report.pairs[0]
+            self.assertEqual(pair.classification, "needs_review")
+            self.assertEqual(pair.visual_classification, "unclear_manual_review")
+            self.assertEqual(bundle.report.unclear_manual_review_count, 1)
+            self.assertEqual(bundle.report.external_classifier_status, "unavailable")
+            self.assertTrue(any("no external service call" in note for note in bundle.report.notes))
 
     def test_materialize_screenshot_triage_reports_missing_candidate_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
