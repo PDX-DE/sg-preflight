@@ -14,6 +14,20 @@ Use this checklist for each staging parity sweep that claims cross-panel, multi-
 - Verify each per-profile folder exists under `profiles/<profile>/` and has four page screenshots plus four HTML captures.
 - Verify `grafiks-setup-uia-probes.json` includes the same minimum profile set and passes all aggregate assertions.
 
+## Real BMW Pipeline Evidence
+
+- Run `scripts/walkthrough_harness/probe_bmw_pipeline_real.py` only when `SGFX_REAL_BMW_PIPELINE_AVAILABLE=1` is intentionally set on the review machine.
+- Verify `probe-summary.json` exists under the G-7 evidence folder.
+- Verify `probe-summary.json` records `gate_enabled: true` for a real-subprocess sweep, or `status: skipped` when the gate was not set.
+- Verify `profiles` includes at least `G65`, `G70`, `NA8`, `F70`, and `U10`.
+- Verify `actions` includes `delivery_export` and `screenshot_capture`.
+- Verify `minimum_profile_set_real_subprocess_evidence_recorded: true`.
+- Verify `lane_coverage.idc_evo.real_subprocess_evidence_recorded: true`.
+- Verify `lane_coverage.idc_23.real_subprocess_evidence_recorded: true`.
+- Verify each default profile in `profile_coverage` records both actions as invoked.
+- Verify each real action record contains `real_subprocess_invoked: true`, `is_approval: false`, command evidence, and stdout/stderr paths when logs are available.
+- Treat `unavailable` records as environment/data-prep evidence to classify, not as SGFX approval or rejection.
+
 ## Cross-Panel Consistency
 
 - Do not accept G65-only evidence for dependency consistency.
