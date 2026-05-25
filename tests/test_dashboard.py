@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -346,6 +347,59 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("defer_daily_digest=True", source)
         self.assertIn("defer_team_digest_board=True", source)
         self.assertIn('page_id in {"daily-digest", "team-digest-board"}', source)
+
+    def test_dashboard_tooltips_are_verbose_opt_in(self) -> None:
+        from sg_preflight.dashboard import main
+
+        class FakeTooltip:
+            def __init__(self, text: str) -> None:
+                self.text = text
+                self.props_value = ""
+                self.classes_value = ""
+
+            def props(self, value: str) -> "FakeTooltip":
+                self.props_value = value
+                return self
+
+            def classes(self, value: str) -> "FakeTooltip":
+                self.classes_value = value
+                return self
+
+        class FakeUi:
+            def __init__(self) -> None:
+                self.tooltips: list[FakeTooltip] = []
+
+            def tooltip(self, text: str) -> FakeTooltip:
+                tooltip = FakeTooltip(text)
+                self.tooltips.append(tooltip)
+                return tooltip
+
+        class FakeElement:
+            def __init__(self) -> None:
+                self.enter_count = 0
+
+            def __enter__(self) -> "FakeElement":
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+        with mock.patch.dict(os.environ, {"SGFX_DASHBOARD_VERBOSE_TOOLTIPS": ""}, clear=False):
+            ui = FakeUi()
+            element = FakeElement()
+            self.assertIs(main._attach_tooltip(ui, element, "Hidden by default"), element)
+            self.assertEqual(ui.tooltips, [])
+            self.assertEqual(element.enter_count, 0)
+
+        with mock.patch.dict(os.environ, {"SGFX_DASHBOARD_VERBOSE_TOOLTIPS": "1"}, clear=False):
+            ui = FakeUi()
+            element = FakeElement()
+            self.assertIs(main._attach_tooltip(ui, element, "Visible in verbose mode"), element)
+            self.assertEqual(element.enter_count, 1)
+            self.assertEqual(ui.tooltips[0].text, "Visible in verbose mode")
+            self.assertEqual(ui.tooltips[0].props_value, "delay=900")
+            self.assertEqual(ui.tooltips[0].classes_value, "sgfx-thinking-tooltip")
 
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

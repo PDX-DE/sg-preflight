@@ -85,6 +85,7 @@ WEBVIEW2_RUNTIME_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 NATIVE_RETURN_FALLBACK_SECONDS = 5.0
 BROWSER_FALLBACK_ENV = "SGFX_PREFLIGHT_BROWSER_FALLBACK"
 FORCE_FROZEN_NATIVE_ENV = "SGFX_PREFLIGHT_FORCE_FROZEN_NATIVE"
+VERBOSE_TOOLTIP_ENV = "SGFX_DASHBOARD_VERBOSE_TOOLTIPS"
 DASHBOARD_GUARDRAILS = (
     "Manual review remains required.",
     "Decision: not approval — evidence only.",
@@ -2152,9 +2153,15 @@ def _render_page_confluence_anchors(ui: Any, page: dict[str, Any]) -> None:
         ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
 
 
+def _dashboard_verbose_tooltips_enabled() -> bool:
+    return os.environ.get(VERBOSE_TOOLTIP_ENV) == "1"
+
+
 def _attach_tooltip(ui: Any, element: Any, text: str) -> Any:
+    if not text.strip() or not _dashboard_verbose_tooltips_enabled():
+        return element
     with element:
-        ui.tooltip(text).classes("sgfx-thinking-tooltip")
+        ui.tooltip(text).props("delay=900").classes("sgfx-thinking-tooltip")
     return element
 
 
