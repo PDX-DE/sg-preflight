@@ -1055,6 +1055,57 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Manual review remains required", markdown_stdout.getvalue())
         self.assertNotIn("production-" "ready", markdown_stdout.getvalue().lower())
 
+    def test_team_digest_board_cli_returns_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_screenshot_test_state(root)
+            clean_env = {
+                "SG_BMW_CAR_MODELS_ROOT": "",
+                "SG_CARMODELS_REPO": "",
+                "SG-CarModels-Repo": "",
+                "Digital-3D-Car-Repo": "",
+            }
+
+            stdout = io.StringIO()
+            with mock.patch.dict("os.environ", clean_env):
+                with redirect_stdout(stdout):
+                    result = main(
+                        [
+                            "team-digest-board",
+                            "snapshot",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G65",
+                            "--json",
+                        ]
+                    )
+
+                markdown_stdout = io.StringIO()
+                with redirect_stdout(markdown_stdout):
+                    markdown_result = main(
+                        [
+                            "team-digest-board",
+                            "snapshot",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G65",
+                            "--markdown",
+                        ]
+                    )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["share_decision"]["selected_model"], "local_snapshot")
+        self.assertEqual(payload["share_decision"]["options"][0]["status"], "available")
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(markdown_result, 0)
+        self.assertIn("Sharing Model Trade-Offs", markdown_stdout.getvalue())
+        self.assertIn("local_snapshot", markdown_stdout.getvalue())
+        self.assertIn("Manual review remains required", markdown_stdout.getvalue())
+        self.assertNotIn("validated", markdown_stdout.getvalue().lower())
+
     def test_bmw_git_readiness_read_cli_returns_json_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1203,7 +1254,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result, 7)
         runner.assert_called_once_with(workspace=None, initial_profile_id="G65", initial_mode="clean")
 
-    def test_desktop_state_surfaces_returns_five_grafiks_evidence_cards(self) -> None:
+    def test_desktop_state_surfaces_returns_six_grafiks_evidence_cards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             create_temp_g65_profile(root)
@@ -1216,7 +1267,14 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(
             [item["key"] for item in payload],
-            ["delivery-checklist", "screenshot-test-state", "risk-score", "daily-digest", "manual-review"],
+            [
+                "delivery-checklist",
+                "screenshot-test-state",
+                "risk-score",
+                "daily-digest",
+                "team-digest-board",
+                "manual-review",
+            ],
         )
 
     def test_launch_action_spawns_worker_and_returns_queued_record(self) -> None:

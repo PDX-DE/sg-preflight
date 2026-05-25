@@ -135,6 +135,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
                 "screenshot-test-state",
                 "risk-score",
                 "daily-digest",
+                "team-digest-board",
                 "manual-review",
             ],
         )

@@ -138,6 +138,11 @@ from sg_preflight.screenshot_triage import (
     VisualDiffThresholds,
     materialize_screenshot_triage,
 )
+from sg_preflight.team_digest_board import (
+    build_team_daily_digest_board,
+    render_team_digest_board_markdown,
+    render_team_digest_board_text,
+)
 from sg_preflight.ticket_review import (
     default_ticket_review_output_root,
     materialize_ticket_review_bundle,
@@ -1183,6 +1188,25 @@ def build_parser() -> argparse.ArgumentParser:
     daily_digest_latest.add_argument("--json", action="store_true", help="Print daily digest payload as JSON")
     daily_digest_latest.add_argument("--markdown", action="store_true", help="Print daily digest as Markdown")
     _add_render_options(daily_digest_latest)
+
+    team_digest_board = sub.add_parser(
+        "team-digest-board",
+        help="Build a local Team Daily Digest board snapshot",
+    )
+    team_digest_board_sub = team_digest_board.add_subparsers(dest="team_digest_board_command", required=True)
+    team_digest_board_snapshot = team_digest_board_sub.add_parser("snapshot", help="Read the team digest board")
+    team_digest_board_snapshot.add_argument("--workspace", help="Workspace root override")
+    team_digest_board_snapshot.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    team_digest_board_snapshot.add_argument("--ticket-id", default="", help="Optional ticket id filter")
+    team_digest_board_snapshot.add_argument(
+        "--profile",
+        action="append",
+        default=[],
+        help="Profile id to include on the board, repeatable (defaults to G70,G65)",
+    )
+    team_digest_board_snapshot.add_argument("--json", action="store_true", help="Print board as JSON")
+    team_digest_board_snapshot.add_argument("--markdown", action="store_true", help="Print board as Markdown")
+    _add_render_options(team_digest_board_snapshot)
 
     manual_review = sub.add_parser(
         "manual-review",
@@ -2231,6 +2255,31 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _emit_text(render_daily_digest_markdown(payload), args)
         else:
             _emit_text(render_daily_digest_text(payload), args)
+        return 0
+
+    if args.command == "team-digest-board":
+        board_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.team_digest_board_command == "snapshot":
+                payload = build_team_daily_digest_board(
+                    workspace=board_root,
+                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+                    profiles=tuple(args.profile),
+                    ticket_id=args.ticket_id,
+                )
+            else:
+                parser.error(f"Unhandled team-digest-board command: {args.team_digest_board_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"team-digest-board failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_team_digest_board_markdown(payload), args)
+        else:
+            _emit_text(render_team_digest_board_text(payload), args)
         return 0
 
     if args.command == "manual-review":

@@ -18,6 +18,7 @@ from sg_preflight.qa_actions import ActionRecord, list_operator_actions, list_re
 from sg_preflight.export_size_analysis import read_export_size_analysis
 from sg_preflight.reporting import build_report_presentation
 from sg_preflight.risk_scoring import read_per_car_risk_score
+from sg_preflight.team_digest_board import build_team_daily_digest_board
 from sg_preflight.services import (
     RunRecord,
     list_recent_run_records,
@@ -1079,6 +1080,11 @@ def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> lis
             "daily-digest",
             "Daily Digest",
             lambda: build_latest_daily_digest(workspace=root),
+        ),
+        _safe_item(
+            "team-digest-board",
+            "Team Digest Board",
+            lambda: build_team_daily_digest_board(workspace=root, profiles=(normalized_profile, "G70", "G65")),
         ),
         DesktopSurfaceItem(
             key="manual-review",

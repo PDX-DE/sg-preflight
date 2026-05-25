@@ -66,6 +66,7 @@ from sg_preflight.screenshot_capture import (
 )
 from sg_preflight.services import operator_ui_root
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs, sgfx_cli_command
+from sg_preflight.team_digest_board import build_team_daily_digest_board
 from sg_preflight.utils import ensure_parent
 from sg_preflight.visual_review import build_visual_review_prep
 
@@ -90,6 +91,7 @@ DASHBOARD_NAVIGATION = (
     ("screenshot-test-state", "Screenshot Test State"),
     ("risk-score", "Risk Score"),
     ("daily-digest", "Daily Digest"),
+    ("team-digest-board", "Team Digest Board"),
     ("manual-review", "Manual Review Companion"),
     ("about", "About"),
 )
@@ -195,6 +197,9 @@ RISK_SCORE_EMPTY_NOTE = (
 )
 DAILY_DIGEST_EMPTY_NOTE = (
     "No review package on this workspace yet. Click Build to generate one for the active ticket."
+)
+TEAM_DIGEST_BOARD_EMPTY_NOTE = (
+    "No team-board rows were generated yet. Build local evidence first, then refresh this board."
 )
 MANUAL_REVIEW_EMPTY_NOTE = (
     "Manual review session not started. Click Start Session below to begin, then Record evidence on each Quality-Hero step as you complete it."
@@ -902,6 +907,17 @@ def _notify_completion_safe(
 
 
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
+    board_rows = payload.get("board_rows", [])
+    if isinstance(board_rows, list) and board_rows:
+        return [
+            {
+                "label": str(item.get("label", "row")),
+                "status": str(item.get("status", "unknown")),
+                "detail": str(item.get("detail", "")),
+            }
+            for item in board_rows
+            if isinstance(item, dict)
+        ]
     signals = payload.get("signals", [])
     if isinstance(signals, list) and signals:
         return [
@@ -972,6 +988,10 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "is_approval",
         "note",
         "guidance",
+        "share_decision",
+        "sections",
+        "profiles",
+        "board_rows",
     )
     return {key: payload[key] for key in allowed if key in payload}
 
@@ -1098,6 +1118,60 @@ def _daily_digest_page(
     }
     if raw_status == "no_review_package" or status_value == "incomplete":
         page["empty_state_note"] = DAILY_DIGEST_EMPTY_NOTE
+    return page
+
+
+def _team_digest_board_page(
+    workspace: Path,
+    profile_id: str,
+    *,
+    bmw_root: Path | str | None = None,
+) -> dict[str, Any]:
+    def _reader() -> dict[str, Any]:
+        board = build_team_daily_digest_board(
+            workspace=workspace,
+            bmw_root=bmw_root,
+            profiles=(profile_id, "G70", "G65"),
+            ticket_id=_dashboard_active_ticket_id(workspace),
+        )
+        sections = board.get("sections", {}) if isinstance(board.get("sections"), dict) else {}
+        rows: list[dict[str, Any]] = []
+        share = board.get("share_decision", {}) if isinstance(board.get("share_decision"), dict) else {}
+        rows.append(
+            {
+                "label": "Sharing model",
+                "status": str(share.get("status", "unknown")),
+                "detail": f"Selected: {share.get('selected_model', 'unknown')}",
+            }
+        )
+        for section_key in ("risk_by_profile", "what_landed_today", "workflow_status"):
+            section = sections.get(section_key, {}) if isinstance(sections, dict) else {}
+            if not isinstance(section, dict):
+                continue
+            for item in section.get("items", [])[:4]:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("label", item.get("profile_id", section.get("heading", section_key))))
+                status = str(item.get("status", "unknown"))
+                detail = str(item.get("detail", ""))
+                if "risk_score" in item:
+                    detail = f"risk {item.get('risk_score', 0)}/100; {detail}".strip()
+                rows.append({"label": label, "status": status, "detail": detail})
+        board["board_rows"] = rows
+        return board
+
+    page = _reader_page(
+        page_id="team-digest-board",
+        title="Team Digest Board",
+        tagline="Local snapshot for standup review across selected car profiles.",
+        reader=_reader,
+        workspace=workspace,
+        ownership_note="Default sharing model is local snapshot; SVN and Confluence sharing remain explicit gates.",
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["confluence_anchors"] = list(payload.get("confluence_anchors", []))
+    if not page.get("items"):
+        page["empty_state_note"] = TEAM_DIGEST_BOARD_EMPTY_NOTE
     return page
 
 
@@ -1299,6 +1373,7 @@ def build_dashboard_snapshot(
                 active_ticket_id=active_ticket_id,
                 ticket_context=daily_ticket_context,
             ),
+            _team_digest_board_page(root, resolved_profile_id, bmw_root=bmw_root),
             _manual_review_page(resolved_profile_id, root, active_ticket_id=active_ticket_id),
         ],
     }
@@ -3281,6 +3356,72 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             attach_button_holder["button"] = attach_button
 
 
+def _render_team_digest_board_panel(ui: Any, snapshot: dict[str, Any]) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    share = payload.get("share_decision", {}) if isinstance(payload.get("share_decision"), dict) else {}
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
+        ownership_note = str(page.get("ownership_note", "")).strip()
+        if ownership_note:
+            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
+        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
+        _render_empty_state_note(ui, page)
+        ui.label("Sharing model trade-offs").classes("sgfx-panel-tagline")
+        ui.label(str(share.get("rationale", ""))).classes("sgfx-muted")
+        share_rows = [
+            {
+                "model": str(option.get("model", "")),
+                "status": str(option.get("status", "unknown")),
+                "tradeoff": str(option.get("tradeoff", "")),
+            }
+            for option in share.get("options", [])
+            if isinstance(option, dict)
+        ]
+        if share_rows:
+            _attach_tooltip(
+                ui,
+                ui.table(
+                    columns=[
+                        {"name": "model", "label": "Model", "field": "model", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                        {"name": "tradeoff", "label": "Trade-off", "field": "tradeoff", "align": "left"},
+                    ],
+                    rows=share_rows,
+                    row_key="model",
+                ).classes("sgfx-table"),
+                "The board defaults to local snapshot until a separate share/write gate opens.",
+            )
+        rows = [
+            {
+                "label": str(item.get("label", "")),
+                "status": str(item.get("status", "")),
+                "detail": str(item.get("detail", "")),
+            }
+            for item in page.get("items", [])
+            if isinstance(item, dict)
+        ]
+        if rows:
+            _attach_tooltip(
+                ui,
+                ui.table(
+                    columns=[
+                        {"name": "label", "label": "Row", "field": "label", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="label",
+                ).classes("sgfx-table"),
+                "Team board rows are read from local digest and risk-score data.",
+            )
+
+
 def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
     with ui.column().classes("sgfx-page-panel"):
@@ -3410,6 +3551,8 @@ def _render_selected_page(
             _render_manual_review_panel(ui, snapshot, workspace)
         elif page_id == "daily-digest":
             _render_daily_digest_panel(ui, snapshot, workspace)
+        elif page_id == "team-digest-board":
+            _render_team_digest_board_panel(ui, snapshot)
         elif page_id == "about":
             _render_about_panel(ui, ABOUT_CONTENT)
         else:
@@ -3617,6 +3760,8 @@ def _render_dashboard(
                     _render_risk_score_panel(ui, state["snapshot"])
                 elif active_page_id == "daily-digest":
                     _render_daily_digest_panel(ui, state["snapshot"], workspace)
+                elif active_page_id == "team-digest-board":
+                    _render_team_digest_board_panel(ui, state["snapshot"])
                 elif active_page_id == "manual-review":
                     _render_manual_review_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "about":
