@@ -1189,6 +1189,54 @@ def _daily_digest_page(
     return page
 
 
+def _deferred_daily_digest_page(profile_id: str, ticket_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    context = dict(ticket_context or {})
+    default_ticket = str(context.get("active_ticket_id", "")).strip()
+    ticket_hint = str(context.get("ticket_id_hint", default_ticket or DAILY_DIGEST_TICKET_ID_PLACEHOLDER)).strip()
+    base_action = {
+        "requires_ticket_id": True,
+        "ticket_id_hint": ticket_hint or DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
+        "ticket_id_default": default_ticket,
+        "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
+        "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
+        "confluence_anchor": SG_DAILY_CONFLUENCE_ANCHOR,
+    }
+    return {
+        "id": "daily-digest",
+        "title": "Daily Digest",
+        "tagline": "Morning status snapshot for the SG Daily standup.",
+        "status": "not_run",
+        "raw_status": "not_run",
+        "data_available": False,
+        "summary": f"Daily Digest for {profile_id} refreshes when opened.",
+        "items": [],
+        "actions": [
+            {
+                "id": DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID,
+                "label": DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL,
+                **base_action,
+            },
+            {
+                "id": QUALITY_HERO_REPORT_ACTION_ID,
+                "label": QUALITY_HERO_REPORT_ACTION_LABEL,
+                **base_action,
+            },
+        ],
+        "confluence_anchors": [SG_DAILY_CONFLUENCE_ANCHOR],
+        "payload": {
+            "profile_id": profile_id,
+            "status": "not_run",
+            "scope": [],
+            "date": "",
+            "active_ticket_id": default_ticket,
+            "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
+            "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
+        },
+        "empty_state_note": "Open Daily Digest to load the local standup snapshot.",
+        "deferred": True,
+    }
+
+
 def _team_digest_board_page(
     workspace: Path,
     profile_id: str,
@@ -1411,6 +1459,7 @@ def build_dashboard_snapshot(
     *,
     bmw_root: Path | str | None = None,
     ui_mode: str | None = None,
+    defer_daily_digest: bool = False,
     defer_team_digest_board: bool = False,
 ) -> dict[str, Any]:
     root = _workspace(workspace)
@@ -1434,6 +1483,16 @@ def build_dashboard_snapshot(
     active_ticket_id = _dashboard_active_ticket_id(root)
     daily_ticket_context = _daily_digest_ticket_context(root)
     output_root = operator_ui_root(root)
+    daily_digest_page = (
+        _deferred_daily_digest_page(resolved_profile_id, daily_ticket_context)
+        if defer_daily_digest
+        else _daily_digest_page(
+            root,
+            resolved_profile_id,
+            active_ticket_id=active_ticket_id,
+            ticket_context=daily_ticket_context,
+        )
+    )
     team_digest_page = (
         _deferred_team_digest_board_page(resolved_profile_id)
         if defer_team_digest_board
@@ -1489,12 +1548,7 @@ def build_dashboard_snapshot(
             _screenshot_test_state_page(resolved_profile_id, root, bmw_root=bmw_root),
             _risk_score_page(resolved_profile_id, root, bmw_root=bmw_root),
             _cross_car_comparison_page(root, bmw_root=bmw_root),
-            _daily_digest_page(
-                root,
-                resolved_profile_id,
-                active_ticket_id=active_ticket_id,
-                ticket_context=daily_ticket_context,
-            ),
+            daily_digest_page,
             team_digest_page,
             _operator_handoff_page(resolved_profile_id, root),
             _manual_review_page(resolved_profile_id, root, active_ticket_id=active_ticket_id),
@@ -3869,6 +3923,7 @@ def _render_dashboard(
         workspace,
         bmw_root=bmw_root,
         ui_mode=ui_mode,
+        defer_daily_digest=True,
         defer_team_digest_board=True,
     )
 
@@ -3881,6 +3936,7 @@ def _render_dashboard(
                 workspace,
                 bmw_root=bmw_root,
                 ui_mode=ui_mode,
+                defer_daily_digest=True,
                 defer_team_digest_board=True,
             )
             if query_profile
@@ -4084,13 +4140,14 @@ def _render_dashboard(
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
             ui.run_javascript(f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
-            if page_id == "team-digest-board" and _pages_by_id().get(page_id, {}).get("deferred"):
+            if page_id in {"daily-digest", "team-digest-board"} and _pages_by_id().get(page_id, {}).get("deferred"):
                 state["snapshot"] = build_dashboard_snapshot(
                     str(state["snapshot"]["profile_id"]),
                     workspace,
                     bmw_root=bmw_root,
                     ui_mode=_current_theme(),
-                    defer_team_digest_board=False,
+                    defer_daily_digest=page_id != "daily-digest",
+                    defer_team_digest_board=page_id != "team-digest-board",
                 )
                 _refresh_labels()
             _render_current_page()
@@ -4103,6 +4160,7 @@ def _render_dashboard(
                 workspace,
                 bmw_root=bmw_root,
                 ui_mode=_current_theme(),
+                defer_daily_digest=active_page_id != "daily-digest",
                 defer_team_digest_board=active_page_id != "team-digest-board",
             )
             _refresh_labels()
