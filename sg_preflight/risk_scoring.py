@@ -8,9 +8,13 @@ from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.manual_review import list_manual_review_sessions
 
 
+RISK_SCORE_GUARDRAILS = (
+    "Manual review remains required.",
+    "Decision: not approval — evidence only.",
+)
 RISK_SCORE_BANNER = (
     "Per-car risk score is an evidence triage signal from local files. "
-    "Manual review remains required; decision is not approval."
+    f"{RISK_SCORE_GUARDRAILS[0]} {RISK_SCORE_GUARDRAILS[1]}"
 )
 RISK_SCORE_NOTE = (
     "Risk score is based on current screenshot counts, latest manual-review state, "
@@ -301,6 +305,7 @@ def read_per_car_risk_score(
         "delta_since_last_review": delta,
         "signals": signals,
         "confluence_anchors": list(RISK_SCORE_CONFLUENCE_ANCHORS),
+        "guardrails": list(RISK_SCORE_GUARDRAILS),
         "manual_review_required": True,
         "is_approval": False,
         "note": RISK_SCORE_NOTE,
@@ -314,6 +319,11 @@ def render_risk_score_text(payload: dict[str, Any]) -> str:
     delta = payload.get("delta_since_last_review", {}) if isinstance(payload.get("delta_since_last_review"), dict) else {}
     lines = [
         RISK_SCORE_BANNER,
+        *[
+            str(item)
+            for item in payload.get("guardrails", RISK_SCORE_GUARDRAILS)
+            if str(item).strip()
+        ],
         f"Profile: {payload.get('profile_id', '')}",
         f"Status: {payload.get('status', '')}",
         f"Risk score: {payload.get('risk_score', 0)}/100 ({payload.get('risk_level', 'unknown')})",
@@ -344,8 +354,15 @@ def render_risk_score_markdown(payload: dict[str, Any]) -> str:
         f"- Manual-review steps: `{latest.get('recorded_steps', 0)} recorded / {latest.get('pending_steps', 0)} not_run`",
         f"- Changed screenshot files after latest review: `{delta.get('changed_file_count', 0)}`",
         "",
-        "## Signals",
+        "## Guardrails",
     ]
+    for guardrail in payload.get("guardrails", RISK_SCORE_GUARDRAILS):
+        if str(guardrail).strip():
+            lines.append(f"- {guardrail}")
+    lines.extend([
+        "",
+        "## Signals",
+    ])
     for signal in payload.get("signals", []):
         if isinstance(signal, dict):
             lines.append(

@@ -22,8 +22,9 @@ class TestDependencyOnboarding(unittest.TestCase):
                     with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
                         with mock.patch.object(onboarding, "_blender_path_candidates", return_value=[]):
                             with mock.patch.object(onboarding, "_candidate_bmw_repo_paths", return_value=[]):
-                                with mock.patch.object(onboarding, "_find_executable", return_value=None):
-                                    payload = onboarding.build_dependency_onboarding_status(workspace=root)
+                                with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[]):
+                                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                                        payload = onboarding.build_dependency_onboarding_status(workspace=root)
 
         self.assertEqual(payload["status"], "incomplete")
         self.assertTrue(payload["first_run"])
@@ -106,15 +107,17 @@ class TestDependencyOnboarding(unittest.TestCase):
 
             with mock.patch.dict(os.environ, {}, clear=True):
                 with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
-                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
-                        setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
+                    with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[idc23_root]):
+                        with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                            setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
             state = onboarding.load_dependency_onboarding_state(root)
             state_path = onboarding.dependency_onboarding_state_path(root)
             state_text = state_path.read_text(encoding="utf-8")
             with mock.patch.dict(os.environ, {}, clear=True):
                 with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
-                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
-                        second_setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
+                    with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[idc23_root]):
+                        with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                            second_setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
             second_state_text = state_path.read_text(encoding="utf-8")
 
             with mock.patch.dict(os.environ, {}, clear=True):
@@ -180,8 +183,9 @@ class TestDependencyOnboarding(unittest.TestCase):
 
             with mock.patch.dict(os.environ, {}, clear=True):
                 with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
-                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
-                        payload = onboarding.build_dependency_onboarding_status(workspace=root)
+                    with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[new_idc23_root]):
+                        with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                            payload = onboarding.build_dependency_onboarding_status(workspace=root)
             state = onboarding.load_dependency_onboarding_state(root)
 
         registered_paths = state["registered_paths"]
@@ -228,8 +232,9 @@ class TestDependencyOnboarding(unittest.TestCase):
                     with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
                         with mock.patch.object(onboarding, "_blender_path_candidates", return_value=[]):
                             with mock.patch.object(onboarding, "_candidate_bmw_repo_paths", return_value=[]):
-                                with mock.patch.object(onboarding, "_find_executable", return_value=None):
-                                    payload = onboarding.build_dependency_onboarding_status(workspace=root)
+                                with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[]):
+                                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                                        payload = onboarding.build_dependency_onboarding_status(workspace=root)
 
         raco_items = [item for item in payload["items"] if item["key"] in {"raco_gui", "raco_headless"}]
         self.assertTrue(all(item["status"] == "available" for item in raco_items))

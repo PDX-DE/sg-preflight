@@ -12,6 +12,7 @@ from sg_preflight.manual_review import (
     record_manual_review_step,
 )
 from sg_preflight.risk_scoring import (
+    RISK_SCORE_GUARDRAILS,
     read_per_car_risk_score,
     render_risk_score_markdown,
     render_risk_score_text,
@@ -71,6 +72,7 @@ class RiskScoringTests(unittest.TestCase):
         self.assertEqual(payload["latest_review"]["pending_steps"], len(QUALITY_HERO_STEPS) - 1)
         self.assertEqual(payload["delta_since_last_review"]["changed_file_count"], 2)
         self.assertGreater(payload["risk_score"], 0)
+        self.assertEqual(tuple(payload["guardrails"]), RISK_SCORE_GUARDRAILS)
         self.assertFalse(payload["is_approval"])
         signal_ids = {signal["id"] for signal in payload["signals"]}
         self.assertIn("diff_screenshots_present", signal_ids)
@@ -99,6 +101,7 @@ class RiskScoringTests(unittest.TestCase):
             "latest_review": {"session_id": "risk-review-g65", "recorded_steps": 1, "pending_steps": 6},
             "delta_since_last_review": {"changed_file_count": 2},
             "signals": [{"id": "diff_screenshots_present", "status": "available", "weight": 13, "detail": "1 diff"}],
+            "guardrails": list(RISK_SCORE_GUARDRAILS),
             "is_approval": False,
         }
 
@@ -107,6 +110,8 @@ class RiskScoringTests(unittest.TestCase):
 
         self.assertIn("Manual review remains required", text)
         self.assertIn("Manual review remains required", markdown)
+        self.assertIn("Decision: not approval — evidence only.", text)
+        self.assertIn("Decision: not approval — evidence only.", markdown)
         self.assertIn("42/100", markdown)
         self.assertNotIn("approved", text.casefold())
         self.assertNotIn("production-" "ready", markdown.casefold())
