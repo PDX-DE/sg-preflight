@@ -29,12 +29,13 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertTrue(payload["first_run"])
         self.assertFalse((root / "operator_state").exists())
         self.assertEqual(payload["counts"]["available"], 0)
-        self.assertEqual(payload["counts"]["missing"], 4)
+        self.assertEqual(payload["counts"]["missing"], 5)
         self.assertEqual([item["key"] for item in payload["items"]], [
             "raco_gui",
             "raco_headless",
             "blender",
             "digital_3d_car_repo",
+            "digital_3d_car_repo_idc23",
         ])
         self.assertTrue(all(action["requires_confirmation"] for action in payload["actions"]))
         self.assertIn("Manual review remains required.", payload["guardrails"])
@@ -50,20 +51,30 @@ class TestDependencyOnboarding(unittest.TestCase):
             headless = raco_root / "RaCoHeadless.exe"
             blender = root / "tools" / "Blender 4.1" / "blender.exe"
             bmw_root = root / "digital-3d-car-models"
+            idc23_root = root / "digital-3d-car-models-idc23"
             for path in (gui, headless, blender):
                 write_text(path, "fixture\n")
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(idc23_root / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
+            (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
             onboarding.record_dependency_path(workspace=root, key="raco_gui", path=gui)
             onboarding.record_dependency_path(workspace=root, key="raco_headless", path=headless)
             onboarding.record_dependency_path(workspace=root, key="blender", path=blender)
 
-            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}, clear=True):
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "Digital-3D-Car-Repo": str(bmw_root),
+                    "Digital-3D-Car-Repo-IDC23": str(idc23_root),
+                },
+                clear=True,
+            ):
                 with mock.patch.object(onboarding, "_find_executable", return_value=None):
                     payload = onboarding.build_dependency_onboarding_status(workspace=root)
 
         self.assertFalse(payload["first_run"])
         self.assertEqual(payload["status"], "available")
-        self.assertEqual(payload["counts"]["available"], 4)
+        self.assertEqual(payload["counts"]["available"], 5)
         self.assertFalse(payload["actions"])
 
     def test_fast_path_detection_auto_registers_paths_for_g70_generation_preflight(self) -> None:
@@ -77,9 +88,12 @@ class TestDependencyOnboarding(unittest.TestCase):
             headless = raco_root / "RaCoHeadless.exe"
             blender = root / "external" / "blender" / "blender.exe"
             bmw_root = root / "digital-3d-car-models"
+            idc23_root = root / "digital-3d-car-models-idc23"
             for path in (gui, headless, blender):
                 write_text(path, "fixture\n")
             (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
+            write_text(idc23_root / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
+            (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
             write_text(
                 bmw_root / "ci" / "scripts" / "common" / "models_build_config.yaml",
@@ -124,6 +138,8 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertEqual(Path(registered_paths["raco_headless"]), headless.resolve())
         self.assertEqual(Path(registered_paths["blender"]), blender.resolve())
         self.assertEqual(Path(registered_paths["digital_3d_car_repo"]), bmw_root.resolve())
+        self.assertEqual(Path(registered_paths["digital_3d_car_repo_idc23"]), idc23_root.resolve())
+        self.assertEqual(Path(registered_paths["digital_3d_car_repo_assets_idc23"]), idc23_root.resolve())
         checks = {item["key"]: item for item in preflight["checks"]}
         self.assertTrue(preflight["can_run"])
         self.assertEqual(preflight["profile_id"], "G70")
@@ -141,19 +157,26 @@ class TestDependencyOnboarding(unittest.TestCase):
             old_headless = root / "old-tools" / "RaCoHeadless.exe"
             old_blender = root / "old-tools" / "blender.exe"
             old_bmw_root = root / "old-digital-3d-car-models"
+            old_idc23_root = root / "old-digital-3d-car-models-idc23"
             new_raco_root = root / "external" / "ramses" / "bin" / "RelWithDebInfo"
             new_gui = new_raco_root / "RamsesComposer.exe"
             new_headless = new_raco_root / "RaCoHeadless.exe"
             new_blender = root / "external" / "blender" / "blender.exe"
             new_bmw_root = root / "digital-3d-car-models"
+            new_idc23_root = root / "digital-3d-car-models-idc23"
             for path in (old_gui, old_headless, old_blender, new_gui, new_headless, new_blender):
                 write_text(path, "fixture\n")
             (old_bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(old_idc23_root / "ci" / "scripts" / "test" / "main.py", "print('old')\n")
+            (old_idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
             (new_bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(new_idc23_root / "ci" / "scripts" / "test" / "main.py", "print('new')\n")
+            (new_idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
             onboarding.record_dependency_path(workspace=root, key="raco_gui", path=old_gui)
             onboarding.record_dependency_path(workspace=root, key="raco_headless", path=old_headless)
             onboarding.record_dependency_path(workspace=root, key="blender", path=old_blender)
             onboarding.record_dependency_path(workspace=root, key="digital_3d_car_repo", path=old_bmw_root)
+            onboarding.record_dependency_path(workspace=root, key="digital_3d_car_repo_idc23", path=old_idc23_root)
 
             with mock.patch.dict(os.environ, {}, clear=True):
                 with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
@@ -167,6 +190,7 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertEqual(Path(registered_paths["raco_headless"]), new_headless.resolve())
         self.assertEqual(Path(registered_paths["blender"]), new_blender.resolve())
         self.assertEqual(Path(registered_paths["digital_3d_car_repo"]), new_bmw_root.resolve())
+        self.assertEqual(Path(registered_paths["digital_3d_car_repo_idc23"]), new_idc23_root.resolve())
 
     def test_detected_bmw_checkout_without_env_var_uses_existing_install_fast_path(self) -> None:
         from sg_preflight import dependency_onboarding as onboarding
@@ -394,6 +418,88 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertTrue(any("clone" in command for command in commands))
         self.assertTrue(any(command[1:4] == ["-C", resolved_repo_root, "lfs"] for command in commands))
         self.assertTrue(any(command[:2] == ["setx", onboarding.DIGITAL_3D_CAR_REPO_ENV] for command in commands))
+
+    def test_idc23_worktree_setup_creates_sets_env_verifies_shared_and_registers(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            target = root / "worktrees" / "assets-idc23"
+            fake_git = root / "git.exe"
+            write_text(fake_git, "git\n")
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            commands: list[list[str]] = []
+
+            def _find_executable(name: str) -> Path | None:
+                if name in {"git.exe", "git"}:
+                    return fake_git
+                return None
+
+            def _run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                self.assertIn("creationflags", kwargs)
+                commands.append(command)
+                if command[3:5] == ["worktree", "add"]:
+                    write_text(target / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
+                    (target / "cars" / "BMW" / "_Shared").mkdir(parents=True)
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="ok\n", stderr="")
+
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}, clear=True):
+                with mock.patch.object(onboarding.sys, "platform", "win32"):
+                    with mock.patch.object(onboarding, "_find_executable", side_effect=_find_executable):
+                        with mock.patch.object(onboarding.subprocess, "run", side_effect=_run):
+                            result = onboarding.run_dependency_setup_action(
+                                action_id="setup-digital-3d-car-repo-idc23",
+                                workspace=root,
+                                operator_confirmed=True,
+                                target_path=target,
+                            )
+            state = onboarding.load_dependency_onboarding_state(root)
+
+        self.assertEqual(result["status"], "recorded")
+        self.assertFalse(result["is_approval"])
+        self.assertTrue(result["git_worktree_add_invoked"])
+        self.assertTrue(result["setx_invoked"])
+        self.assertEqual(result["shared_root_status"], "available")
+        self.assertTrue(any(command[1:4] == ["-C", str(bmw_root.resolve()), "worktree"] for command in commands))
+        self.assertTrue(any(command[:2] == ["setx", onboarding.DIGITAL_3D_CAR_REPO_IDC23_ENV] for command in commands))
+        self.assertEqual(Path(state["registered_paths"]["digital_3d_car_repo_idc23"]), target.resolve())
+        self.assertEqual(Path(state["registered_paths"]["digital_3d_car_repo_assets_idc23"]), target.resolve())
+
+    def test_existing_idc23_worktree_fast_path_records_without_git_worktree_add(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            idc23_root = root / "digital-3d-car-models-idc23"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(idc23_root / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
+            (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
+            commands: list[list[str]] = []
+
+            def _run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                self.assertIn("creationflags", kwargs)
+                commands.append(command)
+                return subprocess.CompletedProcess(args=command, returncode=0, stdout="ok\n", stderr="")
+
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}, clear=True):
+                with mock.patch.object(onboarding.sys, "platform", "win32"):
+                    with mock.patch.object(onboarding.subprocess, "run", side_effect=_run):
+                        result = onboarding.run_dependency_setup_action(
+                            action_id="setup-digital-3d-car-repo-idc23",
+                            workspace=root,
+                            operator_confirmed=True,
+                            target_path=idc23_root,
+                        )
+            state = onboarding.load_dependency_onboarding_state(root)
+
+        self.assertEqual(result["status"], "recorded")
+        self.assertFalse(result["git_worktree_add_invoked"])
+        self.assertTrue(result["setx_invoked"])
+        self.assertFalse(any("worktree" in command for command in commands))
+        self.assertTrue(any(command[:2] == ["setx", onboarding.DIGITAL_3D_CAR_REPO_IDC23_ENV] for command in commands))
+        self.assertEqual(Path(state["registered_paths"]["digital_3d_car_repo_idc23"]), idc23_root.resolve())
 
     def test_start_dependency_setup_action_spawns_hidden_worker_and_reports_progress_tail(self) -> None:
         from sg_preflight import dependency_onboarding as onboarding

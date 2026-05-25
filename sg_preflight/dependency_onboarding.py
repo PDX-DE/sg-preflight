@@ -18,6 +18,7 @@ from sg_preflight.utils import ensure_parent
 
 
 DIGITAL_3D_CAR_REPO_ENV = "Digital-3D-Car-Repo"
+DIGITAL_3D_CAR_REPO_IDC23_ENV = "Digital-3D-Car-Repo-IDC23"
 ONBOARDING_STATE_FILENAME = "dependency_onboarding.json"
 RACO_BASELINE_VERSION = "2.3.1"
 BLENDER_BASELINE_VERSION = "4.1.1"
@@ -31,6 +32,7 @@ DEPENDENCY_SETUP_FILE_ACTIVITY_LIMIT = 20
 RACO_SETUP_TYPICAL_RANGE_LABEL = "typical ~30 sec"
 BLENDER_SETUP_TYPICAL_RANGE_LABEL = "typical ~2 min"
 BMW_GIT_SETUP_TYPICAL_RANGE_LABEL = "typical ~2-10 min"
+BMW_GIT_IDC23_SETUP_TYPICAL_RANGE_LABEL = "typical ~1-5 min"
 ENV_SETUP_TYPICAL_RANGE_LABEL = "typical <30 sec"
 
 RACO_CONFLUENCE_ANCHOR = "003_Onboarding/005_How-to-set-up-your-Laptop:190-204"
@@ -43,12 +45,24 @@ BMW_ENV_CONFLUENCE_ANCHOR = (
     "311_Delivery-process/312_3D-Car---Delivery-and-Integration/"
     "315_How-to-3D-Cars-Delivery-Checklist----v0:50-54"
 )
+IDC23_WORKTREE_CONFLUENCE_ANCHOR = (
+    "003_Onboarding/004_Onboarding-for-new-team-members:143-145; "
+    "003_Onboarding/013_How-to-access-BMW-GIT:20-126; "
+    "311_Delivery-process/312_3D-Car---Delivery-and-Integration/"
+    "315_How-to-3D-Cars-Delivery-Checklist----v0:81-82"
+)
 RACO_HEADLESS_CONFLUENCE_ANCHOR = (
     "139_3D-Car/225_3D-Car---RaCo-Implementation/"
     "249_How-to-use-the-various-python-scripts-fo:170-190"
 )
 
-_DEPENDENCY_ORDER = ("raco_gui", "raco_headless", "blender", "digital_3d_car_repo")
+_DEPENDENCY_ORDER = (
+    "raco_gui",
+    "raco_headless",
+    "blender",
+    "digital_3d_car_repo",
+    "digital_3d_car_repo_idc23",
+)
 _KNOWN_REGISTERED_PATHS = {
     "raco_gui",
     "raco_headless",
@@ -65,6 +79,7 @@ _SETUP_ACTION_TYPICAL_RANGES = {
     "setup-blender-411": BLENDER_SETUP_TYPICAL_RANGE_LABEL,
     "clone-digital-3d-car-repo": BMW_GIT_SETUP_TYPICAL_RANGE_LABEL,
     "setup-digital-3d-car-repo": ENV_SETUP_TYPICAL_RANGE_LABEL,
+    "setup-digital-3d-car-repo-idc23": BMW_GIT_IDC23_SETUP_TYPICAL_RANGE_LABEL,
 }
 
 
@@ -568,6 +583,66 @@ def _candidate_bmw_repo_paths(workspace: Path, state: dict[str, Any], bmw_root: 
     return candidates
 
 
+def _valid_bmw_repo_root(root: Path | None) -> bool:
+    return root is not None and (root / "cars" / "BMW").is_dir()
+
+
+def _candidate_idc23_repo_paths(
+    workspace: Path,
+    state: dict[str, Any],
+    bmw_root: Path | str | None,
+) -> list[Path | None]:
+    main_root = _existing_dir(_candidate_bmw_repo_paths(workspace, state, bmw_root))
+    candidates: list[Path | None] = [
+        _env_path((DIGITAL_3D_CAR_REPO_IDC23_ENV, "SG_BMW_CAR_MODELS_ROOT_IDC23")),
+        workspace / "external" / "digital-3d-car-models-idc23",
+        workspace.parent / "digital-3d-car-models-idc23",
+        Path(r"C:\3D Car git\worktrees\assets-idc23"),
+        Path(r"C:\3D Car git\digital-3d-car-models-idc23"),
+    ]
+    if main_root is not None:
+        candidates.extend(
+            [
+                main_root.parent / "worktrees" / "assets-idc23",
+                main_root.parent / "digital-3d-car-models-idc23",
+                main_root / "assets" / "idc23",
+            ]
+        )
+    candidates.extend(
+        [
+            _registered_path(state, "digital_3d_car_repo_idc23"),
+            _registered_path(state, "digital_3d_car_repo_assets_idc23"),
+        ]
+    )
+    return candidates
+
+
+def _default_idc23_worktree_target(main_root: Path | None, workspace: Path) -> Path:
+    if main_root is not None:
+        worktrees_root = main_root.parent / "worktrees"
+        if worktrees_root.is_dir() or main_root.parent.name.casefold() == "3d car git":
+            return worktrees_root / "assets-idc23"
+        return main_root.parent / "digital-3d-car-models-idc23"
+    return workspace / "external" / "digital-3d-car-models-idc23"
+
+
+def _idc23_worktree_check(root: Path | None) -> tuple[str, str]:
+    if root is None:
+        return "missing", f"{DIGITAL_3D_CAR_REPO_IDC23_ENV} is not set."
+    script = root / "ci" / "scripts" / "test" / "main.py"
+    shared = root / "cars" / "BMW" / "_Shared"
+    if not script.is_file():
+        return "incomplete", "The IDC_23 worktree does not expose ci/scripts/test/main.py."
+    if not shared.is_dir():
+        return "incomplete", "The IDC_23 worktree is missing cars/BMW/_Shared."
+    return "available", "IDC_23 assets/idc23 worktree is available for read-only script invocation."
+
+
+def _record_idc23_repo_path(*, workspace: Path | str, path: Path | str) -> None:
+    record_dependency_path(workspace=workspace, key="digital_3d_car_repo_idc23", path=path)
+    record_dependency_path(workspace=workspace, key="digital_3d_car_repo_assets_idc23", path=path)
+
+
 def _bmw_repo_status(state: dict[str, Any], workspace: Path, bmw_root: Path | str | None) -> dict[str, Any]:
     explicit_env = os.environ.get(DIGITAL_3D_CAR_REPO_ENV, "").strip()
     candidate = _existing_dir(_candidate_bmw_repo_paths(workspace, state, bmw_root))
@@ -642,6 +717,79 @@ def _bmw_repo_status(state: dict[str, Any], workspace: Path, bmw_root: Path | st
     )
 
 
+def _idc23_repo_status(state: dict[str, Any], workspace: Path, bmw_root: Path | str | None) -> dict[str, Any]:
+    main_root = _existing_dir(_candidate_bmw_repo_paths(workspace, state, bmw_root))
+    candidate = _existing_dir(_candidate_idc23_repo_paths(workspace, state, bmw_root))
+    candidate_status, candidate_detail = _idc23_worktree_check(candidate)
+    target_path = candidate if candidate is not None else _default_idc23_worktree_target(main_root, workspace)
+    git_path = _find_executable("git.exe") or _find_executable("git")
+    effects = [
+        "Runs git worktree add for the assets/idc23 branch only after operator confirmation.",
+        f"Sets the user environment variable {DIGITAL_3D_CAR_REPO_IDC23_ENV} with setx on Windows.",
+        "Verifies ci/scripts/test/main.py and cars/BMW/_Shared before recording the path.",
+        "Records the IDC_23 worktree path in operator_state/dependency_onboarding.json.",
+        "Does not modify BMW source files, SVN, or Jira.",
+    ]
+    command_preview = f'git -C "<{DIGITAL_3D_CAR_REPO_ENV}>" worktree add "{target_path}" assets/idc23'
+    if sys.platform == "win32":
+        command_preview += f' && setx {DIGITAL_3D_CAR_REPO_IDC23_ENV} "{target_path}"'
+    action = _setup_action(
+        action_id="setup-digital-3d-car-repo-idc23",
+        label="Set up IDC_23 worktree",
+        dependency_key="digital_3d_car_repo_idc23",
+        status="available" if (_valid_bmw_repo_root(main_root) and git_path is not None) else "incomplete",
+        confirmation_message=(
+            "Create or register the separate assets/idc23 BMW Git worktree for IDC_23 pipeline commands. "
+            "This setup records local paths only after the worktree structure is verified."
+        ),
+        effects=effects,
+        confluence_anchor=IDC23_WORKTREE_CONFLUENCE_ANCHOR,
+        can_run_now=_valid_bmw_repo_root(main_root) and git_path is not None,
+        command_preview=command_preview,
+        target_path=target_path,
+        source_path=main_root,
+        operator_inputs=[
+            "Choose the local target folder for the assets/idc23 worktree.",
+            f"Confirm {DIGITAL_3D_CAR_REPO_ENV} points at the master BMW Git checkout before running.",
+        ],
+    )
+    if candidate_status == "available" and candidate is not None:
+        _auto_register_dependency_path(
+            state,
+            workspace=workspace,
+            key="digital_3d_car_repo_idc23",
+            path=candidate,
+        )
+        _auto_register_dependency_path(
+            state,
+            workspace=workspace,
+            key="digital_3d_car_repo_assets_idc23",
+            path=candidate,
+        )
+        return _status_item(
+            key="digital_3d_car_repo_idc23",
+            label=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV}",
+            status="available",
+            detail=candidate_detail,
+            path=candidate,
+            confluence_anchor=IDC23_WORKTREE_CONFLUENCE_ANCHOR,
+            setup_action={},
+        )
+    if main_root is None:
+        candidate_detail += f" Configure {DIGITAL_3D_CAR_REPO_ENV} before creating the IDC_23 worktree."
+    elif git_path is None:
+        candidate_detail += " Git was not found; install Git before creating the IDC_23 worktree."
+    return _status_item(
+        key="digital_3d_car_repo_idc23",
+        label=f"{DIGITAL_3D_CAR_REPO_IDC23_ENV}",
+        status=candidate_status,
+        detail=candidate_detail,
+        path=candidate,
+        confluence_anchor=IDC23_WORKTREE_CONFLUENCE_ANCHOR,
+        setup_action=action,
+    )
+
+
 def build_dependency_onboarding_status(
     *,
     workspace: Path | str,
@@ -656,6 +804,7 @@ def build_dependency_onboarding_status(
         "raco_headless": raco_headless,
         "blender": _blender_status(state, root),
         "digital_3d_car_repo": _bmw_repo_status(state, root, bmw_root),
+        "digital_3d_car_repo_idc23": _idc23_repo_status(state, root, bmw_root),
     }
     items = [dependencies[key] for key in _DEPENDENCY_ORDER]
     actions = []
@@ -696,6 +845,7 @@ def build_dependency_onboarding_status(
             BLENDER_CONFLUENCE_ANCHOR,
             BMW_GIT_CONFLUENCE_ANCHOR,
             BMW_ENV_CONFLUENCE_ANCHOR,
+            IDC23_WORKTREE_CONFLUENCE_ANCHOR,
         ],
         "guardrails": [
             "Manual review remains required.",
@@ -1201,11 +1351,192 @@ def _run_bmw_clone_setup(
     )
 
 
+def _run_setx_for_idc23(workspace: Path, repo_root: Path, action_id: str) -> dict[str, Any]:
+    if sys.platform != "win32":
+        _record_idc23_repo_path(workspace=workspace, path=repo_root)
+        return _setup_result(
+            status="recorded",
+            action_id=action_id,
+            summary=f"Recorded {DIGITAL_3D_CAR_REPO_IDC23_ENV}; setx is available only on Windows.",
+            path=repo_root,
+            git_worktree_add_invoked=False,
+            setx_invoked=False,
+            shared_root_status="available",
+        )
+    try:
+        completed = subprocess.run(
+            ["setx", DIGITAL_3D_CAR_REPO_IDC23_ENV, str(repo_root)],
+            cwd=workspace,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+            **hidden_subprocess_kwargs(),
+        )
+    except subprocess.TimeoutExpired:
+        return _setup_result(
+            status="failed",
+            action_id=action_id,
+            summary="setx timed out while setting the IDC_23 BMW Git environment variable.",
+            path=repo_root,
+            git_worktree_add_invoked=False,
+            setx_invoked=True,
+            shared_root_status="available",
+        )
+    if completed.returncode != 0:
+        return _setup_result(
+            status="failed",
+            action_id=action_id,
+            summary=(completed.stderr or completed.stdout or "setx failed.").strip(),
+            path=repo_root,
+            exit_code=completed.returncode,
+            git_worktree_add_invoked=False,
+            setx_invoked=True,
+            shared_root_status="available",
+        )
+    _record_idc23_repo_path(workspace=workspace, path=repo_root)
+    return _setup_result(
+        status="recorded",
+        action_id=action_id,
+        summary=f"Recorded {DIGITAL_3D_CAR_REPO_IDC23_ENV} for future shells.",
+        path=repo_root,
+        exit_code=completed.returncode,
+        git_worktree_add_invoked=False,
+        setx_invoked=True,
+        shared_root_status="available",
+    )
+
+
+def _run_bmw_idc23_setup(
+    *,
+    action_id: str,
+    workspace: Path,
+    action: dict[str, Any],
+    target_path: Path | str | None,
+    source_path: Path | str | None,
+    stream_output: bool,
+) -> dict[str, Any]:
+    raw_target = str(target_path or action.get("target_path", "")).strip()
+    if not raw_target:
+        return _setup_result(
+            status="incomplete",
+            action_id=action_id,
+            summary="Choose the local target folder for the IDC_23 assets/idc23 worktree before running setup.",
+        )
+    target = Path(raw_target).expanduser().resolve()
+    state = load_dependency_onboarding_state(workspace)
+    raw_base = str(source_path or action.get("source_path", "")).strip()
+    base_repo = Path(raw_base).expanduser().resolve() if raw_base else _existing_dir(
+        _candidate_bmw_repo_paths(workspace, state, None)
+    )
+    if not _valid_bmw_repo_root(base_repo):
+        return _setup_result(
+            status="incomplete",
+            action_id=action_id,
+            summary=f"Configure {DIGITAL_3D_CAR_REPO_ENV} before creating the IDC_23 worktree.",
+            path=target,
+            git_worktree_add_invoked=False,
+            setx_invoked=False,
+            shared_root_status="unknown",
+        )
+    current_status, current_detail = _idc23_worktree_check(target if target.exists() else None)
+    if current_status == "available":
+        result = _run_setx_for_idc23(workspace, target, action_id)
+        result["summary"] = f"Existing IDC_23 worktree verified. {result['summary']}"
+        return result
+    if target.exists():
+        return _setup_result(
+            status="incomplete",
+            action_id=action_id,
+            summary=current_detail,
+            path=target,
+            git_worktree_add_invoked=False,
+            setx_invoked=False,
+            shared_root_status="missing" if not (target / "cars" / "BMW" / "_Shared").is_dir() else "available",
+        )
+    git_path = _find_executable("git.exe") or _find_executable("git")
+    if git_path is None:
+        return _setup_result(
+            status="missing",
+            action_id=action_id,
+            summary="Git was not found; install Git before creating the IDC_23 worktree.",
+            path=target,
+            git_worktree_add_invoked=False,
+            setx_invoked=False,
+            shared_root_status="unknown",
+        )
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return _setup_result(
+            status="failed",
+            action_id=action_id,
+            summary=f"Could not create IDC_23 worktree parent folder: {exc}",
+            path=target,
+            git_worktree_add_invoked=False,
+            setx_invoked=False,
+            shared_root_status="unknown",
+        )
+    command = [str(git_path), "-C", str(base_repo), "worktree", "add", str(target), "assets/idc23"]
+    if stream_output:
+        print(f"Running {' '.join(command)}", flush=True)
+        completed = subprocess.run(
+            command,
+            cwd=base_repo,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=DEPENDENCY_SETUP_TIMEOUT_SECONDS,
+            **hidden_subprocess_kwargs(),
+        )
+        output = ""
+    else:
+        completed = subprocess.run(
+            command,
+            cwd=base_repo,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=DEPENDENCY_SETUP_TIMEOUT_SECONDS,
+            **hidden_subprocess_kwargs(),
+        )
+        output = (completed.stderr or completed.stdout or "").strip()
+    if completed.returncode != 0:
+        return _setup_result(
+            status="failed",
+            action_id=action_id,
+            summary=output or f"IDC_23 git worktree add failed with exit code {completed.returncode}.",
+            path=target,
+            exit_code=completed.returncode,
+            git_worktree_add_invoked=True,
+            setx_invoked=False,
+            shared_root_status="unknown",
+        )
+    status, detail = _idc23_worktree_check(target)
+    if status != "available":
+        return _setup_result(
+            status="incomplete",
+            action_id=action_id,
+            summary=detail,
+            path=target,
+            exit_code=completed.returncode,
+            git_worktree_add_invoked=True,
+            setx_invoked=False,
+            shared_root_status="missing" if not (target / "cars" / "BMW" / "_Shared").is_dir() else "available",
+        )
+    result = _run_setx_for_idc23(workspace, target, action_id)
+    result["git_worktree_add_invoked"] = True
+    result["summary"] = f"IDC_23 worktree created and verified. {result['summary']}"
+    return result
+
+
 _SETUP_ACTION_HANDLERS = {
     "setup-raco-from-shared-tools": _run_raco_setup,
     "setup-blender-411": _run_blender_setup,
     "clone-digital-3d-car-repo": _run_bmw_clone_setup,
     "setup-digital-3d-car-repo": _run_bmw_env_setup,
+    "setup-digital-3d-car-repo-idc23": _run_bmw_idc23_setup,
 }
 
 

@@ -2321,12 +2321,20 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
                         ).classes("sgfx-muted")
 
                     action_id = str(action.get("id", ""))
-                    source_supported = action_id in {"setup-raco-from-shared-tools", "setup-blender-411"}
-                    source_required = action_id == "setup-raco-from-shared-tools"
+                    source_supported = action_id in {
+                        "setup-raco-from-shared-tools",
+                        "setup-blender-411",
+                        "setup-digital-3d-car-repo-idc23",
+                    }
+                    source_required = action_id in {
+                        "setup-raco-from-shared-tools",
+                        "setup-digital-3d-car-repo-idc23",
+                    }
                     target_required = action_id in {
                         "setup-raco-from-shared-tools",
                         "clone-digital-3d-car-repo",
                         "setup-digital-3d-car-repo",
+                        "setup-digital-3d-car-repo-idc23",
                     }
                     source_input = None
                     target_input = None
