@@ -1243,6 +1243,33 @@ def _team_digest_board_page(
     return page
 
 
+def _deferred_team_digest_board_page(profile_id: str) -> dict[str, Any]:
+    return {
+        "id": "team-digest-board",
+        "title": "Team Digest Board",
+        "tagline": "Local snapshot for standup review across selected car profiles.",
+        "ownership_note": "Default sharing model is local snapshot; SVN and Confluence sharing remain explicit gates.",
+        "status": "not_run",
+        "raw_status": "not_run",
+        "data_available": False,
+        "summary": f"Team Digest Board for {profile_id} refreshes when opened.",
+        "items": [],
+        "payload": {
+            "profile_id": profile_id,
+            "status": "not_run",
+            "data_available": False,
+            "share_decision": {
+                "rationale": "Open this page to load the local team digest snapshot.",
+                "options": [],
+            },
+            "board_rows": [],
+        },
+        "confluence_anchors": [],
+        "empty_state_note": "Open Team Digest Board to load the local standup snapshot.",
+        "deferred": True,
+    }
+
+
 def _operator_handoff_page(profile_id: str, workspace: Path) -> dict[str, Any]:
     page = _reader_page(
         page_id="operator-handoff",
@@ -1384,6 +1411,7 @@ def build_dashboard_snapshot(
     *,
     bmw_root: Path | str | None = None,
     ui_mode: str | None = None,
+    defer_team_digest_board: bool = False,
 ) -> dict[str, Any]:
     root = _workspace(workspace)
     profile_options = dashboard_profile_options(bmw_root=bmw_root, profile_scope=PROFILE_SCOPE_DEFAULT)
@@ -1406,6 +1434,11 @@ def build_dashboard_snapshot(
     active_ticket_id = _dashboard_active_ticket_id(root)
     daily_ticket_context = _daily_digest_ticket_context(root)
     output_root = operator_ui_root(root)
+    team_digest_page = (
+        _deferred_team_digest_board_page(resolved_profile_id)
+        if defer_team_digest_board
+        else _team_digest_board_page(root, resolved_profile_id, bmw_root=bmw_root)
+    )
     return {
         "title": DASHBOARD_TITLE,
         "profile_id": resolved_profile_id,
@@ -1462,7 +1495,7 @@ def build_dashboard_snapshot(
                 active_ticket_id=active_ticket_id,
                 ticket_context=daily_ticket_context,
             ),
-            _team_digest_board_page(root, resolved_profile_id, bmw_root=bmw_root),
+            team_digest_page,
             _operator_handoff_page(resolved_profile_id, root),
             _manual_review_page(resolved_profile_id, root, active_ticket_id=active_ticket_id),
         ],
@@ -3831,13 +3864,25 @@ def _render_dashboard(
     operator_ui_static_root = operator_ui_root(workspace)
     operator_ui_static_root.mkdir(parents=True, exist_ok=True)
     app.add_static_files("/sgfx-operator-ui", str(operator_ui_static_root))
-    base_snapshot = build_dashboard_snapshot(initial_profile_id, workspace, bmw_root=bmw_root, ui_mode=ui_mode)
+    base_snapshot = build_dashboard_snapshot(
+        initial_profile_id,
+        workspace,
+        bmw_root=bmw_root,
+        ui_mode=ui_mode,
+        defer_team_digest_board=True,
+    )
 
     @ui.page("/")
     def _index(profile: str = "") -> None:
         query_profile = str(profile or "").strip()
         snapshot = (
-            build_dashboard_snapshot(query_profile, workspace, bmw_root=bmw_root, ui_mode=ui_mode)
+            build_dashboard_snapshot(
+                query_profile,
+                workspace,
+                bmw_root=bmw_root,
+                ui_mode=ui_mode,
+                defer_team_digest_board=True,
+            )
             if query_profile
             else dict(base_snapshot)
         )
@@ -4039,15 +4084,26 @@ def _render_dashboard(
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
             ui.run_javascript(f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
+            if page_id == "team-digest-board" and _pages_by_id().get(page_id, {}).get("deferred"):
+                state["snapshot"] = build_dashboard_snapshot(
+                    str(state["snapshot"]["profile_id"]),
+                    workspace,
+                    bmw_root=bmw_root,
+                    ui_mode=_current_theme(),
+                    defer_team_digest_board=False,
+                )
+                _refresh_labels()
             _render_current_page()
 
         def _refresh_snapshot(profile_id: str | None = None) -> None:
             current_profile = profile_id if profile_id is not None else str(state["snapshot"]["profile_id"])
+            active_page_id = str(state.get("active_page_id", "delivery-checklist"))
             state["snapshot"] = build_dashboard_snapshot(
                 current_profile,
                 workspace,
                 bmw_root=bmw_root,
                 ui_mode=_current_theme(),
+                defer_team_digest_board=active_page_id != "team-digest-board",
             )
             _refresh_labels()
             _render_current_page()

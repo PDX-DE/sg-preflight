@@ -343,7 +343,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         self.assertIn('def _index(profile: str = "")', source)
         self.assertIn('query_profile = str(profile or "").strip()', source)
-        self.assertIn("build_dashboard_snapshot(query_profile, workspace, bmw_root=bmw_root, ui_mode=ui_mode)", source)
+        self.assertIn("defer_team_digest_board=True", source)
+        self.assertIn('page_id == "team-digest-board" and _pages_by_id().get(page_id, {}).get("deferred")', source)
 
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -416,6 +417,20 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["setup_status"], fake_setup)
         self.assertEqual(delivery["setup_status"]["actions"][0]["label"], "Set up RaCo")
+
+    def test_dashboard_snapshot_can_defer_team_digest_board_for_fast_profile_switch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            with mock.patch("sg_preflight.dashboard.main.build_team_daily_digest_board") as team_board:
+                snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
+
+        team_board.assert_not_called()
+        self.assertEqual(len(snapshot["pages"]), 8)
+        team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
+        self.assertTrue(team_page["deferred"])
+        self.assertEqual(team_page["status"], "not_run")
+        self.assertIn("refreshes when opened", team_page["summary"])
 
     def test_dashboard_snapshot_suppresses_welcome_setup_action_when_none_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
