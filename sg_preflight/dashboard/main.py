@@ -26,8 +26,8 @@ from sg_preflight.delivery_workbook_generation import (
     GENERATE_WORKBOOK_ACTION_ID,
     GENERATE_WORKBOOK_ACTION_LABEL,
     GENERATE_WORKBOOK_TIMEOUT_SECONDS,
+    build_delivery_workbook_trigger,
     cancel_delivery_workbook_generation,
-    check_delivery_workbook_generation_environment,
     poll_delivery_workbook_generation,
     start_delivery_workbook_generation,
 )
@@ -764,14 +764,15 @@ def _delivery_checklist_page(
     )
     page["confluence_anchors"] = [DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR]
     page["setup_status"] = setup_status or build_dependency_onboarding_status(workspace=workspace, bmw_root=bmw_root)
-    if page.get("status") != "unavailable":
-        return page
-    page["empty_state_note"] = DELIVERY_CHECKLIST_EMPTY_NOTE
-    preflight = check_delivery_workbook_generation_environment(
+    page["workbook_trigger"] = build_delivery_workbook_trigger(
         profile_id=profile_id,
         workspace=workspace,
         bmw_root=bmw_root,
     )
+    if page.get("status") != "unavailable":
+        return page
+    page["empty_state_note"] = DELIVERY_CHECKLIST_EMPTY_NOTE
+    preflight = page["workbook_trigger"].get("preflight", {})
     page["actions"] = [
         {
             "id": GENERATE_WORKBOOK_ACTION_ID,
@@ -2627,6 +2628,14 @@ def _render_delivery_checklist_panel(
             )
         else:
             ui.label("No rows loaded for this page.").classes("sgfx-muted")
+        trigger = page.get("workbook_trigger", {})
+        if isinstance(trigger, dict):
+            ui.separator()
+            with ui.row().classes("items-center justify-between full-width"):
+                ui.label("Workbook generation trigger").classes("sgfx-panel-tagline")
+                _render_status_chip(ui, str(trigger.get("trigger_status", "unknown")))
+            ui.label(str(trigger.get("summary", ""))).classes("sgfx-muted")
+            ui.label("Local-only: generation starts only through the confirmation-gated action.").classes("sgfx-muted")
 
         actions = [
             action for action in page.get("actions", []) if isinstance(action, dict)

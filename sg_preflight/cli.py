@@ -55,6 +55,11 @@ from sg_preflight.delivery_checklist import (
     render_delivery_checklist_markdown,
     render_delivery_checklist_text,
 )
+from sg_preflight.delivery_workbook_generation import (
+    build_delivery_workbook_trigger,
+    render_delivery_workbook_trigger_markdown,
+    render_delivery_workbook_trigger_text,
+)
 from sg_preflight.export_size_analysis import (
     read_export_size_analysis,
     render_export_size_analysis_markdown,
@@ -767,6 +772,24 @@ def build_parser() -> argparse.ArgumentParser:
     delivery_checklist_read.add_argument("--json", action="store_true", help="Print delivery checklist payload as JSON")
     delivery_checklist_read.add_argument("--markdown", action="store_true", help="Print delivery checklist payload as Markdown")
     _add_render_options(delivery_checklist_read)
+
+    delivery_workbook = sub.add_parser(
+        "delivery-workbook",
+        help="Inspect the confirmation-gated delivery workbook generation trigger",
+    )
+    delivery_workbook_sub = delivery_workbook.add_subparsers(dest="delivery_workbook_command", required=True)
+    delivery_workbook_trigger = delivery_workbook_sub.add_parser("trigger", help="Read generation trigger status")
+    delivery_workbook_trigger.add_argument("--workspace", help="Workspace root override")
+    delivery_workbook_trigger.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    delivery_workbook_trigger.add_argument("--profile", required=True, help="Profile id such as G65")
+    delivery_workbook_trigger.add_argument(
+        "--trusted-tool-mode",
+        action="store_true",
+        help="Report trusted orchestration mode without starting generation",
+    )
+    delivery_workbook_trigger.add_argument("--json", action="store_true", help="Print trigger as JSON")
+    delivery_workbook_trigger.add_argument("--markdown", action="store_true", help="Print trigger as Markdown")
+    _add_render_options(delivery_workbook_trigger)
 
     export_size = sub.add_parser(
         "export-size-analysis",
@@ -1726,6 +1749,31 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _emit_text(render_delivery_checklist_markdown(payload), args)
         else:
             _emit_text(render_delivery_checklist_text(payload), args)
+        return 0
+
+    if args.command == "delivery-workbook":
+        workbook_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.delivery_workbook_command == "trigger":
+                payload = build_delivery_workbook_trigger(
+                    profile_id=args.profile,
+                    workspace=workbook_root,
+                    bmw_root=Path(args.bmw_root).resolve() if getattr(args, "bmw_root", None) else None,
+                    trusted_tool_mode=bool(getattr(args, "trusted_tool_mode", False)),
+                )
+            else:
+                parser.error(f"Unhandled delivery-workbook command: {args.delivery_workbook_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"delivery-workbook failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_delivery_workbook_trigger_markdown(payload), args)
+        else:
+            _emit_text(render_delivery_workbook_trigger_text(payload), args)
         return 0
 
     if args.command == "export-size-analysis":

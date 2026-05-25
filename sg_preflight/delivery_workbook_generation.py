@@ -33,6 +33,12 @@ GENERATE_WORKBOOK_ACTION_ID = "generate-delivery-workbook"
 GENERATE_WORKBOOK_ACTION_LABEL = "Generate delivery workbook"
 GENERATE_WORKBOOK_TIMEOUT_SECONDS = 600
 GENERATE_WORKBOOK_MIN_FREE_BYTES = 100 * 1024 * 1024
+WORKBOOK_TRIGGER_GUARDRAILS = (
+    "Manual review remains required.",
+    "Decision: not approval — evidence only.",
+    "BMW Git access is read-only. SGFX never modifies BMW source.",
+    "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
+)
 GENERATION_STDOUT_TAIL_BYTES = 2000
 GENERATION_STDOUT_TAIL_LINES = 20
 GENERATION_FILE_ACTIVITY_LIMIT = 20
@@ -548,6 +554,121 @@ def check_delivery_workbook_generation_environment(
         ),
         "disabled_reason": "" if can_run else "One or more environment pre-flight checks failed.",
     }
+
+
+def _delivery_workbook_trigger_blockers(preflight: dict[str, Any]) -> list[dict[str, str]]:
+    blockers: list[dict[str, str]] = []
+    for check in preflight.get("checks", []):
+        if not isinstance(check, dict):
+            continue
+        status = str(check.get("status", "")).strip()
+        if status == "available":
+            continue
+        blockers.append(
+            {
+                "key": str(check.get("key", "")).strip(),
+                "label": str(check.get("label", "")).strip(),
+                "status": status or "unknown",
+                "detail": str(check.get("detail", "")).strip(),
+                "remediation": str(check.get("remediation", "")).strip(),
+            }
+        )
+    return blockers
+
+
+def build_delivery_workbook_trigger(
+    *,
+    profile_id: str,
+    workspace: Path | str,
+    bmw_root: Path | str | None = None,
+    trusted_tool_mode: bool = False,
+) -> dict[str, Any]:
+    preflight = check_delivery_workbook_generation_environment(
+        profile_id=profile_id,
+        workspace=workspace,
+        bmw_root=bmw_root,
+    )
+    blockers = _delivery_workbook_trigger_blockers(preflight)
+    can_start = bool(preflight.get("can_run", False))
+    confirmation_required = can_start and not trusted_tool_mode
+    trigger_status = "available" if can_start else str(preflight.get("status", "incomplete") or "incomplete")
+    return {
+        "schema_version": 1,
+        "action_id": GENERATE_WORKBOOK_ACTION_ID,
+        "label": GENERATE_WORKBOOK_ACTION_LABEL,
+        "profile_id": str(preflight.get("profile_id", profile_id)).strip(),
+        "workspace": str(Path(workspace).resolve()),
+        "status": "available",
+        "trigger_status": trigger_status,
+        "can_start": can_start,
+        "started": False,
+        "trusted_tool_mode": bool(trusted_tool_mode),
+        "operator_confirmation_required": confirmation_required,
+        "confirmation_message": str(preflight.get("confirmation_message", "")),
+        "timeout_seconds": GENERATE_WORKBOOK_TIMEOUT_SECONDS,
+        "preflight": preflight,
+        "blockers": blockers,
+        "manual_review_required": True,
+        "records_operator_verdict": False,
+        "is_approval": False,
+        "summary": (
+            "Delivery workbook generation can be started after operator confirmation."
+            if can_start
+            else f"Delivery workbook generation is not available yet: {preflight.get('disabled_reason', '')}"
+        ),
+        "next_action": (
+            "Confirm the generation action in the dashboard or trusted orchestrator."
+            if can_start
+            else "Resolve the listed pre-flight blockers before starting generation."
+        ),
+        "guardrails": list(WORKBOOK_TRIGGER_GUARDRAILS),
+    }
+
+
+def render_delivery_workbook_trigger_text(payload: dict[str, Any]) -> str:
+    lines = [
+        f"Delivery workbook trigger - {payload.get('profile_id', '')}",
+        str(payload.get("summary", "")),
+        f"Trigger status: {payload.get('trigger_status', 'unknown')}",
+        f"Can start: {payload.get('can_start', False)}",
+        f"Operator confirmation required: {payload.get('operator_confirmation_required', False)}",
+        "",
+        "Guardrails:",
+    ]
+    lines.extend(f"- {guardrail}" for guardrail in payload.get("guardrails", []) if str(guardrail).strip())
+    blockers = [item for item in payload.get("blockers", []) if isinstance(item, dict)]
+    if blockers:
+        lines.extend(["", "Blockers:"])
+        lines.extend(
+            f"- [{item.get('status', 'unknown')}] {item.get('label', '')}: {item.get('detail', '')}"
+            for item in blockers
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_delivery_workbook_trigger_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        f"# Delivery workbook trigger - {payload.get('profile_id', '')}",
+        "",
+        str(payload.get("summary", "")),
+        "",
+        f"- Trigger status: `{payload.get('trigger_status', 'unknown')}`",
+        f"- Can start: `{payload.get('can_start', False)}`",
+        f"- Operator confirmation required: `{payload.get('operator_confirmation_required', False)}`",
+        "- Manual review required: yes",
+        "- Decision: not approval; evidence only.",
+        "",
+        "## Guardrails",
+    ]
+    lines.extend(f"- {guardrail}" for guardrail in payload.get("guardrails", []) if str(guardrail).strip())
+    blockers = [item for item in payload.get("blockers", []) if isinstance(item, dict)]
+    if blockers:
+        lines.extend(["", "## Blockers"])
+        lines.extend(
+            f"- `{item.get('status', 'unknown')}` {item.get('label', '')}: {item.get('detail', '')}"
+            for item in blockers
+        )
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def resolve_delivery_workbook_generation_command(

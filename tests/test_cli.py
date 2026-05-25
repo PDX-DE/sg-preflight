@@ -891,6 +891,56 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Delivery checklist data is read-only", markdown_stdout.getvalue())
         self.assertIn("SGFX does not run the delivery checklist or modify the workbook.", markdown_stdout.getvalue())
 
+    def test_delivery_workbook_trigger_cli_returns_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = main(
+                    [
+                        "delivery-workbook",
+                        "trigger",
+                        "--workspace",
+                        str(root),
+                        "--bmw-root",
+                        str(bmw_root),
+                        "--profile",
+                        "G70",
+                        "--json",
+                    ]
+                )
+
+            markdown_stdout = io.StringIO()
+            markdown_stderr = io.StringIO()
+            with redirect_stdout(markdown_stdout), redirect_stderr(markdown_stderr):
+                markdown_result = main(
+                    [
+                        "delivery-workbook",
+                        "trigger",
+                        "--workspace",
+                        str(root),
+                        "--bmw-root",
+                        str(bmw_root),
+                        "--profile",
+                        "G70",
+                        "--markdown",
+                    ]
+                )
+
+        self.assertEqual(result, 0, msg=stderr.getvalue())
+        self.assertEqual(markdown_result, 0, msg=markdown_stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["action_id"], "generate-delivery-workbook")
+        self.assertFalse(payload["started"])
+        self.assertTrue(payload["manual_review_required"])
+        self.assertFalse(payload["records_operator_verdict"])
+        self.assertFalse(payload["is_approval"])
+        self.assertIn("Delivery workbook trigger", markdown_stdout.getvalue())
+
     def test_export_size_analysis_read_cli_returns_json_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -756,15 +756,23 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "checks": [{"key": "digital_3d_car_repo", "status": "missing"}],
                 "confirmation_message": "This will run the BMW pipeline for G70.",
             }
+            fake_trigger = {
+                "trigger_status": "incomplete",
+                "summary": "Delivery workbook generation is not available yet.",
+                "preflight": fake_preflight,
+                "manual_review_required": True,
+                "is_approval": False,
+            }
             with mock.patch(
-                "sg_preflight.dashboard.main.check_delivery_workbook_generation_environment",
-                return_value=fake_preflight,
+                "sg_preflight.dashboard.main.build_delivery_workbook_trigger",
+                return_value=fake_trigger,
             ):
                 snapshot = build_dashboard_snapshot("G70", tmp)
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["status"], "unavailable")
         self.assertIn("No size-analysis workbook yet", delivery["empty_state_note"])
+        self.assertEqual(delivery["workbook_trigger"], fake_trigger)
         self.assertEqual(len(delivery["actions"]), 1)
         action = delivery["actions"][0]
         self.assertEqual(action["id"], GENERATE_WORKBOOK_ACTION_ID)

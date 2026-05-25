@@ -62,6 +62,34 @@ class _FakeProcess:
 
 
 class TestDeliveryWorkbookGeneration(unittest.TestCase):
+    def test_workbook_trigger_wraps_preflight_without_starting_generation(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch("sg_preflight.delivery_workbook_generation._find_executable", return_value=""):
+                    payload = generation.build_delivery_workbook_trigger(
+                        profile_id="G70",
+                        workspace=root,
+                        bmw_root=bmw_root,
+                    )
+
+        self.assertEqual(payload["status"], "available")
+        self.assertFalse(payload["can_start"])
+        self.assertFalse(payload["started"])
+        self.assertTrue(payload["manual_review_required"])
+        self.assertFalse(payload["records_operator_verdict"])
+        self.assertFalse(payload["is_approval"])
+        self.assertTrue(payload["blockers"])
+        self.assertIn("Manual review remains required.", payload["guardrails"])
+        markdown = generation.render_delivery_workbook_trigger_markdown(payload)
+        self.assertIn("Delivery workbook trigger", markdown)
+        self.assertIn("Manual review required: yes", markdown)
+        self.assertIn("Decision: not approval", markdown)
+
     def test_tool_check_prefers_registered_raco_path_when_not_on_path(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation
 
