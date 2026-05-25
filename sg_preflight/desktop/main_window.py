@@ -1252,12 +1252,12 @@ QLabel#hotkeyText {
             anchors_label.setObjectName("panelHint")
             layout.addWidget(anchors_label)
 
-        ai_lines = tuple(ABOUT_CONTENT.get("ai_use_disclosure", ()))
-        if ai_lines:
-            ai_label = QLabel("\n".join(str(line) for line in ai_lines), dialog)
-            ai_label.setWordWrap(True)
-            ai_label.setObjectName("panelHint")
-            layout.addWidget(ai_label)
+        disclosure_lines = tuple(ABOUT_CONTENT.get("data_handling_disclosure", ()))
+        if disclosure_lines:
+            disclosure_label = QLabel("\n".join(str(line) for line in disclosure_lines), dialog)
+            disclosure_label.setWordWrap(True)
+            disclosure_label.setObjectName("panelHint")
+            layout.addWidget(disclosure_label)
 
         guardrails = QLabel("\n".join(GRAFIKS_GUARDRAILS), dialog)
         guardrails.setWordWrap(True)

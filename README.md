@@ -198,15 +198,13 @@ SGFX QA Preflight is designed to stay out of the way of active work:
 
 If a command appears to modify source content unexpectedly, stop and report it. That is not intended behaviour.
 
-## AI use
+## Data handling
 
-SGFX QA Preflight is **default-off** for AI. When you run the tool, it does not call any language model, image model, or third-party AI service. No telemetry, no inference, no "AI-assisted suggestion" that originated from a model query.
+When you run SGFX QA Preflight, it reads operator-local files and renders them for review. It does not call any external service or send telemetry. Everything that happens is local to your workstation.
 
 Where the tool surfaces "suggested" evidence — for example the per-step evidence hints in the Manual Review Companion — the suggestion comes from a deterministic local filesystem probe (file exists, directory has these files, workbook has these rows). The operator records every verdict; the tool never pre-decides.
 
-The tool was developed with AI-assisted pair-coding (operator + AI agents collaborating on code, tests, docs, review). The shipped tool does not embed any of those agents and does not phone home to any AI service.
-
-If a future iteration adds opt-in AI-assisted features (suggestion ranking, automated screenshot triage, etc.), they will land behind an explicit operator toggle and an explicit Confluence-anchored consent flow — same standing pattern as Jira posting (`--confirm` flag required; default is dry-run / off).
+The Jira post flow is the one explicit network boundary. It stays default-off behind a `--confirm` flag; the default mode is dry-run. A real post additionally requires operator-provided Jira base URL and PAT.
 
 Manual review remains required. Decision: not approval — evidence only.
 BMW Git access is read-only. SGFX never modifies BMW source.

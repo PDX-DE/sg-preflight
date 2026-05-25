@@ -141,11 +141,11 @@ ABOUT_CONTENT: dict[str, Any] = {
         ("BMW pipeline Python scripts", BMW_PIPELINE_PYTHON_CONFLUENCE_ANCHOR),
         ("SG Daily", SG_DAILY_CONFLUENCE_ANCHOR),
     ),
-    "ai_use_disclosure": (
-        "AI use",
-        "This tool calls no language model, image model, or third-party AI service when you use it. Local filesystem probes produce evidence hints; you record every verdict.",
-        "Developed with AI-assisted pair-coding; the shipped tool embeds no AI agents and phones home to no AI service.",
-        "Any future opt-in AI-assisted feature would land behind an explicit operator toggle and an explicit Confluence-anchored consent flow.",
+    "data_handling_disclosure": (
+        "Data handling",
+        "This tool reads operator-local files (delivery checklists, BMW pipeline outputs, screenshot test state, manual-review records) and renders them for the morning Quality-Hero standup. No telemetry, no external service calls.",
+        "Suggested evidence comes from a deterministic local filesystem probe — does this file exist, does this directory contain these files, does this workbook have these rows. The operator records every verdict; the tool does not pre-decide.",
+        "The Jira post flow is the one explicit network boundary, and it stays default-off behind a --confirm flag. Default mode is dry-run.",
     ),
 }
 
@@ -1941,10 +1941,10 @@ def _render_about_panel(ui: Any, content: dict[str, Any] | None = None) -> None:
             ui.label("Confluence anchors").classes("sgfx-panel-title")
             for label, anchor in anchors:
                 ui.label(f"{label} — {anchor}").classes("sgfx-shortcut")
-        ai_lines = tuple(payload.get("ai_use_disclosure", ()))
-        if ai_lines:
-            ui.label(str(ai_lines[0])).classes("sgfx-panel-title")
-            for line in ai_lines[1:]:
+        disclosure_lines = tuple(payload.get("data_handling_disclosure", ()))
+        if disclosure_lines:
+            ui.label(str(disclosure_lines[0])).classes("sgfx-panel-title")
+            for line in disclosure_lines[1:]:
                 ui.label(str(line)).classes("sgfx-summary")
         for guardrail in DASHBOARD_GUARDRAILS:
             ui.label(str(guardrail)).classes("sgfx-guardrail")
