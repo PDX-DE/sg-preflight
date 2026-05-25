@@ -241,6 +241,21 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("Manual review remains required.", text)
         self.assertIn("Decision: not approval — evidence only.", text)
 
+    def test_reviewer_sweep_template_requires_frozen_exe_smoke(self) -> None:
+        template_path = ROOT / "scripts" / "walkthrough_harness" / "reviewer_sweep_template.md"
+        text = template_path.read_text(encoding="utf-8")
+
+        self.assertIn("Frozen-.exe Smoke per Subprocess-Spawning Feature", text)
+        self.assertIn("dist/sgfx-preflight/sgfx-preflight.exe", text)
+        self.assertIn("subprocess_utils.install_no_window_subprocess_patch()", text)
+        self.assertIn("creationflags_no_window: true", text)
+        self.assertIn("frozen_exe_path", text)
+        self.assertIn("frozen_exe_sha256", text)
+        self.assertIn("frozen-exe-smoke/index.json", text)
+        self.assertIn("spawned_interpreter", text)
+        self.assertIn("_MEIPASS", text)
+        self.assertIn("is_approval: false", text)
+
     def test_native_shell_font_discovery_ignores_archives(self) -> None:
         shell_source = (ROOT / "desktop_native" / "src" / "sgfx_shell" / "sgfx_shared_resources.cpp").read_text(encoding="utf-8")
 
