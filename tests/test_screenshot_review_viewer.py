@@ -56,9 +56,12 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertTrue(bundle.html_path.exists())
             item = bundle.viewer.items[0]
             self.assertEqual(item.key, "front")
-            self.assertTrue(item.expected_uri.startswith("file:///"))
-            self.assertTrue(item.actual_uri.startswith("file:///"))
-            self.assertTrue(item.diff_uri.startswith("file:///"))
+            self.assertEqual(item.expected_uri, "assets/expected/front.bmp")
+            self.assertEqual(item.actual_uri, "assets/actual/front.bmp")
+            self.assertEqual(item.diff_uri, "assets/diff/front.bmp")
+            self.assertTrue((bundle.html_path.parent / item.expected_uri).is_file())
+            self.assertTrue((bundle.html_path.parent / item.actual_uri).is_file())
+            self.assertTrue((bundle.html_path.parent / item.diff_uri).is_file())
 
             html = bundle.html_path.read_text(encoding="utf-8")
             self.assertIn('data-sgfx-screenshot-viewer="true"', html)
@@ -113,7 +116,7 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["profile_id"], "G70")
             self.assertEqual(payload["item_count"], 1)
-            self.assertTrue(payload["items"][0]["actual_uri"].startswith("file:///"))
+            self.assertEqual(payload["items"][0]["actual_uri"], "assets/actual/rear.bmp")
 
 
 if __name__ == "__main__":

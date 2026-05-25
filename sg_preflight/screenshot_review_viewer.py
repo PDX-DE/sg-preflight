@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 from html import escape
 import json
 from pathlib import Path
+import re
+import shutil
 from typing import Any
+from urllib.parse import quote
 
 from sg_preflight.screenshot_triage import materialize_screenshot_triage
 
@@ -63,13 +66,25 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _path_uri(path_value: str) -> str:
+def _safe_asset_name(key: str, suffix: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", key.strip()).strip("._")
+    if not cleaned:
+        cleaned = "screenshot"
+    return f"{cleaned[:120]}{suffix}"
+
+
+def _viewer_asset_uri(path_value: str, output_root: Path, asset_root: Path, slot: str, key: str) -> str:
     if not path_value:
         return ""
-    path = Path(path_value)
-    if not path.exists():
+    source = Path(path_value)
+    if not source.is_file():
         return ""
-    return path.resolve().as_uri()
+    suffix = source.suffix.lower() or ".png"
+    target = asset_root / slot / _safe_asset_name(key, suffix)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    relative = target.relative_to(output_root).as_posix()
+    return quote(relative, safe="/._-")
 
 
 def _diff_lookup(diff_reference_roots: tuple[Path, ...]) -> dict[str, Path]:
@@ -111,6 +126,7 @@ def build_screenshot_review_viewer(
         priority_names=priority_names,
     )
     diff_lookup = _diff_lookup(diff_reference_roots)
+    asset_root = output_root / "assets"
 
     items: list[ScreenshotReviewItem] = []
     for pair in triage_bundle.report.pairs[:max_items]:
@@ -131,9 +147,9 @@ def build_screenshot_review_viewer(
                 expected_path=pair.baseline_path,
                 actual_path=pair.candidate_path,
                 diff_path=diff_path,
-                expected_uri=_path_uri(pair.baseline_path),
-                actual_uri=_path_uri(pair.candidate_path),
-                diff_uri=_path_uri(diff_path),
+                expected_uri=_viewer_asset_uri(pair.baseline_path, output_root, asset_root, "expected", pair.key),
+                actual_uri=_viewer_asset_uri(pair.candidate_path, output_root, asset_root, "actual", pair.key),
+                diff_uri=_viewer_asset_uri(diff_path, output_root, asset_root, "diff", pair.key),
                 changed_pixel_ratio=pair.changed_pixel_ratio,
                 mean_abs_diff=pair.mean_abs_diff,
                 review_score=pair.review_score,
