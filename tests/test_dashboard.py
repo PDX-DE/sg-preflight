@@ -351,7 +351,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
 
         self.assertIn('active_page_id == "delivery-checklist"', source)
-        self.assertIn("_render_delivery_checklist_panel(ui, state[\"snapshot\"], workspace)", source)
+        self.assertIn("on_setup_completed=_refresh_snapshot", source)
         self.assertIn("Live output", source)
         self.assertIn("File activity", source)
         self.assertIn("typical 1-10 min", source)
@@ -454,6 +454,9 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Target path", source)
         self.assertIn("update:model-value", source)
         self.assertIn("leave optional installer sources blank", source)
+        self.assertIn("on_setup_completed: Callable[[], None] | None = None", source)
+        self.assertIn("Re-reading dependency status.", source)
+        self.assertIn("on_setup_completed()", source)
 
     def test_dashboard_source_renders_build_review_package_progress_panel(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

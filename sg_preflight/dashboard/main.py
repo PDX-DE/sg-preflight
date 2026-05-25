@@ -2168,7 +2168,13 @@ def _render_about_panel(ui: Any, content: dict[str, Any] | None = None) -> None:
             ui.label(str(guardrail)).classes("sgfx-guardrail")
 
 
-def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace: Path) -> None:
+def _render_setup_status_panel(
+    ui: Any,
+    setup_status: dict[str, Any],
+    workspace: Path,
+    *,
+    on_setup_completed: Callable[[], None] | None = None,
+) -> None:
     items = [item for item in setup_status.get("items", []) if isinstance(item, dict)]
     actions = [action for action in setup_status.get("actions", []) if isinstance(action, dict)]
     if not items:
@@ -2294,8 +2300,10 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
                 progress.visible = False
                 cancel_button.disable()
                 outcome = str(result.get("status", "unknown"))
-                status_label.text = f"Setup {outcome}. {result.get('summary', '')} Refresh to re-read dependency status."
+                status_label.text = f"Setup {outcome}. {result.get('summary', '')} Re-reading dependency status."
                 ui.notify(f"Dependency setup {outcome}.")
+                if on_setup_completed is not None:
+                    on_setup_completed()
             except RuntimeError as exc:
                 if not _parent_slot_deleted(exc):
                     raise
@@ -2437,11 +2445,17 @@ def _render_setup_status_panel(ui: Any, setup_status: dict[str, Any], workspace:
                 )
 
 
-def _render_delivery_checklist_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
+def _render_delivery_checklist_panel(
+    ui: Any,
+    snapshot: dict[str, Any],
+    workspace: Path,
+    *,
+    on_setup_completed: Callable[[], None] | None = None,
+) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
     setup_status = page.get("setup_status", {})
     if isinstance(setup_status, dict):
-        _render_setup_status_panel(ui, setup_status, workspace)
+        _render_setup_status_panel(ui, setup_status, workspace, on_setup_completed=on_setup_completed)
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(page["title"])).classes("sgfx-panel-title")
@@ -3997,7 +4011,12 @@ def _render_dashboard(
                     open_setup=lambda: _open_page("delivery-checklist"),
                 )
                 if active_page_id == "delivery-checklist":
-                    _render_delivery_checklist_panel(ui, state["snapshot"], workspace)
+                    _render_delivery_checklist_panel(
+                        ui,
+                        state["snapshot"],
+                        workspace,
+                        on_setup_completed=_refresh_snapshot,
+                    )
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
                 elif active_page_id == "risk-score":
