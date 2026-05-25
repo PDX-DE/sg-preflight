@@ -192,8 +192,12 @@ def _image_pane(label: str, slot: str) -> str:
     """
 
 
+def _script_json_payload(payload: str) -> str:
+    return payload.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+
+
 def _html(viewer: ScreenshotReviewViewer) -> str:
-    payload = json.dumps(viewer.to_dict(), ensure_ascii=False)
+    payload = _script_json_payload(json.dumps(viewer.to_dict(), ensure_ascii=False))
     item_buttons = "\n".join(
         (
             f'<button type="button" data-key="{escape(item.key)}">'
@@ -277,7 +281,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
       {_image_pane("Diff", "diff")}
     </section>
   </main>
-  <script id="sgfx-viewer-data" type="application/json">{escape(payload)}</script>
+  <script id="sgfx-viewer-data" type="application/json">{payload}</script>
   <script>
     (() => {{
       const data = JSON.parse(document.getElementById('sgfx-viewer-data').textContent);

@@ -9,7 +9,7 @@ from pathlib import Path
 import unittest
 
 from sg_preflight.cli import main
-from sg_preflight.screenshot_review_viewer import build_screenshot_review_viewer
+from sg_preflight.screenshot_review_viewer import _script_json_payload, build_screenshot_review_viewer
 
 
 class TestScreenshotReviewViewer(unittest.TestCase):
@@ -68,6 +68,20 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertIn('data-pane="diff"', html)
             self.assertIn("pointerdown", html)
             self.assertIn("Manual review remains required.", html)
+            script_body = html.split('<script id="sgfx-viewer-data" type="application/json">', 1)[1].split(
+                "</script>",
+                1,
+            )[0]
+            self.assertTrue(script_body.startswith('{"profile_id"'))
+            self.assertNotIn("&quot;", script_body)
+
+    def test_viewer_json_script_payload_keeps_json_quotes_for_row_buttons(self) -> None:
+        payload = _script_json_payload('{"summary":"</script><b>check</b>","quote":"ok"}')
+
+        self.assertIn('"summary"', payload)
+        self.assertNotIn("&quot;", payload)
+        self.assertNotIn("</script>", payload)
+        self.assertIn("\\u003c/script\\u003e", payload)
 
     def test_cli_build_screenshot_review_viewer_outputs_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
