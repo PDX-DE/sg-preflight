@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from typing import Any
 
 
@@ -20,6 +21,16 @@ def hidden_subprocess_kwargs() -> dict[str, int]:
     if os.name != "nt":
         return {}
     return {"creationflags": no_window_creationflags()}
+
+
+def sgfx_cli_command(*args: str, bytecode: bool = True) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *args]
+    command = [sys.executable]
+    if bytecode:
+        command.append("-B")
+    command.extend(["-m", "sg_preflight", *args])
+    return command
 
 
 def install_no_window_subprocess_patch() -> None:

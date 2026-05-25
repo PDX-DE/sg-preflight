@@ -13,7 +13,7 @@ from typing import Any
 import urllib.request
 import zipfile
 
-from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
+from sg_preflight.subprocess_utils import hidden_subprocess_kwargs, sgfx_cli_command
 from sg_preflight.utils import ensure_parent
 
 
@@ -1352,10 +1352,7 @@ def _dependency_setup_worker_command(
     target_path: Path | str | None,
     source_path: Path | str | None,
 ) -> list[str]:
-    if getattr(sys, "frozen", False):
-        command = [sys.executable, "dependency-setup-worker", action_id, "--workspace", str(workspace)]
-    else:
-        command = [sys.executable, "-B", "-m", "sg_preflight", "dependency-setup-worker", action_id, "--workspace", str(workspace)]
+    command = sgfx_cli_command("dependency-setup-worker", action_id, "--workspace", str(workspace))
     if target_path:
         command.extend(["--target-path", str(target_path)])
     if source_path:

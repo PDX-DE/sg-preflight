@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import socket
 import subprocess
-import sys
 import urllib.error
 import urllib.request
 
@@ -13,7 +12,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
 
 from sg_preflight.assets import runtime_asset_path
-from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
+from sg_preflight.subprocess_utils import hidden_subprocess_kwargs, sgfx_cli_command
 
 CLEAN_WINDOW_TITLE = "Seriengrafik: Project Quality-Hero"
 
@@ -95,10 +94,7 @@ class CleanDashboardWindow(QMainWindow):
         self._poll_timer.start()
 
     def _server_command(self) -> list[str]:
-        if getattr(sys, "frozen", False):
-            command = [sys.executable, "dashboard", "run"]
-        else:
-            command = [sys.executable, "-B", "-m", "sg_preflight", "dashboard", "run"]
+        command = sgfx_cli_command("dashboard", "run")
         command.extend(
             [
                 "--workspace",

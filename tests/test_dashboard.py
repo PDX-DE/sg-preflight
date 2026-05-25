@@ -1097,7 +1097,7 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertIn("IDCEVODEV-1005738", command)
         self.assertIn("--workspace", command)
         self.assertIn(str(workspace.resolve()), command)
-        self.assertIn("--profile-ids", command)
+        self.assertIn("--profile", command)
         self.assertIn("G65", command)
         self.assertIn("--json", command)
         self.assertEqual(result["outcome"], "recorded")
@@ -1107,6 +1107,25 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertTrue(result["recorded_by_tool"])
         self.assertEqual(active_ticket["active_ticket_id"], "IDCEVODEV-1005738")
         self.assertIn("IDCEVODEV-1005738", activity_log)
+
+    def test_build_dashboard_review_package_command_uses_frozen_exe_directly(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch.object(dashboard_main.sys, "frozen", True, create=True):
+                with mock.patch.object(dashboard_main.sys, "executable", r"C:\bundle\sgfx-preflight.exe"):
+                    command = dashboard_main._dashboard_review_package_command(
+                        workspace=workspace,
+                        profile_id="NA0",
+                        ticket_id="IDCEVODEV-1009239",
+                    )
+
+        self.assertEqual(command[:2], [r"C:\bundle\sgfx-preflight.exe", "ticket-review"])
+        self.assertNotIn("-m", command)
+        self.assertNotIn("sg_preflight", command)
+        self.assertIn("IDCEVODEV-1009239", command)
+        self.assertIn("NA0", command)
 
     def test_build_dashboard_review_package_marks_failed_outcome_on_nonzero_exit(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main

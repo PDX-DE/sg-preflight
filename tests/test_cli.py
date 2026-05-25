@@ -1197,6 +1197,40 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(payload["status"], "queued")
         self.assertTrue(payload["run_id"])
 
+    def test_launch_action_uses_frozen_exe_directly_for_worker(self) -> None:
+        import sg_preflight.cli as cli_module
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            create_temp_g65_profile(root)
+            _create_checker_files(root)
+            (root / "config").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "config" / "sg_rules_live_g65.json", root / "config" / "sg_rules_live_g65.json")
+
+            stdout = io.StringIO()
+            with mock.patch.object(cli_module.sys, "frozen", True, create=True):
+                with mock.patch.object(cli_module.sys, "executable", r"C:\bundle\sgfx-preflight.exe"):
+                    with mock.patch("sg_preflight.cli.subprocess.Popen") as popen:
+                        with mock.patch("sg_preflight.qa_actions.prerequisite_status", return_value=[]):
+                            with redirect_stdout(stdout):
+                                result = cli_module.main(
+                                    [
+                                        "launch-action",
+                                        "qa_stack__g65",
+                                        "--workspace",
+                                        str(root),
+                                        "--json",
+                                    ]
+                                )
+
+        self.assertEqual(result, 0)
+        command = popen.call_args.args[0]
+        self.assertEqual(command[:2], [r"C:\bundle\sgfx-preflight.exe", "run-action-worker"])
+        self.assertNotIn("-m", command)
+        self.assertNotIn("sg_preflight", command)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "queued")
+
     def test_dependency_setup_worker_invokes_hidden_runner(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

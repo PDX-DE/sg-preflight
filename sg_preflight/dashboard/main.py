@@ -62,7 +62,7 @@ from sg_preflight.screenshot_capture import (
     start_screenshot_capture,
 )
 from sg_preflight.services import operator_ui_root
-from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
+from sg_preflight.subprocess_utils import hidden_subprocess_kwargs, sgfx_cli_command
 from sg_preflight.utils import ensure_parent
 from sg_preflight.visual_review import build_visual_review_prep
 
@@ -354,10 +354,7 @@ def _launch_browser_fallback_process(
 ) -> int:
     from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 
-    if getattr(sys, "frozen", False):
-        command = [sys.executable, "dashboard", "run"]
-    else:
-        command = [sys.executable, "-B", "-m", "sg_preflight", "dashboard", "run"]
+    command = sgfx_cli_command("dashboard", "run")
     if profile_id:
         command.extend(["--profile", profile_id])
     command.extend(
@@ -1345,19 +1342,15 @@ def _validate_review_package_inputs(workspace: Path | str, profile_id: str, tick
 
 
 def _dashboard_review_package_command(*, workspace: Path, profile_id: str, ticket_id: str) -> list[str]:
-    return [
-        sys.executable,
-        "-B",
-        "-m",
-        "sg_preflight",
+    return sgfx_cli_command(
         "ticket-review",
         ticket_id,
         "--workspace",
         str(workspace),
-        "--profile-ids",
+        "--profile",
         profile_id,
         "--json",
-    ]
+    )
 
 
 def _build_tail_text(path: Path, limit: int = _BUILD_PACKAGE_STDOUT_TAIL_BYTES) -> str:

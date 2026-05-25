@@ -118,6 +118,7 @@ from sg_preflight.services import (
     qa_workflow_status,
     sg_checker_catalog,
 )
+from sg_preflight.subprocess_utils import sgfx_cli_command
 from sg_preflight.daily_snapshot import materialize_daily_qa_snapshot
 from sg_preflight.review_state import (
     build_review_board_state,
@@ -2370,17 +2371,15 @@ def _main_impl(argv: list[str] | None = None) -> int:
 
         record = build_action_record(action, action_root)
         save_action_record(record)
-        worker_command = [
-            sys.executable,
-            "-m",
-            "sg_preflight",
+        worker_command = sgfx_cli_command(
             "run-action-worker",
             action.action_id,
             "--run-id",
             record.run_id,
             "--workspace",
             str(action_root),
-        ]
+            bytecode=False,
+        )
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             subprocess.Popen(
