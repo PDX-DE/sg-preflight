@@ -86,7 +86,9 @@ from sg_preflight.manual_review import (
     load_manual_review_session,
     open_manual_review_tool,
     record_manual_review_step,
+    render_manual_review_auto_checks_markdown,
     render_manual_review_markdown,
+    run_manual_review_auto_checks,
 )
 from sg_preflight.operator_handoff import (
     build_operator_handoff_snapshot,
@@ -1284,6 +1286,15 @@ def build_parser() -> argparse.ArgumentParser:
     manual_review_templates = manual_review_sub.add_parser("templates", help="List built-in car review templates")
     manual_review_templates.add_argument("--json", action="store_true", help="Print templates as JSON")
 
+    manual_review_auto = manual_review_sub.add_parser(
+        "auto-checks",
+        help="Run local evidence auto-checks for the manual-review companion",
+    )
+    manual_review_auto.add_argument("--profile", required=True, help="Profile id such as G65")
+    manual_review_auto.add_argument("--workspace", help="Workspace root override")
+    manual_review_auto.add_argument("--json", action="store_true", help="Print auto-checks as JSON")
+    manual_review_auto.add_argument("--markdown", action="store_true", help="Print auto-checks as Markdown")
+
     manual_review_record = manual_review_sub.add_parser("record-step", help="Record one reviewer verdict")
     manual_review_record.add_argument("session_id", help="Manual-review session id or session.json path")
     manual_review_record.add_argument("--workspace", help="Workspace root override")
@@ -2419,6 +2430,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
                     "manual_review_required": True,
                     "note": "Templates bootstrap local evidence checklists only; operator verdicts remain manual.",
                 }
+            elif args.manual_review_command == "auto-checks":
+                payload = run_manual_review_auto_checks(args.profile, workspace=review_root)
             elif args.manual_review_command == "record-step":
                 payload = record_manual_review_step(
                     args.session_id,
@@ -2442,6 +2455,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return 1
         if getattr(args, "json", False):
             _console_desktop_payload(payload)
+        elif getattr(args, "markdown", False) and args.manual_review_command == "auto-checks":
+            print(_console_safe(render_manual_review_auto_checks_markdown(payload)))
         elif getattr(args, "markdown", False) or args.manual_review_command == "summary":
             print(_console_safe(render_manual_review_markdown(payload)))
         elif args.manual_review_command == "templates":
@@ -2449,6 +2464,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
             for item in payload.get("templates", []):
                 if isinstance(item, dict):
                     print(_console_safe(f"- {item.get('family_id', '')}: {item.get('title', '')}"))
+        elif args.manual_review_command == "auto-checks":
+            print(_console_safe(payload.get("summary", "Manual-review auto-checks complete.")))
         else:
             print(_console_safe(f"Manual review session: {payload.get('session_id', '')}"))
             if payload.get("session_path"):

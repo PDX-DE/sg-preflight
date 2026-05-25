@@ -452,6 +452,35 @@ class TestCLI(unittest.TestCase):
         self.assertTrue(session_payload["evidence_checklist"])
         self.assertTrue(all(step["verdict"] == "not_run" for step in session_payload["steps"]))
 
+    def test_manual_review_cli_runs_auto_checks_without_verdicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project = root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / "G70"
+            write_text(project / "_WorkFiles" / "scene.blend", "blend fixture\n")
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = main(
+                    [
+                        "manual-review",
+                        "auto-checks",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G70",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(result, 0, msg=stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertTrue(payload["manual_review_required"])
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(len(payload["steps"]), 7)
+        self.assertTrue(all(step["suggested_verdict"] == "" for step in payload["steps"]))
+
     def test_cli_with_workspace_appends_activity_log_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

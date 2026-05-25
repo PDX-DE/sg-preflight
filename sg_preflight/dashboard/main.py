@@ -1306,6 +1306,10 @@ def _manual_review_step_recorded(step: dict[str, Any]) -> bool:
 
 def _manual_review_step_detail(step: dict[str, Any]) -> str:
     if not _manual_review_step_recorded(step):
+        auto_status = str(step.get("auto_check_status", "")).strip()
+        auto_summary = str(step.get("auto_check_summary", "")).strip()
+        if auto_status and auto_status != "not_run" and auto_summary:
+            return f"Auto-check {auto_status}. Manual review remains required. {auto_summary}".strip()
         evidence_status = str(step.get("evidence_status", step.get("suggestion_status", ""))).strip()
         reason = str(step.get("suggestion_reason", "")).strip()
         if evidence_status in {"available", "missing"}:
@@ -3714,6 +3718,15 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                     ui.label(
                         f"{evidence_label}. Manual review remains required. {suggestion_reason}".strip()
                     ).classes("sgfx-muted")
+                auto_status = str(step.get("auto_check_status", "")).strip()
+                auto_summary = str(step.get("auto_check_summary", "")).strip()
+                auto_kind = str(step.get("auto_check_kind", "")).strip()
+                if auto_status and auto_status != "not_run" and auto_summary:
+                    prefix = f"Auto-check {auto_status}"
+                    if auto_kind:
+                        prefix = f"{prefix} · {auto_kind}"
+                    ui.label(f"{prefix}: {auto_summary}").classes("sgfx-muted")
+                    ui.label("Operator records the manual-review verdict; this evidence is not approval.").classes("sgfx-muted")
                 verdict_value = (
                     current_verdict
                     if current_verdict in MANUAL_REVIEW_RECORD_VERDICTS

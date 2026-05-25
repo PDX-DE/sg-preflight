@@ -19,8 +19,10 @@ from sg_preflight.manual_review import (
     list_car_review_templates,
     load_manual_review_session,
     record_manual_review_step,
+    render_manual_review_auto_checks_markdown,
     render_manual_review_markdown,
     review_template_for_profile,
+    run_manual_review_auto_checks,
     suggest_manual_review_verdicts,
 )
 from tests.operator_helpers import write_text
@@ -159,6 +161,58 @@ class TestManualReviewCompanion(unittest.TestCase):
         self.assertFalse(payload["is_approval"])
         self.assertIn("Evidence hints never select", payload["note"])
 
+    def test_manual_review_auto_checks_surface_evidence_without_verdicts(self) -> None:
+        from openpyxl import Workbook
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project = root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / "G70"
+            write_text(project / "_WorkFiles" / "scene.blend", "blend fixture\n")
+            write_text(project / "_WorkFiles" / "json" / "G70_Pivot_Master.json", "{}\n")
+            write_text(project / "_Common" / "constants" / "scripts" / "Module_constants_G70.lua", "return {}\n")
+            write_text(project / "export" / "tests" / "expected" / "front.png", "fake baseline\n")
+            write_text(project / "resources" / "RES_G70_AnchorPoints" / "anchors.json", "{}\n")
+            write_text(project.parent / "CarPaint.json", "{}\n")
+            write_text(project / "README.md", "# G70\n")
+            write_text(project / "CHANGELOG.md", "# Changes\n")
+            workbook_path = root / "Cars" / "size_analysis" / "G70_20260525.xlsx"
+            workbook_path.parent.mkdir(parents=True, exist_ok=True)
+            workbook = Workbook()
+            overview = workbook.active
+            overview.title = "Overview"
+            overview.append(["G70"])
+            overview.append([])
+            overview.append(["Variant", "Total", "Logic"])
+            overview.append(["Base", 100, 20])
+            overview.append(["M Sport", 110, 21])
+            workbook.save(workbook_path)
+
+            payload = run_manual_review_auto_checks("G70", workspace=root)
+
+        by_slug = {step["slug"]: step for step in payload["steps"]}
+        self.assertEqual(payload["status"], "available")
+        self.assertTrue(payload["manual_review_required"])
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(by_slug["blender_visual_check"]["suggested_verdict"], "")
+        self.assertEqual(by_slug["blender_visual_check"]["auto_check_kind"], "file_presence")
+        self.assertEqual(by_slug["final_look_comparison_raco_blender_epic"]["auto_check_kind"], "visual_diff")
+        self.assertEqual(
+            by_slug["final_look_comparison_raco_blender_epic"]["auto_check_metrics"]["visual_diff"]["pair_count"],
+            1,
+        )
+        self.assertEqual(by_slug["functionality_test_raco"]["auto_check_kind"], "workbook_variance")
+        self.assertEqual(
+            by_slug["functionality_test_raco"]["auto_check_metrics"]["workbook_variance"]["variant_count"],
+            2,
+        )
+        self.assertEqual(by_slug["anchor_points_test_raco"]["evidence_status"], "available")
+        self.assertEqual(by_slug["carpaints_test_raco"]["evidence_status"], "available")
+        self.assertTrue(all(step["suggested_verdict"] == "" for step in payload["steps"]))
+        markdown = render_manual_review_auto_checks_markdown(payload)
+        self.assertIn("Auto-check status", markdown)
+        self.assertIn("Manual review required: yes", markdown)
+        self.assertNotIn("approved", markdown.lower())
+
     def test_apply_manual_review_suggestions_does_not_overwrite_recorded_verdicts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -181,6 +235,8 @@ class TestManualReviewCompanion(unittest.TestCase):
         self.assertEqual(constants["evidence_status"], "missing")
         self.assertTrue(constants["manual_review_required"])
         self.assertFalse(constants["suggestion_is_approval"])
+        self.assertEqual(constants["auto_check_status"], "missing")
+        self.assertEqual(constants["operator_focus_status"], "incomplete")
 
     def test_record_step_captures_explicit_reviewer_verdict_note_and_screenshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

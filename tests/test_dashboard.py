@@ -832,10 +832,12 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(blender_step["verdict"], "not_run")
         self.assertEqual(blender_step["suggested_verdict"], "")
         self.assertEqual(blender_step["evidence_status"], "available")
+        self.assertEqual(blender_step["auto_check_status"], "available")
+        self.assertEqual(blender_step["auto_check_kind"], "file_presence")
         self.assertTrue(blender_step["manual_review_required"])
         self.assertFalse(blender_step["suggestion_is_approval"])
         item = next(item for item in manual_page["items"] if item["label"] == "Blender Visual Check")
-        self.assertIn("Evidence available", item["detail"])
+        self.assertIn("Auto-check available", item["detail"])
         self.assertIn("Manual review remains required", item["detail"])
 
     def test_manual_review_dashboard_recording_stores_suggested_and_operator_verdicts(self) -> None:
