@@ -580,6 +580,68 @@ class TestCLI(unittest.TestCase):
         self.assertIn("dependency-setup", {step["key"] for step in payload["steps"]})
         self.assertIn("Onboarding Guide", markdown_stdout.getvalue())
 
+    def test_full_qa_pass_cli_returns_json_and_markdown(self) -> None:
+        payload = {
+            "profile_id": "G70",
+            "status": "incomplete",
+            "summary": "Full QA pass prepared local evidence.",
+            "trusted_tool_mode": False,
+            "operator_confirmation_required": True,
+            "progress": {"completed_steps": 1, "total_steps": 1},
+            "guardrails": ["Manual review remains required.", "Decision: not approval — evidence only."],
+            "steps": [{"status": "passed", "label": "Risk score", "summary": "Risk score read locally."}],
+            "confirmation_items": [],
+            "manual_review_required": True,
+            "records_operator_verdict": False,
+            "is_approval": False,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with mock.patch("sg_preflight.cli.build_full_qa_pass", return_value=payload) as runner:
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    result = main(
+                        [
+                            "full-qa-pass",
+                            "run",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G70",
+                            "--trusted-tool-mode",
+                            "--json",
+                        ]
+                    )
+
+            markdown_stdout = io.StringIO()
+            markdown_stderr = io.StringIO()
+            with mock.patch("sg_preflight.cli.build_full_qa_pass", return_value=payload):
+                with redirect_stdout(markdown_stdout), redirect_stderr(markdown_stderr):
+                    markdown_result = main(
+                        [
+                            "full-qa-pass",
+                            "run",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G70",
+                            "--markdown",
+                        ]
+                    )
+
+        self.assertEqual(result, 0, msg=stderr.getvalue())
+        self.assertEqual(markdown_result, 0, msg=markdown_stderr.getvalue())
+        runner.assert_called_once()
+        self.assertTrue(runner.call_args.kwargs["trusted_tool_mode"])
+        parsed = json.loads(stdout.getvalue())
+        self.assertEqual(parsed["status"], "incomplete")
+        self.assertTrue(parsed["manual_review_required"])
+        self.assertFalse(parsed["records_operator_verdict"])
+        self.assertFalse(parsed["is_approval"])
+        self.assertIn("Run full QA pass", markdown_stdout.getvalue())
+
     def test_cli_with_workspace_appends_activity_log_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

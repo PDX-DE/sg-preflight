@@ -65,6 +65,11 @@ from sg_preflight.export_size_analysis import (
     render_export_size_analysis_markdown,
     render_export_size_analysis_text,
 )
+from sg_preflight.full_qa_pass import (
+    build_full_qa_pass,
+    render_full_qa_pass_markdown,
+    render_full_qa_pass_text,
+)
 from sg_preflight.jira_client import (
     DEFAULT_BASE_URL_ENV,
     DEFAULT_TOKEN_ENV,
@@ -758,6 +763,30 @@ def build_parser() -> argparse.ArgumentParser:
     checker_list = sub.add_parser("list-checkers", help="List SG checker coverage and readiness")
     checker_list.add_argument("--json", action="store_true", help="Print checker coverage as JSON")
     _add_render_options(checker_list, formats=("text", "json"))
+
+    full_qa_pass = sub.add_parser(
+        "full-qa-pass",
+        help="Run the local full QA pass sequence for one car without posting results",
+    )
+    full_qa_pass_sub = full_qa_pass.add_subparsers(dest="full_qa_pass_command", required=True)
+    full_qa_pass_run = full_qa_pass_sub.add_parser("run", help="Read the full QA pass sequence for one profile")
+    full_qa_pass_run.add_argument("--workspace", help="Workspace root override")
+    full_qa_pass_run.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    full_qa_pass_run.add_argument("--profile", required=True, help="Profile id such as G70")
+    full_qa_pass_run.add_argument("--comparison-profile", default="G65", help="Comparison profile id such as G65")
+    full_qa_pass_run.add_argument(
+        "--trusted-tool-mode",
+        action="store_true",
+        help="Report trusted orchestration mode while preserving hard write locks",
+    )
+    full_qa_pass_run.add_argument(
+        "--no-halt",
+        action="store_true",
+        help="Continue read-only steps after flagged issues instead of skipping later steps",
+    )
+    full_qa_pass_run.add_argument("--json", action="store_true", help="Print the pass as JSON")
+    full_qa_pass_run.add_argument("--markdown", action="store_true", help="Print the pass as Markdown")
+    _add_render_options(full_qa_pass_run)
 
     delivery_checklist = sub.add_parser(
         "delivery-checklist",
@@ -1724,6 +1753,33 @@ def _main_impl(argv: list[str] | None = None) -> int:
     if args.command == "list-checkers":
         output_format = _resolve_render_format(args, parser, formats=("text", "json"))
         _emit_console(lambda: _console_checkers(output_format == "json"), args)
+        return 0
+
+    if args.command == "full-qa-pass":
+        pass_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.full_qa_pass_command == "run":
+                payload = build_full_qa_pass(
+                    args.profile,
+                    workspace=pass_root,
+                    bmw_root=Path(args.bmw_root).resolve() if getattr(args, "bmw_root", None) else None,
+                    comparison_profile=args.comparison_profile,
+                    trusted_tool_mode=bool(args.trusted_tool_mode),
+                    halt_on_flagged_issue=not bool(args.no_halt),
+                )
+            else:
+                parser.error(f"Unhandled full-qa-pass command: {args.full_qa_pass_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"full-qa-pass failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_full_qa_pass_markdown(payload), args)
+        else:
+            _emit_text(render_full_qa_pass_text(payload), args)
         return 0
 
     if args.command == "delivery-checklist":

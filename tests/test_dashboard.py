@@ -64,7 +64,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(THEME_CHOICES, ["clean"])
         self.assertIsInstance(MANUAL_REVIEW_STATUSES, list)
 
-    def test_dashboard_snapshot_contains_nine_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_ten_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -74,6 +74,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(
             page_ids,
             [
+                "full-qa-pass",
                 "delivery-checklist",
                 "onboarding-guide",
                 "screenshot-test-state",
@@ -97,6 +98,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(
             snapshot["navigation"],
             [
+                {"id": "full-qa-pass", "label": "Full QA Pass"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
                 {"id": "onboarding-guide", "label": "Onboarding Guide"},
                 {"id": "screenshot-test-state", "label": "Screenshot Test State"},
@@ -113,34 +115,43 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             snapshot["shortcuts"],
             ["F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit"],
         )
-        self.assertEqual(snapshot["pages"][0]["tagline"], "Workbook evidence per delivery profile (read-only).")
         self.assertEqual(
-            snapshot["pages"][1]["tagline"],
+            snapshot["pages"][0]["tagline"],
+            "One local pass through setup, evidence, review assist, and handoff status.",
+        )
+        self.assertEqual(snapshot["pages"][1]["tagline"], "Workbook evidence per delivery profile (read-only).")
+        self.assertEqual(
+            snapshot["pages"][2]["tagline"],
             "New-operator path through setup, evidence pages, manual review, and handoff.",
         )
-        self.assertEqual(snapshot["pages"][2]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
+        self.assertEqual(snapshot["pages"][3]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
         self.assertEqual(
-            snapshot["pages"][3]["tagline"],
+            snapshot["pages"][4]["tagline"],
             "Per-car review focus signal with delta since latest local manual review.",
         )
-        self.assertEqual(snapshot["pages"][4]["tagline"], "G70 vs G65 risk-score widget side by side.")
-        self.assertEqual(snapshot["pages"][5]["tagline"], "Morning status snapshot for the SG Daily standup.")
+        self.assertEqual(snapshot["pages"][5]["tagline"], "G70 vs G65 risk-score widget side by side.")
+        self.assertEqual(snapshot["pages"][6]["tagline"], "Morning status snapshot for the SG Daily standup.")
         self.assertEqual(
-            snapshot["pages"][6]["tagline"],
+            snapshot["pages"][7]["tagline"],
             "Local snapshot for standup review across selected car profiles.",
         )
         self.assertEqual(
-            snapshot["pages"][7]["tagline"],
+            snapshot["pages"][8]["tagline"],
             "Record the stopping point before a shift handoff.",
         )
         self.assertEqual(
-            snapshot["pages"][8]["tagline"],
+            snapshot["pages"][9]["tagline"],
             "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
         )
         self.assertIn("Manual review remains required.", snapshot["guardrails"])
         self.assertIn("Decision: not approval — evidence only.", snapshot["guardrails"])
         self.assertIn("BMW Git access is read-only. SGFX never modifies BMW source.", snapshot["guardrails"])
         self.assertIn("Activity log is local-only — never posted to Jira, SVN, or BMW Git.", snapshot["guardrails"])
+        full_pass_page = next(page for page in snapshot["pages"] if page["id"] == "full-qa-pass")
+        self.assertIn("steps", full_pass_page["payload"])
+        self.assertTrue(full_pass_page["payload"]["manual_review_required"])
+        self.assertFalse(full_pass_page["payload"]["records_operator_verdict"])
+        self.assertFalse(full_pass_page["payload"]["is_approval"])
         manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
         self.assertEqual(manual_page["status"], "not_run")
         self.assertIn("Manual review session not started", manual_page["empty_state_note"])
@@ -306,7 +317,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 9)
+                self.assertEqual(len(snapshot["pages"]), 10)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -492,7 +503,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 9)
+        self.assertEqual(len(snapshot["pages"]), 10)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -506,7 +517,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 9)
+        self.assertEqual(len(snapshot["pages"]), 10)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")

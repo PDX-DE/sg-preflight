@@ -38,6 +38,7 @@ from sg_preflight.dependency_onboarding import (
     poll_dependency_setup_action,
     start_dependency_setup_action,
 )
+from sg_preflight.full_qa_pass import build_full_qa_pass
 from sg_preflight.jira_client import DEFAULT_JIRA_URL, load_jira_credentials
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
@@ -96,6 +97,7 @@ DASHBOARD_GUARDRAILS = (
     "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
 )
 DASHBOARD_NAVIGATION = (
+    ("full-qa-pass", "Full QA Pass"),
     ("delivery-checklist", "Delivery Checklist"),
     ("onboarding-guide", "Onboarding Guide"),
     ("screenshot-test-state", "Screenshot Test State"),
@@ -786,6 +788,52 @@ def _delivery_checklist_page(
         }
     ]
     return page
+
+
+def _full_qa_pass_page(
+    profile_id: str,
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+    trusted_tool_mode: bool = False,
+) -> dict[str, Any]:
+    del bmw_root, trusted_tool_mode
+    payload = {
+        "schema_version": 1,
+        "profile_id": profile_id,
+        "workspace": str(workspace),
+        "status": "not_run",
+        "run_status": "not_run",
+        "summary": "Full QA pass has not run in this dashboard session.",
+        "progress": {"completed_steps": 0, "total_steps": 9, "percent": 0},
+        "steps": [],
+        "confirmation_items": [],
+        "operator_confirmation_required": False,
+        "manual_review_required": True,
+        "records_operator_verdict": False,
+        "is_approval": False,
+        "guardrails": list(DASHBOARD_GUARDRAILS),
+        "confluence_anchors": [QUALITY_HERO_CONFLUENCE_ANCHOR, DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR],
+    }
+    return {
+        "id": "full-qa-pass",
+        "title": "Full QA Pass",
+        "tagline": "One local pass through setup, evidence, review assist, and handoff status.",
+        "status": str(payload.get("status", "unknown")),
+        "data_available": True,
+        "summary": str(payload.get("summary", "")),
+        "items": [
+            {
+                "label": str(step.get("label", "")),
+                "status": str(step.get("status", "")),
+                "detail": str(step.get("summary", "")),
+            }
+            for step in payload.get("steps", [])
+            if isinstance(step, dict)
+        ],
+        "payload": payload,
+        "confluence_anchors": list(payload.get("confluence_anchors", [])),
+    }
 
 
 def _onboarding_guide_page(
@@ -1584,6 +1632,7 @@ def build_dashboard_snapshot(
             "guardrails": list(DASHBOARD_GUARDRAILS),
         },
         "pages": [
+            _full_qa_pass_page(resolved_profile_id, root, bmw_root=bmw_root),
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _onboarding_guide_page(
                 resolved_profile_id,
@@ -3960,6 +4009,96 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                 )
 
 
+def _render_full_qa_pass_panel(
+    ui: Any,
+    snapshot: dict[str, Any],
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "full-qa-pass")
+    payload_state: dict[str, Any] = {"payload": page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}}
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            status_chip_host = ui.row().classes("items-center")
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
+        ui.label(
+            "Runs local evidence readers in order and stops before blocking issues. "
+            "Confirmation-gated actions remain explicit."
+        ).classes("sgfx-muted")
+        controls = ui.row().classes("items-center")
+        trusted = ui.checkbox("Trusted tool mode", value=False).props("dense")
+        result_host = ui.column().classes("full-width")
+
+        def _render_payload() -> None:
+            payload = payload_state["payload"]
+            status_chip_host.clear()
+            with status_chip_host:
+                _render_status_chip(ui, str(payload.get("status", "unknown")))
+            result_host.clear()
+            with result_host:
+                ui.label(str(payload.get("summary", ""))).classes("sgfx-summary")
+                progress = payload.get("progress", {}) if isinstance(payload.get("progress"), dict) else {}
+                percent = max(0, min(100, int(progress.get("percent", 0) or 0)))
+                ui.linear_progress(value=percent / 100).classes("full-width")
+                ui.label(
+                    f"Progress: {progress.get('completed_steps', 0)}/{progress.get('total_steps', 0)} step(s)."
+                ).classes("sgfx-muted")
+                halt_reason = str(payload.get("halt_reason", "")).strip()
+                if halt_reason:
+                    ui.label(f"Halted: {halt_reason}").classes("sgfx-warning")
+                confirmations = [item for item in payload.get("confirmation_items", []) if isinstance(item, dict)]
+                if confirmations:
+                    ui.label("Confirmation items").classes("sgfx-panel-tagline")
+                    for item in confirmations:
+                        ui.label(f"{item.get('label', '')}: {item.get('detail', '')}").classes("sgfx-muted")
+                rows = [
+                    {
+                        "label": str(step.get("label", "")),
+                        "status": str(step.get("status", "")),
+                        "detail": str(step.get("summary", "")),
+                    }
+                    for step in payload.get("steps", [])
+                    if isinstance(step, dict)
+                ]
+                if rows:
+                    _attach_tooltip(
+                        ui,
+                        ui.table(
+                            columns=[
+                                {"name": "label", "label": "Step", "field": "label", "align": "left"},
+                                {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                                {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                            ],
+                            rows=rows,
+                            row_key="label",
+                        ).classes("sgfx-table"),
+                        "Per-step progress for the local full QA pass.",
+                    )
+                for guardrail in payload.get("guardrails", []):
+                    ui.label(str(guardrail)).classes("sgfx-guardrail")
+
+        def _run_full_pass() -> None:
+            payload_state["payload"] = build_full_qa_pass(
+                str(snapshot["profile_id"]),
+                workspace=workspace,
+                bmw_root=bmw_root,
+                trusted_tool_mode=bool(trusted.value),
+            )
+            _render_payload()
+            ui.notify("Full QA pass refreshed from local evidence.")
+
+        with controls:
+            _attach_tooltip(
+                ui,
+                ui.button("Run full QA pass", on_click=_run_full_pass).props("color=primary no-caps"),
+                "Read each local evidence component for the selected profile.",
+            )
+        _render_payload()
+
+
 def _render_selected_page(
     ui: Any,
     container: Any,
@@ -3970,7 +4109,9 @@ def _render_selected_page(
 ) -> None:
     container.clear()
     with container:
-        if page_id == "delivery-checklist":
+        if page_id == "full-qa-pass":
+            _render_full_qa_pass_panel(ui, snapshot, workspace)
+        elif page_id == "delivery-checklist":
             _render_delivery_checklist_panel(ui, snapshot, workspace)
         elif page_id == "screenshot-test-state":
             _render_screenshot_test_state_panel(ui, snapshot, workspace)
@@ -4206,6 +4347,8 @@ def _render_dashboard(
                         workspace,
                         on_setup_completed=_refresh_snapshot,
                     )
+                elif active_page_id == "full-qa-pass":
+                    _render_full_qa_pass_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
                 elif active_page_id == "risk-score":
