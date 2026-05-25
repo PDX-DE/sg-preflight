@@ -481,6 +481,61 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(len(payload["steps"]), 7)
         self.assertTrue(all(step["suggested_verdict"] == "" for step in payload["steps"]))
 
+    def test_manual_review_cli_assist_returns_operator_confirmed_starting_points(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project = root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / "G70"
+            write_text(project / "_WorkFiles" / "scene.blend", "blend fixture\n")
+            write_text(
+                root
+                / "operator_state"
+                / "manual_review_suggestions"
+                / "g70"
+                / "functionality_test_raco.ok",
+                "operator marker\n",
+            )
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = main(
+                    [
+                        "manual-review",
+                        "assist",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G70",
+                        "--json",
+                    ]
+                )
+
+            markdown_stdout = io.StringIO()
+            markdown_stderr = io.StringIO()
+            with redirect_stdout(markdown_stdout), redirect_stderr(markdown_stderr):
+                markdown_result = main(
+                    [
+                        "manual-review",
+                        "assist",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G70",
+                        "--markdown",
+                    ]
+                )
+
+        self.assertEqual(result, 0, msg=stderr.getvalue())
+        self.assertEqual(markdown_result, 0, msg=markdown_stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        by_slug = {step["slug"]: step for step in payload["steps"]}
+        self.assertEqual(payload["assist_status"], "available")
+        self.assertTrue(payload["operator_confirmation_required"])
+        self.assertFalse(payload["records_operator_verdict"])
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(by_slug["functionality_test_raco"]["suggested_verdict"], "passed")
+        self.assertIn("Suggested starting verdict", markdown_stdout.getvalue())
+
     def test_cli_with_workspace_appends_activity_log_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -42,11 +42,13 @@ from sg_preflight.jira_client import DEFAULT_JIRA_URL, load_jira_credentials
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
     apply_manual_review_suggestions,
+    build_manual_review_assist_from_auto_checks,
     create_manual_review_session_from_template,
     list_car_review_templates,
     load_manual_review_session,
     record_manual_review_step,
     review_template_for_profile,
+    run_manual_review_auto_checks,
 )
 from sg_preflight.operator_handoff import (
     build_operator_handoff_snapshot,
@@ -1411,7 +1413,14 @@ def _manual_review_page(
         if isinstance(session, dict)
         else [step.to_session_step() for step in QUALITY_HERO_STEPS]
     )
-    steps = apply_manual_review_suggestions(steps, profile_id=profile_id, workspace=workspace)
+    auto_check_payload = run_manual_review_auto_checks(profile_id, workspace=workspace)
+    steps = apply_manual_review_suggestions(
+        steps,
+        profile_id=profile_id,
+        workspace=workspace,
+        auto_check_payload=auto_check_payload,
+    )
+    review_assist = build_manual_review_assist_from_auto_checks(auto_check_payload)
     recorded_count = sum(1 for step in steps if isinstance(step, dict) and _manual_review_step_recorded(step))
     status = "recorded" if recorded_count else _MANUAL_REVIEW_PENDING_VERDICT
     session_payload = session if isinstance(session, dict) else {}
@@ -1446,6 +1455,7 @@ def _manual_review_page(
             "family_id": str(session_payload.get("family_id", default_template.get("family_id", ""))),
             "evidence_checklist": list(session_payload.get("evidence_checklist", default_template.get("evidence_checklist", []))),
             "confluence_anchors": template_anchors or [QUALITY_HERO_CONFLUENCE_ANCHOR],
+            "review_assist": review_assist,
         },
         "confluence_anchors": template_anchors or [QUALITY_HERO_CONFLUENCE_ANCHOR],
     }
@@ -3805,6 +3815,34 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                 ui.button("Start new car review", on_click=_start_session).props("flat no-caps"),
                 "Create the local family-template review session before recording step evidence.",
             )
+        review_assist = page.get("payload", {}).get("review_assist", {})
+        if isinstance(review_assist, dict) and review_assist.get("steps"):
+            with ui.expansion("Review Assist", icon="rule").classes("sgfx-step"):
+                ui.label(str(review_assist.get("summary", ""))).classes("sgfx-summary")
+                ui.label("Suggested starting points only; operator confirms or changes every verdict below.").classes(
+                    "sgfx-muted"
+                )
+                assist_rows = [
+                    {
+                        "step": str(step.get("title", "")),
+                        "suggested": str(step.get("suggested_verdict", "")),
+                        "status": str(step.get("auto_check_status", "")),
+                        "reason": str(step.get("suggestion_reason", "")),
+                    }
+                    for step in review_assist.get("steps", [])
+                    if isinstance(step, dict)
+                ]
+                if assist_rows:
+                    ui.table(
+                        columns=[
+                            {"name": "step", "label": "Step", "field": "step", "align": "left"},
+                            {"name": "suggested", "label": "Starting Point", "field": "suggested", "align": "left"},
+                            {"name": "status", "label": "Evidence", "field": "status", "align": "left"},
+                            {"name": "reason", "label": "Reason", "field": "reason", "align": "left"},
+                        ],
+                        rows=assist_rows,
+                        row_key="step",
+                    ).classes("sgfx-table")
         checklist = page.get("payload", {}).get("evidence_checklist", [])
         if isinstance(checklist, list) and checklist:
             with ui.expansion("Evidence checklist", icon="checklist").classes("sgfx-step"):

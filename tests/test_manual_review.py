@@ -14,11 +14,13 @@ from sg_preflight.manual_review import (
     QUALITY_HERO_STEP_TITLES,
     VALID_VERDICTS,
     apply_manual_review_suggestions,
+    build_manual_review_assist,
     create_manual_review_session,
     create_manual_review_session_from_template,
     list_car_review_templates,
     load_manual_review_session,
     record_manual_review_step,
+    render_manual_review_assist_markdown,
     render_manual_review_auto_checks_markdown,
     render_manual_review_markdown,
     review_template_for_profile,
@@ -211,6 +213,40 @@ class TestManualReviewCompanion(unittest.TestCase):
         markdown = render_manual_review_auto_checks_markdown(payload)
         self.assertIn("Auto-check status", markdown)
         self.assertIn("Manual review required: yes", markdown)
+        self.assertNotIn("approved", markdown.lower())
+
+    def test_manual_review_assist_suggests_operator_confirmed_starting_points(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project = root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / "G70"
+            write_text(project / "_WorkFiles" / "scene.blend", "blend fixture\n")
+            write_text(
+                root
+                / "operator_state"
+                / "manual_review_suggestions"
+                / "g70"
+                / "functionality_test_raco.passed",
+                "operator marker\n",
+            )
+
+            payload = build_manual_review_assist("G70", workspace=root)
+
+        by_slug = {step["slug"]: step for step in payload["steps"]}
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["assist_status"], "available")
+        self.assertEqual(payload["mode"], "local_evidence_rules")
+        self.assertTrue(payload["manual_review_required"])
+        self.assertTrue(payload["operator_confirmation_required"])
+        self.assertFalse(payload["records_operator_verdict"])
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(by_slug["functionality_test_raco"]["suggested_verdict"], "passed")
+        self.assertEqual(by_slug["blender_visual_check"]["suggested_verdict"], "incomplete")
+        self.assertEqual(by_slug["anchor_points_test_raco"]["suggested_verdict"], "incomplete")
+        self.assertEqual(payload["counts"]["passed"], 1)
+        self.assertIn("Manual review remains required.", payload["guardrails"])
+        markdown = render_manual_review_assist_markdown(payload)
+        self.assertIn("Suggested starting verdict", markdown)
+        self.assertIn("Operator records final verdict: yes", markdown)
         self.assertNotIn("approved", markdown.lower())
 
     def test_apply_manual_review_suggestions_does_not_overwrite_recorded_verdicts(self) -> None:

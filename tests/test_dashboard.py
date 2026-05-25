@@ -912,6 +912,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             root = Path(tmp)
             project = root / "repositories" / "trunk" / "Cars_IDCevo" / "BMW" / "G70"
             write_text(project / "_WorkFiles" / "scene.blend", "blend fixture\n")
+            write_text(
+                root
+                / "operator_state"
+                / "manual_review_suggestions"
+                / "g70"
+                / "functionality_test_raco.passed",
+                "operator marker\n",
+            )
 
             snapshot = build_dashboard_snapshot("G70", root)
 
@@ -927,6 +935,13 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         item = next(item for item in manual_page["items"] if item["label"] == "Blender Visual Check")
         self.assertIn("Auto-check available", item["detail"])
         self.assertIn("Manual review remains required", item["detail"])
+        review_assist = manual_page["payload"]["review_assist"]
+        self.assertEqual(review_assist["assist_status"], "available")
+        self.assertTrue(review_assist["operator_confirmation_required"])
+        self.assertFalse(review_assist["records_operator_verdict"])
+        assist_steps = {item["slug"]: item for item in review_assist["steps"]}
+        self.assertEqual(assist_steps["functionality_test_raco"]["suggested_verdict"], "passed")
+        self.assertEqual(assist_steps["blender_visual_check"]["suggested_verdict"], "incomplete")
 
     def test_manual_review_dashboard_recording_stores_suggested_and_operator_verdicts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

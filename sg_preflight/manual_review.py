@@ -22,6 +22,16 @@ MANUAL_REVIEW_HEADER = (
 )
 REVIEW_FOCUS_NOTE = "Review guidance only; the operator records the verdict."
 AUTO_CHECK_NOTE = "Auto-checks prepare evidence only; the operator records each manual-review verdict."
+REVIEW_ASSIST_NOTE = (
+    "Review Assist suggests local starting points from evidence. "
+    "The operator confirms or changes every manual-review verdict."
+)
+REVIEW_ASSIST_GUARDRAILS = (
+    "Manual review remains required.",
+    "Decision: not approval — evidence only.",
+    "BMW Git access is read-only. SGFX never modifies BMW source.",
+    "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
+)
 
 VALID_VERDICTS = ("passed", "failed", "skipped", "incomplete")
 _VERDICT_ALIASES = {
@@ -937,13 +947,89 @@ def run_manual_review_auto_checks(
     }
 
 
+def _review_assist_verdict(step: dict[str, Any]) -> tuple[str, str]:
+    evidence_status = str(step.get("evidence_status", "")).strip()
+    auto_check_status = str(step.get("auto_check_status", "")).strip()
+    auto_check_kind = str(step.get("auto_check_kind", "")).strip()
+    if evidence_status == _EVIDENCE_AVAILABLE and auto_check_kind == "operator_marker":
+        return "passed", "Existing operator marker found; operator still confirms before recording."
+    if auto_check_status == _EVIDENCE_AVAILABLE:
+        return "incomplete", "Evidence is available, but the manual check still needs operator confirmation."
+    if auto_check_status == "incomplete":
+        return "incomplete", "Local evidence points to remaining review focus before recording a verdict."
+    if evidence_status == _EVIDENCE_MISSING or auto_check_status == _EVIDENCE_MISSING:
+        return "incomplete", "Required evidence is missing or unavailable; operator should keep this step incomplete."
+    return "incomplete", "No local evidence was strong enough to suggest a completed verdict."
+
+
+def build_manual_review_assist_from_auto_checks(auto_check_payload: dict[str, Any]) -> dict[str, Any]:
+    steps: list[dict[str, Any]] = []
+    counts = {verdict: 0 for verdict in VALID_VERDICTS}
+    for step in auto_check_payload.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        verdict, reason = _review_assist_verdict(step)
+        if verdict in counts:
+            counts[verdict] += 1
+        steps.append(
+            {
+                "slug": str(step.get("slug", "")).strip(),
+                "title": str(step.get("title", "")).strip(),
+                "suggested_verdict": verdict,
+                "suggestion_reason": reason,
+                "evidence_status": str(step.get("evidence_status", "")).strip(),
+                "auto_check_status": str(step.get("auto_check_status", "")).strip(),
+                "auto_check_kind": str(step.get("auto_check_kind", "")).strip(),
+                "auto_check_summary": str(step.get("auto_check_summary", "")).strip(),
+                "operator_confirmation_required": True,
+                "manual_review_required": True,
+                "is_approval": False,
+            }
+        )
+    focus_count = sum(1 for step in steps if step["suggested_verdict"] != "passed")
+    return {
+        "schema_version": 1,
+        "profile_id": str(auto_check_payload.get("profile_id", "")).strip(),
+        "status": "available",
+        "assist_status": "available",
+        "mode": "local_evidence_rules",
+        "steps": steps,
+        "counts": counts,
+        "operator_focus_steps": [step["slug"] for step in steps if step["suggested_verdict"] != "passed"],
+        "manual_review_required": True,
+        "operator_confirmation_required": True,
+        "records_operator_verdict": False,
+        "recorded_by_tool": False,
+        "is_approval": False,
+        "summary": (
+            f"Review Assist prepared {len(steps)} suggested starting point(s); "
+            f"{focus_count} step(s) still need operator focus before recording."
+        ),
+        "note": REVIEW_ASSIST_NOTE,
+        "guardrails": list(REVIEW_ASSIST_GUARDRAILS),
+        "confluence_anchors": list(auto_check_payload.get("confluence_anchors", []))
+        or [_CONFLUENCE_SOURCE, _DELIVERY_CONFLUENCE_SOURCE, _BMW_SCRIPT_CONFLUENCE_SOURCE],
+    }
+
+
+def build_manual_review_assist(
+    profile_id: str,
+    *,
+    workspace: Path | str | None = None,
+) -> dict[str, Any]:
+    return build_manual_review_assist_from_auto_checks(
+        run_manual_review_auto_checks(profile_id, workspace=workspace)
+    )
+
+
 def apply_manual_review_suggestions(
     steps: list[dict[str, Any]],
     *,
     profile_id: str,
     workspace: Path | str | None = None,
+    auto_check_payload: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    payload = suggest_manual_review_verdicts(profile_id, workspace=workspace)
+    payload = auto_check_payload if auto_check_payload is not None else suggest_manual_review_verdicts(profile_id, workspace=workspace)
     suggestions = payload.get("suggestions", {}) if isinstance(payload, dict) else {}
     decorated: list[dict[str, Any]] = []
     for step in steps:
@@ -1319,6 +1405,46 @@ def render_manual_review_auto_checks_markdown(payload: dict[str, Any]) -> str:
             lines.append(f"- Operator focus: {focus}")
         lines.append("- Suggested verdict: []")
         lines.append("- Manual review required: yes")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_manual_review_assist_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        f"# Manual review assist - {payload.get('profile_id', '')}",
+        "",
+        REVIEW_ASSIST_NOTE,
+        "",
+        f"- Status: `{payload.get('status', 'unknown')}`",
+        f"- Assist status: `{payload.get('assist_status', 'unknown')}`",
+        "- Manual review required: yes",
+        "- Operator confirmation required: yes",
+        "- Decision: not approval; evidence only.",
+    ]
+    summary = str(payload.get("summary", "")).strip()
+    if summary:
+        lines.extend(["", summary])
+    anchors = payload.get("confluence_anchors", [])
+    if isinstance(anchors, list) and anchors:
+        lines.extend(["", "## Confluence Anchors"])
+        lines.extend(f"- `{anchor}`" for anchor in anchors if str(anchor).strip())
+    lines.extend(["", "## Suggested Starting Points"])
+    for step in payload.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        lines.append(f"### {step.get('title', step.get('slug', 'Manual review step'))}")
+        lines.append(f"- Step: `{step.get('slug', '')}`")
+        lines.append(f"- Suggested starting verdict: [{step.get('suggested_verdict', '')}]")
+        reason = str(step.get("suggestion_reason", "")).strip()
+        if reason:
+            lines.append(f"- Reason: {reason}")
+        auto_check_status = str(step.get("auto_check_status", "")).strip()
+        if auto_check_status:
+            lines.append(f"- Auto-check status: `{auto_check_status}`")
+        auto_check_kind = str(step.get("auto_check_kind", "")).strip()
+        if auto_check_kind:
+            lines.append(f"- Auto-check kind: `{auto_check_kind}`")
+        lines.append("- Operator records final verdict: yes")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 

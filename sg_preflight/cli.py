@@ -80,12 +80,14 @@ from sg_preflight.jira_client import (
 )
 from sg_preflight.manual_review import (
     VALID_VERDICTS,
+    build_manual_review_assist,
     create_manual_review_session,
     create_manual_review_session_from_template,
     list_car_review_templates,
     load_manual_review_session,
     open_manual_review_tool,
     record_manual_review_step,
+    render_manual_review_assist_markdown,
     render_manual_review_auto_checks_markdown,
     render_manual_review_markdown,
     run_manual_review_auto_checks,
@@ -1295,6 +1297,15 @@ def build_parser() -> argparse.ArgumentParser:
     manual_review_auto.add_argument("--json", action="store_true", help="Print auto-checks as JSON")
     manual_review_auto.add_argument("--markdown", action="store_true", help="Print auto-checks as Markdown")
 
+    manual_review_assist = manual_review_sub.add_parser(
+        "assist",
+        help="Suggest operator-confirmed starting verdicts from local evidence",
+    )
+    manual_review_assist.add_argument("--profile", required=True, help="Profile id such as G65")
+    manual_review_assist.add_argument("--workspace", help="Workspace root override")
+    manual_review_assist.add_argument("--json", action="store_true", help="Print review assist as JSON")
+    manual_review_assist.add_argument("--markdown", action="store_true", help="Print review assist as Markdown")
+
     manual_review_record = manual_review_sub.add_parser("record-step", help="Record one reviewer verdict")
     manual_review_record.add_argument("session_id", help="Manual-review session id or session.json path")
     manual_review_record.add_argument("--workspace", help="Workspace root override")
@@ -2432,6 +2443,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
                 }
             elif args.manual_review_command == "auto-checks":
                 payload = run_manual_review_auto_checks(args.profile, workspace=review_root)
+            elif args.manual_review_command == "assist":
+                payload = build_manual_review_assist(args.profile, workspace=review_root)
             elif args.manual_review_command == "record-step":
                 payload = record_manual_review_step(
                     args.session_id,
@@ -2457,6 +2470,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _console_desktop_payload(payload)
         elif getattr(args, "markdown", False) and args.manual_review_command == "auto-checks":
             print(_console_safe(render_manual_review_auto_checks_markdown(payload)))
+        elif getattr(args, "markdown", False) and args.manual_review_command == "assist":
+            print(_console_safe(render_manual_review_assist_markdown(payload)))
         elif getattr(args, "markdown", False) or args.manual_review_command == "summary":
             print(_console_safe(render_manual_review_markdown(payload)))
         elif args.manual_review_command == "templates":
@@ -2466,6 +2481,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
                     print(_console_safe(f"- {item.get('family_id', '')}: {item.get('title', '')}"))
         elif args.manual_review_command == "auto-checks":
             print(_console_safe(payload.get("summary", "Manual-review auto-checks complete.")))
+        elif args.manual_review_command == "assist":
+            print(_console_safe(payload.get("summary", "Manual review assist complete.")))
         else:
             print(_console_safe(f"Manual review session: {payload.get('session_id', '')}"))
             if payload.get("session_path"):
