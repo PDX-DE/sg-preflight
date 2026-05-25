@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -213,6 +214,59 @@ class TestDeliveryChecklist(unittest.TestCase):
         self.assertIn("28000.0", checks["variant_totals"]["raw_value"])
         self.assertIn("3 variant rows", payload["summary"])
         self.assertFalse(payload["is_approval"])
+
+    def test_read_delivery_checklist_uses_latest_size_analysis_mtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trunk = Path(temp_dir) / "repositories" / "trunk"
+            older_name_newer_mtime = trunk / "Cars" / "size_analysis" / "G65_20250930.xlsx"
+            newer_name_older_mtime = trunk / "Cars" / "size_analysis" / "G65_20251002.xlsx"
+            _write_size_analysis_overview_workbook(
+                older_name_newer_mtime,
+                variant_count=5,
+                total_base=29000.0,
+            )
+            _write_size_analysis_overview_workbook(
+                newer_name_older_mtime,
+                variant_count=2,
+                total_base=28000.0,
+            )
+            old_timestamp = 1_700_000_000
+            new_timestamp = 1_800_000_000
+            os.utime(newer_name_older_mtime, (old_timestamp, old_timestamp))
+            os.utime(older_name_newer_mtime, (new_timestamp, new_timestamp))
+
+            resolved = resolve_delivery_checklist_workbook(workspace=trunk, profile_id="G65")
+            payload = read_delivery_checklist(profile_id="G65", workspace=trunk)
+
+        self.assertEqual(resolved, older_name_newer_mtime.resolve())
+        self.assertEqual(Path(payload["workbook_path"]), older_name_newer_mtime.resolve())
+        self.assertEqual(payload["last_tested"], "2025-09-30")
+        checks = {item["key"]: item for item in payload["checks"]}
+        self.assertEqual(checks["variant_count"]["raw_value"], "5")
+        self.assertIn("29000.0", checks["variant_totals"]["raw_value"])
+
+    def test_read_delivery_checklist_prefers_profile_size_analysis_over_generic_export_workbook(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trunk = Path(temp_dir) / "repositories" / "trunk"
+            generic_workbook = trunk / "Cars" / "BMW" / "BMW Export Size.xlsx"
+            profile_workbook = trunk / "Cars" / "size_analysis" / "F70_vx.xlsx"
+            _write_export_size_workbook(generic_workbook)
+            _write_versioned_size_analysis_overview_workbook(
+                profile_workbook,
+                profile_id="F70",
+                version="vx",
+                variant_count=3,
+                total_base=15000.0,
+            )
+
+            resolved = resolve_delivery_checklist_workbook(workspace=trunk, profile_id="F70")
+            payload = read_delivery_checklist(profile_id="F70", workspace=trunk)
+
+        self.assertEqual(resolved, profile_workbook.resolve())
+        self.assertEqual(Path(payload["workbook_path"]), profile_workbook.resolve())
+        self.assertEqual(payload["matched_profile_id"], "F70 Sizes - vx")
+        checks = {item["key"]: item for item in payload["checks"]}
+        self.assertEqual(checks["variant_count"]["raw_value"], "3")
 
     def test_read_delivery_checklist_discovers_versioned_size_analysis_workbook(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

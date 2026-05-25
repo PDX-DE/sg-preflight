@@ -108,18 +108,22 @@ def _filename_date_token(path: Path) -> str:
     return match.group(1) if match else ""
 
 
-def _size_analysis_sort_key(path: Path) -> tuple[int, int, str]:
-    date_token = _filename_date_token(path)
-    if date_token:
-        return (3, int(date_token), path.name.casefold())
+def _size_analysis_suffix(path: Path) -> str:
     suffix_match = re.search(r"_([^_]+)$", path.stem)
-    suffix = suffix_match.group(1).casefold() if suffix_match else ""
-    version_match = re.fullmatch(r"v(\d+)", suffix)
-    if version_match:
-        return (2, int(version_match.group(1)), path.name.casefold())
-    if suffix == "vx":
-        return (2, 1_000_000, path.name.casefold())
-    return (1, 0, path.name.casefold())
+    return suffix_match.group(1).casefold() if suffix_match else ""
+
+
+def _is_size_analysis_workbook(path: Path) -> bool:
+    suffix = _size_analysis_suffix(path)
+    return bool(re.fullmatch(r"\d{8}|v\d+|vx", suffix))
+
+
+def _mtime_key(path: Path) -> tuple[int, str]:
+    try:
+        mtime_ns = path.stat().st_mtime_ns
+    except OSError:
+        mtime_ns = 0
+    return (mtime_ns, path.name.casefold())
 
 
 def _date_text_from_token(value: str) -> str:
@@ -130,18 +134,21 @@ def _date_text_from_token(value: str) -> str:
 
 
 def _find_latest_size_analysis_workbook(root: Path, profile_id: str) -> Path | None:
-    matches: list[tuple[tuple[int, int, str], str, Path]] = []
+    matches: list[tuple[int, str, Path]] = []
     seen: set[Path] = set()
     for directory in _size_analysis_dirs(root):
         if not directory.exists():
             continue
         for profile in _candidate_profile_ids(profile_id):
             for path in directory.glob(f"{profile}_*.xlsx"):
+                if not _is_size_analysis_workbook(path):
+                    continue
                 resolved = path.resolve()
                 if resolved in seen:
                     continue
                 seen.add(resolved)
-                matches.append((_size_analysis_sort_key(path), path.name.casefold(), resolved))
+                mtime_ns, name = _mtime_key(resolved)
+                matches.append((mtime_ns, name, resolved))
     if not matches:
         return None
     return sorted(matches, key=lambda item: (item[0], item[1]))[-1][2]
@@ -177,13 +184,16 @@ def resolve_delivery_checklist_workbook(
     workbook_name = _workbook_name_for_brand(brand)
     export_size_workbook_name = _export_size_workbook_name_for_brand(brand)
     brand_label = _brand_label(brand)
-    candidates = [
-        root / "repositories" / "trunk" / "Cars" / brand_label / export_size_workbook_name,
-        root / "Cars" / brand_label / export_size_workbook_name,
-    ]
+    candidates = []
     latest_size_analysis = _find_latest_size_analysis_workbook(root, profile_id)
     if latest_size_analysis is not None:
         candidates.append(latest_size_analysis)
+    candidates.extend(
+        [
+            root / "repositories" / "trunk" / "Cars" / brand_label / export_size_workbook_name,
+            root / "Cars" / brand_label / export_size_workbook_name,
+        ]
+    )
     candidates.extend(
         [
             root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist" / workbook_name,
