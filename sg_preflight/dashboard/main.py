@@ -53,6 +53,7 @@ from sg_preflight.profiles import (
     get_run_profile,
     list_run_profiles,
 )
+from sg_preflight.risk_scoring import read_per_car_risk_score
 from sg_preflight.screenshot_review_viewer import build_screenshot_review_viewer
 from sg_preflight.screenshot_capture import (
     SCREENSHOT_CAPTURE_ACTION_ID,
@@ -87,6 +88,7 @@ DASHBOARD_GUARDRAILS = (
 DASHBOARD_NAVIGATION = (
     ("delivery-checklist", "Delivery Checklist"),
     ("screenshot-test-state", "Screenshot Test State"),
+    ("risk-score", "Risk Score"),
     ("daily-digest", "Daily Digest"),
     ("manual-review", "Manual Review Companion"),
     ("about", "About"),
@@ -187,6 +189,9 @@ DELIVERY_CHECKLIST_EMPTY_NOTE = (
 )
 SCREENSHOT_TEST_STATE_EMPTY_NOTE = (
     "No captured screenshots yet. Click Capture to invoke the BMW pipeline screenshot step after pre-flight passes."
+)
+RISK_SCORE_EMPTY_NOTE = (
+    "No prior manual-review session or screenshot evidence was found for this profile. Start with evidence capture and review recording."
 )
 DAILY_DIGEST_EMPTY_NOTE = (
     "No review package on this workspace yet. Click Build to generate one for the active ticket."
@@ -799,6 +804,31 @@ def _screenshot_test_state_page(
     return page
 
 
+def _risk_score_page(
+    profile_id: str,
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="risk-score",
+        title="Risk Score",
+        tagline="Per-car review focus signal with delta since latest local manual review.",
+        reader=lambda: read_per_car_risk_score(
+            profile_id,
+            workspace=workspace,
+            bmw_root=bmw_root,
+        ),
+        workspace=workspace,
+        ownership_note="Risk score focuses review order only; operator verdicts remain manual.",
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["confluence_anchors"] = list(payload.get("confluence_anchors", []))
+    if page.get("status") == "not_run":
+        page["empty_state_note"] = RISK_SCORE_EMPTY_NOTE
+    return page
+
+
 def _screenshot_review_viewer_output_root(workspace: Path, profile_id: str) -> Path:
     safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
     return operator_ui_root(workspace) / "screenshot-review-viewer" / safe_profile
@@ -872,6 +902,17 @@ def _notify_completion_safe(
 
 
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
+    signals = payload.get("signals", [])
+    if isinstance(signals, list) and signals:
+        return [
+            {
+                "label": str(signal.get("id", "signal")),
+                "status": str(signal.get("status", "unknown")),
+                "detail": str(signal.get("detail", "")),
+            }
+            for signal in signals
+            if isinstance(signal, dict)
+        ]
     checks = payload.get("checks", [])
     if isinstance(checks, list) and checks:
         items = []
@@ -920,6 +961,17 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "sg_perspectives_latest_folder",
         "sg_perspectives_screenshot_count",
         "sg_perspectives_comparison_count",
+        "risk_score",
+        "risk_level",
+        "current_snapshot",
+        "latest_review",
+        "delta_since_last_review",
+        "signals",
+        "confluence_anchors",
+        "manual_review_required",
+        "is_approval",
+        "note",
+        "guidance",
     )
     return {key: payload[key] for key in allowed if key in payload}
 
@@ -1240,6 +1292,7 @@ def build_dashboard_snapshot(
         "pages": [
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _screenshot_test_state_page(resolved_profile_id, root, bmw_root=bmw_root),
+            _risk_score_page(resolved_profile_id, root, bmw_root=bmw_root),
             _daily_digest_page(
                 root,
                 resolved_profile_id,
@@ -2769,6 +2822,71 @@ def _render_screenshot_test_state_panel(
                 run_button.disable()
 
 
+def _render_risk_score_panel(ui: Any, snapshot: dict[str, Any]) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "risk-score")
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    current = payload.get("current_snapshot", {}) if isinstance(payload.get("current_snapshot"), dict) else {}
+    latest = payload.get("latest_review", {}) if isinstance(payload.get("latest_review"), dict) else {}
+    delta = (
+        payload.get("delta_since_last_review", {})
+        if isinstance(payload.get("delta_since_last_review"), dict)
+        else {}
+    )
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
+        ownership_note = str(page.get("ownership_note", "")).strip()
+        if ownership_note:
+            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
+        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
+        _render_empty_state_note(ui, page)
+        with ui.row().classes("full-width"):
+            with ui.column().classes("sgfx-risk-metric"):
+                ui.label("Current evidence").classes("sgfx-panel-tagline")
+                ui.label(
+                    f"{current.get('expected_count', 0)} expected / "
+                    f"{current.get('actual_count', 0)} actual / {current.get('diff_count', 0)} diff"
+                ).classes("sgfx-summary")
+                ui.label(f"Disabled tests: {current.get('disabled_test_count', 0)}").classes("sgfx-muted")
+            with ui.column().classes("sgfx-risk-metric"):
+                ui.label("Latest manual review").classes("sgfx-panel-tagline")
+                ui.label(str(latest.get("session_id", "") or "not found")).classes("sgfx-summary")
+                ui.label(
+                    f"{latest.get('recorded_steps', 0)} recorded / {latest.get('pending_steps', 0)} not_run"
+                ).classes("sgfx-muted")
+            with ui.column().classes("sgfx-risk-metric"):
+                ui.label("Delta since latest review").classes("sgfx-panel-tagline")
+                ui.label(f"{delta.get('changed_file_count', 0)} changed screenshot file(s)").classes("sgfx-summary")
+                ui.label(str(delta.get("summary", ""))).classes("sgfx-muted")
+        rows = [
+            {
+                "label": str(item.get("label", "")),
+                "status": str(item.get("status", "")),
+                "detail": str(item.get("detail", "")),
+            }
+            for item in page.get("items", [])
+            if isinstance(item, dict)
+        ]
+        if rows:
+            _attach_tooltip(
+                ui,
+                ui.table(
+                    columns=[
+                        {"name": "label", "label": "Signal", "field": "label", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="label",
+                ).classes("sgfx-table"),
+                "Risk signals are deterministic local-file observations.",
+            )
+
+
 def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
     with ui.column().classes("sgfx-page-panel"):
@@ -3286,6 +3404,8 @@ def _render_selected_page(
             _render_delivery_checklist_panel(ui, snapshot, workspace)
         elif page_id == "screenshot-test-state":
             _render_screenshot_test_state_panel(ui, snapshot, workspace)
+        elif page_id == "risk-score":
+            _render_risk_score_panel(ui, snapshot)
         elif page_id == "manual-review":
             _render_manual_review_panel(ui, snapshot, workspace)
         elif page_id == "daily-digest":
@@ -3371,6 +3491,7 @@ def _render_dashboard(
             .sgfx-table { width: 100%; color: var(--sgfx-fg); }
             .sgfx-step { border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; background: var(--sgfx-bg-elev); }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
+            .sgfx-risk-metric { flex: 1 1 220px; min-width: 220px; border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 12px; background: var(--sgfx-bg-elev); }
             .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid var(--sgfx-border); border-radius: 6px; padding: 8px; background: var(--sgfx-bg-elev); }
             .sgfx-viewer-dialog-card { width: min(96vw, 1680px); height: min(92vh, 980px); max-width: none !important; display: flex; flex-direction: column; gap: 10px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); border: 1px solid var(--sgfx-border); border-radius: 8px; }
             .sgfx-viewer-frame-host { flex: 1 1 auto; min-height: 0; width: 100%; }
@@ -3492,6 +3613,8 @@ def _render_dashboard(
                     _render_delivery_checklist_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
+                elif active_page_id == "risk-score":
+                    _render_risk_score_panel(ui, state["snapshot"])
                 elif active_page_id == "daily-digest":
                     _render_daily_digest_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "manual-review":

@@ -133,6 +133,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
             [
                 "delivery-checklist",
                 "screenshot-test-state",
+                "risk-score",
                 "daily-digest",
                 "manual-review",
             ],

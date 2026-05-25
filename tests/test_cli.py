@@ -1004,6 +1004,57 @@ class TestCLI(unittest.TestCase):
         self.assertIn("SGFX does not run screenshot tests or approve screenshots.", markdown_stdout.getvalue())
         self.assertNotIn("approved", markdown_stdout.getvalue().lower())
 
+    def test_risk_score_read_cli_returns_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_screenshot_test_state(root)
+            clean_env = {
+                "SG_BMW_CAR_MODELS_ROOT": "",
+                "SG_CARMODELS_REPO": "",
+                "SG-CarModels-Repo": "",
+                "Digital-3D-Car-Repo": "",
+            }
+
+            stdout = io.StringIO()
+            with mock.patch.dict("os.environ", clean_env):
+                with redirect_stdout(stdout):
+                    result = main(
+                        [
+                            "risk-score",
+                            "read",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G65",
+                            "--json",
+                        ]
+                    )
+
+                markdown_stdout = io.StringIO()
+                with redirect_stdout(markdown_stdout):
+                    markdown_result = main(
+                        [
+                            "risk-score",
+                            "read",
+                            "--workspace",
+                            str(root),
+                            "--profile",
+                            "G65",
+                            "--markdown",
+                        ]
+                    )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["risk_score"] > 0, True)
+        self.assertEqual(payload["delta_since_last_review"]["status"], "not_run")
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(markdown_result, 0)
+        self.assertIn("Per-car risk score", markdown_stdout.getvalue())
+        self.assertIn("Manual review remains required", markdown_stdout.getvalue())
+        self.assertNotIn("production-" "ready", markdown_stdout.getvalue().lower())
+
     def test_bmw_git_readiness_read_cli_returns_json_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1152,7 +1203,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result, 7)
         runner.assert_called_once_with(workspace=None, initial_profile_id="G65", initial_mode="clean")
 
-    def test_desktop_state_surfaces_returns_four_grafiks_evidence_cards(self) -> None:
+    def test_desktop_state_surfaces_returns_five_grafiks_evidence_cards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             create_temp_g65_profile(root)
@@ -1165,7 +1216,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(
             [item["key"] for item in payload],
-            ["delivery-checklist", "screenshot-test-state", "daily-digest", "manual-review"],
+            ["delivery-checklist", "screenshot-test-state", "risk-score", "daily-digest", "manual-review"],
         )
 
     def test_launch_action_spawns_worker_and_returns_queued_record(self) -> None:

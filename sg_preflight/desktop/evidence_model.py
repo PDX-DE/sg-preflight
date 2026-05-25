@@ -17,6 +17,7 @@ from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.qa_actions import ActionRecord, list_operator_actions, list_recent_action_records, load_action_record
 from sg_preflight.export_size_analysis import read_export_size_analysis
 from sg_preflight.reporting import build_report_presentation
+from sg_preflight.risk_scoring import read_per_car_risk_score
 from sg_preflight.services import (
     RunRecord,
     list_recent_run_records,
@@ -1068,6 +1069,11 @@ def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> lis
             "screenshot-test-state",
             "Screenshot Test State",
             lambda: read_bmw_screenshot_state(normalized_profile, workspace=root, sg_project_root=root),
+        ),
+        _safe_item(
+            "risk-score",
+            "Risk Score",
+            lambda: read_per_car_risk_score(normalized_profile, workspace=root),
         ),
         _safe_item(
             "daily-digest",

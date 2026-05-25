@@ -89,6 +89,11 @@ from sg_preflight.qa_hero_readiness import (
     render_qa_hero_readiness_text,
 )
 from sg_preflight.profiles import get_run_profile, list_run_profiles
+from sg_preflight.risk_scoring import (
+    read_per_car_risk_score,
+    render_risk_score_markdown,
+    render_risk_score_text,
+)
 from sg_preflight.qa_actions import (
     attach_manual_evidence,
     build_action_record,
@@ -768,6 +773,19 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot_state_read.add_argument("--json", action="store_true", help="Print screenshot test state as JSON")
     screenshot_state_read.add_argument("--markdown", action="store_true", help="Print screenshot test state as Markdown")
     _add_render_options(screenshot_state_read)
+
+    risk_score = sub.add_parser(
+        "risk-score",
+        help="Read per-car local risk scoring with delta since latest manual review",
+    )
+    risk_score_sub = risk_score.add_subparsers(dest="risk_score_command", required=True)
+    risk_score_read = risk_score_sub.add_parser("read", help="Read risk score for one profile")
+    risk_score_read.add_argument("--workspace", help="Workspace root override")
+    risk_score_read.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    risk_score_read.add_argument("--profile", required=True, help="Profile id such as <profile>")
+    risk_score_read.add_argument("--json", action="store_true", help="Print risk score as JSON")
+    risk_score_read.add_argument("--markdown", action="store_true", help="Print risk score as Markdown")
+    _add_render_options(risk_score_read)
 
     bmw_git_readiness = sub.add_parser(
         "bmw-git-readiness",
@@ -1639,6 +1657,30 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _emit_text(render_bmw_screenshot_state_markdown(payload), args)
         else:
             _emit_text(render_bmw_screenshot_state_text(payload), args)
+        return 0
+
+    if args.command == "risk-score":
+        risk_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.risk_score_command == "read":
+                payload = read_per_car_risk_score(
+                    args.profile,
+                    workspace=risk_root,
+                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+                )
+            else:
+                parser.error(f"Unhandled risk-score command: {args.risk_score_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"risk-score failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_risk_score_markdown(payload), args)
+        else:
+            _emit_text(render_risk_score_text(payload), args)
         return 0
 
     if args.command == "bmw-git-readiness":
