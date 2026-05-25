@@ -48,6 +48,10 @@ from sg_preflight.manual_review import (
     record_manual_review_step,
     review_template_for_profile,
 )
+from sg_preflight.operator_handoff import (
+    build_operator_handoff_snapshot,
+    record_operator_handoff,
+)
 from sg_preflight.profiles import (
     PROFILE_REGISTRY_DYNAMIC_SOURCE,
     PROFILE_SCOPE_DEFAULT,
@@ -94,6 +98,7 @@ DASHBOARD_NAVIGATION = (
     ("cross-car-comparison", "Cross-Car Comparison"),
     ("daily-digest", "Daily Digest"),
     ("team-digest-board", "Team Digest Board"),
+    ("operator-handoff", "Operator Handoff"),
     ("manual-review", "Manual Review Companion"),
     ("about", "About"),
 )
@@ -205,6 +210,9 @@ DAILY_DIGEST_EMPTY_NOTE = (
 )
 TEAM_DIGEST_BOARD_EMPTY_NOTE = (
     "No team-board rows were generated yet. Build local evidence first, then refresh this board."
+)
+OPERATOR_HANDOFF_EMPTY_NOTE = (
+    "No shift handoff recorded yet. Add a stopping point before pausing or handing over."
 )
 MANUAL_REVIEW_EMPTY_NOTE = (
     "Manual review session not started. Click Start Session below to begin, then Record evidence on each Quality-Hero step as you complete it."
@@ -937,6 +945,17 @@ def _notify_completion_safe(
 
 
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
+    handoff_items = payload.get("handoff_items", [])
+    if isinstance(handoff_items, list) and handoff_items:
+        return [
+            {
+                "label": str(item.get("label", "item")),
+                "status": str(item.get("status", "unknown")),
+                "detail": str(item.get("detail", "")),
+            }
+            for item in handoff_items
+            if isinstance(item, dict)
+        ]
     comparison_rows = payload.get("comparison_rows", [])
     if isinstance(comparison_rows, list) and comparison_rows:
         return [
@@ -1038,6 +1057,9 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "left_profile",
         "right_profile",
         "widget_label",
+        "handoff_count",
+        "latest_handoff",
+        "handoff_items",
     )
     return {key: payload[key] for key in allowed if key in payload}
 
@@ -1218,6 +1240,22 @@ def _team_digest_board_page(
     page["confluence_anchors"] = list(payload.get("confluence_anchors", []))
     if not page.get("items"):
         page["empty_state_note"] = TEAM_DIGEST_BOARD_EMPTY_NOTE
+    return page
+
+
+def _operator_handoff_page(profile_id: str, workspace: Path) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="operator-handoff",
+        title="Operator Handoff",
+        tagline="Record the stopping point before a shift handoff.",
+        reader=lambda: build_operator_handoff_snapshot(workspace=workspace, profile_id=profile_id),
+        workspace=workspace,
+        ownership_note="Handoff records stay operator-local and are not posted to Jira, SVN, or BMW Git.",
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["confluence_anchors"] = [SG_DAILY_CONFLUENCE_ANCHOR, QUALITY_HERO_CONFLUENCE_ANCHOR]
+    if not payload.get("latest_handoff"):
+        page["empty_state_note"] = OPERATOR_HANDOFF_EMPTY_NOTE
     return page
 
 
@@ -1421,6 +1459,7 @@ def build_dashboard_snapshot(
                 ticket_context=daily_ticket_context,
             ),
             _team_digest_board_page(root, resolved_profile_id, bmw_root=bmw_root),
+            _operator_handoff_page(resolved_profile_id, root),
             _manual_review_page(resolved_profile_id, root, active_ticket_id=active_ticket_id),
         ],
     }
@@ -3515,6 +3554,93 @@ def _render_team_digest_board_panel(ui: Any, snapshot: dict[str, Any]) -> None:
             )
 
 
+def _render_operator_handoff_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "operator-handoff")
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    latest = payload.get("latest_handoff", {}) if isinstance(payload.get("latest_handoff"), dict) else {}
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
+        ownership_note = str(page.get("ownership_note", "")).strip()
+        if ownership_note:
+            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
+        latest_label = ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
+        _render_empty_state_note(ui, page)
+        rows = [
+            {
+                "label": str(item.get("label", "")),
+                "status": str(item.get("status", "")),
+                "detail": str(item.get("detail", "")),
+            }
+            for item in page.get("items", [])
+            if isinstance(item, dict)
+        ]
+        if rows:
+            _attach_tooltip(
+                ui,
+                ui.table(
+                    columns=[
+                        {"name": "label", "label": "Item", "field": "label", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="label",
+                ).classes("sgfx-table"),
+                "Latest handoff rows are read from the operator-local handoff log.",
+            )
+        ui.label("Mark stopping point").classes("sgfx-panel-tagline")
+        stopping_input = ui.input(
+            "Stopping point",
+            value=str(latest.get("stopping_point", "")),
+            placeholder="Example: reviewed exterior diffs through right-front view",
+        ).classes("full-width")
+        next_step_input = ui.input(
+            "Next step",
+            value=str(latest.get("next_step", "")),
+            placeholder="Example: continue with interior lighting screenshots",
+        ).classes("full-width")
+        ticket_input = ui.input(
+            "Ticket",
+            value=str(latest.get("ticket_id", "") or _dashboard_active_ticket_id(workspace)),
+            placeholder="Optional ticket id",
+        ).classes("full-width")
+        note_input = ui.textarea(
+            "Note",
+            value=str(latest.get("note", "")),
+            placeholder="Optional local note for the next operator",
+        ).classes("full-width")
+        status_label = ui.label("").classes("sgfx-muted")
+
+        def _record_handoff() -> None:
+            try:
+                record = record_operator_handoff(
+                    workspace=workspace,
+                    profile_id=str(snapshot.get("profile_id", "")),
+                    ticket_id=str(ticket_input.value or ""),
+                    stopping_point=str(stopping_input.value or ""),
+                    next_step=str(next_step_input.value or ""),
+                    note=str(note_input.value or ""),
+                )
+            except Exception as exc:  # noqa: BLE001
+                status_label.text = f"Handoff record failed: {exc}"
+                ui.notify("Handoff record failed.")
+                return
+            latest_label.text = f"Latest handoff for {record['profile_id']}: {record['stopping_point']}"
+            status_label.text = f"Handoff recorded locally: {record['handoff_id']}"
+            ui.notify("Handoff recorded locally.")
+
+        _attach_tooltip(
+            ui,
+            ui.button("Record handoff", on_click=_record_handoff).props("color=primary"),
+            "Record the stopping point in operator-local state.",
+        )
+
+
 def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
     with ui.column().classes("sgfx-page-panel"):
@@ -3648,6 +3774,8 @@ def _render_selected_page(
             _render_daily_digest_panel(ui, snapshot, workspace)
         elif page_id == "team-digest-board":
             _render_team_digest_board_panel(ui, snapshot)
+        elif page_id == "operator-handoff":
+            _render_operator_handoff_panel(ui, snapshot, workspace)
         elif page_id == "about":
             _render_about_panel(ui, ABOUT_CONTENT)
         else:
@@ -3859,6 +3987,8 @@ def _render_dashboard(
                     _render_daily_digest_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "team-digest-board":
                     _render_team_digest_board_panel(ui, state["snapshot"])
+                elif active_page_id == "operator-handoff":
+                    _render_operator_handoff_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "manual-review":
                     _render_manual_review_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "about":

@@ -63,7 +63,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(THEME_CHOICES, ["clean"])
         self.assertIsInstance(MANUAL_REVIEW_STATUSES, list)
 
-    def test_dashboard_snapshot_contains_seven_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_eight_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -79,6 +79,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "cross-car-comparison",
                 "daily-digest",
                 "team-digest-board",
+                "operator-handoff",
                 "manual-review",
             ],
         )
@@ -100,6 +101,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "cross-car-comparison", "label": "Cross-Car Comparison"},
                 {"id": "daily-digest", "label": "Daily Digest"},
                 {"id": "team-digest-board", "label": "Team Digest Board"},
+                {"id": "operator-handoff", "label": "Operator Handoff"},
                 {"id": "manual-review", "label": "Manual Review Companion"},
                 {"id": "about", "label": "About"},
             ],
@@ -122,6 +124,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
         self.assertEqual(
             snapshot["pages"][6]["tagline"],
+            "Record the stopping point before a shift handoff.",
+        )
+        self.assertEqual(
+            snapshot["pages"][7]["tagline"],
             "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
         )
         self.assertIn("Manual review remains required.", snapshot["guardrails"])
@@ -145,6 +151,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertEqual(team_page["payload"]["share_decision"]["selected_model"], "local_snapshot")
         self.assertFalse(team_page["payload"]["is_approval"])
+        handoff_page = next(page for page in snapshot["pages"] if page["id"] == "operator-handoff")
+        self.assertEqual(handoff_page["payload"]["status"], "not_run")
+        self.assertFalse(handoff_page["payload"]["is_approval"])
+        self.assertIn("stopping point", handoff_page["empty_state_note"].casefold())
         for forbidden in ("approved", "cleared", "signed-off", "production-ready"):
             self.assertNotIn(forbidden, json.dumps(snapshot, ensure_ascii=False).casefold())
 
@@ -284,7 +294,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 7)
+                self.assertEqual(len(snapshot["pages"]), 8)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

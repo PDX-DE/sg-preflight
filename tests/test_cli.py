@@ -1160,6 +1160,55 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Manual review remains required", markdown_stdout.getvalue())
         self.assertNotIn("validated", markdown_stdout.getvalue().lower())
 
+    def test_operator_handoff_cli_records_and_reads_latest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            record_stdout = io.StringIO()
+            with redirect_stdout(record_stdout):
+                record_result = main(
+                    [
+                        "operator-handoff",
+                        "record",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--ticket",
+                        "IDCEVODEV-977874",
+                        "--stopping-point",
+                        "Exterior diffs reviewed through right-front view.",
+                        "--next-step",
+                        "Continue with interior lighting screenshots.",
+                        "--json",
+                    ]
+                )
+
+            latest_stdout = io.StringIO()
+            with redirect_stdout(latest_stdout):
+                latest_result = main(
+                    [
+                        "operator-handoff",
+                        "latest",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G65",
+                        "--markdown",
+                    ]
+                )
+
+        self.assertEqual(record_result, 0)
+        payload = json.loads(record_stdout.getvalue())
+        self.assertEqual(payload["status"], "recorded")
+        self.assertEqual(payload["latest_handoff"]["profile_id"], "G65")
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(latest_result, 0)
+        self.assertIn("Operator Handoff", latest_stdout.getvalue())
+        self.assertIn("Stopping point", latest_stdout.getvalue())
+        self.assertIn("Manual review remains required", latest_stdout.getvalue())
+        self.assertNotIn("validated", latest_stdout.getvalue().lower())
+
     def test_bmw_git_readiness_read_cli_returns_json_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1308,7 +1357,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result, 7)
         runner.assert_called_once_with(workspace=None, initial_profile_id="G65", initial_mode="clean")
 
-    def test_desktop_state_surfaces_returns_seven_grafiks_evidence_cards(self) -> None:
+    def test_desktop_state_surfaces_returns_eight_grafiks_evidence_cards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             create_temp_g65_profile(root)
@@ -1328,6 +1377,7 @@ class TestCLI(unittest.TestCase):
                 "cross-car-comparison",
                 "daily-digest",
                 "team-digest-board",
+                "operator-handoff",
                 "manual-review",
             ],
         )

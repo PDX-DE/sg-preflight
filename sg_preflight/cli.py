@@ -88,6 +88,12 @@ from sg_preflight.manual_review import (
     record_manual_review_step,
     render_manual_review_markdown,
 )
+from sg_preflight.operator_handoff import (
+    build_operator_handoff_snapshot,
+    record_operator_handoff,
+    render_operator_handoff_markdown,
+    render_operator_handoff_text,
+)
 from sg_preflight.qa_hero_readiness import (
     read_qa_hero_readiness,
     render_qa_hero_readiness_markdown,
@@ -1233,6 +1239,29 @@ def build_parser() -> argparse.ArgumentParser:
     team_digest_board_snapshot.add_argument("--markdown", action="store_true", help="Print board as Markdown")
     _add_render_options(team_digest_board_snapshot)
 
+    operator_handoff = sub.add_parser(
+        "operator-handoff",
+        help="Record or read an operator-local shift handoff",
+    )
+    operator_handoff_sub = operator_handoff.add_subparsers(dest="operator_handoff_command", required=True)
+    operator_handoff_latest = operator_handoff_sub.add_parser("latest", help="Read the latest local handoff")
+    operator_handoff_latest.add_argument("--workspace", help="Workspace root override")
+    operator_handoff_latest.add_argument("--profile", required=True, help="Profile id such as G65")
+    operator_handoff_latest.add_argument("--json", action="store_true", help="Print handoff as JSON")
+    operator_handoff_latest.add_argument("--markdown", action="store_true", help="Print handoff as Markdown")
+    _add_render_options(operator_handoff_latest)
+
+    operator_handoff_record = operator_handoff_sub.add_parser("record", help="Record a local stopping point")
+    operator_handoff_record.add_argument("--workspace", help="Workspace root override")
+    operator_handoff_record.add_argument("--profile", required=True, help="Profile id such as G65")
+    operator_handoff_record.add_argument("--ticket", default="", help="Optional ticket id")
+    operator_handoff_record.add_argument("--stopping-point", required=True, help="Where the operator stopped")
+    operator_handoff_record.add_argument("--next-step", default="", help="Suggested next local step")
+    operator_handoff_record.add_argument("--note", default="", help="Optional operator-local note")
+    operator_handoff_record.add_argument("--json", action="store_true", help="Print recorded handoff as JSON")
+    operator_handoff_record.add_argument("--markdown", action="store_true", help="Print recorded handoff as Markdown")
+    _add_render_options(operator_handoff_record)
+
     manual_review = sub.add_parser(
         "manual-review",
         help="Create and update operator-recorded RaCo / Blender manual-review sessions",
@@ -2330,6 +2359,36 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _emit_text(render_team_digest_board_markdown(payload), args)
         else:
             _emit_text(render_team_digest_board_text(payload), args)
+        return 0
+
+    if args.command == "operator-handoff":
+        handoff_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.operator_handoff_command == "latest":
+                payload = build_operator_handoff_snapshot(workspace=handoff_root, profile_id=args.profile)
+            elif args.operator_handoff_command == "record":
+                record_operator_handoff(
+                    workspace=handoff_root,
+                    profile_id=args.profile,
+                    ticket_id=args.ticket,
+                    stopping_point=args.stopping_point,
+                    next_step=args.next_step,
+                    note=args.note,
+                )
+                payload = build_operator_handoff_snapshot(workspace=handoff_root, profile_id=args.profile)
+            else:
+                parser.error(f"Unhandled operator-handoff command: {args.operator_handoff_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"operator-handoff failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_operator_handoff_markdown(payload), args)
+        else:
+            _emit_text(render_operator_handoff_text(payload), args)
         return 0
 
     if args.command == "manual-review":

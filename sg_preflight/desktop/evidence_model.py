@@ -14,6 +14,7 @@ from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.manual_review import QUALITY_HERO_STEPS
+from sg_preflight.operator_handoff import build_operator_handoff_snapshot
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.qa_actions import ActionRecord, list_operator_actions, list_recent_action_records, load_action_record
 from sg_preflight.export_size_analysis import read_export_size_analysis
@@ -1091,6 +1092,11 @@ def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> lis
             "team-digest-board",
             "Team Digest Board",
             lambda: build_team_daily_digest_board(workspace=root, profiles=(normalized_profile, "G70", "G65")),
+        ),
+        _safe_item(
+            "operator-handoff",
+            "Operator Handoff",
+            lambda: build_operator_handoff_snapshot(workspace=root, profile_id=normalized_profile),
         ),
         DesktopSurfaceItem(
             key="manual-review",

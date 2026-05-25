@@ -137,6 +137,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
                 "cross-car-comparison",
                 "daily-digest",
                 "team-digest-board",
+                "operator-handoff",
                 "manual-review",
             ],
         )
