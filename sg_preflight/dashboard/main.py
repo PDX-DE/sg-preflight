@@ -37,6 +37,7 @@ from sg_preflight.dependency_onboarding import (
     poll_dependency_setup_action,
     start_dependency_setup_action,
 )
+from sg_preflight.jira_client import DEFAULT_JIRA_URL, load_jira_credentials
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
     apply_manual_review_suggestions,
@@ -925,6 +926,9 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID = "build-review-package"
 DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL = "Build review package for this workspace"
+QUALITY_HERO_REPORT_ACTION_ID = "build-quality-hero-report"
+QUALITY_HERO_REPORT_ACTION_LABEL = "Build Quality-Hero report"
+QUALITY_HERO_REPORT_ATTACH_ACTION_LABEL = "Attach to Jira ticket"
 DAILY_DIGEST_TICKET_ID_PLACEHOLDER = "e.g., IDCEVODEV-1005738"
 _DAILY_DIGEST_PARTIAL_SECTION_KEYS = (
     "what_landed_today",
@@ -960,17 +964,25 @@ def _daily_digest_page(
     context = dict(ticket_context or {})
     default_ticket = str(context.get("active_ticket_id", active_ticket_id)).strip()
     ticket_hint = str(context.get("ticket_id_hint", default_ticket or DAILY_DIGEST_TICKET_ID_PLACEHOLDER)).strip()
+    base_action = {
+        "requires_ticket_id": True,
+        "ticket_id_hint": ticket_hint or DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
+        "ticket_id_default": default_ticket,
+        "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
+        "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
+        "confluence_anchor": SG_DAILY_CONFLUENCE_ANCHOR,
+    }
     actions = [
         {
             "id": DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID,
             "label": DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL,
-            "requires_ticket_id": True,
-            "ticket_id_hint": ticket_hint or DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
-            "ticket_id_default": default_ticket,
-            "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
-            "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
-            "confluence_anchor": SG_DAILY_CONFLUENCE_ANCHOR,
-        }
+            **base_action,
+        },
+        {
+            "id": QUALITY_HERO_REPORT_ACTION_ID,
+            "label": QUALITY_HERO_REPORT_ACTION_LABEL,
+            **base_action,
+        },
     ]
     try:
         digest = build_latest_daily_digest(workspace=workspace)
@@ -1314,6 +1326,7 @@ _BUILD_PACKAGE_STDOUT_TAIL_LINES = 20
 _BUILD_PACKAGE_STDOUT_TAIL_BYTES = 2000
 _BUILD_PACKAGE_FILE_ACTIVITY_LIMIT = 20
 _BUILD_PACKAGE_TYPICAL_RANGE_LABEL = "typical 1-5 min"
+_QUALITY_HERO_REPORT_TIMEOUT_SECONDS = 600
 
 
 @dataclass
@@ -1666,6 +1679,153 @@ def build_dashboard_review_package(
         "stdout_tail": completed.stdout[-2000:] if completed.stdout else "",
         "stderr_tail": completed.stderr[-2000:] if completed.stderr else "",
         "recorded_by_tool": True,
+    }
+
+
+def _quality_hero_report_output_root(workspace: Path, profile_id: str) -> Path:
+    safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
+    return operator_ui_root(workspace) / "quality-hero-report" / safe_profile
+
+
+def _dashboard_quality_hero_report_command(
+    *,
+    workspace: Path,
+    profile_id: str,
+    ticket_id: str,
+    output_root: Path,
+    attach_ticket: str = "",
+) -> list[str]:
+    command = sgfx_cli_command(
+        "quality-hero-report",
+        "generate",
+        "--profile",
+        profile_id,
+        "--workspace",
+        str(workspace),
+        "--output-root",
+        str(output_root),
+        "--format",
+        "json",
+    )
+    if ticket_id:
+        command.extend(["--ticket", ticket_id])
+    if attach_ticket:
+        command.extend(["--attach-ticket", attach_ticket, "--auto-confirm"])
+    return command
+
+
+def _dashboard_jira_attachment_endpoint(ticket_id: str) -> str:
+    ticket = ticket_id.strip().upper()
+    try:
+        base_url = str(load_jira_credentials().get("jira_url", "") or DEFAULT_JIRA_URL)
+    except Exception:  # noqa: BLE001
+        base_url = DEFAULT_JIRA_URL
+    return f"{base_url.rstrip('/')}/rest/api/2/issue/{ticket}/attachments"
+
+
+def _attachment_response_url(attachment: dict[str, Any]) -> str:
+    response = attachment.get("response")
+    if isinstance(response, list) and response:
+        first = response[0]
+        if isinstance(first, dict):
+            return str(first.get("self", "") or "")
+    if isinstance(response, dict):
+        return str(response.get("self", "") or "")
+    return ""
+
+
+def _attachment_response_id(attachment: dict[str, Any]) -> str:
+    response = attachment.get("response")
+    if isinstance(response, list) and response:
+        first = response[0]
+        if isinstance(first, dict):
+            return str(first.get("id", "") or first.get("key", "") or "")
+    if isinstance(response, dict):
+        return str(response.get("id", "") or response.get("key", "") or "")
+    return ""
+
+
+def build_dashboard_quality_hero_report(
+    *,
+    workspace: Path | str,
+    profile_id: str,
+    ticket_id: str = "",
+    output_root: Path | str | None = None,
+    attach_ticket: str = "",
+    operator_confirmed: bool = False,
+    timeout_seconds: int = _QUALITY_HERO_REPORT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    clean_profile = profile_id.strip()
+    if not clean_profile:
+        raise ValueError("Profile ID required to build a Quality-Hero report.")
+    clean_ticket = ticket_id.strip().upper()
+    clean_attach_ticket = attach_ticket.strip().upper()
+    if clean_attach_ticket and not operator_confirmed:
+        raise ValueError("Operator confirmation is required before attaching a Quality-Hero report to Jira.")
+    workspace_path = Path(workspace).resolve()
+    output_path = Path(output_root).resolve() if output_root else _quality_hero_report_output_root(workspace_path, clean_profile)
+    command = _dashboard_quality_hero_report_command(
+        workspace=workspace_path,
+        profile_id=clean_profile,
+        ticket_id=clean_ticket,
+        output_root=output_path,
+        attach_ticket=clean_attach_ticket,
+    )
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+        **hidden_subprocess_kwargs(),
+    )
+    payload: dict[str, Any] = {}
+    if completed.stdout.strip():
+        try:
+            loaded = json.loads(completed.stdout)
+            payload = loaded if isinstance(loaded, dict) else {}
+        except json.JSONDecodeError:
+            payload = {}
+    outcome = "recorded" if completed.returncode == 0 else "failed"
+    ticket_for_state = clean_attach_ticket or clean_ticket
+    if completed.returncode == 0 and ticket_for_state:
+        _write_active_ticket_state(workspace_path, ticket_for_state, source="quality-hero-report")
+    append_activity_entry(
+        workspace_path,
+        verb="ran",
+        surface="daily-digest",
+        profile=clean_profile,
+        outcome="ok" if completed.returncode == 0 else "error",
+        note=(
+            f"Attach Quality-Hero report to {clean_attach_ticket}"
+            if clean_attach_ticket
+            else f"Build Quality-Hero report for {clean_ticket or 'no ticket'}"
+        ),
+    )
+    markdown_path = str(payload.get("markdown_path", "") or "")
+    json_path = str(payload.get("json_path", "") or "")
+    attachment = payload.get("jira_attachment", {}) if isinstance(payload.get("jira_attachment"), dict) else {}
+    return {
+        "ticket_id": clean_ticket,
+        "attach_ticket": clean_attach_ticket,
+        "profile_id": clean_profile,
+        "workspace": str(workspace_path),
+        "output_root": str(output_path),
+        "exit_code": completed.returncode,
+        "outcome": outcome,
+        "status": outcome,
+        "command": command,
+        "markdown_path": markdown_path,
+        "json_path": json_path,
+        "markdown_size_bytes": Path(markdown_path).stat().st_size if markdown_path and Path(markdown_path).is_file() else 0,
+        "json_size_bytes": Path(json_path).stat().st_size if json_path and Path(json_path).is_file() else 0,
+        "jira_attachment": attachment,
+        "attachment_id": _attachment_response_id(attachment),
+        "jira_url": _attachment_response_url(attachment),
+        "stdout_tail": completed.stdout[-2000:] if completed.stdout else "",
+        "stderr_tail": completed.stderr[-2000:] if completed.stderr else "",
+        "recorded_by_tool": True,
+        "is_approval": False,
     }
 
 
@@ -2835,6 +2995,172 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                 ).props("color=primary"),
                 "Build a local review package; nothing is posted externally.",
             )
+
+        quality_action = next(
+            (action for action in actions if action.get("id") == QUALITY_HERO_REPORT_ACTION_ID),
+            None,
+        )
+        if quality_action:
+            ui.separator()
+            ui.label("Quality-Hero report").classes("sgfx-panel-tagline")
+            ui.label(
+                "Generate the local Markdown report first. Attaching to Jira stays confirmation-gated per post."
+            ).classes("sgfx-muted")
+            anchor = str(quality_action.get("confluence_anchor", "")).strip()
+            if anchor:
+                ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
+            default_ticket = str(quality_action.get("ticket_id_default", "")).strip().upper()
+            recent_tickets = [
+                str(item).strip().upper()
+                for item in quality_action.get("recent_ticket_ids", [])
+                if str(item).strip()
+            ]
+            ticket_options = []
+            for candidate in [default_ticket, *recent_tickets]:
+                if candidate and candidate not in ticket_options:
+                    ticket_options.append(candidate)
+            ticket_select = ui.select(
+                ticket_options or [DAILY_DIGEST_TICKET_ID_PLACEHOLDER],
+                value=default_ticket if default_ticket in ticket_options else (ticket_options[0] if ticket_options else None),
+                label="Ticket picker",
+            ).classes("full-width")
+            ticket_override = ui.input(
+                label="Ticket override",
+                placeholder=str(quality_action.get("ticket_id_hint", DAILY_DIGEST_TICKET_ID_PLACEHOLDER)),
+            ).classes("full-width")
+            report_status = ui.label("No Quality-Hero report generated in this session.").classes("sgfx-muted")
+            report_path_label = ui.label("").classes("sgfx-muted")
+            attach_status = ui.label("").classes("sgfx-muted")
+            jira_link_host = ui.column().classes("full-width")
+            report_state: dict[str, Any] = {}
+            attach_button_holder: dict[str, Any] = {}
+
+            def _selected_report_ticket() -> str:
+                raw = str(ticket_override.value or ticket_select.value or "").strip().upper()
+                return raw if _TICKET_ID_PATTERN.fullmatch(raw) else ""
+
+            def _report_markdown_path() -> Path | None:
+                value = str(report_state.get("markdown_path", "") or "").strip()
+                if not value:
+                    return None
+                path = Path(value)
+                return path if path.is_file() else None
+
+            def _build_quality_report() -> None:
+                ticket_value = _selected_report_ticket()
+                if not ticket_value:
+                    ui.notify("Choose or enter a Jira ticket before building the report.")
+                    return
+                try:
+                    result = build_dashboard_quality_hero_report(
+                        workspace=workspace,
+                        profile_id=str(snapshot["profile_id"]),
+                        ticket_id=ticket_value,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    report_status.text = f"Quality-Hero report failed: {exc}"
+                    ui.notify("Quality-Hero report failed.")
+                    return
+                report_state.clear()
+                report_state.update(result)
+                markdown_path = _report_markdown_path()
+                report_status.text = (
+                    f"Quality-Hero report {result.get('outcome', 'unknown')} "
+                    f"(exit {result.get('exit_code', '?')}) for {ticket_value}."
+                )
+                report_path_label.text = f"Report: {markdown_path}" if markdown_path else "Report path unavailable."
+                attach_status.text = "Report can now be attached after confirmation." if markdown_path else ""
+                jira_link_host.clear()
+                if markdown_path:
+                    attach_button_holder["button"].enable()
+                ui.notify("Quality-Hero report generated locally.")
+
+            def _open_attach_dialog() -> None:
+                ticket_value = _selected_report_ticket()
+                markdown_path = _report_markdown_path()
+                if not ticket_value:
+                    ui.notify("Choose or enter a Jira ticket before attaching.")
+                    return
+                if markdown_path is None:
+                    ui.notify("Generate the Quality-Hero report before attaching to Jira.")
+                    return
+                confirm_ticket.text = f"Ticket: {ticket_value}"
+                confirm_path.text = f"Report path: {markdown_path}"
+                confirm_size.text = f"Attachment size: {_size_label(markdown_path.stat().st_size)}"
+                confirm_endpoint.text = f"Endpoint: {_dashboard_jira_attachment_endpoint(ticket_value)}"
+                attach_dialog.open()
+
+            with ui.dialog() as attach_dialog, ui.card():
+                ui.label("Attach to Jira ticket").classes("sgfx-panel-title")
+                ui.label("Post to Jira?").classes("sgfx-summary")
+                ui.label("This posts the generated Markdown report only after this confirmation.").classes(
+                    "sgfx-summary"
+                )
+                confirm_ticket = ui.label("Ticket:").classes("sgfx-muted")
+                confirm_path = ui.label("Report path:").classes("sgfx-muted")
+                confirm_size = ui.label("Attachment size:").classes("sgfx-muted")
+                confirm_endpoint = ui.label("Endpoint:").classes("sgfx-muted")
+                ui.label("Manual review remains required. Decision: not approval — evidence only.").classes(
+                    "sgfx-muted"
+                )
+
+                def _post_report_attachment() -> None:
+                    ticket_value = _selected_report_ticket()
+                    markdown_path = _report_markdown_path()
+                    if not ticket_value or markdown_path is None:
+                        ui.notify("Generate a report and choose a ticket before posting.")
+                        return
+                    try:
+                        result = build_dashboard_quality_hero_report(
+                            workspace=workspace,
+                            profile_id=str(snapshot["profile_id"]),
+                            ticket_id=ticket_value,
+                            output_root=Path(str(report_state.get("output_root", ""))),
+                            attach_ticket=ticket_value,
+                            operator_confirmed=True,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        attach_status.text = f"Jira attachment failed: {exc}"
+                        ui.notify("Jira attachment failed.")
+                        attach_dialog.close()
+                        return
+                    report_state.clear()
+                    report_state.update(result)
+                    attachment_id = str(result.get("attachment_id", "") or "")
+                    jira_url = str(result.get("jira_url", "") or "")
+                    attach_status.text = (
+                        f"Jira attachment {attachment_id or result.get('outcome', 'unknown')} "
+                        f"for {ticket_value}."
+                    )
+                    jira_link_host.clear()
+                    with jira_link_host:
+                        if jira_url:
+                            ui.link("Open Jira attachment", jira_url, new_tab=True).classes("sgfx-muted")
+                        else:
+                            ui.label("Jira attachment URL unavailable in response.").classes("sgfx-muted")
+                    ui.notify("Quality-Hero report attached to Jira.")
+                    attach_dialog.close()
+
+                _attach_tooltip(
+                    ui,
+                    ui.button("Post", on_click=_post_report_attachment).props("color=primary"),
+                    "Attach this local Markdown report to the selected Jira ticket.",
+                )
+                ui.button("Cancel", on_click=attach_dialog.close)
+
+            _attach_tooltip(
+                ui,
+                ui.button(str(quality_action.get("label", QUALITY_HERO_REPORT_ACTION_LABEL)), on_click=_build_quality_report)
+                .props("color=primary"),
+                "Generate a local Quality-Hero Markdown report.",
+            )
+            attach_button = _attach_tooltip(
+                ui,
+                ui.button(QUALITY_HERO_REPORT_ATTACH_ACTION_LABEL, on_click=_open_attach_dialog),
+                "Review the Jira ticket, report path, size, and endpoint before attaching.",
+            )
+            attach_button.disable()
+            attach_button_holder["button"] = attach_button
 
 
 def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:

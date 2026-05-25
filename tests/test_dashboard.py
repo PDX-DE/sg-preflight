@@ -333,6 +333,18 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("sanitize=False", source)
         self.assertNotIn("window.open", source)
 
+    def test_dashboard_source_exposes_quality_report_jira_attach_flow(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Build Quality-Hero report", source)
+        self.assertIn("Attach to Jira ticket", source)
+        self.assertIn("Ticket picker", source)
+        self.assertIn("Post to Jira?", source)
+        self.assertIn("--attach-ticket", source)
+        self.assertIn("--auto-confirm", source)
+
     def test_dashboard_snapshot_exposes_first_run_setup_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
@@ -917,12 +929,15 @@ class TestDailyDigestPage(unittest.TestCase):
                 page = _daily_digest_page(workspace, "G65")
 
         actions = page.get("actions", [])
-        self.assertEqual(len(actions), 1)
-        action = actions[0]
+        self.assertEqual(len(actions), 2)
+        action = next(item for item in actions if item["id"] == DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID)
         self.assertEqual(action["id"], DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID)
         self.assertEqual(action["label"], DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL)
         self.assertTrue(action["requires_ticket_id"])
         self.assertEqual(action["ticket_id_hint"], DAILY_DIGEST_TICKET_ID_PLACEHOLDER)
+        report_action = next(item for item in actions if item["id"] == "build-quality-hero-report")
+        self.assertEqual(report_action["label"], "Build Quality-Hero report")
+        self.assertTrue(report_action["requires_ticket_id"])
 
     def test_daily_digest_page_action_carries_active_ticket_id_hint(self) -> None:
         from sg_preflight.dashboard.main import _daily_digest_page
@@ -935,8 +950,9 @@ class TestDailyDigestPage(unittest.TestCase):
             ):
                 page = _daily_digest_page(workspace, "G65", active_ticket_id="IDCEVODEV-1005738")
 
-        self.assertEqual(page["actions"][0]["ticket_id_hint"], "IDCEVODEV-1005738")
-        self.assertEqual(page["actions"][0]["ticket_id_default"], "IDCEVODEV-1005738")
+        for action in page["actions"]:
+            self.assertEqual(action["ticket_id_hint"], "IDCEVODEV-1005738")
+            self.assertEqual(action["ticket_id_default"], "IDCEVODEV-1005738")
         self.assertEqual(page["payload"]["active_ticket_id"], "IDCEVODEV-1005738")
 
     def test_daily_digest_ticket_context_prefers_git_branch_before_activity_log(self) -> None:
@@ -1139,6 +1155,92 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertNotIn("sg_preflight", command)
         self.assertIn("IDCEVODEV-1009239", command)
         self.assertIn("NA0", command)
+
+    def test_build_quality_hero_report_invokes_cli_without_jira_attachment(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            markdown_path = workspace / "out" / "quality" / "quality-hero-review-g70.md"
+            json_path = workspace / "out" / "quality" / "quality-hero-review-g70.json"
+            markdown_path.parent.mkdir(parents=True)
+            markdown_path.write_text("# report\n", encoding="utf-8")
+            markdown_size = markdown_path.stat().st_size
+            json_path.write_text("{}", encoding="utf-8")
+            fake_completed = mock.Mock(
+                returncode=0,
+                stdout=json.dumps({"markdown_path": str(markdown_path), "json_path": str(json_path)}),
+                stderr="",
+            )
+            with mock.patch.object(dashboard_main.subprocess, "run", return_value=fake_completed) as run_mock:
+                result = dashboard_main.build_dashboard_quality_hero_report(
+                    workspace=workspace,
+                    profile_id="G70",
+                    ticket_id="IDCEVODEV-1009244",
+                )
+
+        command = run_mock.call_args.args[0]
+        self.assertIn("quality-hero-report", command)
+        self.assertIn("generate", command)
+        self.assertIn("--ticket", command)
+        self.assertIn("IDCEVODEV-1009244", command)
+        self.assertNotIn("--attach-ticket", command)
+        self.assertEqual(result["outcome"], "recorded")
+        self.assertEqual(result["markdown_size_bytes"], markdown_size)
+        self.assertEqual(result["markdown_path"], str(markdown_path))
+
+    def test_build_quality_hero_report_attachment_requires_operator_confirmation(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                dashboard_main.build_dashboard_quality_hero_report(
+                    workspace=Path(tmp),
+                    profile_id="G70",
+                    ticket_id="IDCEVODEV-1009244",
+                    attach_ticket="IDCEVODEV-1009244",
+                    operator_confirmed=False,
+                )
+
+    def test_build_quality_hero_report_attach_uses_auto_confirmed_cli_path(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            markdown_path = workspace / "out" / "quality" / "quality-hero-review-g70.md"
+            json_path = workspace / "out" / "quality" / "quality-hero-review-g70.json"
+            markdown_path.parent.mkdir(parents=True)
+            markdown_path.write_text("# report\n", encoding="utf-8")
+            json_path.write_text("{}", encoding="utf-8")
+            fake_completed = mock.Mock(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "markdown_path": str(markdown_path),
+                        "json_path": str(json_path),
+                        "jira_attachment": {
+                            "status": "recorded",
+                            "response": [{"id": "11915479", "self": "https://jira.example/attachment/11915479"}],
+                        },
+                    }
+                ),
+                stderr="",
+            )
+            with mock.patch.object(dashboard_main.subprocess, "run", return_value=fake_completed) as run_mock:
+                result = dashboard_main.build_dashboard_quality_hero_report(
+                    workspace=workspace,
+                    profile_id="G70",
+                    ticket_id="IDCEVODEV-1009244",
+                    output_root=workspace / "out" / "quality",
+                    attach_ticket="IDCEVODEV-1009244",
+                    operator_confirmed=True,
+                )
+
+        command = run_mock.call_args.args[0]
+        self.assertIn("--attach-ticket", command)
+        self.assertIn("--auto-confirm", command)
+        self.assertEqual(result["attachment_id"], "11915479")
+        self.assertEqual(result["jira_url"], "https://jira.example/attachment/11915479")
 
     def test_build_dashboard_review_package_marks_failed_outcome_on_nonzero_exit(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main
