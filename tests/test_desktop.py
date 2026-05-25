@@ -134,6 +134,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
                 "delivery-checklist",
                 "screenshot-test-state",
                 "risk-score",
+                "cross-car-comparison",
                 "daily-digest",
                 "team-digest-board",
                 "manual-review",

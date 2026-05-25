@@ -1106,6 +1106,60 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Manual review remains required", markdown_stdout.getvalue())
         self.assertNotIn("validated", markdown_stdout.getvalue().lower())
 
+    def test_cross_car_comparison_cli_returns_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            _write_screenshot_test_state(root)
+            clean_env = {
+                "SG_BMW_CAR_MODELS_ROOT": "",
+                "SG_CARMODELS_REPO": "",
+                "SG-CarModels-Repo": "",
+                "Digital-3D-Car-Repo": "",
+            }
+
+            stdout = io.StringIO()
+            with mock.patch.dict("os.environ", clean_env):
+                with redirect_stdout(stdout):
+                    result = main(
+                        [
+                            "cross-car-comparison",
+                            "snapshot",
+                            "--workspace",
+                            str(root),
+                            "--left-profile",
+                            "G70",
+                            "--right-profile",
+                            "G65",
+                            "--json",
+                        ]
+                    )
+
+                markdown_stdout = io.StringIO()
+                with redirect_stdout(markdown_stdout):
+                    markdown_result = main(
+                        [
+                            "cross-car-comparison",
+                            "snapshot",
+                            "--workspace",
+                            str(root),
+                            "--left-profile",
+                            "G70",
+                            "--right-profile",
+                            "G65",
+                            "--markdown",
+                        ]
+                    )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["comparison_axis"], "risk-score")
+        self.assertEqual(payload["profiles"], ["G70", "G65"])
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(markdown_result, 0)
+        self.assertIn("Cross-Car Comparison", markdown_stdout.getvalue())
+        self.assertIn("Manual review remains required", markdown_stdout.getvalue())
+        self.assertNotIn("validated", markdown_stdout.getvalue().lower())
+
     def test_bmw_git_readiness_read_cli_returns_json_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -1254,7 +1308,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result, 7)
         runner.assert_called_once_with(workspace=None, initial_profile_id="G65", initial_mode="clean")
 
-    def test_desktop_state_surfaces_returns_six_grafiks_evidence_cards(self) -> None:
+    def test_desktop_state_surfaces_returns_seven_grafiks_evidence_cards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             create_temp_g65_profile(root)
@@ -1271,6 +1325,7 @@ class TestCLI(unittest.TestCase):
                 "delivery-checklist",
                 "screenshot-test-state",
                 "risk-score",
+                "cross-car-comparison",
                 "daily-digest",
                 "team-digest-board",
                 "manual-review",

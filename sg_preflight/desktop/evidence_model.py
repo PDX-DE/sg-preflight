@@ -10,6 +10,7 @@ from typing import Any
 import uuid
 
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
+from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.manual_review import QUALITY_HERO_STEPS
@@ -1075,6 +1076,11 @@ def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> lis
             "risk-score",
             "Risk Score",
             lambda: read_per_car_risk_score(normalized_profile, workspace=root),
+        ),
+        _safe_item(
+            "cross-car-comparison",
+            "Cross-Car Comparison",
+            lambda: build_cross_car_comparison(workspace=root, left_profile="G70", right_profile="G65"),
         ),
         _safe_item(
             "daily-digest",

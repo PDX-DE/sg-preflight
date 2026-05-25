@@ -26,6 +26,11 @@ from sg_preflight.bmw_git_readiness import (
     render_bmw_git_readiness_markdown,
     render_bmw_git_readiness_text,
 )
+from sg_preflight.cross_car_comparison import (
+    build_cross_car_comparison,
+    render_cross_car_comparison_markdown,
+    render_cross_car_comparison_text,
+)
 from sg_preflight.desktop.evidence_model import (
     desktop_action_snapshot,
     desktop_actions_for_profile,
@@ -791,6 +796,26 @@ def build_parser() -> argparse.ArgumentParser:
     risk_score_read.add_argument("--json", action="store_true", help="Print risk score as JSON")
     risk_score_read.add_argument("--markdown", action="store_true", help="Print risk score as Markdown")
     _add_render_options(risk_score_read)
+
+    cross_car_comparison = sub.add_parser(
+        "cross-car-comparison",
+        help="Compare two car profiles using the same local risk-score widget",
+    )
+    cross_car_comparison_sub = cross_car_comparison.add_subparsers(
+        dest="cross_car_comparison_command",
+        required=True,
+    )
+    cross_car_snapshot = cross_car_comparison_sub.add_parser(
+        "snapshot",
+        help="Read a side-by-side profile comparison",
+    )
+    cross_car_snapshot.add_argument("--workspace", help="Workspace root override")
+    cross_car_snapshot.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    cross_car_snapshot.add_argument("--left-profile", default="G70", help="Left profile id such as G70")
+    cross_car_snapshot.add_argument("--right-profile", default="G65", help="Right profile id such as G65")
+    cross_car_snapshot.add_argument("--json", action="store_true", help="Print comparison as JSON")
+    cross_car_snapshot.add_argument("--markdown", action="store_true", help="Print comparison as Markdown")
+    _add_render_options(cross_car_snapshot)
 
     bmw_git_readiness = sub.add_parser(
         "bmw-git-readiness",
@@ -1705,6 +1730,31 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _emit_text(render_risk_score_markdown(payload), args)
         else:
             _emit_text(render_risk_score_text(payload), args)
+        return 0
+
+    if args.command == "cross-car-comparison":
+        comparison_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.cross_car_comparison_command == "snapshot":
+                payload = build_cross_car_comparison(
+                    workspace=comparison_root,
+                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+                    left_profile=args.left_profile,
+                    right_profile=args.right_profile,
+                )
+            else:
+                parser.error(f"Unhandled cross-car-comparison command: {args.cross_car_comparison_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"cross-car-comparison failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_cross_car_comparison_markdown(payload), args)
+        else:
+            _emit_text(render_cross_car_comparison_text(payload), args)
         return 0
 
     if args.command == "bmw-git-readiness":

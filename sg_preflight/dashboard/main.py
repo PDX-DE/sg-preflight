@@ -19,6 +19,7 @@ from urllib.parse import quote
 from sg_preflight.activity_log import append_activity_entry
 from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_asset_root
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
+from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.delivery_workbook_generation import (
@@ -90,6 +91,7 @@ DASHBOARD_NAVIGATION = (
     ("delivery-checklist", "Delivery Checklist"),
     ("screenshot-test-state", "Screenshot Test State"),
     ("risk-score", "Risk Score"),
+    ("cross-car-comparison", "Cross-Car Comparison"),
     ("daily-digest", "Daily Digest"),
     ("team-digest-board", "Team Digest Board"),
     ("manual-review", "Manual Review Companion"),
@@ -194,6 +196,9 @@ SCREENSHOT_TEST_STATE_EMPTY_NOTE = (
 )
 RISK_SCORE_EMPTY_NOTE = (
     "No prior manual-review session or screenshot evidence was found for this profile. Start with evidence capture and review recording."
+)
+CROSS_CAR_COMPARISON_EMPTY_NOTE = (
+    "No cross-car comparison rows were generated yet. Build local evidence for G70 and G65, then refresh this page."
 )
 DAILY_DIGEST_EMPTY_NOTE = (
     "No review package on this workspace yet. Click Build to generate one for the active ticket."
@@ -834,6 +839,31 @@ def _risk_score_page(
     return page
 
 
+def _cross_car_comparison_page(
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="cross-car-comparison",
+        title="Cross-Car Comparison",
+        tagline="G70 vs G65 risk-score widget side by side.",
+        reader=lambda: build_cross_car_comparison(
+            workspace=workspace,
+            bmw_root=bmw_root,
+            left_profile="G70",
+            right_profile="G65",
+        ),
+        workspace=workspace,
+        ownership_note="Read-only comparison of local risk-score evidence; no BMW source or network writes.",
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["confluence_anchors"] = list(payload.get("confluence_anchors", []))
+    if not page.get("items"):
+        page["empty_state_note"] = CROSS_CAR_COMPARISON_EMPTY_NOTE
+    return page
+
+
 def _screenshot_review_viewer_output_root(workspace: Path, profile_id: str) -> Path:
     safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
     return operator_ui_root(workspace) / "screenshot-review-viewer" / safe_profile
@@ -907,6 +937,17 @@ def _notify_completion_safe(
 
 
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
+    comparison_rows = payload.get("comparison_rows", [])
+    if isinstance(comparison_rows, list) and comparison_rows:
+        return [
+            {
+                "label": str(item.get("label", "row")),
+                "status": str(item.get("status", "unknown")),
+                "detail": f"{item.get('left_value', '')} vs {item.get('right_value', '')}; {item.get('delta_label', '')}",
+            }
+            for item in comparison_rows
+            if isinstance(item, dict)
+        ]
     board_rows = payload.get("board_rows", [])
     if isinstance(board_rows, list) and board_rows:
         return [
@@ -992,6 +1033,11 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "sections",
         "profiles",
         "board_rows",
+        "comparison_axis",
+        "comparison_rows",
+        "left_profile",
+        "right_profile",
+        "widget_label",
     )
     return {key: payload[key] for key in allowed if key in payload}
 
@@ -1367,6 +1413,7 @@ def build_dashboard_snapshot(
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _screenshot_test_state_page(resolved_profile_id, root, bmw_root=bmw_root),
             _risk_score_page(resolved_profile_id, root, bmw_root=bmw_root),
+            _cross_car_comparison_page(root, bmw_root=bmw_root),
             _daily_digest_page(
                 root,
                 resolved_profile_id,
@@ -2962,6 +3009,52 @@ def _render_risk_score_panel(ui: Any, snapshot: dict[str, Any]) -> None:
             )
 
 
+def _render_cross_car_comparison_panel(ui: Any, snapshot: dict[str, Any]) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "cross-car-comparison")
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    left_profile = str(payload.get("left_profile", "G70"))
+    right_profile = str(payload.get("right_profile", "G65"))
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
+        ownership_note = str(page.get("ownership_note", "")).strip()
+        if ownership_note:
+            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
+        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
+        _render_empty_state_note(ui, page)
+        rows = [
+            {
+                "label": str(item.get("label", "")),
+                "left_value": str(item.get("left_value", "")),
+                "right_value": str(item.get("right_value", "")),
+                "delta": str(item.get("delta_label", "")),
+                "status": str(item.get("status", "")),
+            }
+            for item in page.get("items", [])
+            if isinstance(item, dict)
+        ]
+        if rows:
+            _attach_tooltip(
+                ui,
+                ui.table(
+                    columns=[
+                        {"name": "label", "label": "Signal", "field": "label", "align": "left"},
+                        {"name": "left_value", "label": left_profile, "field": "left_value", "align": "left"},
+                        {"name": "right_value", "label": right_profile, "field": "right_value", "align": "left"},
+                        {"name": "delta", "label": "Delta", "field": "delta", "align": "left"},
+                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="label",
+                ).classes("sgfx-table"),
+                "Compares the same local risk-score widget across two profiles.",
+            )
+
+
 def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
     with ui.column().classes("sgfx-page-panel"):
@@ -3547,6 +3640,8 @@ def _render_selected_page(
             _render_screenshot_test_state_panel(ui, snapshot, workspace)
         elif page_id == "risk-score":
             _render_risk_score_panel(ui, snapshot)
+        elif page_id == "cross-car-comparison":
+            _render_cross_car_comparison_panel(ui, snapshot)
         elif page_id == "manual-review":
             _render_manual_review_panel(ui, snapshot, workspace)
         elif page_id == "daily-digest":
@@ -3758,6 +3853,8 @@ def _render_dashboard(
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
                 elif active_page_id == "risk-score":
                     _render_risk_score_panel(ui, state["snapshot"])
+                elif active_page_id == "cross-car-comparison":
+                    _render_cross_car_comparison_panel(ui, state["snapshot"])
                 elif active_page_id == "daily-digest":
                     _render_daily_digest_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "team-digest-board":
