@@ -58,7 +58,12 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertEqual(item.key, "front")
             self.assertEqual(item.expected_uri, "assets/expected/front.bmp")
             self.assertEqual(item.actual_uri, "assets/actual/front.bmp")
-            self.assertEqual(item.diff_uri, "assets/diff/front.bmp")
+            expected_diff_uri = (
+                "assets/diff/front.png"
+                if (bundle.html_path.parent / "assets/diff/front.png").is_file()
+                else "assets/diff/front.bmp"
+            )
+            self.assertEqual(item.diff_uri, expected_diff_uri)
             self.assertTrue((bundle.html_path.parent / item.expected_uri).is_file())
             self.assertTrue((bundle.html_path.parent / item.actual_uri).is_file())
             self.assertTrue((bundle.html_path.parent / item.diff_uri).is_file())
