@@ -536,6 +536,50 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(by_slug["functionality_test_raco"]["suggested_verdict"], "passed")
         self.assertIn("Suggested starting verdict", markdown_stdout.getvalue())
 
+    def test_onboarding_guide_cli_returns_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = main(
+                    [
+                        "onboarding-guide",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G70",
+                        "--json",
+                    ]
+                )
+
+            markdown_stdout = io.StringIO()
+            markdown_stderr = io.StringIO()
+            with redirect_stdout(markdown_stdout), redirect_stderr(markdown_stderr):
+                markdown_result = main(
+                    [
+                        "onboarding-guide",
+                        "read",
+                        "--workspace",
+                        str(root),
+                        "--profile",
+                        "G70",
+                        "--markdown",
+                    ]
+                )
+
+        self.assertEqual(result, 0, msg=stderr.getvalue())
+        self.assertEqual(markdown_result, 0, msg=markdown_stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertTrue(payload["manual_review_required"])
+        self.assertFalse(payload["records_operator_verdict"])
+        self.assertFalse(payload["is_approval"])
+        self.assertIn("dependency-setup", {step["key"] for step in payload["steps"]})
+        self.assertIn("Onboarding Guide", markdown_stdout.getvalue())
+
     def test_cli_with_workspace_appends_activity_log_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

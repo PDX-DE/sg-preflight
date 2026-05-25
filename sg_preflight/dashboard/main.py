@@ -54,6 +54,7 @@ from sg_preflight.operator_handoff import (
     build_operator_handoff_snapshot,
     record_operator_handoff,
 )
+from sg_preflight.onboarding_assistant import build_onboarding_guide
 from sg_preflight.profiles import (
     PROFILE_REGISTRY_DYNAMIC_SOURCE,
     PROFILE_SCOPE_DEFAULT,
@@ -96,6 +97,7 @@ DASHBOARD_GUARDRAILS = (
 )
 DASHBOARD_NAVIGATION = (
     ("delivery-checklist", "Delivery Checklist"),
+    ("onboarding-guide", "Onboarding Guide"),
     ("screenshot-test-state", "Screenshot Test State"),
     ("risk-score", "Risk Score"),
     ("cross-car-comparison", "Cross-Car Comparison"),
@@ -783,6 +785,32 @@ def _delivery_checklist_page(
         }
     ]
     return page
+
+
+def _onboarding_guide_page(
+    profile_id: str,
+    workspace: Path | str,
+    *,
+    setup_status: dict[str, Any],
+    bmw_root: Path | str | None = None,
+) -> dict[str, Any]:
+    payload = build_onboarding_guide(
+        profile_id,
+        workspace=workspace,
+        bmw_root=bmw_root,
+        dependency_status=setup_status,
+    )
+    return {
+        "id": "onboarding-guide",
+        "title": "Onboarding Guide",
+        "tagline": "New-operator path through setup, evidence pages, manual review, and handoff.",
+        "status": str(payload.get("onboarding_status", "unknown")),
+        "data_available": True,
+        "summary": str(payload.get("summary", "")),
+        "items": list(payload.get("items", [])),
+        "payload": payload,
+        "confluence_anchors": list(payload.get("confluence_anchors", [])),
+    }
 
 
 def _screenshot_test_state_page(
@@ -1556,6 +1584,12 @@ def build_dashboard_snapshot(
         },
         "pages": [
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
+            _onboarding_guide_page(
+                resolved_profile_id,
+                root,
+                bmw_root=bmw_root,
+                setup_status=setup_status,
+            ),
             _screenshot_test_state_page(resolved_profile_id, root, bmw_root=bmw_root),
             _risk_score_page(resolved_profile_id, root, bmw_root=bmw_root),
             _cross_car_comparison_page(root, bmw_root=bmw_root),

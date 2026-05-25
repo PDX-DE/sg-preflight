@@ -64,7 +64,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(THEME_CHOICES, ["clean"])
         self.assertIsInstance(MANUAL_REVIEW_STATUSES, list)
 
-    def test_dashboard_snapshot_contains_eight_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_nine_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -75,6 +75,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             page_ids,
             [
                 "delivery-checklist",
+                "onboarding-guide",
                 "screenshot-test-state",
                 "risk-score",
                 "cross-car-comparison",
@@ -97,6 +98,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             snapshot["navigation"],
             [
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
+                {"id": "onboarding-guide", "label": "Onboarding Guide"},
                 {"id": "screenshot-test-state", "label": "Screenshot Test State"},
                 {"id": "risk-score", "label": "Risk Score"},
                 {"id": "cross-car-comparison", "label": "Cross-Car Comparison"},
@@ -112,23 +114,27 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             ["F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit"],
         )
         self.assertEqual(snapshot["pages"][0]["tagline"], "Workbook evidence per delivery profile (read-only).")
-        self.assertEqual(snapshot["pages"][1]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
         self.assertEqual(
-            snapshot["pages"][2]["tagline"],
+            snapshot["pages"][1]["tagline"],
+            "New-operator path through setup, evidence pages, manual review, and handoff.",
+        )
+        self.assertEqual(snapshot["pages"][2]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
+        self.assertEqual(
+            snapshot["pages"][3]["tagline"],
             "Per-car review focus signal with delta since latest local manual review.",
         )
-        self.assertEqual(snapshot["pages"][3]["tagline"], "G70 vs G65 risk-score widget side by side.")
-        self.assertEqual(snapshot["pages"][4]["tagline"], "Morning status snapshot for the SG Daily standup.")
+        self.assertEqual(snapshot["pages"][4]["tagline"], "G70 vs G65 risk-score widget side by side.")
+        self.assertEqual(snapshot["pages"][5]["tagline"], "Morning status snapshot for the SG Daily standup.")
         self.assertEqual(
-            snapshot["pages"][5]["tagline"],
+            snapshot["pages"][6]["tagline"],
             "Local snapshot for standup review across selected car profiles.",
         )
         self.assertEqual(
-            snapshot["pages"][6]["tagline"],
+            snapshot["pages"][7]["tagline"],
             "Record the stopping point before a shift handoff.",
         )
         self.assertEqual(
-            snapshot["pages"][7]["tagline"],
+            snapshot["pages"][8]["tagline"],
             "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
         )
         self.assertIn("Manual review remains required.", snapshot["guardrails"])
@@ -141,6 +147,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertTrue(manual_page["confluence_anchors"])
         self.assertTrue(all(item["status"] == "not_run" for item in manual_page["items"]))
         self.assertTrue(all(step["verdict"] == "not_run" for step in manual_page["payload"]["steps"]))
+        onboarding_page = next(page for page in snapshot["pages"] if page["id"] == "onboarding-guide")
+        self.assertEqual(onboarding_page["payload"]["status"], "available")
+        self.assertTrue(onboarding_page["payload"]["manual_review_required"])
+        self.assertFalse(onboarding_page["payload"]["is_approval"])
+        self.assertIn("dependency-setup", {item["key"] for item in onboarding_page["payload"]["steps"]})
         risk_page = next(page for page in snapshot["pages"] if page["id"] == "risk-score")
         self.assertIn("risk_score", risk_page["payload"])
         self.assertFalse(risk_page["payload"]["is_approval"])
@@ -295,7 +306,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 8)
+                self.assertEqual(len(snapshot["pages"]), 9)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -481,7 +492,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 8)
+        self.assertEqual(len(snapshot["pages"]), 9)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -495,7 +506,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 8)
+        self.assertEqual(len(snapshot["pages"]), 9)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")

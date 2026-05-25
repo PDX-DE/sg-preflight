@@ -98,6 +98,11 @@ from sg_preflight.operator_handoff import (
     render_operator_handoff_markdown,
     render_operator_handoff_text,
 )
+from sg_preflight.onboarding_assistant import (
+    build_onboarding_guide,
+    render_onboarding_guide_markdown,
+    render_onboarding_guide_text,
+)
 from sg_preflight.qa_hero_readiness import (
     read_qa_hero_readiness,
     render_qa_hero_readiness_markdown,
@@ -1266,6 +1271,19 @@ def build_parser() -> argparse.ArgumentParser:
     operator_handoff_record.add_argument("--markdown", action="store_true", help="Print recorded handoff as Markdown")
     _add_render_options(operator_handoff_record)
 
+    onboarding_guide = sub.add_parser(
+        "onboarding-guide",
+        help="Read the local onboarding guide for one profile",
+    )
+    onboarding_guide_sub = onboarding_guide.add_subparsers(dest="onboarding_guide_command", required=True)
+    onboarding_guide_read = onboarding_guide_sub.add_parser("read", help="Read onboarding guidance")
+    onboarding_guide_read.add_argument("--workspace", help="Workspace root override")
+    onboarding_guide_read.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    onboarding_guide_read.add_argument("--profile", required=True, help="Profile id such as G65")
+    onboarding_guide_read.add_argument("--json", action="store_true", help="Print guide as JSON")
+    onboarding_guide_read.add_argument("--markdown", action="store_true", help="Print guide as Markdown")
+    _add_render_options(onboarding_guide_read)
+
     manual_review = sub.add_parser(
         "manual-review",
         help="Create and update operator-recorded RaCo / Blender manual-review sessions",
@@ -2411,6 +2429,30 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _emit_text(render_operator_handoff_markdown(payload), args)
         else:
             _emit_text(render_operator_handoff_text(payload), args)
+        return 0
+
+    if args.command == "onboarding-guide":
+        guide_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        try:
+            if args.onboarding_guide_command == "read":
+                payload = build_onboarding_guide(
+                    args.profile,
+                    workspace=guide_root,
+                    bmw_root=Path(args.bmw_root).resolve() if getattr(args, "bmw_root", None) else None,
+                )
+            else:
+                parser.error(f"Unhandled onboarding-guide command: {args.onboarding_guide_command}")
+                return 1
+        except Exception as exc:
+            print(_console_safe(f"onboarding-guide failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_onboarding_guide_markdown(payload), args)
+        else:
+            _emit_text(render_onboarding_guide_text(payload), args)
         return 0
 
     if args.command == "manual-review":
