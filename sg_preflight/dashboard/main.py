@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import escape as html_escape
 import json
 import os
 from pathlib import Path
@@ -2337,8 +2338,33 @@ def _render_screenshot_test_state_panel(
         viewer_status = ui.label("Viewer not generated in this session.").classes("sgfx-muted")
         viewer_links = ui.column().classes("full-width")
 
-        def _open_viewer_url(url: str) -> None:
-            ui.run_javascript(f"window.open({json.dumps(url)}, '_blank', 'noopener,noreferrer');")
+        with ui.dialog() as viewer_dialog:
+            with ui.card().classes("sgfx-viewer-dialog-card"):
+                with ui.row().classes("items-center justify-between full-width"):
+                    viewer_dialog_title = ui.label("Side-by-side screenshot review").classes("sgfx-panel-title")
+                    _attach_tooltip(
+                        ui,
+                        ui.button("Close", on_click=viewer_dialog.close).props("flat dense no-caps"),
+                        "Close the embedded screenshot review viewer.",
+                    )
+                ui.label(
+                    "Expected / actual / diff panes render below with synchronized zoom and pan controls. "
+                    "Manual review remains required."
+                ).classes("sgfx-muted")
+                viewer_frame_host = ui.column().classes("sgfx-viewer-frame-host")
+
+        def _open_inline_viewer(url: str, label: str = "") -> None:
+            viewer_dialog_title.text = label or "Side-by-side screenshot review"
+            viewer_frame_host.clear()
+            safe_url = html_escape(url, quote=True)
+            with viewer_frame_host:
+                ui.html(
+                    f'<iframe data-sgfx-inline-viewer="true" class="sgfx-viewer-iframe" '
+                    f'src="{safe_url}" title="Side-by-side screenshot review"></iframe>',
+                    sanitize=False,
+                ).classes("full-width")
+            viewer_status.text = f"Viewer open inside SGFX: {label or 'all screenshot rows'}."
+            viewer_dialog.open()
 
         def _render_viewer_links(bundle: Any) -> None:
             viewer_links.clear()
@@ -2350,11 +2376,12 @@ def _render_screenshot_test_state_panel(
                 ui.label("Open a diff row in the side-by-side viewer.").classes("sgfx-muted")
                 for item in items[:12]:
                     target_url = _screenshot_review_viewer_url(str(snapshot["profile_id"]), item.key)
+                    target_label = f"{item.key} [{item.classification} / {item.visual_classification}]"
                     button = _attach_tooltip(
                         ui,
                         ui.button(
-                            f"{item.key} [{item.classification} / {item.visual_classification}]",
-                            on_click=lambda url=target_url: _open_viewer_url(url),
+                            target_label,
+                            on_click=lambda url=target_url, label=target_label: _open_inline_viewer(url, label),
                         ),
                         "Open this screenshot in the synchronized expected / actual / diff viewer.",
                     )
@@ -2376,7 +2403,10 @@ def _render_screenshot_test_state_panel(
                 f"JSON: {bundle.json_path.name}"
             )
             _render_viewer_links(bundle)
-            _open_viewer_url(_screenshot_review_viewer_url(str(snapshot["profile_id"])))
+            _open_inline_viewer(
+                _screenshot_review_viewer_url(str(snapshot["profile_id"])),
+                f"Side-by-side screenshot review - {snapshot['profile_id']}",
+            )
             ui.notify("Screenshot review viewer generated locally.")
 
         _attach_tooltip(
@@ -3016,6 +3046,9 @@ def _render_dashboard(
             .sgfx-step { border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; background: var(--sgfx-bg-elev); }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
             .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid var(--sgfx-border); border-radius: 6px; padding: 8px; background: var(--sgfx-bg-elev); }
+            .sgfx-viewer-dialog-card { width: min(96vw, 1680px); height: min(92vh, 980px); max-width: none !important; display: flex; flex-direction: column; gap: 10px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); border: 1px solid var(--sgfx-border); border-radius: 8px; }
+            .sgfx-viewer-frame-host { flex: 1 1 auto; min-height: 0; width: 100%; }
+            .sgfx-viewer-iframe { width: 100%; height: 100%; min-height: 620px; border: 1px solid var(--sgfx-border); border-radius: 6px; background: #ffffff; }
             .sgfx-thinking-tooltip { background: #121b1f !important; color: #f4fbf7 !important; border: 1px solid var(--sgfx-accent) !important; border-radius: 8px !important; padding: 8px 10px !important; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32); animation: sgfx-tooltip-pop 150ms ease-out; }
             .sgfx-thinking-tooltip::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: var(--sgfx-accent); animation: sgfx-tooltip-pulse 900ms ease-in-out infinite; vertical-align: middle; }
             .sgfx-hotkey-popup { position: fixed; top: 82px; right: 36px; z-index: 9000; min-width: 280px; max-width: 380px; display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--sgfx-accent); border-radius: 8px; background: rgba(18, 27, 31, 0.96); color: var(--sgfx-fg); opacity: 0; transform: translateY(-8px) scale(0.98); pointer-events: none; transition: opacity 150ms ease-out, transform 150ms ease-out; box-shadow: 0 16px 42px rgba(0, 0, 0, 0.38); }

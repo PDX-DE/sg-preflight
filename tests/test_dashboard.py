@@ -320,6 +320,19 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("File activity", source)
         self.assertIn("typical 1-10 min", source)
 
+    def test_dashboard_source_opens_screenshot_viewer_inline_for_operator_path(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("data-sgfx-inline-viewer", source)
+        self.assertIn("sgfx-viewer-dialog-card", source)
+        self.assertIn("sgfx-viewer-iframe", source)
+        self.assertIn("_open_inline_viewer", source)
+        self.assertIn("viewer_dialog.open()", source)
+        self.assertIn("sanitize=False", source)
+        self.assertNotIn("window.open", source)
+
     def test_dashboard_snapshot_exposes_first_run_setup_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
