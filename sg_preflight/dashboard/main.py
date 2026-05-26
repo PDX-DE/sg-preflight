@@ -4170,6 +4170,7 @@ def _render_full_qa_pass_panel(
     *,
     bmw_root: Path | str | None = None,
     open_page: Callable[[str], None] | None = None,
+    on_payload_ready: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     running_navigation_message = "Action running — cancel first to navigate"
     page = next(page for page in snapshot["pages"] if page["id"] == "full-qa-pass")
@@ -4203,7 +4204,7 @@ def _render_full_qa_pass_panel(
         ).classes("sgfx-muted")
 
         with ui.row().classes("sgfx-full-qa-controls"):
-            trusted_control = ui.checkbox("Automatic mode", value=True)
+            trusted_control = ui.checkbox("Automatic mode", value=bool(initial_payload.get("trusted_tool_mode", True)))
             ui.label("Manual mode opt-out: switch Automatic mode off to confirm local actions one by one.").classes(
                 "sgfx-muted"
             )
@@ -4922,8 +4923,11 @@ def _render_full_qa_pass_panel(
                 trusted_tool_mode=trusted,
             )
             _append_activity(action="run", note=f"Full QA Pass run with automatic_mode={trusted}.")
-            _render_payload(payload)
-            notice.text = "Full QA pass refreshed from local evidence."
+            if on_payload_ready is not None:
+                on_payload_ready(payload)
+            else:
+                _render_payload(payload)
+                notice.text = "Full QA pass refreshed from local evidence."
             if trusted:
                 ui.notify("Automatic mode is active for local tool actions only. Jira REST and SVN gates still always prompt.")
 
@@ -5212,6 +5216,31 @@ def _render_dashboard(
                 show_all_control.value = True
             _sync_profile_select()
 
+        def _apply_full_qa_payload(payload: dict[str, Any]) -> None:
+            pages = list(state["snapshot"].get("pages", []))
+            for index, page in enumerate(pages):
+                if str(page.get("id", "")) != "full-qa-pass":
+                    continue
+                steps = [step for step in payload.get("steps", []) if isinstance(step, dict)]
+                pages[index] = {
+                    **page,
+                    "status": str(payload.get("status", payload.get("run_status", "unknown"))),
+                    "summary": str(payload.get("summary", "")),
+                    "items": [
+                        {
+                            "label": str(step.get("label", "")),
+                            "status": str(step.get("status", "")),
+                            "detail": str(step.get("summary", "")),
+                        }
+                        for step in steps
+                    ],
+                    "payload": payload,
+                    "confluence_anchors": list(payload.get("confluence_anchors", page.get("confluence_anchors", []))),
+                }
+                break
+            state["snapshot"] = {**state["snapshot"], "pages": pages}
+            _render_current_page()
+
         def _render_current_page() -> None:
             content = content_holder.get("content")
             if content is None:
@@ -5241,6 +5270,7 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         open_page=_open_page,
+                        on_payload_ready=_apply_full_qa_payload,
                     )
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
