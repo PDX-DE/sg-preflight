@@ -22,7 +22,11 @@ from sg_preflight.bmw_delivery import (
     load_bmw_model_config_records,
     resolve_bmw_profile_id,
 )
-from sg_preflight.delivery_checklist import read_delivery_checklist
+from sg_preflight.delivery_checklist import (
+    delivery_workbook_missing_escalation,
+    delivery_workbook_missing_summary,
+    read_delivery_checklist,
+)
 from sg_preflight.dependency_onboarding import load_dependency_onboarding_state
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
@@ -54,7 +58,6 @@ _PYTHON_REGISTRATION_KEYS = ("bmw_pipeline_python", "python", "python_executable
 _DIGITAL_REPO_REGISTRATION_KEYS = ("digital_3d_car_repo",)
 _DIGITAL_REPO_IDC23_REGISTRATION_KEYS = ("digital_3d_car_repo_idc23", "digital_3d_car_repo_assets_idc23")
 _MODEL_ONBOARDING_CONTACT = "Confluence anchor: Adding a new model derivative to system assembly process."
-_DELIVERY_CHECKLIST_CONTACT = "Confluence anchor: 3D Cars Delivery Checklist, lines 67-69 and 100-102."
 _IDC23_CONTACT = "Confluence anchor: 3D Cars Delivery Checklist, lines 81-82."
 _BRAND_FOLDERS = {
     "BMW": "BMW",
@@ -989,6 +992,7 @@ def _generation_result(
     canceled: bool = False,
 ) -> dict[str, Any]:
     checklist_payload: dict[str, Any] = {}
+    escalation: dict[str, str] = {}
     if exit_code == 0 and not timed_out and not canceled:
         try:
             checklist_payload = read_delivery_checklist(profile_id=job.profile_id, workspace=job.workspace)
@@ -1000,9 +1004,10 @@ def _generation_result(
         elif status == "available":
             status = "unavailable"
             checklist_summary = str(checklist_payload.get("summary", "")).strip()
+            escalation = delivery_workbook_missing_escalation(job.profile_id)
             summary = (
                 "BMW export completed, but the delivery workbook is not available yet. "
-                f"CI team operation. {_DELIVERY_CHECKLIST_CONTACT}"
+                f"{delivery_workbook_missing_summary(job.profile_id)}"
             )
             if checklist_summary:
                 summary = f"{summary} {checklist_summary}"
@@ -1037,6 +1042,7 @@ def _generation_result(
         "preflight": job.preflight,
         "checklist_status": str(checklist_payload.get("status", "")),
         "checklist_summary": str(checklist_payload.get("summary", "")),
+        "escalation": escalation,
         "recorded_by_tool": True,
         "is_approval": False,
     }

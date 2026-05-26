@@ -487,6 +487,45 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertIn("car_manager.py", " ".join(result["command"]))
         self.assertEqual(result["command"][-1], "G70_EVO")
 
+    def test_poll_generation_reports_actionable_escalation_when_workbook_is_still_missing(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+
+        fake_process = _FakeProcess(returncode=0)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
+                with mock.patch(
+                    "sg_preflight.delivery_workbook_generation._find_executable",
+                    return_value=r"C:\tools\tool.exe",
+                ):
+                    with mock.patch.object(generation.subprocess, "Popen", return_value=fake_process):
+                        with mock.patch.object(
+                            generation,
+                            "read_delivery_checklist",
+                            return_value={"status": "unavailable", "summary": "no workbook"},
+                        ):
+                            job = generation.start_delivery_workbook_generation(
+                                profile_id="G70",
+                                workspace=root,
+                                operator_confirmed=True,
+                            )
+                            result = generation.poll_delivery_workbook_generation(job)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(
+            result["escalation"]["expected_path"],
+            r"C:\repositories\trunk\Cars\size_analysis\G70_*.xlsx",
+        )
+        self.assertIn("Delivery Checklist", result["summary"])
+        self.assertIn("Decision: not approval", result["summary"])
+        self.assertFalse(result["is_approval"])
+
     def test_poll_generation_copies_workbook_evidence_to_sgfx_output_root(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation
 

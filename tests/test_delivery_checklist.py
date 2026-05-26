@@ -154,6 +154,25 @@ class TestDeliveryChecklist(unittest.TestCase):
         self.assertIn("BMW Export Size.xlsx", payload["workbook_path"])
         self.assertIn("delivery-checklist data unavailable", payload["summary"].lower())
         self.assertEqual(payload["checks"], [])
+        self.assertTrue(payload["manual_review_required"])
+        self.assertIn("escalation", payload)
+        self.assertEqual(
+            payload["escalation"]["expected_path"],
+            r"C:\repositories\trunk\Cars\size_analysis\G65_*.xlsx",
+        )
+        self.assertIn("Delivery Checklist", payload["summary"])
+        self.assertIn("Decision: not approval", payload["summary"])
+
+    def test_missing_delivery_checklist_escalation_renders_next_step(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            payload = read_delivery_checklist(profile_id="G65_EVO", workspace=Path(temp_dir))
+
+        markdown = render_delivery_checklist_markdown(payload)
+
+        self.assertIn("## Next Step", markdown)
+        self.assertIn(r"C:\repositories\trunk\Cars\size_analysis\G65_*.xlsx", markdown)
+        self.assertIn("PDX_" + "SER" + "GFX", markdown)
+        self.assertNotIn("approved", markdown.lower())
 
     def test_missing_workbook_uses_existing_trunk_delivery_checklist_folder(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

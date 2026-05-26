@@ -15,6 +15,19 @@ READ_ONLY_BANNER = (
     "Delivery checklist data is read-only from the operator-local Excel workbook. "
     "SGFX does not run the delivery checklist or modify the workbook."
 )
+DELIVERY_CHECKLIST_ESCALATION_ANCHOR = (
+    "PDX_"
+    + "SER"
+    + "GFX/311_Delivery-process/312_3D-Car---Delivery-and-Integration/"
+    "315_How-to-3D-Cars-Delivery-Checklist----v0/page.txt (lines 67-69 + 100-102)"
+)
+DELIVERY_CHECKLIST_ESCALATION_PAGE = (
+    "PDX_"
+    + "SER"
+    + "GFX/311_Delivery-process/312_3D-Car---Delivery-and-Integration/"
+    "315_How-to-3D-Cars-Delivery-Checklist----v0, lines 67-69 + 100-102"
+)
+SIZE_ANALYSIS_WORKBOOK_ROOT = Path(r"C:\repositories\trunk\Cars\size_analysis")
 _CHECK_COLUMNS = {
     "export_size": "Export Size",
     "screenshots": "Screenshots",
@@ -298,6 +311,37 @@ def _workbook_metadata(workbook_path: Path, *, brand: str | None, row_count: int
     }
 
 
+def delivery_workbook_expected_path(profile_id: str) -> str:
+    profile = resolve_svn_profile_id(profile_id).strip().upper() or profile_id.strip().upper() or "profile"
+    return str(SIZE_ANALYSIS_WORKBOOK_ROOT / f"{profile}_*.xlsx")
+
+
+def delivery_workbook_missing_escalation(profile_id: str) -> dict[str, str]:
+    return {
+        "confluence_anchor": DELIVERY_CHECKLIST_ESCALATION_ANCHOR,
+        "expected_path": delivery_workbook_expected_path(profile_id),
+    }
+
+
+def delivery_workbook_missing_summary(profile_id: str, *, lookup_path: Path | str | None = None) -> str:
+    profile = profile_id.strip() or "profile"
+    parts = [
+        f"delivery-checklist data unavailable: size-analysis workbook not found for {profile}.",
+        "BMW export may be complete, but workbook generation is a CI team operation.",
+        f"Expected at {delivery_workbook_expected_path(profile)} (date-stamped or v-tagged).",
+    ]
+    if lookup_path is not None:
+        parts.append(f"Looked in {Path(lookup_path)}.")
+    parts.extend(
+        [
+            "Escalation: see the 3D Cars Delivery Checklist Confluence page "
+            f"({DELIVERY_CHECKLIST_ESCALATION_PAGE}) for the CI workbook step + contact.",
+            "Manual review remains required. Decision: not approval — evidence only.",
+        ]
+    )
+    return " ".join(parts)
+
+
 def _missing_payload(
     profile_id: str,
     workbook_path: Path,
@@ -305,8 +349,9 @@ def _missing_payload(
     summary: str,
     *,
     brand: str | None,
+    escalation: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "profile_id": profile_id.strip(),
         "matched_profile_id": "",
         "status": status,
@@ -321,8 +366,12 @@ def _missing_payload(
         "checks": [],
         "summary": summary,
         "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+        "manual_review_required": True,
         "is_approval": False,
     }
+    if escalation:
+        payload["escalation"] = dict(escalation)
+    return payload
 
 
 def _row_mapping(values: tuple[object, ...], header: dict[int, str]) -> dict[str, object]:
@@ -575,11 +624,9 @@ def read_delivery_checklist(
             profile,
             workbook,
             "unavailable",
-            (
-                f"delivery-checklist data unavailable: workbook not found for {profile or 'profile'}: {workbook}. "
-                "BMW export may be complete, but workbook generation is a CI team operation."
-            ),
+            delivery_workbook_missing_summary(profile, lookup_path=workbook),
             brand=brand,
+            escalation=delivery_workbook_missing_escalation(profile),
         )
 
     candidate_tokens = _candidate_profile_tokens(profile)
@@ -694,8 +741,9 @@ def read_delivery_checklist(
         profile,
         workbook,
         "unavailable",
-        f"delivery-checklist data unavailable: workbook was found, but no row matched {profile}.",
+        delivery_workbook_missing_summary(profile, lookup_path=workbook),
         brand=brand,
+        escalation=delivery_workbook_missing_escalation(profile),
     )
 
 
@@ -771,6 +819,15 @@ def render_delivery_checklist_markdown(payload: dict[str, Any]) -> str:
     summary = str(payload.get("summary", "")).strip()
     if summary:
         lines.extend(["", summary])
+    escalation = payload.get("escalation")
+    if isinstance(escalation, dict) and escalation:
+        lines.extend(["", "## Next Step"])
+        expected_path = str(escalation.get("expected_path", "")).strip()
+        confluence_anchor = str(escalation.get("confluence_anchor", "")).strip()
+        if expected_path:
+            lines.append(f"- Expected workbook: `{expected_path}`")
+        if confluence_anchor:
+            lines.append(f"- Escalation anchor: `{confluence_anchor}`")
     checks = payload.get("checks", [])
     if isinstance(checks, list) and checks:
         lines.extend(["", "## Recorded Tests"])
@@ -795,6 +852,15 @@ def render_delivery_checklist_text(payload: dict[str, Any]) -> str:
     workbook_path = str(payload.get("workbook_path", "")).strip()
     if workbook_path:
         lines.append(f"Workbook: {workbook_path}")
+    escalation = payload.get("escalation")
+    if isinstance(escalation, dict) and escalation:
+        lines.append("Next step:")
+        expected_path = str(escalation.get("expected_path", "")).strip()
+        confluence_anchor = str(escalation.get("confluence_anchor", "")).strip()
+        if expected_path:
+            lines.append(f"- Expected workbook: {expected_path}")
+        if confluence_anchor:
+            lines.append(f"- Escalation anchor: {confluence_anchor}")
     for check in payload.get("checks", []):
         if not isinstance(check, dict):
             continue
