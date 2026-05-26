@@ -147,6 +147,34 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result, 29)
         runner.assert_called_once_with(["dashboard", "run", "--workspace", r"C:\bundle"])
 
+    def test_frozen_exe_entry_default_workspace_uses_svn_trunk_ancestor(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trunk = Path(temp_dir) / "repositories" / "trunk"
+            exe_path = trunk / "Playground" / "SGFX_QA_Preflight" / "dist" / "sgfx-preflight" / "sgfx-preflight.exe"
+            exe_path.parent.mkdir(parents=True)
+            exe_path.write_text("fixture\n", encoding="utf-8")
+
+            with mock.patch.object(module.sys, "frozen", True, create=True):
+                with mock.patch.object(module.sys, "executable", str(exe_path)):
+                    with mock.patch.dict(module.os.environ, {}, clear=True):
+                        workspace = module.default_workspace()
+
+        self.assertEqual(Path(workspace), trunk.resolve())
+
+    def test_frozen_exe_entry_default_workspace_allows_operator_override(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            custom_workspace = Path(temp_dir) / "custom-trunk"
+            with mock.patch.object(module.sys, "frozen", True, create=True):
+                with mock.patch.object(module.sys, "executable", r"C:\bundle\sgfx-preflight.exe"):
+                    with mock.patch.dict(module.os.environ, {"SGFX_PREFLIGHT_WORKSPACE": str(custom_workspace)}):
+                        workspace = module.default_workspace()
+
+        self.assertEqual(Path(workspace), custom_workspace.resolve())
+
     def test_frozen_exe_entry_installs_no_window_subprocess_patch(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 

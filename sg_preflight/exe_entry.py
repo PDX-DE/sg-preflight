@@ -9,11 +9,29 @@ import traceback
 
 
 DEFAULT_DOUBLE_CLICK_ARGS = ["dashboard", "run", "--ui-mode", "clean"]
+DEFAULT_OPERATOR_WORKSPACE = Path(r"C:\repositories\trunk")
+WORKSPACE_ENV = "SGFX_PREFLIGHT_WORKSPACE"
+
+
+def _svn_trunk_ancestor(path: Path) -> Path | None:
+    for parent in path.parents:
+        if parent.name.casefold() == "trunk" and parent.parent.name.casefold() == "repositories":
+            return parent
+    return None
 
 
 def default_workspace() -> str:
+    configured = os.environ.get(WORKSPACE_ENV, "").strip()
+    if configured:
+        return str(Path(configured).resolve())
     if getattr(sys, "frozen", False):
-        return str(Path(sys.executable).resolve().parent)
+        executable_path = Path(sys.executable).resolve()
+        trunk_ancestor = _svn_trunk_ancestor(executable_path)
+        if trunk_ancestor is not None:
+            return str(trunk_ancestor)
+        if DEFAULT_OPERATOR_WORKSPACE.exists():
+            return str(DEFAULT_OPERATOR_WORKSPACE.resolve())
+        return str(executable_path.parent)
     return str(Path.cwd().resolve())
 
 
