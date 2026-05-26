@@ -292,13 +292,15 @@ class TestBmwDelivery(unittest.TestCase):
 
             payload = read_bmw_screenshot_state("G65", workspace=root, sg_project_root=root)
 
-        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["status"], "incomplete")
+        self.assertTrue(payload["data_available"])
         self.assertEqual(payload["expected_count"], 1)
         self.assertEqual(payload["sg_perspectives_screenshot_count"], 0)
         self.assertEqual(payload["sg_perspectives_comparison_count"], 0)
         self.assertEqual(payload["sg_perspectives_root"], "")
         self.assertEqual(payload["sg_perspectives_latest_folder"], "")
         self.assertNotIn("prespectivesTests latest folder", payload["summary"])
+        self.assertIn("No actual screenshots captured yet", payload["summary"])
         self.assertTrue(any("No SG prespectivesTests output" in note for note in payload["notes"]))
 
     def test_prerequisite_status_exposes_repo_local_bmw_snapshot(self) -> None:

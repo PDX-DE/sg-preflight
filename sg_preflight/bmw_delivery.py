@@ -565,6 +565,13 @@ _SCREENSHOT_STATE_NOTE = "Read-only screenshot test state; manual review remains
 
 
 def _surface_status(surface: BmwScreenshotSurface) -> str:
+    if (
+        surface.bmw_expected_count > 0
+        and surface.actual_count == 0
+        and surface.diff_count == 0
+        and surface.sg_perspectives_screenshot_count == 0
+    ):
+        return "incomplete"
     if surface.bmw_expected_count > 0 or surface.sg_perspectives_screenshot_count > 0:
         return "available"
     if surface.export_tests_root:
@@ -591,11 +598,18 @@ def read_bmw_screenshot_state(
     )
     status = _surface_status(surface)
     disabled_count = _disabled_test_count(Path(surface.test_config_path)) if surface.test_config_path else 0
-    summary = (
-        f"{surface.bmw_expected_count} expected / {surface.actual_count} actual / {surface.diff_count} diff screenshot file(s)"
-        if surface.bmw_expected_count or surface.actual_count or surface.diff_count
-        else f"screenshot test state unavailable for {profile_id.strip() or 'profile'}"
-    )
+    if status == "incomplete":
+        summary = (
+            f"{surface.bmw_expected_count} expected / 0 actual / 0 diff screenshot file(s). "
+            "No actual screenshots captured yet; run screenshot capture before treating this step as evidence."
+        )
+    elif surface.bmw_expected_count or surface.actual_count or surface.diff_count:
+        summary = (
+            f"{surface.bmw_expected_count} expected / {surface.actual_count} actual / "
+            f"{surface.diff_count} diff screenshot file(s)"
+        )
+    else:
+        summary = f"screenshot test state unavailable for {profile_id.strip() or 'profile'}"
     if surface.sg_perspectives_screenshot_count:
         summary += (
             f"; SG prespectivesTests latest folder has {surface.sg_perspectives_screenshot_count} screenshot file(s)"
@@ -606,7 +620,7 @@ def read_bmw_screenshot_state(
         "matched_profile_id": surface.bmw_profile_id,
         "brand": surface.brand,
         "status": status,
-        "data_available": status == "available",
+        "data_available": status in {"available", "incomplete"},
         "repo_root": surface.repo_root,
         "car_root": surface.car_root,
         "export_tests_root": surface.export_tests_root,

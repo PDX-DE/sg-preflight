@@ -459,6 +459,18 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("--attach-ticket", source)
         self.assertIn("--auto-confirm", source)
 
+    def test_dashboard_source_exposes_full_qa_inline_actions(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("sgfx-inline-confirm", source)
+        self.assertIn("Trusted tool mode is active for local tool actions only.", source)
+        self.assertIn("record_operator_handoff", source)
+        self.assertIn("start_delivery_workbook_generation", source)
+        self.assertIn("start_screenshot_capture", source)
+        self.assertIn("Manual-review state still has", source)
+
     def test_dashboard_snapshot_exposes_first_run_setup_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot

@@ -12,6 +12,12 @@ from sg_preflight.manual_review import build_manual_review_assist
 from sg_preflight.onboarding_assistant import build_onboarding_guide
 from sg_preflight.operator_handoff import build_operator_handoff_snapshot
 from sg_preflight.risk_scoring import read_per_car_risk_score
+from sg_preflight.screenshot_capture import (
+    SCREENSHOT_CAPTURE_ACTION_ID,
+    SCREENSHOT_CAPTURE_ACTION_LABEL,
+    SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
+    check_screenshot_capture_environment,
+)
 from sg_preflight.team_digest_board import build_team_daily_digest_board
 
 
@@ -32,6 +38,10 @@ FULL_QA_PASS_CONFLUENCE_ANCHORS = (
     + "GFX/016_Project-Management/024_How-to...-Seriesgraphics/029_Regular-Meetings/030_SG-Daily/page.txt",
 )
 _BLOCKING_SOURCE_STATUSES = {"failed", "missing", "unavailable"}
+_INCOMPLETE_SOURCE_STATUSES = {"incomplete", "not_run", "pending", "not_available", "no_expected_baselines"}
+FULL_QA_TRUSTED_MODE_NOTE = (
+    "Trusted tool mode auto-confirms local tool actions only. Jira and SVN writes still require explicit per-action gates."
+)
 
 
 def _utc_now() -> str:
@@ -56,9 +66,23 @@ def _step_status(source_status: str, *, operator_focus_count: int = 0, blocker_c
         return "failed"
     if blocker_count or source_status in _BLOCKING_SOURCE_STATUSES:
         return "incomplete"
+    if source_status in _INCOMPLETE_SOURCE_STATUSES:
+        return "incomplete"
     if operator_focus_count:
         return "incomplete"
     return "passed"
+
+
+def _confirmation_item_from_action(action: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action_id": str(action.get("id", "")),
+        "step_id": str(action.get("step_id", "")),
+        "label": str(action.get("label", "Operator confirmation")),
+        "status": "confirmation_pending",
+        "detail": str(action.get("confirmation_message", "") or action.get("next_action", "")),
+        "manual_review_required": True,
+        "is_approval": False,
+    }
 
 
 def _confirmation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -76,6 +100,189 @@ def _confirmation_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _action_prompt(label: str, detail: str) -> str:
+    return (
+        f"{label}: {detail} "
+        "Manual review remains required. Decision: not approval — evidence only."
+    ).strip()
+
+
+def _delivery_workbook_action(payload: dict[str, Any], *, trusted_tool_mode: bool) -> dict[str, Any] | None:
+    if not bool(payload.get("can_start", False)):
+        return None
+    confirmation_message = str(payload.get("confirmation_message", "") or payload.get("next_action", ""))
+    return {
+        "id": str(payload.get("action_id", "generate-delivery-workbook")),
+        "step_id": "delivery-workbook-trigger",
+        "kind": "subprocess",
+        "label": str(payload.get("label", "Generate delivery workbook")),
+        "requires_confirmation": not trusted_tool_mode,
+        "auto_confirm_allowed": True,
+        "trusted_auto_confirm": bool(trusted_tool_mode),
+        "hard_gate": "none",
+        "timeout_seconds": int(payload.get("timeout_seconds", 600) or 600),
+        "confirmation_message": _action_prompt(
+            "Generate delivery workbook",
+            confirmation_message or "Run the local BMW pipeline export helper for this profile.",
+        ),
+        "target_paths": [
+            str(payload.get("preflight", {}).get("target_write_path", "")),
+            str(payload.get("preflight", {}).get("native_output_path", "")),
+        ],
+        "enabled": True,
+        "manual_review_required": True,
+        "is_approval": False,
+    }
+
+
+def _screenshot_capture_action(
+    profile_id: str,
+    workspace: Path,
+    bmw_root: Path | str | None,
+    *,
+    trusted_tool_mode: bool,
+) -> dict[str, Any] | None:
+    preflight = check_screenshot_capture_environment(profile_id=profile_id, workspace=workspace, bmw_root=bmw_root)
+    can_run = bool(preflight.get("can_run", False))
+    return {
+        "id": SCREENSHOT_CAPTURE_ACTION_ID,
+        "step_id": "screenshot-test-state",
+        "kind": "subprocess",
+        "label": SCREENSHOT_CAPTURE_ACTION_LABEL,
+        "requires_confirmation": not trusted_tool_mode and can_run,
+        "auto_confirm_allowed": can_run,
+        "trusted_auto_confirm": bool(trusted_tool_mode and can_run),
+        "hard_gate": "none",
+        "timeout_seconds": SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
+        "confirmation_message": _action_prompt(
+            "Capture screenshots",
+            str(preflight.get("confirmation_message", "Run the BMW screenshot capture helper for this profile.")),
+        ),
+        "target_paths": [
+            str(preflight.get("target_write_path", "")),
+            str(preflight.get("native_output_path", "")),
+        ],
+        "enabled": can_run,
+        "disabled_reason": str(preflight.get("disabled_reason", "")),
+        "preflight": preflight,
+        "manual_review_required": True,
+        "is_approval": False,
+    }
+
+
+def _operator_action(
+    *,
+    action_id: str,
+    step_id: str,
+    label: str,
+    kind: str,
+    summary: str,
+    target_page: str = "",
+) -> dict[str, Any]:
+    return {
+        "id": action_id,
+        "step_id": step_id,
+        "kind": kind,
+        "label": label,
+        "summary": summary,
+        "requires_confirmation": False,
+        "auto_confirm_allowed": False,
+        "trusted_auto_confirm": False,
+        "hard_gate": "none",
+        "target_page": target_page,
+        "enabled": True,
+        "manual_review_required": True,
+        "is_approval": False,
+    }
+
+
+def _step_inline_actions(
+    *,
+    step_id: str,
+    payload: dict[str, Any],
+    profile_id: str,
+    workspace: Path,
+    bmw_root: Path | str | None,
+    trusted_tool_mode: bool,
+    operator_focus_count: int,
+) -> list[dict[str, Any]]:
+    if step_id == "delivery-workbook-trigger":
+        action = _delivery_workbook_action(payload, trusted_tool_mode=trusted_tool_mode)
+        return [action] if action is not None else []
+    if step_id == "screenshot-test-state":
+        expected = _int_value(payload, "expected_count")
+        actual = _int_value(payload, "actual_count")
+        diff = _int_value(payload, "diff_count")
+        if expected > 0 and actual == 0 and diff == 0:
+            action = _screenshot_capture_action(
+                profile_id,
+                workspace,
+                bmw_root,
+                trusted_tool_mode=trusted_tool_mode,
+            )
+            return [action] if action is not None else []
+        return []
+    if step_id == "risk-score" and operator_focus_count:
+        signals = [
+            signal
+            for signal in payload.get("signals", [])
+            if isinstance(signal, dict) and int(signal.get("weight", 0) or 0) > 0
+        ]
+        return [
+            _operator_action(
+                action_id="risk-reviewed",
+                step_id=step_id,
+                label="I've reviewed",
+                kind="operator_ack",
+                summary=f"Operator reviewed {len(signals)} active risk signal(s).",
+            ),
+            _operator_action(
+                action_id="open-risk-score",
+                step_id=step_id,
+                label="Investigate further",
+                kind="navigate",
+                summary="Open the Risk Score page for details.",
+                target_page="risk-score",
+            ),
+        ]
+    if step_id == "manual-review-assist" and operator_focus_count:
+        return [
+            _operator_action(
+                action_id="manual-review-recorded",
+                step_id=step_id,
+                label="I've recorded verdicts",
+                kind="verify_manual_review",
+                summary="Re-read manual-review state and pass only if all required verdicts are recorded.",
+            ),
+            _operator_action(
+                action_id="open-manual-review",
+                step_id=step_id,
+                label="Continue reviewing",
+                kind="navigate",
+                summary="Open the Manual Review Companion page.",
+                target_page="manual-review",
+            ),
+        ]
+    if step_id == "operator-handoff" and operator_focus_count:
+        return [
+            _operator_action(
+                action_id="record-handoff",
+                step_id=step_id,
+                label="Mark stopping point here",
+                kind="handoff_form",
+                summary="Record a local-only shift handoff for this profile.",
+            )
+        ]
+    return []
+
+
+def _int_value(payload: dict[str, Any], key: str) -> int:
+    try:
+        return int(payload.get(key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _step(
     *,
     step_id: str,
@@ -87,8 +294,18 @@ def _step(
     blocker_count: int = 0,
     delicate: bool = False,
     critical: bool = False,
+    inline_actions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     status = _step_status(source_status, operator_focus_count=operator_focus_count, blocker_count=blocker_count)
+    actions = list(inline_actions or [])
+    action_confirmations = [
+        _confirmation_item_from_action(action)
+        for action in actions
+        if bool(action.get("requires_confirmation", False))
+    ]
+    if action_confirmations:
+        status = "confirmation_pending"
+    payload_confirmations = [] if actions else _confirmation_items(payload)
     return {
         "id": step_id,
         "label": label,
@@ -99,8 +316,9 @@ def _step(
         "blocker_count": blocker_count,
         "delicate": delicate,
         "critical": critical,
-        "operator_confirmation_required": bool(payload.get("operator_confirmation_required", False)),
-        "confirmation_items": _confirmation_items(payload),
+        "operator_confirmation_required": bool(payload_confirmations) or bool(action_confirmations),
+        "confirmation_items": [*payload_confirmations, *action_confirmations],
+        "inline_actions": actions,
         "manual_review_required": True,
         "records_operator_verdict": False,
         "is_approval": False,
@@ -121,6 +339,7 @@ def _failed_step(step_id: str, label: str, exc: Exception) -> dict[str, Any]:
         "critical": True,
         "operator_confirmation_required": False,
         "confirmation_items": [],
+        "inline_actions": [],
         "manual_review_required": True,
         "records_operator_verdict": False,
         "is_approval": False,
@@ -141,6 +360,7 @@ def _skipped_step(step_id: str, label: str, halted_label: str) -> dict[str, Any]
         "critical": False,
         "operator_confirmation_required": False,
         "confirmation_items": [],
+        "inline_actions": [],
         "manual_review_required": True,
         "records_operator_verdict": False,
         "is_approval": False,
@@ -297,6 +517,15 @@ def build_full_qa_pass(
             source_status = _status(payload.get("trigger_status", payload.get("status", "unknown")))
             focus = focus_count(payload)
             blockers = blocker_count(payload)
+            inline_actions = _step_inline_actions(
+                step_id=step_id,
+                payload=payload,
+                profile_id=profile,
+                workspace=root,
+                bmw_root=bmw_root,
+                trusted_tool_mode=trusted_tool_mode,
+                operator_focus_count=focus,
+            )
             step = _step(
                 step_id=step_id,
                 label=label,
@@ -307,6 +536,7 @@ def build_full_qa_pass(
                 blocker_count=blockers,
                 delicate=delicate,
                 critical=critical,
+                inline_actions=inline_actions,
             )
         steps.append(step)
         confirmations.extend(step.get("confirmation_items", []))
@@ -320,13 +550,13 @@ def build_full_qa_pass(
             halted_step = str(step.get("label", label))
             halt_reason = str(step.get("summary", "A blocking issue needs operator attention."))
 
-    counts = {status: 0 for status in ("passed", "incomplete", "failed", "skipped", "unavailable")}
+    counts = {status: 0 for status in ("passed", "confirmation_pending", "incomplete", "failed", "skipped", "unavailable")}
     for step in steps:
         status = str(step.get("status", "unknown"))
         counts[status] = counts.get(status, 0) + 1
     completed_count = counts.get("passed", 0)
     blocking_count = counts.get("failed", 0) + counts.get("unavailable", 0)
-    focus_count = counts.get("incomplete", 0)
+    focus_count = counts.get("incomplete", 0) + counts.get("confirmation_pending", 0)
     overall_status = "passed"
     if blocking_count:
         overall_status = "failed"
@@ -358,12 +588,19 @@ def build_full_qa_pass(
         "counts": counts,
         "steps": steps,
         "confirmation_items": confirmations,
+        "trusted_auto_actions": [
+            action
+            for step in steps
+            for action in step.get("inline_actions", [])
+            if isinstance(action, dict) and bool(action.get("trusted_auto_confirm", False))
+        ],
         "operator_confirmation_required": bool(confirmations) and not trusted_tool_mode,
         "manual_review_required": True,
         "records_operator_verdict": False,
         "is_approval": False,
         "guardrails": list(FULL_QA_PASS_GUARDRAILS),
         "confluence_anchors": list(FULL_QA_PASS_CONFLUENCE_ANCHORS),
+        "trusted_tool_mode_note": FULL_QA_TRUSTED_MODE_NOTE,
         "summary": summary if not halted else f"{summary} Halted at {halted_step}: {halt_reason}",
         "next_action": (
             f"Resolve or confirm {halted_step}, then run the pass again."

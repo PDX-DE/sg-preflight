@@ -43,6 +43,7 @@ from sg_preflight.jira_client import DEFAULT_JIRA_URL, load_jira_credentials
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
     apply_manual_review_suggestions,
+    build_manual_review_assist,
     build_manual_review_assist_from_auto_checks,
     create_manual_review_session_from_template,
     list_car_review_templates,
@@ -4015,17 +4016,13 @@ def _render_full_qa_pass_panel(
     workspace: Path,
     *,
     bmw_root: Path | str | None = None,
+    open_page: Callable[[str], None] | None = None,
 ) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "full-qa-pass")
     initial_payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
-    api_url = f"/sgfx-dashboard-api/full-qa-pass?profile={quote(str(snapshot['profile_id']), safe='')}"
-    payload_json = json.dumps(initial_payload).replace("</", "<\\/")
-    api_url_json = json.dumps(api_url)
-    widget_id = (
-        "sgfx-full-qa-widget-"
-        + (re.sub(r"[^a-z0-9]+", "-", str(snapshot["profile_id"]).casefold()).strip("-") or "profile")
-    )
-    widget_id_json = json.dumps(widget_id)
+    profile_id = str(snapshot["profile_id"])
+    running_actions: set[str] = set()
+
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(page["title"])).classes("sgfx-panel-title")
@@ -4036,96 +4033,368 @@ def _render_full_qa_pass_panel(
             "Runs local evidence readers in order and stops before blocking issues. "
             "Confirmation-gated actions remain explicit."
         ).classes("sgfx-muted")
-        ui.html(
-            f"""
-            <div id="{widget_id}" class="sgfx-full-qa-widget" data-sgfx-full-qa-widget>
-              <div class="sgfx-full-qa-controls">
-                <button type="button" class="sgfx-html-action-button" data-sgfx-full-qa-run>
-                  Run full QA pass
-                </button>
-                <label class="sgfx-inline-check">
-                  <input type="checkbox" data-sgfx-full-qa-trusted>
-                  <span>Trusted tool mode</span>
-                </label>
-              </div>
-              <div class="sgfx-muted" data-sgfx-full-qa-notice aria-live="polite"></div>
-              <div data-sgfx-full-qa-result></div>
-            </div>
-            """
+        ui.label(str(initial_payload.get("trusted_tool_mode_note", ""))).classes("sgfx-muted")
+
+        with ui.row().classes("sgfx-full-qa-controls"):
+            trusted_control = ui.checkbox("Trusted tool mode", value=False)
+            notice = ui.label("Full QA pass has not run in this dashboard session.").classes("sgfx-muted")
+            result_host = ui.column().classes("full-width")
+
+        def _append_activity(*, action: str, outcome: str = "ok", note: str = "") -> None:
+            append_activity_entry(
+                workspace,
+                verb="ran",
+                surface=f"full-qa-pass:{action}",
+                profile=profile_id,
+                outcome=outcome,
+                note=note,
+            )
+
+        def _start_subprocess_action(
+            action: dict[str, Any],
+            *,
+            status_label: Any,
+            progress: Any,
+            live_output: Any,
+            completion_label: Any,
+            on_complete: Callable[[], None] | None = None,
+        ) -> None:
+            action_id = str(action.get("id", ""))
+            if action_id in running_actions:
+                return
+            running_actions.add(action_id)
+            status_label.text = "running"
+            completion_label.text = f"{action.get('label', 'Action')} running..."
+            progress.visible = True
+            progress.props("indeterminate")
+            live_output.visible = True
+            live_output.value = "Starting local subprocess..."
+            job_state: dict[str, Any] = {"job": None, "timer": None}
+
+            try:
+                if action_id == GENERATE_WORKBOOK_ACTION_ID:
+                    job_state["job"] = start_delivery_workbook_generation(
+                        profile_id=profile_id,
+                        workspace=workspace,
+                        bmw_root=bmw_root,
+                        operator_confirmed=True,
+                    )
+                    poller = poll_delivery_workbook_generation
+                    label = "delivery workbook generation"
+                elif action_id == SCREENSHOT_CAPTURE_ACTION_ID:
+                    job_state["job"] = start_screenshot_capture(
+                        profile_id=profile_id,
+                        workspace=workspace,
+                        bmw_root=bmw_root,
+                        operator_confirmed=True,
+                    )
+                    poller = poll_screenshot_capture
+                    label = "screenshot capture"
+                else:
+                    raise ValueError(f"Unsupported Full QA Pass action: {action_id}")
+            except Exception as exc:  # noqa: BLE001
+                status_label.text = "failed"
+                completion_label.text = f"{action.get('label', 'Action')} failed to start: {exc}"
+                live_output.value = str(exc)
+                progress.visible = False
+                running_actions.discard(action_id)
+                _append_activity(action=action_id, outcome="error", note=str(exc))
+                ui.notify(f"{action.get('label', 'Action')} failed to start.")
+                return
+
+            _append_activity(action=action_id, note=f"Started {label} from Full QA Pass.")
+
+            def _stop_timer() -> None:
+                _cancel_background_poll_timer(job_state.get("timer"))
+                job_state["timer"] = None
+
+            def _poll() -> None:
+                try:
+                    job = job_state.get("job")
+                    if job is None:
+                        _stop_timer()
+                        return
+                    result = poller(job)
+                    if result is None:
+                        return
+                    stdout_lines = [
+                        str(line)
+                        for line in result.get("stdout_tail_lines", [])
+                        if str(line).strip()
+                    ]
+                    live_output.value = "\n".join(stdout_lines) if stdout_lines else str(result.get("summary", ""))
+                    if not bool(result.get("completed", True)):
+                        completion_label.text = str(result.get("summary", f"{label} running."))
+                        return
+                    _stop_timer()
+                    running_actions.discard(action_id)
+                    progress.visible = False
+                    outcome = str(result.get("status", "unknown"))
+                    status_label.text = "passed" if outcome == "available" else outcome
+                    completion_label.text = f"{action.get('label', 'Action')} {outcome}. {result.get('summary', '')}"
+                    _append_activity(
+                        action=action_id,
+                        outcome="ok" if outcome == "available" else "unavailable",
+                        note=str(result.get("summary", "")),
+                    )
+                    ui.notify(f"{action.get('label', 'Action')} {outcome}.")
+                    _notify_completion_safe(
+                        title="SGFX Full QA Pass action finished",
+                        message=f"{action.get('label', 'Action')} {outcome}.",
+                        workspace=workspace,
+                        action_id=action_id,
+                        profile_id=profile_id,
+                        evidence_path=str(result.get("sgfx_output_root", "")),
+                    )
+                    if outcome == "available" and on_complete is not None:
+                        on_complete()
+                except RuntimeError as exc:
+                    if not _parent_slot_deleted(exc):
+                        raise
+                    _stop_timer()
+
+            job_state["timer"] = _start_background_poll_timer(1.0, _poll)
+
+        def _invoke_operator_action(
+            action: dict[str, Any],
+            *,
+            status_label: Any,
+            completion_label: Any,
+            stopping_point: str = "",
+            next_step: str = "",
+        ) -> None:
+            action_id = str(action.get("id", ""))
+            try:
+                if action_id == "risk-reviewed":
+                    _append_activity(action=action_id, note=str(action.get("summary", "")))
+                    status_label.text = "passed"
+                    completion_label.text = "Risk signals were marked reviewed for this local pass."
+                elif action_id == "manual-review-recorded":
+                    assist = build_manual_review_assist(profile_id, workspace=workspace)
+                    focus_count = len(assist.get("operator_focus_steps", []))
+                    status_label.text = "passed" if focus_count == 0 else "incomplete"
+                    completion_label.text = (
+                        "Manual-review state has recorded verdicts for this pass."
+                        if focus_count == 0
+                        else f"Manual-review state still has {focus_count} item(s) needing operator focus."
+                    )
+                    _append_activity(action=action_id, outcome="ok" if focus_count == 0 else "unavailable")
+                elif action_id == "record-handoff":
+                    record_operator_handoff(
+                        workspace=workspace,
+                        profile_id=profile_id,
+                        ticket_id=str(snapshot.get("active_ticket_id", "")),
+                        stopping_point=stopping_point or "Full QA Pass operator stopping point.",
+                        next_step=next_step or "Continue the remaining Full QA Pass items.",
+                    )
+                    _append_activity(action=action_id, note="Recorded local stopping point from Full QA Pass.")
+                    status_label.text = "passed"
+                    completion_label.text = "Local operator handoff recorded."
+                else:
+                    raise ValueError(f"Unsupported operator action: {action_id}")
+                ui.notify(str(completion_label.text))
+            except Exception as exc:  # noqa: BLE001
+                status_label.text = "failed"
+                completion_label.text = f"{action.get('label', 'Action')} failed: {exc}"
+                _append_activity(action=action_id, outcome="error", note=str(exc))
+                ui.notify(f"{action.get('label', 'Action')} failed.")
+
+        def _open_target_page(target_page: str) -> None:
+            if open_page is not None:
+                open_page(target_page)
+                return
+            ui.notify(f"Open {target_page} from the sidebar.")
+
+        def _render_action(
+            action: dict[str, Any],
+            *,
+            status_label: Any,
+            trusted_auto_queue: list[tuple[dict[str, Any], Any, Any, Any, Any]],
+        ) -> None:
+            label = str(action.get("label", "Action"))
+            completion_label = ui.label(str(action.get("summary", ""))).classes("sgfx-muted")
+            progress = ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+            progress.visible = False
+            live_output = (
+                ui.textarea(label="Live action output", value="No subprocess output yet.")
+                .props("readonly outlined")
+                .classes("full-width sgfx-live-output")
+            )
+            live_output.visible = False
+            kind = str(action.get("kind", ""))
+            if kind == "navigate":
+                _attach_tooltip(
+                    ui,
+                    ui.button(label, on_click=lambda target=str(action.get("target_page", "")): _open_target_page(target)),
+                    str(action.get("summary", "")),
+                )
+                return
+            if kind == "handoff_form":
+                form_host = ui.column().classes("full-width")
+                form_host.visible = False
+
+                def _show_form() -> None:
+                    form_host.visible = True
+
+                _attach_tooltip(ui, ui.button(label, on_click=_show_form), str(action.get("summary", "")))
+                with form_host:
+                    stopping_input = ui.textarea(
+                        "Stopping point",
+                        value=f"Stopped during Full QA Pass for {profile_id}.",
+                    ).props("outlined").classes("full-width")
+                    next_input = ui.input(
+                        "Next step",
+                        value="Continue remaining Full QA Pass items.",
+                    ).props("outlined").classes("full-width")
+                    ui.button(
+                        "Save stopping point",
+                        on_click=lambda: _invoke_operator_action(
+                            action,
+                            status_label=status_label,
+                            completion_label=completion_label,
+                            stopping_point=str(stopping_input.value or ""),
+                            next_step=str(next_input.value or ""),
+                        ),
+                    ).props("color=primary")
+                return
+            if kind in {"operator_ack", "verify_manual_review"}:
+                _attach_tooltip(
+                    ui,
+                    ui.button(
+                        label,
+                        on_click=lambda current=action: _invoke_operator_action(
+                            current,
+                            status_label=status_label,
+                            completion_label=completion_label,
+                        ),
+                    ),
+                    str(action.get("summary", "")),
+                )
+                return
+            if kind == "subprocess":
+                prompt_host = ui.column().classes("sgfx-inline-confirm full-width")
+                prompt_host.visible = False
+
+                def _show_prompt_or_start() -> None:
+                    if not bool(action.get("enabled", True)):
+                        completion_label.text = str(action.get("disabled_reason", "Action is not available."))
+                        return
+                    if bool(action.get("requires_confirmation", False)):
+                        prompt_host.visible = True
+                    else:
+                        _start_subprocess_action(
+                            action,
+                            status_label=status_label,
+                            progress=progress,
+                            live_output=live_output,
+                            completion_label=completion_label,
+                        )
+
+                button = _attach_tooltip(
+                    ui,
+                    ui.button(label, on_click=_show_prompt_or_start),
+                    str(action.get("confirmation_message", action.get("summary", ""))),
+                )
+                if not bool(action.get("enabled", True)):
+                    button.disable()
+                with prompt_host:
+                    ui.label(str(action.get("confirmation_message", ""))).classes("sgfx-summary")
+                    paths = [str(path) for path in action.get("target_paths", []) if str(path).strip()]
+                    for path in paths:
+                        ui.label(f"Target: {path}").classes("sgfx-muted")
+                    with ui.row():
+                        ui.button(
+                            "Yes",
+                            on_click=lambda current=action: _start_subprocess_action(
+                                current,
+                                status_label=status_label,
+                                progress=progress,
+                                live_output=live_output,
+                                completion_label=completion_label,
+                            ),
+                        ).props("color=primary")
+                        ui.button("Cancel", on_click=lambda: setattr(prompt_host, "visible", False))
+                if bool(action.get("trusted_auto_confirm", False)) and bool(action.get("enabled", True)):
+                    trusted_auto_queue.append((action, status_label, progress, live_output, completion_label))
+                return
+
+        def _start_trusted_auto_queue(
+            queue: list[tuple[dict[str, Any], Any, Any, Any, Any]],
+            index: int = 0,
+        ) -> None:
+            if index >= len(queue):
+                return
+            action, status_label, progress, live_output, completion_label = queue[index]
+            _start_subprocess_action(
+                action,
+                status_label=status_label,
+                progress=progress,
+                live_output=live_output,
+                completion_label=completion_label,
+                on_complete=lambda: _start_trusted_auto_queue(queue, index + 1),
+            )
+
+        def _render_payload(payload: dict[str, Any]) -> None:
+            result_host.clear()
+            with result_host:
+                trusted_auto_queue: list[tuple[dict[str, Any], Any, Any, Any, Any]] = []
+                progress = payload.get("progress", {}) if isinstance(payload.get("progress"), dict) else {}
+                percent = int(progress.get("percent", 0) or 0)
+                ui.label(str(payload.get("summary", ""))).classes("sgfx-summary")
+                ui.linear_progress(value=max(0, min(100, percent)) / 100).classes("full-width")
+                ui.label(
+                    f"Progress: {progress.get('completed_steps', 0)}/{progress.get('total_steps', 0)} step(s)."
+                ).classes("sgfx-muted")
+                trusted_note = str(payload.get("trusted_tool_mode_note", "")).strip()
+                if trusted_note:
+                    ui.label(trusted_note).classes("sgfx-muted")
+                halt_reason = str(payload.get("halt_reason", "")).strip()
+                if halt_reason:
+                    ui.label(f"Halted: {halt_reason}").classes("sgfx-warning")
+                steps = [step for step in payload.get("steps", []) if isinstance(step, dict)]
+                for step in steps:
+                    step_status = str(step.get("status", "unknown"))
+                    with ui.column().classes(f"sgfx-full-qa-step sgfx-step-{step_status}"):
+                        with ui.row().classes("items-center justify-between full-width"):
+                            ui.label(str(step.get("label", ""))).classes("sgfx-summary")
+                            status_label = ui.label(step_status).classes("sgfx-status-pill")
+                        ui.label(str(step.get("summary", ""))).classes("sgfx-muted")
+                        actions = [action for action in step.get("inline_actions", []) if isinstance(action, dict)]
+                        if actions:
+                            ui.label("Inline action").classes("sgfx-panel-tagline")
+                            for action in actions:
+                                _render_action(
+                                    action,
+                                    status_label=status_label,
+                                    trusted_auto_queue=trusted_auto_queue,
+                                )
+                for guardrail in payload.get("guardrails", []):
+                    if str(guardrail).strip():
+                        ui.label(str(guardrail)).classes("sgfx-guardrail")
+                if trusted_auto_queue:
+                    _start_trusted_auto_queue(trusted_auto_queue)
+
+        def _run_full_pass() -> None:
+            trusted = bool(trusted_control.value)
+            notice.text = "Reading local evidence..."
+            payload = build_full_qa_pass(
+                profile_id,
+                workspace=workspace,
+                bmw_root=bmw_root,
+                trusted_tool_mode=trusted,
+            )
+            _append_activity(action="run", note=f"Full QA Pass run with trusted_tool_mode={trusted}.")
+            _render_payload(payload)
+            notice.text = "Full QA pass refreshed from local evidence."
+            if trusted:
+                ui.notify("Trusted tool mode is active for local tool actions only.")
+
+        _attach_tooltip(
+            ui,
+            ui.button("Run full QA pass", on_click=_run_full_pass).props("color=primary"),
+            "Run the local Full QA Pass and render inline operator actions.",
         )
-        ui.run_javascript(
-            f"""
-            (() => {{
-              const init = () => {{
-                const widget = document.getElementById({widget_id_json});
-                if (!widget || widget.dataset.sgfxInitialized === '1') return;
-                widget.dataset.sgfxInitialized = '1';
-                const button = widget.querySelector('[data-sgfx-full-qa-run]');
-                const trusted = widget.querySelector('[data-sgfx-full-qa-trusted]');
-                const notice = widget.querySelector('[data-sgfx-full-qa-notice]');
-                const result = widget.querySelector('[data-sgfx-full-qa-result]');
-                const initialPayload = {payload_json};
-                const apiUrl = {api_url_json};
-                const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({{
-                  '&': '&amp;',
-                  '<': '&lt;',
-                  '>': '&gt;',
-                  '"': '&quot;',
-                  "'": '&#39;',
-                }}[char]));
-                const render = (payload) => {{
-                  const progress = payload && typeof payload.progress === 'object' ? payload.progress : {{}};
-                  const percent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
-                  const steps = Array.isArray(payload.steps) ? payload.steps : [];
-                  const confirmations = Array.isArray(payload.confirmation_items) ? payload.confirmation_items : [];
-                  const guardrails = Array.isArray(payload.guardrails) ? payload.guardrails : [];
-                  const rows = steps.map((step) => `
-                    <tr>
-                      <td>${{escapeHtml(step.label)}}</td>
-                      <td><span class="sgfx-status-pill">${{escapeHtml(step.status)}}</span></td>
-                      <td>${{escapeHtml(step.summary)}}</td>
-                    </tr>
-                  `).join('');
-                  const confirmationHtml = confirmations.length ? `
-                    <div class="sgfx-panel-tagline">Confirmation items</div>
-                    ${{confirmations.map((item) => `<div class="sgfx-muted">${{escapeHtml(item.label)}}: ${{escapeHtml(item.detail)}}</div>`).join('')}}
-                  ` : '';
-                  const haltReason = String(payload.halt_reason || '').trim();
-                  result.innerHTML = `
-                    <div class="sgfx-summary">${{escapeHtml(payload.summary || '')}}</div>
-                    <progress class="sgfx-full-qa-progress" max="100" value="${{percent}}"></progress>
-                    <div class="sgfx-muted">Progress: ${{escapeHtml(progress.completed_steps || 0)}}/${{escapeHtml(progress.total_steps || 0)}} step(s).</div>
-                    ${{haltReason ? `<div class="sgfx-warning">Halted: ${{escapeHtml(haltReason)}}</div>` : ''}}
-                    ${{confirmationHtml}}
-                    ${{rows ? `<table class="sgfx-full-qa-table"><thead><tr><th>Step</th><th>Status</th><th>Detail</th></tr></thead><tbody>${{rows}}</tbody></table>` : ''}}
-                    ${{guardrails.map((guardrail) => `<div class="sgfx-guardrail">${{escapeHtml(guardrail)}}</div>`).join('')}}
-                  `;
-                }};
-                button.addEventListener('click', async (event) => {{
-                  event.preventDefault();
-                  button.disabled = true;
-                  button.textContent = 'Running...';
-                  notice.textContent = 'Reading local evidence...';
-                  try {{
-                    const response = await fetch(`${{apiUrl}}&trusted_tool_mode=${{trusted.checked ? '1' : '0'}}&ts=${{Date.now()}}`, {{
-                      headers: {{ Accept: 'application/json' }},
-                    }});
-                    if (!response.ok) throw new Error(`HTTP ${{response.status}}`);
-                    render(await response.json());
-                    notice.textContent = 'Full QA pass refreshed from local evidence.';
-                  }} catch (error) {{
-                    notice.textContent = `Full QA pass failed: ${{error}}`;
-                  }} finally {{
-                    button.disabled = false;
-                    button.textContent = 'Run full QA pass';
-                  }}
-                }});
-                render(initialPayload);
-              }};
-              window.setTimeout(init, 0);
-            }})();
-            """
-        )
+        _render_payload(initial_payload)
 
 
 def _render_selected_page(
@@ -4270,6 +4539,12 @@ def _render_dashboard(
             .sgfx-full-qa-table th { color: var(--sgfx-fg-strong); background: var(--sgfx-bg-elev); }
             .sgfx-status-pill { display: inline-block; min-width: 72px; border-radius: 999px; padding: 2px 8px; background: var(--sgfx-bg-elev); border: 1px solid var(--sgfx-border); font-size: 12px; }
             .sgfx-step { border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; background: var(--sgfx-bg-elev); }
+            .sgfx-full-qa-step { width: 100%; gap: 8px; border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; padding: 12px; background: var(--sgfx-bg-elev); transition: border-color 140ms ease-out, background 140ms ease-out; }
+            .sgfx-step-running { border-color: var(--sgfx-accent); background: #203530; }
+            .sgfx-step-passed { border-color: #3b6f55; background: #223027; }
+            .sgfx-step-failed { border-color: #8f4d4d; background: #332425; }
+            .sgfx-step-incomplete, .sgfx-step-confirmation_pending { border-color: var(--sgfx-warning-border); background: var(--sgfx-warning-bg); }
+            .sgfx-inline-confirm { border: 1px solid var(--sgfx-warning-border); border-radius: 8px; padding: 10px; margin-top: 6px; background: rgba(58, 47, 24, 0.62); }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
             .sgfx-risk-metric { flex: 1 1 220px; min-width: 220px; border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 12px; background: var(--sgfx-bg-elev); }
             .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid var(--sgfx-border); border-radius: 6px; padding: 8px; background: var(--sgfx-bg-elev); }
@@ -4397,7 +4672,13 @@ def _render_dashboard(
                         on_setup_completed=_refresh_snapshot,
                     )
                 elif active_page_id == "full-qa-pass":
-                    _render_full_qa_pass_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
+                    _render_full_qa_pass_panel(
+                        ui,
+                        state["snapshot"],
+                        workspace,
+                        bmw_root=bmw_root,
+                        open_page=_open_page,
+                    )
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
                 elif active_page_id == "risk-score":
