@@ -4023,6 +4023,14 @@ def _render_full_qa_pass_panel(
     profile_id = str(snapshot["profile_id"])
     running_actions: set[str] = set()
     active_jobs: dict[str, dict[str, Any]] = {}
+    wizard_state: dict[str, Any] = {
+        "payload": initial_payload,
+        "index": 0,
+        "skipped": set(),
+        "completed": set(),
+        "auto_started": set(),
+        "done": False,
+    }
 
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
@@ -4253,11 +4261,128 @@ def _render_full_qa_pass_panel(
                 return
             ui.notify(f"Open {target_page} from the sidebar.")
 
+        def _safe_int(value: object) -> int:
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        def _full_qa_display_status(step: dict[str, Any]) -> str:
+            status = str(step.get("status", "unknown"))
+            step_payload = step.get("payload", {}) if isinstance(step.get("payload"), dict) else {}
+            if str(step.get("id", "")) == "screenshot-test-state":
+                expected = _safe_int(step_payload.get("expected_count"))
+                actual = _safe_int(step_payload.get("actual_count"))
+                diff = _safe_int(step_payload.get("diff_count"))
+                sg_captured = _safe_int(step_payload.get("sg_perspectives_screenshot_count"))
+                if expected > 0 and actual == 0 and diff == 0 and sg_captured == 0:
+                    return "incomplete"
+            return status
+
+        def _full_qa_effective_status(step: dict[str, Any]) -> str:
+            step_id = str(step.get("id", ""))
+            if step_id in wizard_state["skipped"]:
+                return "skipped"
+            if step_id in wizard_state["completed"]:
+                return "passed"
+            return _full_qa_display_status(step)
+
+        def _payload_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
+            return [step for step in payload.get("steps", []) if isinstance(step, dict)]
+
+        def _first_focus_index(steps: list[dict[str, Any]], *, start: int = 0) -> int:
+            for index in range(max(0, start), len(steps)):
+                if _full_qa_effective_status(steps[index]) not in {"passed", "skipped"}:
+                    return index
+            return len(steps)
+
+        def _set_wizard_index(payload: dict[str, Any], *, start: int = 0) -> None:
+            steps = _payload_steps(payload)
+            wizard_state["index"] = _first_focus_index(steps, start=start)
+            wizard_state["done"] = wizard_state["index"] >= len(steps)
+
+        def _mark_step_completed(step_id: str) -> None:
+            if step_id:
+                wizard_state["completed"].add(step_id)
+            payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+            steps = _payload_steps(payload)
+            current_index = _safe_int(wizard_state.get("index"))
+            wizard_state["index"] = _first_focus_index(steps, start=current_index + 1)
+            wizard_state["done"] = wizard_state["index"] >= len(steps)
+            _render_payload(payload, preserve_index=True)
+
+        def _skip_current_step() -> None:
+            payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+            steps = _payload_steps(payload)
+            current_index = _safe_int(wizard_state.get("index"))
+            if current_index >= len(steps):
+                wizard_state["done"] = True
+                _render_payload(payload, preserve_index=True)
+                return
+            step_id = str(steps[current_index].get("id", ""))
+            wizard_state["skipped"].add(step_id)
+            _append_activity(action=f"skip:{step_id}", outcome="ok", note="Operator skipped current wizard step.")
+            wizard_state["index"] = _first_focus_index(steps, start=current_index + 1)
+            wizard_state["done"] = wizard_state["index"] >= len(steps)
+            _render_payload(payload, preserve_index=True)
+
+        def _show_previous_step() -> None:
+            payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+            steps = _payload_steps(payload)
+            current_index = _safe_int(wizard_state.get("index"))
+            if not steps:
+                return
+            wizard_state["done"] = False
+            wizard_state["index"] = max(0, min(current_index, len(steps)) - 1)
+            _render_payload(payload, preserve_index=True)
+
+        def _hide_prompt_overlay(prompt_overlay: Any) -> None:
+            prompt_overlay.clear()
+            prompt_overlay.visible = False
+
+        def _show_prompt_overlay(
+            prompt_overlay: Any,
+            action: dict[str, Any],
+            *,
+            status_label: Any,
+            progress: Any,
+            live_output: Any,
+            completion_label: Any,
+            cancel_button: Any,
+        ) -> None:
+            def _confirm_start(current: dict[str, Any] = action) -> None:
+                _hide_prompt_overlay(prompt_overlay)
+                _start_subprocess_action(
+                    current,
+                    status_label=status_label,
+                    progress=progress,
+                    live_output=live_output,
+                    completion_label=completion_label,
+                    cancel_button=cancel_button,
+                    on_complete=lambda step_id=str(current.get("step_id", "")): _mark_step_completed(step_id),
+                )
+
+            prompt_overlay.clear()
+            prompt_overlay.visible = True
+            with prompt_overlay:
+                with ui.column().classes("sgfx-wizard-modal"):
+                    ui.label("Confirm local tool action").classes("sgfx-panel-title")
+                    ui.label(str(action.get("confirmation_message", ""))).classes("sgfx-summary")
+                    paths = [str(path) for path in action.get("target_paths", []) if str(path).strip()]
+                    if paths:
+                        ui.label("Target paths").classes("sgfx-panel-tagline")
+                        for path in paths:
+                            ui.label(path).classes("sgfx-muted")
+                    with ui.row().classes("sgfx-wizard-modal-actions"):
+                        ui.button("Yes", on_click=_confirm_start).props("color=primary")
+                        ui.button("Cancel", on_click=lambda: _hide_prompt_overlay(prompt_overlay))
+
         def _render_action(
             action: dict[str, Any],
             *,
             status_label: Any,
-            trusted_auto_queue: list[tuple[dict[str, Any], Any, Any, Any, Any]],
+            prompt_overlay: Any,
+            auto_start_trusted: bool,
         ) -> None:
             label = str(action.get("label", "Action"))
             completion_label = ui.label(str(action.get("summary", ""))).classes("sgfx-muted")
@@ -4296,6 +4421,17 @@ def _render_full_qa_pass_panel(
                 def _show_form() -> None:
                     form_host.visible = True
 
+                def _save_handoff() -> None:
+                    _invoke_operator_action(
+                        action,
+                        status_label=status_label,
+                        completion_label=completion_label,
+                        stopping_point=str(stopping_input.value or ""),
+                        next_step=str(next_input.value or ""),
+                    )
+                    if str(status_label.text) == "passed":
+                        _mark_step_completed(str(action.get("step_id", "")))
+
                 _attach_tooltip(ui, ui.button(label, on_click=_show_form), str(action.get("summary", "")))
                 with form_host:
                     stopping_input = ui.textarea(
@@ -4306,49 +4442,44 @@ def _render_full_qa_pass_panel(
                         "Next step",
                         value="Continue remaining Full QA Pass items.",
                     ).props("outlined").classes("full-width")
-                    ui.button(
-                        "Save stopping point",
-                        on_click=lambda: _invoke_operator_action(
-                            action,
-                            status_label=status_label,
-                            completion_label=completion_label,
-                            stopping_point=str(stopping_input.value or ""),
-                            next_step=str(next_input.value or ""),
-                        ),
-                    ).props("color=primary")
+                    ui.button("Save stopping point", on_click=_save_handoff).props("color=primary")
                 return
             if kind in {"operator_ack", "verify_manual_review"}:
-                _attach_tooltip(
-                    ui,
-                    ui.button(
-                        label,
-                        on_click=lambda current=action: _invoke_operator_action(
-                            current,
-                            status_label=status_label,
-                            completion_label=completion_label,
-                        ),
-                    ),
-                    str(action.get("summary", "")),
-                )
+                def _run_operator_action(current: dict[str, Any] = action) -> None:
+                    _invoke_operator_action(
+                        current,
+                        status_label=status_label,
+                        completion_label=completion_label,
+                    )
+                    if str(status_label.text) == "passed":
+                        _mark_step_completed(str(current.get("step_id", "")))
+
+                _attach_tooltip(ui, ui.button(label, on_click=_run_operator_action), str(action.get("summary", "")))
                 return
             if kind == "subprocess":
-                prompt_host = ui.column().classes("sgfx-inline-confirm full-width")
-                prompt_host.visible = False
-
-                def _show_prompt_or_start() -> None:
-                    if not bool(action.get("enabled", True)):
-                        completion_label.text = str(action.get("disabled_reason", "Action is not available."))
+                def _show_prompt_or_start(current: dict[str, Any] = action) -> None:
+                    if not bool(current.get("enabled", True)):
+                        completion_label.text = str(current.get("disabled_reason", "Action is not available."))
                         return
-                    if bool(action.get("requires_confirmation", False)):
-                        prompt_host.visible = True
-                    else:
-                        _start_subprocess_action(
-                            action,
+                    if bool(current.get("requires_confirmation", False)):
+                        _show_prompt_overlay(
+                            prompt_overlay,
+                            current,
                             status_label=status_label,
                             progress=progress,
                             live_output=live_output,
                             completion_label=completion_label,
                             cancel_button=cancel_button,
+                        )
+                    else:
+                        _start_subprocess_action(
+                            current,
+                            status_label=status_label,
+                            progress=progress,
+                            live_output=live_output,
+                            completion_label=completion_label,
+                            cancel_button=cancel_button,
+                            on_complete=lambda step_id=str(current.get("step_id", "")): _mark_step_completed(step_id),
                         )
 
                 button = _attach_tooltip(
@@ -4358,88 +4489,128 @@ def _render_full_qa_pass_panel(
                 )
                 if not bool(action.get("enabled", True)):
                     button.disable()
-                with prompt_host:
-                    ui.label(str(action.get("confirmation_message", ""))).classes("sgfx-summary")
-                    paths = [str(path) for path in action.get("target_paths", []) if str(path).strip()]
-                    for path in paths:
-                        ui.label(f"Target: {path}").classes("sgfx-muted")
-                    with ui.row():
-                        ui.button(
-                            "Yes",
-                            on_click=lambda current=action: _start_subprocess_action(
-                                current,
-                                status_label=status_label,
-                                progress=progress,
-                                live_output=live_output,
-                                completion_label=completion_label,
-                                cancel_button=cancel_button,
-                            ),
-                        ).props("color=primary")
-                        ui.button("Cancel", on_click=lambda: setattr(prompt_host, "visible", False))
-                if bool(action.get("trusted_auto_confirm", False)) and bool(action.get("enabled", True)):
-                    trusted_auto_queue.append((action, status_label, progress, live_output, completion_label))
+                action_id = str(action.get("id", ""))
+                if (
+                    auto_start_trusted
+                    and bool(action.get("trusted_auto_confirm", False))
+                    and bool(action.get("enabled", True))
+                    and action_id not in wizard_state["auto_started"]
+                ):
+                    wizard_state["auto_started"].add(action_id)
+                    _show_prompt_or_start(action)
                 return
 
-        def _start_trusted_auto_queue(
-            queue: list[tuple[dict[str, Any], Any, Any, Any, Any]],
-            index: int = 0,
-        ) -> None:
-            if index >= len(queue):
-                return
-            action, status_label, progress, live_output, completion_label = queue[index]
-            _start_subprocess_action(
-                action,
-                status_label=status_label,
-                progress=progress,
-                live_output=live_output,
-                completion_label=completion_label,
-                cancel_button=cancel_button,
-                on_complete=lambda: _start_trusted_auto_queue(queue, index + 1),
-            )
-
-        def _render_payload(payload: dict[str, Any]) -> None:
+        def _render_payload(payload: dict[str, Any], *, preserve_index: bool = False) -> None:
+            wizard_state["payload"] = payload
+            steps = _payload_steps(payload)
+            if not preserve_index:
+                _set_wizard_index(payload)
+            current_index = _safe_int(wizard_state.get("index"))
+            if current_index > len(steps):
+                current_index = len(steps)
+                wizard_state["index"] = current_index
+            wizard_state["done"] = bool(wizard_state.get("done")) or current_index >= len(steps)
             result_host.clear()
             with result_host:
-                trusted_auto_queue: list[tuple[dict[str, Any], Any, Any, Any, Any]] = []
                 progress = payload.get("progress", {}) if isinstance(payload.get("progress"), dict) else {}
-                percent = int(progress.get("percent", 0) or 0)
+                total = len(steps) or _safe_int(progress.get("total_steps"))
+                wizard_position = min(current_index, total)
+                passed_count = sum(1 for step in steps if _full_qa_effective_status(step) == "passed")
+                skipped_count = len(wizard_state["skipped"])
+                percent = int((wizard_position / total) * 100) if total else 0
                 ui.label(str(payload.get("summary", ""))).classes("sgfx-summary")
-                ui.linear_progress(value=max(0, min(100, percent)) / 100).classes("full-width")
-                ui.label(
-                    f"Progress: {progress.get('completed_steps', 0)}/{progress.get('total_steps', 0)} step(s)."
-                ).classes("sgfx-muted")
+                with ui.column().classes("sgfx-wizard-shell"):
+                    with ui.row().classes("sgfx-wizard-header"):
+                        ui.label(
+                            f"Full QA Pass / {profile_id} / Step {min(current_index + 1, total) if total else 0} of {total}"
+                        ).classes("sgfx-wizard-breadcrumb")
+                        ui.label(f"{passed_count} passed | {skipped_count} skipped").classes("sgfx-muted")
+                    ui.linear_progress(value=max(0, min(100, percent)) / 100).classes(
+                        "full-width sgfx-full-qa-progress"
+                    )
+                    ui.label(
+                        f"Progress: {progress.get('completed_steps', 0)}/{progress.get('total_steps', 0)} "
+                        f"evidence step(s); wizard position {wizard_position}/{total}."
+                    ).classes("sgfx-muted")
                 trusted_note = str(payload.get("trusted_tool_mode_note", "")).strip()
                 if trusted_note:
                     ui.label(trusted_note).classes("sgfx-muted")
                 halt_reason = str(payload.get("halt_reason", "")).strip()
                 if halt_reason:
                     ui.label(f"Halted: {halt_reason}").classes("sgfx-warning")
-                steps = [step for step in payload.get("steps", []) if isinstance(step, dict)]
-                for step in steps:
-                    step_status = str(step.get("status", "unknown"))
-                    with ui.column().classes(f"sgfx-full-qa-step sgfx-step-{step_status}"):
-                        with ui.row().classes("items-center justify-between full-width"):
-                            ui.label(str(step.get("label", ""))).classes("sgfx-summary")
-                            status_label = ui.label(step_status).classes("sgfx-status-pill")
-                        ui.label(str(step.get("summary", ""))).classes("sgfx-muted")
-                        actions = [action for action in step.get("inline_actions", []) if isinstance(action, dict)]
-                        if actions:
-                            ui.label("Inline action").classes("sgfx-panel-tagline")
-                            for action in actions:
-                                _render_action(
-                                    action,
-                                    status_label=status_label,
-                                    trusted_auto_queue=trusted_auto_queue,
-                                )
+
+                prompt_overlay = ui.column().classes("sgfx-wizard-overlay full-width")
+                prompt_overlay.visible = False
+
+                if steps and current_index > 0:
+                    with ui.row().classes("sgfx-wizard-rail"):
+                        for prior_index, prior_step in enumerate(steps[:current_index]):
+                            prior_status = _full_qa_effective_status(prior_step)
+                            icon = "✓" if prior_status == "passed" else "skip" if prior_status == "skipped" else "!"
+                            ui.label(f"{icon} {prior_index + 1}. {prior_step.get('label', '')}").classes(
+                                f"sgfx-wizard-rail-item sgfx-step-{prior_status}"
+                            )
+
+                if not steps or wizard_state["done"]:
+                    with ui.column().classes("sgfx-wizard-card sgfx-wizard-done"):
+                        ui.label("Full QA Pass summary").classes("sgfx-panel-title")
+                        ui.label(str(payload.get("summary", "Full QA Pass complete for this dashboard run."))).classes(
+                            "sgfx-summary"
+                        )
+                        ui.label(
+                            f"Wizard reviewed {min(current_index, len(steps))}/{len(steps)} step(s); "
+                            f"{passed_count} passed and {skipped_count} skipped locally."
+                        ).classes("sgfx-muted")
+                        for guardrail in payload.get("guardrails", []):
+                            if str(guardrail).strip():
+                                ui.label(str(guardrail)).classes("sgfx-guardrail")
+                        if steps:
+                            ui.button("Back", on_click=_show_previous_step)
+                    return
+
+                step = steps[current_index]
+                step_status = _full_qa_effective_status(step)
+                with ui.column().classes(f"sgfx-wizard-card sgfx-full-qa-step sgfx-step-{step_status}"):
+                    with ui.row().classes("items-center justify-between full-width"):
+                        ui.label(str(step.get("label", ""))).classes("sgfx-panel-title")
+                        status_label = ui.label(step_status).classes("sgfx-status-pill")
+                    ui.label(str(step.get("summary", ""))).classes("sgfx-muted")
+                    if str(step.get("id", "")) == "screenshot-test-state":
+                        step_payload = step.get("payload", {}) if isinstance(step.get("payload"), dict) else {}
+                        ui.label(
+                            "Screenshot counts: "
+                            f"{_safe_int(step_payload.get('expected_count'))} expected / "
+                            f"{_safe_int(step_payload.get('actual_count'))} actual / "
+                            f"{_safe_int(step_payload.get('diff_count'))} diff."
+                        ).classes("sgfx-muted")
+                    actions = [action for action in step.get("inline_actions", []) if isinstance(action, dict)]
+                    if actions:
+                        ui.label("Operator action").classes("sgfx-panel-tagline")
+                        for action in actions:
+                            _render_action(
+                                action,
+                                status_label=status_label,
+                                prompt_overlay=prompt_overlay,
+                                auto_start_trusted=bool(payload.get("trusted_tool_mode", False)),
+                            )
+                    with ui.row().classes("sgfx-wizard-nav"):
+                        back_button = ui.button("Back", on_click=_show_previous_step)
+                        if current_index <= 0:
+                            back_button.disable()
+                        ui.button("Skip current", on_click=_skip_current_step)
+                        ui.button("Run again", on_click=lambda: _run_full_pass())
+
                 for guardrail in payload.get("guardrails", []):
                     if str(guardrail).strip():
                         ui.label(str(guardrail)).classes("sgfx-guardrail")
-                if trusted_auto_queue:
-                    _start_trusted_auto_queue(trusted_auto_queue)
 
         def _run_full_pass() -> None:
             trusted = bool(trusted_control.value)
             notice.text = "Reading local evidence..."
+            wizard_state["skipped"] = set()
+            wizard_state["completed"] = set()
+            wizard_state["auto_started"] = set()
+            wizard_state["done"] = False
             payload = build_full_qa_pass(
                 profile_id,
                 workspace=workspace,
@@ -4603,11 +4774,21 @@ def _render_dashboard(
             .sgfx-status-pill { display: inline-block; min-width: 72px; border-radius: 999px; padding: 2px 8px; background: var(--sgfx-bg-elev); border: 1px solid var(--sgfx-border); font-size: 12px; }
             .sgfx-step { border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; background: var(--sgfx-bg-elev); }
             .sgfx-full-qa-step { width: 100%; gap: 8px; border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; padding: 12px; background: var(--sgfx-bg-elev); transition: border-color 140ms ease-out, background 140ms ease-out; }
+            .sgfx-wizard-shell { width: 100%; gap: 8px; margin-top: 10px; }
+            .sgfx-wizard-header { width: 100%; align-items: center; justify-content: space-between; gap: 12px; }
+            .sgfx-wizard-breadcrumb { color: var(--sgfx-fg-strong); font-size: 14px; font-weight: 650; }
+            .sgfx-wizard-rail { width: 100%; gap: 6px; flex-wrap: wrap; margin: 12px 0 8px 0; }
+            .sgfx-wizard-rail-item { border: 1px solid var(--sgfx-border); border-radius: 999px; padding: 4px 10px; background: var(--sgfx-bg-elev); color: var(--sgfx-fg-muted); font-size: 12px; }
+            .sgfx-wizard-card { width: min(100%, 860px); align-self: center; gap: 10px; border-radius: 8px; padding: 18px; margin: 14px auto; }
+            .sgfx-wizard-nav, .sgfx-wizard-modal-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+            .sgfx-wizard-overlay { position: fixed; inset: 0; z-index: 9200; display: flex; align-items: center; justify-content: center; background: rgba(4, 8, 10, 0.72); padding: 20px; }
+            .sgfx-wizard-modal { width: min(92vw, 640px); gap: 10px; border: 1px solid var(--sgfx-warning-border); border-radius: 8px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); padding: 18px; box-shadow: 0 22px 58px rgba(0, 0, 0, 0.45); }
+            .sgfx-wizard-done { border: 1px solid #3b6f55; background: #223027; }
             .sgfx-step-running { border-color: var(--sgfx-accent); background: #203530; }
             .sgfx-step-passed { border-color: #3b6f55; background: #223027; }
             .sgfx-step-failed { border-color: #8f4d4d; background: #332425; }
+            .sgfx-step-skipped { border-color: var(--sgfx-border); background: var(--sgfx-bg-elev); }
             .sgfx-step-incomplete, .sgfx-step-confirmation_pending { border-color: var(--sgfx-warning-border); background: var(--sgfx-warning-bg); }
-            .sgfx-inline-confirm { border: 1px solid var(--sgfx-warning-border); border-radius: 8px; padding: 10px; margin-top: 6px; background: rgba(58, 47, 24, 0.62); }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
             .sgfx-risk-metric { flex: 1 1 220px; min-width: 220px; border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 12px; background: var(--sgfx-bg-elev); }
             .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid var(--sgfx-border); border-radius: 6px; padding: 8px; background: var(--sgfx-bg-elev); }
