@@ -841,6 +841,12 @@ def _tail_text(path: Path, limit: int = GENERATION_STDOUT_TAIL_BYTES) -> str:
     return data[-limit:].decode("utf-8", errors="replace")
 
 
+def _combined_tail_lines(stdout_path: Path, stderr_path: Path) -> list[str]:
+    lines = list(_tail_lines(stdout_path))
+    lines.extend(f"stderr: {line}" for line in _tail_lines(stderr_path))
+    return lines[-GENERATION_STDOUT_TAIL_LINES:]
+
+
 def _size_label(size_bytes: int) -> str:
     if size_bytes < 1024:
         return f"{size_bytes} B"
@@ -969,7 +975,7 @@ def _generation_progress_payload(job: DeliveryWorkbookGenerationJob, *, elapsed_
         "canceled": False,
         "summary": "BMW pipeline export running.",
         "stdout_tail": _tail_text(job.stdout_path),
-        "stdout_tail_lines": _tail_lines(job.stdout_path),
+        "stdout_tail_lines": _combined_tail_lines(job.stdout_path, job.stderr_path),
         "stderr_tail": _tail_text(job.stderr_path),
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
@@ -1031,7 +1037,7 @@ def _generation_result(
         "canceled": canceled,
         "summary": summary,
         "stdout_tail": _tail_text(job.stdout_path),
-        "stdout_tail_lines": _tail_lines(job.stdout_path),
+        "stdout_tail_lines": _combined_tail_lines(job.stdout_path, job.stderr_path),
         "stderr_tail": _tail_text(job.stderr_path),
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
@@ -1083,6 +1089,8 @@ def start_delivery_workbook_generation(
     ensure_parent(stdout_path)
     env = os.environ.copy()
     env[DIGITAL_3D_CAR_REPO_ENV] = str(execution_root)
+    env["PYTHONUNBUFFERED"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     if command_payload.get("lane") == LANE_IDC23:
         env[DIGITAL_3D_CAR_REPO_IDC23_ENV] = str(execution_root)
     started_wall_time = time.time()

@@ -458,6 +458,12 @@ def _copy_screenshot_capture_evidence(job: ScreenshotCaptureJob) -> dict[str, An
     }
 
 
+def _capture_combined_tail_lines(stdout_path: Path, stderr_path: Path) -> list[str]:
+    lines = list(_tail_lines(stdout_path))
+    lines.extend(f"stderr: {line}" for line in _tail_lines(stderr_path))
+    return lines[-SCREENSHOT_CAPTURE_FILE_ACTIVITY_LIMIT:]
+
+
 def _capture_progress_payload(job: ScreenshotCaptureJob, *, elapsed_seconds: float) -> dict[str, Any]:
     return {
         "profile_id": job.profile_id,
@@ -477,7 +483,7 @@ def _capture_progress_payload(job: ScreenshotCaptureJob, *, elapsed_seconds: flo
         "canceled": False,
         "summary": "BMW screenshot capture running.",
         "stdout_tail": _tail_text(job.stdout_path),
-        "stdout_tail_lines": _tail_lines(job.stdout_path),
+        "stdout_tail_lines": _capture_combined_tail_lines(job.stdout_path, job.stderr_path),
         "stderr_tail": _tail_text(job.stderr_path),
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
@@ -548,7 +554,7 @@ def _capture_result(
         "canceled": canceled,
         "summary": summary,
         "stdout_tail": _tail_text(job.stdout_path),
-        "stdout_tail_lines": _tail_lines(job.stdout_path),
+        "stdout_tail_lines": _capture_combined_tail_lines(job.stdout_path, job.stderr_path),
         "stderr_tail": _tail_text(job.stderr_path),
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
@@ -600,6 +606,8 @@ def start_screenshot_capture(
     ensure_parent(stdout_path)
     env = os.environ.copy()
     env[DIGITAL_3D_CAR_REPO_ENV] = str(execution_root)
+    env["PYTHONUNBUFFERED"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     if command_payload.get("lane") == LANE_IDC23:
         env[DIGITAL_3D_CAR_REPO_IDC23_ENV] = str(execution_root)
     started_wall_time = time.time()

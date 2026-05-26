@@ -314,7 +314,7 @@ class TestScreenshotCapture(unittest.TestCase):
                     "sg_preflight.delivery_workbook_generation._find_executable",
                     return_value=r"C:\tools\tool.exe",
                 ):
-                    with mock.patch.object(capture.subprocess, "Popen", return_value=fake_process):
+                    with mock.patch.object(capture.subprocess, "Popen", return_value=fake_process) as popen:
                         job = capture.start_screenshot_capture(
                             profile_id="G70",
                             workspace=root,
@@ -333,6 +333,38 @@ class TestScreenshotCapture(unittest.TestCase):
         self.assertEqual(result["file_activity"][0]["relative_path"], "actuals/front.png")
         self.assertFalse(result["is_approval"])
         self.assertTrue(result["recorded_by_tool"])
+        self.assertEqual(popen.call_args.kwargs["env"]["PYTHONUNBUFFERED"], "1")
+        self.assertEqual(popen.call_args.kwargs["env"]["PYTHONIOENCODING"], "utf-8")
+
+    def test_poll_capture_streams_stdout_and_stderr_tail_lines(self) -> None:
+        from sg_preflight import screenshot_capture as capture
+
+        fake_process = _FakeProcess(returncode=None)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            tests_root = bmw_root / "cars" / "BMW" / "G70_EVO" / "export" / "tests"
+            write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (tests_root / "actuals").mkdir(parents=True)
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
+                with mock.patch(
+                    "sg_preflight.delivery_workbook_generation._find_executable",
+                    return_value=r"C:\tools\tool.exe",
+                ):
+                    with mock.patch.object(capture.subprocess, "Popen", return_value=fake_process):
+                        job = capture.start_screenshot_capture(
+                            profile_id="G70",
+                            workspace=root,
+                            operator_confirmed=True,
+                        )
+                        write_text(job.stdout_path, "Test lights_indicators_front_R\nRGB differences checked\n")
+                        write_text(job.stderr_path, "stderr fixture warning\n")
+                        result = capture.poll_screenshot_capture(job)
+
+        self.assertEqual(result["status"], "running")
+        self.assertIn("Test lights_indicators_front_R", result["stdout_tail_lines"])
+        self.assertIn("stderr: stderr fixture warning", result["stdout_tail_lines"])
 
 
 if __name__ == "__main__":

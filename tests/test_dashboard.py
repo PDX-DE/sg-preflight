@@ -479,8 +479,29 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn('str(step.get("id", "")) == "screenshot-test-state"', source)
         self.assertIn("expected > 0 and actual == 0 and diff == 0", source)
         self.assertIn('action=f"skip:{step_id}", outcome="ok"', source)
+        self.assertIn("Action running", source)
+        self.assertIn("cancel first to navigate", source)
+        self.assertIn("sgfx-wizard-nav-blocked", source)
+        self.assertIn("button.visible = not is_running", source)
+        self.assertIn("Starting local subprocess; waiting for stdout/stderr", source)
+        self.assertIn("_action_output_text", source)
+        self.assertIn("if not _parent_slot_deleted(exc)", source)
+        self.assertIn("set_running_controls: Callable[[bool], None]", source)
+        self.assertIn("set_running_controls=set_running_controls", source)
+        self.assertIn('"launch_timer": None', source)
+        self.assertIn("Canceled before local subprocess started.", source)
+        self.assertIn("lambda _event=None, current=action: _show_prompt_or_start(current)", source)
+        self.assertIn("lambda _event=None, current=action: _confirm_start(current)", source)
         self.assertNotIn('outcome="skipped"', source)
         self.assertNotIn("trusted_auto_queue", source)
+        self.assertNotIn("on_click=_show_prompt_or_start", source)
+        self.assertNotIn('aria-label="{running_navigation_message}"', source)
+
+    def test_parent_slot_deleted_matches_nicegui_deleted_element_message(self) -> None:
+        from sg_preflight.dashboard.main import _parent_slot_deleted
+
+        self.assertTrue(_parent_slot_deleted(RuntimeError("The parent element this slot belongs to has been deleted.")))
+        self.assertTrue(_parent_slot_deleted(RuntimeError("The parent slot has been deleted.")))
 
     def test_dashboard_snapshot_exposes_first_run_setup_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1484,6 +1505,8 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertIn("ticket-review", command)
         self.assertIn("IDCEVODEV-1005738", command)
         self.assertEqual(popen_mock.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(popen_mock.call_args.kwargs["env"]["PYTHONUNBUFFERED"], "1")
+        self.assertEqual(popen_mock.call_args.kwargs["env"]["PYTHONIOENCODING"], "utf-8")
 
     def test_poll_build_review_package_persists_ticket_on_success(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main
