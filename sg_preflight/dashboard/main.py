@@ -4017,86 +4017,115 @@ def _render_full_qa_pass_panel(
     bmw_root: Path | str | None = None,
 ) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "full-qa-pass")
-    payload_state: dict[str, Any] = {"payload": page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}}
+    initial_payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    api_url = f"/sgfx-dashboard-api/full-qa-pass?profile={quote(str(snapshot['profile_id']), safe='')}"
+    payload_json = json.dumps(initial_payload).replace("</", "<\\/")
+    api_url_json = json.dumps(api_url)
+    widget_id = (
+        "sgfx-full-qa-widget-"
+        + (re.sub(r"[^a-z0-9]+", "-", str(snapshot["profile_id"]).casefold()).strip("-") or "profile")
+    )
+    widget_id_json = json.dumps(widget_id)
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(page["title"])).classes("sgfx-panel-title")
-            status_chip_host = ui.row().classes("items-center")
+            _render_status_chip(ui, str(initial_payload.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         _render_page_confluence_anchors(ui, page)
         ui.label(
             "Runs local evidence readers in order and stops before blocking issues. "
             "Confirmation-gated actions remain explicit."
         ).classes("sgfx-muted")
-        controls = ui.row().classes("items-center")
-        trusted = ui.checkbox("Trusted tool mode", value=False).props("dense")
-        result_host = ui.column().classes("full-width")
-
-        def _render_payload() -> None:
-            payload = payload_state["payload"]
-            status_chip_host.clear()
-            with status_chip_host:
-                _render_status_chip(ui, str(payload.get("status", "unknown")))
-            result_host.clear()
-            with result_host:
-                ui.label(str(payload.get("summary", ""))).classes("sgfx-summary")
-                progress = payload.get("progress", {}) if isinstance(payload.get("progress"), dict) else {}
-                percent = max(0, min(100, int(progress.get("percent", 0) or 0)))
-                ui.linear_progress(value=percent / 100).classes("full-width")
-                ui.label(
-                    f"Progress: {progress.get('completed_steps', 0)}/{progress.get('total_steps', 0)} step(s)."
-                ).classes("sgfx-muted")
-                halt_reason = str(payload.get("halt_reason", "")).strip()
-                if halt_reason:
-                    ui.label(f"Halted: {halt_reason}").classes("sgfx-warning")
-                confirmations = [item for item in payload.get("confirmation_items", []) if isinstance(item, dict)]
-                if confirmations:
-                    ui.label("Confirmation items").classes("sgfx-panel-tagline")
-                    for item in confirmations:
-                        ui.label(f"{item.get('label', '')}: {item.get('detail', '')}").classes("sgfx-muted")
-                rows = [
-                    {
-                        "label": str(step.get("label", "")),
-                        "status": str(step.get("status", "")),
-                        "detail": str(step.get("summary", "")),
-                    }
-                    for step in payload.get("steps", [])
-                    if isinstance(step, dict)
-                ]
-                if rows:
-                    _attach_tooltip(
-                        ui,
-                        ui.table(
-                            columns=[
-                                {"name": "label", "label": "Step", "field": "label", "align": "left"},
-                                {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                                {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
-                            ],
-                            rows=rows,
-                            row_key="label",
-                        ).classes("sgfx-table"),
-                        "Per-step progress for the local full QA pass.",
-                    )
-                for guardrail in payload.get("guardrails", []):
-                    ui.label(str(guardrail)).classes("sgfx-guardrail")
-
-        def _run_full_pass() -> None:
-            payload_state["payload"] = build_full_qa_pass(
-                str(snapshot["profile_id"]),
-                workspace=workspace,
-                bmw_root=bmw_root,
-                trusted_tool_mode=bool(trusted.value),
-            )
-            _render_payload()
-            ui.notify("Full QA pass refreshed from local evidence.")
-
-        with controls:
-            _attach_tooltip(
-                ui,
-                ui.button("Run full QA pass", on_click=_run_full_pass).props("color=primary no-caps"),
-                "Read each local evidence component for the selected profile.",
-            )
-        _render_payload()
+        ui.html(
+            f"""
+            <div id="{widget_id}" class="sgfx-full-qa-widget" data-sgfx-full-qa-widget>
+              <div class="sgfx-full-qa-controls">
+                <button type="button" class="sgfx-html-action-button" data-sgfx-full-qa-run>
+                  Run full QA pass
+                </button>
+                <label class="sgfx-inline-check">
+                  <input type="checkbox" data-sgfx-full-qa-trusted>
+                  <span>Trusted tool mode</span>
+                </label>
+              </div>
+              <div class="sgfx-muted" data-sgfx-full-qa-notice aria-live="polite"></div>
+              <div data-sgfx-full-qa-result></div>
+            </div>
+            """
+        )
+        ui.run_javascript(
+            f"""
+            (() => {{
+              const init = () => {{
+                const widget = document.getElementById({widget_id_json});
+                if (!widget || widget.dataset.sgfxInitialized === '1') return;
+                widget.dataset.sgfxInitialized = '1';
+                const button = widget.querySelector('[data-sgfx-full-qa-run]');
+                const trusted = widget.querySelector('[data-sgfx-full-qa-trusted]');
+                const notice = widget.querySelector('[data-sgfx-full-qa-notice]');
+                const result = widget.querySelector('[data-sgfx-full-qa-result]');
+                const initialPayload = {payload_json};
+                const apiUrl = {api_url_json};
+                const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({{
+                  '&': '&amp;',
+                  '<': '&lt;',
+                  '>': '&gt;',
+                  '"': '&quot;',
+                  "'": '&#39;',
+                }}[char]));
+                const render = (payload) => {{
+                  const progress = payload && typeof payload.progress === 'object' ? payload.progress : {{}};
+                  const percent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+                  const steps = Array.isArray(payload.steps) ? payload.steps : [];
+                  const confirmations = Array.isArray(payload.confirmation_items) ? payload.confirmation_items : [];
+                  const guardrails = Array.isArray(payload.guardrails) ? payload.guardrails : [];
+                  const rows = steps.map((step) => `
+                    <tr>
+                      <td>${{escapeHtml(step.label)}}</td>
+                      <td><span class="sgfx-status-pill">${{escapeHtml(step.status)}}</span></td>
+                      <td>${{escapeHtml(step.summary)}}</td>
+                    </tr>
+                  `).join('');
+                  const confirmationHtml = confirmations.length ? `
+                    <div class="sgfx-panel-tagline">Confirmation items</div>
+                    ${{confirmations.map((item) => `<div class="sgfx-muted">${{escapeHtml(item.label)}}: ${{escapeHtml(item.detail)}}</div>`).join('')}}
+                  ` : '';
+                  const haltReason = String(payload.halt_reason || '').trim();
+                  result.innerHTML = `
+                    <div class="sgfx-summary">${{escapeHtml(payload.summary || '')}}</div>
+                    <progress class="sgfx-full-qa-progress" max="100" value="${{percent}}"></progress>
+                    <div class="sgfx-muted">Progress: ${{escapeHtml(progress.completed_steps || 0)}}/${{escapeHtml(progress.total_steps || 0)}} step(s).</div>
+                    ${{haltReason ? `<div class="sgfx-warning">Halted: ${{escapeHtml(haltReason)}}</div>` : ''}}
+                    ${{confirmationHtml}}
+                    ${{rows ? `<table class="sgfx-full-qa-table"><thead><tr><th>Step</th><th>Status</th><th>Detail</th></tr></thead><tbody>${{rows}}</tbody></table>` : ''}}
+                    ${{guardrails.map((guardrail) => `<div class="sgfx-guardrail">${{escapeHtml(guardrail)}}</div>`).join('')}}
+                  `;
+                }};
+                button.addEventListener('click', async (event) => {{
+                  event.preventDefault();
+                  button.disabled = true;
+                  button.textContent = 'Running...';
+                  notice.textContent = 'Reading local evidence...';
+                  try {{
+                    const response = await fetch(`${{apiUrl}}&trusted_tool_mode=${{trusted.checked ? '1' : '0'}}&ts=${{Date.now()}}`, {{
+                      headers: {{ Accept: 'application/json' }},
+                    }});
+                    if (!response.ok) throw new Error(`HTTP ${{response.status}}`);
+                    render(await response.json());
+                    notice.textContent = 'Full QA pass refreshed from local evidence.';
+                  }} catch (error) {{
+                    notice.textContent = `Full QA pass failed: ${{error}}`;
+                  }} finally {{
+                    button.disabled = false;
+                    button.textContent = 'Run full QA pass';
+                  }}
+                }});
+                render(initialPayload);
+              }};
+              window.setTimeout(init, 0);
+            }})();
+            """
+        )
 
 
 def _render_selected_page(
@@ -4155,6 +4184,17 @@ def _render_dashboard(
         defer_daily_digest=True,
         defer_team_digest_board=True,
     )
+
+    @app.get("/sgfx-dashboard-api/full-qa-pass")
+    def _full_qa_pass_api(profile: str = "", trusted_tool_mode: str = "0") -> dict[str, Any]:
+        requested_profile = str(profile or base_snapshot.get("profile_id") or initial_profile_id).strip()
+        trusted = str(trusted_tool_mode).strip().casefold() in {"1", "true", "yes", "on"}
+        return build_full_qa_pass(
+            requested_profile,
+            workspace=workspace,
+            bmw_root=bmw_root,
+            trusted_tool_mode=trusted,
+        )
 
     @ui.page("/")
     def _index(profile: str = "") -> None:
@@ -4220,6 +4260,15 @@ def _render_dashboard(
             .sgfx-profile-select { min-width: 144px; }
             .sgfx-status { text-transform: none; }
             .sgfx-table { width: 100%; color: var(--sgfx-fg); }
+            .sgfx-full-qa-controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0 14px 0; }
+            .sgfx-html-action-button { min-height: 36px; border: 0; border-radius: 6px; padding: 0 16px; background: var(--sgfx-accent); color: #071d18; font-weight: 600; cursor: pointer; }
+            .sgfx-html-action-button:disabled { cursor: progress; opacity: 0.68; }
+            .sgfx-inline-check { display: inline-flex; align-items: center; gap: 8px; color: var(--sgfx-fg); font-size: 13px; }
+            .sgfx-full-qa-progress { width: 100%; height: 10px; margin: 10px 0 6px 0; accent-color: var(--sgfx-accent); }
+            .sgfx-full-qa-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
+            .sgfx-full-qa-table th, .sgfx-full-qa-table td { border-bottom: 1px solid var(--sgfx-border-soft); padding: 9px 10px; text-align: left; vertical-align: top; }
+            .sgfx-full-qa-table th { color: var(--sgfx-fg-strong); background: var(--sgfx-bg-elev); }
+            .sgfx-status-pill { display: inline-block; min-width: 72px; border-radius: 999px; padding: 2px 8px; background: var(--sgfx-bg-elev); border: 1px solid var(--sgfx-border); font-size: 12px; }
             .sgfx-step { border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; background: var(--sgfx-bg-elev); }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
             .sgfx-risk-metric { flex: 1 1 220px; min-width: 220px; border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 12px; background: var(--sgfx-bg-elev); }
