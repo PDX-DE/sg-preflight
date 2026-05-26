@@ -50,7 +50,7 @@ class TestFullQaPass(unittest.TestCase):
                 mock.patch("sg_preflight.full_qa_pass.build_operator_handoff_snapshot", return_value=_payload("recorded")),
             ]
             with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
-                payload = build_full_qa_pass("G70", workspace=root)
+                payload = build_full_qa_pass("G70", workspace=root, trusted_tool_mode=False)
 
         self.assertEqual(payload["status"], "incomplete")
         self.assertFalse(payload["halted"])
@@ -95,7 +95,8 @@ class TestFullQaPass(unittest.TestCase):
         self.assertFalse(payload["operator_confirmation_required"])
         self.assertEqual(payload["confirmation_items"], [])
         self.assertEqual(payload["trusted_auto_actions"][0]["id"], "generate-delivery-workbook")
-        self.assertIn("Jira and SVN writes still require explicit", payload["trusted_tool_mode_note"])
+        self.assertIn("Jira REST and SVN gates still always prompt", payload["trusted_tool_mode_note"])
+        self.assertTrue(payload["steps"][2]["confluence_anchors"])
         self.assertFalse(payload["records_operator_verdict"])
 
     def test_screenshot_zero_actuals_is_incomplete_with_capture_action(self) -> None:
@@ -136,12 +137,13 @@ class TestFullQaPass(unittest.TestCase):
                 patches[8],
                 patches[9],
             ):
-                payload = build_full_qa_pass("F70", workspace=root)
+                payload = build_full_qa_pass("F70", workspace=root, trusted_tool_mode=False)
 
         screenshot_step = next(step for step in payload["steps"] if step["id"] == "screenshot-test-state")
         self.assertEqual(screenshot_step["status"], "confirmation_pending")
         self.assertEqual(screenshot_step["inline_actions"][0]["id"], "capture-screenshots")
         self.assertIn("Run BMW screenshot capture for F70", screenshot_step["inline_actions"][0]["confirmation_message"])
+        self.assertIn("black offscreen-rendering window", screenshot_step["inline_actions"][0]["confirmation_message"])
         self.assertTrue(payload["operator_confirmation_required"])
 
     def test_full_pass_halts_and_skips_later_steps_on_blocking_issue(self) -> None:
@@ -164,7 +166,7 @@ class TestFullQaPass(unittest.TestCase):
             "profile_id": "G70",
             "status": "incomplete",
             "summary": "Full QA pass prepared local evidence.",
-            "trusted_tool_mode": False,
+            "trusted_tool_mode": True,
             "operator_confirmation_required": True,
             "progress": {"completed_steps": 1, "total_steps": 2},
             "guardrails": ["Manual review remains required.", "Decision: not approval — evidence only."],
@@ -176,7 +178,9 @@ class TestFullQaPass(unittest.TestCase):
         markdown = render_full_qa_pass_markdown(payload)
 
         self.assertIn("Run full QA pass - G70", text)
+        self.assertIn("Automatic mode: True", text)
         self.assertIn("Manual review remains required.", text)
+        self.assertIn("Automatic mode: `True`", markdown)
         self.assertIn("Manual review required: yes", markdown)
         self.assertIn("Decision: not approval", markdown)
         self.assertNotIn("records operator verdict", markdown.casefold())

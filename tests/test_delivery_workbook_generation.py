@@ -552,6 +552,17 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
                                 "status": "available",
                                 "summary": "Delivery checklist G70: generated workbook found.",
                                 "workbook_path": str(workbook),
+                                "worksheet": "Overview",
+                                "workbook_metadata": {"file_size": workbook.stat().st_size, "modified_at": "2026-05-26T12:00:00"},
+                                "checks": [
+                                    {"key": "variant_count", "label": "Size Analysis Variants", "status": "recorded", "raw_value": "3"},
+                                    {
+                                        "key": "variant_totals",
+                                        "label": "Variant Totals",
+                                        "status": "recorded",
+                                        "raw_value": "Variant-1=12000, Variant-2=12500, Variant-3=13000",
+                                    },
+                                ],
                             },
                         ):
                             job = generation.start_delivery_workbook_generation(
@@ -567,6 +578,8 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         copied = result["copied_evidence"]
         self.assertEqual(copied["status"], "recorded")
         self.assertEqual(copied["file_count"], 3)
+        self.assertEqual(result["workbook_preview"]["variant_count"], "3")
+        self.assertEqual(result["workbook_preview"]["variant_totals"][0], "Variant-1=12000")
         copied_paths = [Path(item["path"]) for item in copied["files"]]
         self.assertTrue(any(path.name == "G70_20260524.xlsx" for path in copied_paths))
         self.assertTrue(any("out" in path.parts and "delivery-workbook" in path.parts for path in copied_paths))

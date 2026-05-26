@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import escape as html_escape
 import base64
 import json
 from pathlib import Path
@@ -22,6 +23,7 @@ from sg_preflight.visual_review import build_visual_review_prep
 class QualityHeroReportBundle:
     payload: dict[str, Any]
     markdown_path: Path
+    html_path: Path
     json_path: Path
 
 
@@ -274,13 +276,17 @@ def build_quality_hero_report(
         "is_approval": False,
     }
     markdown_path = output_path / f"quality-hero-review-{_slug(profile.profile_id)}.md"
+    html_path = output_path / f"quality-hero-review-{_slug(profile.profile_id)}.html"
     json_path = output_path / f"quality-hero-review-{_slug(profile.profile_id)}.json"
     payload["markdown_path"] = str(markdown_path)
+    payload["html_path"] = str(html_path)
     payload["json_path"] = str(json_path)
     markdown = render_quality_hero_report_markdown(payload)
+    html = render_quality_hero_report_html(payload)
     markdown_path.write_text(markdown, encoding="utf-8")
+    html_path.write_text(html, encoding="utf-8")
     json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return QualityHeroReportBundle(payload=payload, markdown_path=markdown_path, json_path=json_path)
+    return QualityHeroReportBundle(payload=payload, markdown_path=markdown_path, html_path=html_path, json_path=json_path)
 
 
 def _status_line(label: str, payload: dict[str, Any]) -> str:
@@ -310,6 +316,147 @@ def _manual_review_markdown(session: dict[str, Any]) -> list[str]:
         return [f"- Status: `{_safe_status(session)}`", f"- Note: {session.get('note', 'No manual-review session was found.')}"]
     rendered = render_manual_review_markdown(session).splitlines()
     return [line for line in rendered if line.strip()][:80]
+
+
+def _html_check_rows(payload: dict[str, Any], *, limit: int = 12) -> str:
+    checks = payload.get("checks", [])
+    if not isinstance(checks, list) or not checks:
+        return "<p>No workbook check rows were available.</p>"
+    rows = []
+    for check in checks[:limit]:
+        if not isinstance(check, dict):
+            continue
+        label = html_escape(str(check.get("label", check.get("key", "check"))).strip())
+        status = html_escape(str(check.get("status", "unknown")).strip())
+        raw_value = html_escape(str(check.get("raw_value", "")).strip())
+        rows.append(f"<tr><th>{label}</th><td><span class=\"status\">{status}</span></td><td>{raw_value}</td></tr>")
+    if not rows:
+        return "<p>No workbook check rows were available.</p>"
+    return "<table><thead><tr><th>Check</th><th>Status</th><th>Value</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+
+
+def _html_screenshot_rows(viewer: dict[str, Any], *, limit: int = 20) -> str:
+    items = viewer.get("items", []) if isinstance(viewer.get("items", []), list) else []
+    if not items:
+        return "<p>No screenshot pairs were available.</p>"
+    rows = []
+    for item in items[:limit]:
+        if not isinstance(item, dict):
+            continue
+        cells = [
+            html_escape(str(item.get("key", ""))),
+            html_escape(str(item.get("classification", ""))),
+            html_escape(str(item.get("visual_classification", ""))),
+            html_escape(str(item.get("summary", ""))),
+        ]
+        rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>")
+    return (
+        "<table><thead><tr><th>Screenshot</th><th>Classification</th>"
+        "<th>Visual bucket</th><th>Summary</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+
+
+def _html_thumbnail_grid(thumbnails: list[Any]) -> str:
+    cards = []
+    for item in thumbnails:
+        if not isinstance(item, dict):
+            continue
+        src = str(item.get("image_data_uri", "")).strip()
+        if not src:
+            continue
+        key = html_escape(str(item.get("key", "screenshot")))
+        classification = html_escape(str(item.get("classification", "")))
+        visual = html_escape(str(item.get("visual_classification", "")))
+        cards.append(
+            "<figure>"
+            f"<img alt=\"{key}\" src=\"{src}\">"
+            f"<figcaption><strong>{key}</strong><br>{classification} / {visual}</figcaption>"
+            "</figure>"
+        )
+    if not cards:
+        return "<p>No embeddable screenshot thumbnails were available within the local size limit.</p>"
+    return "<div class=\"thumb-grid\">" + "".join(cards) + "</div>"
+
+
+def render_quality_hero_report_html(payload: dict[str, Any]) -> str:
+    profile = html_escape(str(payload.get("profile_id", "")).strip())
+    ticket = html_escape(str(payload.get("ticket_id", "")).strip() or "not provided")
+    screenshot_counts = payload.get("screenshot_counts", {}) if isinstance(payload.get("screenshot_counts"), dict) else {}
+    viewer = payload.get("screenshot_viewer", {}) if isinstance(payload.get("screenshot_viewer"), dict) else {}
+    thumbnails = payload.get("thumbnails", []) if isinstance(payload.get("thumbnails"), list) else []
+    guardrails = "".join(
+        f"<li>{html_escape(str(guardrail))}</li>"
+        for guardrail in payload.get("guardrails", [])
+        if str(guardrail).strip()
+    )
+    manual_lines = "\n".join(_manual_review_markdown(payload.get("manual_review", {})))
+    summary_cards = [
+        ("Delivery checklist", payload.get("delivery_checklist", {})),
+        ("Export-size analysis", payload.get("export_size_analysis", {})),
+        ("Screenshot test state", payload.get("screenshot_state", {})),
+        ("Manual-review session", payload.get("manual_review", {})),
+    ]
+    summary_html = "".join(
+        "<article class=\"card\">"
+        f"<h3>{html_escape(label)}</h3>"
+        f"<p><span class=\"status\">{html_escape(_safe_status(item if isinstance(item, dict) else {}))}</span></p>"
+        f"<p>{html_escape(str(item.get('summary', '') if isinstance(item, dict) else ''))}</p>"
+        "</article>"
+        for label, item in summary_cards
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quality-Hero Review Report - {profile}</title>
+  <style>
+    body {{ margin: 0; background: #1e1e1e; color: #d4d4d4; font: 14px/1.55 Segoe UI, Arial, sans-serif; }}
+    main {{ max-width: 1160px; margin: 0 auto; padding: 28px; }}
+    h1, h2, h3 {{ color: #f0f0f0; }}
+    .muted {{ color: #a8adb2; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }}
+    .card {{ border: 1px solid #3c3c3c; border-radius: 8px; background: #2b2b2b; padding: 14px; }}
+    .status {{ display: inline-block; border: 1px solid #4ec9b0; border-radius: 999px; padding: 2px 8px; color: #c8fff0; }}
+    table {{ width: 100%; border-collapse: collapse; margin: 12px 0; }}
+    th, td {{ border-bottom: 1px solid #3c3c3c; padding: 8px 10px; text-align: left; vertical-align: top; }}
+    th {{ color: #ececec; background: #252526; }}
+    .thumb-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }}
+    figure {{ margin: 0; border: 1px solid #3c3c3c; border-radius: 8px; background: #252526; padding: 10px; }}
+    img {{ width: 100%; height: auto; max-height: 220px; object-fit: contain; background: #111; border-radius: 4px; }}
+    pre {{ white-space: pre-wrap; background: #252526; border: 1px solid #3c3c3c; border-radius: 8px; padding: 12px; }}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Quality-Hero Review Report - {profile}</h1>
+  <p class="muted">Generated at: {html_escape(str(payload.get('generated_at_utc', '')))} | Ticket: {ticket}</p>
+  <p>This report collects local QA evidence for reviewer use. It is not a delivery signoff.</p>
+  <h2>Guardrails</h2>
+  <ul>{guardrails}</ul>
+  <h2>Evidence Summary</h2>
+  <section class="grid">{summary_html}</section>
+  <h2>Workbook Stats</h2>
+  {_html_check_rows(payload.get('delivery_checklist', {}) if isinstance(payload.get('delivery_checklist'), dict) else {})}
+  <h2>Screenshot Review</h2>
+  <p>Viewer items: <span class="status">{int(screenshot_counts.get('items', 0) or 0)}</span></p>
+  {_html_screenshot_rows(viewer)}
+  <h2>Screenshot Thumbnails</h2>
+  {_html_thumbnail_grid(thumbnails)}
+  <h2>Manual Review</h2>
+  <pre>{html_escape(manual_lines)}</pre>
+  <h2>Files</h2>
+  <ul>
+    <li>Markdown: {html_escape(str(payload.get('markdown_path', '')))}</li>
+    <li>HTML: {html_escape(str(payload.get('html_path', '')))}</li>
+    <li>JSON: {html_escape(str(payload.get('json_path', '')))}</li>
+  </ul>
+</main>
+</body>
+</html>
+"""
 
 
 def render_quality_hero_report_markdown(payload: dict[str, Any]) -> str:
@@ -421,6 +568,7 @@ def render_quality_hero_report_markdown(payload: dict[str, Any]) -> str:
             "## Files",
             f"- JSON: `{payload.get('json_path', '')}`",
             f"- Markdown: `{payload.get('markdown_path', '')}`",
+            f"- HTML: `{payload.get('html_path', '')}`",
         ]
     )
     return "\n".join(lines).rstrip() + "\n"

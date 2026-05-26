@@ -956,6 +956,41 @@ def _copy_delivery_workbook_evidence(
     }
 
 
+def _check_by_key(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    checks = payload.get("checks", [])
+    if not isinstance(checks, list):
+        return {}
+    for check in checks:
+        if isinstance(check, dict) and str(check.get("key", "")).strip() == key:
+            return check
+    return {}
+
+
+def _workbook_preview(checklist_payload: dict[str, Any]) -> dict[str, Any]:
+    workbook_path = str(checklist_payload.get("workbook_path", "")).strip()
+    if not workbook_path:
+        return {}
+    variant_count_check = _check_by_key(checklist_payload, "variant_count")
+    totals_check = _check_by_key(checklist_payload, "variant_totals")
+    variant_count = str(variant_count_check.get("raw_value", "") or "").strip()
+    totals_raw = str(totals_check.get("raw_value", "") or "").strip()
+    totals = [item.strip() for item in totals_raw.split(",") if item.strip()]
+    metadata = checklist_payload.get("workbook_metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return {
+        "status": str(checklist_payload.get("status", "unknown")),
+        "title": "Workbook preview",
+        "workbook_path": workbook_path,
+        "worksheet": str(checklist_payload.get("worksheet", "")),
+        "variant_count": variant_count,
+        "variant_totals": totals[:6],
+        "modified_at": str(metadata.get("modified_at", "")),
+        "file_size": int(metadata.get("file_size", 0) or 0),
+        "summary": str(checklist_payload.get("summary", "")),
+    }
+
+
 def _generation_progress_payload(job: DeliveryWorkbookGenerationJob, *, elapsed_seconds: float) -> dict[str, Any]:
     return {
         "profile_id": job.profile_id,
@@ -980,6 +1015,7 @@ def _generation_progress_payload(job: DeliveryWorkbookGenerationJob, *, elapsed_
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _file_activity(job.workspace, job.started_wall_time),
+        "workbook_preview": {},
         "sgfx_output_root": str(_delivery_workbook_sgfx_output_dir(job.workspace, job.profile_id)),
         "native_output_path": str(_delivery_workbook_output_dir(job.workspace)),
         "preflight": job.preflight,
@@ -1042,6 +1078,7 @@ def _generation_result(
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _file_activity(job.workspace, job.started_wall_time),
+        "workbook_preview": _workbook_preview(checklist_payload),
         "copied_evidence": copied_evidence,
         "sgfx_output_root": copied_evidence["output_root"],
         "native_output_path": str(_delivery_workbook_output_dir(job.workspace)),

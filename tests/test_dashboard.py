@@ -453,6 +453,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
 
         self.assertIn("Build Quality-Hero report", source)
+        self.assertIn("HTML report", source)
         self.assertIn("Attach to Jira ticket", source)
         self.assertIn("Ticket picker", source)
         self.assertIn("Post to Jira?", source)
@@ -469,7 +470,15 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Confirm local tool action", source)
         self.assertIn("Skip current", source)
         self.assertIn("Full QA Pass summary", source)
-        self.assertIn("Trusted tool mode is active for local tool actions only.", source)
+        self.assertIn("Automatic mode is active for local tool actions only.", source)
+        self.assertIn('ui.checkbox("Automatic mode", value=True)', source)
+        self.assertIn("Manual mode opt-out", source)
+        self.assertIn("Jira REST and SVN gates still always prompt", source)
+        self.assertIn("View doc", source)
+        self.assertIn("sgfx-live-visuals", source)
+        self.assertIn("Diff thumbnails", source)
+        self.assertIn("Workbook preview", source)
+        self.assertIn("black offscreen-rendering window", source)
         self.assertIn("record_operator_handoff", source)
         self.assertIn("start_delivery_workbook_generation", source)
         self.assertIn("start_screenshot_capture", source)
@@ -485,6 +494,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("button.visible = not is_running", source)
         self.assertIn("Starting local subprocess; waiting for stdout/stderr", source)
         self.assertIn("_action_output_text", source)
+        self.assertIn("_render_action_visuals", source)
         self.assertIn("if not _parent_slot_deleted(exc)", source)
         self.assertIn("set_running_controls: Callable[[bool], None]", source)
         self.assertIn("set_running_controls=set_running_controls", source)
@@ -1377,14 +1387,19 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             markdown_path = workspace / "out" / "quality" / "quality-hero-review-g70.md"
+            html_path = workspace / "out" / "quality" / "quality-hero-review-g70.html"
             json_path = workspace / "out" / "quality" / "quality-hero-review-g70.json"
             markdown_path.parent.mkdir(parents=True)
             markdown_path.write_text("# report\n", encoding="utf-8")
             markdown_size = markdown_path.stat().st_size
+            html_path.write_text("<html></html>\n", encoding="utf-8")
+            html_size = html_path.stat().st_size
             json_path.write_text("{}", encoding="utf-8")
             fake_completed = mock.Mock(
                 returncode=0,
-                stdout=json.dumps({"markdown_path": str(markdown_path), "json_path": str(json_path)}),
+                stdout=json.dumps(
+                    {"markdown_path": str(markdown_path), "html_path": str(html_path), "json_path": str(json_path)}
+                ),
                 stderr="",
             )
             with mock.patch.object(dashboard_main.subprocess, "run", return_value=fake_completed) as run_mock:
@@ -1402,7 +1417,9 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertNotIn("--attach-ticket", command)
         self.assertEqual(result["outcome"], "recorded")
         self.assertEqual(result["markdown_size_bytes"], markdown_size)
+        self.assertEqual(result["html_size_bytes"], html_size)
         self.assertEqual(result["markdown_path"], str(markdown_path))
+        self.assertEqual(result["html_path"], str(html_path))
 
     def test_build_quality_hero_report_attachment_requires_operator_confirmation(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main
@@ -1423,15 +1440,18 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             markdown_path = workspace / "out" / "quality" / "quality-hero-review-g70.md"
+            html_path = workspace / "out" / "quality" / "quality-hero-review-g70.html"
             json_path = workspace / "out" / "quality" / "quality-hero-review-g70.json"
             markdown_path.parent.mkdir(parents=True)
             markdown_path.write_text("# report\n", encoding="utf-8")
+            html_path.write_text("<html></html>\n", encoding="utf-8")
             json_path.write_text("{}", encoding="utf-8")
             fake_completed = mock.Mock(
                 returncode=0,
                 stdout=json.dumps(
                     {
                         "markdown_path": str(markdown_path),
+                        "html_path": str(html_path),
                         "json_path": str(json_path),
                         "jira_attachment": {
                             "status": "recorded",

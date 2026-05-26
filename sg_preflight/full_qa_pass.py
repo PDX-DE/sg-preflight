@@ -37,10 +37,30 @@ FULL_QA_PASS_CONFLUENCE_ANCHORS = (
     + "SER"
     + "GFX/016_Project-Management/024_How-to...-Seriesgraphics/029_Regular-Meetings/030_SG-Daily/page.txt",
 )
+_QUALITY_HERO_ANCHOR = FULL_QA_PASS_CONFLUENCE_ANCHORS[0]
+_DELIVERY_ANCHOR = FULL_QA_PASS_CONFLUENCE_ANCHORS[1]
+_SG_DAILY_ANCHOR = FULL_QA_PASS_CONFLUENCE_ANCHORS[2]
+_SCREENSHOT_ANCHOR = (
+    "PDX_"
+    + "SER"
+    + "GFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt"
+)
+FULL_QA_STEP_CONFLUENCE_ANCHORS = {
+    "onboarding-guide": (_QUALITY_HERO_ANCHOR,),
+    "delivery-checklist": (_DELIVERY_ANCHOR,),
+    "delivery-workbook-trigger": (_DELIVERY_ANCHOR,),
+    "screenshot-test-state": (_SCREENSHOT_ANCHOR,),
+    "risk-score": (_QUALITY_HERO_ANCHOR,),
+    "cross-car-comparison": (_QUALITY_HERO_ANCHOR,),
+    "team-digest-board": (_SG_DAILY_ANCHOR,),
+    "manual-review-assist": (_QUALITY_HERO_ANCHOR,),
+    "operator-handoff": (_SG_DAILY_ANCHOR,),
+}
 _BLOCKING_SOURCE_STATUSES = {"failed", "missing", "unavailable"}
 _INCOMPLETE_SOURCE_STATUSES = {"incomplete", "not_run", "pending", "not_available", "no_expected_baselines"}
 FULL_QA_TRUSTED_MODE_NOTE = (
-    "Trusted tool mode auto-confirms local tool actions only. Jira and SVN writes still require explicit per-action gates."
+    "Automatic mode runs local tool actions when available. Jira REST and SVN gates still always prompt. "
+    "Switch Automatic mode off for Manual mode."
 )
 
 
@@ -107,6 +127,11 @@ def _action_prompt(label: str, detail: str) -> str:
     ).strip()
 
 
+def _step_confluence_anchors(step_id: str) -> list[str]:
+    anchors = FULL_QA_STEP_CONFLUENCE_ANCHORS.get(step_id, (_QUALITY_HERO_ANCHOR,))
+    return [anchor for anchor in anchors if str(anchor).strip()]
+
+
 def _delivery_workbook_action(payload: dict[str, Any], *, trusted_tool_mode: bool) -> dict[str, Any] | None:
     if not bool(payload.get("can_start", False)):
         return None
@@ -156,7 +181,11 @@ def _screenshot_capture_action(
         "timeout_seconds": SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
         "confirmation_message": _action_prompt(
             "Capture screenshots",
-            str(preflight.get("confirmation_message", "Run the BMW screenshot capture helper for this profile.")),
+            (
+                str(preflight.get("confirmation_message", "Run the BMW screenshot capture helper for this profile."))
+                + " The BMW Ramses renderer may show a black offscreen-rendering window while screenshots are captured; "
+                "SGFX streams the pipeline output here."
+            ),
         ),
         "target_paths": [
             str(preflight.get("target_write_path", "")),
@@ -319,6 +348,7 @@ def _step(
         "operator_confirmation_required": bool(payload_confirmations) or bool(action_confirmations),
         "confirmation_items": [*payload_confirmations, *action_confirmations],
         "inline_actions": actions,
+        "confluence_anchors": _step_confluence_anchors(step_id),
         "manual_review_required": True,
         "records_operator_verdict": False,
         "is_approval": False,
@@ -340,6 +370,7 @@ def _failed_step(step_id: str, label: str, exc: Exception) -> dict[str, Any]:
         "operator_confirmation_required": False,
         "confirmation_items": [],
         "inline_actions": [],
+        "confluence_anchors": _step_confluence_anchors(step_id),
         "manual_review_required": True,
         "records_operator_verdict": False,
         "is_approval": False,
@@ -361,6 +392,7 @@ def _skipped_step(step_id: str, label: str, halted_label: str) -> dict[str, Any]
         "operator_confirmation_required": False,
         "confirmation_items": [],
         "inline_actions": [],
+        "confluence_anchors": _step_confluence_anchors(step_id),
         "manual_review_required": True,
         "records_operator_verdict": False,
         "is_approval": False,
@@ -488,7 +520,7 @@ def build_full_qa_pass(
     workspace: Path | str | None = None,
     bmw_root: Path | str | None = None,
     comparison_profile: str = "G65",
-    trusted_tool_mode: bool = False,
+    trusted_tool_mode: bool = True,
     halt_on_flagged_issue: bool = True,
 ) -> dict[str, Any]:
     root = Path(workspace).resolve() if workspace is not None else Path.cwd()
@@ -615,7 +647,7 @@ def render_full_qa_pass_text(payload: dict[str, Any]) -> str:
         f"Run full QA pass - {payload.get('profile_id', '')}",
         str(payload.get("summary", "")),
         f"Status: {payload.get('status', 'unknown')}",
-        f"Trusted tool mode: {payload.get('trusted_tool_mode', False)}",
+        f"Automatic mode: {payload.get('trusted_tool_mode', False)}",
         f"Operator confirmation required: {payload.get('operator_confirmation_required', False)}",
         "",
         "Guardrails:",
@@ -637,7 +669,7 @@ def render_full_qa_pass_markdown(payload: dict[str, Any]) -> str:
         "",
         f"- Status: `{payload.get('status', 'unknown')}`",
         f"- Progress: `{progress.get('completed_steps', 0)}/{progress.get('total_steps', 0)}`",
-        f"- Trusted tool mode: `{payload.get('trusted_tool_mode', False)}`",
+        f"- Automatic mode: `{payload.get('trusted_tool_mode', False)}`",
         f"- Operator confirmation required: `{payload.get('operator_confirmation_required', False)}`",
         "- Manual review required: yes",
         "- Decision: not approval; evidence only.",

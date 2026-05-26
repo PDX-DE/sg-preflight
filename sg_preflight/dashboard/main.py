@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape as html_escape
@@ -2208,6 +2209,7 @@ def build_dashboard_quality_hero_report(
         ),
     )
     markdown_path = str(payload.get("markdown_path", "") or "")
+    html_path = str(payload.get("html_path", "") or "")
     json_path = str(payload.get("json_path", "") or "")
     attachment = payload.get("jira_attachment", {}) if isinstance(payload.get("jira_attachment"), dict) else {}
     return {
@@ -2221,8 +2223,10 @@ def build_dashboard_quality_hero_report(
         "status": outcome,
         "command": command,
         "markdown_path": markdown_path,
+        "html_path": html_path,
         "json_path": json_path,
         "markdown_size_bytes": Path(markdown_path).stat().st_size if markdown_path and Path(markdown_path).is_file() else 0,
+        "html_size_bytes": Path(html_path).stat().st_size if html_path and Path(html_path).is_file() else 0,
         "json_size_bytes": Path(json_path).stat().st_size if json_path and Path(json_path).is_file() else 0,
         "jira_attachment": attachment,
         "attachment_id": _attachment_response_id(attachment),
@@ -2247,9 +2251,144 @@ def _page_confluence_anchors(page: dict[str, Any]) -> list[str]:
     return [str(anchor).strip() for anchor in anchors if str(anchor).strip()]
 
 
+def _confluence_dump_root() -> Path:
+    return Path(os.environ.get("SGFX_CONFLUENCE_DUMP_ROOT", Path.home() / "Downloads" / "confluence-readable-dumps"))
+
+
+def _confluence_anchor_relative_path(anchor: str) -> str:
+    clean = anchor.strip()
+    if ".txt" in clean:
+        clean = clean[: clean.index(".txt") + 4]
+    elif ":" in clean:
+        clean = clean.split(":", 1)[0]
+    clean = clean.strip().replace("\\", "/").lstrip("/")
+    prefix = "PDX_" + "SER" + "GFX/"
+    if clean and not clean.startswith((prefix, "BMW_3DCar/")):
+        clean = prefix + clean
+    return clean
+
+
+def _confluence_anchor_path(anchor: str) -> Path | None:
+    relative = _confluence_anchor_relative_path(anchor)
+    if not relative:
+        return None
+    path = (_confluence_dump_root() / relative).resolve()
+    return path if path.is_file() else None
+
+
+def _confluence_anchor_url(anchor: str) -> str:
+    path = _confluence_anchor_path(anchor)
+    if path is None:
+        return ""
+    try:
+        relative = path.relative_to(_confluence_dump_root().resolve())
+    except ValueError:
+        return ""
+    return "/sgfx-confluence/" + quote(str(relative).replace("\\", "/"), safe="/")
+
+
+def _render_confluence_anchor(ui: Any, anchor: str) -> None:
+    with ui.row().classes("sgfx-doc-link-row"):
+        ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
+        url = _confluence_anchor_url(anchor)
+        if url:
+            ui.link("View doc", url, new_tab=True).classes("sgfx-doc-link")
+        else:
+            ui.label("View doc unavailable").classes("sgfx-muted")
+
+
+def _image_mime(path: Path) -> str:
+    suffix = path.suffix.casefold()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".webp":
+        return "image/webp"
+    if suffix == ".bmp":
+        return "image/bmp"
+    return "image/png"
+
+
+def _dashboard_data_uri(path_value: str, *, max_bytes: int = 450_000) -> str:
+    path = Path(str(path_value or ""))
+    if path.suffix.casefold() not in {".png", ".jpg", ".jpeg", ".bmp", ".webp"}:
+        return ""
+    if not path.is_file():
+        return ""
+    try:
+        if path.stat().st_size > max_bytes:
+            return ""
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    except OSError:
+        return ""
+    return f"data:{_image_mime(path)};base64,{encoded}"
+
+
+def _file_activity_visual_items(result: dict[str, Any], *, limit: int = 4) -> list[dict[str, str]]:
+    activity = result.get("file_activity", [])
+    if not isinstance(activity, list):
+        return []
+    items: list[dict[str, str]] = []
+    for entry in activity:
+        if not isinstance(entry, dict):
+            continue
+        path = str(entry.get("path", "")).strip()
+        data_uri = _dashboard_data_uri(path)
+        if not data_uri:
+            continue
+        relative = str(entry.get("relative_path", Path(path).name)).strip()
+        items.append(
+            {
+                "label": relative or Path(path).name,
+                "detail": str(entry.get("summary", "") or entry.get("size_label", "")),
+                "src": data_uri,
+            }
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _render_action_visuals(ui: Any, result: dict[str, Any], *, visual_label: Any, visual_host: Any) -> None:
+    visual_host.clear()
+    image_items = _file_activity_visual_items(result)
+    workbook_preview = result.get("workbook_preview", {})
+    if not isinstance(workbook_preview, dict):
+        workbook_preview = {}
+    has_workbook_preview = bool(workbook_preview.get("workbook_path"))
+    if not image_items and not has_workbook_preview:
+        visual_label.visible = False
+        visual_host.visible = False
+        return
+    visual_label.visible = True
+    visual_host.visible = True
+    with visual_host:
+        if has_workbook_preview:
+            with ui.column().classes("sgfx-workbook-preview"):
+                ui.label("Workbook preview").classes("sgfx-panel-tagline")
+                ui.label(Path(str(workbook_preview.get("workbook_path", ""))).name).classes("sgfx-summary")
+                variant_count = str(workbook_preview.get("variant_count", "") or "").strip()
+                if variant_count:
+                    ui.label(f"{variant_count} variant(s) detected").classes("sgfx-status-pill")
+                totals = workbook_preview.get("variant_totals", [])
+                if isinstance(totals, list) and totals:
+                    for item in totals[:6]:
+                        ui.label(str(item)).classes("sgfx-muted")
+                summary = str(workbook_preview.get("summary", "") or "").strip()
+                if summary:
+                    ui.label(summary).classes("sgfx-muted")
+        if image_items:
+            with ui.column().classes("sgfx-diff-preview"):
+                ui.label("Diff thumbnails").classes("sgfx-panel-tagline")
+                with ui.row().classes("sgfx-diff-thumbnails"):
+                    for item in image_items:
+                        with ui.column().classes("sgfx-diff-thumb-card"):
+                            ui.image(str(item["src"])).classes("sgfx-diff-thumb")
+                            ui.label(str(item["label"])).classes("sgfx-muted")
+
+
 def _render_page_confluence_anchors(ui: Any, page: dict[str, Any]) -> None:
     for anchor in _page_confluence_anchors(page):
-        ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
+        _render_confluence_anchor(ui, anchor)
 
 
 def _dashboard_verbose_tooltips_enabled() -> bool:
@@ -3582,6 +3721,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             ).classes("full-width")
             report_status = ui.label("No Quality-Hero report generated in this session.").classes("sgfx-muted")
             report_path_label = ui.label("").classes("sgfx-muted")
+            report_html_label = ui.label("").classes("sgfx-muted")
             attach_status = ui.label("").classes("sgfx-muted")
             jira_link_host = ui.column().classes("full-width")
             report_state: dict[str, Any] = {}
@@ -3593,6 +3733,13 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
 
             def _report_markdown_path() -> Path | None:
                 value = str(report_state.get("markdown_path", "") or "").strip()
+                if not value:
+                    return None
+                path = Path(value)
+                return path if path.is_file() else None
+
+            def _report_html_path() -> Path | None:
+                value = str(report_state.get("html_path", "") or "").strip()
                 if not value:
                     return None
                 path = Path(value)
@@ -3621,6 +3768,8 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                     f"(exit {result.get('exit_code', '?')}) for {ticket_value}."
                 )
                 report_path_label.text = f"Report: {markdown_path}" if markdown_path else "Report path unavailable."
+                html_path = _report_html_path()
+                report_html_label.text = f"HTML report: {html_path}" if html_path else "HTML report path unavailable."
                 attach_status.text = "Report can now be attached after confirmation." if markdown_path else ""
                 jira_link_host.clear()
                 if markdown_path:
@@ -3645,7 +3794,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             with ui.dialog() as attach_dialog, ui.card():
                 ui.label("Attach to Jira ticket").classes("sgfx-panel-title")
                 ui.label("Post to Jira?").classes("sgfx-summary")
-                ui.label("This posts the generated Markdown report only after this confirmation.").classes(
+                ui.label("This posts the generated Markdown report only after this confirmation. HTML stays local.").classes(
                     "sgfx-summary"
                 )
                 confirm_ticket = ui.label("Ticket:").classes("sgfx-muted")
@@ -4048,9 +4197,16 @@ def _render_full_qa_pass_panel(
             "Confirmation-gated actions remain explicit."
         ).classes("sgfx-muted")
         ui.label(str(initial_payload.get("trusted_tool_mode_note", ""))).classes("sgfx-muted")
+        ui.label(
+            "Ramses may show a black offscreen-rendering window during screenshot capture; "
+            "live output appears in the action panel."
+        ).classes("sgfx-muted")
 
         with ui.row().classes("sgfx-full-qa-controls"):
-            trusted_control = ui.checkbox("Trusted tool mode", value=False)
+            trusted_control = ui.checkbox("Automatic mode", value=True)
+            ui.label("Manual mode opt-out: switch Automatic mode off to confirm local actions one by one.").classes(
+                "sgfx-muted"
+            )
             notice = ui.label("Full QA pass has not run in this dashboard session.").classes("sgfx-muted")
             result_host = ui.column().classes("full-width")
 
@@ -4095,6 +4251,8 @@ def _render_full_qa_pass_panel(
             status_label: Any,
             progress: Any,
             live_output: Any,
+            visual_label: Any,
+            visual_host: Any,
             completion_label: Any,
             cancel_button: Any | None = None,
             set_running_controls: Callable[[bool], None] | None = None,
@@ -4110,6 +4268,9 @@ def _render_full_qa_pass_panel(
             progress.props("indeterminate")
             live_output.visible = True
             live_output.value = "Starting local subprocess; waiting for stdout/stderr..."
+            visual_label.visible = False
+            visual_host.clear()
+            visual_host.visible = False
             _scroll_live_output_to_bottom()
             if cancel_button is not None:
                 cancel_button.visible = True
@@ -4129,6 +4290,8 @@ def _render_full_qa_pass_panel(
                 status_label.text = "failed"
                 completion_label.text = f"{action.get('label', 'Action')} failed to start: {exc}"
                 live_output.value = str(exc)
+                visual_label.visible = False
+                visual_host.visible = False
                 progress.visible = False
                 if cancel_button is not None:
                     cancel_button.visible = False
@@ -4157,6 +4320,7 @@ def _render_full_qa_pass_panel(
                     if result is None:
                         return
                     live_output.value = _action_output_text(result)
+                    _render_action_visuals(ui, result, visual_label=visual_label, visual_host=visual_host)
                     _scroll_live_output_to_bottom()
                     if not bool(result.get("completed", True)):
                         completion_label.text = str(result.get("summary", f"{label} running."))
@@ -4231,6 +4395,8 @@ def _render_full_qa_pass_panel(
             status_label: Any,
             progress: Any,
             live_output: Any,
+            visual_label: Any,
+            visual_host: Any,
             completion_label: Any,
             cancel_button: Any,
             set_running_controls: Callable[[bool], None] | None = None,
@@ -4246,6 +4412,8 @@ def _render_full_qa_pass_panel(
                     status_label.text = "incomplete"
                     live_output.visible = True
                     live_output.value = "Canceled before local subprocess started."
+                    visual_label.visible = False
+                    visual_host.visible = False
                     if set_running_controls is not None:
                         set_running_controls(False)
                     _append_activity(action=action_id, outcome="unavailable", note="Action canceled before subprocess start.")
@@ -4269,6 +4437,7 @@ def _render_full_qa_pass_panel(
                 status_label.text = "incomplete"
                 completion_label.text = str(result.get("summary", "Action canceled."))
                 live_output.value = _action_output_text(result)
+                _render_action_visuals(ui, result, visual_label=visual_label, visual_host=visual_host)
                 _scroll_live_output_to_bottom()
                 if set_running_controls is not None:
                     set_running_controls(False)
@@ -4417,6 +4586,8 @@ def _render_full_qa_pass_panel(
             status_label: Any,
             progress: Any,
             live_output: Any,
+            visual_label: Any,
+            visual_host: Any,
             completion_label: Any,
             cancel_button: Any,
             set_running_controls: Callable[[bool], None],
@@ -4428,6 +4599,8 @@ def _render_full_qa_pass_panel(
                     status_label=status_label,
                     progress=progress,
                     live_output=live_output,
+                    visual_label=visual_label,
+                    visual_host=visual_host,
                     completion_label=completion_label,
                     cancel_button=cancel_button,
                     set_running_controls=set_running_controls,
@@ -4470,6 +4643,10 @@ def _render_full_qa_pass_panel(
                 .classes("full-width sgfx-live-output")
             )
             live_output.visible = False
+            visual_label = ui.label("Live visual output").classes("sgfx-panel-tagline")
+            visual_label.visible = False
+            visual_host = ui.row().classes("full-width sgfx-live-visuals")
+            visual_host.visible = False
             cancel_button = ui.button(
                 "Cancel running action",
                 on_click=lambda _event=None, current=action: _cancel_subprocess_action(
@@ -4477,6 +4654,8 @@ def _render_full_qa_pass_panel(
                     status_label=status_label,
                     progress=progress,
                     live_output=live_output,
+                    visual_label=visual_label,
+                    visual_host=visual_host,
                     completion_label=completion_label,
                     cancel_button=cancel_button,
                     set_running_controls=set_running_controls,
@@ -4554,6 +4733,8 @@ def _render_full_qa_pass_panel(
                             status_label=status_label,
                             progress=progress,
                             live_output=live_output,
+                            visual_label=visual_label,
+                            visual_host=visual_host,
                             completion_label=completion_label,
                             cancel_button=cancel_button,
                             set_running_controls=set_running_controls,
@@ -4564,6 +4745,8 @@ def _render_full_qa_pass_panel(
                             status_label=status_label,
                             progress=progress,
                             live_output=live_output,
+                            visual_label=visual_label,
+                            visual_host=visual_host,
                             completion_label=completion_label,
                             cancel_button=cancel_button,
                             set_running_controls=set_running_controls,
@@ -4689,6 +4872,11 @@ def _render_full_qa_pass_panel(
                         ui.label(str(step.get("label", ""))).classes("sgfx-panel-title")
                         status_label = ui.label(step_status).classes("sgfx-status-pill")
                     ui.label(str(step.get("summary", ""))).classes("sgfx-muted")
+                    step_anchors = step.get("confluence_anchors", [])
+                    if isinstance(step_anchors, str):
+                        step_anchors = [step_anchors]
+                    for anchor in [str(item).strip() for item in step_anchors if str(item).strip()][:1]:
+                        _render_confluence_anchor(ui, anchor)
                     if str(step.get("id", "")) == "screenshot-test-state":
                         step_payload = step.get("payload", {}) if isinstance(step.get("payload"), dict) else {}
                         ui.label(
@@ -4733,11 +4921,11 @@ def _render_full_qa_pass_panel(
                 bmw_root=bmw_root,
                 trusted_tool_mode=trusted,
             )
-            _append_activity(action="run", note=f"Full QA Pass run with trusted_tool_mode={trusted}.")
+            _append_activity(action="run", note=f"Full QA Pass run with automatic_mode={trusted}.")
             _render_payload(payload)
             notice.text = "Full QA pass refreshed from local evidence."
             if trusted:
-                ui.notify("Trusted tool mode is active for local tool actions only.")
+                ui.notify("Automatic mode is active for local tool actions only. Jira REST and SVN gates still always prompt.")
 
         _attach_tooltip(
             ui,
@@ -4792,6 +4980,9 @@ def _render_dashboard(
 ) -> None:
     app.add_static_files("/sgfx-dashboard-static", str(runtime_asset_dir("sg_preflight/dashboard")))
     app.add_static_files("/sgfx-dashboard-assets", str(runtime_asset_root()))
+    confluence_root = _confluence_dump_root()
+    if confluence_root.is_dir():
+        app.add_static_files("/sgfx-confluence", str(confluence_root))
     operator_ui_static_root = operator_ui_root(workspace)
     operator_ui_static_root.mkdir(parents=True, exist_ok=True)
     app.add_static_files("/sgfx-operator-ui", str(operator_ui_static_root))
@@ -4805,7 +4996,7 @@ def _render_dashboard(
     )
 
     @app.get("/sgfx-dashboard-api/full-qa-pass")
-    def _full_qa_pass_api(profile: str = "", trusted_tool_mode: str = "0") -> dict[str, Any]:
+    def _full_qa_pass_api(profile: str = "", trusted_tool_mode: str = "1") -> dict[str, Any]:
         requested_profile = str(profile or base_snapshot.get("profile_id") or initial_profile_id).strip()
         trusted = str(trusted_tool_mode).strip().casefold() in {"1", "true", "yes", "on"}
         return build_full_qa_pass(
@@ -4873,6 +5064,8 @@ def _render_dashboard(
             .sgfx-page-panel { border-radius: 8px; box-shadow: none; border: 1px solid var(--sgfx-border); width: 100%; padding: 18px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); margin-bottom: 14px; }
             .sgfx-panel-title { font-size: 18px; font-weight: 650; color: var(--sgfx-fg-strong); }
             .sgfx-panel-tagline, .sgfx-muted { color: var(--sgfx-fg-muted); font-size: 13px; }
+            .sgfx-doc-link-row { gap: 10px; align-items: center; flex-wrap: wrap; }
+            .sgfx-doc-link { color: var(--sgfx-accent) !important; font-size: 13px; text-decoration: none; border-bottom: 1px solid rgba(78, 201, 176, 0.45); }
             .sgfx-summary { color: var(--sgfx-fg); font-size: 14px; line-height: 1.55; }
             .sgfx-warning { border: 1px solid var(--sgfx-warning-border); background: var(--sgfx-warning-bg); color: var(--sgfx-warning-fg); border-radius: 6px; padding: 9px 12px; }
             .sgfx-shortcut-feedback { min-height: 22px; color: var(--sgfx-fg-muted); font-size: 13px; padding: 2px 0; }
@@ -4883,22 +5076,24 @@ def _render_dashboard(
             .sgfx-html-action-button { min-height: 36px; border: 0; border-radius: 6px; padding: 0 16px; background: var(--sgfx-accent); color: #071d18; font-weight: 600; cursor: pointer; }
             .sgfx-html-action-button:disabled { cursor: progress; opacity: 0.68; }
             .sgfx-inline-check { display: inline-flex; align-items: center; gap: 8px; color: var(--sgfx-fg); font-size: 13px; }
-            .sgfx-full-qa-progress { width: 100%; height: 10px; margin: 10px 0 6px 0; accent-color: var(--sgfx-accent); }
+            .sgfx-full-qa-progress { width: 100%; height: 10px; margin: 10px 0 6px 0; accent-color: var(--sgfx-accent); transition: opacity 180ms ease, filter 180ms ease; }
             .sgfx-full-qa-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
             .sgfx-full-qa-table th, .sgfx-full-qa-table td { border-bottom: 1px solid var(--sgfx-border-soft); padding: 9px 10px; text-align: left; vertical-align: top; }
             .sgfx-full-qa-table th { color: var(--sgfx-fg-strong); background: var(--sgfx-bg-elev); }
-            .sgfx-status-pill { display: inline-block; min-width: 72px; border-radius: 999px; padding: 2px 8px; background: var(--sgfx-bg-elev); border: 1px solid var(--sgfx-border); font-size: 12px; }
+            .sgfx-status-pill { display: inline-block; min-width: 72px; border-radius: 999px; padding: 2px 8px; background: var(--sgfx-bg-elev); border: 1px solid var(--sgfx-border); font-size: 12px; transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease; }
             .sgfx-step { border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; background: var(--sgfx-bg-elev); }
-            .sgfx-full-qa-step { width: 100%; gap: 8px; border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; padding: 12px; background: var(--sgfx-bg-elev); transition: border-color 140ms ease-out, background 140ms ease-out; }
+            .sgfx-full-qa-step { width: 100%; gap: 8px; border: 1px solid var(--sgfx-border); border-radius: 8px; margin: 8px 0; padding: 12px; background: var(--sgfx-bg-elev); transition: border-color 180ms ease-out, background-color 180ms ease-out, transform 180ms ease-out; }
             .sgfx-wizard-shell { width: 100%; gap: 8px; margin-top: 10px; }
             .sgfx-wizard-header { width: 100%; align-items: center; justify-content: space-between; gap: 12px; }
             .sgfx-wizard-breadcrumb { color: var(--sgfx-fg-strong); font-size: 14px; font-weight: 650; }
             .sgfx-wizard-rail { width: 100%; gap: 6px; flex-wrap: wrap; margin: 12px 0 8px 0; }
             .sgfx-wizard-rail-item { border: 1px solid var(--sgfx-border); border-radius: 999px; padding: 4px 10px; background: var(--sgfx-bg-elev); color: var(--sgfx-fg-muted); font-size: 12px; }
-            .sgfx-wizard-card { width: min(100%, 860px); align-self: center; gap: 10px; border-radius: 8px; padding: 18px; margin: 14px auto; }
+            .sgfx-wizard-card { width: min(100%, 860px); align-self: center; gap: 10px; border-radius: 8px; padding: 18px; margin: 14px auto; animation: sgfx-wizard-card-in 160ms ease-out; transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease; }
             .sgfx-wizard-nav, .sgfx-wizard-modal-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-            .sgfx-wizard-overlay { position: fixed; inset: 0; z-index: 9200; display: flex; align-items: center; justify-content: center; background: rgba(4, 8, 10, 0.72); padding: 20px; }
-            .sgfx-wizard-modal { width: min(92vw, 640px); gap: 10px; border: 1px solid var(--sgfx-warning-border); border-radius: 8px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); padding: 18px; box-shadow: 0 22px 58px rgba(0, 0, 0, 0.45); }
+            .sgfx-wizard-nav .q-btn { transition: opacity 160ms ease, filter 160ms ease, transform 160ms ease; }
+            .sgfx-wizard-nav-blocked { opacity: 0.52; filter: saturate(0.68); }
+            .sgfx-wizard-overlay { position: fixed; inset: 0; z-index: 9200; display: flex; align-items: center; justify-content: center; background: rgba(4, 8, 10, 0.72); padding: 20px; animation: sgfx-overlay-in 120ms ease-out; }
+            .sgfx-wizard-modal { width: min(92vw, 640px); gap: 10px; border: 1px solid var(--sgfx-warning-border); border-radius: 8px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); padding: 18px; box-shadow: 0 22px 58px rgba(0, 0, 0, 0.45); animation: sgfx-wizard-card-in 160ms ease-out; }
             .sgfx-wizard-done { border: 1px solid #3b6f55; background: #223027; }
             .sgfx-step-running { border-color: var(--sgfx-accent); background: #203530; }
             .sgfx-step-passed { border-color: #3b6f55; background: #223027; }
@@ -4906,6 +5101,11 @@ def _render_dashboard(
             .sgfx-step-skipped { border-color: var(--sgfx-border); background: var(--sgfx-bg-elev); }
             .sgfx-step-incomplete, .sgfx-step-confirmation_pending { border-color: var(--sgfx-warning-border); background: var(--sgfx-warning-bg); }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
+            .sgfx-live-visuals { gap: 12px; align-items: stretch; animation: sgfx-visual-in 160ms ease-out; }
+            .sgfx-workbook-preview, .sgfx-diff-preview { flex: 1 1 280px; min-width: 260px; border: 1px solid var(--sgfx-border); border-radius: 8px; background: var(--sgfx-bg); padding: 10px; gap: 6px; }
+            .sgfx-diff-thumbnails { gap: 10px; flex-wrap: wrap; }
+            .sgfx-diff-thumb-card { width: 176px; border: 1px solid var(--sgfx-border-soft); border-radius: 6px; background: var(--sgfx-bg-elev); padding: 8px; gap: 6px; }
+            .sgfx-diff-thumb { width: 160px; height: 100px; object-fit: contain; background: #111; border-radius: 4px; }
             .sgfx-risk-metric { flex: 1 1 220px; min-width: 220px; border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 12px; background: var(--sgfx-bg-elev); }
             .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid var(--sgfx-border); border-radius: 6px; padding: 8px; background: var(--sgfx-bg-elev); }
             .sgfx-viewer-dialog-card { width: min(96vw, 1680px); height: min(92vh, 980px); max-width: none !important; display: flex; flex-direction: column; gap: 10px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); border: 1px solid var(--sgfx-border); border-radius: 8px; }
@@ -4918,6 +5118,9 @@ def _render_dashboard(
             .sgfx-hotkey-popup img { width: 96px; height: 96px; object-fit: contain; animation: sgfx-hotkey-pulse 900ms ease-in-out infinite; flex: 0 0 auto; }
             .sgfx-hotkey-key { color: var(--sgfx-fg-strong); font-size: 14px; font-weight: 650; }
             .sgfx-hotkey-message { color: var(--sgfx-fg-muted); font-size: 13px; line-height: 1.45; }
+            @keyframes sgfx-wizard-card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+            @keyframes sgfx-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+            @keyframes sgfx-visual-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
             @keyframes sgfx-tooltip-pop { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
             @keyframes sgfx-tooltip-pulse { 0%, 100% { transform: scale(0.78); opacity: 0.58; } 50% { transform: scale(1.22); opacity: 1; } }
             @keyframes sgfx-hotkey-pulse { 0%, 100% { transform: scale(0.96) rotate(0deg); opacity: 0.82; } 50% { transform: scale(1.04) rotate(3deg); opacity: 1; } }

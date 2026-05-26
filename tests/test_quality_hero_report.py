@@ -105,6 +105,7 @@ class TestQualityHeroReport(unittest.TestCase):
             )
 
             self.assertTrue(bundle.markdown_path.exists())
+            self.assertTrue(bundle.html_path.exists())
             self.assertTrue(bundle.json_path.exists())
             self.assertEqual(bundle.payload["profile_id"], "G65")
             self.assertEqual(bundle.payload["delivery_checklist"]["status"], "available")
@@ -113,12 +114,17 @@ class TestQualityHeroReport(unittest.TestCase):
             self.assertFalse(bundle.payload["is_approval"])
 
             markdown = bundle.markdown_path.read_text(encoding="utf-8")
+            html = bundle.html_path.read_text(encoding="utf-8")
             self.assertIn("# Quality-Hero Review Report - G65", markdown)
             self.assertIn("## Workbook Stats", markdown)
             self.assertIn("## Screenshot Review", markdown)
             self.assertIn("## Screenshot Thumbnails", markdown)
             self.assertIn("<img", markdown)
             self.assertIn("Manual review remains required.", markdown)
+            self.assertIn("<html", html)
+            self.assertIn("Quality-Hero Review Report - G65", html)
+            self.assertIn("Manual review remains required.", html)
+            self.assertIn("HTML:", markdown)
 
     def test_cli_quality_hero_report_can_prepare_jira_attachment_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -168,8 +174,33 @@ class TestQualityHeroReport(unittest.TestCase):
             self.assertEqual(result, 0)
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["jira_attachment"]["status"], "recorded")
+            self.assertTrue(Path(payload["html_path"]).exists())
             attach.assert_called_once()
             self.assertTrue(attach.call_args.kwargs["auto_confirm"])
+
+            html_stdout = io.StringIO()
+            with redirect_stdout(html_stdout):
+                html_result = main(
+                    [
+                        "quality-hero-report",
+                        "generate",
+                        "--profile",
+                        profile.profile_id,
+                        "--workspace",
+                        str(root),
+                        "--bmw-root",
+                        str(root / "missing-digital-3d-car-models"),
+                        "--screenshot-viewer-json",
+                        str(viewer_json),
+                        "--output-root",
+                        str(root / "out" / "report-html"),
+                        "--format",
+                        "html",
+                    ]
+                )
+            self.assertEqual(html_result, 0)
+            self.assertIn("<html", html_stdout.getvalue())
+            self.assertIn("Quality-Hero Review Report", html_stdout.getvalue())
 
 
 if __name__ == "__main__":

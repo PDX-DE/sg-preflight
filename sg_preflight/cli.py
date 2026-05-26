@@ -775,9 +775,23 @@ def build_parser() -> argparse.ArgumentParser:
     full_qa_pass_run.add_argument("--profile", required=True, help="Profile id such as G70")
     full_qa_pass_run.add_argument("--comparison-profile", default="G65", help="Comparison profile id such as G65")
     full_qa_pass_run.add_argument(
-        "--trusted-tool-mode",
+        "--automatic-mode",
+        dest="trusted_tool_mode",
         action="store_true",
-        help="Report trusted orchestration mode while preserving hard write locks",
+        default=True,
+        help="Run local tool actions automatically when available while preserving Jira REST and SVN gates",
+    )
+    full_qa_pass_run.add_argument(
+        "--manual-mode",
+        dest="trusted_tool_mode",
+        action="store_false",
+        help="Require operator confirmation before each local tool action",
+    )
+    full_qa_pass_run.add_argument(
+        "--trusted-tool-mode",
+        dest="trusted_tool_mode",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     full_qa_pass_run.add_argument(
         "--no-halt",
@@ -812,9 +826,22 @@ def build_parser() -> argparse.ArgumentParser:
     delivery_workbook_trigger.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
     delivery_workbook_trigger.add_argument("--profile", required=True, help="Profile id such as G65")
     delivery_workbook_trigger.add_argument(
-        "--trusted-tool-mode",
+        "--automatic-mode",
+        dest="trusted_tool_mode",
         action="store_true",
-        help="Report trusted orchestration mode without starting generation",
+        help="Report Automatic mode without starting generation",
+    )
+    delivery_workbook_trigger.add_argument(
+        "--manual-mode",
+        dest="trusted_tool_mode",
+        action="store_false",
+        help="Report Manual mode without starting generation",
+    )
+    delivery_workbook_trigger.add_argument(
+        "--trusted-tool-mode",
+        dest="trusted_tool_mode",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     delivery_workbook_trigger.add_argument("--json", action="store_true", help="Print trigger as JSON")
     delivery_workbook_trigger.add_argument("--markdown", action="store_true", help="Print trigger as Markdown")
@@ -1150,7 +1177,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     quality_hero_report = sub.add_parser(
         "quality-hero-report",
-        help="Generate a Markdown Quality-Hero review report from local evidence",
+        help="Generate Markdown and HTML Quality-Hero review reports from local evidence",
     )
     quality_hero_report_sub = quality_hero_report.add_subparsers(dest="quality_hero_report_command", required=True)
     quality_hero_report_generate = quality_hero_report_sub.add_parser(
@@ -1166,7 +1193,7 @@ def build_parser() -> argparse.ArgumentParser:
     quality_hero_report_generate.add_argument("--thumbnail-limit", type=int, default=4, help="Embedded screenshot thumbnail limit")
     quality_hero_report_generate.add_argument("--attach-ticket", default="", help="Optional Jira ticket id to attach the Markdown report")
     quality_hero_report_generate.add_argument("--auto-confirm", action="store_true", help="Attach the report after confirmation")
-    _add_render_options(quality_hero_report_generate, formats=("text", "json", "markdown"))
+    _add_render_options(quality_hero_report_generate, formats=("text", "json", "markdown", "html"))
 
     desktop_notification = sub.add_parser(
         "desktop-notification",
@@ -2311,15 +2338,18 @@ def _main_impl(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(_console_safe(f"quality-hero-report failed: {exc}"), file=sys.stderr)
             return 1
-        output_format = _resolve_render_format(args, parser)
+        output_format = _resolve_render_format(args, parser, formats=("text", "json", "markdown", "html"))
         if output_format == "json":
             _emit_json(payload, args)
         elif output_format == "markdown":
             _emit_text(bundle.markdown_path.read_text(encoding="utf-8"), args)
+        elif output_format == "html":
+            _emit_text(bundle.html_path.read_text(encoding="utf-8"), args)
         else:
             lines = [
                 f"Quality-Hero report: {payload.get('profile_id', args.profile)}",
                 f"Markdown: {bundle.markdown_path}",
+                f"HTML: {bundle.html_path}",
                 f"JSON: {bundle.json_path}",
             ]
             if payload.get("jira_attachment"):
