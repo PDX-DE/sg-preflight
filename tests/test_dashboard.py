@@ -469,6 +469,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("record_operator_handoff", source)
         self.assertIn("start_delivery_workbook_generation", source)
         self.assertIn("start_screenshot_capture", source)
+        self.assertIn("Cancel running action", source)
         self.assertIn("Manual-review state still has", source)
 
     def test_dashboard_snapshot_exposes_first_run_setup_status(self) -> None:

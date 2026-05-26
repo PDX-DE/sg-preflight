@@ -4022,6 +4022,7 @@ def _render_full_qa_pass_panel(
     initial_payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
     profile_id = str(snapshot["profile_id"])
     running_actions: set[str] = set()
+    active_jobs: dict[str, dict[str, Any]] = {}
 
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
@@ -4057,6 +4058,7 @@ def _render_full_qa_pass_panel(
             progress: Any,
             live_output: Any,
             completion_label: Any,
+            cancel_button: Any | None = None,
             on_complete: Callable[[], None] | None = None,
         ) -> None:
             action_id = str(action.get("id", ""))
@@ -4069,6 +4071,9 @@ def _render_full_qa_pass_panel(
             progress.props("indeterminate")
             live_output.visible = True
             live_output.value = "Starting local subprocess..."
+            if cancel_button is not None:
+                cancel_button.visible = True
+                cancel_button.enable()
             job_state: dict[str, Any] = {"job": None, "timer": None}
 
             try:
@@ -4097,6 +4102,8 @@ def _render_full_qa_pass_panel(
                 completion_label.text = f"{action.get('label', 'Action')} failed to start: {exc}"
                 live_output.value = str(exc)
                 progress.visible = False
+                if cancel_button is not None:
+                    cancel_button.visible = False
                 running_actions.discard(action_id)
                 _append_activity(action=action_id, outcome="error", note=str(exc))
                 ui.notify(f"{action.get('label', 'Action')} failed to start.")
@@ -4107,6 +4114,7 @@ def _render_full_qa_pass_panel(
             def _stop_timer() -> None:
                 _cancel_background_poll_timer(job_state.get("timer"))
                 job_state["timer"] = None
+                active_jobs.pop(action_id, None)
 
             def _poll() -> None:
                 try:
@@ -4129,6 +4137,8 @@ def _render_full_qa_pass_panel(
                     _stop_timer()
                     running_actions.discard(action_id)
                     progress.visible = False
+                    if cancel_button is not None:
+                        cancel_button.visible = False
                     outcome = str(result.get("status", "unknown"))
                     status_label.text = "passed" if outcome == "available" else outcome
                     completion_label.text = f"{action.get('label', 'Action')} {outcome}. {result.get('summary', '')}"
@@ -4154,6 +4164,44 @@ def _render_full_qa_pass_panel(
                     _stop_timer()
 
             job_state["timer"] = _start_background_poll_timer(1.0, _poll)
+            active_jobs[action_id] = job_state
+
+        def _cancel_subprocess_action(
+            action: dict[str, Any],
+            *,
+            status_label: Any,
+            progress: Any,
+            live_output: Any,
+            completion_label: Any,
+            cancel_button: Any,
+        ) -> None:
+            action_id = str(action.get("id", ""))
+            job_state = active_jobs.get(action_id)
+            if not job_state or job_state.get("job") is None:
+                completion_label.text = "No running action is available to cancel."
+                cancel_button.visible = False
+                return
+            try:
+                if action_id == GENERATE_WORKBOOK_ACTION_ID:
+                    result = cancel_delivery_workbook_generation(job_state["job"])
+                elif action_id == SCREENSHOT_CAPTURE_ACTION_ID:
+                    result = cancel_screenshot_capture(job_state["job"])
+                else:
+                    raise ValueError(f"Unsupported Full QA Pass action: {action_id}")
+                _cancel_background_poll_timer(job_state.get("timer"))
+                active_jobs.pop(action_id, None)
+                running_actions.discard(action_id)
+                progress.visible = False
+                cancel_button.visible = False
+                status_label.text = "incomplete"
+                completion_label.text = str(result.get("summary", "Action canceled."))
+                live_output.value = completion_label.text
+                _append_activity(action=action_id, outcome="unavailable", note=completion_label.text)
+                ui.notify(completion_label.text)
+            except Exception as exc:  # noqa: BLE001
+                status_label.text = "failed"
+                completion_label.text = f"Cancel failed: {exc}"
+                _append_activity(action=action_id, outcome="error", note=str(exc))
 
         def _invoke_operator_action(
             action: dict[str, Any],
@@ -4221,6 +4269,18 @@ def _render_full_qa_pass_panel(
                 .classes("full-width sgfx-live-output")
             )
             live_output.visible = False
+            cancel_button = ui.button(
+                "Cancel running action",
+                on_click=lambda current=action: _cancel_subprocess_action(
+                    current,
+                    status_label=status_label,
+                    progress=progress,
+                    live_output=live_output,
+                    completion_label=completion_label,
+                    cancel_button=cancel_button,
+                ),
+            )
+            cancel_button.visible = False
             kind = str(action.get("kind", ""))
             if kind == "navigate":
                 _attach_tooltip(
@@ -4288,6 +4348,7 @@ def _render_full_qa_pass_panel(
                             progress=progress,
                             live_output=live_output,
                             completion_label=completion_label,
+                            cancel_button=cancel_button,
                         )
 
                 button = _attach_tooltip(
@@ -4311,6 +4372,7 @@ def _render_full_qa_pass_panel(
                                 progress=progress,
                                 live_output=live_output,
                                 completion_label=completion_label,
+                                cancel_button=cancel_button,
                             ),
                         ).props("color=primary")
                         ui.button("Cancel", on_click=lambda: setattr(prompt_host, "visible", False))
@@ -4331,6 +4393,7 @@ def _render_full_qa_pass_panel(
                 progress=progress,
                 live_output=live_output,
                 completion_label=completion_label,
+                cancel_button=cancel_button,
                 on_complete=lambda: _start_trusted_auto_queue(queue, index + 1),
             )
 
