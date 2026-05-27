@@ -838,6 +838,31 @@ def _full_qa_pass_page(
     }
 
 
+def _snapshot_with_full_qa_payload(snapshot: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    pages = list(snapshot.get("pages", []))
+    for index, page in enumerate(pages):
+        if not isinstance(page, dict) or str(page.get("id", "")) != "full-qa-pass":
+            continue
+        steps = [step for step in payload.get("steps", []) if isinstance(step, dict)]
+        pages[index] = {
+            **page,
+            "status": str(payload.get("status", payload.get("run_status", "unknown"))),
+            "summary": str(payload.get("summary", "")),
+            "items": [
+                {
+                    "label": str(step.get("label", "")),
+                    "status": str(step.get("status", "")),
+                    "detail": str(step.get("summary", "")),
+                }
+                for step in steps
+            ],
+            "payload": payload,
+            "confluence_anchors": list(payload.get("confluence_anchors", page.get("confluence_anchors", []))),
+        }
+        break
+    return {**snapshot, "pages": pages}
+
+
 def _onboarding_guide_page(
     profile_id: str,
     workspace: Path | str,
@@ -4170,7 +4195,6 @@ def _render_full_qa_pass_panel(
     *,
     bmw_root: Path | str | None = None,
     open_page: Callable[[str], None] | None = None,
-    on_payload_ready: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     running_navigation_message = "Action running — cancel first to navigate"
     page = next(page for page in snapshot["pages"] if page["id"] == "full-qa-pass")
@@ -4204,7 +4228,10 @@ def _render_full_qa_pass_panel(
         ).classes("sgfx-muted")
 
         with ui.row().classes("sgfx-full-qa-controls"):
-            trusted_control = ui.checkbox("Automatic mode", value=bool(initial_payload.get("trusted_tool_mode", True)))
+            trusted_control = ui.checkbox(
+                "Automatic mode",
+                value=bool(initial_payload.get("trusted_tool_mode", True)),
+            ).classes("sgfx-automatic-mode-control")
             ui.label("Manual mode opt-out: switch Automatic mode off to confirm local actions one by one.").classes(
                 "sgfx-muted"
             )
@@ -4839,6 +4866,7 @@ def _render_full_qa_pass_panel(
                                 ui.label(str(guardrail)).classes("sgfx-guardrail")
                         if steps:
                             ui.button("Back", on_click=_show_previous_step)
+                    result_host.update()
                     return
 
                 step = steps[current_index]
@@ -4908,33 +4936,35 @@ def _render_full_qa_pass_panel(
                 for guardrail in payload.get("guardrails", []):
                     if str(guardrail).strip():
                         ui.label(str(guardrail)).classes("sgfx-guardrail")
+            result_host.update()
 
         def _run_full_pass() -> None:
-            trusted = bool(trusted_control.value)
-            notice.text = "Reading local evidence..."
-            wizard_state["skipped"] = set()
-            wizard_state["completed"] = set()
-            wizard_state["auto_started"] = set()
-            wizard_state["done"] = False
-            payload = build_full_qa_pass(
-                profile_id,
-                workspace=workspace,
-                bmw_root=bmw_root,
-                trusted_tool_mode=trusted,
-            )
-            _append_activity(action="run", note=f"Full QA Pass run with automatic_mode={trusted}.")
-            if on_payload_ready is not None:
-                on_payload_ready(payload)
-            else:
-                _render_payload(payload)
-                notice.text = "Full QA pass refreshed from local evidence."
-            if trusted:
-                ui.notify("Automatic mode is active for local tool actions only. Jira REST and SVN gates still always prompt.")
+            trusted = "1" if bool(trusted_control.value) else "0"
+            ui.run_javascript(f"""
+                (() => {{
+                    const url = new window.URL(window.location.href);
+                    url.searchParams.set('profile', {json.dumps(profile_id)});
+                    url.searchParams.set('full_qa_run', '1');
+                    url.searchParams.set('automatic_mode', {json.dumps(trusted)});
+                    window.location.assign(url.toString());
+                }})();
+            """)
 
-        _attach_tooltip(
-            ui,
-            ui.button("Run full QA pass", on_click=_run_full_pass).props("color=primary"),
-            "Run the local Full QA Pass and render inline operator actions.",
+        ui.html(
+            f"""
+            <button class="sgfx-html-action-button" type="button" onclick="
+                (() => {{
+                    const checkbox = document.querySelector('.sgfx-automatic-mode-control');
+                    const automatic = checkbox?.getAttribute('aria-checked') !== 'false';
+                    const url = new window.URL(window.location.href);
+                    url.searchParams.set('profile', {html_escape(json.dumps(profile_id))});
+                    url.searchParams.set('full_qa_run', '1');
+                    url.searchParams.set('automatic_mode', automatic ? '1' : '0');
+                    window.location.assign(url.toString());
+                }})();
+            ">Run full QA pass</button>
+            """,
+            sanitize=False,
         )
         _render_payload(initial_payload)
 
@@ -5011,7 +5041,7 @@ def _render_dashboard(
         )
 
     @ui.page("/")
-    def _index(profile: str = "") -> None:
+    def _index(profile: str = "", full_qa_run: str = "", automatic_mode: str = "1") -> None:
         query_profile = str(profile or "").strip()
         snapshot = (
             build_dashboard_snapshot(
@@ -5026,6 +5056,23 @@ def _render_dashboard(
             else dict(base_snapshot)
         )
         snapshot["theme"] = _clean_theme(ui_mode or load_dashboard_preference(workspace))
+        if str(full_qa_run or "").strip().casefold() in {"1", "true", "yes", "on"}:
+            trusted = str(automatic_mode or "1").strip().casefold() in {"1", "true", "yes", "on"}
+            payload = build_full_qa_pass(
+                str(snapshot.get("profile_id", query_profile or initial_profile_id)),
+                workspace=workspace,
+                bmw_root=bmw_root,
+                trusted_tool_mode=trusted,
+            )
+            append_activity_entry(
+                workspace,
+                verb="ran",
+                surface="full-qa-pass:run",
+                profile=str(payload.get("profile_id", snapshot.get("profile_id", ""))),
+                outcome="ok",
+                note=f"Full QA Pass run with automatic_mode={trusted}.",
+            )
+            snapshot = _snapshot_with_full_qa_payload(snapshot, payload)
         theme = str(snapshot.get("theme", "clean"))
         ui.dark_mode().enable()
         ui.query("body").classes(f"sgfx-dashboard sgfx-theme-{theme}")
@@ -5216,31 +5263,6 @@ def _render_dashboard(
                 show_all_control.value = True
             _sync_profile_select()
 
-        def _apply_full_qa_payload(payload: dict[str, Any]) -> None:
-            pages = list(state["snapshot"].get("pages", []))
-            for index, page in enumerate(pages):
-                if str(page.get("id", "")) != "full-qa-pass":
-                    continue
-                steps = [step for step in payload.get("steps", []) if isinstance(step, dict)]
-                pages[index] = {
-                    **page,
-                    "status": str(payload.get("status", payload.get("run_status", "unknown"))),
-                    "summary": str(payload.get("summary", "")),
-                    "items": [
-                        {
-                            "label": str(step.get("label", "")),
-                            "status": str(step.get("status", "")),
-                            "detail": str(step.get("summary", "")),
-                        }
-                        for step in steps
-                    ],
-                    "payload": payload,
-                    "confluence_anchors": list(payload.get("confluence_anchors", page.get("confluence_anchors", []))),
-                }
-                break
-            state["snapshot"] = {**state["snapshot"], "pages": pages}
-            _render_current_page()
-
         def _render_current_page() -> None:
             content = content_holder.get("content")
             if content is None:
@@ -5270,7 +5292,6 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         open_page=_open_page,
-                        on_payload_ready=_apply_full_qa_payload,
                     )
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
@@ -5290,6 +5311,7 @@ def _render_dashboard(
                     _render_about_panel(ui, ABOUT_CONTENT)
                 else:
                     _render_page_panel(ui, _pages_by_id()[active_page_id])
+            content.update()
 
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
