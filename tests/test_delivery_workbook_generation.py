@@ -62,6 +62,18 @@ class _FakeProcess:
 
 
 class TestDeliveryWorkbookGeneration(unittest.TestCase):
+    def setUp(self) -> None:
+        self._home_dir = tempfile.TemporaryDirectory()
+        self._home_patch = mock.patch(
+            "sg_preflight.delivery_workbook_generation.Path.home",
+            return_value=Path(self._home_dir.name),
+        )
+        self._home_patch.start()
+
+    def tearDown(self) -> None:
+        self._home_patch.stop()
+        self._home_dir.cleanup()
+
     def test_workbook_trigger_wraps_preflight_without_starting_generation(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation
 
@@ -201,7 +213,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["profile_id"], "G70")
         self.assertIn("This will run the BMW pipeline for G70", payload["confirmation_message"])
-        self.assertIn("out", payload["target_write_path"])
+        self.assertIn("sgfx_outputs", payload["target_write_path"])
         self.assertIn("delivery-workbook", payload["target_write_path"])
         self.assertIn("Cars", payload["native_output_path"])
         self.assertIn("copies the generated workbook evidence", payload["confirmation_message"])
@@ -582,7 +594,7 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertEqual(result["workbook_preview"]["variant_totals"][0], "Variant-1=12000")
         copied_paths = [Path(item["path"]) for item in copied["files"]]
         self.assertTrue(any(path.name == "G70_20260524.xlsx" for path in copied_paths))
-        self.assertTrue(any("out" in path.parts and "delivery-workbook" in path.parts for path in copied_paths))
+        self.assertTrue(any("sgfx_outputs" in path.parts and "delivery-workbook" in path.parts for path in copied_paths))
 
     def test_poll_generation_reports_live_stdout_tail_and_file_activity(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation
@@ -652,12 +664,19 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
                             operator_confirmed=True,
                         )
                         write_text(job.stdout_path, "Exporting G70_EVO\nGetting asset paths\n")
-                        write_text(job.stderr_path, "Ramses warning: fixture\n")
+                        write_text(
+                            job.stderr_path,
+                            "Ramses warning: fixture\n"
+                            "Traceback (most recent call last):\n"
+                            "Exception: export fixture failed\n",
+                        )
                         result = generation.poll_delivery_workbook_generation(job)
 
         self.assertEqual(result["status"], "running")
         self.assertIn("Exporting G70_EVO", result["stdout_tail_lines"])
         self.assertIn("stderr: Ramses warning: fixture", result["stdout_tail_lines"])
+        self.assertTrue(result["pipeline_traceback"]["detected"])
+        self.assertIn("technical traceback", result["pipeline_traceback"]["summary"])
 
 
 if __name__ == "__main__":

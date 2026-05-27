@@ -24,6 +24,7 @@ from sg_preflight.delivery_workbook_generation import (
     DIGITAL_3D_CAR_REPO_IDC23_ENV,
     _check,
     _clean_profile,
+    _copy_file_evidence,
     _digital_repo_check,
     _elapsed_label,
     _idc23_repo_check,
@@ -33,9 +34,11 @@ from sg_preflight.delivery_workbook_generation import (
     _registered_car_root,
     _requires_registered_car_folder,
     _sgfx_pipeline_output_root,
+    _sgfx_output_root_check,
     _unavailable_model_summary,
     _python_check,
     _python_command_payload,
+    _profile_output_token,
     _size_label,
     _tail_lines,
     _tail_text,
@@ -76,6 +79,10 @@ def _capture_tests_root(bmw_root: Path, profile_id: str) -> Path:
 def _capture_activity_roots(bmw_root: Path, profile_id: str) -> list[Path]:
     tests_root = _capture_tests_root(bmw_root, profile_id)
     return [tests_root / "actuals", tests_root / "diff"]
+
+
+def _capture_expected_root(bmw_root: Path, profile_id: str) -> Path:
+    return _capture_tests_root(bmw_root, profile_id) / "expected"
 
 
 def _screenshot_sgfx_output_dir(workspace: Path, profile_id: str) -> Path:
@@ -255,6 +262,7 @@ def check_screenshot_capture_environment(
         _python_check(workspace_path),
         _tool_check("RaCoHeadless.exe", "RaCoHeadless", workspace=workspace_path),
         _tool_check("blender.exe", "Blender", workspace=workspace_path),
+        _sgfx_output_root_check(clean_profile, workspace_path),
     ]
     if repo_root is not None:
         if lane == LANE_IDC23 and repo_check["status"] == "available":
@@ -324,7 +332,8 @@ def check_screenshot_capture_environment(
         "checks": checks,
         "confirmation_message": (
             f"This will run BMW pipeline screenshot capture for {clean_profile}. It may write native actual/diff "
-            f"output under `{native_target_path}`; SGFX copies review evidence to `{target_path}`. Continue?"
+            f"output under `{native_target_path}`; SGFX copies review evidence to "
+            f"`~/sgfx_outputs/{_profile_output_token(clean_profile)}/screenshot-capture/` (`{target_path}`). Continue?"
         ),
         "disabled_reason": "" if can_run else "One or more environment pre-flight checks failed.",
     }
@@ -397,9 +406,57 @@ def _capture_file_activity(
     return [item for _timestamp, item in sorted(entries, key=lambda pair: pair[0], reverse=True)[:limit]]
 
 
+def _screenshot_key_candidates(relative_path: Path) -> list[str]:
+    normalized = relative_path.as_posix().casefold()
+    candidates = [normalized]
+    stem = relative_path.stem
+    suffix = relative_path.suffix
+    suffixes = ("_diff", "-diff", "_color", "-color", "_rgb", "-rgb", "_delta", "-delta", "_mask", "-mask")
+    for marker in suffixes:
+        if stem.casefold().endswith(marker):
+            candidates.append(relative_path.with_name(stem[: -len(marker)] + suffix).as_posix().casefold())
+    parts = stem.split("_")
+    while len(parts) > 1:
+        parts = parts[:-1]
+        candidates.append(relative_path.with_name("_".join(parts) + suffix).as_posix().casefold())
+    return list(dict.fromkeys(candidates))
+
+
+def _path_lookup(root: Path) -> dict[str, Path]:
+    if not root.is_dir():
+        return {}
+    lookup: dict[str, Path] = {}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            relative = path.relative_to(root).as_posix().casefold()
+        except ValueError:
+            relative = path.name.casefold()
+        lookup[relative] = path
+    return lookup
+
+
+def _matching_path(relative_path: Path, lookup: dict[str, Path]) -> Path | None:
+    for key in _screenshot_key_candidates(relative_path):
+        path = lookup.get(key)
+        if path is not None:
+            return path
+    return None
+
+
+def _review_row_key(relative_path: Path) -> str:
+    candidate = relative_path.as_posix()
+    for marker in ("_diff", "-diff", "_color", "-color", "_rgb", "-rgb", "_delta", "-delta", "_mask", "-mask"):
+        if relative_path.stem.casefold().endswith(marker):
+            return relative_path.with_name(relative_path.stem[: -len(marker)] + relative_path.suffix).as_posix()
+    return candidate
+
+
 def _copy_screenshot_capture_evidence(job: ScreenshotCaptureJob) -> dict[str, Any]:
     output_root = _screenshot_sgfx_output_dir(job.workspace, job.profile_id)
     copied_files: list[dict[str, Any]] = []
+    copied_by_relative: dict[str, dict[str, Any]] = {}
     for root in _capture_activity_roots(job.bmw_root, job.profile_id):
         if not root.is_dir():
             continue
@@ -421,12 +478,59 @@ def _copy_screenshot_capture_evidence(job: ScreenshotCaptureJob) -> dict[str, An
             else:
                 size_bytes = int(stat.st_size)
             copied_files.append(
-                {
+                copied_record := {
                     "source_path": str(source),
                     "path": str(destination),
                     "relative_path": str(Path(group) / relative).replace("\\", "/"),
                     "size_bytes": size_bytes,
                     "size_label": _size_label(size_bytes),
+                }
+            )
+            copied_by_relative[str(Path(group) / relative).replace("\\", "/").casefold()] = copied_record
+    expected_root = _capture_expected_root(job.bmw_root, job.profile_id)
+    actual_lookup = _path_lookup(_capture_tests_root(job.bmw_root, job.profile_id) / "actuals")
+    expected_lookup = _path_lookup(expected_root)
+    diff_root = _capture_tests_root(job.bmw_root, job.profile_id) / "diff"
+    review_rows: list[dict[str, str]] = []
+    if diff_root.is_dir():
+        for diff_source in sorted(diff_root.rglob("*")):
+            if not diff_source.is_file():
+                continue
+            try:
+                diff_relative = diff_source.relative_to(diff_root)
+            except ValueError:
+                diff_relative = Path(diff_source.name)
+            expected_source = _matching_path(diff_relative, expected_lookup)
+            actual_source = _matching_path(diff_relative, actual_lookup)
+            copied_expected: dict[str, Any] | None = None
+            if expected_source is not None:
+                expected_relative = expected_source.relative_to(expected_root) if expected_root.is_dir() else Path(expected_source.name)
+                copied_expected = _copy_file_evidence(
+                    expected_source,
+                    output_root / "expected" / expected_relative,
+                )
+                if copied_expected is not None:
+                    copied_expected["relative_path"] = str(Path("expected") / expected_relative).replace("\\", "/")
+                    copied_files.append(copied_expected)
+            diff_key = str(Path("diff") / diff_relative).replace("\\", "/").casefold()
+            diff_record = copied_by_relative.get(diff_key)
+            actual_record: dict[str, Any] | None = None
+            if actual_source is not None:
+                try:
+                    actual_relative = actual_source.relative_to(_capture_tests_root(job.bmw_root, job.profile_id) / "actuals")
+                except ValueError:
+                    actual_relative = Path(actual_source.name)
+                actual_record = copied_by_relative.get(str(Path("actuals") / actual_relative).replace("\\", "/").casefold())
+            review_rows.append(
+                {
+                    "key": _review_row_key(diff_relative),
+                    "label": _review_row_key(diff_relative),
+                    "expected_path": str(copied_expected.get("path", "")) if copied_expected else str(expected_source or ""),
+                    "actual_path": str(actual_record.get("path", "")) if actual_record else str(actual_source or ""),
+                    "diff_path": str(diff_record.get("path", "")) if diff_record else str(diff_source),
+                    "expected_relative_path": str(copied_expected.get("relative_path", "")) if copied_expected else "",
+                    "actual_relative_path": str(actual_record.get("relative_path", "")) if actual_record else "",
+                    "diff_relative_path": str(diff_record.get("relative_path", "")) if diff_record else str(Path("diff") / diff_relative).replace("\\", "/"),
                 }
             )
     for source, name in ((job.stdout_path, "stdout.log"), (job.stderr_path, "stderr.log")):
@@ -455,6 +559,7 @@ def _copy_screenshot_capture_evidence(job: ScreenshotCaptureJob) -> dict[str, An
         "output_root": str(output_root),
         "files": copied_files[:SCREENSHOT_CAPTURE_COPIED_EVIDENCE_LIMIT],
         "file_count": len(copied_files),
+        "screenshot_review_rows": review_rows[:SCREENSHOT_CAPTURE_FILE_ACTIVITY_LIMIT],
     }
 
 
@@ -462,6 +567,38 @@ def _capture_combined_tail_lines(stdout_path: Path, stderr_path: Path) -> list[s
     lines = list(_tail_lines(stdout_path))
     lines.extend(f"stderr: {line}" for line in _tail_lines(stderr_path))
     return lines[-SCREENSHOT_CAPTURE_FILE_ACTIVITY_LIMIT:]
+
+
+def _capture_combined_tail_text(stdout_path: Path, stderr_path: Path) -> str:
+    parts = []
+    stdout = _tail_text(stdout_path).strip()
+    stderr = _tail_text(stderr_path).strip()
+    if stdout:
+        parts.append(stdout)
+    if stderr:
+        parts.append(f"stderr:\n{stderr}")
+    return "\n".join(parts).strip()
+
+
+def _screenshot_traceback_payload(
+    *,
+    stdout_path: Path,
+    stderr_path: Path,
+    diff_count: int = 0,
+) -> dict[str, Any]:
+    details = _capture_combined_tail_text(stdout_path, stderr_path)
+    lowered = details.casefold()
+    has_screenshot_failure = "exception: some screenshot tests failed!" in lowered
+    has_traceback = "traceback (most recent call last)" in lowered or "exception:" in lowered
+    if not has_screenshot_failure and not has_traceback:
+        return {}
+    count_text = str(diff_count) if diff_count else "one or more"
+    summary = f"BMW pipeline reports {count_text} tests with visual differences - see thumbnails below for review."
+    return {
+        "detected": True,
+        "summary": summary,
+        "technical_details": details,
+    }
 
 
 def _capture_progress_payload(job: ScreenshotCaptureJob, *, elapsed_seconds: float) -> dict[str, Any]:
@@ -485,9 +622,14 @@ def _capture_progress_payload(job: ScreenshotCaptureJob, *, elapsed_seconds: flo
         "stdout_tail": _tail_text(job.stdout_path),
         "stdout_tail_lines": _capture_combined_tail_lines(job.stdout_path, job.stderr_path),
         "stderr_tail": _tail_text(job.stderr_path),
+        "pipeline_traceback": _screenshot_traceback_payload(
+            stdout_path=job.stdout_path,
+            stderr_path=job.stderr_path,
+        ),
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _capture_file_activity(job.bmw_root, job.profile_id, job.started_wall_time),
+        "screenshot_review_rows": [],
         "sgfx_output_root": str(_screenshot_sgfx_output_dir(job.workspace, job.profile_id)),
         "native_output_path": str(_capture_tests_root(job.bmw_root, job.profile_id)),
         "preflight": job.preflight,
@@ -536,6 +678,11 @@ def _capture_result(
             )
     copied_evidence = _copy_screenshot_capture_evidence(job)
     elapsed_seconds = time.monotonic() - job.started_monotonic
+    traceback_payload = _screenshot_traceback_payload(
+        stdout_path=job.stdout_path,
+        stderr_path=job.stderr_path,
+        diff_count=int(screenshot_payload.get("diff_count", 0) or 0),
+    )
     return {
         "profile_id": job.profile_id,
         "workspace": str(job.workspace),
@@ -556,10 +703,12 @@ def _capture_result(
         "stdout_tail": _tail_text(job.stdout_path),
         "stdout_tail_lines": _capture_combined_tail_lines(job.stdout_path, job.stderr_path),
         "stderr_tail": _tail_text(job.stderr_path),
+        "pipeline_traceback": traceback_payload,
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _capture_file_activity(job.bmw_root, job.profile_id, job.started_wall_time),
         "copied_evidence": copied_evidence,
+        "screenshot_review_rows": copied_evidence.get("screenshot_review_rows", []),
         "sgfx_output_root": copied_evidence["output_root"],
         "native_output_path": str(_capture_tests_root(job.bmw_root, job.profile_id)),
         "preflight": job.preflight,

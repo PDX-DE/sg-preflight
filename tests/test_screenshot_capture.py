@@ -62,6 +62,18 @@ class _FakeProcess:
 
 
 class TestScreenshotCapture(unittest.TestCase):
+    def setUp(self) -> None:
+        self._home_dir = tempfile.TemporaryDirectory()
+        self._home_patch = mock.patch(
+            "sg_preflight.delivery_workbook_generation.Path.home",
+            return_value=Path(self._home_dir.name),
+        )
+        self._home_patch.start()
+
+    def tearDown(self) -> None:
+        self._home_patch.stop()
+        self._home_dir.cleanup()
+
     def test_capture_command_prefers_car_manager_screenshots_with_diff(self) -> None:
         from sg_preflight.screenshot_capture import resolve_screenshot_capture_command
 
@@ -202,7 +214,7 @@ class TestScreenshotCapture(unittest.TestCase):
         self.assertEqual(checks["blender"]["status"], "available")
         self.assertEqual(checks["bmw_screenshot_script"]["status"], "available")
         self.assertIn("actual/diff", payload["confirmation_message"])
-        self.assertIn("out", payload["target_write_path"])
+        self.assertIn("sgfx_outputs", payload["target_write_path"])
         self.assertIn("screenshot-capture", payload["target_write_path"])
         self.assertIn("export", payload["native_output_path"])
         self.assertIn("copies review evidence", payload["confirmation_message"])
@@ -279,6 +291,12 @@ class TestScreenshotCapture(unittest.TestCase):
                             workspace=root,
                             operator_confirmed=True,
                         )
+                        write_text(
+                            job.stderr_path,
+                            "Traceback (most recent call last):\n"
+                            "  File \"car_manager.py\", line 1, in <module>\n"
+                            "Exception: Some screenshot tests failed!\n",
+                        )
                         result = capture.poll_screenshot_capture(job)
 
         self.assertIsNotNone(result)
@@ -289,12 +307,20 @@ class TestScreenshotCapture(unittest.TestCase):
         self.assertTrue(result["data_available"])
         self.assertIn("actual/diff evidence", result["summary"])
         self.assertIn("Manual review remains required", result["summary"])
+        self.assertEqual(
+            result["pipeline_traceback"]["summary"],
+            "BMW pipeline reports 1 tests with visual differences - see thumbnails below for review.",
+        )
+        self.assertIn("Exception: Some screenshot tests failed!", result["pipeline_traceback"]["technical_details"])
         self.assertEqual(result["copied_evidence"]["status"], "recorded")
         copied = {item["relative_path"]: Path(item["path"]) for item in result["copied_evidence"]["files"]}
-        self.assertIn("out", copied["actuals/front.png"].parts)
+        self.assertIn("sgfx_outputs", copied["actuals/front.png"].parts)
         self.assertIn("screenshot-capture", copied["actuals/front.png"].parts)
-        self.assertIn("out", copied["diff/front_color.png"].parts)
+        self.assertIn("sgfx_outputs", copied["diff/front_color.png"].parts)
         self.assertIn("screenshot-capture", copied["diff/front_color.png"].parts)
+        self.assertEqual(result["screenshot_review_rows"][0]["expected_relative_path"], "expected/front.png")
+        self.assertEqual(result["screenshot_review_rows"][0]["actual_relative_path"], "actuals/front.png")
+        self.assertEqual(result["screenshot_review_rows"][0]["diff_relative_path"], "diff/front_color.png")
         self.assertNotIn("approval", result["summary"].lower())
 
     def test_poll_capture_reports_live_stdout_tail_and_file_activity(self) -> None:

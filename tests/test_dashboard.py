@@ -483,6 +483,13 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("View doc", source)
         self.assertIn("sgfx-live-visuals", source)
         self.assertIn("Diff thumbnails", source)
+        self.assertIn("Side-by-side diff rows", source)
+        self.assertIn("Show technical details", source)
+        self.assertIn("SGFX output:", source)
+        self.assertIn("Elapsed", source)
+        self.assertIn("Typical", source)
+        self.assertIn("Steps with diffs requiring review", source)
+        self.assertIn("_handle_action_completed", source)
         self.assertIn("Workbook preview", source)
         self.assertIn("black offscreen-rendering window", source)
         self.assertIn("record_operator_handoff", source)
@@ -501,7 +508,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Starting local subprocess; waiting for stdout/stderr", source)
         self.assertIn("_action_output_text", source)
         self.assertIn("_render_action_visuals", source)
-        self.assertIn("if not _parent_slot_deleted(exc)", source)
+        self.assertIn("def _notify_ui(message: str) -> None:", source)
+        self.assertIn("if not _ignorable_nicegui_runtime_error(exc)", source)
         self.assertIn("set_running_controls: Callable[[bool], None]", source)
         self.assertIn("set_running_controls=set_running_controls", source)
         self.assertIn('"launch_timer": None', source)
@@ -514,10 +522,17 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn('aria-label="{running_navigation_message}"', source)
 
     def test_parent_slot_deleted_matches_nicegui_deleted_element_message(self) -> None:
-        from sg_preflight.dashboard.main import _parent_slot_deleted
+        from sg_preflight.dashboard.main import _ignorable_nicegui_runtime_error, _parent_slot_deleted
 
         self.assertTrue(_parent_slot_deleted(RuntimeError("The parent element this slot belongs to has been deleted.")))
         self.assertTrue(_parent_slot_deleted(RuntimeError("The parent slot has been deleted.")))
+        self.assertTrue(
+            _ignorable_nicegui_runtime_error(
+                RuntimeError(
+                    "The current slot cannot be determined because the slot stack for this task is empty."
+                )
+            )
+        )
 
     def test_dashboard_snapshot_exposes_first_run_setup_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -647,6 +662,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("_cancel_background_poll_timer", source)
         self.assertIn("_parent_slot_deleted", source)
         self.assertIn("except RuntimeError as exc", source)
+        self.assertIn("def _scroll_live_output_to_bottom() -> None:", source)
+        self.assertIn("except RuntimeError:\n                return", source)
         self.assertNotIn("ui.timer(", source)
         self.assertNotIn("poll_timer.active", source)
 

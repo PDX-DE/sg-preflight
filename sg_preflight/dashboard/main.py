@@ -322,6 +322,13 @@ def _parent_slot_deleted(error: RuntimeError) -> bool:
     return ("parent slot" in message or ("parent element" in message and "slot" in message)) and "deleted" in message
 
 
+def _ignorable_nicegui_runtime_error(error: RuntimeError) -> bool:
+    message = str(error).casefold()
+    return _parent_slot_deleted(error) or (
+        "current slot cannot be determined" in message and "slot stack" in message
+    )
+
+
 def _find_open_dashboard_port(start_port: int = 8000, end_port: int = 8999) -> int:
     for port in range(start_port, end_port + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -2333,7 +2340,7 @@ def _image_mime(path: Path) -> str:
     return "image/png"
 
 
-def _dashboard_data_uri(path_value: str, *, max_bytes: int = 450_000) -> str:
+def _dashboard_data_uri(path_value: str, *, max_bytes: int = 3_000_000) -> str:
     path = Path(str(path_value or ""))
     if path.suffix.casefold() not in {".png", ".jpg", ".jpeg", ".bmp", ".webp"}:
         return ""
@@ -2346,6 +2353,47 @@ def _dashboard_data_uri(path_value: str, *, max_bytes: int = 450_000) -> str:
     except OSError:
         return ""
     return f"data:{_image_mime(path)};base64,{encoded}"
+
+
+def _pipeline_traceback(result: dict[str, Any]) -> dict[str, str]:
+    payload = result.get("pipeline_traceback", {})
+    if not isinstance(payload, dict) or not bool(payload.get("detected", False)):
+        return {}
+    summary = str(payload.get("summary", "")).strip()
+    details = str(payload.get("technical_details", "")).strip()
+    if not summary and not details:
+        return {}
+    return {"summary": summary, "technical_details": details}
+
+
+def _screenshot_review_visual_rows(result: dict[str, Any], *, limit: int = 4) -> list[dict[str, str]]:
+    rows = result.get("screenshot_review_rows", [])
+    if not isinstance(rows, list):
+        return []
+    visual_rows: list[dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        expected_src = _dashboard_data_uri(str(row.get("expected_path", "")))
+        actual_src = _dashboard_data_uri(str(row.get("actual_path", "")))
+        diff_src = _dashboard_data_uri(str(row.get("diff_path", "")))
+        if not any((expected_src, actual_src, diff_src)):
+            continue
+        visual_rows.append(
+            {
+                "key": str(row.get("key", "") or row.get("label", "")).strip(),
+                "label": str(row.get("label", "") or row.get("key", "")).strip(),
+                "expected_src": expected_src,
+                "actual_src": actual_src,
+                "diff_src": diff_src,
+                "expected_path": str(row.get("expected_path", "")).strip(),
+                "actual_path": str(row.get("actual_path", "")).strip(),
+                "diff_path": str(row.get("diff_path", "")).strip(),
+            }
+        )
+        if len(visual_rows) >= limit:
+            break
+    return visual_rows
 
 
 def _file_activity_visual_items(result: dict[str, Any], *, limit: int = 4) -> list[dict[str, str]]:
@@ -2373,14 +2421,22 @@ def _file_activity_visual_items(result: dict[str, Any], *, limit: int = 4) -> li
     return items
 
 
-def _render_action_visuals(ui: Any, result: dict[str, Any], *, visual_label: Any, visual_host: Any) -> None:
+def _render_action_visuals(
+    ui: Any,
+    result: dict[str, Any],
+    *,
+    visual_label: Any,
+    visual_host: Any,
+    open_screenshot_viewer: Callable[[str, str], None] | None = None,
+) -> None:
     visual_host.clear()
+    review_rows = _screenshot_review_visual_rows(result)
     image_items = _file_activity_visual_items(result)
     workbook_preview = result.get("workbook_preview", {})
     if not isinstance(workbook_preview, dict):
         workbook_preview = {}
     has_workbook_preview = bool(workbook_preview.get("workbook_path"))
-    if not image_items and not has_workbook_preview:
+    if not review_rows and not image_items and not has_workbook_preview:
         visual_label.visible = False
         visual_host.visible = False
         return
@@ -2401,7 +2457,29 @@ def _render_action_visuals(ui: Any, result: dict[str, Any], *, visual_label: Any
                 summary = str(workbook_preview.get("summary", "") or "").strip()
                 if summary:
                     ui.label(summary).classes("sgfx-muted")
-        if image_items:
+        if review_rows:
+            with ui.column().classes("sgfx-diff-preview sgfx-side-by-side-preview"):
+                ui.label("Side-by-side diff rows").classes("sgfx-panel-tagline")
+                for row in review_rows:
+                    label = row["label"] or row["key"] or "screenshot diff"
+
+                    def _open(current: dict[str, str] = row) -> None:
+                        if open_screenshot_viewer is not None:
+                            open_screenshot_viewer(current["key"], current["label"])
+
+                    with ui.column().classes("sgfx-diff-row-card"):
+                        with ui.button(on_click=_open).props("flat no-caps").classes("sgfx-diff-triplet-button"):
+                            with ui.row().classes("sgfx-diff-triplet"):
+                                for slot in ("expected", "actual", "diff"):
+                                    src = row.get(f"{slot}_src", "")
+                                    with ui.column().classes("sgfx-diff-triplet-pane"):
+                                        ui.label(slot.title()).classes("sgfx-muted")
+                                        if src:
+                                            ui.image(src).classes("sgfx-diff-thumb")
+                                        else:
+                                            ui.label("missing").classes("sgfx-muted")
+                        ui.label(label).classes("sgfx-muted")
+        elif image_items:
             with ui.column().classes("sgfx-diff-preview"):
                 ui.label("Diff thumbnails").classes("sgfx-panel-tagline")
                 with ui.row().classes("sgfx-diff-thumbnails"):
@@ -2409,6 +2487,21 @@ def _render_action_visuals(ui: Any, result: dict[str, Any], *, visual_label: Any
                         with ui.column().classes("sgfx-diff-thumb-card"):
                             ui.image(str(item["src"])).classes("sgfx-diff-thumb")
                             ui.label(str(item["label"])).classes("sgfx-muted")
+
+
+def _render_action_technical_details(ui: Any, result: dict[str, Any], *, details_host: Any) -> None:
+    details_host.clear()
+    traceback_payload = _pipeline_traceback(result)
+    if not traceback_payload:
+        details_host.visible = False
+        return
+    details_host.visible = True
+    with details_host:
+        ui.label(traceback_payload["summary"]).classes("sgfx-warning")
+        with ui.expansion("Show technical details", value=False).classes("full-width sgfx-technical-details"):
+            ui.textarea(value=traceback_payload["technical_details"]).props("readonly outlined").classes(
+                "full-width sgfx-technical-details-text"
+            )
 
 
 def _render_page_confluence_anchors(ui: Any, page: dict[str, Any]) -> None:
@@ -2662,7 +2755,7 @@ def _render_setup_status_panel(
                 if on_setup_completed is not None:
                     on_setup_completed()
             except RuntimeError as exc:
-                if not _parent_slot_deleted(exc):
+                if not _ignorable_nicegui_runtime_error(exc):
                     raise
                 _stop_setup_poll_timer()
 
@@ -4208,6 +4301,7 @@ def _render_full_qa_pass_panel(
         "skipped": set(),
         "completed": set(),
         "auto_started": set(),
+        "action_results": {},
         "done": False,
     }
 
@@ -4238,6 +4332,41 @@ def _render_full_qa_pass_panel(
             notice = ui.label("Full QA pass has not run in this dashboard session.").classes("sgfx-muted")
             result_host = ui.column().classes("full-width")
 
+        with ui.dialog() as wizard_viewer_dialog:
+            with ui.card().classes("sgfx-viewer-dialog-card"):
+                with ui.row().classes("items-center justify-between full-width"):
+                    wizard_viewer_title = ui.label("Side-by-side screenshot review").classes("sgfx-panel-title")
+                    ui.button("Close", on_click=wizard_viewer_dialog.close).props("flat dense no-caps")
+                ui.label(
+                    "Expected / actual / diff panes render below with synchronized zoom and pan controls. "
+                    "Manual review remains required."
+                ).classes("sgfx-muted")
+                wizard_viewer_frame_host = ui.column().classes("sgfx-viewer-frame-host")
+
+        def _open_wizard_screenshot_viewer(item_key: str, label: str = "") -> None:
+            try:
+                _materialize_screenshot_review_viewer_for_dashboard(profile_id, workspace, bmw_root=bmw_root)
+            except Exception as exc:  # noqa: BLE001
+                _notify_ui(f"Screenshot viewer generation failed: {exc}")
+                return
+            safe_url = html_escape(_screenshot_review_viewer_url(profile_id, item_key), quote=True)
+            wizard_viewer_title.text = label or "Side-by-side screenshot review"
+            wizard_viewer_frame_host.clear()
+            with wizard_viewer_frame_host:
+                ui.html(
+                    f'<iframe data-sgfx-inline-viewer="true" class="sgfx-viewer-iframe" '
+                    f'src="{safe_url}" title="Side-by-side screenshot review"></iframe>',
+                    sanitize=False,
+                ).classes("full-width")
+            wizard_viewer_dialog.open()
+
+        def _notify_ui(message: str) -> None:
+            try:
+                ui.notify(message)
+            except RuntimeError as exc:
+                if not _ignorable_nicegui_runtime_error(exc):
+                    raise
+
         def _append_activity(*, action: str, outcome: str = "ok", note: str = "") -> None:
             append_activity_entry(
                 workspace,
@@ -4249,7 +4378,17 @@ def _render_full_qa_pass_panel(
             )
 
         def _action_output_text(result: dict[str, Any]) -> str:
+            copied_evidence = result.get("copied_evidence", {}) if isinstance(result.get("copied_evidence"), dict) else {}
+            sgfx_output = str(result.get("sgfx_output_root") or copied_evidence.get("output_root") or "").strip()
+            traceback_payload = _pipeline_traceback(result)
+            if traceback_payload:
+                lines = [traceback_payload["summary"]]
+                if sgfx_output:
+                    lines.append(f"SGFX output: {sgfx_output}")
+                return "\n".join(lines)
             stdout_lines = [str(line) for line in result.get("stdout_tail_lines", []) if str(line).strip()]
+            if sgfx_output:
+                stdout_lines.append(f"SGFX output: {sgfx_output}")
             if stdout_lines:
                 return "\n".join(stdout_lines)
             paths = [
@@ -4269,33 +4408,63 @@ def _render_full_qa_pass_panel(
                     ".forEach((el) => { el.scrollTop = el.scrollHeight; });"
                     "}, 0);"
                 )
-            except RuntimeError as exc:
-                if not _parent_slot_deleted(exc):
-                    raise
+            except RuntimeError:
+                return
+
+        def _typical_range_for_step(step: dict[str, Any]) -> str:
+            step_id = str(step.get("id", ""))
+            actions = [action for action in step.get("inline_actions", []) if isinstance(action, dict)]
+            for action in actions:
+                action_id = str(action.get("id", ""))
+                if action_id == GENERATE_WORKBOOK_ACTION_ID:
+                    return "typical 1-10 min"
+                if action_id == SCREENSHOT_CAPTURE_ACTION_ID:
+                    return "typical 2-10 min"
+                if action_id == DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID:
+                    return _BUILD_PACKAGE_TYPICAL_RANGE_LABEL
+            ranges = {
+                "delivery-workbook-trigger": "typical 1-10 min",
+                "screenshot-test-state": "typical 2-10 min",
+                "operator-handoff": "typical <1 min",
+            }
+            return ranges.get(step_id, "typical <1 min")
+
+        def _eta_text(*, elapsed: str = "00:00", typical: str = "typical <1 min") -> str:
+            clean_typical = str(typical or "typical <1 min").strip()
+            if clean_typical.casefold().startswith("typical "):
+                clean_typical = "Typical " + clean_typical[8:]
+            elif clean_typical:
+                clean_typical = clean_typical[:1].upper() + clean_typical[1:]
+            return f"Elapsed {elapsed or '00:00'} / {clean_typical}"
 
         def _start_subprocess_action(
             action: dict[str, Any],
             *,
             status_label: Any,
+            eta_label: Any,
             progress: Any,
             live_output: Any,
+            details_host: Any,
             visual_label: Any,
             visual_host: Any,
             completion_label: Any,
             cancel_button: Any | None = None,
             set_running_controls: Callable[[bool], None] | None = None,
-            on_complete: Callable[[], None] | None = None,
+            on_complete: Callable[[dict[str, Any]], None] | None = None,
         ) -> None:
             action_id = str(action.get("id", ""))
             if action_id in running_actions:
                 return
             running_actions.add(action_id)
             status_label.text = "running"
+            eta_label.text = _eta_text(typical=str(action.get("typical_range", _typical_range_for_step({"inline_actions": [action]}))))
             completion_label.text = f"{action.get('label', 'Action')} running..."
             progress.visible = True
             progress.props("indeterminate")
             live_output.visible = True
             live_output.value = "Starting local subprocess; waiting for stdout/stderr..."
+            details_host.clear()
+            details_host.visible = False
             visual_label.visible = False
             visual_host.clear()
             visual_host.visible = False
@@ -4316,8 +4485,11 @@ def _render_full_qa_pass_panel(
                 _stop_launch_timer()
                 active_jobs.pop(action_id, None)
                 status_label.text = "failed"
+                eta_label.text = _eta_text(typical=str(action.get("typical_range", "typical <1 min")))
                 completion_label.text = f"{action.get('label', 'Action')} failed to start: {exc}"
                 live_output.value = str(exc)
+                details_host.clear()
+                details_host.visible = False
                 visual_label.visible = False
                 visual_host.visible = False
                 progress.visible = False
@@ -4327,7 +4499,7 @@ def _render_full_qa_pass_panel(
                 if set_running_controls is not None:
                     set_running_controls(False)
                 _append_activity(action=action_id, outcome="error", note=str(exc))
-                ui.notify(f"{action.get('label', 'Action')} failed to start.")
+                _notify_ui(f"{action.get('label', 'Action')} failed to start.")
 
             def _stop_timer() -> None:
                 _cancel_background_poll_timer(job_state.get("timer"))
@@ -4348,7 +4520,18 @@ def _render_full_qa_pass_panel(
                     if result is None:
                         return
                     live_output.value = _action_output_text(result)
-                    _render_action_visuals(ui, result, visual_label=visual_label, visual_host=visual_host)
+                    eta_label.text = _eta_text(
+                        elapsed=str(result.get("elapsed_label", "00:00")),
+                        typical=str(result.get("typical_range", action.get("typical_range", "typical <1 min"))),
+                    )
+                    _render_action_technical_details(ui, result, details_host=details_host)
+                    _render_action_visuals(
+                        ui,
+                        result,
+                        visual_label=visual_label,
+                        visual_host=visual_host,
+                        open_screenshot_viewer=_open_wizard_screenshot_viewer,
+                    )
                     _scroll_live_output_to_bottom()
                     if not bool(result.get("completed", True)):
                         completion_label.text = str(result.get("summary", f"{label} running."))
@@ -4368,7 +4551,7 @@ def _render_full_qa_pass_panel(
                         outcome="ok" if outcome == "available" else "unavailable",
                         note=str(result.get("summary", "")),
                     )
-                    ui.notify(f"{action.get('label', 'Action')} {outcome}.")
+                    _notify_ui(f"{action.get('label', 'Action')} {outcome}.")
                     _notify_completion_safe(
                         title="SGFX Full QA Pass action finished",
                         message=f"{action.get('label', 'Action')} {outcome}.",
@@ -4378,9 +4561,9 @@ def _render_full_qa_pass_panel(
                         evidence_path=str(result.get("sgfx_output_root", "")),
                     )
                     if outcome == "available" and on_complete is not None:
-                        on_complete()
+                        on_complete(result)
                 except RuntimeError as exc:
-                    if not _parent_slot_deleted(exc):
+                    if not _ignorable_nicegui_runtime_error(exc):
                         raise
                     _stop_timer()
                     if set_running_controls is not None:
@@ -4421,8 +4604,10 @@ def _render_full_qa_pass_panel(
             action: dict[str, Any],
             *,
             status_label: Any,
+            eta_label: Any,
             progress: Any,
             live_output: Any,
+            details_host: Any,
             visual_label: Any,
             visual_host: Any,
             completion_label: Any,
@@ -4438,8 +4623,11 @@ def _render_full_qa_pass_panel(
                     running_actions.discard(action_id)
                     progress.visible = False
                     status_label.text = "incomplete"
+                    eta_label.text = _eta_text(typical=str(action.get("typical_range", "typical <1 min")))
                     live_output.visible = True
                     live_output.value = "Canceled before local subprocess started."
+                    details_host.clear()
+                    details_host.visible = False
                     visual_label.visible = False
                     visual_host.visible = False
                     if set_running_controls is not None:
@@ -4463,14 +4651,25 @@ def _render_full_qa_pass_panel(
                 progress.visible = False
                 cancel_button.visible = False
                 status_label.text = "incomplete"
+                eta_label.text = _eta_text(
+                    elapsed=str(result.get("elapsed_label", "00:00")),
+                    typical=str(result.get("typical_range", action.get("typical_range", "typical <1 min"))),
+                )
                 completion_label.text = str(result.get("summary", "Action canceled."))
                 live_output.value = _action_output_text(result)
-                _render_action_visuals(ui, result, visual_label=visual_label, visual_host=visual_host)
+                _render_action_technical_details(ui, result, details_host=details_host)
+                _render_action_visuals(
+                    ui,
+                    result,
+                    visual_label=visual_label,
+                    visual_host=visual_host,
+                    open_screenshot_viewer=_open_wizard_screenshot_viewer,
+                )
                 _scroll_live_output_to_bottom()
                 if set_running_controls is not None:
                     set_running_controls(False)
                 _append_activity(action=action_id, outcome="unavailable", note=completion_label.text)
-                ui.notify(completion_label.text)
+                _notify_ui(completion_label.text)
             except Exception as exc:  # noqa: BLE001
                 status_label.text = "failed"
                 completion_label.text = f"Cancel failed: {exc}"
@@ -4515,18 +4714,18 @@ def _render_full_qa_pass_panel(
                     completion_label.text = "Local operator handoff recorded."
                 else:
                     raise ValueError(f"Unsupported operator action: {action_id}")
-                ui.notify(str(completion_label.text))
+                _notify_ui(str(completion_label.text))
             except Exception as exc:  # noqa: BLE001
                 status_label.text = "failed"
                 completion_label.text = f"{action.get('label', 'Action')} failed: {exc}"
                 _append_activity(action=action_id, outcome="error", note=str(exc))
-                ui.notify(f"{action.get('label', 'Action')} failed.")
+                _notify_ui(f"{action.get('label', 'Action')} failed.")
 
         def _open_target_page(target_page: str) -> None:
             if open_page is not None:
                 open_page(target_page)
                 return
-            ui.notify(f"Open {target_page} from the sidebar.")
+            _notify_ui(f"Open {target_page} from the sidebar.")
 
         def _safe_int(value: object) -> int:
             try:
@@ -4567,6 +4766,37 @@ def _render_full_qa_pass_panel(
             steps = _payload_steps(payload)
             wizard_state["index"] = _first_focus_index(steps, start=start)
             wizard_state["done"] = wizard_state["index"] >= len(steps)
+
+        def _replace_step_payload(step_id: str, result: dict[str, Any]) -> None:
+            payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+            steps = _payload_steps(payload)
+            for step in steps:
+                if str(step.get("id", "")) != step_id:
+                    continue
+                step_payload = step.get("payload", {}) if isinstance(step.get("payload"), dict) else {}
+                merged = {**step_payload, **result}
+                step["payload"] = merged
+                step["source_status"] = str(result.get("status", step.get("source_status", "unknown")))
+                if str(result.get("summary", "")).strip():
+                    step["summary"] = str(result.get("summary", ""))
+                if str(result.get("status", "")) == "available":
+                    step["status"] = "available" if bool(result.get("manual_review_required", True)) else "passed"
+                break
+
+        def _step_has_diff_review(step: dict[str, Any]) -> bool:
+            step_payload = step.get("payload", {}) if isinstance(step.get("payload"), dict) else {}
+            return _safe_int(step_payload.get("diff_count")) > 0 or bool(step_payload.get("screenshot_review_rows"))
+
+        def _handle_action_completed(step_id: str, result: dict[str, Any]) -> None:
+            if step_id:
+                wizard_state["action_results"][step_id] = result
+                _replace_step_payload(step_id, result)
+            trusted = bool((wizard_state.get("payload") or {}).get("trusted_tool_mode", False))
+            diff_found = _safe_int(result.get("diff_count")) > 0 or bool(result.get("screenshot_review_rows"))
+            if trusted or not diff_found:
+                _mark_step_completed(step_id)
+                return
+            _render_payload(wizard_state["payload"], preserve_index=True)
 
         def _mark_step_completed(step_id: str) -> None:
             if step_id:
@@ -4612,8 +4842,10 @@ def _render_full_qa_pass_panel(
             action: dict[str, Any],
             *,
             status_label: Any,
+            eta_label: Any,
             progress: Any,
             live_output: Any,
+            details_host: Any,
             visual_label: Any,
             visual_host: Any,
             completion_label: Any,
@@ -4625,14 +4857,19 @@ def _render_full_qa_pass_panel(
                 _start_subprocess_action(
                     current,
                     status_label=status_label,
+                    eta_label=eta_label,
                     progress=progress,
                     live_output=live_output,
+                    details_host=details_host,
                     visual_label=visual_label,
                     visual_host=visual_host,
                     completion_label=completion_label,
                     cancel_button=cancel_button,
                     set_running_controls=set_running_controls,
-                    on_complete=lambda step_id=str(current.get("step_id", "")): _mark_step_completed(step_id),
+                    on_complete=lambda result, step_id=str(current.get("step_id", "")): _handle_action_completed(
+                        step_id,
+                        result,
+                    ),
                 )
 
             prompt_overlay.clear()
@@ -4656,6 +4893,7 @@ def _render_full_qa_pass_panel(
             action: dict[str, Any],
             *,
             status_label: Any,
+            eta_label: Any,
             prompt_overlay: Any,
             auto_start_trusted: bool,
             action_buttons: list[Any],
@@ -4671,6 +4909,8 @@ def _render_full_qa_pass_panel(
                 .classes("full-width sgfx-live-output")
             )
             live_output.visible = False
+            details_host = ui.column().classes("full-width sgfx-technical-details-host")
+            details_host.visible = False
             visual_label = ui.label("Live visual output").classes("sgfx-panel-tagline")
             visual_label.visible = False
             visual_host = ui.row().classes("full-width sgfx-live-visuals")
@@ -4680,8 +4920,10 @@ def _render_full_qa_pass_panel(
                 on_click=lambda _event=None, current=action: _cancel_subprocess_action(
                     current,
                     status_label=status_label,
+                    eta_label=eta_label,
                     progress=progress,
                     live_output=live_output,
+                    details_host=details_host,
                     visual_label=visual_label,
                     visual_host=visual_host,
                     completion_label=completion_label,
@@ -4759,8 +5001,10 @@ def _render_full_qa_pass_panel(
                             prompt_overlay,
                             current,
                             status_label=status_label,
+                            eta_label=eta_label,
                             progress=progress,
                             live_output=live_output,
+                            details_host=details_host,
                             visual_label=visual_label,
                             visual_host=visual_host,
                             completion_label=completion_label,
@@ -4771,14 +5015,19 @@ def _render_full_qa_pass_panel(
                         _start_subprocess_action(
                             current,
                             status_label=status_label,
+                            eta_label=eta_label,
                             progress=progress,
                             live_output=live_output,
+                            details_host=details_host,
                             visual_label=visual_label,
                             visual_host=visual_host,
                             completion_label=completion_label,
                             cancel_button=cancel_button,
                             set_running_controls=set_running_controls,
-                            on_complete=lambda step_id=str(current.get("step_id", "")): _mark_step_completed(step_id),
+                            on_complete=lambda result, step_id=str(current.get("step_id", "")): _handle_action_completed(
+                                step_id,
+                                result,
+                            ),
                         )
 
                 button = _attach_tooltip(
@@ -4861,6 +5110,42 @@ def _render_full_qa_pass_panel(
                             f"Wizard reviewed {min(current_index, len(steps))}/{len(steps)} step(s); "
                             f"{passed_count} passed and {skipped_count} skipped locally."
                         ).classes("sgfx-muted")
+                        diff_steps = [step for step in steps if _step_has_diff_review(step)]
+                        if diff_steps:
+                            ui.label("Steps with diffs requiring review").classes("sgfx-warning")
+                            ui.label(
+                                f"{len(diff_steps)} step(s) produced visual differences. "
+                                "Review the rows below before recording any manual verdict."
+                            ).classes("sgfx-muted")
+                            for diff_step in diff_steps:
+                                step_payload = diff_step.get("payload", {}) if isinstance(diff_step.get("payload"), dict) else {}
+                                copied_evidence = (
+                                    step_payload.get("copied_evidence", {})
+                                    if isinstance(step_payload.get("copied_evidence"), dict)
+                                    else {}
+                                )
+                                sgfx_output = str(
+                                    step_payload.get("sgfx_output_root") or copied_evidence.get("output_root") or ""
+                                ).strip()
+                                diff_count = _safe_int(step_payload.get("diff_count"))
+                                count_text = str(diff_count) if diff_count else "one or more"
+                                ui.label(
+                                    f"{diff_step.get('label', 'Screenshot step')}: BMW pipeline reports "
+                                    f"{count_text} tests with visual differences - see thumbnails below for review."
+                                ).classes("sgfx-summary")
+                                if sgfx_output:
+                                    ui.label(f"SGFX output: {sgfx_output}").classes("sgfx-muted")
+                                done_details_host = ui.column().classes("full-width")
+                                _render_action_technical_details(ui, step_payload, details_host=done_details_host)
+                                done_visual_label = ui.label("Live visual output").classes("sgfx-panel-tagline")
+                                done_visual_host = ui.row().classes("full-width sgfx-live-visuals")
+                                _render_action_visuals(
+                                    ui,
+                                    step_payload,
+                                    visual_label=done_visual_label,
+                                    visual_host=done_visual_host,
+                                    open_screenshot_viewer=_open_wizard_screenshot_viewer,
+                                )
                         for guardrail in payload.get("guardrails", []):
                             if str(guardrail).strip():
                                 ui.label(str(guardrail)).classes("sgfx-guardrail")
@@ -4900,6 +5185,12 @@ def _render_full_qa_pass_panel(
                     with ui.row().classes("items-center justify-between full-width"):
                         ui.label(str(step.get("label", ""))).classes("sgfx-panel-title")
                         status_label = ui.label(step_status).classes("sgfx-status-pill")
+                    eta_label = ui.label(
+                        _eta_text(
+                            elapsed=str((step.get("payload", {}) if isinstance(step.get("payload"), dict) else {}).get("elapsed_label", "00:00")),
+                            typical=_typical_range_for_step(step),
+                        )
+                    ).classes("sgfx-muted sgfx-step-eta")
                     ui.label(str(step.get("summary", ""))).classes("sgfx-muted")
                     step_anchors = step.get("confluence_anchors", [])
                     if isinstance(step_anchors, str):
@@ -4921,6 +5212,7 @@ def _render_full_qa_pass_panel(
                             _render_action(
                                 action,
                                 status_label=status_label,
+                                eta_label=eta_label,
                                 prompt_overlay=prompt_overlay,
                                 auto_start_trusted=bool(payload.get("trusted_tool_mode", False)),
                                 action_buttons=action_buttons,
@@ -5157,6 +5449,12 @@ def _render_dashboard(
             .sgfx-diff-thumbnails { gap: 10px; flex-wrap: wrap; }
             .sgfx-diff-thumb-card { width: 176px; border: 1px solid var(--sgfx-border-soft); border-radius: 6px; background: var(--sgfx-bg-elev); padding: 8px; gap: 6px; }
             .sgfx-diff-thumb { width: 160px; height: 100px; object-fit: contain; background: #111; border-radius: 4px; }
+            .sgfx-diff-row-card { border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 8px; background: var(--sgfx-bg-panel); gap: 6px; }
+            .sgfx-diff-triplet-button { width: 100%; padding: 0 !important; text-align: left; }
+            .sgfx-diff-triplet { display: grid; grid-template-columns: repeat(3, minmax(112px, 1fr)); gap: 8px; width: 100%; }
+            .sgfx-diff-triplet-pane { min-width: 0; gap: 4px; align-items: center; }
+            .sgfx-technical-details-text textarea { font-family: Consolas, 'Courier New', monospace; font-size: 12px; min-height: 180px; }
+            .sgfx-step-eta { font-variant-numeric: tabular-nums; }
             .sgfx-risk-metric { flex: 1 1 220px; min-width: 220px; border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 12px; background: var(--sgfx-bg-elev); }
             .sgfx-file-activity { max-height: 160px; overflow-y: auto; border: 1px solid var(--sgfx-border); border-radius: 6px; padding: 8px; background: var(--sgfx-bg-elev); }
             .sgfx-viewer-dialog-card { width: min(96vw, 1680px); height: min(92vh, 980px); max-width: none !important; display: flex; flex-direction: column; gap: 10px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); border: 1px solid var(--sgfx-border); border-radius: 8px; }

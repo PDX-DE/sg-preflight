@@ -7,7 +7,7 @@ from typing import Any, Callable
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.delivery_checklist import read_delivery_checklist
-from sg_preflight.delivery_workbook_generation import build_delivery_workbook_trigger
+from sg_preflight.delivery_workbook_generation import GENERATION_TYPICAL_RANGE_LABEL, build_delivery_workbook_trigger
 from sg_preflight.manual_review import build_manual_review_assist
 from sg_preflight.onboarding_assistant import build_onboarding_guide
 from sg_preflight.operator_handoff import build_operator_handoff_snapshot
@@ -146,6 +146,7 @@ def _delivery_workbook_action(payload: dict[str, Any], *, trusted_tool_mode: boo
         "trusted_auto_confirm": bool(trusted_tool_mode),
         "hard_gate": "none",
         "timeout_seconds": int(payload.get("timeout_seconds", 600) or 600),
+        "typical_range": str(payload.get("typical_range", GENERATION_TYPICAL_RANGE_LABEL)),
         "confirmation_message": _action_prompt(
             "Generate delivery workbook",
             confirmation_message or "Run the local BMW pipeline export helper for this profile.",
@@ -179,6 +180,7 @@ def _screenshot_capture_action(
         "trusted_auto_confirm": bool(trusted_tool_mode and can_run),
         "hard_gate": "none",
         "timeout_seconds": SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
+        "typical_range": "typical 2-10 min",
         "confirmation_message": _action_prompt(
             "Capture screenshots",
             (

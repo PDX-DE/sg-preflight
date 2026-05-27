@@ -33,6 +33,7 @@ from sg_preflight.utils import ensure_parent
 
 
 BMW_PIPELINE_PYTHON_ENV = "SG_BMW_PYTHON_EXE"
+SGFX_OUTPUT_ROOT_ENV = "SGFX_OUTPUT_ROOT"
 GENERATE_WORKBOOK_ACTION_ID = "generate-delivery-workbook"
 GENERATE_WORKBOOK_ACTION_LABEL = "Generate delivery workbook"
 GENERATE_WORKBOOK_TIMEOUT_SECONDS = 600
@@ -509,6 +510,7 @@ def check_delivery_workbook_generation_environment(
         _tool_check("RaCoHeadless.exe", "RaCoHeadless", workspace=workspace_path),
         _tool_check("blender.exe", "Blender", workspace=workspace_path),
         _disk_space_check(workspace_path, min_free_bytes),
+        _sgfx_output_root_check(clean_profile, workspace_path),
     ]
     if repo_root is not None and repo_check["status"] == "available":
         if lane == LANE_IDC23:
@@ -553,7 +555,8 @@ def check_delivery_workbook_generation_environment(
         "checks": checks,
         "confirmation_message": (
             f"This will run the BMW pipeline for {clean_profile}. It may write native pipeline output under "
-            f"`{native_target_path}`; SGFX copies the generated workbook evidence to `{target_path}`. Continue?"
+            f"`{native_target_path}`; SGFX copies the generated workbook evidence to "
+            f"`~/sgfx_outputs/{_profile_output_token(clean_profile)}/delivery-workbook/` (`{target_path}`). Continue?"
         ),
         "disabled_reason": "" if can_run else "One or more environment pre-flight checks failed.",
     }
@@ -847,6 +850,34 @@ def _combined_tail_lines(stdout_path: Path, stderr_path: Path) -> list[str]:
     return lines[-GENERATION_STDOUT_TAIL_LINES:]
 
 
+def _combined_tail_text(stdout_path: Path, stderr_path: Path) -> str:
+    parts = []
+    stdout = _tail_text(stdout_path).strip()
+    stderr = _tail_text(stderr_path).strip()
+    if stdout:
+        parts.append(stdout)
+    if stderr:
+        parts.append(f"stderr:\n{stderr}")
+    return "\n".join(parts).strip()
+
+
+def _pipeline_traceback_payload(
+    *,
+    stdout_path: Path,
+    stderr_path: Path,
+    summary: str,
+) -> dict[str, Any]:
+    details = _combined_tail_text(stdout_path, stderr_path)
+    lowered = details.casefold()
+    if "traceback (most recent call last)" not in lowered and "exception:" not in lowered:
+        return {}
+    return {
+        "detected": True,
+        "summary": summary,
+        "technical_details": details,
+    }
+
+
 def _size_label(size_bytes: int) -> str:
     if size_bytes < 1024:
         return f"{size_bytes} B"
@@ -862,12 +893,48 @@ def _profile_output_token(profile_id: str) -> str:
     return "-".join(part for part in token.split("-") if part) or "profile"
 
 
+def _sgfx_outputs_root(fallback_base: Path | None = None) -> Path:
+    configured = os.environ.get(SGFX_OUTPUT_ROOT_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    try:
+        return (Path.home() / "sgfx_outputs").resolve()
+    except RuntimeError:
+        base = fallback_base if fallback_base is not None else Path.cwd()
+        return (base / "sgfx_outputs").resolve()
+
+
 def _sgfx_profile_output_root(workspace: Path, profile_id: str) -> Path:
-    return workspace / "out" / _profile_output_token(profile_id)
+    return _sgfx_outputs_root(workspace) / _profile_output_token(profile_id)
 
 
 def _sgfx_pipeline_output_root(workspace: Path, profile_id: str, action: str) -> Path:
     return _sgfx_profile_output_root(workspace, profile_id) / action
+
+
+def _sgfx_output_root_check(profile_id: str, workspace: Path | None = None) -> dict[str, str]:
+    root = _sgfx_profile_output_root(workspace or Path.cwd(), profile_id)
+    probe = root / ".sgfx-write-probe"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        probe.write_text("ok\n", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except OSError as exc:
+        return _check(
+            key="sgfx_output_root",
+            label="SGFX operator output root",
+            status="failed",
+            detail=f"Could not write SGFX operator evidence under {root}: {exc}",
+            path=root,
+            remediation="Choose a writable operator-local SGFX_OUTPUT_ROOT or fix home-directory permissions.",
+        )
+    return _check(
+        key="sgfx_output_root",
+        label="SGFX operator output root",
+        status="available",
+        detail=f"SGFX evidence copies are written under {root}.",
+        path=root,
+    )
 
 
 def _copy_file_evidence(source: Path, destination: Path) -> dict[str, Any] | None:
@@ -1012,6 +1079,11 @@ def _generation_progress_payload(job: DeliveryWorkbookGenerationJob, *, elapsed_
         "stdout_tail": _tail_text(job.stdout_path),
         "stdout_tail_lines": _combined_tail_lines(job.stdout_path, job.stderr_path),
         "stderr_tail": _tail_text(job.stderr_path),
+        "pipeline_traceback": _pipeline_traceback_payload(
+            stdout_path=job.stdout_path,
+            stderr_path=job.stderr_path,
+            summary="BMW pipeline export emitted a technical traceback while running. Show technical details for the raw log.",
+        ),
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _file_activity(job.workspace, job.started_wall_time),
@@ -1055,6 +1127,11 @@ def _generation_result(
                 summary = f"{summary} {checklist_summary}"
     copied_evidence = _copy_delivery_workbook_evidence(job, checklist_payload)
     elapsed_seconds = time.monotonic() - job.started_monotonic
+    traceback_payload = _pipeline_traceback_payload(
+        stdout_path=job.stdout_path,
+        stderr_path=job.stderr_path,
+        summary="BMW pipeline export raised a technical traceback - see technical details and workbook/log evidence below.",
+    )
     return {
         "profile_id": job.profile_id,
         "workspace": str(job.workspace),
@@ -1075,6 +1152,7 @@ def _generation_result(
         "stdout_tail": _tail_text(job.stdout_path),
         "stdout_tail_lines": _combined_tail_lines(job.stdout_path, job.stderr_path),
         "stderr_tail": _tail_text(job.stderr_path),
+        "pipeline_traceback": traceback_payload,
         "stdout_path": str(job.stdout_path),
         "stderr_path": str(job.stderr_path),
         "file_activity": _file_activity(job.workspace, job.started_wall_time),
