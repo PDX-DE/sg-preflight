@@ -2460,6 +2460,9 @@ def _render_action_visuals(
         if review_rows:
             with ui.column().classes("sgfx-diff-preview sgfx-side-by-side-preview"):
                 ui.label("Side-by-side diff rows").classes("sgfx-panel-tagline")
+                with ui.row().classes("sgfx-diff-triplet-sticky-header"):
+                    for slot_label in ("Expected", "Actual", "Diff"):
+                        ui.label(slot_label).classes("sgfx-diff-sticky-label")
                 for row in review_rows:
                     label = row["label"] or row["key"] or "screenshot diff"
 
@@ -2473,7 +2476,6 @@ def _render_action_visuals(
                                 for slot in ("expected", "actual", "diff"):
                                     src = row.get(f"{slot}_src", "")
                                     with ui.column().classes("sgfx-diff-triplet-pane"):
-                                        ui.label(slot.title()).classes("sgfx-muted")
                                         if src:
                                             ui.image(src).classes("sgfx-diff-thumb")
                                         else:
@@ -5390,12 +5392,20 @@ def _render_dashboard(
             .sgfx-dashboard { background: var(--sgfx-bg); color: var(--sgfx-fg); font-family: 'Segoe UI', 'Cascadia Code', Arial, sans-serif; }
             .sgfx-theme-grafiks { background: var(--sgfx-bg); }
             .sgfx-shell { min-height: 100vh; gap: 0; }
-            .sgfx-sidebar { width: 292px; min-height: 100vh; padding: 22px 16px; background: var(--sgfx-bg-elev); border-right: 1px solid var(--sgfx-border); gap: 10px; }
+            .sgfx-sidebar { position: fixed; inset: 0 auto 0 0; z-index: 9100; width: min(292px, calc(100vw - 56px)); min-height: 100vh; padding: 22px 16px; background: var(--sgfx-bg-elev); border-right: 1px solid var(--sgfx-border); gap: 10px; overflow-y: auto; transform: translateX(calc(-100% - 1px)); transition: transform 180ms ease-out, box-shadow 180ms ease-out; }
+            body.sgfx-sidebar-open .sgfx-sidebar { transform: translateX(0); box-shadow: 18px 0 42px rgba(0, 0, 0, 0.38); }
+            .sgfx-sidebar-backdrop { position: fixed; inset: 0; z-index: 9090; background: rgba(0, 0, 0, 0.46); opacity: 0; pointer-events: none; transition: opacity 160ms ease-out; }
+            body.sgfx-sidebar-open .sgfx-sidebar-backdrop { opacity: 1; pointer-events: auto; }
             .sgfx-sidebar-logo { width: 200px; max-width: 100%; height: auto; object-fit: contain; margin: 4px 0 14px 0; }
             .sgfx-nav-button { justify-content: flex-start; border-radius: 6px; color: var(--sgfx-fg) !important; }
             .sgfx-nav-button:hover { background: var(--sgfx-accent-soft) !important; }
             .sgfx-shortcut { color: var(--sgfx-fg-muted); font-size: 12px; line-height: 1.5; }
-            .sgfx-main { flex: 1; min-width: 0; padding: 24px 28px; gap: 18px; background: var(--sgfx-bg); }
+            .sgfx-menu-button { position: fixed; top: 18px; left: 18px; z-index: 9080; width: 36px; height: 36px; border: 1px solid var(--sgfx-border) !important; border-radius: 999px; background: var(--sgfx-bg-elev) !important; color: var(--sgfx-fg) !important; font-size: 20px; line-height: 1; cursor: pointer; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22); }
+            body.sgfx-sidebar-open .sgfx-menu-button { border-color: var(--sgfx-accent) !important; color: var(--sgfx-accent) !important; }
+            .sgfx-floating-shortcuts { position: fixed; left: 18px; bottom: 18px; z-index: 9070; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--sgfx-border); border-radius: 8px; background: rgba(37, 37, 38, 0.94); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22); transition: opacity 160ms ease-out, transform 160ms ease-out; }
+            .sgfx-floating-shortcuts span { color: var(--sgfx-fg-muted); font-size: 12px; line-height: 1.35; }
+            body.sgfx-sidebar-open .sgfx-floating-shortcuts { opacity: 0.36; transform: translateX(-4px); pointer-events: none; }
+            .sgfx-main { flex: 1; min-width: 0; padding: 24px 28px 24px 76px; gap: 18px; background: var(--sgfx-bg); }
             .sgfx-header { border-bottom: 1px solid var(--sgfx-border); padding-bottom: 14px; }
             .sgfx-subtitle { color: var(--sgfx-fg-muted); font-size: 13px; }
             .sgfx-brand-lockup { gap: 14px; }
@@ -5446,12 +5456,18 @@ def _render_dashboard(
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
             .sgfx-live-visuals { gap: 12px; align-items: stretch; animation: sgfx-visual-in 160ms ease-out; }
             .sgfx-workbook-preview, .sgfx-diff-preview { flex: 1 1 280px; min-width: 260px; border: 1px solid var(--sgfx-border); border-radius: 8px; background: var(--sgfx-bg); padding: 10px; gap: 6px; }
+            .sgfx-side-by-side-preview { max-height: min(68vh, 760px); overflow-y: auto; position: relative; padding: 0; }
+            .sgfx-side-by-side-preview > .sgfx-panel-tagline { padding: 10px 10px 0 10px; }
+            .sgfx-side-by-side-preview .sgfx-diff-row-card { margin: 0 10px 8px 10px; }
+            .sgfx-side-by-side-preview .sgfx-diff-row-card:last-child { margin-bottom: 10px; }
             .sgfx-diff-thumbnails { gap: 10px; flex-wrap: wrap; }
             .sgfx-diff-thumb-card { width: 176px; border: 1px solid var(--sgfx-border-soft); border-radius: 6px; background: var(--sgfx-bg-elev); padding: 8px; gap: 6px; }
             .sgfx-diff-thumb { width: 160px; height: 100px; object-fit: contain; background: #111; border-radius: 4px; }
             .sgfx-diff-row-card { border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 8px; background: var(--sgfx-bg-panel); gap: 6px; }
             .sgfx-diff-triplet-button { width: 100%; padding: 0 !important; text-align: left; }
             .sgfx-diff-triplet { display: grid; grid-template-columns: repeat(3, minmax(112px, 1fr)); gap: 8px; width: 100%; }
+            .sgfx-diff-triplet-sticky-header { position: sticky; top: 0; z-index: 2; display: grid; grid-template-columns: repeat(3, minmax(112px, 1fr)); gap: 8px; width: 100%; padding: 8px 8px 7px 8px; border-bottom: 1px solid var(--sgfx-border); background: var(--sgfx-bg); box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18); }
+            .sgfx-diff-sticky-label { color: var(--sgfx-fg-strong); font-size: 12px; font-weight: 650; text-align: center; }
             .sgfx-diff-triplet-pane { min-width: 0; gap: 4px; align-items: center; }
             .sgfx-technical-details-text textarea { font-family: Consolas, 'Courier New', monospace; font-size: 12px; min-height: 180px; }
             .sgfx-step-eta { font-variant-numeric: tabular-nums; }
@@ -5614,6 +5630,7 @@ def _render_dashboard(
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
             ui.run_javascript(f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
+            ui.run_javascript("window.sgfxSetSidebarOpen && window.sgfxSetSidebarOpen(false);")
             if page_id in {"daily-digest", "team-digest-board"} and _pages_by_id().get(page_id, {}).get("deferred"):
                 state["snapshot"] = build_dashboard_snapshot(
                     str(state["snapshot"]["profile_id"]),
@@ -5672,6 +5689,15 @@ def _render_dashboard(
                         if (hideTimer) window.clearTimeout(hideTimer);
                         hideTimer = window.setTimeout(() => popup.classList.remove('show'), 1250);
                     }};
+                    window.sgfxSetSidebarOpen = (open) => {{
+                        const isOpen = Boolean(open);
+                        document.body.classList.toggle('sgfx-sidebar-open', isOpen);
+                        document.body.dataset.sgfxSidebar = isOpen ? 'open' : 'closed';
+                    }};
+                    window.sgfxToggleSidebar = () => {{
+                        window.sgfxSetSidebarOpen(!document.body.classList.contains('sgfx-sidebar-open'));
+                    }};
+                    window.sgfxSetSidebarOpen(false);
                     if (window.__sgfxDashboardShortcutsInstalled) return;
                     window.__sgfxDashboardShortcutsInstalled = true;
                     document.addEventListener('keydown', (event) => {{
@@ -5692,7 +5718,10 @@ def _render_dashboard(
                             const currentPage = document.body.dataset.sgfxActivePage || 'unknown';
                             show('F12', `${{messages.F12}} Current page: ${{currentPage}}.`);
                         }}
-                        if (event.key === 'Escape') show('Esc', messages.Esc);
+                        if (event.key === 'Escape') {{
+                            window.sgfxSetSidebarOpen(false);
+                            show('Esc', messages.Esc);
+                        }}
                     }});
                 }})();
                 """
@@ -5700,6 +5729,9 @@ def _render_dashboard(
 
         ui.html(
             f"""
+            <button type="button" class="sgfx-menu-button" aria-label="Open navigation" onclick="window.sgfxToggleSidebar && window.sgfxToggleSidebar()">
+              &#9776;
+            </button>
             <div id="sgfx-hotkey-popup" class="sgfx-hotkey-popup" aria-live="polite">
               <img src="/sgfx-dashboard-assets/{DASHBOARD_DEBUG_ICON_ASSET}" alt="">
               <div>
@@ -5707,7 +5739,14 @@ def _render_dashboard(
                 <div class="sgfx-hotkey-message" data-sgfx-hotkey-message>Shortcuts available.</div>
               </div>
             </div>
-            """
+            <div class="sgfx-sidebar-backdrop" data-sgfx-sidebar-backdrop onclick="window.sgfxSetSidebarOpen && window.sgfxSetSidebarOpen(false)" aria-hidden="true"></div>
+            <div class="sgfx-floating-shortcuts" aria-label="Keyboard shortcuts">
+              <span>F1 Help</span>
+              <span>F12 Diagnostic</span>
+              <span>Esc Quit</span>
+            </div>
+            """,
+            sanitize=False,
         )
 
         with ui.row().classes("sgfx-shell full-width no-wrap"):
