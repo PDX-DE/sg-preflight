@@ -513,6 +513,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("start_screenshot_capture", source)
         self.assertIn("Cancel running action", source)
         self.assertIn("Manual-review state still has", source)
+        self.assertIn("incomplete_but_queued_for_acknowledge", source)
+        self.assertIn("acknowledged_via_bulk_confirm", source)
+        self.assertIn("Acknowledgment items queued", source)
+        self.assertIn("Acknowledge all", source)
+        self.assertIn("Acknowledge all queued items? This records your acknowledgment", source)
+        self.assertIn("bulk_ack_queued", source)
+        self.assertIn("bulk_acknowledged", source)
+        self.assertIn("_bulk_handoff_placeholder", source)
         self.assertIn("_full_qa_display_status", source)
         self.assertIn('str(step.get("id", "")) == "screenshot-test-state"', source)
         self.assertIn("expected > 0 and actual == 0 and diff == 0", source)
@@ -536,6 +544,22 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn("trusted_auto_queue", source)
         self.assertNotIn("on_click=_show_prompt_or_start", source)
         self.assertNotIn('aria-label="{running_navigation_message}"', source)
+
+    def test_dashboard_source_exposes_missing_candidate_operator_wording(self) -> None:
+        triage_source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "screenshot_triage.py").read_text(
+            encoding="utf-8"
+        )
+        viewer_source = (
+            Path(__file__).resolve().parents[1] / "sg_preflight" / "screenshot_review_viewer.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("BMW pipeline did not render an actual image for this test.", triage_source)
+        self.assertIn("scene init / shader load / missing-asset issue", triage_source)
+        self.assertIn("Check disk:", triage_source)
+        self.assertIn("Check BMW Git test config", triage_source)
+        self.assertIn("data_prep_or_ci_team", triage_source)
+        self.assertIn("escalation_path", viewer_source)
+        self.assertNotIn("Baseline exists but no candidate image was found.", triage_source)
 
     def test_parent_slot_deleted_matches_nicegui_deleted_element_message(self) -> None:
         from sg_preflight.dashboard.main import _ignorable_nicegui_runtime_error, _parent_slot_deleted

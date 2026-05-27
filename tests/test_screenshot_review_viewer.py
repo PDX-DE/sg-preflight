@@ -91,6 +91,28 @@ class TestScreenshotReviewViewer(unittest.TestCase):
         self.assertNotIn("</script>", payload)
         self.assertIn("\\u003c/script\\u003e", payload)
 
+    def test_viewer_surfaces_missing_candidate_escalation_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "G70"
+            expected_root = project_root / "export" / "tests" / "expected"
+
+            self._write_bmp(expected_root / "highlighting.bmp", (10, 20, 30))
+
+            bundle = build_screenshot_review_viewer(
+                "G70",
+                project_root,
+                root / "out" / "viewer",
+            )
+
+            item = bundle.viewer.items[0]
+            self.assertEqual(item.classification, "missing_candidate")
+            self.assertEqual(item.escalation_path, "data_prep_or_ci_team")
+            self.assertIn("BMW pipeline did not render an actual image", item.summary)
+            html = bundle.html_path.read_text(encoding="utf-8")
+            self.assertIn("data-escalation", html)
+            self.assertIn("Escalation path:", html)
+
     def test_cli_build_screenshot_review_viewer_outputs_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

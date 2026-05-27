@@ -77,6 +77,15 @@ class TestScreenshotTriage(unittest.TestCase):
             self.assertEqual(pair_map["tiny_drift"].visual_classification, "cosmetic_likely_pass")
             self.assertEqual(pair_map["missing_candidate"].visual_classification, "unclear_manual_review")
             self.assertEqual(pair_map["missing_candidate"].classification, "missing_candidate")
+            self.assertIn(
+                "BMW pipeline did not render an actual image for this test.",
+                pair_map["missing_candidate"].summary,
+            )
+            self.assertIn(
+                "cars/BMW/G70/export/tests/diff/missing_candidate_*.png absent",
+                pair_map["missing_candidate"].summary,
+            )
+            self.assertEqual(pair_map["missing_candidate"].escalation_path, "data_prep_or_ci_team")
             self.assertEqual(pair_map["extra_candidate"].classification, "missing_baseline")
             self.assertIsNotNone(pair_map["changed"].review_score)
             self.assertGreater(pair_map["changed"].review_score or 0.0, 0.0)

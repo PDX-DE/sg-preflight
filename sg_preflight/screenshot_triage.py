@@ -73,6 +73,7 @@ class ScreenshotPair:
     visual_classification: str
     summary: str
     visual_summary: str = ""
+    escalation_path: str = ""
     baseline_path: str = ""
     candidate_path: str = ""
     baseline_size: tuple[int, int] | tuple[()] = ()
@@ -375,6 +376,22 @@ def _visual_diff_classification(
     )
 
 
+def _missing_candidate_summary(profile_id: str, project_root: Path, key: str) -> str:
+    profile_root = project_root.name or str(profile_id or "PROFILE").upper()
+    test_name = Path(str(key)).with_suffix("").name or "<test>"
+    diff_hint = Path("cars") / "BMW" / profile_root / "export" / "tests" / "diff" / f"{test_name}_*.png"
+    config_hint = Path("cars") / "BMW" / profile_root / "export" / "tests" / "test_config.lua"
+    return (
+        "BMW pipeline did not render an actual image for this test.\n\n"
+        "Likely cause: scene init / shader load / missing-asset issue at BMW pipeline level.\n\n"
+        "Investigate:\n"
+        f"- Check disk: {diff_hint.as_posix()} absent\n"
+        f"- Check BMW Git test config for `{test_name}` scene: {config_hint.as_posix()}\n"
+        "- Check BMW Ramses error logs (often fall back to pink/magenta when textures/shaders fail to load)\n\n"
+        "Operator action: identify root cause and escalate to data prep / CI team if BMW Git asset issue."
+    )
+
+
 def _diff_metrics(
     baseline_path: Path,
     candidate_path: Path,
@@ -555,7 +572,7 @@ def build_screenshot_triage(
             )
         elif candidate_path is None:
             classification = "missing_candidate"
-            summary = "Baseline exists but no candidate image was found."
+            summary = _missing_candidate_summary(profile_id, resolved_project_root, key)
             visual_classification, visual_summary = _visual_diff_classification(
                 classification,
                 changed_ratio=None,
@@ -570,6 +587,7 @@ def build_screenshot_triage(
                 visual_classification=visual_classification,
                 summary=summary,
                 visual_summary=visual_summary,
+                escalation_path="data_prep_or_ci_team",
                 baseline_path=str(baseline_path),
                 priority=priority,
             )
@@ -747,6 +765,8 @@ def _markdown(report: ScreenshotTriageReport) -> str:
             lines.append(f"  - {pair.summary}")
             if pair.visual_summary:
                 lines.append(f"  - Visual label: `{pair.visual_classification}` - {pair.visual_summary}")
+            if pair.escalation_path:
+                lines.append(f"  - Escalation path: `{pair.escalation_path}`")
             if pair.review_score:
                 lines.append(f"  - Review score: `{pair.review_score:.2f}`")
             if pair.anomaly_hints:
@@ -791,6 +811,11 @@ def _html(report: ScreenshotTriageReport) -> str:
                 + (
                     f"<p><strong>Visual label:</strong> {escape(pair.visual_classification)} - {escape(pair.visual_summary)}</p>"
                     if pair.visual_summary
+                    else ""
+                )
+                + (
+                    f"<p><strong>Escalation path:</strong> {escape(pair.escalation_path)}</p>"
+                    if pair.escalation_path
                     else ""
                 )
                 + (

@@ -4303,6 +4303,9 @@ def _render_full_qa_pass_panel(
         "skipped": set(),
         "completed": set(),
         "auto_started": set(),
+        "bulk_ack_queued": set(),
+        "bulk_acknowledged": {},
+        "bulk_handoff_text": "",
         "action_results": {},
         "done": False,
     }
@@ -4377,6 +4380,15 @@ def _render_full_qa_pass_panel(
                 profile=profile_id,
                 outcome=outcome,
                 note=note,
+            )
+
+        def _ack_timestamp() -> str:
+            return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        def _bulk_handoff_placeholder(timestamp: str) -> str:
+            return (
+                f"Full QA Pass completed for {profile_id} - automated steps passed; "
+                f"acknowledgment items batch-confirmed at {timestamp}."
             )
 
         def _action_output_text(result: dict[str, Any]) -> str:
@@ -4749,8 +4761,12 @@ def _render_full_qa_pass_panel(
 
         def _full_qa_effective_status(step: dict[str, Any]) -> str:
             step_id = str(step.get("id", ""))
+            if step_id in wizard_state["bulk_acknowledged"]:
+                return "acknowledged_via_bulk_confirm"
             if step_id in wizard_state["skipped"]:
                 return "skipped"
+            if step_id in wizard_state["bulk_ack_queued"]:
+                return "incomplete_but_queued_for_acknowledge"
             if step_id in wizard_state["completed"]:
                 return "passed"
             return _full_qa_display_status(step)
@@ -4758,13 +4774,66 @@ def _render_full_qa_pass_panel(
         def _payload_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             return [step for step in payload.get("steps", []) if isinstance(step, dict)]
 
+        def _ack_action_for_step(step: dict[str, Any]) -> dict[str, Any] | None:
+            for action in step.get("inline_actions", []):
+                if not isinstance(action, dict):
+                    continue
+                if str(action.get("kind", "")) in {"operator_ack", "verify_manual_review", "handoff_form"}:
+                    return action
+            return None
+
+        def _should_queue_bulk_ack(step: dict[str, Any]) -> bool:
+            step_id = str(step.get("id", ""))
+            if step_id not in {"risk-score", "manual-review-assist", "operator-handoff"}:
+                return False
+            if step_id in wizard_state["skipped"] or step_id in wizard_state["completed"]:
+                return False
+            if step_id in wizard_state["bulk_acknowledged"]:
+                return False
+            status = _full_qa_display_status(step)
+            if status in {"failed", "skipped", "unavailable"}:
+                return False
+            if step_id == "operator-handoff":
+                return True
+            return _ack_action_for_step(step) is not None and status != "passed"
+
+        def _sync_bulk_ack_queue(payload: dict[str, Any]) -> None:
+            if not bool(payload.get("trusted_tool_mode", False)):
+                wizard_state["bulk_ack_queued"].clear()
+                return
+            queued: set[str] = set()
+            for step in _payload_steps(payload):
+                if _should_queue_bulk_ack(step):
+                    queued.add(str(step.get("id", "")))
+            wizard_state["bulk_ack_queued"] = queued
+
+        def _bulk_ack_queued_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
+            acknowledged = wizard_state["bulk_acknowledged"]
+            return [
+                step
+                for step in _payload_steps(payload)
+                if str(step.get("id", "")) in wizard_state["bulk_ack_queued"]
+                and str(step.get("id", "")) not in acknowledged
+            ]
+
+        def _bulk_acknowledged_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
+            acknowledged = wizard_state["bulk_acknowledged"]
+            return [step for step in _payload_steps(payload) if str(step.get("id", "")) in acknowledged]
+
         def _first_focus_index(steps: list[dict[str, Any]], *, start: int = 0) -> int:
+            non_blocking = {
+                "passed",
+                "skipped",
+                "incomplete_but_queued_for_acknowledge",
+                "acknowledged_via_bulk_confirm",
+            }
             for index in range(max(0, start), len(steps)):
-                if _full_qa_effective_status(steps[index]) not in {"passed", "skipped"}:
+                if _full_qa_effective_status(steps[index]) not in non_blocking:
                     return index
             return len(steps)
 
         def _set_wizard_index(payload: dict[str, Any], *, start: int = 0) -> None:
+            _sync_bulk_ack_queue(payload)
             steps = _payload_steps(payload)
             wizard_state["index"] = _first_focus_index(steps, start=start)
             wizard_state["done"] = wizard_state["index"] >= len(steps)
@@ -4804,10 +4873,42 @@ def _render_full_qa_pass_panel(
             if step_id:
                 wizard_state["completed"].add(step_id)
             payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+            _sync_bulk_ack_queue(payload)
             steps = _payload_steps(payload)
             current_index = _safe_int(wizard_state.get("index"))
             wizard_state["index"] = _first_focus_index(steps, start=current_index + 1)
             wizard_state["done"] = wizard_state["index"] >= len(steps)
+            _render_payload(payload, preserve_index=True)
+
+        def _acknowledge_all_queued(handoff_text: str = "") -> None:
+            payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+            queued_steps = _bulk_ack_queued_steps(payload)
+            if not queued_steps:
+                return
+            timestamp = _ack_timestamp()
+            acknowledged = wizard_state["bulk_acknowledged"]
+            for step in queued_steps:
+                step_id = str(step.get("id", ""))
+                acknowledged[step_id] = timestamp
+                step["acknowledgment_status"] = "acknowledged_via_bulk_confirm"
+                step["acknowledged_at_utc"] = timestamp
+                _append_activity(
+                    action=f"bulk-acknowledge:{step_id}",
+                    outcome="ok",
+                    note=f"acknowledged_via_bulk_confirm at {timestamp}",
+                )
+            if any(str(step.get("id", "")) == "operator-handoff" for step in queued_steps):
+                stopping_point = handoff_text.strip() or _bulk_handoff_placeholder(timestamp)
+                record_operator_handoff(
+                    workspace=workspace,
+                    profile_id=profile_id,
+                    ticket_id=str(snapshot.get("active_ticket_id", "")),
+                    stopping_point=stopping_point,
+                    next_step="Review the Full QA Pass done summary and continue any listed follow-up.",
+                    note="Batch acknowledgment recorded from Full QA Pass.",
+                )
+            _sync_bulk_ack_queue(payload)
+            _set_wizard_index(payload, start=len(_payload_steps(payload)))
             _render_payload(payload, preserve_index=True)
 
         def _skip_current_step() -> None:
@@ -5054,6 +5155,7 @@ def _render_full_qa_pass_panel(
         def _render_payload(payload: dict[str, Any], *, preserve_index: bool = False) -> None:
             wizard_state["payload"] = payload
             steps = _payload_steps(payload)
+            _sync_bulk_ack_queue(payload)
             if not preserve_index:
                 _set_wizard_index(payload)
             current_index = _safe_int(wizard_state.get("index"))
@@ -5097,7 +5199,16 @@ def _render_full_qa_pass_panel(
                     with ui.row().classes("sgfx-wizard-rail"):
                         for prior_index, prior_step in enumerate(steps[:current_index]):
                             prior_status = _full_qa_effective_status(prior_step)
-                            icon = "✓" if prior_status == "passed" else "skip" if prior_status == "skipped" else "!"
+                            icon = (
+                                "✓"
+                                if prior_status == "passed"
+                                else "ack"
+                                if prior_status
+                                in {"incomplete_but_queued_for_acknowledge", "acknowledged_via_bulk_confirm"}
+                                else "skip"
+                                if prior_status == "skipped"
+                                else "!"
+                            )
                             ui.label(f"{icon} {prior_index + 1}. {prior_step.get('label', '')}").classes(
                                 f"sgfx-wizard-rail-item sgfx-step-{prior_status}"
                             )
@@ -5112,6 +5223,45 @@ def _render_full_qa_pass_panel(
                             f"Wizard reviewed {min(current_index, len(steps))}/{len(steps)} step(s); "
                             f"{passed_count} passed and {skipped_count} skipped locally."
                         ).classes("sgfx-muted")
+                        queued_ack_steps = _bulk_ack_queued_steps(payload)
+                        if queued_ack_steps:
+                            with ui.column().classes("sgfx-acknowledgment-queue"):
+                                ui.label("Acknowledgment items queued").classes("sgfx-panel-tagline")
+                                ui.label(
+                                    f"{len(queued_ack_steps)} acknowledgment item(s) queued for batch confirmation."
+                                ).classes("sgfx-summary")
+                                ui.label(
+                                    "Acknowledge all queued items? This records your acknowledgment for each step "
+                                    "listed below and completes the Full QA Pass."
+                                ).classes("sgfx-muted")
+                                for ack_step in queued_ack_steps:
+                                    ui.label(
+                                        f"{ack_step.get('label', '')}: "
+                                        "incomplete_but_queued_for_acknowledge"
+                                    ).classes("sgfx-muted")
+                                handoff_input = None
+                                if any(str(step.get("id", "")) == "operator-handoff" for step in queued_ack_steps):
+                                    if not str(wizard_state.get("bulk_handoff_text", "")).strip():
+                                        wizard_state["bulk_handoff_text"] = _bulk_handoff_placeholder(_ack_timestamp())
+                                    handoff_input = ui.textarea(
+                                        "Operator Handoff note",
+                                        value=str(wizard_state.get("bulk_handoff_text", "")),
+                                    ).props("outlined").classes("full-width")
+
+                                def _ack_all() -> None:
+                                    if handoff_input is not None:
+                                        wizard_state["bulk_handoff_text"] = str(handoff_input.value or "")
+                                    _acknowledge_all_queued(str(wizard_state.get("bulk_handoff_text", "")))
+
+                                ui.button("Acknowledge all", on_click=_ack_all).props("color=primary")
+                        acknowledged_steps = _bulk_acknowledged_steps(payload)
+                        if acknowledged_steps:
+                            ui.label("Acknowledged via bulk confirmation").classes("sgfx-panel-tagline")
+                            for ack_step in acknowledged_steps:
+                                ack_timestamp = wizard_state["bulk_acknowledged"].get(str(ack_step.get("id", "")), "")
+                                ui.label(
+                                    f"{ack_step.get('label', '')}: acknowledged_via_bulk_confirm at {ack_timestamp}"
+                                ).classes("sgfx-muted")
                         diff_steps = [step for step in steps if _step_has_diff_review(step)]
                         if diff_steps:
                             ui.label("Steps with diffs requiring review").classes("sgfx-warning")
@@ -5452,7 +5602,10 @@ def _render_dashboard(
             .sgfx-step-passed { border-color: #3b6f55; background: #223027; }
             .sgfx-step-failed { border-color: #8f4d4d; background: #332425; }
             .sgfx-step-skipped { border-color: var(--sgfx-border); background: var(--sgfx-bg-elev); }
+            .sgfx-step-incomplete_but_queued_for_acknowledge { border-color: #94764c; background: #302b20; }
+            .sgfx-step-acknowledged_via_bulk_confirm { border-color: #4f766f; background: #20302d; }
             .sgfx-step-incomplete, .sgfx-step-confirmation_pending { border-color: var(--sgfx-warning-border); background: var(--sgfx-warning-bg); }
+            .sgfx-acknowledgment-queue { gap: 8px; border: 1px solid #94764c; border-radius: 8px; background: #29251d; padding: 12px; }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
             .sgfx-live-visuals { gap: 12px; align-items: stretch; animation: sgfx-visual-in 160ms ease-out; }
             .sgfx-workbook-preview, .sgfx-diff-preview { flex: 1 1 280px; min-width: 260px; border: 1px solid var(--sgfx-border); border-radius: 8px; background: var(--sgfx-bg); padding: 10px; gap: 6px; }

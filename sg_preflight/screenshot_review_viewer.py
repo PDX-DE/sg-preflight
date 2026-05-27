@@ -23,6 +23,7 @@ class ScreenshotReviewItem:
     visual_classification: str
     summary: str
     visual_summary: str
+    escalation_path: str = ""
     expected_path: str = ""
     actual_path: str = ""
     diff_path: str = ""
@@ -144,6 +145,7 @@ def build_screenshot_review_viewer(
                 visual_classification=pair.visual_classification,
                 summary=pair.summary,
                 visual_summary=pair.visual_summary,
+                escalation_path=pair.escalation_path,
                 expected_path=pair.baseline_path,
                 actual_path=pair.candidate_path,
                 diff_path=diff_path,
@@ -289,6 +291,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
       <h2 data-title>No screenshot selected</h2>
       <p data-summary>Select a screenshot from the left list.</p>
       <p data-visual></p>
+      <p data-escalation></p>
       <p class="score" data-score></p>
     </section>
     <section class="panes">
@@ -306,6 +309,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
       const title = document.querySelector('[data-title]');
       const summary = document.querySelector('[data-summary]');
       const visual = document.querySelector('[data-visual]');
+      const escalation = document.querySelector('[data-escalation]');
       const score = document.querySelector('[data-score]');
       const zoomInput = document.querySelector('[data-zoom]');
       const zoomLabel = document.querySelector('[data-zoom-label]');
@@ -350,6 +354,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
         title.textContent = `${{item.key}} [${{item.classification}} / ${{item.visual_classification}}]`;
         summary.textContent = item.summary || '';
         visual.textContent = item.visual_summary || '';
+        escalation.textContent = item.escalation_path ? `Escalation path: ${{item.escalation_path}}` : '';
         score.textContent = item.review_score ? `Review score: ${{item.review_score.toFixed(2)}}` : '';
         setPane('expected', item.expected_uri, item.expected_path);
         setPane('actual', item.actual_uri, item.actual_path);
