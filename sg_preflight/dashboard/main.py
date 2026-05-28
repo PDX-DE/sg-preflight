@@ -43,6 +43,7 @@ from sg_preflight.dependency_onboarding import (
     start_dependency_setup_action,
 )
 from sg_preflight.full_qa_pass import build_full_qa_pass
+from sg_preflight.full_qa_history import record_full_qa_run_history
 from sg_preflight.jira_client import DEFAULT_JIRA_URL, load_jira_credentials, search_jira_profile_tickets
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
@@ -67,6 +68,7 @@ from sg_preflight.profiles import (
     get_run_profile,
     list_run_profiles,
 )
+from sg_preflight.profile_change_detection import detect_changed_profiles_since_last_run
 from sg_preflight.risk_scoring import read_per_car_risk_score
 from sg_preflight.screenshot_review_viewer import (
     build_screenshot_review_viewer,
@@ -1821,6 +1823,14 @@ def _manual_review_page(
     return page
 
 
+@lru_cache(maxsize=8)
+def _dashboard_changed_profiles(workspace_text: str, bmw_root_text: str) -> dict[str, Any]:
+    return detect_changed_profiles_since_last_run(
+        workspace=Path(workspace_text),
+        bmw_root=Path(bmw_root_text) if bmw_root_text else None,
+    )
+
+
 def build_dashboard_snapshot(
     profile_id: str,
     workspace: Path | str,
@@ -1865,6 +1875,10 @@ def build_dashboard_snapshot(
         _deferred_team_digest_board_page(resolved_profile_id)
         if defer_team_digest_board
         else _team_digest_board_page(root, resolved_profile_id, bmw_root=bmw_root)
+    )
+    changed_profiles = _dashboard_changed_profiles(
+        str(root),
+        str(Path(bmw_root).resolve()) if bmw_root is not None else "",
     )
     return {
         "title": DASHBOARD_TITLE,
@@ -1911,6 +1925,7 @@ def build_dashboard_snapshot(
             "setup_complete_note": SETUP_COMPLETE_NOTE,
             "guardrails": list(DASHBOARD_GUARDRAILS),
         },
+        "changed_profiles": changed_profiles,
         "pages": [
             _full_qa_pass_page(resolved_profile_id, root, bmw_root=bmw_root),
             _batch_full_qa_pass_page(resolved_profile_id, root),
@@ -3404,6 +3419,57 @@ def _render_first_run_welcome(
                 )
             elif setup_action_count == 0:
                 ui.label(str(welcome.get("setup_complete_note", SETUP_COMPLETE_NOTE))).classes("sgfx-muted")
+
+
+def _render_changed_profiles_card(
+    ui: Any,
+    snapshot: dict[str, Any],
+    *,
+    open_batch: Callable[[list[str]], None] | None = None,
+) -> None:
+    payload = snapshot.get("changed_profiles", {})
+    if not isinstance(payload, dict):
+        return
+    status = str(payload.get("status", "unknown"))
+    changed_profiles = [item for item in payload.get("changed_profiles", []) if isinstance(item, dict)]
+    changed_ids = [str(item.get("profile_id", "")).strip() for item in changed_profiles if str(item.get("profile_id", "")).strip()]
+    with ui.column().classes("sgfx-page-panel sgfx-changed-profiles-card"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label("Changed since last run").classes("sgfx-panel-title")
+            _render_status_chip(ui, "incomplete" if changed_profiles else status)
+        if status == "unavailable":
+            ui.label("Change-detection unavailable; refresh manually.").classes("sgfx-warning")
+            ui.label("Check BMW Git and SVN paths in setup if this persists.").classes("sgfx-muted")
+            return
+        ui.label(str(payload.get("summary", ""))).classes("sgfx-summary")
+        if not changed_profiles:
+            ui.label("No profiles changed since the last successful local run.").classes("sgfx-muted")
+            return
+        rows = [
+            {
+                "profile": str(item.get("profile_id", "")),
+                "last_run": str(item.get("last_qa_pass_at", "")) or "not_run",
+                "newest_config": str(item.get("newest_config_mtime", "")) or "unknown",
+                "path": str(item.get("newest_config_path", "")),
+            }
+            for item in changed_profiles[:12]
+        ]
+        ui.table(
+            columns=[
+                {"name": "profile", "label": "Profile", "field": "profile", "align": "left"},
+                {"name": "last_run", "label": "Last run", "field": "last_run", "align": "left"},
+                {"name": "newest_config", "label": "Newest config", "field": "newest_config", "align": "left"},
+                {"name": "path", "label": "Path", "field": "path", "align": "left"},
+            ],
+            rows=rows,
+            row_key="profile",
+        ).classes("sgfx-table")
+        if open_batch is not None and changed_ids:
+            _attach_tooltip(
+                ui,
+                ui.button("Run Full QA Pass on all", on_click=lambda: open_batch(changed_ids)).props("color=primary"),
+                "Open the batch Full QA Pass runner with these changed profiles selected.",
+            )
 
 
 def _render_about_panel(ui: Any, content: dict[str, Any] | None = None) -> None:
@@ -5163,22 +5229,26 @@ def _render_batch_full_qa_pass_panel(
     *,
     bmw_root: Path | str | None = None,
     open_profile: Callable[[str], None] | None = None,
+    default_profile_ids: list[str] | tuple[str, ...] | None = None,
 ) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "batch-full-qa-pass")
     profile_ids = [str(option.get("id", "")) for option in snapshot.get("profile_options", []) if str(option.get("id", ""))]
     active_profile = str(snapshot.get("profile_id", "") or "")
-    default_profiles = [active_profile] if active_profile in profile_ids else profile_ids[:1]
-    for preferred in ("F70", "G65"):
-        if preferred in profile_ids and preferred not in default_profiles:
-            default_profiles.append(preferred)
-        if len(default_profiles) >= 2:
-            break
-    if len(default_profiles) < 2:
-        for candidate in profile_ids:
-            if candidate not in default_profiles:
-                default_profiles.append(candidate)
+    requested_defaults = [str(item).strip() for item in (default_profile_ids or []) if str(item).strip()]
+    default_profiles = [profile for profile in requested_defaults if profile in profile_ids]
+    if not default_profiles:
+        default_profiles = [active_profile] if active_profile in profile_ids else profile_ids[:1]
+        for preferred in ("F70", "G65"):
+            if preferred in profile_ids and preferred not in default_profiles:
+                default_profiles.append(preferred)
             if len(default_profiles) >= 2:
                 break
+        if len(default_profiles) < 2:
+            for candidate in profile_ids:
+                if candidate not in default_profiles:
+                    default_profiles.append(candidate)
+                if len(default_profiles) >= 2:
+                    break
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(page["title"])).classes("sgfx-panel-title")
@@ -5383,6 +5453,7 @@ def _render_full_qa_pass_panel(
         "running_action_id": "",
         "done": False,
         "full_qa_notified": False,
+        "run_history_recorded": False,
     }
 
     def _save_notifications_preference() -> None:
@@ -5925,6 +5996,7 @@ def _render_full_qa_pass_panel(
                 "running_step_id": str(wizard_state.get("running_step_id", "")),
                 "running_action_id": str(wizard_state.get("running_action_id", "")),
                 "full_qa_notified": bool(wizard_state.get("full_qa_notified")),
+                "run_history_recorded": bool(wizard_state.get("run_history_recorded")),
                 "step_outcomes": [
                     {
                         "step_id": str(step.get("id", "")),
@@ -6073,6 +6145,17 @@ def _render_full_qa_pass_panel(
 
             timer_ref["timer"] = _start_background_poll_timer(2.0, _send_notification)
 
+        def _record_run_history_once(payload: dict[str, Any]) -> None:
+            if bool(wizard_state.get("run_history_recorded")):
+                return
+            try:
+                record_full_qa_run_history(profile_id, payload)
+            except OSError:
+                return
+            wizard_state["run_history_recorded"] = True
+            _dashboard_changed_profiles.cache_clear()
+            _persist_wizard_state(payload, reason="run_history_recorded", status="completed")
+
         def _reset_wizard_run_state(payload: dict[str, Any]) -> None:
             wizard_state["payload"] = payload
             wizard_state["index"] = 0
@@ -6091,6 +6174,7 @@ def _render_full_qa_pass_panel(
             wizard_state["running_action_id"] = ""
             wizard_state["done"] = False
             wizard_state["full_qa_notified"] = False
+            wizard_state["run_history_recorded"] = False
 
         def _restore_wizard_state(saved_state: dict[str, Any]) -> dict[str, Any]:
             payload = saved_state.get("payload", {}) if isinstance(saved_state.get("payload"), dict) else {}
@@ -6108,6 +6192,7 @@ def _render_full_qa_pass_panel(
             if isinstance(saved_state.get("bulk_ack_values"), dict):
                 wizard_state["bulk_ack_values"].update(saved_state["bulk_ack_values"])
             wizard_state["full_qa_notified"] = bool(saved_state.get("full_qa_notified"))
+            wizard_state["run_history_recorded"] = bool(saved_state.get("run_history_recorded"))
             status = str(saved_state.get("status", "")).strip().casefold()
             running_step_id = str(saved_state.get("running_step_id", "")).strip()
             running_action_id = str(saved_state.get("running_action_id", "")).strip()
@@ -6600,6 +6685,7 @@ def _render_full_qa_pass_panel(
                     full_qa_notification = None
                     if not bool(wizard_state.get("full_qa_notified")):
                         full_qa_notification = _full_qa_completion_notification(profile_id, payload)
+                    _record_run_history_once(payload)
                     with ui.column().classes("sgfx-wizard-card sgfx-wizard-done"):
                         ui.label("Full QA Pass summary").classes("sgfx-panel-title")
                         ui.label(str(payload.get("summary", "Full QA Pass complete for this dashboard run."))).classes(
@@ -7069,6 +7155,7 @@ def _render_dashboard(
             .sgfx-draft-low, .sgfx-draft-handoff, .sgfx-draft-manual_review_required { border-color: #4f766f; background: #20302d; }
             .sgfx-draft-text textarea { min-height: 96px; line-height: 1.45; }
             .sgfx-high-risk-confirm { gap: 8px; border: 1px solid #a45a55; border-radius: 8px; background: #352323; padding: 12px; }
+            .sgfx-changed-profiles-card { gap: 10px; }
             .sgfx-confirm-actions { gap: 10px; align-items: center; }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
             .sgfx-live-visuals { gap: 12px; align-items: stretch; animation: sgfx-visual-in 160ms ease-out; }
@@ -7216,10 +7303,14 @@ def _render_dashboard(
                 (() => {{
                     const payload = {json.dumps(payload)};
                     document.body.dataset.sgfxProfileId = payload.profileId || '';
-                    document.body.dataset.sgfxActivePage = payload.activePage || 'unknown';
+                document.body.dataset.sgfxActivePage = payload.activePage || 'unknown';
                 }})();
                 """
             )
+
+        def _open_changed_profiles_batch(profile_ids: list[str]) -> None:
+            state["batch_profile_prefill"] = [str(profile).strip() for profile in profile_ids if str(profile).strip()]
+            _open_page("batch-full-qa-pass")
 
         def _render_current_page() -> None:
             content = content_holder.get("content")
@@ -7236,6 +7327,11 @@ def _render_dashboard(
                     state["snapshot"],
                     open_setup=lambda: _open_page("delivery-checklist"),
                     open_full_qa=lambda: _open_page("full-qa-pass"),
+                )
+                _render_changed_profiles_card(
+                    ui,
+                    state["snapshot"],
+                    open_batch=_open_changed_profiles_batch,
                 )
                 if active_page_id == "delivery-checklist":
                     _render_delivery_checklist_panel(
@@ -7259,6 +7355,7 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         open_profile=lambda profile_id: (_set_profile(profile_id), _open_page("full-qa-pass")),
+                        default_profile_ids=state.get("batch_profile_prefill", []),
                     )
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
@@ -7301,6 +7398,7 @@ def _render_dashboard(
         def _refresh_snapshot(profile_id: str | None = None) -> None:
             current_profile = profile_id if profile_id is not None else str(state["snapshot"]["profile_id"])
             active_page_id = str(state.get("active_page_id", "delivery-checklist"))
+            _dashboard_changed_profiles.cache_clear()
             state["snapshot"] = build_dashboard_snapshot(
                 current_profile,
                 workspace,
