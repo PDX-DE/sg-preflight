@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from sg_preflight.bmw_pipeline_auto_fix import MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID
 from sg_preflight.full_qa_pass import (
     build_full_qa_pass,
     render_full_qa_pass_markdown,
@@ -109,7 +110,16 @@ class TestFullQaPass(unittest.TestCase):
                 mock.patch("sg_preflight.full_qa_pass.build_delivery_workbook_trigger", return_value=_payload("available", trigger_status="available", can_start=False, blockers=[])),
                 mock.patch(
                     "sg_preflight.full_qa_pass.read_bmw_screenshot_state",
-                    return_value=_payload("incomplete", expected_count=48, actual_count=0, diff_count=0),
+                    return_value=_payload(
+                        "incomplete",
+                        expected_count=48,
+                        actual_count=0,
+                        diff_count=0,
+                        car_root=str(root / "Cars_IDCevo" / "BMW" / "F70"),
+                        expected_root=str(root / "Cars_IDCevo" / "BMW" / "F70" / "export" / "tests" / "expected"),
+                        actuals_root=str(root / "Cars_IDCevo" / "BMW" / "F70" / "export" / "tests" / "actuals"),
+                        diff_root=str(root / "Cars_IDCevo" / "BMW" / "F70" / "export" / "tests" / "diff"),
+                    ),
                 ),
                 mock.patch(
                     "sg_preflight.full_qa_pass.check_screenshot_capture_environment",
@@ -146,6 +156,9 @@ class TestFullQaPass(unittest.TestCase):
         self.assertEqual(screenshot_step["inline_actions"][0]["typical_range"], "typical 2-10 min")
         self.assertIn("Run BMW screenshot capture for F70", screenshot_step["inline_actions"][0]["confirmation_message"])
         self.assertIn("black offscreen-rendering window", screenshot_step["inline_actions"][0]["confirmation_message"])
+        self.assertEqual(screenshot_step["inline_actions"][1]["id"], MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID)
+        self.assertEqual(screenshot_step["inline_actions"][1]["kind"], "diagnostic_chain")
+        self.assertTrue(screenshot_step["inline_actions"][1]["enabled"])
         self.assertTrue(payload["operator_confirmation_required"])
 
     def test_full_pass_halts_and_skips_later_steps_on_blocking_issue(self) -> None:

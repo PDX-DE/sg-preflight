@@ -23,6 +23,11 @@ from urllib.parse import quote
 from sg_preflight.activity_log import append_activity_entry
 from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_asset_root
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
+from sg_preflight.bmw_pipeline_auto_fix import (
+    MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID,
+    render_missing_actual_diagnostic_text,
+    run_missing_actual_diagnostic_chain,
+)
 from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.delivery_checklist import read_delivery_checklist
@@ -1208,6 +1213,11 @@ def _cross_car_comparison_page(
 def _screenshot_review_viewer_output_root(workspace: Path, profile_id: str) -> Path:
     safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
     return operator_ui_root(workspace) / "screenshot-review-viewer" / safe_profile
+
+
+def _missing_actual_diagnostics_output_root(workspace: Path, profile_id: str) -> Path:
+    safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
+    return operator_ui_root(workspace) / "missing-actual-diagnostics" / safe_profile
 
 
 def _screenshot_review_viewer_url(profile_id: str, item_key: str = "") -> str:
@@ -5573,6 +5583,8 @@ def _render_full_qa_pass_panel(
             )
 
         def _action_output_text(result: dict[str, Any]) -> str:
+            if str(result.get("action_id", "")) == MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID:
+                return render_missing_actual_diagnostic_text(result)
             copied_evidence = result.get("copied_evidence", {}) if isinstance(result.get("copied_evidence"), dict) else {}
             sgfx_output = str(result.get("sgfx_output_root") or copied_evidence.get("output_root") or "").strip()
             traceback_payload = _pipeline_traceback(result)
@@ -6305,6 +6317,123 @@ def _render_full_qa_pass_panel(
                 return
             _render_payload(wizard_state["payload"], preserve_index=True)
 
+        def _merge_missing_actual_diagnostic_result(step_id: str, result: dict[str, Any]) -> None:
+            payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+            steps = _payload_steps(payload)
+            status = str(result.get("status", "unknown"))
+            for step in steps:
+                if str(step.get("id", "")) != step_id:
+                    continue
+                step_payload = step.get("payload", {}) if isinstance(step.get("payload"), dict) else {}
+                step_payload["missing_actual_diagnostics"] = result
+                step_payload["missing_candidate_count"] = max(
+                    _safe_int(step_payload.get("missing_candidate_count")),
+                    _safe_int(result.get("missing_actual_count")),
+                )
+                step["payload"] = step_payload
+                step["source_status"] = status
+                if str(result.get("summary", "")).strip():
+                    step["summary"] = str(result.get("summary", ""))
+                if status == "auto_fix_resolved":
+                    step["status"] = "passed"
+                elif bool(result.get("operator_confirmation_required", False)):
+                    step["status"] = "confirmation_pending"
+                else:
+                    step["status"] = "incomplete"
+                break
+            wizard_state["action_results"][MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID] = result
+            _persist_wizard_state(payload, reason="diagnostic_chain_completed", status="in_progress")
+
+        def _run_diagnostic_chain_action(
+            action: dict[str, Any],
+            *,
+            status_label: Any,
+            eta_label: Any,
+            progress: Any,
+            live_output: Any,
+            details_host: Any,
+            visual_label: Any,
+            visual_host: Any,
+            completion_label: Any,
+            set_running_controls: Callable[[bool], None] | None = None,
+        ) -> None:
+            if not bool(action.get("enabled", True)):
+                completion_label.text = str(action.get("disabled_reason", "Diagnostic chain is not available."))
+                return
+            action_id = str(action.get("id", MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID))
+            running_actions.add(action_id)
+            wizard_state["running_action_id"] = action_id
+            wizard_state["running_step_id"] = str(action.get("step_id", ""))
+            status_label.text = "running"
+            eta_label.text = _eta_text(typical=str(action.get("typical_range", "typical <1 min")))
+            completion_label.text = "Building missing-actual diagnostic chain..."
+            progress.visible = True
+            progress.props("indeterminate")
+            live_output.visible = True
+            live_output.value = "Reading local screenshot state, diagnostic patterns, and test config..."
+            details_host.clear()
+            details_host.visible = False
+            visual_label.visible = False
+            visual_host.clear()
+            visual_host.visible = False
+            if set_running_controls is not None:
+                set_running_controls(True)
+            try:
+                project_root_text = str(action.get("project_root", "")).strip()
+                expected_root_text = str(action.get("expected_root", "")).strip()
+                if project_root_text:
+                    project_root = Path(project_root_text).resolve()
+                else:
+                    project = get_run_profile(profile_id, workspace, bmw_root=bmw_root)
+                    project_root = project.source_project_root()
+                result = run_missing_actual_diagnostic_chain(
+                    profile_id=profile_id,
+                    workspace=workspace,
+                    bmw_root=bmw_root,
+                    project_root=project_root,
+                    expected_root=Path(expected_root_text).resolve() if expected_root_text else None,
+                    candidate_roots=tuple(
+                        Path(str(item)).resolve()
+                        for item in action.get("candidate_roots", [])
+                        if str(item).strip()
+                    ),
+                    diff_reference_roots=tuple(
+                        Path(str(item)).resolve()
+                        for item in action.get("diff_reference_roots", [])
+                        if str(item).strip()
+                    ),
+                    output_root=_missing_actual_diagnostics_output_root(workspace, profile_id),
+                )
+            except Exception as exc:  # noqa: BLE001
+                result = {
+                    "action_id": MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID,
+                    "profile_id": profile_id,
+                    "status": "failed",
+                    "summary": f"Missing-actual diagnostic chain failed: {exc}",
+                    "manual_review_required": True,
+                    "is_approval": False,
+                    "steps": [],
+                }
+            finally:
+                running_actions.discard(action_id)
+                wizard_state["running_action_id"] = ""
+                wizard_state["running_step_id"] = ""
+                progress.visible = False
+                if set_running_controls is not None:
+                    set_running_controls(False)
+            status = str(result.get("status", "unknown"))
+            status_label.text = status
+            completion_label.text = str(result.get("summary", "Missing-actual diagnostic chain recorded."))
+            live_output.value = _action_output_text(result)
+            _scroll_live_output_to_bottom()
+            _merge_missing_actual_diagnostic_result(str(action.get("step_id", "")), result)
+            _append_activity(
+                action=action_id,
+                outcome="error" if status == "failed" else "ok",
+                note=str(result.get("summary", "")),
+            )
+            _notify_ui(f"Missing-actual diagnostic chain {status}.")
+
         def _mark_step_completed(step_id: str) -> None:
             if step_id:
                 wizard_state["completed"].add(step_id)
@@ -6550,6 +6679,30 @@ def _render_full_qa_pass_panel(
                     ui.button(label, on_click=lambda _event=None, current=action: _run_operator_action(current)),
                     str(action.get("summary", "")),
                 )
+                return
+            if kind == "diagnostic_chain":
+                def _run_diagnostic_action(current: dict[str, Any] = action) -> None:
+                    _run_diagnostic_chain_action(
+                        current,
+                        status_label=status_label,
+                        eta_label=eta_label,
+                        progress=progress,
+                        live_output=live_output,
+                        details_host=details_host,
+                        visual_label=visual_label,
+                        visual_host=visual_host,
+                        completion_label=completion_label,
+                        set_running_controls=set_running_controls,
+                    )
+
+                button = _attach_tooltip(
+                    ui,
+                    ui.button(label, on_click=lambda _event=None, current=action: _run_diagnostic_action(current)),
+                    str(action.get("summary", "")),
+                )
+                action_buttons.append(button)
+                if not bool(action.get("enabled", True)):
+                    button.disable()
                 return
             if kind == "subprocess":
                 def _show_prompt_or_start(current: dict[str, Any] = action) -> None:

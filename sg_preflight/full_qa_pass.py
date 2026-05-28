@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
+from sg_preflight.bmw_pipeline_auto_fix import MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID
 from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.delivery_workbook_generation import GENERATION_TYPICAL_RANGE_LABEL, build_delivery_workbook_trigger
@@ -201,6 +202,40 @@ def _screenshot_capture_action(
     }
 
 
+def _missing_actual_diagnostic_action(payload: dict[str, Any]) -> dict[str, Any] | None:
+    expected = _int_value(payload, "expected_count")
+    actual = _int_value(payload, "actual_count")
+    missing_candidates = _int_value(payload, "missing_candidate_count")
+    if expected <= 0 or (actual > 0 and missing_candidates <= 0):
+        return None
+    project_root = str(payload.get("car_root", "")).strip()
+    expected_root = str(payload.get("expected_root", "")).strip()
+    actuals_root = str(payload.get("actuals_root", "")).strip()
+    diff_root = str(payload.get("diff_root", "")).strip()
+    enabled = bool(project_root and expected_root)
+    return {
+        "id": MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID,
+        "step_id": "screenshot-test-state",
+        "kind": "diagnostic_chain",
+        "label": "Diagnose missing actuals",
+        "summary": "Build the missing-actual diagnostic chain; read-refresh and retry stay confirmation-gated.",
+        "requires_confirmation": False,
+        "auto_confirm_allowed": False,
+        "trusted_auto_confirm": False,
+        "hard_gate": "read_refresh_and_retry_stay_gated",
+        "typical_range": "typical <1 min",
+        "project_root": project_root,
+        "expected_root": expected_root,
+        "candidate_roots": [actuals_root] if actuals_root else [],
+        "diff_reference_roots": [diff_root] if diff_root else [],
+        "target_paths": [path for path in (project_root, expected_root, actuals_root, diff_root) if path],
+        "enabled": enabled,
+        "disabled_reason": "" if enabled else "Missing BMW project root or expected screenshot root.",
+        "manual_review_required": True,
+        "is_approval": False,
+    }
+
+
 def _operator_action(
     *,
     action_id: str,
@@ -244,6 +279,7 @@ def _step_inline_actions(
         expected = _int_value(payload, "expected_count")
         actual = _int_value(payload, "actual_count")
         diff = _int_value(payload, "diff_count")
+        actions: list[dict[str, Any]] = []
         if expected > 0 and actual == 0 and diff == 0:
             action = _screenshot_capture_action(
                 profile_id,
@@ -251,8 +287,12 @@ def _step_inline_actions(
                 bmw_root,
                 trusted_tool_mode=trusted_tool_mode,
             )
-            return [action] if action is not None else []
-        return []
+            if action is not None:
+                actions.append(action)
+        diagnostic_action = _missing_actual_diagnostic_action(payload)
+        if diagnostic_action is not None:
+            actions.append(diagnostic_action)
+        return actions
     if step_id == "risk-score" and operator_focus_count:
         signals = [
             signal
