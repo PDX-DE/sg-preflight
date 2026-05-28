@@ -18,6 +18,17 @@ VALID_VERBS = {
     "refreshed",
     "switched-profile",
     "switched-mode",
+    # H-26 lifecycle event verbs (granular observability per [[feedback-real-bmw-pipeline-must-be-run]]).
+    # Each pairs with a surface like `subprocess:start` / `modal:open` / `wizard:step-enter`
+    # / `button:click` and operator-readable payload context.
+    "started",
+    "exited",
+    "entered",
+    "completed",
+    "cancelled",
+    "clicked",
+    "dismissed",
+    "errored",
 }
 
 FORBIDDEN_VERBS = {"approved", "cleared", "signed off", "marked done", "verified"}
@@ -138,10 +149,18 @@ def _clean_token(value: str, *, default: str) -> str:
 
 
 def _utc_now(value: datetime | None = None) -> str:
+    """Return an ISO-8601 UTC timestamp with millisecond precision (Z suffix).
+
+    H-26 upgrade: pre-H-26 entries used second precision; the reader continues to
+    parse both forms (see `_parse_ts`). New entries are written at ms precision so
+    Mercedes/Aston/Lexus can correlate activity log + live_state.json updates
+    without ambiguity when events land within the same second.
+    """
     current = value or datetime.now(timezone.utc)
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
-    return current.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    iso = current.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+    return iso.replace("+00:00", "Z")
 
 
 def _parse_ts(value: str) -> datetime:
@@ -149,6 +168,18 @@ def _parse_ts(value: str) -> datetime:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
     except ValueError:
         return datetime.min.replace(tzinfo=timezone.utc)
+
+
+_DURATION_PATTERN = __import__("re").compile(
+    r"^\s*(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)\s*(?:ago)?\s*$",
+    __import__("re").IGNORECASE,
+)
+_DURATION_UNIT_SECONDS = {
+    "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
+    "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
+    "h": 3600, "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600,
+    "d": 86400, "day": 86400, "days": 86400,
+}
 
 
 def _cutoff_for_since(since: str, now: datetime) -> datetime | None:
@@ -163,4 +194,11 @@ def _cutoff_for_since(since: str, now: datetime) -> datetime | None:
     if normalized in {"this-week", "week"}:
         start = current.replace(hour=0, minute=0, second=0, microsecond=0)
         return start - timedelta(days=start.weekday())
+    # H-26: free-form duration strings such as "5m", "5 min ago", "30s", "1h", "2 hours".
+    match = _DURATION_PATTERN.match(normalized)
+    if match:
+        amount = int(match.group(1))
+        unit_seconds = _DURATION_UNIT_SECONDS.get(match.group(2).lower(), 0)
+        if amount > 0 and unit_seconds > 0:
+            return current - timedelta(seconds=amount * unit_seconds)
     return None

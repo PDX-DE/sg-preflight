@@ -1079,6 +1079,52 @@ def _is_truthy_trigger(value: str | None, *, default: str = "") -> bool:
     return raw in _TRUTHY_TRIGGERS
 
 
+def _publish_live_state(
+    workspace: Path | str,
+    *,
+    dashboard_surface: str,
+    profile_id: str = "",
+    wizard_step_id: str = "",
+    wizard_step_index: int = -1,
+    wizard_step_total: int = 0,
+    queued_acknowledgments: tuple[str, ...] = (),
+    last_operator_action: tuple[str, str] | None = None,
+    last_error: str | None = None,
+) -> None:
+    """H-26 hookpoint: best-effort debounced write to live_state.json.
+
+    All failures are swallowed — observability must never crash an operator
+    surface. The debounced writer batches updates so a sub-250ms burst becomes
+    one disk write.
+    """
+    try:
+        from sg_preflight.live_state import (
+            LastOperatorAction,
+            LiveStateSnapshot,
+            _utc_now_ms,
+            write_live_state,
+        )
+        action = (
+            LastOperatorAction(verb=last_operator_action[0], surface=last_operator_action[1], ts=_utc_now_ms())
+            if last_operator_action
+            else None
+        )
+        snapshot = LiveStateSnapshot(
+            dashboard_surface=dashboard_surface,
+            profile_id=profile_id,
+            wizard_step_id=wizard_step_id,
+            wizard_step_index=wizard_step_index,
+            wizard_step_total=wizard_step_total,
+            queued_acknowledgments=tuple(queued_acknowledgments),
+            last_operator_action=action,
+            last_error=last_error,
+        )
+        write_live_state(workspace, snapshot)
+    except Exception:
+        # Observability never blocks; failures are not surfaced to the operator.
+        return
+
+
 def _snapshot_with_full_qa_payload(snapshot: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     pages = list(snapshot.get("pages", []))
     for index, page in enumerate(pages):
@@ -7313,8 +7359,20 @@ def _render_dashboard(
             profile_for_redirect = str(
                 snapshot.get("profile_id", query_profile or initial_profile_id)
             )
+            _publish_live_state(
+                workspace,
+                dashboard_surface="full-qa-pass:run-fired",
+                profile_id=profile_for_redirect,
+                last_operator_action=("ran", "full-qa-pass:run"),
+            )
             ui.navigate.to(f"/?profile={quote_plus(profile_for_redirect)}")
             return
+        _publish_live_state(
+            workspace,
+            dashboard_surface="dashboard:index",
+            profile_id=str(snapshot.get("profile_id", query_profile or initial_profile_id)),
+            last_operator_action=("opened", "dashboard:index"),
+        )
         theme = str(snapshot.get("theme", "clean"))
         ui.dark_mode().enable()
         ui.query("body").classes(f"sgfx-dashboard sgfx-theme-{theme}")

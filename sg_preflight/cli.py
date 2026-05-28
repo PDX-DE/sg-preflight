@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -281,6 +282,117 @@ def _emit_text(text: str, args: argparse.Namespace) -> None:
 
 def _emit_json(payload: object, args: argparse.Namespace) -> None:
     _emit_text(_json_text(payload), args)
+
+
+def _stream_activity_log_tail(
+    workspace: Path,
+    *,
+    profile: str,
+    since: str,
+    limit: int,
+    interval: float,
+    as_json: bool,
+) -> int:
+    """H-26: poll the activity_log.jsonl and print only new entries as they appear.
+
+    Polls every `interval` seconds. Exits cleanly on Ctrl-C. Operator-local
+    filesystem read; no network I/O.
+    """
+    from sg_preflight.activity_log import (
+        activity_log_path,
+        read_activity_entries,
+        render_activity_log_text,
+    )
+
+    log_path = activity_log_path(workspace)
+    print(_console_safe(f"Tailing {log_path} (Ctrl-C to stop)"))
+    seen_keys: set[str] = set()
+    # Prime with anything already on disk so we only print NEW entries.
+    initial = read_activity_entries(workspace, profile=profile, since=since, limit=max(limit, 1000))
+    for entry in initial.get("entries", []):
+        seen_keys.add(_activity_entry_key(entry))
+    try:
+        while True:
+            payload = read_activity_entries(workspace, profile=profile, since=since, limit=max(limit, 1000))
+            new_entries = []
+            for entry in payload.get("entries", []):
+                key = _activity_entry_key(entry)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                new_entries.append(entry)
+            if new_entries:
+                # entries are returned newest-first; print oldest-first so tail reads natural.
+                for entry in reversed(new_entries):
+                    if as_json:
+                        print(_json_text(entry))
+                    else:
+                        print(_console_safe(
+                            f"{entry.get('ts', '')} {entry.get('verb', '')} "
+                            f"{entry.get('surface', '')} {entry.get('profile', '')} "
+                            f"{entry.get('outcome', '')} {entry.get('note', '')}".rstrip()
+                        ))
+                try:
+                    sys.stdout.flush()
+                except OSError:
+                    pass
+            try:
+                time.sleep(max(interval, 0.05))
+            except KeyboardInterrupt:
+                break
+    except KeyboardInterrupt:
+        print(_console_safe("\nactivity-log tail stopped."))
+    return 0
+
+
+def _activity_entry_key(entry: dict) -> str:
+    return "|".join([
+        str(entry.get("ts", "")),
+        str(entry.get("verb", "")),
+        str(entry.get("surface", "")),
+        str(entry.get("profile", "")),
+        str(entry.get("note", "")),
+    ])
+
+
+def _stream_live_state_tail(
+    workspace: Path,
+    *,
+    interval: float,
+    as_json: bool,
+) -> int:
+    """H-26: poll live_state.json and print updates as they appear.
+
+    Per Lexus 01:10 directive: agents tail this during operator walkthroughs to
+    observe ground-truth telemetry instead of asking the operator what they see.
+    """
+    from sg_preflight.live_state import live_state_path, read_live_state, render_live_state_text
+
+    state_path = live_state_path(workspace)
+    print(_console_safe(f"Tailing {state_path} (Ctrl-C to stop)"))
+    last_ts = ""
+    try:
+        while True:
+            payload = read_live_state(workspace)
+            current_ts = str(payload.get("ts", ""))
+            if current_ts and current_ts != last_ts:
+                if as_json:
+                    print(_json_text(payload))
+                else:
+                    print(_console_safe(render_live_state_text(payload)))
+                    print(_console_safe("---"))
+                try:
+                    sys.stdout.flush()
+                except OSError:
+                    pass
+                last_ts = current_ts
+            try:
+                time.sleep(max(interval, 0.05))
+            except KeyboardInterrupt:
+                break
+    except KeyboardInterrupt:
+        print(_console_safe("\nlive-state tail stopped."))
+    return 0
 
 
 def _emit_console(render: Callable[[], None], args: argparse.Namespace) -> None:
@@ -717,7 +829,9 @@ def _activity_verb(raw_args: list[str]) -> str:
 
 
 def _record_cli_activity(raw_args: list[str], exit_code: int) -> None:
-    if not raw_args or raw_args[0] == "activity-log":
+    # Skip self-recording for the observability surfaces themselves so they do
+    # not pollute the very signal an operator is trying to inspect.
+    if not raw_args or raw_args[0] in {"activity-log", "live-state"}:
         return
     import os
 
@@ -875,8 +989,13 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
     ("workflow-status", "List workflow coverage and known partial areas.", "sgfx-preflight.exe workflow-status --json"),
     (
         "activity-log",
-        "Read or append the operator-local activity log.",
-        r"sgfx-preflight.exe activity-log read --workspace C:\repositories\trunk --format json",
+        "Read or tail the operator-local activity log.",
+        r"sgfx-preflight.exe activity-log read --workspace C:\repositories\trunk --tail",
+    ),
+    (
+        "live-state",
+        "Read or tail the operator-local dashboard live-state telemetry.",
+        r"sgfx-preflight.exe live-state --workspace C:\repositories\trunk --tail",
     ),
     ("station", "Run the optional local OpenHTF station surface.", r"sgfx-preflight.exe station run --profile G65 --workspace C:\repositories\trunk --no-browser --once"),
     ("desktop", "Start the desktop operator shell.", r"sgfx-preflight.exe desktop --workspace C:\repositories\trunk --profile G65"),
@@ -1321,12 +1440,48 @@ def build_parser() -> argparse.ArgumentParser:
     activity_read.add_argument(
         "--since",
         default="all",
-        choices=("today", "yesterday", "this-week", "all"),
-        help="Date filter for activity entries",
+        help=(
+            "Date filter: today, yesterday, this-week, all, or a duration like '5 min ago' / '30s' / '1h' / '2 days ago'"
+        ),
     )
     activity_read.add_argument("--limit", type=int, default=100, help="Maximum entries to return")
     activity_read.add_argument("--json", action="store_true", help="Print activity log as JSON")
+    activity_read.add_argument(
+        "--tail",
+        action="store_true",
+        help="Stream new activity log entries as they are appended (Ctrl-C to stop)",
+    )
+    activity_read.add_argument(
+        "--tail-interval",
+        type=float,
+        default=0.5,
+        help="Polling interval in seconds for --tail mode (default 0.5)",
+    )
     _add_render_options(activity_read, formats=("text", "json"))
+
+    live_state = sub.add_parser(
+        "live-state",
+        help="Print or tail the operator-local SGFX dashboard live state",
+        description=(
+            "Reads <workspace>/operator_state/live_state.json which SGFX writes "
+            "on every dashboard state change (debounced ~250ms). Operator-local; "
+            "never crosses external boundaries; sanitized of credentials."
+        ),
+    )
+    live_state.add_argument("--workspace", required=True, help="Workspace root that owns operator_state/live_state.json")
+    live_state.add_argument(
+        "--tail",
+        action="store_true",
+        help="Stream live state updates as they happen (Ctrl-C to stop)",
+    )
+    live_state.add_argument(
+        "--tail-interval",
+        type=float,
+        default=0.25,
+        help="Polling interval in seconds for --tail mode (default 0.25)",
+    )
+    live_state.add_argument("--json", action="store_true", help="Print live state as JSON")
+    _add_render_options(live_state, formats=("text", "json"))
 
     activity_append = activity_log_sub.add_parser("append", help="Append one operator-local activity entry")
     activity_append.add_argument("--workspace", required=True, help="Workspace root that owns operator_state/activity_log.jsonl")
@@ -2428,6 +2583,15 @@ def _main_impl(argv: list[str] | None = None) -> int:
         activity_root = Path(args.workspace).resolve()
         try:
             if args.activity_log_command == "read":
+                if getattr(args, "tail", False):
+                    return _stream_activity_log_tail(
+                        activity_root,
+                        profile=args.profile,
+                        since=args.since,
+                        limit=args.limit,
+                        interval=float(getattr(args, "tail_interval", 0.5)),
+                        as_json=_resolve_render_format(args, parser, formats=("text", "json")) == "json",
+                    )
                 payload = read_activity_entries(
                     activity_root,
                     profile=args.profile,
@@ -2459,6 +2623,27 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return 1
         except Exception as exc:
             print(_console_safe(f"activity-log failed: {exc}"), file=sys.stderr)
+            return 1
+
+    if args.command == "live-state":
+        live_root = Path(args.workspace).resolve()
+        as_json = _resolve_render_format(args, parser, formats=("text", "json")) == "json"
+        try:
+            if getattr(args, "tail", False):
+                return _stream_live_state_tail(
+                    live_root,
+                    interval=float(getattr(args, "tail_interval", 0.25)),
+                    as_json=as_json,
+                )
+            from sg_preflight.live_state import read_live_state, render_live_state_text
+            payload = read_live_state(live_root)
+            if as_json:
+                _emit_json(payload, args)
+            else:
+                _emit_text(render_live_state_text(payload), args)
+            return 0
+        except Exception as exc:
+            print(_console_safe(f"live-state failed: {exc}"), file=sys.stderr)
             return 1
 
     if args.command == "template":
