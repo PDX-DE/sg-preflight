@@ -95,6 +95,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertIn("scaledToWidth(240", main_window_source)
         self.assertIn("debug_icon.png", main_window_source)
         self.assertIn("GRAFIKS_HOTKEY_MESSAGES", main_window_source)
+        self.assertIn("Qt.Key_F11", main_window_source)
         self.assertIn("keyPressEvent", main_window_source)
         self.assertIn("_show_about_dialog", main_window_source)
         self.assertIn("setToolTip", main_window_source)

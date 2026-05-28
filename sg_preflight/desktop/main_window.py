@@ -79,7 +79,15 @@ DESKTOP_WINDOW_TITLE = "Seriengrafik: Project Quality-Hero"
 GRAFIKS_HOTKEY_MESSAGES = {
     Qt.Key_F1: ("F1", "Help: inspect local evidence surfaces, setup status, and guardrails."),
     Qt.Key_F2: ("F2", "Profile switch: focus the profile list."),
+    Qt.Key_F3: ("F3", "Reference: no action is assigned to F3 in this release."),
+    Qt.Key_F4: ("F4", "Reference: no action is assigned to F4 in this release."),
     Qt.Key_F5: ("F5", "Refresh: re-read setup status and current profile evidence."),
+    Qt.Key_F6: ("F6", "Reference: no action is assigned to F6 in this release."),
+    Qt.Key_F7: ("F7", "Reference: no action is assigned to F7 in this release."),
+    Qt.Key_F8: ("F8", "Reference: no action is assigned to F8 in this release."),
+    Qt.Key_F9: ("F9", "Reference: no action is assigned to F9 in this release."),
+    Qt.Key_F10: ("F10", "Reference: no action is assigned to F10 in this release."),
+    Qt.Key_F11: ("F11", "Reference: no action is assigned to F11 in this release."),
     Qt.Key_F12: ("F12", "Diagnostic: current profile, mode, and workspace stay local."),
     Qt.Key_Escape: ("Esc", "Quit guidance: close the window when the local review is done."),
 }

@@ -206,7 +206,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
         self.assertEqual(
             snapshot["shortcuts"],
-            ["F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit"],
+            ["F1-F12 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit"],
         )
         self.assertEqual(
             snapshot["pages"][0]["tagline"],
@@ -460,6 +460,12 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("debug_icon.png", source)
         self.assertIn("sgfx-hotkey-popup", source)
         self.assertIn("sgfx-thinking-tooltip", source)
+        self.assertIn("data-sgfx-first-launch-card", source)
+        self.assertIn("sgfx.firstLaunch.dismissed", source)
+        self.assertIn("window.__sgfxPerformanceTrace", source)
+        self.assertIn("data-sgfx-nav-item", source)
+        self.assertIn("functionKeys", source)
+        self.assertIn("F11", source)
 
     def test_dashboard_source_accepts_profile_query_for_walkthrough_harness(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -472,7 +478,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("defer_team_digest_board=True", source)
         self.assertIn('page_id in {"daily-digest", "team-digest-board"}', source)
 
-    def test_dashboard_tooltips_are_verbose_opt_in(self) -> None:
+    def test_dashboard_tooltips_are_enabled_by_default_with_env_opt_out(self) -> None:
         from sg_preflight.dashboard import main
 
         class FakeTooltip:
@@ -512,18 +518,18 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"SGFX_DASHBOARD_VERBOSE_TOOLTIPS": ""}, clear=False):
             ui = FakeUi()
             element = FakeElement()
-            self.assertIs(main._attach_tooltip(ui, element, "Hidden by default"), element)
-            self.assertEqual(ui.tooltips, [])
-            self.assertEqual(element.enter_count, 0)
-
-        with mock.patch.dict(os.environ, {"SGFX_DASHBOARD_VERBOSE_TOOLTIPS": "1"}, clear=False):
-            ui = FakeUi()
-            element = FakeElement()
-            self.assertIs(main._attach_tooltip(ui, element, "Visible in verbose mode"), element)
+            self.assertIs(main._attach_tooltip(ui, element, "Visible by default"), element)
             self.assertEqual(element.enter_count, 1)
-            self.assertEqual(ui.tooltips[0].text, "Visible in verbose mode")
+            self.assertEqual(ui.tooltips[0].text, "Visible by default")
             self.assertEqual(ui.tooltips[0].props_value, "delay=900")
             self.assertEqual(ui.tooltips[0].classes_value, "sgfx-thinking-tooltip")
+
+        with mock.patch.dict(os.environ, {"SGFX_DASHBOARD_VERBOSE_TOOLTIPS": "0"}, clear=False):
+            ui = FakeUi()
+            element = FakeElement()
+            self.assertIs(main._attach_tooltip(ui, element, "Hidden by opt-out"), element)
+            self.assertEqual(ui.tooltips, [])
+            self.assertEqual(element.enter_count, 0)
 
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -972,7 +978,9 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         actions = {item["key"]: item["message"] for item in snapshot["shortcut_actions"]}
         self.assertIn("F1", actions)
         self.assertIn("F2", actions)
+        self.assertIn("F3", actions)
         self.assertIn("F5", actions)
+        self.assertIn("F11", actions)
         self.assertIn("F12", actions)
         self.assertIn("Esc", actions)
         self.assertIn("Profile", actions["F2"])

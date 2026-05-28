@@ -92,6 +92,7 @@ NATIVE_RETURN_FALLBACK_SECONDS = 5.0
 BROWSER_FALLBACK_ENV = "SGFX_PREFLIGHT_BROWSER_FALLBACK"
 FORCE_FROZEN_NATIVE_ENV = "SGFX_PREFLIGHT_FORCE_FROZEN_NATIVE"
 VERBOSE_TOOLTIP_ENV = "SGFX_DASHBOARD_VERBOSE_TOOLTIPS"
+FIRST_LAUNCH_DISMISS_STORAGE_KEY = "sgfx.firstLaunch.dismissed"
 DASHBOARD_GUARDRAILS = (
     "Manual review remains required.",
     "Decision: not approval — evidence only.",
@@ -111,11 +112,19 @@ DASHBOARD_NAVIGATION = (
     ("manual-review", "Manual Review Companion"),
     ("about", "About"),
 )
-DASHBOARD_SHORTCUTS = ("F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit")
+DASHBOARD_SHORTCUTS = ("F1-F12 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit")
 DASHBOARD_SHORTCUT_ACTIONS = (
     ("F1", "Help: use the sidebar pages to inspect read-only SGFX evidence."),
     ("F2", "Profile switch: use the Profile selector in the header."),
+    ("F3", "Reference: no action is assigned to F3 in this release."),
+    ("F4", "Reference: no action is assigned to F4 in this release."),
     ("F5", "Refresh page: re-read the current profile evidence."),
+    ("F6", "Reference: no action is assigned to F6 in this release."),
+    ("F7", "Reference: no action is assigned to F7 in this release."),
+    ("F8", "Reference: no action is assigned to F8 in this release."),
+    ("F9", "Reference: no action is assigned to F9 in this release."),
+    ("F10", "Reference: no action is assigned to F10 in this release."),
+    ("F11", "Reference: no action is assigned to F11 in this release."),
     ("F12", "Diagnostic: profile, workspace, and current page are shown in the header."),
     ("Esc", "Quit: close the native window or browser tab when the local review is done."),
 )
@@ -1658,10 +1667,10 @@ def build_dashboard_snapshot(
         "guardrails": list(DASHBOARD_GUARDRAILS),
         "welcome": {
             "show": bool(setup_status.get("first_run")),
-            "title": "Welcome",
+            "title": "Pick a profile",
             "summary": (
-                "Local-only tool for collecting SGFX delivery evidence. "
-                "Run setup before invoking local BMW pipeline helpers."
+                "Local-only preflight for collecting delivery evidence. "
+                "Choose the car profile first, then start Full QA Pass from the visible entry point."
             ),
             "setup_page_id": "delivery-checklist",
             "setup_action_count": len(
@@ -2735,7 +2744,8 @@ def _full_qa_bulk_ack_drafts(profile_id: str, steps: list[dict[str, Any]]) -> di
 
 
 def _dashboard_verbose_tooltips_enabled() -> bool:
-    return os.environ.get(VERBOSE_TOOLTIP_ENV) == "1"
+    value = os.environ.get(VERBOSE_TOOLTIP_ENV, "").strip().casefold()
+    return value not in {"0", "false", "no", "off"}
 
 
 def _attach_tooltip(ui: Any, element: Any, text: str) -> Any:
@@ -2795,26 +2805,44 @@ def _render_empty_state_note(ui: Any, page: dict[str, Any]) -> None:
         ui.label(note).classes("sgfx-warning")
 
 
-def _render_first_run_welcome(ui: Any, snapshot: dict[str, Any], open_setup: Callable[[], None] | None = None) -> None:
+def _render_first_run_welcome(
+    ui: Any,
+    snapshot: dict[str, Any],
+    open_setup: Callable[[], None] | None = None,
+    open_full_qa: Callable[[], None] | None = None,
+) -> None:
     welcome = snapshot.get("welcome", {})
     if not isinstance(welcome, dict) or not welcome.get("show"):
         return
-    with ui.column().classes("sgfx-page-panel"):
+    with ui.column().classes("sgfx-page-panel sgfx-first-launch-card").props("data-sgfx-first-launch-card=true"):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(welcome.get("title", "Welcome"))).classes("sgfx-panel-title")
-            _render_status_chip(ui, "incomplete")
+            with ui.row().classes("items-center sgfx-first-launch-actions"):
+                _render_status_chip(ui, "incomplete")
+                ui.html(
+                    '<button type="button" class="sgfx-link-button" '
+                    'data-sgfx-dismiss-onboarding="true" '
+                    'onclick="window.sgfxDismissFirstLaunch && window.sgfxDismissFirstLaunch()">'
+                    "Don't show again</button>",
+                    sanitize=False,
+                )
         ui.label(str(welcome.get("summary", ""))).classes("sgfx-summary")
-        for guardrail in welcome.get("guardrails", []):
-            ui.label(str(guardrail)).classes("sgfx-guardrail")
-        setup_action_count = int(welcome.get("setup_action_count", 0) or 0)
-        if open_setup is not None and setup_action_count > 0:
-            _attach_tooltip(
-                ui,
-                ui.button("Run setup", on_click=open_setup).props("color=primary"),
-                "Open the dependency setup card; no system changes run without confirmation.",
-            )
-        elif setup_action_count == 0:
-            ui.label(str(welcome.get("setup_complete_note", SETUP_COMPLETE_NOTE))).classes("sgfx-muted")
+        with ui.row().classes("sgfx-first-launch-actions"):
+            if open_full_qa is not None:
+                _attach_tooltip(
+                    ui,
+                    ui.button("Full QA Pass", on_click=open_full_qa).props("color=primary no-caps dense"),
+                    "Open the one-pass wizard for the selected profile.",
+                )
+            setup_action_count = int(welcome.get("setup_action_count", 0) or 0)
+            if open_setup is not None and setup_action_count > 0:
+                _attach_tooltip(
+                    ui,
+                    ui.button("Run setup", on_click=open_setup).props("flat no-caps dense"),
+                    "Open dependency setup; no system changes run without confirmation.",
+                )
+            elif setup_action_count == 0:
+                ui.label(str(welcome.get("setup_complete_note", SETUP_COMPLETE_NOTE))).classes("sgfx-muted")
 
 
 def _render_about_panel(ui: Any, content: dict[str, Any] | None = None) -> None:
@@ -5909,6 +5937,11 @@ def _render_dashboard(
             .sgfx-footer { border-top: 1px solid var(--sgfx-border); padding-top: 12px; margin-top: 12px; }
             .sgfx-guardrail { color: var(--sgfx-fg-muted); font-size: 13px; line-height: 1.55; }
             .sgfx-page-panel { border-radius: 8px; box-shadow: none; border: 1px solid var(--sgfx-border); width: 100%; padding: 18px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); margin-bottom: 14px; }
+            .sgfx-first-launch-card { gap: 8px; padding: 14px 16px; border-color: rgba(78, 201, 176, 0.42); background: #22302d; }
+            .sgfx-first-launch-card[data-sgfx-dismissed="true"] { display: none; }
+            .sgfx-first-launch-actions { gap: 10px; align-items: center; flex-wrap: wrap; }
+            .sgfx-link-button { border: 0; background: transparent; color: var(--sgfx-accent); cursor: pointer; font-size: 12px; padding: 4px 0; }
+            .sgfx-link-button:hover { text-decoration: underline; }
             .sgfx-panel-title { font-size: 18px; font-weight: 650; color: var(--sgfx-fg-strong); }
             .sgfx-panel-tagline, .sgfx-muted { color: var(--sgfx-fg-muted); font-size: 13px; }
             .sgfx-doc-link-row { gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -6103,6 +6136,7 @@ def _render_dashboard(
                     ui,
                     state["snapshot"],
                     open_setup=lambda: _open_page("delivery-checklist"),
+                    open_full_qa=lambda: _open_page("full-qa-pass"),
                 )
                 if active_page_id == "delivery-checklist":
                     _render_delivery_checklist_panel(
@@ -6138,6 +6172,7 @@ def _render_dashboard(
                 else:
                     _render_page_panel(ui, _pages_by_id()[active_page_id])
             content.update()
+            ui.run_javascript("window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();")
 
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
@@ -6154,6 +6189,7 @@ def _render_dashboard(
                 )
                 _refresh_labels()
             _render_current_page()
+            ui.run_javascript(f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});")
 
         def _refresh_snapshot(profile_id: str | None = None) -> None:
             current_profile = profile_id if profile_id is not None else str(state["snapshot"]["profile_id"])
@@ -6186,6 +6222,8 @@ def _render_dashboard(
                 f"""
                 (() => {{
                     const messages = {json.dumps(messages)};
+                    const firstLaunchStorageKey = {json.dumps(FIRST_LAUNCH_DISMISS_STORAGE_KEY)};
+                    const functionKeys = Array.from({{ length: 12 }}, (_, index) => `F${{index + 1}}`);
                     let hideTimer = null;
                     document.body.dataset.sgfxActivePage = {json.dumps(state["active_page_id"])};
                     const show = (key, message) => {{
@@ -6201,6 +6239,41 @@ def _render_dashboard(
                         if (hideTimer) window.clearTimeout(hideTimer);
                         hideTimer = window.setTimeout(() => popup.classList.remove('show'), 1250);
                     }};
+                    window.__sgfxPerformanceTrace = window.__sgfxPerformanceTrace || [];
+                    window.sgfxBeginTransition = (kind, label) => {{
+                        window.__sgfxTransitionStart = {{
+                            kind,
+                            label,
+                            startedAt: window.performance ? performance.now() : Date.now(),
+                        }};
+                    }};
+                    window.sgfxFinishTransition = (kind, label) => {{
+                        const now = window.performance ? performance.now() : Date.now();
+                        const start = window.__sgfxTransitionStart || {{ kind, label, startedAt: now }};
+                        const duration = Math.max(0, now - Number(start.startedAt || now));
+                        const entry = {{
+                            kind,
+                            label,
+                            duration_ms: Number(duration.toFixed(1)),
+                            threshold_ms: 200,
+                            status: duration > 200 ? 'hitch' : 'ok',
+                        }};
+                        window.__sgfxPerformanceTrace.push(entry);
+                        document.body.dataset.sgfxLastTransitionMs = String(Math.round(duration));
+                        document.body.dataset.sgfxLastTransitionStatus = entry.status;
+                        if (duration > 200) console.warn('SGFX transition over 200ms', entry);
+                        window.__sgfxTransitionStart = null;
+                    }};
+                    window.sgfxApplyFirstLaunchState = () => {{
+                        const dismissed = window.localStorage.getItem(firstLaunchStorageKey) === '1';
+                        document.querySelectorAll('[data-sgfx-first-launch-card]').forEach((card) => {{
+                            card.dataset.sgfxDismissed = dismissed ? 'true' : 'false';
+                        }});
+                    }};
+                    window.sgfxDismissFirstLaunch = () => {{
+                        window.localStorage.setItem(firstLaunchStorageKey, '1');
+                        window.sgfxApplyFirstLaunchState();
+                    }};
                     window.sgfxSetSidebarOpen = (open) => {{
                         const isOpen = Boolean(open);
                         document.body.classList.toggle('sgfx-sidebar-open', isOpen);
@@ -6212,8 +6285,24 @@ def _render_dashboard(
                     window.sgfxSetSidebarOpen(false);
                     if (window.__sgfxDashboardShortcutsInstalled) return;
                     window.__sgfxDashboardShortcutsInstalled = true;
+                    window.sgfxApplyFirstLaunchState();
+                    document.addEventListener('click', (event) => {{
+                        const clickTarget = event.target instanceof Element ? event.target : event.target.parentElement;
+                        if (!clickTarget) return;
+                        const nav = clickTarget.closest('[data-sgfx-nav-item]');
+                        if (nav) window.sgfxBeginTransition('tab', nav.dataset.sgfxNavItem || 'unknown');
+                        const wizard = clickTarget.closest('.sgfx-wizard-nav button, .sgfx-html-action-button');
+                        if (wizard) window.sgfxBeginTransition('wizard', (wizard.textContent || '').trim() || 'wizard');
+                    }}, true);
+                    const wizardObserver = new MutationObserver(() => {{
+                        const card = document.querySelector('.sgfx-wizard-card');
+                        if (card && window.__sgfxTransitionStart && window.__sgfxTransitionStart.kind === 'wizard') {{
+                            window.sgfxFinishTransition('wizard', (card.textContent || '').trim().slice(0, 80) || 'wizard');
+                        }}
+                    }});
+                    wizardObserver.observe(document.body, {{ childList: true, subtree: true }});
                     document.addEventListener('keydown', (event) => {{
-                        if (!['F1', 'F2', 'F5', 'F12', 'Escape'].includes(event.key)) return;
+                        if (!functionKeys.includes(event.key) && event.key !== 'Escape') return;
                         event.preventDefault();
                         if (event.key === 'F1') show('F1', messages.F1);
                         if (event.key === 'F2') {{
@@ -6233,6 +6322,9 @@ def _render_dashboard(
                         if (event.key === 'Escape') {{
                             window.sgfxSetSidebarOpen(false);
                             show('Esc', messages.Esc);
+                        }}
+                        if (!['F1', 'F2', 'F5', 'F12', 'Escape'].includes(event.key)) {{
+                            show(event.key, messages[event.key] || 'No action is assigned to this function key.');
                         }}
                     }});
                 }})();
@@ -6266,12 +6358,15 @@ def _render_dashboard(
                 ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_BRAND_ICON_ASSET}").classes("sgfx-sidebar-logo")
                 ui.separator()
                 for nav_item in state["snapshot"]["navigation"]:
+                    nav_id = str(nav_item["id"])
                     _attach_tooltip(
                         ui,
                         ui.button(
                             str(nav_item["label"]),
-                            on_click=lambda page_id=str(nav_item["id"]): _open_page(page_id),
-                        ).props("flat no-caps align=left").classes("sgfx-nav-button full-width"),
+                            on_click=lambda page_id=nav_id: _open_page(page_id),
+                        ).props(f"flat no-caps align=left data-sgfx-nav-item={nav_id}").classes(
+                            "sgfx-nav-button full-width"
+                        ),
                         f"Open {nav_item['label']} for the selected local profile.",
                     )
                 ui.separator()
