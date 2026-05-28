@@ -28,6 +28,11 @@ from sg_preflight.bmw_git_readiness import (
     render_bmw_git_readiness_markdown,
     render_bmw_git_readiness_text,
 )
+from sg_preflight.bmw_pipeline_auto_fix import (
+    render_missing_actual_diagnostic_markdown,
+    render_missing_actual_diagnostic_text,
+    run_missing_actual_diagnostic_chain,
+)
 from sg_preflight.cross_car_comparison import (
     build_cross_car_comparison,
     render_cross_car_comparison_markdown,
@@ -885,6 +890,11 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
     ("run-profile", "Materialize and validate one canonical profile.", r"sgfx-preflight.exe run-profile G65 --output-root out\run-profile-g65 --json"),
     ("run", "Run validation packs against an existing bundle.", r"sgfx-preflight.exe run --bundle out\bundle --config config\sg_rules.json --packs anchors --fail-on warning"),
     ("list-checkers", "List checker coverage and readiness.", "sgfx-preflight.exe list-checkers --format json"),
+    (
+        "bmw-pipeline-diagnostics",
+        "Inspect missing-actual diagnostics with confirmation-gated refresh actions.",
+        r"sgfx-preflight.exe bmw-pipeline-diagnostics missing-actuals --profile F70 --workspace C:\repositories\trunk --format json",
+    ),
     ("screenshot-triage", "Run deterministic screenshot triage.", r"sgfx-preflight.exe screenshot-triage --profile F70 --workspace C:\repositories\trunk --json"),
     ("materialize", "Create a normalized validation bundle from SG-shaped inputs.", r"sgfx-preflight.exe materialize --output-bundle out\bundle --repo-root C:\repositories\trunk"),
     ("probe", "Discover SG-style repository roots and likely inputs.", r"sgfx-preflight.exe probe --search-root C:\repositories\trunk"),
@@ -918,6 +928,12 @@ _COMMAND_EXAMPLES: dict[str, tuple[str, ...]] = {
     "desktop-state overview": (_MAIN_ACTION_MAP[29][2],),
     "quality-hero-report": (_MAIN_ACTION_MAP[7][2],),
     "quality-hero-report generate": (_MAIN_ACTION_MAP[7][2],),
+    "bmw-pipeline-diagnostics": (
+        r"sgfx-preflight.exe bmw-pipeline-diagnostics missing-actuals --profile F70 --workspace C:\repositories\trunk --format json",
+    ),
+    "bmw-pipeline-diagnostics missing-actuals": (
+        r"sgfx-preflight.exe bmw-pipeline-diagnostics missing-actuals --profile F70 --workspace C:\repositories\trunk --format json",
+    ),
     "template": (_MAIN_ACTION_MAP[19][2],),
     "template save": ('sgfx-preflight.exe template save f70-pass --command full-qa-pass --args "run --profile F70 --workspace C:\\repositories\\trunk" --json',),
     "template run": ("sgfx-preflight.exe template run f70-pass",),
@@ -1178,6 +1194,55 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot_state_read.add_argument("--json", action="store_true", help="Print screenshot test state as JSON")
     screenshot_state_read.add_argument("--markdown", action="store_true", help="Print screenshot test state as Markdown")
     _add_render_options(screenshot_state_read)
+
+    bmw_pipeline_diagnostics = sub.add_parser(
+        "bmw-pipeline-diagnostics",
+        help="Inspect BMW pipeline missing-actual diagnostics with confirmation-gated refresh actions",
+    )
+    bmw_pipeline_diagnostics_sub = bmw_pipeline_diagnostics.add_subparsers(
+        dest="bmw_pipeline_diagnostics_command",
+        required=True,
+    )
+    missing_actuals = bmw_pipeline_diagnostics_sub.add_parser(
+        "missing-actuals",
+        help="Build the missing-actual diagnostic chain for one profile",
+    )
+    missing_actuals.add_argument("--workspace", help="Workspace root override")
+    missing_actuals.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    missing_actuals.add_argument("--profile", help="Profile id such as F70")
+    missing_actuals.add_argument("--project-root", help="Explicit BMW project root override")
+    missing_actuals.add_argument("--expected-root", help="Explicit expected screenshot root")
+    missing_actuals.add_argument(
+        "--candidate-root",
+        action="append",
+        default=[],
+        help="Explicit actual/candidate screenshot root (repeatable)",
+    )
+    missing_actuals.add_argument(
+        "--diff-root",
+        action="append",
+        default=[],
+        help="Explicit diff screenshot root (repeatable)",
+    )
+    missing_actuals.add_argument("--output-root", help="Directory to write diagnostic artifacts")
+    missing_actuals.add_argument(
+        "--auto-confirm-read-refresh",
+        action="store_true",
+        help="Confirm BMW Git/SVN read-refresh commands if discovered",
+    )
+    missing_actuals.add_argument(
+        "--retry-capture",
+        action="store_true",
+        help="Retry BMW screenshot capture after diagnostics",
+    )
+    missing_actuals.add_argument(
+        "--auto-confirm-retry-capture",
+        action="store_true",
+        help="Confirm the screenshot-capture retry action",
+    )
+    missing_actuals.add_argument("--json", action="store_true", help="Print diagnostic chain as JSON")
+    missing_actuals.add_argument("--markdown", action="store_true", help="Print diagnostic chain as Markdown")
+    _add_render_options(missing_actuals)
 
     risk_score = sub.add_parser(
         "risk-score",
@@ -2208,6 +2273,52 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _emit_text(render_bmw_screenshot_state_markdown(payload), args)
         else:
             _emit_text(render_bmw_screenshot_state_text(payload), args)
+        return 0
+
+    if args.command == "bmw-pipeline-diagnostics":
+        diagnostic_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
+        if args.bmw_pipeline_diagnostics_command != "missing-actuals":
+            parser.error(f"Unhandled bmw-pipeline-diagnostics command: {args.bmw_pipeline_diagnostics_command}")
+            return 1
+        if not args.profile and not args.project_root:
+            parser.error("bmw-pipeline-diagnostics missing-actuals needs either --profile or --project-root")
+            return 1
+        try:
+            if args.project_root:
+                project_root = Path(args.project_root).resolve()
+                profile_id = args.profile or project_root.name
+            else:
+                profile = get_run_profile(args.profile, diagnostic_root, bmw_root=args.bmw_root)
+                profile_id = profile.profile_id
+                project_root = profile.source_project_root()
+            output_root = (
+                Path(args.output_root).resolve()
+                if args.output_root
+                else diagnostic_root / "out" / f"{str(profile_id).strip().lower()}-missing-actual-diagnostics"
+            )
+            payload = run_missing_actual_diagnostic_chain(
+                profile_id=str(profile_id),
+                workspace=diagnostic_root,
+                bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+                project_root=project_root,
+                expected_root=Path(args.expected_root).resolve() if args.expected_root else None,
+                candidate_roots=tuple(Path(item).resolve() for item in args.candidate_root if str(item).strip()),
+                diff_reference_roots=tuple(Path(item).resolve() for item in args.diff_root if str(item).strip()),
+                output_root=output_root,
+                operator_confirmed_read_refresh=bool(args.auto_confirm_read_refresh),
+                retry_capture=bool(args.retry_capture),
+                operator_confirmed_retry_capture=bool(args.auto_confirm_retry_capture),
+            )
+        except Exception as exc:
+            print(_console_safe(f"bmw-pipeline-diagnostics failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = _resolve_render_format(args, parser)
+        if output_format == "json":
+            _emit_json(payload, args)
+        elif output_format == "markdown":
+            _emit_text(render_missing_actual_diagnostic_markdown(payload), args)
+        else:
+            _emit_text(render_missing_actual_diagnostic_text(payload), args)
         return 0
 
     if args.command == "risk-score":
