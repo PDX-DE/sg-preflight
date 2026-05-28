@@ -39,8 +39,8 @@ class BmwPipelineDiagnosticsTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest", anchors)
-        self.assertIn("PDX_SGFX/366_Ambient-Layer/376_How-to-screenshot-test-AL", anchors)
+        self.assertIn("PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest", anchors)
+        self.assertIn("PDX_SERGFX/366_Ambient-Layer/376_How-to-screenshot-test-AL", anchors)
         self.assertNotIn("C:" + "/Users", data_text)
         self.assertNotIn("C:" + "\\Users", data_text)
         for token in (

@@ -19,8 +19,8 @@
           "hypothesis": "An external resource the scene depends on (HDRI environment, texture, color reference, asset binary) is not correctly linked at render time. Graphics pipelines conventionally render magenta as the fallback color for an unbound texture sampler.",
           "operator_action": "Check the .exr (HDRI) linkage in the scene's source file. For Blender masterfiles, switch to the Shading workspace, choose World in the Shader Editor dropdown, and verify the orange texture node points at the correct city.exr. Relink via the folder icon if needed. For RaCo scenes the equivalent step is to verify the texture/material assignment in the Resources panel.",
           "verbatim_confluence_quote": "The object lighting is driven by the external hdri file \"city.exr\" which should be found in a folder next to the masterfile. In case of visual errors in the scene, for example if the car mesh has a magenta tint, make sure to check if the .exr file is still correctly linked.",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/410_OldOutdated/425_How-To-Product-Correctness/page.txt",
-          "confluence_anchor": "PDX_SGFX/410_OldOutdated/425_How-To-Product-Correctness",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/410_OldOutdated/425_How-To-Product-Correctness/page.txt",
+          "confluence_anchor": "PDX_SERGFX/410_OldOutdated/425_How-To-Product-Correctness",
           "evidence_strength": "documented; OldOutdated section so context is Blender masterfile specifically; the broader graphics convention (unbound texture renders magenta) is industry-standard and transfers"
         },
         {
@@ -29,8 +29,8 @@
           "operator_action": "Before diagnosing as a defect, check the test name. If it is the AL Intensity Zero or Intensity Half test on BMW / BMW_M / Alpina (not RR), the pink fill is the documented expected output. The actual image only diverges if the expected and actual disagree on the same pink region.",
           "verbatim_confluence_quote_1": "Intensity Zero \u2014 This test shows the result of setting Main_Intensity to 0\nIn the case of Rolls Royce CIDs, the Neutral Background is expected to be seen instead of the full pink color.",
           "verbatim_confluence_quote_2": "Intensity Half \u2014 This test shows the result of setting Main_Intensity to 0.5\nIn the case of Rolls Royce CIDs, the Neutral Background is expected to be half-seen instead of the half pink color.",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/366_Ambient-Layer/376_How-to-screenshot-test-AL/page.txt",
-          "confluence_anchor": "PDX_SGFX/366_Ambient-Layer/376_How-to-screenshot-test-AL",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/366_Ambient-Layer/376_How-to-screenshot-test-AL/page.txt",
+          "confluence_anchor": "PDX_SERGFX/366_Ambient-Layer/376_How-to-screenshot-test-AL",
           "evidence_strength": "documented; AL-specific; does NOT apply to 3D Car body renders"
         }
       ],
@@ -58,8 +58,8 @@
           "hypothesis": "The screenshot-test script requires the -d / --diff flag since 2023-11-27 to actually save diff PNGs. Without it, the script tests and reports failed tests but does not persist the diff images.",
           "operator_action": "Re-run with the -d (or --diff) argument: `py main.py screenshots_ext C:/PATH/TO/PROJECT.rca -b BMW -d`. SGFX's wrapper should already inject this flag; if it is missing, this is an SGFX bug worth filing.",
           "verbatim_confluence_quote": "Note: As of 27. Nov 2023, \"-d\" (or \"--diff\") is required as an additional argument for the script to actually save the screenshot diffs, otherwise it will just test and report failed tests",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; explicit canonical flag requirement"
         },
         {
@@ -67,8 +67,8 @@
           "hypothesis": "First-time screenshot generation needs the -g / --generate-screenshots flag because the expected/ folder is empty and there is nothing to compare against. Subsequent diff runs do not.",
           "operator_action": "If expected/ for this car is empty or sparse, re-run with -g: `py main.py screenshots_ext C:/PATH/TO/PROJECT.rca -b BMW -g`. Then run a normal pass to populate diff/.",
           "verbatim_confluence_quote": "If you want to generate new screenshots altogether (e.g. for a first test), add \"-g\" or \"--generate-screenshorts\" as arguments",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; canonical first-run workflow"
         },
         {
@@ -76,8 +76,8 @@
           "hypothesis": "IDC23 cars need the assets/idc23 branch checked out. As of 2024-09-10 the CI on master does not work for IDC23 cars.",
           "operator_action": "If diagnosing an IDC23 car (U06, U10, U11, U12 family), check that the BMW Git checkout is on assets/idc23. If on master, switch: `git checkout assets/idc23 && git pull`. SGFX read-only checks should already flag this \u2014 confirm SGFX's lane detector classified the car correctly.",
           "verbatim_confluence_quote": "Note: As of 10. Sep 2024, the ci on the master branch doesn't work for IDC23 cars. Use the assets/idc23 branch instead.",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; canonical branch convention"
         }
       ],
@@ -100,8 +100,8 @@
           "hypothesis": "BMW screenshot tests generate images sized to monitor resolution. Below 3340 width or 1440 height, output is cropped and the comparison against expected fails. In multi-monitor setups widths add; heights take the max.",
           "operator_action": "Check the operator workstation's monitor resolution. If below 3340 \u00d7 1440 single-monitor, attach a second monitor (widths add) or use a higher-resolution display. SGFX should detect this from a Win32 GetSystemMetrics call before running screenshot tests and warn the operator.",
           "verbatim_confluence_quote": "The screenshots are generated based on the monitor resolution on your pc. You should make sure that you have at least 3340 x 1440 resolution, otherwise the generated screenshots will be cropped and the tests will fail. If you have multiple monitors connected, the resolution adds up on the width (you need to have monitor1.width + monitor2.width > 3340) but not on the height (for the height you need at least one of the monitors to have the height > 1440). To make sure the screenshots generated properly, you can put the image into photoshop and see if there are any missing strips of pixels.",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; explicit minimums + verification method"
         }
       ],
@@ -123,8 +123,8 @@
           "hypothesis": "Per-car test config explicitly disables this test via disableTests() in cars/BMW/<profile>/export/tests/test_config.lua. This is a deliberate exclusion, not a defect.",
           "operator_action": "Open cars/BMW/<profile>/export/tests/test_config.lua and search for disableTests(\"<test_name>\") or the test's identifier. If it is intentionally disabled, no action \u2014 surface the disable line as evidence and move on. If unexpectedly disabled, escalate to data-prep or CI-team for a reason.",
           "verbatim_confluence_quote": "\"./digital-3d-car/cars/BMW/U06/export/tests/test_config.lua\" - with possibility to addTests()/disableTests() per car model",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; canonical per-car override mechanism"
         },
         {
@@ -132,8 +132,8 @@
           "hypothesis": "A new test was added via addTests() in test_config.lua locally but the BMW Git checkout was not refreshed (git pull) since.",
           "operator_action": "Run `git fetch && git status` in the BMW Git checkout. If behind origin, escalate to operator confirmation gate for `git pull`. Per SVN-100-percent-gate this is BMW Git read-refresh which is OK; SGFX confirms with operator before pulling.",
           "verbatim_confluence_quote": "addTests()/disableTests() per car model",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; mechanism inferred from canonical addTests/disableTests"
         }
       ],
@@ -160,8 +160,8 @@
             "GC-prune: `git gc --prune=now` then `git pull`."
           ],
           "verbatim_confluence_quote": "If you face something similar like the following:\nerror: cannot lock ref 'refs/remotes/origin/features/...' \n! ...  (unable to update local ref)\ntry to clean your local repo first with:\ngit reset --hard\ngit clean -fxd\nthen try the update.. \nor \ntry to delete the problematic branch:\ngit branch --delete branchname\ntry then\ngit pull\nor\ntry\ngit gc --prune=now\nthen try\ngit pull",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest (Issues and Solutions section)",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest (Issues and Solutions section)",
           "evidence_strength": "documented; canonical recovery"
         }
       ],
@@ -182,8 +182,8 @@
           "hypothesis": "The color uses a reference to another color that cannot be resolved (e.g., references a token that no longer exists or was renamed).",
           "operator_action": "Trace the reference chain in the source JSON. If the referenced color is missing, the upstream change that removed it is the root cause \u2014 escalate to whoever owns that color token.",
           "verbatim_confluence_quote": "Anything else \u2014 If the Color could not be resolved because of missing / unresolved reference Color\nOr if the Color used modifiers / functions that are not implemented",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/140_3D-Car---Project-Information/212_IDCevo/215_IDCevo---Color-Token-Overview/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/140_3D-Car---Project-Information/212_IDCevo/215_IDCevo---Color-Token-Overview",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/140_3D-Car---Project-Information/212_IDCevo/215_IDCevo---Color-Token-Overview/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/140_3D-Car---Project-Information/212_IDCevo/215_IDCevo---Color-Token-Overview",
           "evidence_strength": "documented; canonical extractor output convention"
         },
         {
@@ -191,8 +191,8 @@
           "hypothesis": "The color uses a modifier or function the extractor does not implement (e.g., a custom color math).",
           "operator_action": "Inspect the source color definition for non-trivial modifier calls. Cross-check against the documented extractor capabilities.",
           "verbatim_confluence_quote": "Or if the Color used modifiers / functions that are not implemented",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/140_3D-Car---Project-Information/212_IDCevo/215_IDCevo---Color-Token-Overview/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/140_3D-Car---Project-Information/212_IDCevo/215_IDCevo---Color-Token-Overview",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/140_3D-Car---Project-Information/212_IDCevo/215_IDCevo---Color-Token-Overview/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/140_3D-Car---Project-Information/212_IDCevo/215_IDCevo---Color-Token-Overview",
           "evidence_strength": "documented"
         }
       ],
@@ -214,8 +214,8 @@
           "hypothesis": "IDCEVO cars must use car_manager.py, not main.py.",
           "operator_action": "Re-invoke with `py car_manager.py screenshots <profile>` for IDC_EVO profiles. SGFX's lane-aware router (Phase G-4 fec3a07) should already pick this correctly \u2014 confirm SGFX's lane detector saw the profile as IDC_EVO.",
           "verbatim_confluence_quote": "Note: If you want to screenshottest for IDCEVO, the script to use is not main.py but car_manager.py.",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; canonical lane convention"
         },
         {
@@ -223,8 +223,8 @@
           "hypothesis": "For external invocation against an .rca file outside the BMW Git tree, the canonical entry is `py main.py screenshots_ext` with the -b BMW / -b MINI brand flag. The page explicitly notes this route is not recommended.",
           "operator_action": "Prefer the in-tree invocation through the BMW Git checkout. Only fall back to screenshots_ext if there is no other path; even then prefer car_manager.py for IDC_EVO.",
           "verbatim_confluence_quote": "For running the screenshot tests \"externally\" (e.g. in the SVN), instead run:\npy main.py screenshots_ext C:/PATH/TO/PROJECT.rca -b BMW\nThis one is NOT recomended\n\"-b\" is a required argument for the script to work; depending on the brand, specify either \"-b BMW\" or \"-b MINI\"",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; explicitly marked NOT recommended"
         }
       ],
@@ -246,8 +246,8 @@
           "hypothesis": "The BLOCK_CONFIG_LIST in digital-3d-car/ci/scripts/test/image_cmp.py (lines 22-23) defines per-block tolerance bands. Operators can adjust these locally to investigate borderline failures, then revert.",
           "operator_action": "Inspect image_cmp.py lines 22-23: `BLOCK_CONFIG_LIST = [(1, 0.1), (2, 0.05), (4, 0.01), (8, 0.005), (16, 0.001)]`. Each tuple is `(allowed max difference per pixel, allowed % of pixels)`. Adjust LOCALLY for investigation only; do not commit to BMW Git. If the change would help permanently, file a ticket through the data-prep team.",
           "verbatim_confluence_quote": "Diff tolerance\nYou can locally adjust the comparison tolerance via digital-3d-car/ci/scripts/test/image_cmp.py (line 22,23):\n#Blocks are defined as (allowed max difference per pixel, allowed % of pixels)\nBLOCK_CONFIG_LIST = [(1, 0.1), (2, 0.05), (4, 0.01), (8, 0.005), (16, 0.001)]",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; canonical configuration"
         }
       ],
@@ -271,8 +271,8 @@
           "verbatim_confluence_quote_1": "Never commit *.ramses or *.logic files (should be already excluded within each car folder via \"./digital-3d-car/cars/BMW/U11/export/.gitignore\")!",
           "verbatim_confluence_quote_2": "Never commit diff/actual folders (should be already excluded within each car folder via \"./digital-3d-car/cars/BMW/U11/export/.gitignore\")!",
           "verbatim_confluence_quote_3": "Never commit _Workfiles!",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; canonical exclusion list"
         }
       ],
@@ -316,8 +316,8 @@
           "hypothesis": "Python's Scripts directory (where pip / pip3 live) is not on the system PATH environment variable.",
           "operator_action": "Type `start %appdata%` in cmd, go up one directory, navigate to Local/Programs/Python/Python39/Scripts, copy the address, add it to the Path system environment variable, restart cmd. Phase D should automate this \u2014 if Phase D is active, this hypothesis is moot.",
           "verbatim_confluence_quote": "If pip3 and pip didn't worked (\"'pip' is not recognized as an internal or external command\") try this :\nType start %appdata% in cmd.\nGo back one directory and navigate to Local/Programs/Python/Python39/Scripts.\nAfter you do this you now have the correct location of your downloaded Python. Copy your file path by selecting the whole directory in the address bar.\nOnce you do that click the start icon and navigate to the Control Panel \u2192 System and Security \u2192 System. Then click \"Advanced System Settings\" on the left side of the panel.\nOnce there, click Environment Variables on the bottom right and there will be two boxes, an upper and a lower box. In the upper box: Click on the 'Path' Variable and click Edit located on the right. Click New and paste your directory Path.",
-          "dump_file_path": "confluence-readable-dumps/PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
-          "confluence_anchor": "PDX_SGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
+          "dump_file_path": "confluence-readable-dumps/PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest/page.txt",
+          "confluence_anchor": "PDX_SERGFX/139_3D-Car/225_3D-Car---RaCo-Implementation/226_How-to-screenshottest",
           "evidence_strength": "documented; canonical onboarding workaround"
         }
       ],
