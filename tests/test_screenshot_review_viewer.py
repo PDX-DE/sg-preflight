@@ -9,26 +9,63 @@ from pathlib import Path
 import unittest
 
 from sg_preflight.cli import main
-from sg_preflight.screenshot_review_viewer import _script_json_payload, build_screenshot_review_viewer
+from sg_preflight.screenshot_review_viewer import (
+    DiffDeltaThresholds,
+    _script_json_payload,
+    build_screenshot_review_viewer,
+    compute_diff_delta_badge,
+)
 
 
 class TestScreenshotReviewViewer(unittest.TestCase):
     def _write_bmp(self, path: Path, color: tuple[int, int, int]) -> None:
+        self._write_bmp_pixels(path, [[color, color], [color, color]])
+
+    def _write_bmp_pixels(self, path: Path, pixels: list[list[tuple[int, int, int]]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        width = 2
-        height = 2
+        height = len(pixels)
+        width = len(pixels[0]) if pixels else 0
         row_size = ((24 * width + 31) // 32) * 4
         image_size = row_size * height
         file_size = 54 + image_size
-        red, green, blue = color
-        pixel = bytes((blue, green, red))
-        row = (pixel * width).ljust(row_size, b"\x00")
         header = (
             b"BM"
             + struct.pack("<IHHI", file_size, 0, 0, 54)
             + struct.pack("<IIIHHIIIIII", 40, width, height, 1, 24, 0, image_size, 2835, 2835, 0, 0)
         )
-        path.write_bytes(header + (row * height))
+        rows: list[bytes] = []
+        for row_pixels in reversed(pixels):
+            row = b"".join(bytes((blue, green, red)) for red, green, blue in row_pixels)
+            rows.append(row.ljust(row_size, b"\x00"))
+        path.write_bytes(header + b"".join(rows))
+
+    def test_compute_diff_delta_badge_classifies_threshold_bands(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            thresholds = DiffDeltaThresholds(green_max_percent=0.5, yellow_max_percent=2.0)
+            cases = (
+                ("green.bmp", 1, "green", "max-\u0394: 0.4% (x=2, y=1)"),
+                ("yellow.bmp", 3, "yellow", "max-\u0394: 1.2% (x=2, y=1)"),
+                ("red.bmp", 8, "red", "max-\u0394: 3.1% (x=2, y=1)"),
+            )
+            for name, value, level, label in cases:
+                path = root / name
+                self._write_bmp_pixels(
+                    path,
+                    [
+                        [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)],
+                        [(0, 0, 0), (0, 0, 0), (value, 0, 0), (0, 0, 0)],
+                        [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)],
+                    ],
+                )
+
+                badge = compute_diff_delta_badge(path, thresholds=thresholds)
+
+                self.assertEqual(badge.status, "available")
+                self.assertEqual(badge.level, level)
+                self.assertEqual(badge.label, label)
+                self.assertEqual(badge.max_x, 2)
+                self.assertEqual(badge.max_y, 1)
 
     def test_build_screenshot_review_viewer_writes_sync_zoom_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -40,7 +77,7 @@ class TestScreenshotReviewViewer(unittest.TestCase):
 
             self._write_bmp(expected_root / "front.bmp", (10, 20, 30))
             self._write_bmp(actual_root / "front.bmp", (90, 20, 30))
-            self._write_bmp(diff_root / "front.bmp", (255, 0, 0))
+            self._write_bmp(diff_root / "front_color.bmp", (255, 0, 0))
 
             bundle = build_screenshot_review_viewer(
                 "G70",
@@ -58,6 +95,8 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertEqual(item.key, "front")
             self.assertEqual(item.expected_uri, "assets/expected/front.bmp")
             self.assertEqual(item.actual_uri, "assets/actual/front.bmp")
+            self.assertEqual(item.diff_delta_level, "red")
+            self.assertEqual(item.diff_delta_label, "max-\u0394: 100.0% (x=0, y=0)")
             expected_diff_uri = (
                 "assets/diff/front.png"
                 if (bundle.html_path.parent / "assets/diff/front.png").is_file()
@@ -76,6 +115,8 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertIn('data-pane="diff"', html)
             self.assertIn("pointerdown", html)
             self.assertIn("Manual review remains required.", html)
+            self.assertIn("delta-badge delta-red", html)
+            self.assertIn("max-\u0394: 100.0%", html)
             script_body = html.split('<script id="sgfx-viewer-data" type="application/json">', 1)[1].split(
                 "</script>",
                 1,

@@ -65,7 +65,7 @@ from sg_preflight.profiles import (
     list_run_profiles,
 )
 from sg_preflight.risk_scoring import read_per_car_risk_score
-from sg_preflight.screenshot_review_viewer import build_screenshot_review_viewer
+from sg_preflight.screenshot_review_viewer import build_screenshot_review_viewer, compute_diff_delta_badge
 from sg_preflight.screenshot_capture import (
     SCREENSHOT_CAPTURE_ACTION_ID,
     SCREENSHOT_CAPTURE_ACTION_LABEL,
@@ -2381,7 +2381,9 @@ def _screenshot_review_visual_rows(result: dict[str, Any], *, limit: int = 4) ->
             continue
         expected_src = _dashboard_data_uri(str(row.get("expected_path", "")))
         actual_src = _dashboard_data_uri(str(row.get("actual_path", "")))
-        diff_src = _dashboard_data_uri(str(row.get("diff_path", "")))
+        diff_path = str(row.get("diff_path", "")).strip()
+        diff_src = _dashboard_data_uri(diff_path)
+        delta_badge = compute_diff_delta_badge(diff_path)
         if not any((expected_src, actual_src, diff_src)):
             continue
         visual_rows.append(
@@ -2393,7 +2395,9 @@ def _screenshot_review_visual_rows(result: dict[str, Any], *, limit: int = 4) ->
                 "diff_src": diff_src,
                 "expected_path": str(row.get("expected_path", "")).strip(),
                 "actual_path": str(row.get("actual_path", "")).strip(),
-                "diff_path": str(row.get("diff_path", "")).strip(),
+                "diff_path": diff_path,
+                "diff_delta_label": delta_badge.label,
+                "diff_delta_level": delta_badge.level,
             }
         )
         if len(visual_rows) >= limit:
@@ -2485,7 +2489,12 @@ def _render_action_visuals(
                                             ui.image(src).classes("sgfx-diff-thumb")
                                         else:
                                             ui.label("missing").classes("sgfx-muted")
-                        ui.label(label).classes("sgfx-muted")
+                        with ui.row().classes("sgfx-diff-row-meta"):
+                            ui.label(label).classes("sgfx-muted")
+                            if row.get("diff_delta_label"):
+                                ui.label(str(row["diff_delta_label"])).classes(
+                                    f"sgfx-delta-badge sgfx-delta-{row['diff_delta_level']}"
+                                )
         elif image_items:
             with ui.column().classes("sgfx-diff-preview"):
                 ui.label("Diff thumbnails").classes("sgfx-panel-tagline")
@@ -5967,6 +5976,11 @@ def _render_dashboard(
             .sgfx-diff-triplet-sticky-header { position: sticky; top: 0; z-index: 2; display: grid; grid-template-columns: repeat(3, minmax(112px, 1fr)); gap: 8px; width: 100%; padding: 8px 8px 7px 8px; border-bottom: 1px solid var(--sgfx-border); background: var(--sgfx-bg); box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18); }
             .sgfx-diff-sticky-label { color: var(--sgfx-fg-strong); font-size: 12px; font-weight: 650; text-align: center; }
             .sgfx-diff-triplet-pane { min-width: 0; gap: 4px; align-items: center; }
+            .sgfx-diff-row-meta { align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+            .sgfx-delta-badge { display: inline-flex; align-items: center; flex: 0 0 auto; padding: 2px 7px; border: 1px solid var(--sgfx-border); border-radius: 999px; font-size: 11px; line-height: 1.35; }
+            .sgfx-delta-green { color: #7ee2a8; border-color: rgba(126, 226, 168, 0.55); background: rgba(126, 226, 168, 0.11); }
+            .sgfx-delta-yellow { color: #e8c07d; border-color: rgba(232, 192, 125, 0.55); background: rgba(232, 192, 125, 0.12); }
+            .sgfx-delta-red { color: #f08a7d; border-color: rgba(240, 138, 125, 0.55); background: rgba(240, 138, 125, 0.13); }
             .sgfx-technical-details-text textarea { font-family: Consolas, 'Courier New', monospace; font-size: 12px; min-height: 180px; }
             .sgfx-step-eta { font-variant-numeric: tabular-nums; }
             .sgfx-risk-metric { flex: 1 1 220px; min-width: 220px; border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 12px; background: var(--sgfx-bg-elev); }

@@ -588,6 +588,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Side-by-side diff rows", source)
         self.assertIn("sgfx-diff-triplet-sticky-header", source)
         self.assertIn("sgfx-diff-sticky-label", source)
+        self.assertIn("compute_diff_delta_badge", source)
+        self.assertIn("sgfx-delta-badge", source)
         self.assertIn(".sgfx-side-by-side-preview { max-height:", source)
         self.assertIn("padding: 0", source)
         self.assertIn("position: sticky", source)

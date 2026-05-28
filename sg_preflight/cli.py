@@ -573,7 +573,7 @@ def _console_screenshot_triage(bundle: object, *, as_json: bool = False) -> None
 def _console_screenshot_review_viewer(bundle: object, *, as_json: bool = False) -> None:
     viewer = bundle.viewer
     if as_json:
-        print(json.dumps(viewer.to_dict(), indent=2, ensure_ascii=False))
+        print(json.dumps(viewer.to_dict(), indent=2, ensure_ascii=True))
         return
 
     print(f"Screenshot review viewer: {viewer.profile_id}")
