@@ -31,7 +31,7 @@ class TestDesktopNotifications(unittest.TestCase):
             self.assertTrue(Path(payload["record_path"]).is_file())
             self.assertFalse(payload["is_approval"])
 
-    def test_notify_desktop_completion_uses_windows_balloon_runner(self) -> None:
+    def test_notify_desktop_completion_uses_windows_shell_notification_runner(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runner = mock.Mock(
                 return_value=subprocess.CompletedProcess(
@@ -53,9 +53,14 @@ class TestDesktopNotifications(unittest.TestCase):
 
             self.assertEqual(payload["delivery_status"], "available")
             self.assertTrue(payload["shown"])
+            self.assertEqual(payload["method"], "windows_shell_notification")
             runner.assert_called_once()
             command = runner.call_args.args[0]
             self.assertIn("powershell.exe", command[0])
+            script = command[-1]
+            self.assertIn("NotifyIcon", script)
+            self.assertIn("ShowBalloonTip", script)
+            self.assertNotIn("TopMost", script)
 
     def test_cli_desktop_notification_dry_run_outputs_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

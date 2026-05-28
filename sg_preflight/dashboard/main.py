@@ -98,6 +98,8 @@ VERBOSE_TOOLTIP_ENV = "SGFX_DASHBOARD_VERBOSE_TOOLTIPS"
 FIRST_LAUNCH_DISMISS_STORAGE_KEY = "sgfx.firstLaunch.dismissed"
 FEEDBACK_EMAIL_ENV = "SGFX_FEEDBACK_EMAIL"
 DEFAULT_FEEDBACK_EMAIL = "daviderikgarciaarenas@gmail.com"
+DESKTOP_NOTIFICATIONS_ENV = "SGFX_DESKTOP_NOTIFICATIONS"
+LONG_RUNNING_NOTIFICATION_SECONDS = 30
 DASHBOARD_GUARDRAILS = (
     "Manual review remains required.",
     "Decision: not approval — evidence only.",
@@ -656,6 +658,37 @@ def _write_dashboard_profile_preference(workspace: Path | str, profile_id: str) 
     return payload
 
 
+def _bool_preference(value: Any, *, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().casefold()
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return default
+
+
+def _dashboard_notifications_enabled(workspace: Path | str) -> bool:
+    env_value = os.environ.get(DESKTOP_NOTIFICATIONS_ENV)
+    if env_value is not None:
+        return _bool_preference(env_value, default=True)
+    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
+    return _bool_preference(payload.get("desktop_notifications_enabled"), default=True)
+
+
+def _write_dashboard_notifications_preference(workspace: Path | str, enabled: bool) -> dict[str, Any]:
+    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
+    payload["desktop_notifications_enabled"] = bool(enabled)
+    payload["updated_at_utc"] = _utc_now()
+    path = _operator_state_path(workspace, "dashboard_preferences.json")
+    ensure_parent(path)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return payload
+
+
 def _ticket_id_from_payload(payload: dict[str, Any]) -> str:
     for key in ("active_ticket_id", "ticket_id", "jira_ticket", "jira_ticket_id", "ticket"):
         raw = str(payload.get(key, "")).strip().upper()
@@ -1181,7 +1214,19 @@ def _notify_completion_safe(
     action_id: str,
     profile_id: str,
     evidence_path: str = "",
+    enabled: bool | None = None,
+    elapsed_seconds: Any | None = None,
+    minimum_elapsed_seconds: int = 0,
 ) -> None:
+    if enabled is False or (enabled is None and not _dashboard_notifications_enabled(workspace)):
+        return
+    if minimum_elapsed_seconds > 0:
+        try:
+            elapsed = int(float(elapsed_seconds or 0))
+        except (TypeError, ValueError):
+            elapsed = 0
+        if elapsed < minimum_elapsed_seconds:
+            return
     try:
         notify_desktop_completion(
             title=title,
@@ -1193,6 +1238,31 @@ def _notify_completion_safe(
         )
     except Exception:
         return
+
+
+def _full_qa_completion_notification(profile_id: str, payload: dict[str, Any]) -> dict[str, str]:
+    status = str(payload.get("status", payload.get("run_status", "unknown"))).strip().casefold()
+    counts = payload.get("counts", {}) if isinstance(payload.get("counts"), dict) else {}
+
+    def _count(key: str) -> int:
+        try:
+            return int(counts.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    failed_count = _count("failed") + _count("unavailable")
+    if status in {"failed", "unavailable"} or failed_count > 0:
+        return {
+            "title": "Full QA Pass needs attention",
+            "message": f"Full QA Pass for {profile_id} did not complete. See dashboard.",
+        }
+    review_count = _count("incomplete") + _count("confirmation_pending") + len(
+        payload.get("confirmation_items", []) if isinstance(payload.get("confirmation_items"), list) else []
+    )
+    return {
+        "title": "Full QA Pass finished",
+        "message": f"Full QA Pass for {profile_id} completed. {review_count} items ready for your review.",
+    }
 
 
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
@@ -3782,6 +3852,8 @@ def _render_delivery_checklist_panel(
                         action_id=GENERATE_WORKBOOK_ACTION_ID,
                         profile_id=str(snapshot["profile_id"]),
                         evidence_path=str(result.get("output_root", "")),
+                        elapsed_seconds=result.get("elapsed_seconds"),
+                        minimum_elapsed_seconds=LONG_RUNNING_NOTIFICATION_SECONDS,
                     )
                 except RuntimeError as exc:
                     if not _parent_slot_deleted(exc):
@@ -4106,6 +4178,8 @@ def _render_screenshot_test_state_panel(
                         action_id=SCREENSHOT_CAPTURE_ACTION_ID,
                         profile_id=str(snapshot["profile_id"]),
                         evidence_path=str(result.get("output_root", "")),
+                        elapsed_seconds=result.get("elapsed_seconds"),
+                        minimum_elapsed_seconds=LONG_RUNNING_NOTIFICATION_SECONDS,
                     )
                 except RuntimeError as exc:
                     if not _parent_slot_deleted(exc):
@@ -4431,6 +4505,8 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                         action_id=DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID,
                         profile_id=str(snapshot["profile_id"]),
                         evidence_path=str(result.get("output_root", "")),
+                        elapsed_seconds=result.get("elapsed_seconds"),
+                        minimum_elapsed_seconds=LONG_RUNNING_NOTIFICATION_SECONDS,
                     )
                 except RuntimeError as exc:
                     if not _parent_slot_deleted(exc):
@@ -5232,6 +5308,12 @@ def _render_full_qa_pass_panel(
     profile_id = str(snapshot["profile_id"])
     running_actions: set[str] = set()
     active_jobs: dict[str, dict[str, Any]] = {}
+    try:
+        from nicegui import context as nicegui_context
+
+        dashboard_client = nicegui_context.client
+    except Exception:
+        dashboard_client = None
     wizard_state: dict[str, Any] = {
         "payload": initial_payload,
         "index": 0,
@@ -5247,7 +5329,17 @@ def _render_full_qa_pass_panel(
         "bulk_handoff_text": "",
         "action_results": {},
         "done": False,
+        "full_qa_notified": False,
     }
+
+    def _save_notifications_preference() -> None:
+        enabled = bool(notifications_control.value)
+        _write_dashboard_notifications_preference(workspace, enabled)
+        try:
+            ui.notify(f"Desktop notifications {'enabled' if enabled else 'disabled'}.")
+        except RuntimeError as exc:
+            if not _ignorable_nicegui_runtime_error(exc):
+                raise
 
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
@@ -5273,6 +5365,17 @@ def _render_full_qa_pass_panel(
             ).classes("sgfx-automatic-mode-control")
             ui.label("Manual mode opt-out: switch Automatic mode off to confirm local actions one by one.").classes(
                 "sgfx-muted"
+            )
+            notifications_control = ui.checkbox(
+                "Desktop notifications",
+                value=_dashboard_notifications_enabled(workspace),
+            ).classes("sgfx-desktop-notifications-control")
+            _attach_tooltip(
+                ui,
+                ui.button("Save notification setting", on_click=_save_notifications_preference).props(
+                    "flat dense no-caps"
+                ),
+                "Store whether SGFX shows Windows notifications when long local work finishes.",
             )
             notice = ui.label("Full QA pass has not run in this dashboard session.").classes("sgfx-muted")
             result_host = ui.column().classes("full-width")
@@ -5311,6 +5414,11 @@ def _render_full_qa_pass_panel(
             except RuntimeError as exc:
                 if not _ignorable_nicegui_runtime_error(exc):
                     raise
+
+        def _client_has_socket_connection() -> bool:
+            if dashboard_client is None:
+                return True
+            return bool(getattr(dashboard_client, "has_socket_connection", True))
 
         def _append_activity(*, action: str, outcome: str = "ok", note: str = "") -> None:
             append_activity_entry(
@@ -5513,6 +5621,9 @@ def _render_full_qa_pass_panel(
                         action_id=action_id,
                         profile_id=profile_id,
                         evidence_path=str(result.get("sgfx_output_root", "")),
+                        enabled=bool(notifications_control.value),
+                        elapsed_seconds=result.get("elapsed_seconds"),
+                        minimum_elapsed_seconds=LONG_RUNNING_NOTIFICATION_SECONDS,
                     )
                     if outcome == "available" and on_complete is not None:
                         on_complete(result)
@@ -5792,6 +5903,48 @@ def _render_full_qa_pass_panel(
         def _bulk_acknowledged_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             acknowledged = wizard_state["bulk_acknowledged"]
             return [step for step in _payload_steps(payload) if str(step.get("id", "")) in acknowledged]
+
+        def _schedule_full_qa_notification(notification: dict[str, str], payload: dict[str, Any]) -> None:
+            timer_ref: dict[str, Any] = {"timer": None}
+
+            def _send_notification() -> None:
+                _cancel_background_poll_timer(timer_ref.get("timer"))
+                timer_ref["timer"] = None
+                if bool(wizard_state.get("full_qa_notified")):
+                    return
+                if running_actions or not bool(wizard_state.get("done")):
+                    return
+                if not _client_has_socket_connection():
+                    return
+                _notify_completion_safe(
+                    title=notification["title"],
+                    message=notification["message"],
+                    workspace=workspace,
+                    action_id="full-qa-pass",
+                    profile_id=profile_id,
+                    evidence_path=str(payload.get("workspace", "")),
+                    enabled=bool(notifications_control.value),
+                )
+                wizard_state["full_qa_notified"] = True
+
+            timer_ref["timer"] = _start_background_poll_timer(2.0, _send_notification)
+
+        def _reset_wizard_run_state(payload: dict[str, Any]) -> None:
+            wizard_state["payload"] = payload
+            wizard_state["index"] = 0
+            wizard_state["skipped"].clear()
+            wizard_state["completed"].clear()
+            wizard_state["auto_started"].clear()
+            wizard_state["bulk_ack_queued"].clear()
+            wizard_state["bulk_acknowledged"].clear()
+            wizard_state["bulk_ack_outcomes"].clear()
+            wizard_state["bulk_ack_drafts"].clear()
+            wizard_state["bulk_ack_values"].clear()
+            wizard_state["bulk_ack_high_risk_prompt"] = False
+            wizard_state["bulk_handoff_text"] = ""
+            wizard_state["action_results"].clear()
+            wizard_state["done"] = False
+            wizard_state["full_qa_notified"] = False
 
         def _first_focus_index(steps: list[dict[str, Any]], *, start: int = 0) -> int:
             non_blocking = {
@@ -6216,7 +6369,19 @@ def _render_full_qa_pass_panel(
                                 f"sgfx-wizard-rail-item sgfx-step-{prior_status}"
                             )
 
-                if not steps or wizard_state["done"]:
+                if not steps:
+                    with ui.column().classes("sgfx-wizard-card sgfx-wizard-empty"):
+                        ui.label(str(payload.get("summary", "Full QA pass has not run yet."))).classes(
+                            "sgfx-panel-title"
+                        )
+                        ui.label("Use Run full QA pass to start the local evidence chain.").classes("sgfx-muted")
+                    result_host.update()
+                    return
+
+                if wizard_state["done"]:
+                    full_qa_notification = None
+                    if not bool(wizard_state.get("full_qa_notified")):
+                        full_qa_notification = _full_qa_completion_notification(profile_id, payload)
                     with ui.column().classes("sgfx-wizard-card sgfx-wizard-done"):
                         ui.label("Full QA Pass summary").classes("sgfx-panel-title")
                         ui.label(str(payload.get("summary", "Full QA Pass complete for this dashboard run."))).classes(
@@ -6361,6 +6526,8 @@ def _render_full_qa_pass_panel(
                         if steps:
                             ui.button("Back", on_click=_show_previous_step)
                     result_host.update()
+                    if full_qa_notification is not None:
+                        _schedule_full_qa_notification(full_qa_notification, payload)
                     return
 
                 step = steps[current_index]
@@ -6440,32 +6607,29 @@ def _render_full_qa_pass_panel(
             result_host.update()
 
         def _run_full_pass() -> None:
-            trusted = "1" if bool(trusted_control.value) else "0"
-            ui.run_javascript(f"""
-                (() => {{
-                    const url = new window.URL(window.location.href);
-                    url.searchParams.set('profile', {json.dumps(profile_id)});
-                    url.searchParams.set('full_qa_run', '1');
-                    url.searchParams.set('automatic_mode', {json.dumps(trusted)});
-                    window.location.assign(url.toString());
-                }})();
-            """)
+            trusted = bool(trusted_control.value)
+            payload = build_full_qa_pass(
+                profile_id,
+                workspace=workspace,
+                bmw_root=bmw_root,
+                trusted_tool_mode=trusted,
+            )
+            append_activity_entry(
+                workspace,
+                verb="ran",
+                surface="full-qa-pass:run",
+                profile=str(payload.get("profile_id", profile_id)),
+                outcome="ok",
+                note=f"Full QA Pass run with automatic_mode={trusted}.",
+            )
+            notice.text = str(payload.get("summary", "Full QA pass started."))
+            _reset_wizard_run_state(payload)
+            _render_payload(payload)
 
-        ui.html(
-            f"""
-            <button class="sgfx-html-action-button" type="button" onclick="
-                (() => {{
-                    const checkbox = document.querySelector('.sgfx-automatic-mode-control');
-                    const automatic = checkbox?.getAttribute('aria-checked') !== 'false';
-                    const url = new window.URL(window.location.href);
-                    url.searchParams.set('profile', {html_escape(json.dumps(profile_id))});
-                    url.searchParams.set('full_qa_run', '1');
-                    url.searchParams.set('automatic_mode', automatic ? '1' : '0');
-                    window.location.assign(url.toString());
-                }})();
-            ">Run full QA pass</button>
-            """,
-            sanitize=False,
+        _attach_tooltip(
+            ui,
+            ui.button("Run full QA pass", on_click=_run_full_pass).classes("sgfx-html-action-button"),
+            "Start the local evidence chain for the selected profile.",
         )
         _render_payload(initial_payload)
 

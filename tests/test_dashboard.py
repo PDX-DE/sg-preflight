@@ -416,7 +416,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 10)
+                self.assertEqual(len(snapshot["pages"]), 11)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -593,6 +593,81 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(context["exe_sha"], "source-run")
         self.assertTrue(context["os_version"])
 
+    def test_dashboard_notifications_default_on_and_persisted_setting_wins(self) -> None:
+        from sg_preflight.dashboard import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            self.assertTrue(main._dashboard_notifications_enabled(workspace))
+
+            main._write_dashboard_notifications_preference(workspace, False)
+            self.assertFalse(main._dashboard_notifications_enabled(workspace))
+
+            main._write_dashboard_notifications_preference(workspace, True)
+            self.assertTrue(main._dashboard_notifications_enabled(workspace))
+
+            with mock.patch.dict(os.environ, {"SGFX_DESKTOP_NOTIFICATIONS": "0"}, clear=False):
+                self.assertFalse(main._dashboard_notifications_enabled(workspace))
+
+    def test_full_qa_completion_notification_uses_review_count_and_failure_copy(self) -> None:
+        from sg_preflight.dashboard.main import _full_qa_completion_notification
+
+        success = _full_qa_completion_notification(
+            "F70",
+            {
+                "status": "incomplete",
+                "counts": {"incomplete": 2, "confirmation_pending": 1},
+                "confirmation_items": [{"id": "manual"}],
+            },
+        )
+        self.assertEqual(success["title"], "Full QA Pass finished")
+        self.assertEqual(success["message"], "Full QA Pass for F70 completed. 4 items ready for your review.")
+
+        failed = _full_qa_completion_notification("F70", {"status": "failed", "counts": {"failed": 1}})
+        self.assertEqual(failed["title"], "Full QA Pass needs attention")
+        self.assertEqual(failed["message"], "Full QA Pass for F70 did not complete. See dashboard.")
+
+    def test_notify_completion_safe_respects_dashboard_preference_and_elapsed_threshold(self) -> None:
+        from sg_preflight.dashboard import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch("sg_preflight.dashboard.main.notify_desktop_completion") as notify:
+                main._notify_completion_safe(
+                    title="Done",
+                    message="Complete.",
+                    workspace=workspace,
+                    action_id="quick-action",
+                    profile_id="F70",
+                    elapsed_seconds=12,
+                    minimum_elapsed_seconds=30,
+                )
+                notify.assert_not_called()
+
+                main._notify_completion_safe(
+                    title="Done",
+                    message="Complete.",
+                    workspace=workspace,
+                    action_id="long-action",
+                    profile_id="F70",
+                    elapsed_seconds=31,
+                    minimum_elapsed_seconds=30,
+                )
+                notify.assert_called_once()
+
+            main._write_dashboard_notifications_preference(workspace, False)
+            with mock.patch("sg_preflight.dashboard.main.notify_desktop_completion") as notify:
+                main._notify_completion_safe(
+                    title="Done",
+                    message="Complete.",
+                    workspace=workspace,
+                    action_id="long-action",
+                    profile_id="F70",
+                    elapsed_seconds=90,
+                    minimum_elapsed_seconds=30,
+                )
+                notify.assert_not_called()
+
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"
@@ -647,6 +722,18 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn('"Automatic mode",', source)
         self.assertIn('value=bool(initial_payload.get("trusted_tool_mode", True))', source)
         self.assertIn("sgfx-automatic-mode-control", source)
+        self.assertIn("Desktop notifications", source)
+        self.assertIn("Save notification setting", source)
+        self.assertIn("desktop_notifications_enabled", source)
+        self.assertIn("LONG_RUNNING_NOTIFICATION_SECONDS", source)
+        self.assertIn("_full_qa_completion_notification", source)
+        self.assertIn('"full_qa_notified": False', source)
+        self.assertIn("sgfx-wizard-empty", source)
+        self.assertIn("full_qa_notification = None", source)
+        self.assertIn("_schedule_full_qa_notification", source)
+        self.assertIn("has_socket_connection", source)
+        self.assertIn("_reset_wizard_run_state", source)
+        self.assertIn("Start the local evidence chain for the selected profile.", source)
         self.assertIn("_snapshot_with_full_qa_payload(snapshot, payload)", source)
         self.assertIn("Manual mode opt-out", source)
         self.assertIn("trusted_tool_mode_note", source)
@@ -800,7 +887,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 10)
+        self.assertEqual(len(snapshot["pages"]), 11)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -814,7 +901,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 10)
+        self.assertEqual(len(snapshot["pages"]), 11)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")

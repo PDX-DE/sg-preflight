@@ -28,51 +28,17 @@ def _powershell_script(title: str, message: str, timeout_ms: int) -> str:
     return f"""
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-$form = New-Object System.Windows.Forms.Form
-$form.Text = {json.dumps(title)}
-$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
-$form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-$form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
-$form.ShowInTaskbar = $false
-$form.TopMost = $true
-$form.Width = 390
-$form.Height = 118
-$form.BackColor = [System.Drawing.Color]::FromArgb(34, 34, 34)
-$area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$form.Location = New-Object System.Drawing.Point(($area.Right - $form.Width - 18), ($area.Bottom - $form.Height - 18))
-$border = New-Object System.Windows.Forms.Panel
-$border.Dock = [System.Windows.Forms.DockStyle]::Fill
-$border.BackColor = [System.Drawing.Color]::FromArgb(34, 34, 34)
-$border.Padding = New-Object System.Windows.Forms.Padding(12)
-$titleLabel = New-Object System.Windows.Forms.Label
-$titleLabel.Text = {json.dumps(title)}
-$titleLabel.ForeColor = [System.Drawing.Color]::White
-$titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-$titleLabel.Left = 14
-$titleLabel.Top = 12
-$titleLabel.Width = 354
-$titleLabel.Height = 24
-$titleLabel.BackColor = [System.Drawing.Color]::FromArgb(34, 34, 34)
-$messageLabel = New-Object System.Windows.Forms.Label
-$messageLabel.Text = {json.dumps(message)}
-$messageLabel.ForeColor = [System.Drawing.Color]::Gainsboro
-$messageLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$messageLabel.Left = 14
-$messageLabel.Top = 42
-$messageLabel.Width = 354
-$messageLabel.Height = 58
-$messageLabel.AutoEllipsis = $true
-$messageLabel.BackColor = [System.Drawing.Color]::FromArgb(34, 34, 34)
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = {max(timeout_ms, 1200)}
-$timer.Add_Tick({{ $timer.Stop(); $form.Close() }})
-$border.Controls.Add($titleLabel)
-$border.Controls.Add($messageLabel)
-$form.Controls.Add($border)
-$timer.Start()
-[void]$form.ShowDialog()
-$timer.Dispose()
-$form.Dispose()
+$notify = New-Object System.Windows.Forms.NotifyIcon
+$notify.Icon = [System.Drawing.SystemIcons]::Information
+$notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
+$notify.BalloonTipTitle = {json.dumps(title)}
+$notify.BalloonTipText = {json.dumps(message)}
+$notify.Text = "SGFX QA Preflight"
+$notify.Visible = $true
+$notify.ShowBalloonTip({max(timeout_ms, 1200)})
+Start-Sleep -Milliseconds {max(timeout_ms, 1200)}
+$notify.Visible = $false
+$notify.Dispose()
 """
 
 
@@ -139,6 +105,7 @@ def notify_desktop_completion(
             record["delivery_status"] = "available" if return_code == 0 else "failed"
             record["shown"] = return_code == 0
             record["return_code"] = return_code
+            record["method"] = "windows_shell_notification"
             stderr = str(getattr(completed, "stderr", "") or "").strip()
             if stderr:
                 record["detail"] = stderr[-800:]
