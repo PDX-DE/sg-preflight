@@ -157,7 +157,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_ten_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_eleven_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -168,6 +168,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             page_ids,
             [
                 "full-qa-pass",
+                "batch-full-qa-pass",
                 "delivery-checklist",
                 "onboarding-guide",
                 "screenshot-test-state",
@@ -192,6 +193,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             snapshot["navigation"],
             [
                 {"id": "full-qa-pass", "label": "Full QA Pass"},
+                {"id": "batch-full-qa-pass", "label": "Batch Full QA Pass"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
                 {"id": "onboarding-guide", "label": "Onboarding Guide"},
                 {"id": "screenshot-test-state", "label": "Screenshot Test State"},
@@ -212,28 +214,32 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             snapshot["pages"][0]["tagline"],
             "One local pass through setup, evidence, review assist, and handoff status.",
         )
-        self.assertEqual(snapshot["pages"][1]["tagline"], "Workbook evidence per delivery profile (read-only).")
         self.assertEqual(
-            snapshot["pages"][2]["tagline"],
+            snapshot["pages"][1]["tagline"],
+            "Run selected profiles sequentially; one profile finishes before the next starts.",
+        )
+        self.assertEqual(snapshot["pages"][2]["tagline"], "Workbook evidence per delivery profile (read-only).")
+        self.assertEqual(
+            snapshot["pages"][3]["tagline"],
             "New-operator path through setup, evidence pages, manual review, and handoff.",
         )
-        self.assertEqual(snapshot["pages"][3]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
+        self.assertEqual(snapshot["pages"][4]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
         self.assertEqual(
-            snapshot["pages"][4]["tagline"],
+            snapshot["pages"][5]["tagline"],
             "Per-car review focus signal with delta since latest local manual review.",
         )
-        self.assertEqual(snapshot["pages"][5]["tagline"], "G70 vs G65 risk-score widget side by side.")
-        self.assertEqual(snapshot["pages"][6]["tagline"], "Morning status snapshot for the SG Daily standup.")
+        self.assertEqual(snapshot["pages"][6]["tagline"], "G70 vs G65 risk-score widget side by side.")
+        self.assertEqual(snapshot["pages"][7]["tagline"], "Morning status snapshot for the SG Daily standup.")
         self.assertEqual(
-            snapshot["pages"][7]["tagline"],
+            snapshot["pages"][8]["tagline"],
             "Local snapshot for standup review across selected car profiles.",
         )
         self.assertEqual(
-            snapshot["pages"][8]["tagline"],
+            snapshot["pages"][9]["tagline"],
             "Record the stopping point before a shift handoff.",
         )
         self.assertEqual(
-            snapshot["pages"][9]["tagline"],
+            snapshot["pages"][10]["tagline"],
             "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
         )
         self.assertIn("Manual review remains required.", snapshot["guardrails"])
@@ -481,6 +487,12 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Read-only Jira REST query", source)
         self.assertIn("Jira tickets unavailable", source)
         self.assertIn("Open setup guidance", source)
+        self.assertIn("Batch Full QA Pass", source)
+        self.assertIn("Run selected profiles", source)
+        self.assertIn("Cancel after current", source)
+        self.assertIn("start_dashboard_batch_full_qa_pass", source)
+        self.assertIn("poll_dashboard_batch_full_qa_pass", source)
+        self.assertIn("Sequential execution", source)
 
     def test_dashboard_source_accepts_profile_query_for_walkthrough_harness(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1615,6 +1627,89 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertNotIn("sg_preflight", command)
         self.assertIn("IDCEVODEV-1009239", command)
         self.assertIn("NA0", command)
+
+    def test_batch_full_qa_pass_command_uses_frozen_exe_directly(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch.object(dashboard_main.sys, "frozen", True, create=True):
+                with mock.patch.object(dashboard_main.sys, "executable", r"C:\bundle\sgfx-preflight.exe"):
+                    command = dashboard_main._dashboard_full_qa_pass_command(
+                        workspace=workspace,
+                        profile_id="F70",
+                        trusted_tool_mode=True,
+                    )
+
+        self.assertEqual(command[:3], [r"C:\bundle\sgfx-preflight.exe", "full-qa-pass", "run"])
+        self.assertNotIn("-m", command)
+        self.assertNotIn("sg_preflight", command)
+        self.assertIn("--profile", command)
+        self.assertIn("F70", command)
+        self.assertIn("--format", command)
+        self.assertIn("json", command)
+        self.assertIn("--automatic-mode", command)
+
+    def test_batch_full_qa_pass_runs_profiles_sequentially(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        popen_commands: list[list[str]] = []
+
+        class FakeProcess:
+            returncode = 0
+
+            def poll(self) -> int:
+                return self.returncode
+
+            def terminate(self) -> None:
+                return None
+
+            def wait(self, timeout: int | None = None) -> int:
+                return self.returncode
+
+            def kill(self) -> None:
+                return None
+
+        def fake_popen(command, **kwargs):
+            popen_commands.append(list(command))
+            profile = command[command.index("--profile") + 1]
+            payload = {
+                "profile_id": profile,
+                "status": "incomplete",
+                "summary": f"Full QA pass prepared for {profile}.",
+                "progress": {"completed_steps": 7, "total_steps": 9},
+                "steps": [
+                    {"id": "risk-score", "status": "incomplete", "payload": {"risk_score": "12"}},
+                    {"id": "manual-review-assist", "status": "incomplete", "payload": {}},
+                ],
+                "manual_review_required": True,
+                "is_approval": False,
+            }
+            kwargs["stdout"].write(json.dumps(payload).encode("utf-8"))
+            kwargs["stdout"].flush()
+            return FakeProcess()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch.object(dashboard_main.subprocess, "Popen", side_effect=fake_popen):
+                job = dashboard_main.start_dashboard_batch_full_qa_pass(
+                    workspace=workspace,
+                    profile_ids=["F70", "G65"],
+                    trusted_tool_mode=True,
+                )
+                first_poll = dashboard_main.poll_dashboard_batch_full_qa_pass(job)
+                second_poll = dashboard_main.poll_dashboard_batch_full_qa_pass(job)
+
+        self.assertEqual([command[command.index("--profile") + 1] for command in popen_commands], ["F70", "G65"])
+        self.assertFalse(first_poll["completed"])
+        self.assertEqual(first_poll["current_profile"], "G65")
+        self.assertTrue(second_poll["completed"])
+        self.assertEqual(second_poll["completed_profiles"], 2)
+        self.assertEqual([item["profile_id"] for item in second_poll["results"]], ["F70", "G65"])
+        self.assertEqual(second_poll["results"][0]["risk_score"], "12")
+        self.assertEqual(second_poll["results"][0]["pending_review_count"], 2)
+        self.assertTrue(second_poll["manual_review_required"])
+        self.assertFalse(second_poll["is_approval"])
 
     def test_build_quality_hero_report_invokes_cli_without_jira_attachment(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main

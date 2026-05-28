@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
@@ -106,6 +106,7 @@ DASHBOARD_GUARDRAILS = (
 )
 DASHBOARD_NAVIGATION = (
     ("full-qa-pass", "Full QA Pass"),
+    ("batch-full-qa-pass", "Batch Full QA Pass"),
     ("delivery-checklist", "Delivery Checklist"),
     ("onboarding-guide", "Onboarding Guide"),
     ("screenshot-test-state", "Screenshot Test State"),
@@ -953,6 +954,34 @@ def _full_qa_pass_page(
     }
 
 
+def _batch_full_qa_pass_page(profile_id: str, workspace: Path) -> dict[str, Any]:
+    payload = {
+        "schema_version": 1,
+        "profile_id": profile_id,
+        "workspace": str(workspace),
+        "status": "not_run",
+        "summary": "Select multiple profiles and run their Full QA Pass snapshots one at a time.",
+        "progress": {"completed_profiles": 0, "total_profiles": 0, "percent": 0},
+        "results": [],
+        "manual_review_required": True,
+        "records_operator_verdict": False,
+        "is_approval": False,
+        "guardrails": list(DASHBOARD_GUARDRAILS),
+        "confluence_anchors": [QUALITY_HERO_CONFLUENCE_ANCHOR],
+    }
+    return {
+        "id": "batch-full-qa-pass",
+        "title": "Batch Full QA Pass",
+        "tagline": "Run selected profiles sequentially; one profile finishes before the next starts.",
+        "status": "not_run",
+        "data_available": True,
+        "summary": str(payload.get("summary", "")),
+        "items": [],
+        "payload": payload,
+        "confluence_anchors": list(payload.get("confluence_anchors", [])),
+    }
+
+
 def _snapshot_with_full_qa_payload(snapshot: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     pages = list(snapshot.get("pages", []))
     for index, page in enumerate(pages):
@@ -1775,6 +1804,7 @@ def build_dashboard_snapshot(
         },
         "pages": [
             _full_qa_pass_page(resolved_profile_id, root, bmw_root=bmw_root),
+            _batch_full_qa_pass_page(resolved_profile_id, root),
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _onboarding_guide_page(
                 resolved_profile_id,
@@ -1869,6 +1899,8 @@ _BUILD_PACKAGE_STDOUT_TAIL_BYTES = 2000
 _BUILD_PACKAGE_FILE_ACTIVITY_LIMIT = 20
 _BUILD_PACKAGE_TYPICAL_RANGE_LABEL = "typical 1-5 min"
 _QUALITY_HERO_REPORT_TIMEOUT_SECONDS = 600
+_BATCH_FULL_QA_TIMEOUT_SECONDS = 600
+_BATCH_FULL_QA_TYPICAL_RANGE_LABEL = "Typical 1-3 min per profile"
 
 
 @dataclass
@@ -1883,6 +1915,29 @@ class ReviewPackageBuildJob:
     started_monotonic: float
     started_wall_time: float
     timeout_seconds: int
+    completed: bool = False
+    result_payload: dict[str, Any] | None = None
+
+
+@dataclass
+class BatchFullQaPassJob:
+    profile_ids: list[str]
+    workspace: Path
+    bmw_root: str
+    log_root: Path
+    timeout_seconds: int
+    trusted_tool_mode: bool
+    current_index: int = 0
+    process: subprocess.Popen[bytes] | None = None
+    command: list[str] = field(default_factory=list)
+    stdout_path: Path | None = None
+    stderr_path: Path | None = None
+    current_started_monotonic: float = 0.0
+    current_started_wall_time: float = 0.0
+    batch_started_monotonic: float = 0.0
+    batch_started_wall_time: float = 0.0
+    results: list[dict[str, Any]] = field(default_factory=list)
+    cancel_after_current: bool = False
     completed: bool = False
     result_payload: dict[str, Any] | None = None
 
@@ -2001,6 +2056,297 @@ def _elapsed_label(elapsed_seconds: float) -> str:
     if hours:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def _dashboard_full_qa_pass_command(
+    *,
+    workspace: Path,
+    profile_id: str,
+    bmw_root: str = "",
+    trusted_tool_mode: bool = True,
+) -> list[str]:
+    command = sgfx_cli_command(
+        "full-qa-pass",
+        "run",
+        "--profile",
+        profile_id,
+        "--workspace",
+        str(workspace),
+        "--format",
+        "json",
+    )
+    if bmw_root:
+        command.extend(["--bmw-root", bmw_root])
+    command.append("--automatic-mode" if trusted_tool_mode else "--manual-mode")
+    return command
+
+
+def _batch_profile_safe_name(profile_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().upper() or "PROFILE")
+
+
+def _read_json_payload(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    if not text:
+        return {}
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _batch_step_payload(payload: dict[str, Any], step_id: str) -> dict[str, Any]:
+    for step in payload.get("steps", []):
+        if isinstance(step, dict) and str(step.get("id", "")) == step_id:
+            step_payload = step.get("payload", {})
+            return step_payload if isinstance(step_payload, dict) else {}
+    return {}
+
+
+def _batch_profile_result(
+    job: BatchFullQaPassJob,
+    *,
+    profile_id: str,
+    exit_code: int,
+    timed_out: bool = False,
+) -> dict[str, Any]:
+    elapsed_seconds = time.monotonic() - job.current_started_monotonic
+    payload = _read_json_payload(job.stdout_path)
+    status = str(payload.get("status", "failed" if exit_code else "unknown"))
+    if exit_code != 0:
+        outcome = "failed"
+    elif timed_out:
+        outcome = "failed"
+    else:
+        outcome = status if status in {"passed", "incomplete", "failed"} else "recorded"
+    risk_payload = _batch_step_payload(payload, "risk-score")
+    risk_score = risk_payload.get("risk_score", risk_payload.get("score", "unknown"))
+    pending_review_count = len(
+        [
+            step
+            for step in payload.get("steps", [])
+            if isinstance(step, dict) and str(step.get("status", "")) not in {"passed", "skipped"}
+        ]
+    )
+    progress = payload.get("progress", {}) if isinstance(payload.get("progress"), dict) else {}
+    summary = str(payload.get("summary", "") or f"Full QA Pass exited {exit_code} for {profile_id}.")
+    result = {
+        "profile_id": profile_id,
+        "outcome": outcome,
+        "status": status,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "risk_score": str(risk_score),
+        "pending_review_count": pending_review_count,
+        "completed_steps": int(progress.get("completed_steps", 0) or 0),
+        "total_steps": int(progress.get("total_steps", 0) or 0),
+        "elapsed_seconds": int(max(0, elapsed_seconds)),
+        "elapsed_label": _elapsed_label(elapsed_seconds),
+        "summary": summary,
+        "stdout_path": str(job.stdout_path or ""),
+        "stderr_path": str(job.stderr_path or ""),
+        "stdout_tail_lines": _build_combined_tail_lines(job.stdout_path or Path(), job.stderr_path or Path()),
+        "profile_link": f"?profile={quote(profile_id)}&full_qa_run=1",
+        "manual_review_required": True,
+        "is_approval": False,
+    }
+    append_activity_entry(
+        job.workspace,
+        verb="ran",
+        surface="batch-full-qa-pass",
+        profile=profile_id,
+        outcome="ok" if exit_code == 0 and not timed_out else "error",
+        note=f"Batch Full QA Pass subprocess completed for {profile_id} with exit {exit_code}.",
+    )
+    return result
+
+
+def _batch_progress_payload(job: BatchFullQaPassJob, *, summary: str = "") -> dict[str, Any]:
+    total = len(job.profile_ids)
+    current_profile = job.profile_ids[job.current_index] if job.current_index < total else ""
+    elapsed = time.monotonic() - (job.current_started_monotonic or job.batch_started_monotonic)
+    completed = len(job.results)
+    return {
+        "status": "running",
+        "completed": False,
+        "profiles": list(job.profile_ids),
+        "current_profile": current_profile,
+        "current_index": min(job.current_index + 1, total),
+        "total_profiles": total,
+        "completed_profiles": completed,
+        "percent": int(round((completed / max(1, total)) * 100)),
+        "elapsed_seconds": int(max(0, elapsed)),
+        "elapsed_label": _elapsed_label(elapsed),
+        "typical_range": _BATCH_FULL_QA_TYPICAL_RANGE_LABEL,
+        "cancel_after_current": bool(job.cancel_after_current),
+        "summary": summary or f"Running profile {min(job.current_index + 1, total)} of {total}: {current_profile}.",
+        "results": list(job.results),
+        "stdout_tail_lines": _build_combined_tail_lines(job.stdout_path or Path(), job.stderr_path or Path()),
+        "stdout_path": str(job.stdout_path or ""),
+        "stderr_path": str(job.stderr_path or ""),
+        "manual_review_required": True,
+        "is_approval": False,
+    }
+
+
+def _complete_batch_full_qa_pass(job: BatchFullQaPassJob, *, canceled: bool = False) -> dict[str, Any]:
+    failed_count = len([item for item in job.results if str(item.get("exit_code", "")) != "0"])
+    incomplete_count = len([item for item in job.results if str(item.get("outcome", "")) == "incomplete"])
+    if canceled:
+        status = "incomplete"
+        summary = f"Batch stopped after {len(job.results)}/{len(job.profile_ids)} profile(s)."
+    elif failed_count:
+        status = "failed"
+        summary = f"Batch completed with {failed_count} failed profile subprocess(es)."
+    elif incomplete_count:
+        status = "incomplete"
+        summary = f"Batch completed; {incomplete_count} profile(s) still need operator review."
+    else:
+        status = "passed"
+        summary = f"Batch completed for {len(job.results)} profile(s)."
+    payload = {
+        "status": status,
+        "completed": True,
+        "profiles": list(job.profile_ids),
+        "current_profile": "",
+        "current_index": len(job.profile_ids),
+        "total_profiles": len(job.profile_ids),
+        "completed_profiles": len(job.results),
+        "percent": 100 if job.profile_ids else 0,
+        "typical_range": _BATCH_FULL_QA_TYPICAL_RANGE_LABEL,
+        "summary": summary,
+        "results": list(job.results),
+        "canceled": canceled,
+        "manual_review_required": True,
+        "is_approval": False,
+    }
+    job.completed = True
+    job.result_payload = payload
+    return payload
+
+
+def _start_batch_profile_process(job: BatchFullQaPassJob) -> None:
+    profile_id = job.profile_ids[job.current_index]
+    profile_token = _batch_profile_safe_name(profile_id)
+    stdout_path = job.log_root / f"{job.current_index + 1:02d}-{profile_token}.stdout.log"
+    stderr_path = job.log_root / f"{job.current_index + 1:02d}-{profile_token}.stderr.log"
+    ensure_parent(stdout_path)
+    command = _dashboard_full_qa_pass_command(
+        workspace=job.workspace,
+        profile_id=profile_id,
+        bmw_root=job.bmw_root,
+        trusted_tool_mode=job.trusted_tool_mode,
+    )
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    if not getattr(sys, "frozen", False):
+        repo_root = Path(__file__).resolve().parents[2]
+        existing_pythonpath = str(env.get("PYTHONPATH", "") or "")
+        env["PYTHONPATH"] = (
+            f"{repo_root}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(repo_root)
+        )
+    job.command = command
+    job.stdout_path = stdout_path
+    job.stderr_path = stderr_path
+    job.current_started_monotonic = time.monotonic()
+    job.current_started_wall_time = time.time()
+    with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
+        job.process = subprocess.Popen(
+            command,
+            cwd=job.workspace,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            env=env,
+            **hidden_subprocess_kwargs(),
+        )
+
+
+def start_dashboard_batch_full_qa_pass(
+    *,
+    workspace: Path | str,
+    profile_ids: list[str],
+    bmw_root: Path | str | None = None,
+    trusted_tool_mode: bool = True,
+    timeout_seconds: int = _BATCH_FULL_QA_TIMEOUT_SECONDS,
+) -> BatchFullQaPassJob:
+    workspace_path = Path(workspace).resolve()
+    clean_profiles: list[str] = []
+    for profile in profile_ids:
+        clean = str(profile or "").strip().upper()
+        if clean and clean not in clean_profiles:
+            clean_profiles.append(clean)
+    if not clean_profiles:
+        raise ValueError("Select at least one profile before starting the batch.")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_root = workspace_path / "operator_state" / "batch_full_qa_pass" / stamp
+    job = BatchFullQaPassJob(
+        profile_ids=clean_profiles,
+        workspace=workspace_path,
+        bmw_root=str(Path(bmw_root).resolve()) if bmw_root else "",
+        log_root=log_root,
+        timeout_seconds=timeout_seconds,
+        trusted_tool_mode=trusted_tool_mode,
+        batch_started_monotonic=time.monotonic(),
+        batch_started_wall_time=time.time(),
+    )
+    _start_batch_profile_process(job)
+    append_activity_entry(
+        workspace_path,
+        verb="ran",
+        surface="batch-full-qa-pass",
+        profile=",".join(clean_profiles),
+        outcome="ok",
+        note=f"Batch Full QA Pass started for {len(clean_profiles)} profile(s).",
+    )
+    return job
+
+
+def request_cancel_dashboard_batch_full_qa_pass(job: BatchFullQaPassJob) -> dict[str, Any]:
+    job.cancel_after_current = True
+    return _batch_progress_payload(job, summary="Cancel requested; current profile will finish first.")
+
+
+def poll_dashboard_batch_full_qa_pass(job: BatchFullQaPassJob) -> dict[str, Any] | None:
+    if job.completed:
+        return job.result_payload or _complete_batch_full_qa_pass(job)
+    if job.process is None:
+        if job.current_index >= len(job.profile_ids):
+            return _complete_batch_full_qa_pass(job)
+        _start_batch_profile_process(job)
+        return _batch_progress_payload(job)
+    exit_code = job.process.poll()
+    elapsed = time.monotonic() - job.current_started_monotonic
+    if exit_code is None and elapsed < job.timeout_seconds:
+        return _batch_progress_payload(job)
+    timed_out = False
+    if exit_code is None:
+        timed_out = True
+        job.process.terminate()
+        try:
+            job.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            job.process.kill()
+            job.process.wait(timeout=5)
+        exit_code = job.process.returncode if job.process.returncode is not None else -1
+    current_profile = job.profile_ids[job.current_index]
+    job.results.append(_batch_profile_result(job, profile_id=current_profile, exit_code=exit_code, timed_out=timed_out))
+    job.current_index += 1
+    job.process = None
+    if job.cancel_after_current or job.current_index >= len(job.profile_ids):
+        return _complete_batch_full_qa_pass(job, canceled=job.cancel_after_current and job.current_index < len(job.profile_ids))
+    _start_batch_profile_process(job)
+    return _batch_progress_payload(
+        job,
+        summary=f"Started next profile {job.current_index + 1} of {len(job.profile_ids)}: {job.profile_ids[job.current_index]}.",
+    )
 
 
 def _review_build_progress_payload(job: ReviewPackageBuildJob, *, elapsed_seconds: float) -> dict[str, Any]:
@@ -4683,6 +5029,195 @@ def _render_jira_profile_tickets_card(
             ui.label("No open profile-matched Jira tickets were returned.").classes("sgfx-muted")
 
 
+def _render_batch_full_qa_pass_panel(
+    ui: Any,
+    snapshot: dict[str, Any],
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+    open_profile: Callable[[str], None] | None = None,
+) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "batch-full-qa-pass")
+    profile_ids = [str(option.get("id", "")) for option in snapshot.get("profile_options", []) if str(option.get("id", ""))]
+    active_profile = str(snapshot.get("profile_id", "") or "")
+    default_profiles = [active_profile] if active_profile in profile_ids else profile_ids[:1]
+    for preferred in ("F70", "G65"):
+        if preferred in profile_ids and preferred not in default_profiles:
+            default_profiles.append(preferred)
+        if len(default_profiles) >= 2:
+            break
+    if len(default_profiles) < 2:
+        for candidate in profile_ids:
+            if candidate not in default_profiles:
+                default_profiles.append(candidate)
+            if len(default_profiles) >= 2:
+                break
+    with ui.column().classes("sgfx-page-panel"):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
+        ui.label("Sequential execution: profile N finishes before profile N+1 starts.").classes("sgfx-summary")
+        ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
+        profiles_select = ui.select(
+            profile_ids,
+            value=default_profiles,
+            label="Profiles",
+        ).props("multiple use-chips outlined").classes("full-width")
+        status_label = ui.label("Batch has not run in this dashboard session.").classes("sgfx-muted")
+        current_label = ui.label("").classes("sgfx-summary")
+        progress = ui.linear_progress(value=0).classes("full-width")
+        progress.visible = False
+        live_output = (
+            ui.textarea(label="Current profile subprocess output", value="No subprocess output yet.")
+            .props("readonly outlined")
+            .classes("full-width sgfx-live-output")
+        )
+        live_output.visible = False
+        result_host = ui.column().classes("full-width")
+        timer_ref: dict[str, Any] = {"timer": None}
+        job_ref: dict[str, Any] = {"job": None}
+
+        def _stop_timer() -> None:
+            _cancel_background_poll_timer(timer_ref.get("timer"))
+            timer_ref["timer"] = None
+
+        def _render_results(result: dict[str, Any]) -> None:
+            result_host.clear()
+            rows = [
+                {
+                    "profile": str(item.get("profile_id", "")),
+                    "outcome": str(item.get("outcome", "")),
+                    "risk_score": str(item.get("risk_score", "")),
+                    "pending_review_count": str(item.get("pending_review_count", 0)),
+                    "elapsed": str(item.get("elapsed_label", "")),
+                }
+                for item in result.get("results", [])
+                if isinstance(item, dict)
+            ]
+            with result_host:
+                if not rows:
+                    ui.label("No profile results recorded yet.").classes("sgfx-muted")
+                    return
+                ui.table(
+                    columns=[
+                        {"name": "profile", "label": "Profile", "field": "profile", "align": "left"},
+                        {"name": "outcome", "label": "Outcome", "field": "outcome", "align": "left"},
+                        {"name": "risk_score", "label": "Risk Score", "field": "risk_score", "align": "left"},
+                        {
+                            "name": "pending_review_count",
+                            "label": "Pending Review",
+                            "field": "pending_review_count",
+                            "align": "left",
+                        },
+                        {"name": "elapsed", "label": "Elapsed", "field": "elapsed", "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="profile",
+                ).classes("sgfx-table")
+                with ui.row().classes("sgfx-batch-profile-links"):
+                    for row in rows:
+                        profile = str(row.get("profile", ""))
+                        ui.link(
+                            f"Open {profile}",
+                            f"/?profile={quote(profile)}&full_qa_run=1",
+                            new_tab=False,
+                        ).classes("sgfx-muted")
+
+        def _apply_result(result: dict[str, Any]) -> None:
+            progress.visible = True
+            live_output.visible = True
+            percent = max(0, min(100, int(result.get("percent", 0) or 0)))
+            progress.value = percent / 100
+            current = str(result.get("current_profile", ""))
+            current_index = result.get("current_index", 0)
+            total = result.get("total_profiles", 0)
+            elapsed = str(result.get("elapsed_label", "00:00"))
+            typical = str(result.get("typical_range", _BATCH_FULL_QA_TYPICAL_RANGE_LABEL))
+            current_label.text = (
+                f"Profile {current_index}/{total}: {current} · Elapsed {elapsed} / {typical}"
+                if current
+                else f"Completed {result.get('completed_profiles', 0)}/{total} profile(s)."
+            )
+            status_label.text = str(result.get("summary", "Batch Full QA Pass running."))
+            lines = [str(line) for line in result.get("stdout_tail_lines", []) if str(line).strip()]
+            live_output.value = "\n".join(lines[-20:]) if lines else "No subprocess output yet."
+            _render_results(result)
+            if bool(result.get("completed", False)):
+                _stop_timer()
+                progress.value = 1.0
+                start_button.enable()
+                cancel_button.disable()
+
+        def _poll() -> None:
+            try:
+                job = job_ref.get("job")
+                if job is None:
+                    _stop_timer()
+                    return
+                result = poll_dashboard_batch_full_qa_pass(job)
+                if result is not None:
+                    _apply_result(result)
+            except RuntimeError as exc:
+                if not _parent_slot_deleted(exc):
+                    raise
+                _stop_timer()
+
+        def _start_timer() -> None:
+            _stop_timer()
+            timer_ref["timer"] = _start_background_poll_timer(1.0, _poll)
+
+        def _start_batch() -> None:
+            raw_profiles = profiles_select.value
+            selected = raw_profiles if isinstance(raw_profiles, list) else [raw_profiles]
+            profiles = [str(profile).strip() for profile in selected if str(profile).strip()]
+            if not profiles:
+                ui.notify("Select at least one profile before starting the batch.")
+                return
+            try:
+                job_ref["job"] = start_dashboard_batch_full_qa_pass(
+                    workspace=workspace,
+                    profile_ids=profiles,
+                    bmw_root=bmw_root,
+                    trusted_tool_mode=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                status_label.text = f"Batch Full QA Pass failed to start: {exc}"
+                ui.notify("Batch Full QA Pass failed to start.")
+                return
+            status_label.text = f"Batch Full QA Pass started for {len(profiles)} profile(s)."
+            progress.visible = True
+            live_output.visible = True
+            start_button.disable()
+            cancel_button.enable()
+            _start_timer()
+            _poll()
+
+        def _cancel_after_current() -> None:
+            job = job_ref.get("job")
+            if job is None:
+                return
+            result = request_cancel_dashboard_batch_full_qa_pass(job)
+            cancel_button.disable()
+            _apply_result(result)
+            ui.notify("Batch will stop after the current profile.")
+
+        with ui.row().classes("sgfx-full-qa-controls"):
+            start_button = _attach_tooltip(
+                ui,
+                ui.button("Run selected profiles", on_click=_start_batch).props("color=primary"),
+                "Start one Full QA Pass subprocess per selected profile, sequentially.",
+            )
+            cancel_button = _attach_tooltip(
+                ui,
+                ui.button("Cancel after current", on_click=_cancel_after_current),
+                "Finish the current profile, then stop before starting the next one.",
+            )
+            cancel_button.disable()
+        _render_results({"results": []})
+
+
 def _render_full_qa_pass_panel(
     ui: Any,
     snapshot: dict[str, Any],
@@ -6094,6 +6629,7 @@ def _render_dashboard(
             .sgfx-jira-ticket-row { border-top: 1px solid var(--sgfx-border); padding-top: 8px; gap: 8px; }
             .sgfx-jira-ticket-key { font-weight: 700; color: var(--sgfx-accent); text-decoration: none; }
             .sgfx-jira-status-pill { border: 1px solid var(--sgfx-border); border-radius: 999px; padding: 2px 8px; color: var(--sgfx-fg-muted); font-size: 12px; white-space: nowrap; }
+            .sgfx-batch-profile-links { gap: 8px; flex-wrap: wrap; margin-top: 8px; }
             .sgfx-first-launch-card { gap: 8px; padding: 14px 16px; border-color: rgba(78, 201, 176, 0.42); background: #22302d; }
             .sgfx-first-launch-card[data-sgfx-dismissed="true"] { display: none; }
             .sgfx-first-launch-actions { gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -6326,6 +6862,14 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         open_page=_open_page,
+                    )
+                elif active_page_id == "batch-full-qa-pass":
+                    _render_batch_full_qa_pass_panel(
+                        ui,
+                        state["snapshot"],
+                        workspace,
+                        bmw_root=bmw_root,
+                        open_profile=lambda profile_id: (_set_profile(profile_id), _open_page("full-qa-pass")),
                     )
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
