@@ -38,6 +38,19 @@ class DiffDeltaBadge:
 
 
 @dataclass(frozen=True)
+class DiffRegressionBadge:
+    status: str
+    label: str = ""
+    level: str = ""
+    delta_percent: float | None = None
+    threshold_percent: float = 1.0
+    current_max_delta_percent: float | None = None
+    previous_max_delta_percent: float | None = None
+    axis_label: str = ""
+    previous_generated_at_utc: str = ""
+
+
+@dataclass(frozen=True)
 class DiffDeltaHistogramAxis:
     axis: str
     axis_length: int
@@ -90,6 +103,14 @@ class ScreenshotReviewItem:
     diff_delta_x: int | None = None
     diff_delta_y: int | None = None
     diff_delta_backend: str = ""
+    diff_regression_status: str = "unavailable"
+    diff_regression_label: str = ""
+    diff_regression_level: str = ""
+    diff_regression_delta_percent: float | None = None
+    diff_regression_threshold_percent: float = 1.0
+    diff_regression_previous_percent: float | None = None
+    diff_regression_axis_label: str = ""
+    diff_regression_previous_generated_at_utc: str = ""
     diff_histogram_status: str = "unavailable"
     diff_histogram_threshold_percent: float = 0.0
     diff_histogram_changed_pixel_count: int = 0
@@ -184,6 +205,209 @@ def diff_histogram_threshold_percent_from_env() -> float:
 
 def diff_histogram_bin_count_from_env() -> int:
     return _env_int("SGFX_DIFF_HISTOGRAM_BINS", 96, minimum=8, maximum=240)
+
+
+def diff_regression_threshold_percent_from_env() -> float:
+    return _env_float("SGFX_DIFF_REGRESSION_THRESHOLD_PERCENT", 1.0)
+
+
+def _profile_output_token(profile_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(profile_id or "").strip().lower() or "profile")
+
+
+def _diff_regression_history_root() -> Path:
+    raw = os.environ.get("SGFX_DIFF_REGRESSION_HISTORY_ROOT", "").strip()
+    if raw:
+        return Path(raw)
+    return Path.home() / "sgfx_outputs"
+
+
+def _diff_regression_history_path(profile_id: str) -> Path:
+    return _diff_regression_history_root() / _profile_output_token(profile_id) / "screenshot-diff-history.json"
+
+
+def _load_diff_regression_history(profile_id: str) -> dict[str, Any]:
+    path = _diff_regression_history_path(profile_id)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _previous_diff_metrics(profile_id: str) -> tuple[dict[str, dict[str, Any]], str]:
+    payload = _load_diff_regression_history(profile_id)
+    items = payload.get("items", {})
+    metrics: dict[str, dict[str, Any]] = {}
+    if isinstance(items, dict):
+        for key, item in items.items():
+            if isinstance(item, dict):
+                metrics[str(key)] = item
+    elif isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                key = str(item.get("key", "")).strip()
+                if key:
+                    metrics[key] = item
+    generated_at = str(payload.get("generated_at_utc", "")).strip()
+    return metrics, generated_at
+
+
+def _metric_float(metric: dict[str, Any], key: str) -> float | None:
+    try:
+        value = float(metric.get(key, ""))
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
+def _metric_int(metric: dict[str, Any], key: str) -> int | None:
+    try:
+        value = int(metric.get(key, ""))
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
+def _axis_label(
+    *,
+    current_x: int | None,
+    current_y: int | None,
+    previous_x: int | None,
+    previous_y: int | None,
+) -> str:
+    if current_x is None or current_y is None or previous_x is None or previous_y is None:
+        return "overall"
+    x_delta = abs(current_x - previous_x)
+    y_delta = abs(current_y - previous_y)
+    if y_delta > x_delta:
+        return "Y-axis"
+    if x_delta > y_delta:
+        return "X-axis"
+    if x_delta and y_delta:
+        return "X/Y axes"
+    return "same hotspot"
+
+
+def _diff_metric_record(key: str, badge: DiffDeltaBadge) -> dict[str, Any] | None:
+    if badge.status != "available" or badge.max_delta_percent is None:
+        return None
+    return {
+        "key": key,
+        "max_delta_percent": badge.max_delta_percent,
+        "max_x": badge.max_x,
+        "max_y": badge.max_y,
+        "level": badge.level,
+        "backend": badge.backend,
+    }
+
+
+def _diff_regression_badge_from_previous(
+    key: str,
+    current: DiffDeltaBadge,
+    *,
+    previous_metrics: dict[str, dict[str, Any]],
+    previous_generated_at_utc: str = "",
+    threshold_percent: float | None = None,
+) -> DiffRegressionBadge:
+    threshold = threshold_percent if threshold_percent is not None else diff_regression_threshold_percent_from_env()
+    if threshold < 0:
+        threshold = 0.0
+    if current.status != "available" or current.max_delta_percent is None:
+        return DiffRegressionBadge(status="unavailable", threshold_percent=threshold)
+    previous = previous_metrics.get(key)
+    if not previous:
+        return DiffRegressionBadge(
+            status="no_previous",
+            label="No previous run",
+            level="neutral",
+            threshold_percent=threshold,
+            current_max_delta_percent=current.max_delta_percent,
+        )
+    previous_percent = _metric_float(previous, "max_delta_percent")
+    if previous_percent is None:
+        return DiffRegressionBadge(
+            status="no_previous",
+            label="No previous run",
+            level="neutral",
+            threshold_percent=threshold,
+            current_max_delta_percent=current.max_delta_percent,
+        )
+    delta = round(current.max_delta_percent - previous_percent, 3)
+    if delta > threshold:
+        level = "regression"
+    elif delta < -threshold:
+        level = "improved"
+    else:
+        level = "stable"
+    axis = _axis_label(
+        current_x=current.max_x,
+        current_y=current.max_y,
+        previous_x=_metric_int(previous, "max_x"),
+        previous_y=_metric_int(previous, "max_y"),
+    )
+    return DiffRegressionBadge(
+        status="available",
+        label=f"\u0394 vs last run: {delta:+.1f}% on {axis}",
+        level=level,
+        delta_percent=delta,
+        threshold_percent=threshold,
+        current_max_delta_percent=current.max_delta_percent,
+        previous_max_delta_percent=previous_percent,
+        axis_label=axis,
+        previous_generated_at_utc=previous_generated_at_utc,
+    )
+
+
+def _write_diff_regression_history(
+    profile_id: str,
+    metrics: list[dict[str, Any]],
+    *,
+    threshold_percent: float,
+) -> None:
+    if not metrics:
+        return
+    path = _diff_regression_history_path(profile_id)
+    payload = {
+        "schema_version": 1,
+        "profile_id": str(profile_id or "").strip().upper(),
+        "generated_at_utc": _utc_now(),
+        "threshold_percent": threshold_percent,
+        "items": {str(item["key"]): item for item in metrics if str(item.get("key", "")).strip()},
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        return
+
+
+def compute_diff_regression_badge(
+    profile_id: str,
+    diff_path: str | Path,
+    *,
+    key: str = "",
+    threshold_percent: float | None = None,
+) -> DiffRegressionBadge:
+    clean_profile = str(profile_id or "").strip()
+    if not clean_profile:
+        return DiffRegressionBadge(status="unavailable")
+    path = Path(diff_path) if str(diff_path or "").strip() else Path()
+    if not path:
+        return DiffRegressionBadge(status="unavailable")
+    current = compute_diff_delta_badge(path)
+    row_key = key.strip() if key.strip() else path.with_suffix("").name
+    for suffix in ("_color", "_diff"):
+        if row_key.casefold().endswith(suffix):
+            row_key = row_key[: -len(suffix)]
+    previous_metrics, previous_generated_at = _previous_diff_metrics(clean_profile)
+    return _diff_regression_badge_from_previous(
+        row_key,
+        current,
+        previous_metrics=previous_metrics,
+        previous_generated_at_utc=previous_generated_at,
+        threshold_percent=threshold_percent,
+    )
 
 
 def _paeth_predictor(left: int, above: int, upper_left: int) -> int:
@@ -623,6 +847,9 @@ def build_screenshot_review_viewer(
     )
     diff_lookup = _diff_lookup(diff_reference_roots)
     asset_root = output_root / "assets"
+    previous_metrics, previous_generated_at = _previous_diff_metrics(profile_id)
+    regression_threshold = diff_regression_threshold_percent_from_env()
+    current_metrics: list[dict[str, Any]] = []
 
     items: list[ScreenshotReviewItem] = []
     for pair in triage_bundle.report.pairs[:max_items]:
@@ -634,6 +861,16 @@ def build_screenshot_review_viewer(
                 or ""
             )
         delta_badge, delta_histogram = _compute_diff_review_metrics(diff_path)
+        regression_badge = _diff_regression_badge_from_previous(
+            pair.key,
+            delta_badge,
+            previous_metrics=previous_metrics,
+            previous_generated_at_utc=previous_generated_at,
+            threshold_percent=regression_threshold,
+        )
+        metric_record = _diff_metric_record(pair.key, delta_badge)
+        if metric_record is not None:
+            current_metrics.append(metric_record)
         x_axis = delta_histogram.x_axis
         y_axis = delta_histogram.y_axis
         items.append(
@@ -656,6 +893,14 @@ def build_screenshot_review_viewer(
                 diff_delta_x=delta_badge.max_x,
                 diff_delta_y=delta_badge.max_y,
                 diff_delta_backend=delta_badge.backend,
+                diff_regression_status=regression_badge.status,
+                diff_regression_label=regression_badge.label,
+                diff_regression_level=regression_badge.level,
+                diff_regression_delta_percent=regression_badge.delta_percent,
+                diff_regression_threshold_percent=regression_badge.threshold_percent,
+                diff_regression_previous_percent=regression_badge.previous_max_delta_percent,
+                diff_regression_axis_label=regression_badge.axis_label,
+                diff_regression_previous_generated_at_utc=regression_badge.previous_generated_at_utc,
                 diff_histogram_status=delta_histogram.status,
                 diff_histogram_threshold_percent=delta_histogram.threshold_percent,
                 diff_histogram_changed_pixel_count=delta_histogram.changed_pixel_count,
@@ -699,6 +944,7 @@ def build_screenshot_review_viewer(
     html_path = output_root / "screenshot-review-viewer.html"
     json_path.write_text(json.dumps(viewer.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     html_path.write_text(_html(viewer), encoding="utf-8")
+    _write_diff_regression_history(profile_id, current_metrics, threshold_percent=regression_threshold)
     return ScreenshotReviewViewerBundle(
         viewer=viewer,
         json_path=json_path,
@@ -815,6 +1061,12 @@ def _item_button_html(item: ScreenshotReviewItem) -> str:
         if item.diff_delta_label
         else ""
     )
+    regression = (
+        f'<em class="regression-badge regression-{escape(item.diff_regression_level)}">'
+        f"{escape(item.diff_regression_label)}</em>"
+        if item.diff_regression_label
+        else ""
+    )
     histogram = _histogram_html(item)
     return (
         f'<article class="review-row{level_class}" data-review-row="{escape(item.key)}">'
@@ -822,6 +1074,7 @@ def _item_button_html(item: ScreenshotReviewItem) -> str:
         f"<strong>{escape(item.key)}</strong>"
         f"<span>{escape(item.classification)} / {escape(item.visual_classification)}</span>"
         f"{badge}"
+        f"{regression}"
         "</button>"
         f"{histogram}"
         "</article>"
@@ -871,6 +1124,11 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
     .delta-badge.delta-green, .delta-detail.delta-green {{ color: var(--delta-green); border-color: rgba(87, 214, 141, 0.5); background: rgba(87, 214, 141, 0.12); }}
     .delta-badge.delta-yellow, .delta-detail.delta-yellow {{ color: var(--delta-yellow); border-color: rgba(232, 192, 125, 0.55); background: rgba(232, 192, 125, 0.12); }}
     .delta-badge.delta-red, .delta-detail.delta-red {{ color: var(--delta-red); border-color: rgba(240, 127, 114, 0.55); background: rgba(240, 127, 114, 0.13); }}
+    .regression-badge, .regression-detail {{ display: inline-flex; align-items: center; margin-top: 6px; padding: 2px 7px; border-radius: 999px; font-style: normal; font-size: 12px; line-height: 1.35; border: 1px solid var(--border); color: var(--muted); background: rgba(255, 255, 255, 0.035); }}
+    .regression-badge.regression-regression, .regression-detail.regression-regression {{ color: var(--delta-red); border-color: rgba(240, 127, 114, 0.55); background: rgba(240, 127, 114, 0.13); }}
+    .regression-badge.regression-improved, .regression-detail.regression-improved {{ color: var(--delta-green); border-color: rgba(87, 214, 141, 0.5); background: rgba(87, 214, 141, 0.12); }}
+    .regression-badge.regression-stable, .regression-detail.regression-stable {{ color: var(--delta-yellow); border-color: rgba(232, 192, 125, 0.55); background: rgba(232, 192, 125, 0.1); }}
+    .regression-badge.regression-neutral, .regression-detail.regression-neutral {{ color: var(--muted); border-color: var(--border); background: rgba(255, 255, 255, 0.035); }}
     .delta-histogram {{ border: 1px solid var(--border); border-radius: 6px; background: rgba(255, 255, 255, 0.025); padding: 7px 8px; }}
     .delta-histogram summary {{ cursor: pointer; color: var(--muted); font-size: 12px; list-style: none; }}
     .delta-histogram summary::-webkit-details-marker {{ display: none; }}
@@ -925,6 +1183,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
       <p data-visual></p>
       <p data-escalation></p>
       <p class="delta-detail" data-delta></p>
+      <p class="regression-detail" data-regression></p>
       <p class="score" data-score></p>
     </section>
     <section class="panes">
@@ -944,6 +1203,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
       const visual = document.querySelector('[data-visual]');
       const escalation = document.querySelector('[data-escalation]');
       const delta = document.querySelector('[data-delta]');
+      const regression = document.querySelector('[data-regression]');
       const score = document.querySelector('[data-score]');
       const zoomInput = document.querySelector('[data-zoom]');
       const zoomLabel = document.querySelector('[data-zoom-label]');
@@ -992,6 +1252,9 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
         delta.textContent = item.diff_delta_label || '';
         delta.className = `delta-detail ${{item.diff_delta_level ? `delta-${{item.diff_delta_level}}` : ''}}`;
         delta.hidden = !item.diff_delta_label;
+        regression.textContent = item.diff_regression_label || '';
+        regression.className = `regression-detail ${{item.diff_regression_level ? `regression-${{item.diff_regression_level}}` : ''}}`;
+        regression.hidden = !item.diff_regression_label;
         score.textContent = item.review_score ? `Review score: ${{item.review_score.toFixed(2)}}` : '';
         setPane('expected', item.expected_uri, item.expected_path);
         setPane('actual', item.actual_uri, item.actual_path);

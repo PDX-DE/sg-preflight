@@ -68,7 +68,11 @@ from sg_preflight.profiles import (
     list_run_profiles,
 )
 from sg_preflight.risk_scoring import read_per_car_risk_score
-from sg_preflight.screenshot_review_viewer import build_screenshot_review_viewer, compute_diff_delta_badge
+from sg_preflight.screenshot_review_viewer import (
+    build_screenshot_review_viewer,
+    compute_diff_delta_badge,
+    compute_diff_regression_badge,
+)
 from sg_preflight.screenshot_capture import (
     SCREENSHOT_CAPTURE_ACTION_ID,
     SCREENSHOT_CAPTURE_ACTION_LABEL,
@@ -2929,6 +2933,7 @@ def _screenshot_review_visual_rows(result: dict[str, Any], *, limit: int = 4) ->
     rows = result.get("screenshot_review_rows", [])
     if not isinstance(rows, list):
         return []
+    profile_id = str(result.get("profile_id", "")).strip()
     visual_rows: list[dict[str, str]] = []
     for row in rows:
         if not isinstance(row, dict):
@@ -2938,6 +2943,11 @@ def _screenshot_review_visual_rows(result: dict[str, Any], *, limit: int = 4) ->
         diff_path = str(row.get("diff_path", "")).strip()
         diff_src = _dashboard_data_uri(diff_path)
         delta_badge = compute_diff_delta_badge(diff_path)
+        regression_badge = compute_diff_regression_badge(
+            profile_id,
+            diff_path,
+            key=str(row.get("key", "") or row.get("label", "")).strip(),
+        )
         if not any((expected_src, actual_src, diff_src)):
             continue
         visual_rows.append(
@@ -2952,6 +2962,8 @@ def _screenshot_review_visual_rows(result: dict[str, Any], *, limit: int = 4) ->
                 "diff_path": diff_path,
                 "diff_delta_label": delta_badge.label,
                 "diff_delta_level": delta_badge.level,
+                "diff_regression_label": regression_badge.label,
+                "diff_regression_level": regression_badge.level,
             }
         )
         if len(visual_rows) >= limit:
@@ -3048,6 +3060,10 @@ def _render_action_visuals(
                             if row.get("diff_delta_label"):
                                 ui.label(str(row["diff_delta_label"])).classes(
                                     f"sgfx-delta-badge sgfx-delta-{row['diff_delta_level']}"
+                                )
+                            if row.get("diff_regression_label"):
+                                ui.label(str(row["diff_regression_label"])).classes(
+                                    f"sgfx-regression-badge sgfx-regression-{row['diff_regression_level']}"
                                 )
         elif image_items:
             with ui.column().classes("sgfx-diff-preview"):
@@ -7075,6 +7091,11 @@ def _render_dashboard(
             .sgfx-delta-green { color: #7ee2a8; border-color: rgba(126, 226, 168, 0.55); background: rgba(126, 226, 168, 0.11); }
             .sgfx-delta-yellow { color: #e8c07d; border-color: rgba(232, 192, 125, 0.55); background: rgba(232, 192, 125, 0.12); }
             .sgfx-delta-red { color: #f08a7d; border-color: rgba(240, 138, 125, 0.55); background: rgba(240, 138, 125, 0.13); }
+            .sgfx-regression-badge { display: inline-flex; align-items: center; flex: 0 0 auto; padding: 2px 7px; border: 1px solid var(--sgfx-border); border-radius: 999px; font-size: 11px; line-height: 1.35; }
+            .sgfx-regression-regression { color: #f08a7d; border-color: rgba(240, 138, 125, 0.55); background: rgba(240, 138, 125, 0.13); }
+            .sgfx-regression-improved { color: #7ee2a8; border-color: rgba(126, 226, 168, 0.55); background: rgba(126, 226, 168, 0.11); }
+            .sgfx-regression-stable { color: #e8c07d; border-color: rgba(232, 192, 125, 0.55); background: rgba(232, 192, 125, 0.1); }
+            .sgfx-regression-neutral { color: var(--sgfx-fg-muted); border-color: var(--sgfx-border); background: rgba(255, 255, 255, 0.035); }
             .sgfx-technical-details-text textarea { font-family: Consolas, 'Courier New', monospace; font-size: 12px; min-height: 180px; }
             .sgfx-step-eta { font-variant-numeric: tabular-nums; }
             .sgfx-risk-metric { flex: 1 1 220px; min-width: 220px; border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 12px; background: var(--sgfx-bg-elev); }

@@ -3,10 +3,12 @@ from __future__ import annotations
 from contextlib import redirect_stdout
 import io
 import json
+import os
 import struct
 import tempfile
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from sg_preflight.cli import main
 from sg_preflight.screenshot_review_viewer import (
@@ -103,13 +105,14 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self._write_bmp(actual_root / "front.bmp", (255, 20, 30))
             self._write_bmp(diff_root / "front_color.bmp", (255, 0, 0))
 
-            bundle = build_screenshot_review_viewer(
-                "G70",
-                project_root,
-                root / "out" / "viewer",
-                candidate_roots=(actual_root,),
-                diff_reference_roots=(diff_root,),
-            )
+            with mock.patch.dict(os.environ, {"SGFX_DIFF_REGRESSION_HISTORY_ROOT": str(root / "history")}):
+                bundle = build_screenshot_review_viewer(
+                    "G70",
+                    project_root,
+                    root / "out" / "viewer",
+                    candidate_roots=(actual_root,),
+                    diff_reference_roots=(diff_root,),
+                )
 
             self.assertEqual(bundle.viewer.profile_id, "G70")
             self.assertEqual(bundle.viewer.item_count, 1)
@@ -161,6 +164,64 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             )[0]
             self.assertTrue(script_body.startswith('{"profile_id"'))
             self.assertNotIn("&quot;", script_body)
+
+    def test_viewer_diff_regression_badge_compares_against_previous_profile_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "G70"
+            expected_root = project_root / "export" / "tests" / "expected"
+            actual_root = project_root / "export" / "tests" / "actuals"
+            diff_root = project_root / "export" / "tests" / "diff"
+            self._write_bmp(expected_root / "front.bmp", (0, 20, 30))
+            self._write_bmp(actual_root / "front.bmp", (255, 20, 30))
+            diff_path = diff_root / "front_color.bmp"
+            env = {
+                "SGFX_DIFF_REGRESSION_HISTORY_ROOT": str(root / "history"),
+                "SGFX_DIFF_REGRESSION_THRESHOLD_PERCENT": "1.0",
+            }
+
+            with mock.patch.dict(os.environ, env):
+                self._write_bmp_pixels(
+                    diff_path,
+                    [
+                        [(4, 0, 0), (0, 0, 0)],
+                        [(0, 0, 0), (0, 0, 0)],
+                    ],
+                )
+                first = build_screenshot_review_viewer(
+                    "G70",
+                    project_root,
+                    root / "out" / "viewer-first",
+                    candidate_roots=(actual_root,),
+                    diff_reference_roots=(diff_root,),
+                )
+
+                self.assertEqual(first.viewer.items[0].diff_regression_status, "no_previous")
+                self.assertEqual(first.viewer.items[0].diff_regression_label, "No previous run")
+
+                self._write_bmp_pixels(
+                    diff_path,
+                    [
+                        [(0, 0, 0), (0, 0, 0)],
+                        [(8, 0, 0), (0, 0, 0)],
+                    ],
+                )
+                second = build_screenshot_review_viewer(
+                    "G70",
+                    project_root,
+                    root / "out" / "viewer-second",
+                    candidate_roots=(actual_root,),
+                    diff_reference_roots=(diff_root,),
+                )
+
+            item = second.viewer.items[0]
+            self.assertEqual(item.diff_regression_status, "available")
+            self.assertEqual(item.diff_regression_level, "regression")
+            self.assertEqual(item.diff_regression_label, "\u0394 vs last run: +1.6% on Y-axis")
+            self.assertEqual(item.diff_regression_axis_label, "Y-axis")
+            self.assertAlmostEqual(item.diff_regression_delta_percent or 0.0, 1.568, places=3)
+            history = json.loads((root / "history" / "g70" / "screenshot-diff-history.json").read_text())
+            self.assertEqual(history["items"]["front"]["max_y"], 1)
 
     def test_viewer_json_script_payload_keeps_json_quotes_for_row_buttons(self) -> None:
         payload = _script_json_payload('{"summary":"</script><b>check</b>","quote":"ok"}')
