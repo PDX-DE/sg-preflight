@@ -1581,6 +1581,67 @@ class TestCLI(unittest.TestCase):
         self.assertIn("repo_scene_checks", workflow_keys)
         self.assertIn("bmw_screenshot_smoke", workflow_keys)
 
+    def test_top_level_help_surfaces_frequency_ordered_action_map(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertIn("Daily-use action map (frequency ordered):", result.stdout)
+        self.assertIn("full-qa-pass", result.stdout)
+        self.assertIn("sgfx-preflight.exe full-qa-pass run --profile G65", result.stdout)
+        self.assertIn("sgfx-preflight.exe delivery-workbook trigger --profile F70", result.stdout)
+        action_map = result.stdout.split("Daily-use action map (frequency ordered):", maxsplit=1)[1]
+        self.assertLess(action_map.index("full-qa-pass"), action_map.index("list-profiles"))
+
+    def test_subcommand_help_includes_copy_paste_example(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "full-qa-pass", "run", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertIn("Examples:", result.stdout)
+        self.assertIn("sgfx-preflight.exe full-qa-pass run --profile G65", result.stdout)
+
+    def test_version_reports_build_metadata(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "sg_preflight", "--version"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertIn("sg-preflight 0.1.0", result.stdout)
+        self.assertIn("commit ", result.stdout)
+        self.assertIn("build ", result.stdout)
+        self.assertIn("python ", result.stdout)
+
+    def test_readme_contains_three_copy_paste_exe_examples(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            r".\dist\sgfx-preflight\sgfx-preflight.exe full-qa-pass run --profile G65",
+            readme,
+        )
+        self.assertIn(
+            r".\dist\sgfx-preflight\sgfx-preflight.exe delivery-workbook trigger --profile F70",
+            readme,
+        )
+        self.assertIn(
+            r".\dist\sgfx-preflight\sgfx-preflight.exe jira post-comment --ticket IDCEVODEV-1009239",
+            readme,
+        )
+
     def test_desktop_help_is_available(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "desktop", "--help"],

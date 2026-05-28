@@ -20,7 +20,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
 - Clean dashboard mode: `python -m sg_preflight dashboard run --ui-mode clean` launches the neutral NiceGUI work view from source. The packaged Windows executable embeds that NiceGUI Clean layout inside a desktop window by default and lets the operator toggle to Grafiks inside the same `.exe`. Both modes are local evidence views and do not change backend QA logic.
 - OpenHTF station MVP: local station surface for delivery checklist, screenshot test state, daily digest, and manual review companion phases. Internal OpenHTF execution state is evidence status only; manual review remains required.
-- Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--confirm`.
+- Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--auto-confirm`.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
 
 ## Included Files
@@ -87,6 +87,18 @@ When `dist\sgfx-preflight\sgfx-preflight.exe` is included in a prepared bundle, 
 Double-clicking the executable without arguments opens the embedded NiceGUI Clean layout in a desktop window. In the packaged executable, Clean and Grafiks dashboard requests stay inside the `.exe`; `--no-native` is reserved for local server diagnostics. The packaged desktop path does not open an external browser. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
 
 The legacy `python -m sg_preflight ui` command and `/ui` routes are deprecated compatibility surfaces. Use the packaged `.exe` Clean window or `dashboard run --ui-mode clean` for operator work.
+
+## Copy-Paste CLI Examples
+
+Use these from the bundle root after the packaged executable is present:
+
+```powershell
+.\dist\sgfx-preflight\sgfx-preflight.exe full-qa-pass run --profile G65 --workspace C:\repositories\trunk --format json
+.\dist\sgfx-preflight\sgfx-preflight.exe delivery-workbook trigger --profile F70 --workspace C:\repositories\trunk --format json
+.\dist\sgfx-preflight\sgfx-preflight.exe jira post-comment --ticket IDCEVODEV-1009239 --body "Local QA evidence is ready for review." --format json
+```
+
+The Jira example previews by default. Review the preview, then rerun the same command with `--auto-confirm` only when posting is intended.
 
 ## Building the Windows Executable
 
@@ -204,7 +216,7 @@ When you run SGFX QA Preflight, it reads operator-local files and renders them f
 
 Where the tool surfaces "suggested" evidence — for example the per-step evidence hints in the Manual Review Companion — the suggestion comes from a deterministic local filesystem probe (file exists, directory has these files, workbook has these rows). The operator records every verdict; the tool never pre-decides.
 
-The Jira post flow is the one explicit network boundary. It stays default-off behind a `--confirm` flag; the default mode is dry-run. A real post additionally requires operator-provided Jira base URL and PAT.
+The Jira post flow is the one explicit network boundary. It stays default-off behind an `--auto-confirm` flag; the default mode is dry-run. A real post additionally requires operator-provided Jira base URL and PAT.
 
 Manual review remains required. Decision: not approval — evidence only.
 BMW Git access is read-only. SGFX never modifies BMW source.
