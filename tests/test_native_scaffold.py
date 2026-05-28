@@ -82,6 +82,7 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertTrue(script_path.exists())
         self.assertIn("packaging = [", pyproject)
         self.assertIn("PyInstaller>=6.20,<7", pyproject)
+        self.assertIn("data/*.json", pyproject)
 
         text = script_path.read_text(encoding="utf-8")
         self.assertIn("--onedir", text)
@@ -101,6 +102,7 @@ class TestNativeScaffold(unittest.TestCase):
             "sg_preflight/static",
             "sg_preflight/templates",
             "sg_preflight/dashboard",
+            "sg_preflight/data",
         ):
             self.assertIn(asset_name, text)
 

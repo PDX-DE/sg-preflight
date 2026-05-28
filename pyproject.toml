@@ -48,4 +48,4 @@ where = ["."]
 include = ["sg_preflight*"]
 
 [tool.setuptools.package-data]
-sg_preflight = ["templates/*.html", "static/*.css", "static/*.js"]
+sg_preflight = ["templates/*.html", "static/*.css", "static/*.js", "data/*.json"]

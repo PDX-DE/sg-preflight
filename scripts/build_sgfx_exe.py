@@ -31,6 +31,7 @@ def build_pyinstaller_args() -> list[str]:
         ("sg_preflight/static", "sg_preflight/static"),
         ("sg_preflight/templates", "sg_preflight/templates"),
         ("sg_preflight/dashboard", "sg_preflight/dashboard"),
+        ("sg_preflight/data", "sg_preflight/data"),
     )
     args = [
         "--noconfirm",

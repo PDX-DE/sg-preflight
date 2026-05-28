@@ -85,6 +85,10 @@ class TestScreenshotTriage(unittest.TestCase):
                 "cars/BMW/G70/export/tests/diff/missing_candidate_*.png absent",
                 pair_map["missing_candidate"].summary,
             )
+            self.assertIn("Pink/magenta content is context-dependent", pair_map["missing_candidate"].summary)
+            self.assertIn("Color alone is not used as the verdict.", pair_map["missing_candidate"].summary)
+            self.assertIn("Diagnostic anchors:", pair_map["missing_candidate"].summary)
+            self.assertNotIn("textures/shaders fail to load", pair_map["missing_candidate"].summary)
             self.assertEqual(pair_map["missing_candidate"].escalation_path, "data_prep_or_ci_team")
             self.assertEqual(pair_map["extra_candidate"].classification, "missing_baseline")
             self.assertIsNotNone(pair_map["changed"].review_score)

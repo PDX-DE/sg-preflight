@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.bmw_pipeline_diagnostics import diagnostic_pattern_anchors
+
 try:
     from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageStat
 except ImportError:  # pragma: no cover - exercised through graceful fallback
@@ -381,14 +383,22 @@ def _missing_candidate_summary(profile_id: str, project_root: Path, key: str) ->
     test_name = Path(str(key)).with_suffix("").name or "<test>"
     diff_hint = Path("cars") / "BMW" / profile_root / "export" / "tests" / "diff" / f"{test_name}_*.png"
     config_hint = Path("cars") / "BMW" / profile_root / "export" / "tests" / "test_config.lua"
+    anchors = diagnostic_pattern_anchors("actual_image_not_rendered_diff_missing", "magenta_tint_in_actual_image")
+    anchor_lines = "\n".join(f"- {anchor}" for anchor in anchors) or "- unavailable"
     return (
         "BMW pipeline did not render an actual image for this test.\n\n"
-        "Likely cause: scene init / shader load / missing-asset issue at BMW pipeline level.\n\n"
+        "This result is incomplete until SGFX can produce the actual image or exhaust the diagnostic chain. "
+        "Manual review remains required.\n\n"
+        "Pink/magenta content is context-dependent: it can be intentional test background, declared placeholder "
+        "graphics, or a missing/mislinked dependency. Color alone is not used as the verdict.\n\n"
         "Investigate:\n"
-        f"- Check disk: {diff_hint.as_posix()} absent\n"
+        f"- Check disk: expected actual image is absent; diff hint: {diff_hint.as_posix()} absent\n"
         f"- Check BMW Git test config for `{test_name}` scene: {config_hint.as_posix()}\n"
-        "- Check BMW Ramses error logs (often fall back to pink/magenta when textures/shaders fail to load)\n\n"
-        "Operator action: identify root cause and escalate to data prep / CI team if BMW Git asset issue."
+        "- Check referenced scene, texture, shader, and environment files.\n"
+        "- If the operator confirms, refresh BMW Git and SVN read-only sources, then retry.\n"
+        "- If still missing, use asset-doctor findings and the copy-ready escalation message.\n\n"
+        f"Diagnostic anchors:\n{anchor_lines}\n\n"
+        "Operator action: run the diagnostic chain and escalate to data prep / CI team if the actual image stays missing."
     )
 
 

@@ -844,11 +844,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("BMW pipeline did not render an actual image for this test.", triage_source)
-        self.assertIn("scene init / shader load / missing-asset issue", triage_source)
+        self.assertIn("Pink/magenta content is context-dependent", triage_source)
+        self.assertIn("Color alone is not used as the verdict.", triage_source)
         self.assertIn("Check disk:", triage_source)
         self.assertIn("Check BMW Git test config", triage_source)
+        self.assertIn("refresh BMW Git and SVN read-only sources", triage_source)
         self.assertIn("data_prep_or_ci_team", triage_source)
         self.assertIn("escalation_path", viewer_source)
+        self.assertNotIn("textures/shaders fail to load", triage_source)
         self.assertNotIn("Baseline exists but no candidate image was found.", triage_source)
 
     def test_parent_slot_deleted_matches_nicegui_deleted_element_message(self) -> None:
