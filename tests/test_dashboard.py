@@ -856,6 +856,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             _ignorable_nicegui_runtime_error,
             _nicegui_client_deleted,
             _parent_slot_deleted,
+            _run_javascript_if_client_alive,
         )
 
         self.assertTrue(_parent_slot_deleted(RuntimeError("The parent element this slot belongs to has been deleted.")))
@@ -875,6 +876,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 RuntimeError("The client this element belongs to has been deleted.")
             )
         )
+        dead_ui = mock.Mock()
+        dead_ui.run_javascript.side_effect = RuntimeError("The parent element this slot belongs to has been deleted.")
+        _run_javascript_if_client_alive(dead_ui, "window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();")
+
+        broken_ui = mock.Mock()
+        broken_ui.run_javascript.side_effect = RuntimeError("unexpected javascript failure")
+        with self.assertRaises(RuntimeError):
+            _run_javascript_if_client_alive(broken_ui, "window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();")
 
     def test_dashboard_snapshot_exposes_first_run_setup_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1003,9 +1012,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("_start_background_poll_timer", source)
         self.assertIn("_cancel_background_poll_timer", source)
         self.assertIn("_parent_slot_deleted", source)
+        self.assertIn("_run_javascript_if_client_alive", source)
         self.assertIn("except RuntimeError as exc", source)
         self.assertIn("def _scroll_live_output_to_bottom() -> None:", source)
-        self.assertIn("except RuntimeError:\n                return", source)
+        self.assertIn("_run_javascript_if_client_alive(\n                ui,", source)
         self.assertNotIn("ui.timer(", source)
         self.assertNotIn("poll_timer.active", source)
 

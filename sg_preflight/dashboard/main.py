@@ -357,6 +357,14 @@ def _ignorable_nicegui_runtime_error(error: RuntimeError) -> bool:
     )
 
 
+def _run_javascript_if_client_alive(ui: Any, code: str) -> None:
+    try:
+        ui.run_javascript(code)
+    except RuntimeError as exc:
+        if not _ignorable_nicegui_runtime_error(exc):
+            raise
+
+
 def _find_open_dashboard_port(start_port: int = 8000, end_port: int = 8999) -> int:
     for port in range(start_port, end_port + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -5588,15 +5596,13 @@ def _render_full_qa_pass_panel(
             return "Waiting for subprocess stdout/stderr..."
 
         def _scroll_live_output_to_bottom() -> None:
-            try:
-                ui.run_javascript(
-                    "setTimeout(() => {"
-                    "document.querySelectorAll('.sgfx-live-output textarea')"
-                    ".forEach((el) => { el.scrollTop = el.scrollHeight; });"
-                    "}, 0);"
-                )
-            except RuntimeError:
-                return
+            _run_javascript_if_client_alive(
+                ui,
+                "setTimeout(() => {"
+                "document.querySelectorAll('.sgfx-live-output textarea')"
+                ".forEach((el) => { el.scrollTop = el.scrollHeight; });"
+                "}, 0);",
+            )
 
         def _typical_range_for_step(step: dict[str, Any]) -> str:
             step_id = str(step.get("id", ""))
@@ -7298,7 +7304,8 @@ def _render_dashboard(
                 "profileId": str(state["snapshot"].get("profile_id", "")),
                 "activePage": str(state.get("active_page_id", "")),
             }
-            ui.run_javascript(
+            _run_javascript_if_client_alive(
+                ui,
                 f"""
                 (() => {{
                     const payload = {json.dumps(payload)};
@@ -7376,12 +7383,15 @@ def _render_dashboard(
                 else:
                     _render_page_panel(ui, _pages_by_id()[active_page_id])
             content.update()
-            ui.run_javascript("window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();")
+            _run_javascript_if_client_alive(
+                ui,
+                "window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();",
+            )
 
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
-            ui.run_javascript(f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
-            ui.run_javascript("window.sgfxSetSidebarOpen && window.sgfxSetSidebarOpen(false);")
+            _run_javascript_if_client_alive(ui, f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
+            _run_javascript_if_client_alive(ui, "window.sgfxSetSidebarOpen && window.sgfxSetSidebarOpen(false);")
             if page_id in {"daily-digest", "team-digest-board"} and _pages_by_id().get(page_id, {}).get("deferred"):
                 state["snapshot"] = build_dashboard_snapshot(
                     str(state["snapshot"]["profile_id"]),
@@ -7393,7 +7403,10 @@ def _render_dashboard(
                 )
                 _refresh_labels()
             _render_current_page()
-            ui.run_javascript(f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});")
+            _run_javascript_if_client_alive(
+                ui,
+                f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
+            )
 
         def _refresh_snapshot(profile_id: str | None = None) -> None:
             current_profile = profile_id if profile_id is not None else str(state["snapshot"]["profile_id"])
@@ -7423,7 +7436,8 @@ def _render_dashboard(
 
         def _install_shortcut_script() -> None:
             messages = {str(item["key"]): str(item["message"]) for item in state["snapshot"]["shortcut_actions"]}
-            ui.run_javascript(
+            _run_javascript_if_client_alive(
+                ui,
                 f"""
                 (() => {{
                     const messages = {json.dumps(messages)};
