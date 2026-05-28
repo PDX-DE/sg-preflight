@@ -9,7 +9,11 @@ import subprocess
 import tempfile
 import unittest
 
-from sg_preflight.bmw_pipeline_auto_fix import run_missing_actual_diagnostic_chain
+from sg_preflight.bmw_pipeline_auto_fix import (
+    render_missing_actual_diagnostic_markdown,
+    render_missing_actual_diagnostic_text,
+    run_missing_actual_diagnostic_chain,
+)
 from sg_preflight.cli import main
 
 
@@ -86,6 +90,10 @@ class TestBmwPipelineAutoFix(unittest.TestCase):
             asset_payload = asset_step["payload"]
             self.assertEqual(asset_step["status"], "incomplete")
             self.assertEqual(asset_payload["missing_references"][0]["reference"], "textures/missing.png")
+            text = render_missing_actual_diagnostic_text(payload)
+            markdown = render_missing_actual_diagnostic_markdown(payload)
+            self.assertIn("textures/missing.png", text)
+            self.assertIn("textures/missing.png", markdown)
 
     def test_read_refresh_runner_executes_only_after_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

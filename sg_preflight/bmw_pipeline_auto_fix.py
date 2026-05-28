@@ -448,6 +448,35 @@ def run_missing_actual_diagnostic_chain(
     }
 
 
+def _asset_doctor_reference_lines(payload: dict[str, Any], *, markdown: bool = False) -> list[str]:
+    missing = payload.get("missing_references", [])
+    if not isinstance(missing, list) or not missing:
+        return []
+    lines = ["  Missing references:" if not markdown else "  - Missing references:"]
+    for item in missing[:5]:
+        if not isinstance(item, dict):
+            continue
+        reference = str(item.get("reference", "")).strip()
+        candidates = item.get("candidate_paths", [])
+        first_candidate = ""
+        if isinstance(candidates, list):
+            first_candidate = next((str(path).strip() for path in candidates if str(path).strip()), "")
+        if markdown:
+            if first_candidate:
+                lines.append(f"    - `{reference}` (check `{first_candidate}`)")
+            else:
+                lines.append(f"    - `{reference}`")
+        elif first_candidate:
+            lines.append(f"  - {reference} (check {first_candidate})")
+        else:
+            lines.append(f"  - {reference}")
+    if len(missing) > 5:
+        remaining = len(missing) - 5
+        prefix = "    -" if markdown else "  -"
+        lines.append(f"{prefix} ... {remaining} more reference(s)")
+    return lines
+
+
 def render_missing_actual_diagnostic_text(payload: dict[str, Any]) -> str:
     lines = [
         f"BMW pipeline diagnostic chain: {payload.get('profile_id', '')}",
@@ -459,6 +488,10 @@ def render_missing_actual_diagnostic_text(payload: dict[str, Any]) -> str:
     for step in payload.get("steps", []):
         if isinstance(step, dict):
             lines.append(f"- {step.get('label', step.get('id', 'step'))}: {step.get('status', 'unknown')} - {step.get('detail', '')}")
+            if str(step.get("id", "")) == "asset-doctor":
+                step_payload = step.get("payload", {})
+                if isinstance(step_payload, dict):
+                    lines.extend(_asset_doctor_reference_lines(step_payload))
     return "\n".join(lines)
 
 
@@ -476,6 +509,10 @@ def render_missing_actual_diagnostic_markdown(payload: dict[str, Any]) -> str:
     for step in payload.get("steps", []):
         if isinstance(step, dict):
             lines.append(f"- **{step.get('label', step.get('id', 'step'))}**: `{step.get('status', 'unknown')}` - {step.get('detail', '')}")
+            if str(step.get("id", "")) == "asset-doctor":
+                step_payload = step.get("payload", {})
+                if isinstance(step_payload, dict):
+                    lines.extend(_asset_doctor_reference_lines(step_payload, markdown=True))
     lines.extend(
         [
             "",
