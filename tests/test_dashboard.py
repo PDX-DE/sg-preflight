@@ -829,6 +829,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Confirm read-refresh and retry", source)
         self.assertIn("operator_confirmed_read_refresh=True", source)
         self.assertIn("operator_confirmed_retry_capture=retry_capture", source)
+        self.assertIn('threading.Thread(target=_worker, name="sgfx-missing-actual-diagnostics"', source)
         self.assertIn("_render_action_visuals", source)
         self.assertIn("def _notify_ui(message: str) -> None:", source)
         self.assertIn("if not _ignorable_nicegui_runtime_error(exc)", source)

@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from time import monotonic
 from typing import Any, Callable
@@ -6389,114 +6390,147 @@ def _render_full_qa_pass_panel(
             visual_host.visible = False
             if set_running_controls is not None:
                 set_running_controls(True)
-            try:
-                project_root_text = str(action.get("project_root", "")).strip()
-                expected_root_text = str(action.get("expected_root", "")).strip()
-                if project_root_text:
-                    project_root = Path(project_root_text).resolve()
-                else:
-                    project = get_run_profile(profile_id, workspace, bmw_root=bmw_root)
-                    project_root = project.source_project_root()
-                result = run_missing_actual_diagnostic_chain(
-                    profile_id=profile_id,
-                    workspace=workspace,
-                    bmw_root=bmw_root,
-                    project_root=project_root,
-                    expected_root=Path(expected_root_text).resolve() if expected_root_text else None,
-                    candidate_roots=tuple(
-                        Path(str(item)).resolve()
-                        for item in action.get("candidate_roots", [])
-                        if str(item).strip()
-                    ),
-                    diff_reference_roots=tuple(
-                        Path(str(item)).resolve()
-                        for item in action.get("diff_reference_roots", [])
-                        if str(item).strip()
-                    ),
-                    output_root=_missing_actual_diagnostics_output_root(workspace, profile_id),
-                    operator_confirmed_read_refresh=operator_confirmed_read_refresh,
-                    retry_capture=retry_capture,
-                    operator_confirmed_retry_capture=retry_capture,
-                )
-            except Exception as exc:  # noqa: BLE001
-                result = {
-                    "action_id": MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID,
-                    "profile_id": profile_id,
-                    "status": "failed",
-                    "summary": f"Missing-actual diagnostic chain failed: {exc}",
-                    "manual_review_required": True,
-                    "is_approval": False,
-                    "steps": [],
-                }
-            finally:
+
+            def _execute_diagnostic_chain() -> dict[str, Any]:
+                try:
+                    project_root_text = str(action.get("project_root", "")).strip()
+                    expected_root_text = str(action.get("expected_root", "")).strip()
+                    if project_root_text:
+                        project_root = Path(project_root_text).resolve()
+                    else:
+                        project = get_run_profile(profile_id, workspace, bmw_root=bmw_root)
+                        project_root = project.source_project_root()
+                    return run_missing_actual_diagnostic_chain(
+                        profile_id=profile_id,
+                        workspace=workspace,
+                        bmw_root=bmw_root,
+                        project_root=project_root,
+                        expected_root=Path(expected_root_text).resolve() if expected_root_text else None,
+                        candidate_roots=tuple(
+                            Path(str(item)).resolve()
+                            for item in action.get("candidate_roots", [])
+                            if str(item).strip()
+                        ),
+                        diff_reference_roots=tuple(
+                            Path(str(item)).resolve()
+                            for item in action.get("diff_reference_roots", [])
+                            if str(item).strip()
+                        ),
+                        output_root=_missing_actual_diagnostics_output_root(workspace, profile_id),
+                        operator_confirmed_read_refresh=operator_confirmed_read_refresh,
+                        retry_capture=retry_capture,
+                        operator_confirmed_retry_capture=retry_capture,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    return {
+                        "action_id": MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID,
+                        "profile_id": profile_id,
+                        "status": "failed",
+                        "summary": f"Missing-actual diagnostic chain failed: {exc}",
+                        "manual_review_required": True,
+                        "is_approval": False,
+                        "steps": [],
+                    }
+
+            def _clear_diagnostic_running_state() -> None:
                 running_actions.discard(action_id)
                 wizard_state["running_action_id"] = ""
                 wizard_state["running_step_id"] = ""
                 progress.visible = False
                 if set_running_controls is not None:
                     set_running_controls(False)
-            status = str(result.get("status", "unknown"))
-            status_label.text = status
-            completion_label.text = str(result.get("summary", "Missing-actual diagnostic chain recorded."))
-            live_output.value = _action_output_text(result)
-            _scroll_live_output_to_bottom()
-            _merge_missing_actual_diagnostic_result(str(action.get("step_id", "")), result)
-            if bool(result.get("operator_confirmation_required", False)) and not operator_confirmed_read_refresh:
-                def _confirm_followup(current: dict[str, Any] = action) -> None:
-                    _hide_prompt_overlay(prompt_overlay)
-                    _run_diagnostic_chain_action(
-                        current,
-                        prompt_overlay=prompt_overlay,
-                        status_label=status_label,
-                        eta_label=eta_label,
-                        progress=progress,
-                        live_output=live_output,
-                        details_host=details_host,
-                        visual_label=visual_label,
-                        visual_host=visual_host,
-                        completion_label=completion_label,
-                        set_running_controls=set_running_controls,
-                        operator_confirmed_read_refresh=True,
-                        retry_capture=True,
-                    )
 
-                def _show_followup_prompt() -> None:
-                    prompt_overlay.clear()
-                    prompt_overlay.visible = True
-                    with prompt_overlay:
-                        with ui.column().classes("sgfx-wizard-modal"):
-                            ui.label("Confirm read-refresh and retry").classes("sgfx-panel-title")
-                            ui.label(str(result.get("confirmation_message", ""))).classes("sgfx-summary")
-                            ui.label(
-                                "This only runs read-refresh and screenshot retry. SVN writes stay locked."
-                            ).classes("sgfx-muted")
-                            paths = [str(path) for path in action.get("target_paths", []) if str(path).strip()]
-                            if paths:
-                                ui.label("Target paths").classes("sgfx-panel-tagline")
-                                for path in paths:
-                                    ui.label(path).classes("sgfx-muted")
-                            with ui.row().classes("sgfx-wizard-modal-actions"):
-                                ui.button("Yes", on_click=lambda _event=None: _confirm_followup()).props(
-                                    "color=primary"
-                                )
-                                ui.button("Cancel", on_click=lambda: _hide_prompt_overlay(prompt_overlay))
+            def _apply_diagnostic_result(result: dict[str, Any]) -> None:
+                status = str(result.get("status", "unknown"))
+                status_label.text = status
+                completion_label.text = str(result.get("summary", "Missing-actual diagnostic chain recorded."))
+                live_output.value = _action_output_text(result)
+                _scroll_live_output_to_bottom()
+                _merge_missing_actual_diagnostic_result(str(action.get("step_id", "")), result)
+                if bool(result.get("operator_confirmation_required", False)) and not operator_confirmed_read_refresh:
+                    def _confirm_followup(current: dict[str, Any] = action) -> None:
+                        _hide_prompt_overlay(prompt_overlay)
+                        _run_diagnostic_chain_action(
+                            current,
+                            prompt_overlay=prompt_overlay,
+                            status_label=status_label,
+                            eta_label=eta_label,
+                            progress=progress,
+                            live_output=live_output,
+                            details_host=details_host,
+                            visual_label=visual_label,
+                            visual_host=visual_host,
+                            completion_label=completion_label,
+                            set_running_controls=set_running_controls,
+                            operator_confirmed_read_refresh=True,
+                            retry_capture=True,
+                        )
 
-                details_host.clear()
-                details_host.visible = True
-                with details_host:
-                    ui.label("Read-refresh and retry are waiting for operator confirmation.").classes(
-                        "sgfx-panel-tagline"
-                    )
-                    ui.label(str(result.get("confirmation_message", ""))).classes("sgfx-muted")
-                    ui.button("Run read-refresh and retry", on_click=lambda _event=None: _show_followup_prompt()).props(
-                        "color=primary"
-                    )
-            _append_activity(
-                action=action_id,
-                outcome="error" if status == "failed" else "ok",
-                note=str(result.get("summary", "")),
-            )
-            _notify_ui(f"Missing-actual diagnostic chain {status}.")
+                    def _show_followup_prompt() -> None:
+                        prompt_overlay.clear()
+                        prompt_overlay.visible = True
+                        with prompt_overlay:
+                            with ui.column().classes("sgfx-wizard-modal"):
+                                ui.label("Confirm read-refresh and retry").classes("sgfx-panel-title")
+                                ui.label(str(result.get("confirmation_message", ""))).classes("sgfx-summary")
+                                ui.label(
+                                    "This only runs read-refresh and screenshot retry. SVN writes stay locked."
+                                ).classes("sgfx-muted")
+                                paths = [str(path) for path in action.get("target_paths", []) if str(path).strip()]
+                                if paths:
+                                    ui.label("Target paths").classes("sgfx-panel-tagline")
+                                    for path in paths:
+                                        ui.label(path).classes("sgfx-muted")
+                                with ui.row().classes("sgfx-wizard-modal-actions"):
+                                    ui.button("Yes", on_click=lambda _event=None: _confirm_followup()).props(
+                                        "color=primary"
+                                    )
+                                    ui.button("Cancel", on_click=lambda: _hide_prompt_overlay(prompt_overlay))
+
+                    details_host.clear()
+                    details_host.visible = True
+                    with details_host:
+                        ui.label("Read-refresh and retry are waiting for operator confirmation.").classes(
+                            "sgfx-panel-tagline"
+                        )
+                        ui.label(str(result.get("confirmation_message", ""))).classes("sgfx-muted")
+                        ui.button(
+                            "Run read-refresh and retry",
+                            on_click=lambda _event=None: _show_followup_prompt(),
+                        ).props(
+                            "color=primary"
+                        )
+                _append_activity(
+                    action=action_id,
+                    outcome="error" if status == "failed" else "ok",
+                    note=str(result.get("summary", "")),
+                )
+                _notify_ui(f"Missing-actual diagnostic chain {status}.")
+
+            if operator_confirmed_read_refresh:
+                worker_state: dict[str, Any] = {"completed": False, "result": None, "timer": None}
+
+                def _worker() -> None:
+                    worker_state["result"] = _execute_diagnostic_chain()
+                    worker_state["completed"] = True
+
+                def _poll_worker() -> None:
+                    if not bool(worker_state.get("completed", False)):
+                        return
+                    _cancel_background_poll_timer(worker_state.get("timer"))
+                    worker_state["timer"] = None
+                    _clear_diagnostic_running_state()
+                    result = worker_state.get("result")
+                    if isinstance(result, dict):
+                        _apply_diagnostic_result(result)
+
+                threading.Thread(target=_worker, name="sgfx-missing-actual-diagnostics", daemon=True).start()
+                worker_state["timer"] = _start_background_poll_timer(0.5, _poll_worker)
+                return
+
+            result = _execute_diagnostic_chain()
+            _clear_diagnostic_running_state()
+            _apply_diagnostic_result(result)
 
         def _mark_step_completed(step_id: str) -> None:
             if step_id:
