@@ -43,7 +43,7 @@ from sg_preflight.dependency_onboarding import (
     start_dependency_setup_action,
 )
 from sg_preflight.full_qa_pass import build_full_qa_pass
-from sg_preflight.jira_client import DEFAULT_JIRA_URL, load_jira_credentials
+from sg_preflight.jira_client import DEFAULT_JIRA_URL, load_jira_credentials, search_jira_profile_tickets
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
     apply_manual_review_suggestions,
@@ -4628,6 +4628,61 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                 )
 
 
+def _render_jira_profile_tickets_card(
+    ui: Any,
+    profile_id: str,
+    *,
+    open_page: Callable[[str], None] | None = None,
+) -> None:
+    try:
+        payload = search_jira_profile_tickets(profile_id, max_results=5, timeout_seconds=8)
+    except Exception as exc:  # noqa: BLE001
+        payload = {
+            "status": "failed",
+            "ticket_count": 0,
+            "tickets": [],
+            "summary": f"Jira tickets unavailable: {exc}",
+            "settings_hint": "Check local Jira setup before retrying.",
+            "read_only": True,
+            "is_approval": False,
+        }
+    status = str(payload.get("status", "unknown"))
+    tickets = [ticket for ticket in payload.get("tickets", []) if isinstance(ticket, dict)]
+    with ui.column().classes("sgfx-jira-profile-card full-width"):
+        ui.html('<span data-sgfx-jira-profile-tickets="true"></span>', sanitize=False)
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label("Active tickets for this profile").classes("sgfx-panel-tagline")
+            _render_status_chip(ui, status)
+        ui.label(str(payload.get("summary", "Jira tickets unavailable."))).classes("sgfx-summary")
+        cache_status = str(payload.get("cache_status", "")).strip()
+        if cache_status:
+            ui.label(f"Read-only Jira REST query. Cache: {cache_status}; no Jira update is sent.").classes(
+                "sgfx-muted"
+            )
+        if tickets:
+            for ticket in tickets:
+                key = str(ticket.get("key", "") or "")
+                with ui.row().classes("sgfx-jira-ticket-row full-width items-center"):
+                    ui.link(key, str(ticket.get("url", "") or ""), new_tab=True).classes("sgfx-jira-ticket-key")
+                    ui.label(str(ticket.get("status", "unknown"))).classes("sgfx-jira-status-pill")
+                    ui.label(str(ticket.get("summary", ""))).classes("sgfx-muted")
+        elif status != "available":
+            ui.label("Jira tickets unavailable").classes("sgfx-summary")
+            settings_hint = str(payload.get("settings_hint", "") or "")
+            if settings_hint:
+                ui.label(settings_hint).classes("sgfx-muted")
+            if open_page is not None:
+                _attach_tooltip(
+                    ui,
+                    ui.button("Open setup guidance", on_click=lambda: open_page("onboarding-guide")).props(
+                        "flat no-caps dense"
+                    ),
+                    "Open local setup guidance. Jira credentials remain operator-local.",
+                )
+        else:
+            ui.label("No open profile-matched Jira tickets were returned.").classes("sgfx-muted")
+
+
 def _render_full_qa_pass_panel(
     ui: Any,
     snapshot: dict[str, Any],
@@ -4674,6 +4729,7 @@ def _render_full_qa_pass_panel(
             "Ramses may show a black offscreen-rendering window during screenshot capture; "
             "live output appears in the action panel."
         ).classes("sgfx-muted")
+        _render_jira_profile_tickets_card(ui, profile_id, open_page=open_page)
 
         with ui.row().classes("sgfx-full-qa-controls"):
             trusted_control = ui.checkbox(
@@ -6034,6 +6090,10 @@ def _render_dashboard(
             .sgfx-feedback-button:hover { border-color: var(--sgfx-accent) !important; color: var(--sgfx-accent) !important; }
             .sgfx-guardrail { color: var(--sgfx-fg-muted); font-size: 13px; line-height: 1.55; }
             .sgfx-page-panel { border-radius: 8px; box-shadow: none; border: 1px solid var(--sgfx-border); width: 100%; padding: 18px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); margin-bottom: 14px; }
+            .sgfx-jira-profile-card { border: 1px solid var(--sgfx-border); border-radius: 8px; padding: 12px 14px; margin: 10px 0 14px; background: var(--sgfx-bg-elev); gap: 8px; }
+            .sgfx-jira-ticket-row { border-top: 1px solid var(--sgfx-border); padding-top: 8px; gap: 8px; }
+            .sgfx-jira-ticket-key { font-weight: 700; color: var(--sgfx-accent); text-decoration: none; }
+            .sgfx-jira-status-pill { border: 1px solid var(--sgfx-border); border-radius: 999px; padding: 2px 8px; color: var(--sgfx-fg-muted); font-size: 12px; white-space: nowrap; }
             .sgfx-first-launch-card { gap: 8px; padding: 14px 16px; border-color: rgba(78, 201, 176, 0.42); background: #22302d; }
             .sgfx-first-launch-card[data-sgfx-dismissed="true"] { display: none; }
             .sgfx-first-launch-actions { gap: 10px; align-items: center; flex-wrap: wrap; }

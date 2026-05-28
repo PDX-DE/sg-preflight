@@ -475,6 +475,12 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn(".exe SHA", source)
         self.assertIn("No telemetry was sent automatically", source)
         self.assertIn("feedback_email", source)
+        self.assertIn("data-sgfx-jira-profile-tickets", source)
+        self.assertIn("Active tickets for this profile", source)
+        self.assertIn("search_jira_profile_tickets", source)
+        self.assertIn("Read-only Jira REST query", source)
+        self.assertIn("Jira tickets unavailable", source)
+        self.assertIn("Open setup guidance", source)
 
     def test_dashboard_source_accepts_profile_query_for_walkthrough_harness(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

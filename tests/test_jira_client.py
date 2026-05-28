@@ -12,11 +12,14 @@ from sg_preflight.jira_client import (
     JIRA_POSTING_BANNER,
     JiraPostError,
     attach_jira_file_action,
+    build_profile_ticket_jql,
+    clear_jira_profile_ticket_cache,
     extract_numbered_section_text,
     jira_status,
     load_jira_credentials,
     post_jira_comment,
     post_jira_comment_action,
+    search_jira_profile_tickets,
     update_jira_issue_action,
     write_jira_credentials,
 )
@@ -209,6 +212,94 @@ Other text
         self.assertEqual(result["ticket_status"], "available")
         self.assertEqual([method for method, _url in calls], ["GET", "GET"])
         self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
+
+    def test_profile_ticket_search_builds_read_only_jql_and_sanitizes_rows(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def transport(request, timeout=30):
+            calls.append((request.get_method(), request.full_url))
+            return _FakeResponse(
+                200,
+                json.dumps(
+                    {
+                        "issues": [
+                            {
+                                "key": "IDCEVODEV-1000001",
+                                "fields": {
+                                    "summary": "G65 screenshot review follow-up",
+                                    "status": {"name": "In Progress"},
+                                    "labels": ["G65"],
+                                    "updated": "2026-05-28T10:00:00.000+0200",
+                                },
+                            }
+                        ]
+                    }
+                ).encode("utf-8"),
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            (state_dir / "jira_pat.json").write_text(
+                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                result = search_jira_profile_tickets("G65", transport=transport)
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["ticket_count"], 1)
+        self.assertEqual(result["tickets"][0]["key"], "IDCEVODEV-1000001")
+        self.assertEqual(result["tickets"][0]["status"], "In Progress")
+        self.assertEqual(result["tickets"][0]["url"], "https://jira.example/browse/IDCEVODEV-1000001")
+        self.assertEqual(calls[0][0], "GET")
+        self.assertIn("statusCategory+%21%3D+Done", calls[0][1])
+        self.assertIn("summary+~+%22G65%22", calls[0][1])
+        self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
+
+    def test_profile_ticket_search_reports_missing_credentials_without_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(Path(temp_dir) / "missing")}):
+                with mock.patch("pathlib.Path.home", return_value=Path(temp_dir) / "home"):
+                    with mock.patch("pathlib.Path.cwd", return_value=Path(temp_dir) / "cwd"):
+                        result = search_jira_profile_tickets("F70")
+
+        self.assertEqual(result["status"], "missing")
+        self.assertEqual(result["ticket_count"], 0)
+        self.assertTrue(result["read_only"])
+        self.assertIn("Jira tickets unavailable", result["summary"])
+
+    def test_profile_ticket_search_uses_sixty_second_cache_for_real_transport(self) -> None:
+        clear_jira_profile_ticket_cache()
+        calls: list[str] = []
+
+        def transport(request, timeout=30):
+            calls.append(request.full_url)
+            return _FakeResponse(200, b'{"issues":[]}')
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            (state_dir / "jira_pat.json").write_text(
+                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch("sg_preflight.jira_client.urllib_request.urlopen", side_effect=transport):
+                    clear_jira_profile_ticket_cache()
+                    first = search_jira_profile_tickets("NA5")
+                    second = search_jira_profile_tickets("NA5")
+
+        self.assertEqual(first["cache_status"], "miss")
+        self.assertEqual(second["cache_status"], "hit")
+        self.assertEqual(len(calls), 1)
+
+    def test_profile_ticket_jql_matches_h17_scope(self) -> None:
+        jql = build_profile_ticket_jql("G65")
+
+        self.assertIn("project = IDCEVODEV", jql)
+        self.assertIn("statusCategory != Done", jql)
+        self.assertIn('summary ~ "G65"', jql)
+        self.assertIn('description ~ "G65"', jql)
+        self.assertIn('labels in ("G65", "g65")', jql)
 
     def test_post_comment_action_previews_with_gets_before_auto_confirm_posts(self) -> None:
         calls: list[tuple[str, str, object]] = []
