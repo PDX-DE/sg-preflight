@@ -125,6 +125,10 @@ class ScreenshotReviewItem:
     mean_abs_diff: float | None = None
     review_score: float | None = None
     anomaly_hints: tuple[str, ...] = ()
+    diagnostic_chain_status: str = ""
+    diagnostic_chain_steps: tuple[dict[str, str], ...] = ()
+    diagnostic_pattern_ids: tuple[str, ...] = ()
+    escalation_message: str = ""
     manual_verdict: str = "not_run"
 
 
@@ -915,6 +919,10 @@ def build_screenshot_review_viewer(
                 mean_abs_diff=pair.mean_abs_diff,
                 review_score=pair.review_score,
                 anomaly_hints=pair.anomaly_hints,
+                diagnostic_chain_status=pair.diagnostic_chain_status,
+                diagnostic_chain_steps=pair.diagnostic_chain_steps,
+                diagnostic_pattern_ids=pair.diagnostic_pattern_ids,
+                escalation_message=pair.escalation_message,
             )
         )
 
@@ -1150,6 +1158,11 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
     .summary p {{ margin: 4px 0; color: var(--muted); }}
     .summary .score {{ color: var(--warning); }}
     .summary .delta-detail {{ display: inline-flex; align-items: center; margin: 5px 0; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; }}
+    .diagnostic-chain {{ margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255, 255, 255, 0.03); color: var(--muted); }}
+    .diagnostic-chain h3 {{ margin: 0 0 6px; font-size: 13px; color: var(--text); }}
+    .diagnostic-chain p {{ margin: 4px 0; font-size: 12px; overflow-wrap: anywhere; }}
+    .diagnostic-chain .status {{ color: var(--warning); font-weight: 700; }}
+    .diagnostic-chain .escalation {{ margin-top: 8px; white-space: pre-wrap; color: var(--text); }}
     .panes {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; min-height: 68vh; }}
     .pane {{ border: 1px solid var(--border); border-radius: 8px; background: var(--panel); min-width: 0; display: flex; flex-direction: column; }}
     .pane header {{ display: flex; justify-content: space-between; gap: 10px; padding: 9px 10px; border-bottom: 1px solid var(--border); color: var(--fg); font-weight: 650; }}
@@ -1182,6 +1195,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
       <p data-summary>Select a screenshot from the left list.</p>
       <p data-visual></p>
       <p data-escalation></p>
+      <div class="diagnostic-chain" data-diagnostic-chain hidden></div>
       <p class="delta-detail" data-delta></p>
       <p class="regression-detail" data-regression></p>
       <p class="score" data-score></p>
@@ -1202,6 +1216,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
       const summary = document.querySelector('[data-summary]');
       const visual = document.querySelector('[data-visual]');
       const escalation = document.querySelector('[data-escalation]');
+      const diagnosticChain = document.querySelector('[data-diagnostic-chain]');
       const delta = document.querySelector('[data-delta]');
       const regression = document.querySelector('[data-regression]');
       const score = document.querySelector('[data-score]');
@@ -1240,6 +1255,35 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
         image.onload = applyTransform;
       }};
 
+      const renderDiagnosticChain = (item) => {{
+        diagnosticChain.replaceChildren();
+        const steps = Array.isArray(item.diagnostic_chain_steps) ? item.diagnostic_chain_steps : [];
+        const message = item.escalation_message || '';
+        if (!steps.length && !message) {{
+          diagnosticChain.hidden = true;
+          return;
+        }}
+        diagnosticChain.hidden = false;
+        const heading = document.createElement('h3');
+        heading.textContent = `Diagnostic chain${{item.diagnostic_chain_status ? ` (${{item.diagnostic_chain_status}})` : ''}}`;
+        diagnosticChain.appendChild(heading);
+        steps.forEach((step) => {{
+          const line = document.createElement('p');
+          const status = document.createElement('span');
+          status.className = 'status';
+          status.textContent = step.status || 'unknown';
+          line.appendChild(status);
+          line.append(` - ${{step.label || step.id || 'step'}}: ${{step.detail || ''}}`);
+          diagnosticChain.appendChild(line);
+        }});
+        if (message) {{
+          const escalationBlock = document.createElement('p');
+          escalationBlock.className = 'escalation';
+          escalationBlock.textContent = `Escalation message: ${{message}}`;
+          diagnosticChain.appendChild(escalationBlock);
+        }}
+      }};
+
       const select = (key) => {{
         const item = byKey.get(key) || items[0];
         if (!item) return;
@@ -1249,6 +1293,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
         summary.textContent = item.summary || '';
         visual.textContent = item.visual_summary || '';
         escalation.textContent = item.escalation_path ? `Escalation path: ${{item.escalation_path}}` : '';
+        renderDiagnosticChain(item);
         delta.textContent = item.diff_delta_label || '';
         delta.className = `delta-detail ${{item.diff_delta_level ? `delta-${{item.diff_delta_level}}` : ''}}`;
         delta.hidden = !item.diff_delta_label;

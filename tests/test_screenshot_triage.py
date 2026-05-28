@@ -90,6 +90,17 @@ class TestScreenshotTriage(unittest.TestCase):
             self.assertIn("Diagnostic anchors:", pair_map["missing_candidate"].summary)
             self.assertNotIn("textures/shaders fail to load", pair_map["missing_candidate"].summary)
             self.assertEqual(pair_map["missing_candidate"].escalation_path, "data_prep_or_ci_team")
+            self.assertEqual(pair_map["missing_candidate"].diagnostic_chain_status, "incomplete")
+            self.assertIn(
+                "actual_image_not_rendered_diff_missing",
+                pair_map["missing_candidate"].diagnostic_pattern_ids,
+            )
+            step_statuses = {
+                step["id"]: step["status"] for step in pair_map["missing_candidate"].diagnostic_chain_steps
+            }
+            self.assertEqual(step_statuses["actual-image"], "missing")
+            self.assertEqual(step_statuses["read-refresh"], "confirmation_pending")
+            self.assertIn("actual screenshot image is missing", pair_map["missing_candidate"].escalation_message)
             self.assertEqual(pair_map["extra_candidate"].classification, "missing_baseline")
             self.assertIsNotNone(pair_map["changed"].review_score)
             self.assertGreater(pair_map["changed"].review_score or 0.0, 0.0)

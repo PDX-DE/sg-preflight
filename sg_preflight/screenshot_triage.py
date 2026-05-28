@@ -86,6 +86,10 @@ class ScreenshotPair:
     review_score: float | None = None
     anomaly_hints: tuple[str, ...] = ()
     diff_image_path: str = ""
+    diagnostic_chain_status: str = ""
+    diagnostic_chain_steps: tuple[dict[str, str], ...] = ()
+    diagnostic_pattern_ids: tuple[str, ...] = ()
+    escalation_message: str = ""
     priority: bool = False
 
 
@@ -378,12 +382,90 @@ def _visual_diff_classification(
     )
 
 
-def _missing_candidate_summary(profile_id: str, project_root: Path, key: str) -> str:
+def _missing_candidate_diagnostics(profile_id: str, project_root: Path, key: str) -> dict[str, Any]:
     profile_root = project_root.name or str(profile_id or "PROFILE").upper()
     test_name = Path(str(key)).with_suffix("").name or "<test>"
     diff_hint = Path("cars") / "BMW" / profile_root / "export" / "tests" / "diff" / f"{test_name}_*.png"
     config_hint = Path("cars") / "BMW" / profile_root / "export" / "tests" / "test_config.lua"
+    config_path = project_root / "export" / "tests" / "test_config.lua"
+    config_status = "missing"
+    config_detail = f"BMW Git test config was not found at {config_hint.as_posix()}."
+    if config_path.is_file():
+        try:
+            config_text = config_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            config_status = "unavailable"
+            config_detail = f"BMW Git test config exists but could not be read at {config_hint.as_posix()}."
+        else:
+            config_status = "available" if test_name in config_text else "incomplete"
+            config_detail = (
+                f"BMW Git test config is readable and mentions `{test_name}`."
+                if config_status == "available"
+                else f"BMW Git test config is readable but `{test_name}` was not found."
+            )
+    pattern_ids = ("actual_image_not_rendered_diff_missing", "magenta_tint_in_actual_image")
     anchors = diagnostic_pattern_anchors("actual_image_not_rendered_diff_missing", "magenta_tint_in_actual_image")
+    steps = (
+        {
+            "id": "actual-image",
+            "label": "Actual image",
+            "status": "missing",
+            "detail": f"Expected actual image is absent; diff hint: {diff_hint.as_posix()} absent.",
+        },
+        {
+            "id": "test-config",
+            "label": "BMW Git test config",
+            "status": config_status,
+            "detail": config_detail,
+        },
+        {
+            "id": "known-patterns",
+            "label": "Known diagnostic patterns",
+            "status": "available",
+            "detail": "Missing actual/diff output and context-dependent magenta guidance are available.",
+        },
+        {
+            "id": "read-refresh",
+            "label": "BMW Git/SVN read-refresh",
+            "status": "confirmation_pending",
+            "detail": "Operator confirmation is required before git pull or svn update.",
+        },
+        {
+            "id": "retry-capture",
+            "label": "Retry screenshot capture",
+            "status": "not_run",
+            "detail": "Retry after read-refresh or after correcting a missing reference.",
+        },
+        {
+            "id": "asset-doctor",
+            "label": "Asset doctor",
+            "status": "not_run",
+            "detail": "Scan referenced scene, texture, shader, and environment files if retry still misses the actual image.",
+        },
+    )
+    escalation_message = (
+        f"{profile_root} `{test_name}`: actual screenshot image is missing. "
+        f"Check `{config_hint.as_posix()}` and expected diff path `{diff_hint.as_posix()}`. "
+        "If operator-confirmed read-refresh and retry still do not produce the actual image, escalate to data prep / CI team."
+    )
+    return {
+        "status": "incomplete",
+        "test_name": test_name,
+        "diff_hint": diff_hint.as_posix(),
+        "config_hint": config_hint.as_posix(),
+        "pattern_ids": pattern_ids,
+        "anchors": anchors,
+        "steps": steps,
+        "escalation_message": escalation_message,
+    }
+
+
+def _missing_candidate_summary(profile_id: str, project_root: Path, key: str) -> str:
+    diagnostics = _missing_candidate_diagnostics(profile_id, project_root, key)
+    diff_hint = str(diagnostics["diff_hint"])
+    config_hint = str(diagnostics["config_hint"])
+    test_name = str(diagnostics["test_name"])
+    anchors = tuple(str(anchor) for anchor in diagnostics.get("anchors", ()))
     anchor_lines = "\n".join(f"- {anchor}" for anchor in anchors) or "- unavailable"
     return (
         "BMW pipeline did not render an actual image for this test.\n\n"
@@ -392,8 +474,8 @@ def _missing_candidate_summary(profile_id: str, project_root: Path, key: str) ->
         "Pink/magenta content is context-dependent: it can be intentional test background, declared placeholder "
         "graphics, or a missing/mislinked dependency. Color alone is not used as the verdict.\n\n"
         "Investigate:\n"
-        f"- Check disk: expected actual image is absent; diff hint: {diff_hint.as_posix()} absent\n"
-        f"- Check BMW Git test config for `{test_name}` scene: {config_hint.as_posix()}\n"
+        f"- Check disk: expected actual image is absent; diff hint: {diff_hint} absent\n"
+        f"- Check BMW Git test config for `{test_name}` scene: {config_hint}\n"
         "- Check referenced scene, texture, shader, and environment files.\n"
         "- If the operator confirms, refresh BMW Git and SVN read-only sources, then retry.\n"
         "- If still missing, use asset-doctor findings and the copy-ready escalation message.\n\n"
@@ -582,6 +664,7 @@ def build_screenshot_triage(
             )
         elif candidate_path is None:
             classification = "missing_candidate"
+            diagnostics = _missing_candidate_diagnostics(profile_id, resolved_project_root, key)
             summary = _missing_candidate_summary(profile_id, resolved_project_root, key)
             visual_classification, visual_summary = _visual_diff_classification(
                 classification,
@@ -599,6 +682,12 @@ def build_screenshot_triage(
                 visual_summary=visual_summary,
                 escalation_path="data_prep_or_ci_team",
                 baseline_path=str(baseline_path),
+                diagnostic_chain_status=str(diagnostics.get("status", "incomplete")),
+                diagnostic_chain_steps=tuple(
+                    item for item in diagnostics.get("steps", ()) if isinstance(item, dict)
+                ),
+                diagnostic_pattern_ids=tuple(str(item) for item in diagnostics.get("pattern_ids", ())),
+                escalation_message=str(diagnostics.get("escalation_message", "")),
                 priority=priority,
             )
         else:

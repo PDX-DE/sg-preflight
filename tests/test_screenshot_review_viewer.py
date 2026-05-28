@@ -249,8 +249,15 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertEqual(item.classification, "missing_candidate")
             self.assertEqual(item.escalation_path, "data_prep_or_ci_team")
             self.assertIn("BMW pipeline did not render an actual image", item.summary)
+            self.assertEqual(item.diagnostic_chain_status, "incomplete")
+            self.assertIn("actual_image_not_rendered_diff_missing", item.diagnostic_pattern_ids)
+            self.assertTrue(any(step["id"] == "read-refresh" for step in item.diagnostic_chain_steps))
+            self.assertIn("actual screenshot image is missing", item.escalation_message)
             html = bundle.html_path.read_text(encoding="utf-8")
             self.assertIn("data-escalation", html)
+            self.assertIn("data-diagnostic-chain", html)
+            self.assertIn("Diagnostic chain", html)
+            self.assertIn("Escalation message:", html)
             self.assertIn("Escalation path:", html)
 
     def test_cli_build_screenshot_review_viewer_outputs_json(self) -> None:
