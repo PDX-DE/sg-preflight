@@ -38,6 +38,31 @@ class DiffDeltaBadge:
 
 
 @dataclass(frozen=True)
+class DiffDeltaHistogramAxis:
+    axis: str
+    axis_length: int
+    bins: tuple[int, ...] = ()
+    peak_bin: int = -1
+    peak_start: int | None = None
+    peak_end: int | None = None
+    peak_count: int = 0
+    peak_label: str = ""
+
+
+@dataclass(frozen=True)
+class DiffDeltaHistogram:
+    status: str
+    threshold_percent: float = 0.0
+    threshold_value: int = 0
+    changed_pixel_count: int = 0
+    total_pixel_count: int = 0
+    changed_pixel_ratio: float | None = None
+    x_axis: DiffDeltaHistogramAxis | None = None
+    y_axis: DiffDeltaHistogramAxis | None = None
+    backend: str = ""
+
+
+@dataclass(frozen=True)
 class _DecodedDiffImage:
     width: int
     height: int
@@ -65,6 +90,16 @@ class ScreenshotReviewItem:
     diff_delta_x: int | None = None
     diff_delta_y: int | None = None
     diff_delta_backend: str = ""
+    diff_histogram_status: str = "unavailable"
+    diff_histogram_threshold_percent: float = 0.0
+    diff_histogram_changed_pixel_count: int = 0
+    diff_histogram_total_pixel_count: int = 0
+    diff_histogram_changed_pixel_ratio: float | None = None
+    diff_histogram_x_bins: tuple[int, ...] = ()
+    diff_histogram_y_bins: tuple[int, ...] = ()
+    diff_histogram_x_peak_label: str = ""
+    diff_histogram_y_peak_label: str = ""
+    diff_histogram_backend: str = ""
     changed_pixel_ratio: float | None = None
     mean_abs_diff: float | None = None
     review_score: float | None = None
@@ -120,12 +155,35 @@ def _env_float(name: str, default: float) -> float:
     return value if value >= 0 else default
 
 
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    if value < minimum:
+        return minimum
+    if value > maximum:
+        return maximum
+    return value
+
+
 def diff_delta_thresholds_from_env() -> DiffDeltaThresholds:
     green = _env_float("SGFX_DIFF_DELTA_GREEN_MAX_PERCENT", 0.5)
     yellow = _env_float("SGFX_DIFF_DELTA_YELLOW_MAX_PERCENT", 2.0)
     if yellow < green:
         yellow = green
     return DiffDeltaThresholds(green_max_percent=green, yellow_max_percent=yellow)
+
+
+def diff_histogram_threshold_percent_from_env() -> float:
+    return _env_float("SGFX_DIFF_HISTOGRAM_MIN_DELTA_PERCENT", 0.0)
+
+
+def diff_histogram_bin_count_from_env() -> int:
+    return _env_int("SGFX_DIFF_HISTOGRAM_BINS", 96, minimum=8, maximum=240)
 
 
 def _paeth_predictor(left: int, above: int, upper_left: int) -> int:
@@ -332,21 +390,10 @@ def _max_delta_fallback(decoded: _DecodedDiffImage) -> tuple[int, int, int, str]
     return int(max_value), int(max_x), int(max_y), f"{decoded.backend}+python"
 
 
-def compute_diff_delta_badge(
-    diff_path: str | Path,
-    *,
-    thresholds: DiffDeltaThresholds | None = None,
+def _compute_diff_delta_badge_from_decoded(
+    decoded: _DecodedDiffImage,
+    thresholds: DiffDeltaThresholds,
 ) -> DiffDeltaBadge:
-    path = Path(diff_path) if str(diff_path or "").strip() else Path()
-    if not path:
-        return DiffDeltaBadge(status="unavailable")
-    try:
-        decoded = _decode_diff_image(path)
-    except OSError:
-        decoded = None
-    if decoded is None:
-        return DiffDeltaBadge(status="unavailable")
-    thresholds = thresholds or diff_delta_thresholds_from_env()
     result = _max_delta_with_numpy(decoded) or _max_delta_fallback(decoded)
     max_value, max_x, max_y, backend = result
     percent = round((max_value / 255.0) * 100.0, 3)
@@ -366,6 +413,151 @@ def compute_diff_delta_badge(
         max_y=max_y,
         backend=backend,
     )
+
+
+def compute_diff_delta_badge(
+    diff_path: str | Path,
+    *,
+    thresholds: DiffDeltaThresholds | None = None,
+) -> DiffDeltaBadge:
+    path = Path(diff_path) if str(diff_path or "").strip() else Path()
+    if not path:
+        return DiffDeltaBadge(status="unavailable")
+    try:
+        decoded = _decode_diff_image(path)
+    except OSError:
+        decoded = None
+    if decoded is None:
+        return DiffDeltaBadge(status="unavailable")
+    thresholds = thresholds or diff_delta_thresholds_from_env()
+    return _compute_diff_delta_badge_from_decoded(decoded, thresholds)
+
+
+def _threshold_percent_to_value(threshold_percent: float) -> int:
+    if threshold_percent <= 0:
+        return 0
+    value = int(round((threshold_percent / 100.0) * 255.0))
+    if value < 0:
+        return 0
+    if value > 255:
+        return 255
+    return value
+
+
+def _axis_histogram(axis: str, axis_length: int, bins: list[int]) -> DiffDeltaHistogramAxis:
+    if not bins:
+        return DiffDeltaHistogramAxis(axis=axis, axis_length=axis_length)
+    peak_count = max(bins)
+    if peak_count <= 0:
+        return DiffDeltaHistogramAxis(
+            axis=axis,
+            axis_length=axis_length,
+            bins=tuple(bins),
+            peak_bin=-1,
+            peak_count=0,
+            peak_label=f"{axis}=none",
+        )
+    peak_bin = bins.index(peak_count)
+    bin_count = len(bins)
+    peak_start = int((peak_bin * axis_length) // bin_count)
+    peak_end = int((((peak_bin + 1) * axis_length) // bin_count) - 1)
+    if peak_end < peak_start:
+        peak_end = peak_start
+    peak_label = f"{axis}={peak_start}" if peak_start == peak_end else f"{axis}={peak_start}-{peak_end}"
+    return DiffDeltaHistogramAxis(
+        axis=axis,
+        axis_length=axis_length,
+        bins=tuple(bins),
+        peak_bin=peak_bin,
+        peak_start=peak_start,
+        peak_end=peak_end,
+        peak_count=peak_count,
+        peak_label=peak_label,
+    )
+
+
+def _compute_diff_delta_histogram_from_decoded(
+    decoded: _DecodedDiffImage,
+    *,
+    threshold_percent: float,
+    max_bins: int,
+) -> DiffDeltaHistogram:
+    total_pixels = decoded.width * decoded.height
+    if total_pixels <= 0:
+        return DiffDeltaHistogram(status="unavailable")
+    threshold_value = _threshold_percent_to_value(threshold_percent)
+    x_bin_count = max(1, min(max_bins, decoded.width))
+    y_bin_count = max(1, min(max_bins, decoded.height))
+    x_bins = [0] * x_bin_count
+    y_bins = [0] * y_bin_count
+    changed = 0
+    values = decoded.channel_max
+    for y in range(decoded.height):
+        row_start = y * decoded.width
+        y_bin = (y * y_bin_count) // decoded.height
+        for x in range(decoded.width):
+            if values[row_start + x] > threshold_value:
+                x_bins[(x * x_bin_count) // decoded.width] += 1
+                y_bins[y_bin] += 1
+                changed += 1
+    return DiffDeltaHistogram(
+        status="available",
+        threshold_percent=threshold_percent,
+        threshold_value=threshold_value,
+        changed_pixel_count=changed,
+        total_pixel_count=total_pixels,
+        changed_pixel_ratio=(changed / total_pixels) if total_pixels else None,
+        x_axis=_axis_histogram("x", decoded.width, x_bins),
+        y_axis=_axis_histogram("y", decoded.height, y_bins),
+        backend=f"{decoded.backend}+python",
+    )
+
+
+def compute_diff_delta_histogram(
+    diff_path: str | Path,
+    *,
+    threshold_percent: float | None = None,
+    max_bins: int | None = None,
+) -> DiffDeltaHistogram:
+    path = Path(diff_path) if str(diff_path or "").strip() else Path()
+    if not path:
+        return DiffDeltaHistogram(status="unavailable")
+    try:
+        decoded = _decode_diff_image(path)
+    except OSError:
+        decoded = None
+    if decoded is None:
+        return DiffDeltaHistogram(status="unavailable")
+    threshold = threshold_percent if threshold_percent is not None else diff_histogram_threshold_percent_from_env()
+    if threshold < 0:
+        threshold = 0.0
+    bin_count = max_bins if max_bins is not None else diff_histogram_bin_count_from_env()
+    if bin_count < 1:
+        bin_count = 1
+    return _compute_diff_delta_histogram_from_decoded(
+        decoded,
+        threshold_percent=threshold,
+        max_bins=bin_count,
+    )
+
+
+def _compute_diff_review_metrics(diff_path: str | Path) -> tuple[DiffDeltaBadge, DiffDeltaHistogram]:
+    path = Path(diff_path) if str(diff_path or "").strip() else Path()
+    if not path:
+        return DiffDeltaBadge(status="unavailable"), DiffDeltaHistogram(status="unavailable")
+    try:
+        decoded = _decode_diff_image(path)
+    except OSError:
+        decoded = None
+    if decoded is None:
+        return DiffDeltaBadge(status="unavailable"), DiffDeltaHistogram(status="unavailable")
+    badge = _compute_diff_delta_badge_from_decoded(decoded, diff_delta_thresholds_from_env())
+    histogram = _compute_diff_delta_histogram_from_decoded(
+        decoded,
+        threshold_percent=diff_histogram_threshold_percent_from_env(),
+        max_bins=diff_histogram_bin_count_from_env(),
+    )
+    return badge, histogram
 
 
 def _viewer_asset_uri(path_value: str, output_root: Path, asset_root: Path, slot: str, key: str) -> str:
@@ -441,7 +633,9 @@ def build_screenshot_review_viewer(
                 or diff_lookup.get(Path(pair.key).with_suffix("").name.casefold())
                 or ""
             )
-        delta_badge = compute_diff_delta_badge(diff_path)
+        delta_badge, delta_histogram = _compute_diff_review_metrics(diff_path)
+        x_axis = delta_histogram.x_axis
+        y_axis = delta_histogram.y_axis
         items.append(
             ScreenshotReviewItem(
                 key=pair.key,
@@ -462,6 +656,16 @@ def build_screenshot_review_viewer(
                 diff_delta_x=delta_badge.max_x,
                 diff_delta_y=delta_badge.max_y,
                 diff_delta_backend=delta_badge.backend,
+                diff_histogram_status=delta_histogram.status,
+                diff_histogram_threshold_percent=delta_histogram.threshold_percent,
+                diff_histogram_changed_pixel_count=delta_histogram.changed_pixel_count,
+                diff_histogram_total_pixel_count=delta_histogram.total_pixel_count,
+                diff_histogram_changed_pixel_ratio=delta_histogram.changed_pixel_ratio,
+                diff_histogram_x_bins=x_axis.bins if x_axis else (),
+                diff_histogram_y_bins=y_axis.bins if y_axis else (),
+                diff_histogram_x_peak_label=x_axis.peak_label if x_axis else "",
+                diff_histogram_y_peak_label=y_axis.peak_label if y_axis else "",
+                diff_histogram_backend=delta_histogram.backend,
                 changed_pixel_ratio=pair.changed_pixel_ratio,
                 mean_abs_diff=pair.mean_abs_diff,
                 review_score=pair.review_score,
@@ -524,6 +728,81 @@ def _script_json_payload(payload: str) -> str:
     return payload.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
 
 
+def _format_percent(value: float | None, *, digits: int = 2) -> str:
+    if value is None:
+        return "unknown"
+    return f"{value * 100.0:.{digits}f}%"
+
+
+def _histogram_svg(bins: tuple[int, ...], *, orientation: str) -> str:
+    if not bins:
+        return '<div class="histogram-empty">Histogram unavailable</div>'
+    peak = max(bins)
+    if peak <= 0:
+        return '<div class="histogram-empty">No changed pixels above threshold</div>'
+    if orientation == "y":
+        width = 56.0
+        height = 132.0
+        bin_height = height / len(bins)
+        rects = []
+        for index, count in enumerate(bins):
+            bar_width = (count / peak) * (width - 6.0)
+            y = index * bin_height
+            rects.append(
+                f'<rect x="0" y="{y:.2f}" width="{bar_width:.2f}" height="{max(1.0, bin_height - 0.7):.2f}" />'
+            )
+        return (
+            '<svg class="histogram-svg histogram-y-strip" data-histogram-y '
+            f'viewBox="0 0 {width:.0f} {height:.0f}" preserveAspectRatio="none" aria-label="y-axis histogram">'
+            f'{"".join(rects)}</svg>'
+        )
+    width = 260.0
+    height = 46.0
+    bin_width = width / len(bins)
+    rects = []
+    for index, count in enumerate(bins):
+        bar_height = (count / peak) * (height - 6.0)
+        x = index * bin_width
+        y = height - bar_height
+        rects.append(
+            f'<rect x="{x:.2f}" y="{y:.2f}" width="{max(1.0, bin_width - 0.6):.2f}" height="{bar_height:.2f}" />'
+        )
+    return (
+        '<svg class="histogram-svg histogram-x-strip" data-histogram-x '
+        f'viewBox="0 0 {width:.0f} {height:.0f}" preserveAspectRatio="none" aria-label="x-axis histogram">'
+        f'{"".join(rects)}</svg>'
+    )
+
+
+def _histogram_html(item: ScreenshotReviewItem) -> str:
+    if item.diff_histogram_status != "available":
+        return ""
+    ratio = _format_percent(item.diff_histogram_changed_pixel_ratio)
+    total = item.diff_histogram_total_pixel_count
+    changed = item.diff_histogram_changed_pixel_count
+    x_label = item.diff_histogram_x_peak_label or "x=none"
+    y_label = item.diff_histogram_y_peak_label or "y=none"
+    return f"""
+        <details class="delta-histogram sgfx-delta-histogram" data-histogram-row>
+          <summary>Show positional histogram</summary>
+          <div class="histogram-meta">
+            <span>changed pixels: {changed} / {total} ({escape(ratio)})</span>
+            <span>threshold: &gt; {item.diff_histogram_threshold_percent:.1f}%</span>
+          </div>
+          <div class="histogram-grid">
+            <div class="histogram-main">
+              <span>x-axis peak: {escape(x_label)}</span>
+              {_histogram_svg(item.diff_histogram_x_bins, orientation="x")}
+            </div>
+            <div class="histogram-side">
+              <span>y-axis peak: {escape(y_label)}</span>
+              {_histogram_svg(item.diff_histogram_y_bins, orientation="y")}
+            </div>
+          </div>
+        </details>
+    """
+
+
 def _item_button_html(item: ScreenshotReviewItem) -> str:
     level_class = f" delta-{item.diff_delta_level}" if item.diff_delta_level else ""
     delta_attrs = ""
@@ -536,12 +815,16 @@ def _item_button_html(item: ScreenshotReviewItem) -> str:
         if item.diff_delta_label
         else ""
     )
+    histogram = _histogram_html(item)
     return (
+        f'<article class="review-row{level_class}" data-review-row="{escape(item.key)}">'
         f'<button type="button" data-key="{escape(item.key)}"{delta_attrs} class="{level_class.strip()}">'
         f"<strong>{escape(item.key)}</strong>"
         f"<span>{escape(item.classification)} / {escape(item.visual_classification)}</span>"
         f"{badge}"
         "</button>"
+        f"{histogram}"
+        "</article>"
     )
 
 
@@ -575,7 +858,9 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
     h1 {{ font-size: 18px; margin: 0 0 6px; }}
     .meta, .hint, li {{ color: var(--muted); font-size: 12px; }}
     .list {{ display: flex; flex-direction: column; gap: 8px; margin-top: 14px; max-height: calc(100vh - 210px); overflow: auto; }}
+    .review-row {{ display: flex; flex-direction: column; gap: 6px; }}
     button[data-key] {{ text-align: left; border: 1px solid var(--border); border-left-width: 5px; border-radius: 6px; background: #1d1d1d; color: var(--fg); padding: 9px; cursor: pointer; }}
+    .review-row button[data-key] {{ width: 100%; }}
     button[data-key].active {{ border-color: var(--accent); background: #20302d; }}
     button[data-key].delta-green {{ border-left-color: var(--delta-green); }}
     button[data-key].delta-yellow {{ border-left-color: var(--delta-yellow); }}
@@ -586,6 +871,19 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
     .delta-badge.delta-green, .delta-detail.delta-green {{ color: var(--delta-green); border-color: rgba(87, 214, 141, 0.5); background: rgba(87, 214, 141, 0.12); }}
     .delta-badge.delta-yellow, .delta-detail.delta-yellow {{ color: var(--delta-yellow); border-color: rgba(232, 192, 125, 0.55); background: rgba(232, 192, 125, 0.12); }}
     .delta-badge.delta-red, .delta-detail.delta-red {{ color: var(--delta-red); border-color: rgba(240, 127, 114, 0.55); background: rgba(240, 127, 114, 0.13); }}
+    .delta-histogram {{ border: 1px solid var(--border); border-radius: 6px; background: rgba(255, 255, 255, 0.025); padding: 7px 8px; }}
+    .delta-histogram summary {{ cursor: pointer; color: var(--muted); font-size: 12px; list-style: none; }}
+    .delta-histogram summary::-webkit-details-marker {{ display: none; }}
+    .delta-histogram summary::before {{ content: "+"; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-right: 5px; border: 1px solid var(--border); border-radius: 50%; color: var(--accent); font-size: 11px; line-height: 1; }}
+    .delta-histogram[open] summary::before {{ content: "-"; }}
+    .histogram-meta {{ display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 7px 0; color: var(--muted); font-size: 11px; }}
+    .histogram-grid {{ display: grid; grid-template-columns: minmax(0, 1fr) 70px; gap: 8px; align-items: end; }}
+    .histogram-main, .histogram-side {{ min-width: 0; color: var(--muted); font-size: 11px; }}
+    .histogram-svg {{ display: block; margin-top: 4px; overflow: visible; }}
+    .histogram-svg rect {{ fill: var(--accent); opacity: 0.78; }}
+    .histogram-x-strip {{ width: 100%; height: 46px; border-bottom: 1px solid var(--border); }}
+    .histogram-y-strip {{ width: 56px; height: 132px; border-left: 1px solid var(--border); }}
+    .histogram-empty {{ margin-top: 4px; color: var(--muted); font-size: 11px; border: 1px dashed var(--border); border-radius: 6px; padding: 8px; }}
     .toolbar {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 10px 12px; margin-bottom: 12px; }}
     .toolbar label {{ color: var(--muted); }}
     .toolbar input {{ width: 220px; }}

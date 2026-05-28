@@ -14,6 +14,7 @@ from sg_preflight.screenshot_review_viewer import (
     _script_json_payload,
     build_screenshot_review_viewer,
     compute_diff_delta_badge,
+    compute_diff_delta_histogram,
 )
 
 
@@ -67,6 +68,29 @@ class TestScreenshotReviewViewer(unittest.TestCase):
                 self.assertEqual(badge.max_x, 2)
                 self.assertEqual(badge.max_y, 1)
 
+    def test_compute_diff_delta_histogram_bins_changed_pixels_by_axis(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            path = root / "cluster.bmp"
+            self._write_bmp_pixels(
+                path,
+                [
+                    [(0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)],
+                    [(0, 0, 0), (8, 0, 0), (8, 0, 0), (0, 0, 0)],
+                    [(0, 0, 0), (0, 0, 0), (8, 0, 0), (0, 0, 0)],
+                ],
+            )
+
+            histogram = compute_diff_delta_histogram(path, max_bins=4)
+
+            self.assertEqual(histogram.status, "available")
+            self.assertEqual(histogram.changed_pixel_count, 3)
+            self.assertEqual(histogram.total_pixel_count, 12)
+            self.assertEqual(histogram.x_axis.bins, (0, 1, 2, 0))
+            self.assertEqual(histogram.y_axis.bins, (0, 2, 1))
+            self.assertEqual(histogram.x_axis.peak_label, "x=2")
+            self.assertEqual(histogram.y_axis.peak_label, "y=1")
+
     def test_build_screenshot_review_viewer_writes_sync_zoom_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -103,6 +127,13 @@ class TestScreenshotReviewViewer(unittest.TestCase):
                 else "assets/diff/front.bmp"
             )
             self.assertEqual(item.diff_uri, expected_diff_uri)
+            self.assertEqual(item.diff_histogram_status, "available")
+            self.assertEqual(item.diff_histogram_changed_pixel_count, 4)
+            self.assertEqual(item.diff_histogram_total_pixel_count, 4)
+            self.assertEqual(item.diff_histogram_x_bins, (2, 2))
+            self.assertEqual(item.diff_histogram_y_bins, (2, 2))
+            self.assertEqual(item.diff_histogram_x_peak_label, "x=0")
+            self.assertEqual(item.diff_histogram_y_peak_label, "y=0")
             self.assertTrue((bundle.html_path.parent / item.expected_uri).is_file())
             self.assertTrue((bundle.html_path.parent / item.actual_uri).is_file())
             self.assertTrue((bundle.html_path.parent / item.diff_uri).is_file())
@@ -117,6 +148,13 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertIn("Manual review remains required.", html)
             self.assertIn("delta-badge delta-red", html)
             self.assertIn("max-\u0394: 100.0%", html)
+            self.assertIn('class="delta-histogram sgfx-delta-histogram"', html)
+            self.assertIn("Show positional histogram", html)
+            self.assertIn("x-axis peak: x=0", html)
+            self.assertIn("y-axis peak: y=0", html)
+            self.assertIn("data-histogram-x", html)
+            self.assertIn("data-histogram-y", html)
+            self.assertNotIn("<details open", html)
             script_body = html.split('<script id="sgfx-viewer-data" type="application/json">', 1)[1].split(
                 "</script>",
                 1,
