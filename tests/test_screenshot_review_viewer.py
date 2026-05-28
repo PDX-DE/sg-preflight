@@ -75,8 +75,8 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             actual_root = project_root / "export" / "tests" / "actuals"
             diff_root = project_root / "export" / "tests" / "diff"
 
-            self._write_bmp(expected_root / "front.bmp", (10, 20, 30))
-            self._write_bmp(actual_root / "front.bmp", (90, 20, 30))
+            self._write_bmp(expected_root / "front.bmp", (0, 20, 30))
+            self._write_bmp(actual_root / "front.bmp", (255, 20, 30))
             self._write_bmp(diff_root / "front_color.bmp", (255, 0, 0))
 
             bundle = build_screenshot_review_viewer(
