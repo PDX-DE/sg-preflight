@@ -64,6 +64,99 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(THEME_CHOICES, ["clean"])
         self.assertIsInstance(MANUAL_REVIEW_STATUSES, list)
 
+    def test_full_qa_bulk_ack_drafts_classify_high_risk_missing_candidate(self) -> None:
+        from sg_preflight.dashboard.main import _full_qa_bulk_ack_drafts
+
+        steps = [
+            {
+                "id": "screenshot-test-state",
+                "status": "incomplete",
+                "payload": {
+                    "expected_count": 86,
+                    "actual_count": 85,
+                    "diff_count": 0,
+                    "missing_candidate_count": 1,
+                },
+            },
+            {
+                "id": "risk-score",
+                "status": "incomplete",
+                "operator_focus_count": 1,
+                "payload": {"risk_score": 25, "risk_level": "low"},
+            },
+            {
+                "id": "manual-review-assist",
+                "status": "incomplete",
+                "operator_focus_count": 2,
+                "payload": {"operator_focus_steps": [{"id": "visual"}, {"id": "workbook"}]},
+            },
+            {"id": "operator-handoff", "status": "incomplete", "operator_focus_count": 1, "payload": {}},
+        ]
+
+        drafts = _full_qa_bulk_ack_drafts("F70", steps)
+
+        self.assertEqual(drafts["risk-score"]["level"], "high")
+        self.assertIn("1 screenshot candidate(s) are missing", drafts["risk-score"]["reason"])
+        self.assertIn("Manual review remains required", drafts["risk-score"]["text"])
+        self.assertIn("2 item(s) still need operator focus", drafts["manual-review-assist"]["text"])
+        self.assertIn("Full QA Pass for F70 completed", drafts["operator-handoff"]["text"])
+
+    def test_full_qa_bulk_ack_drafts_classify_medium_visual_diff(self) -> None:
+        from sg_preflight.dashboard.main import _full_qa_bulk_ack_drafts
+
+        steps = [
+            {
+                "id": "screenshot-test-state",
+                "status": "available",
+                "payload": {
+                    "expected_count": 86,
+                    "actual_count": 0,
+                    "diff_count": 0,
+                    "copied_evidence": {
+                        "screenshot_review_rows": [{"key": "adaptiveCharge"} for _ in range(3)],
+                    },
+                },
+            },
+            {
+                "id": "risk-score",
+                "status": "incomplete",
+                "operator_focus_count": 1,
+                "payload": {"risk_score": 40, "risk_level": "medium"},
+            },
+            {"id": "manual-review-assist", "status": "passed", "payload": {}},
+            {"id": "operator-handoff", "status": "incomplete", "operator_focus_count": 1, "payload": {}},
+        ]
+
+        drafts = _full_qa_bulk_ack_drafts("F70", steps)
+
+        self.assertEqual(drafts["risk-score"]["level"], "medium")
+        self.assertIn("3 visual diff row(s)", drafts["risk-score"]["reason"])
+
+    def test_full_qa_bulk_ack_drafts_treat_capture_evidence_as_medium(self) -> None:
+        from sg_preflight.dashboard.main import _full_qa_bulk_ack_drafts
+
+        steps = [
+            {
+                "id": "screenshot-test-state",
+                "status": "available",
+                "payload": {
+                    "expected_count": 48,
+                    "actual_count": 0,
+                    "diff_count": 0,
+                    "copied_evidence": {"file_count": 12, "screenshot_review_rows": []},
+                    "pipeline_traceback": {"detected": True},
+                },
+            },
+            {"id": "risk-score", "status": "incomplete", "payload": {"risk_score": 60, "risk_level": "medium"}},
+            {"id": "manual-review-assist", "status": "incomplete", "payload": {}},
+            {"id": "operator-handoff", "status": "incomplete", "payload": {}},
+        ]
+
+        drafts = _full_qa_bulk_ack_drafts("F70", steps)
+
+        self.assertEqual(drafts["risk-score"]["level"], "medium")
+        self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
+
     def test_dashboard_snapshot_contains_ten_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
@@ -515,12 +608,19 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Manual-review state still has", source)
         self.assertIn("incomplete_but_queued_for_acknowledge", source)
         self.assertIn("acknowledged_via_bulk_confirm", source)
+        self.assertIn("confirmed_via_bulk_with_tool_draft", source)
+        self.assertIn("operator_overrode_draft", source)
+        self.assertIn("confirmed_via_bulk_without_review", source)
         self.assertIn("Acknowledgment items queued", source)
-        self.assertIn("Acknowledge all", source)
-        self.assertIn("Acknowledge all queued items? This records your acknowledgment", source)
+        self.assertIn("Confirm All", source)
+        self.assertIn("High-risk draft requires a second confirmation.", source)
+        self.assertIn("original draft preserved", source)
         self.assertIn("bulk_ack_queued", source)
         self.assertIn("bulk_acknowledged", source)
+        self.assertIn("bulk_ack_drafts", source)
+        self.assertIn("bulk_ack_values", source)
         self.assertIn("_bulk_handoff_placeholder", source)
+        self.assertIn("_full_qa_bulk_ack_drafts", source)
         self.assertIn("_full_qa_display_status", source)
         self.assertIn('str(step.get("id", "")) == "screenshot-test-state"', source)
         self.assertIn("expected > 0 and actual == 0 and diff == 0", source)
@@ -562,15 +662,27 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn("Baseline exists but no candidate image was found.", triage_source)
 
     def test_parent_slot_deleted_matches_nicegui_deleted_element_message(self) -> None:
-        from sg_preflight.dashboard.main import _ignorable_nicegui_runtime_error, _parent_slot_deleted
+        from sg_preflight.dashboard.main import (
+            _ignorable_nicegui_runtime_error,
+            _nicegui_client_deleted,
+            _parent_slot_deleted,
+        )
 
         self.assertTrue(_parent_slot_deleted(RuntimeError("The parent element this slot belongs to has been deleted.")))
         self.assertTrue(_parent_slot_deleted(RuntimeError("The parent slot has been deleted.")))
+        self.assertTrue(
+            _nicegui_client_deleted(RuntimeError("The client this element belongs to has been deleted."))
+        )
         self.assertTrue(
             _ignorable_nicegui_runtime_error(
                 RuntimeError(
                     "The current slot cannot be determined because the slot stack for this task is empty."
                 )
+            )
+        )
+        self.assertTrue(
+            _ignorable_nicegui_runtime_error(
+                RuntimeError("The client this element belongs to has been deleted.")
             )
         )
 

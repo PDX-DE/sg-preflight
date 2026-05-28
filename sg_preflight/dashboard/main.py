@@ -322,9 +322,14 @@ def _parent_slot_deleted(error: RuntimeError) -> bool:
     return ("parent slot" in message or ("parent element" in message and "slot" in message)) and "deleted" in message
 
 
+def _nicegui_client_deleted(error: RuntimeError) -> bool:
+    message = str(error).casefold()
+    return "client this element belongs to has been deleted" in message
+
+
 def _ignorable_nicegui_runtime_error(error: RuntimeError) -> bool:
     message = str(error).casefold()
-    return _parent_slot_deleted(error) or (
+    return _parent_slot_deleted(error) or _nicegui_client_deleted(error) or (
         "current slot cannot be determined" in message and "slot stack" in message
     )
 
@@ -2511,6 +2516,215 @@ def _render_page_confluence_anchors(ui: Any, page: dict[str, Any]) -> None:
         _render_confluence_anchor(ui, anchor)
 
 
+_FULL_QA_DRAFT_STEP_IDS = ("risk-score", "manual-review-assist", "operator-handoff")
+
+
+def _full_qa_int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _full_qa_step_payload(step: dict[str, Any]) -> dict[str, Any]:
+    payload = step.get("payload", {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def _full_qa_step_map(steps: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(step.get("id", "")): step for step in steps if isinstance(step, dict)}
+
+
+def _full_qa_step_status(step: dict[str, Any]) -> str:
+    return str(step.get("status", "unknown") or "unknown")
+
+
+def _full_qa_screenshot_counts(step: dict[str, Any] | None) -> dict[str, int]:
+    if not isinstance(step, dict):
+        return {
+            "expected_count": 0,
+            "actual_count": 0,
+            "diff_count": 0,
+            "missing_candidate_count": 0,
+            "review_row_count": 0,
+            "evidence_file_count": 0,
+            "pipeline_traceback_detected": 0,
+        }
+    payload = _full_qa_step_payload(step)
+    rows = payload.get("screenshot_review_rows", [])
+    copied_evidence = payload.get("copied_evidence", {})
+    if not isinstance(rows, list) or not rows:
+        if isinstance(copied_evidence, dict):
+            rows = copied_evidence.get("screenshot_review_rows", [])
+    pipeline_traceback = payload.get("pipeline_traceback", {})
+    pipeline_detected = bool(pipeline_traceback.get("detected")) if isinstance(pipeline_traceback, dict) else False
+    return {
+        "expected_count": _full_qa_int(payload.get("expected_count")),
+        "actual_count": _full_qa_int(payload.get("actual_count")),
+        "diff_count": _full_qa_int(payload.get("diff_count")),
+        "missing_candidate_count": _full_qa_int(payload.get("missing_candidate_count")),
+        "review_row_count": len(rows) if isinstance(rows, list) else 0,
+        "evidence_file_count": (
+            _full_qa_int(copied_evidence.get("file_count")) if isinstance(copied_evidence, dict) else 0
+        ),
+        "pipeline_traceback_detected": 1 if pipeline_detected else 0,
+    }
+
+
+def _full_qa_risk_draft(profile_id: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+    step_by_id = _full_qa_step_map(steps)
+    screenshot_counts = _full_qa_screenshot_counts(step_by_id.get("screenshot-test-state"))
+    risk_payload = _full_qa_step_payload(step_by_id.get("risk-score", {}))
+    workbook_status = _full_qa_step_status(step_by_id.get("delivery-checklist", {}))
+    workbook_trigger_status = _full_qa_step_status(step_by_id.get("delivery-workbook-trigger", {}))
+    missing_candidate_count = screenshot_counts["missing_candidate_count"]
+    diff_count = screenshot_counts["diff_count"]
+    review_row_count = screenshot_counts["review_row_count"]
+    evidence_file_count = screenshot_counts["evidence_file_count"]
+    pipeline_traceback_detected = bool(screenshot_counts["pipeline_traceback_detected"])
+    risk_score = _full_qa_int(risk_payload.get("risk_score"))
+    risk_level = str(risk_payload.get("risk_level", "")).strip().casefold()
+    expected = screenshot_counts["expected_count"]
+    actual = screenshot_counts["actual_count"]
+
+    level = "low"
+    reasons: list[str] = []
+    if missing_candidate_count:
+        level = "high"
+        reasons.append(f"{missing_candidate_count} screenshot candidate(s) are missing")
+    elif (
+        expected > 0
+        and actual == 0
+        and diff_count == 0
+        and review_row_count == 0
+        and evidence_file_count == 0
+        and not pipeline_traceback_detected
+    ):
+        level = "high"
+        reasons.append("expected screenshots exist but no actual or diff screenshots are present")
+    elif risk_level == "high" or risk_score >= 70:
+        level = "high"
+        reasons.append(f"risk score is {risk_score}/100")
+    elif (
+        diff_count
+        or review_row_count
+        or evidence_file_count
+        or pipeline_traceback_detected
+        or risk_level == "medium"
+        or risk_score >= 35
+    ):
+        level = "medium"
+        count = diff_count or review_row_count
+        if diff_count or review_row_count:
+            reasons.append(f"{count} visual diff row(s) need operator review")
+        elif evidence_file_count or pipeline_traceback_detected:
+            reasons.append("screenshot capture output needs operator review")
+        else:
+            reasons.append(f"risk score is {risk_score}/100")
+    else:
+        reasons.append("local evidence has no high-risk signal")
+
+    if workbook_status in {"failed", "incomplete", "unavailable"} or workbook_trigger_status in {
+        "failed",
+        "incomplete",
+        "unavailable",
+    }:
+        if level == "low":
+            level = "medium"
+        reasons.append("workbook readiness is not passed")
+
+    reason = "; ".join(reasons[:3])
+    text = (
+        f"Risk draft: {level} for {profile_id}. {reason}. "
+        "Manual review remains required before any verdict is recorded."
+    )
+    return {
+        "step_id": "risk-score",
+        "label": "Risk Score draft",
+        "level": level,
+        "reason": reason,
+        "text": text,
+        "draft_available": True,
+    }
+
+
+def _full_qa_manual_review_draft(profile_id: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+    step_by_id = _full_qa_step_map(steps)
+    manual_step = step_by_id.get("manual-review-assist", {})
+    payload = _full_qa_step_payload(manual_step)
+    focus_steps = payload.get("operator_focus_steps", [])
+    focus_count = (
+        len(focus_steps) if isinstance(focus_steps, list) else _full_qa_int(manual_step.get("operator_focus_count"))
+    )
+    suggestions = payload.get("suggestions", [])
+    suggestion_count = len(suggestions) if isinstance(suggestions, list) else 0
+    session = payload.get("session", {}) if isinstance(payload.get("session"), dict) else {}
+    recorded_count = _full_qa_int(session.get("recorded_steps") or payload.get("recorded_steps"))
+    pending_count = _full_qa_int(session.get("pending_steps") or payload.get("pending_steps"))
+    if not recorded_count and not pending_count:
+        recorded_count = _full_qa_int(payload.get("recorded_verdict_count"))
+        pending_count = _full_qa_int(payload.get("pending_verdict_count"))
+    if focus_count:
+        text = (
+            f"Manual Review draft for {profile_id}: {focus_count} item(s) still need operator focus. "
+            f"{suggestion_count} local suggestion(s) are captured for review; record verdicts only after inspection."
+        )
+    elif recorded_count or pending_count:
+        text = (
+            f"Manual Review draft for {profile_id}: {recorded_count} decision(s) recorded locally and "
+            f"{pending_count} decision(s) still pending. Confirm the board before final handoff."
+        )
+    else:
+        text = (
+            f"Manual Review draft for {profile_id}: no recorded decision summary was found in this run. "
+            "Open the Manual Review Companion if a verdict still needs to be entered."
+        )
+    return {
+        "step_id": "manual-review-assist",
+        "label": "Manual Review draft",
+        "level": "manual_review_required",
+        "reason": f"{focus_count} focus item(s), {recorded_count} recorded, {pending_count} pending",
+        "text": text,
+        "draft_available": True,
+    }
+
+
+def _full_qa_handoff_draft(profile_id: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+    passed_count = len([step for step in steps if _full_qa_step_status(step) == "passed"])
+    flagged_steps = [
+        step
+        for step in steps
+        if _full_qa_step_status(step) in {"incomplete", "failed", "unavailable", "confirmation_pending"}
+        or _full_qa_int(step.get("operator_focus_count")) > 0
+    ]
+    risk_draft = _full_qa_risk_draft(profile_id, steps)
+    escalation = ""
+    if str(risk_draft.get("level", "")) == "high":
+        escalation = f" Escalation reason: {risk_draft.get('reason', '')}."
+    elif flagged_steps:
+        escalation = " Review the queued acknowledgment cards before shift handoff."
+    text = (
+        f"Full QA Pass for {profile_id} completed. {passed_count} automated steps passed; "
+        f"{len(flagged_steps)} item(s) flagged for review.{escalation}"
+    )
+    return {
+        "step_id": "operator-handoff",
+        "label": "Operator Handoff draft",
+        "level": "handoff",
+        "reason": f"{passed_count} passed, {len(flagged_steps)} flagged",
+        "text": text,
+        "draft_available": True,
+    }
+
+
+def _full_qa_bulk_ack_drafts(profile_id: str, steps: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        "risk-score": _full_qa_risk_draft(profile_id, steps),
+        "manual-review-assist": _full_qa_manual_review_draft(profile_id, steps),
+        "operator-handoff": _full_qa_handoff_draft(profile_id, steps),
+    }
+
+
 def _dashboard_verbose_tooltips_enabled() -> bool:
     return os.environ.get(VERBOSE_TOOLTIP_ENV) == "1"
 
@@ -4305,6 +4519,10 @@ def _render_full_qa_pass_panel(
         "auto_started": set(),
         "bulk_ack_queued": set(),
         "bulk_acknowledged": {},
+        "bulk_ack_outcomes": {},
+        "bulk_ack_drafts": {},
+        "bulk_ack_values": {},
+        "bulk_ack_high_risk_prompt": False,
         "bulk_handoff_text": "",
         "action_results": {},
         "done": False,
@@ -4762,7 +4980,7 @@ def _render_full_qa_pass_panel(
         def _full_qa_effective_status(step: dict[str, Any]) -> str:
             step_id = str(step.get("id", ""))
             if step_id in wizard_state["bulk_acknowledged"]:
-                return "acknowledged_via_bulk_confirm"
+                return str(wizard_state["bulk_ack_outcomes"].get(step_id, "acknowledged_via_bulk_confirm"))
             if step_id in wizard_state["skipped"]:
                 return "skipped"
             if step_id in wizard_state["bulk_ack_queued"]:
@@ -4774,17 +4992,9 @@ def _render_full_qa_pass_panel(
         def _payload_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             return [step for step in payload.get("steps", []) if isinstance(step, dict)]
 
-        def _ack_action_for_step(step: dict[str, Any]) -> dict[str, Any] | None:
-            for action in step.get("inline_actions", []):
-                if not isinstance(action, dict):
-                    continue
-                if str(action.get("kind", "")) in {"operator_ack", "verify_manual_review", "handoff_form"}:
-                    return action
-            return None
-
         def _should_queue_bulk_ack(step: dict[str, Any]) -> bool:
             step_id = str(step.get("id", ""))
-            if step_id not in {"risk-score", "manual-review-assist", "operator-handoff"}:
+            if step_id not in _FULL_QA_DRAFT_STEP_IDS:
                 return False
             if step_id in wizard_state["skipped"] or step_id in wizard_state["completed"]:
                 return False
@@ -4793,19 +5003,60 @@ def _render_full_qa_pass_panel(
             status = _full_qa_display_status(step)
             if status in {"failed", "skipped", "unavailable"}:
                 return False
-            if step_id == "operator-handoff":
-                return True
-            return _ack_action_for_step(step) is not None and status != "passed"
+            return True
+
+        def _ensure_bulk_ack_drafts(payload: dict[str, Any]) -> None:
+            steps = _payload_steps(payload)
+            computed = _full_qa_bulk_ack_drafts(profile_id, steps)
+            drafts = wizard_state["bulk_ack_drafts"]
+            values = wizard_state["bulk_ack_values"]
+            queued = set(wizard_state["bulk_ack_queued"])
+            acknowledged = set(wizard_state["bulk_acknowledged"])
+            for store_name in ("bulk_ack_drafts", "bulk_ack_values"):
+                store = wizard_state[store_name]
+                for step_id in list(store):
+                    if step_id not in queued and step_id not in acknowledged:
+                        store.pop(step_id, None)
+            for step_id in queued:
+                if step_id not in drafts:
+                    draft = computed.get(step_id) or {
+                        "step_id": step_id,
+                        "label": f"{step_id} draft",
+                        "level": "unknown",
+                        "reason": "draft unavailable",
+                        "text": "",
+                        "draft_available": False,
+                    }
+                    drafts[step_id] = draft
+                values.setdefault(step_id, str(drafts.get(step_id, {}).get("text", "")))
+
+        def _bulk_ack_outcome(step_id: str, value: str) -> str:
+            draft = wizard_state["bulk_ack_drafts"].get(step_id, {})
+            draft_text = str(draft.get("text", "")).strip()
+            if not bool(draft.get("draft_available", False)) or not draft_text:
+                return "confirmed_via_bulk_without_review"
+            if value.strip() != draft_text:
+                return "operator_overrode_draft"
+            return "confirmed_via_bulk_with_tool_draft"
+
+        def _risk_draft_is_high() -> bool:
+            draft = wizard_state["bulk_ack_drafts"].get("risk-score", {})
+            return str(draft.get("level", "")).strip().casefold() == "high"
 
         def _sync_bulk_ack_queue(payload: dict[str, Any]) -> None:
             if not bool(payload.get("trusted_tool_mode", False)):
                 wizard_state["bulk_ack_queued"].clear()
+                wizard_state["bulk_ack_drafts"].clear()
+                wizard_state["bulk_ack_values"].clear()
+                wizard_state["bulk_ack_high_risk_prompt"] = False
                 return
             queued: set[str] = set()
             for step in _payload_steps(payload):
                 if _should_queue_bulk_ack(step):
                     queued.add(str(step.get("id", "")))
             wizard_state["bulk_ack_queued"] = queued
+            if not queued:
+                wizard_state["bulk_ack_high_risk_prompt"] = False
 
         def _bulk_ack_queued_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             acknowledged = wizard_state["bulk_acknowledged"]
@@ -4826,6 +5077,9 @@ def _render_full_qa_pass_panel(
                 "skipped",
                 "incomplete_but_queued_for_acknowledge",
                 "acknowledged_via_bulk_confirm",
+                "confirmed_via_bulk_with_tool_draft",
+                "operator_overrode_draft",
+                "confirmed_via_bulk_without_review",
             }
             for index in range(max(0, start), len(steps)):
                 if _full_qa_effective_status(steps[index]) not in non_blocking:
@@ -4880,25 +5134,45 @@ def _render_full_qa_pass_panel(
             wizard_state["done"] = wizard_state["index"] >= len(steps)
             _render_payload(payload, preserve_index=True)
 
-        def _acknowledge_all_queued(handoff_text: str = "") -> None:
+        def _confirm_all_queued(draft_values: dict[str, str], *, require_high_risk_confirm: bool = True) -> None:
             payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+            _sync_bulk_ack_queue(payload)
             queued_steps = _bulk_ack_queued_steps(payload)
             if not queued_steps:
                 return
+            _ensure_bulk_ack_drafts(payload)
+            wizard_state["bulk_ack_values"].update({key: str(value or "") for key, value in draft_values.items()})
+            if _risk_draft_is_high() and require_high_risk_confirm:
+                wizard_state["bulk_ack_high_risk_prompt"] = True
+                _render_payload(payload, preserve_index=True)
+                return
             timestamp = _ack_timestamp()
             acknowledged = wizard_state["bulk_acknowledged"]
+            outcomes = wizard_state["bulk_ack_outcomes"]
+            final_values: dict[str, str] = {}
             for step in queued_steps:
                 step_id = str(step.get("id", ""))
+                value = str(wizard_state["bulk_ack_values"].get(step_id, "")).strip()
+                draft = wizard_state["bulk_ack_drafts"].get(step_id, {})
+                if not value:
+                    value = str(draft.get("text", "") or _bulk_handoff_placeholder(timestamp)).strip()
+                outcome = _bulk_ack_outcome(step_id, value)
                 acknowledged[step_id] = timestamp
-                step["acknowledgment_status"] = "acknowledged_via_bulk_confirm"
+                outcomes[step_id] = outcome
+                final_values[step_id] = value
+                step["acknowledgment_status"] = outcome
                 step["acknowledged_at_utc"] = timestamp
+                step["acknowledgment_draft"] = str(draft.get("text", ""))
+                step["acknowledgment_value"] = value
+                if outcome == "operator_overrode_draft":
+                    step["operator_override_text"] = value
                 _append_activity(
                     action=f"bulk-acknowledge:{step_id}",
                     outcome="ok",
-                    note=f"acknowledged_via_bulk_confirm at {timestamp}",
+                    note=f"{outcome} at {timestamp}",
                 )
             if any(str(step.get("id", "")) == "operator-handoff" for step in queued_steps):
-                stopping_point = handoff_text.strip() or _bulk_handoff_placeholder(timestamp)
+                stopping_point = final_values.get("operator-handoff", "").strip() or _bulk_handoff_placeholder(timestamp)
                 record_operator_handoff(
                     workspace=workspace,
                     profile_id=profile_id,
@@ -4907,6 +5181,7 @@ def _render_full_qa_pass_panel(
                     next_step="Review the Full QA Pass done summary and continue any listed follow-up.",
                     note="Batch acknowledgment recorded from Full QA Pass.",
                 )
+            wizard_state["bulk_ack_high_risk_prompt"] = False
             _sync_bulk_ack_queue(payload)
             _set_wizard_index(payload, start=len(_payload_steps(payload)))
             _render_payload(payload, preserve_index=True)
@@ -5204,7 +5479,13 @@ def _render_full_qa_pass_panel(
                                 if prior_status == "passed"
                                 else "ack"
                                 if prior_status
-                                in {"incomplete_but_queued_for_acknowledge", "acknowledged_via_bulk_confirm"}
+                                in {
+                                    "incomplete_but_queued_for_acknowledge",
+                                    "acknowledged_via_bulk_confirm",
+                                    "confirmed_via_bulk_with_tool_draft",
+                                    "operator_overrode_draft",
+                                    "confirmed_via_bulk_without_review",
+                                }
                                 else "skip"
                                 if prior_status == "skipped"
                                 else "!"
@@ -5225,42 +5506,96 @@ def _render_full_qa_pass_panel(
                         ).classes("sgfx-muted")
                         queued_ack_steps = _bulk_ack_queued_steps(payload)
                         if queued_ack_steps:
+                            _ensure_bulk_ack_drafts(payload)
                             with ui.column().classes("sgfx-acknowledgment-queue"):
                                 ui.label("Acknowledgment items queued").classes("sgfx-panel-tagline")
                                 ui.label(
-                                    f"{len(queued_ack_steps)} acknowledgment item(s) queued for batch confirmation."
+                                    f"{len(queued_ack_steps)} acknowledgment item(s) queued with local evidence drafts."
                                 ).classes("sgfx-summary")
                                 ui.label(
-                                    "Acknowledge all queued items? This records your acknowledgment for each step "
-                                    "listed below and completes the Full QA Pass."
+                                    "Review each draft below. Confirm All records unchanged drafts as "
+                                    "confirmed_via_bulk_with_tool_draft; edited text is recorded as "
+                                    "operator_overrode_draft with the original draft preserved."
                                 ).classes("sgfx-muted")
+                                draft_inputs: dict[str, Any] = {}
                                 for ack_step in queued_ack_steps:
-                                    ui.label(
-                                        f"{ack_step.get('label', '')}: "
-                                        "incomplete_but_queued_for_acknowledge"
-                                    ).classes("sgfx-muted")
-                                handoff_input = None
-                                if any(str(step.get("id", "")) == "operator-handoff" for step in queued_ack_steps):
-                                    if not str(wizard_state.get("bulk_handoff_text", "")).strip():
-                                        wizard_state["bulk_handoff_text"] = _bulk_handoff_placeholder(_ack_timestamp())
-                                    handoff_input = ui.textarea(
-                                        "Operator Handoff note",
-                                        value=str(wizard_state.get("bulk_handoff_text", "")),
-                                    ).props("outlined").classes("full-width")
+                                    step_id = str(ack_step.get("id", ""))
+                                    draft = wizard_state["bulk_ack_drafts"].get(step_id, {})
+                                    draft_value = str(
+                                        wizard_state["bulk_ack_values"].get(step_id)
+                                        or draft.get("text", "")
+                                        or _bulk_handoff_placeholder(_ack_timestamp())
+                                    )
+                                    with ui.column().classes(
+                                        f"sgfx-draft-confirm-card sgfx-draft-{draft.get('level', 'unknown')}"
+                                    ):
+                                        with ui.row().classes("items-center justify-between full-width"):
+                                            ui.label(str(draft.get("label", ack_step.get("label", "")))).classes(
+                                                "sgfx-panel-tagline"
+                                            )
+                                            ui.label("Draft - operator confirms or edits").classes("sgfx-muted")
+                                        reason = str(draft.get("reason", "")).strip()
+                                        if reason:
+                                            ui.label(reason).classes("sgfx-muted")
+                                        draft_input = ui.textarea(
+                                            "Draft text",
+                                            value=draft_value,
+                                        ).props("outlined autogrow").classes("full-width sgfx-draft-text")
+                                        draft_inputs[step_id] = draft_input
+                                        ui.button(
+                                            "Edit",
+                                            on_click=lambda _event=None: _notify_ui(
+                                                "Edit the draft text, then use Confirm All."
+                                            ),
+                                        ).props("flat dense no-caps")
 
-                                def _ack_all() -> None:
-                                    if handoff_input is not None:
-                                        wizard_state["bulk_handoff_text"] = str(handoff_input.value or "")
-                                    _acknowledge_all_queued(str(wizard_state.get("bulk_handoff_text", "")))
+                                def _collect_draft_values() -> dict[str, str]:
+                                    values = {
+                                        step_id: str(control.value or "")
+                                        for step_id, control in draft_inputs.items()
+                                    }
+                                    wizard_state["bulk_ack_values"].update(values)
+                                    return values
 
-                                ui.button("Acknowledge all", on_click=_ack_all).props("color=primary")
+                                if bool(wizard_state.get("bulk_ack_high_risk_prompt")):
+                                    with ui.column().classes("sgfx-high-risk-confirm"):
+                                        ui.label("High-risk draft requires a second confirmation.").classes(
+                                            "sgfx-warning"
+                                        )
+                                        ui.label(
+                                            "Confirm All records the visible drafts; Cancel returns to draft review."
+                                        ).classes("sgfx-muted")
+
+                                        def _cancel_high_risk() -> None:
+                                            wizard_state["bulk_ack_high_risk_prompt"] = False
+                                            _render_payload(payload, preserve_index=True)
+
+                                        with ui.row().classes("sgfx-confirm-actions"):
+                                            ui.button(
+                                                "Confirm All",
+                                                on_click=lambda _event=None: _confirm_all_queued(
+                                                    _collect_draft_values(),
+                                                    require_high_risk_confirm=False,
+                                                ),
+                                            ).props("color=primary")
+                                            ui.button("Cancel", on_click=_cancel_high_risk).props("flat")
+                                else:
+                                    ui.button(
+                                        "Confirm All",
+                                        on_click=lambda _event=None: _confirm_all_queued(_collect_draft_values()),
+                                    ).props("color=primary")
                         acknowledged_steps = _bulk_acknowledged_steps(payload)
                         if acknowledged_steps:
-                            ui.label("Acknowledged via bulk confirmation").classes("sgfx-panel-tagline")
+                            ui.label("Confirmed queued items").classes("sgfx-panel-tagline")
                             for ack_step in acknowledged_steps:
-                                ack_timestamp = wizard_state["bulk_acknowledged"].get(str(ack_step.get("id", "")), "")
+                                step_id = str(ack_step.get("id", ""))
+                                ack_timestamp = wizard_state["bulk_acknowledged"].get(step_id, "")
+                                outcome = wizard_state["bulk_ack_outcomes"].get(
+                                    step_id,
+                                    "acknowledged_via_bulk_confirm",
+                                )
                                 ui.label(
-                                    f"{ack_step.get('label', '')}: acknowledged_via_bulk_confirm at {ack_timestamp}"
+                                    f"{ack_step.get('label', '')}: {outcome} at {ack_timestamp}"
                                 ).classes("sgfx-muted")
                         diff_steps = [step for step in steps if _step_has_diff_review(step)]
                         if diff_steps:
@@ -5604,8 +5939,18 @@ def _render_dashboard(
             .sgfx-step-skipped { border-color: var(--sgfx-border); background: var(--sgfx-bg-elev); }
             .sgfx-step-incomplete_but_queued_for_acknowledge { border-color: #94764c; background: #302b20; }
             .sgfx-step-acknowledged_via_bulk_confirm { border-color: #4f766f; background: #20302d; }
+            .sgfx-step-confirmed_via_bulk_with_tool_draft { border-color: #4f766f; background: #20302d; }
+            .sgfx-step-operator_overrode_draft { border-color: #6d7590; background: #252a38; }
+            .sgfx-step-confirmed_via_bulk_without_review { border-color: #94764c; background: #302b20; }
             .sgfx-step-incomplete, .sgfx-step-confirmation_pending { border-color: var(--sgfx-warning-border); background: var(--sgfx-warning-bg); }
             .sgfx-acknowledgment-queue { gap: 8px; border: 1px solid #94764c; border-radius: 8px; background: #29251d; padding: 12px; }
+            .sgfx-draft-confirm-card { gap: 8px; border: 1px solid var(--sgfx-border); border-radius: 8px; background: var(--sgfx-bg-panel); padding: 12px; }
+            .sgfx-draft-high { border-color: #a45a55; background: #352323; }
+            .sgfx-draft-medium { border-color: #94764c; background: #302b20; }
+            .sgfx-draft-low, .sgfx-draft-handoff, .sgfx-draft-manual_review_required { border-color: #4f766f; background: #20302d; }
+            .sgfx-draft-text textarea { min-height: 96px; line-height: 1.45; }
+            .sgfx-high-risk-confirm { gap: 8px; border: 1px solid #a45a55; border-radius: 8px; background: #352323; padding: 12px; }
+            .sgfx-confirm-actions { gap: 10px; align-items: center; }
             .sgfx-live-output textarea { min-height: 160px; font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.45; background: var(--sgfx-bg) !important; color: var(--sgfx-fg) !important; }
             .sgfx-live-visuals { gap: 12px; align-items: stretch; animation: sgfx-visual-in 160ms ease-out; }
             .sgfx-workbook-preview, .sgfx-diff-preview { flex: 1 1 280px; min-width: 260px; border: 1px solid var(--sgfx-border); border-radius: 8px; background: var(--sgfx-bg); padding: 10px; gap: 6px; }
