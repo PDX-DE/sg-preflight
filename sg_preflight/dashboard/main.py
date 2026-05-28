@@ -689,6 +689,41 @@ def _write_dashboard_notifications_preference(workspace: Path | str, enabled: bo
     return payload
 
 
+def _full_qa_profile_output_token(profile_id: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(profile_id or "unknown").strip()).strip("._-")
+    return (token or "unknown").lower()
+
+
+def _full_qa_wizard_state_path(profile_id: str, *, home: Path | None = None) -> Path:
+    root = Path(home).resolve() if home is not None else Path.home().resolve()
+    return root / "sgfx_outputs" / _full_qa_profile_output_token(profile_id) / ".wizard_state.json"
+
+
+def _read_full_qa_wizard_state(profile_id: str, *, home: Path | None = None) -> dict[str, Any]:
+    path = _full_qa_wizard_state_path(profile_id, home=home)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_full_qa_wizard_state(profile_id: str, payload: dict[str, Any], *, home: Path | None = None) -> Path:
+    path = _full_qa_wizard_state_path(profile_id, home=home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f"{path.name}.tmp")
+    temp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    temp_path.replace(path)
+    return path
+
+
+def _delete_full_qa_wizard_state(profile_id: str, *, home: Path | None = None) -> None:
+    try:
+        _full_qa_wizard_state_path(profile_id, home=home).unlink()
+    except FileNotFoundError:
+        return
+
+
 def _ticket_id_from_payload(payload: dict[str, Any]) -> str:
     for key in ("active_ticket_id", "ticket_id", "jira_ticket", "jira_ticket_id", "ticket"):
         raw = str(payload.get(key, "")).strip().upper()
@@ -5328,6 +5363,8 @@ def _render_full_qa_pass_panel(
         "bulk_ack_high_risk_prompt": False,
         "bulk_handoff_text": "",
         "action_results": {},
+        "running_step_id": "",
+        "running_action_id": "",
         "done": False,
         "full_qa_notified": False,
     }
@@ -5378,6 +5415,7 @@ def _render_full_qa_pass_panel(
                 "Store whether SGFX shows Windows notifications when long local work finishes.",
             )
             notice = ui.label("Full QA pass has not run in this dashboard session.").classes("sgfx-muted")
+            resume_prompt_host = ui.column().classes("full-width")
             result_host = ui.column().classes("full-width")
 
         with ui.dialog() as wizard_viewer_dialog:
@@ -5518,6 +5556,10 @@ def _render_full_qa_pass_panel(
             if action_id in running_actions:
                 return
             running_actions.add(action_id)
+            wizard_state["running_action_id"] = action_id
+            wizard_state["running_step_id"] = str(action.get("step_id", ""))
+            current_payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+            _persist_wizard_state(current_payload, reason="action_started", status="running")
             status_label.text = "running"
             eta_label.text = _eta_text(typical=str(action.get("typical_range", _typical_range_for_step({"inline_actions": [action]}))))
             completion_label.text = f"{action.get('label', 'Action')} running..."
@@ -5558,6 +5600,9 @@ def _render_full_qa_pass_panel(
                 if cancel_button is not None:
                     cancel_button.visible = False
                 running_actions.discard(action_id)
+                wizard_state["running_action_id"] = ""
+                wizard_state["running_step_id"] = ""
+                _persist_wizard_state(current_payload, reason="action_start_failed", status="in_progress")
                 if set_running_controls is not None:
                     set_running_controls(False)
                 _append_activity(action=action_id, outcome="error", note=str(exc))
@@ -5600,6 +5645,8 @@ def _render_full_qa_pass_panel(
                         return
                     _stop_timer()
                     running_actions.discard(action_id)
+                    wizard_state["running_action_id"] = ""
+                    wizard_state["running_step_id"] = ""
                     progress.visible = False
                     if cancel_button is not None:
                         cancel_button.visible = False
@@ -5627,6 +5674,9 @@ def _render_full_qa_pass_panel(
                     )
                     if outcome == "available" and on_complete is not None:
                         on_complete(result)
+                    else:
+                        current_payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+                        _persist_wizard_state(current_payload, reason="action_completed", status="in_progress")
                 except RuntimeError as exc:
                     if not _ignorable_nicegui_runtime_error(exc):
                         raise
@@ -5686,6 +5736,8 @@ def _render_full_qa_pass_panel(
                     _cancel_background_poll_timer(job_state.get("launch_timer"))
                     active_jobs.pop(action_id, None)
                     running_actions.discard(action_id)
+                    wizard_state["running_action_id"] = ""
+                    wizard_state["running_step_id"] = ""
                     progress.visible = False
                     status_label.text = "incomplete"
                     eta_label.text = _eta_text(typical=str(action.get("typical_range", "typical <1 min")))
@@ -5698,6 +5750,8 @@ def _render_full_qa_pass_panel(
                     if set_running_controls is not None:
                         set_running_controls(False)
                     _append_activity(action=action_id, outcome="unavailable", note="Action canceled before subprocess start.")
+                    current_payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+                    _persist_wizard_state(current_payload, reason="action_canceled", status="in_progress")
                     completion_label.text = "Action canceled before local subprocess started."
                 else:
                     completion_label.text = "No running action is available to cancel."
@@ -5713,6 +5767,8 @@ def _render_full_qa_pass_panel(
                 _cancel_background_poll_timer(job_state.get("timer"))
                 active_jobs.pop(action_id, None)
                 running_actions.discard(action_id)
+                wizard_state["running_action_id"] = ""
+                wizard_state["running_step_id"] = ""
                 progress.visible = False
                 cancel_button.visible = False
                 status_label.text = "incomplete"
@@ -5734,6 +5790,8 @@ def _render_full_qa_pass_panel(
                 if set_running_controls is not None:
                     set_running_controls(False)
                 _append_activity(action=action_id, outcome="unavailable", note=completion_label.text)
+                current_payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+                _persist_wizard_state(current_payload, reason="action_canceled", status="in_progress")
                 _notify_ui(completion_label.text)
             except Exception as exc:  # noqa: BLE001
                 status_label.text = "failed"
@@ -5824,6 +5882,75 @@ def _render_full_qa_pass_panel(
 
         def _payload_steps(payload: dict[str, Any]) -> list[dict[str, Any]]:
             return [step for step in payload.get("steps", []) if isinstance(step, dict)]
+
+        def _current_step_id(steps: list[dict[str, Any]]) -> str:
+            index = _safe_int(wizard_state.get("index"))
+            if 0 <= index < len(steps):
+                return str(steps[index].get("id", ""))
+            return ""
+
+        def _serialize_wizard_state(payload: dict[str, Any], *, status: str, reason: str) -> dict[str, Any]:
+            steps = _payload_steps(payload)
+            return {
+                "schema_version": 1,
+                "profile_id": profile_id,
+                "workspace": str(workspace),
+                "status": status,
+                "reason": reason,
+                "saved_at_utc": _utc_now(),
+                "current_step_index": _safe_int(wizard_state.get("index")),
+                "current_step_id": _current_step_id(steps),
+                "completed_step_ids": sorted(str(item) for item in wizard_state["completed"]),
+                "skipped_step_ids": sorted(str(item) for item in wizard_state["skipped"]),
+                "bulk_ack_queued_step_ids": sorted(str(item) for item in wizard_state["bulk_ack_queued"]),
+                "bulk_acknowledged": dict(wizard_state["bulk_acknowledged"]),
+                "bulk_ack_outcomes": dict(wizard_state["bulk_ack_outcomes"]),
+                "bulk_ack_values": dict(wizard_state["bulk_ack_values"]),
+                "running_step_id": str(wizard_state.get("running_step_id", "")),
+                "running_action_id": str(wizard_state.get("running_action_id", "")),
+                "full_qa_notified": bool(wizard_state.get("full_qa_notified")),
+                "step_outcomes": [
+                    {
+                        "step_id": str(step.get("id", "")),
+                        "label": str(step.get("label", "")),
+                        "status": _full_qa_effective_status(step),
+                    }
+                    for step in steps
+                ],
+                "payload": payload,
+            }
+
+        def _persist_wizard_state(payload: dict[str, Any], *, reason: str, status: str | None = None) -> None:
+            if not _payload_steps(payload):
+                return
+            state_status = status or (
+                "completed"
+                if bool(wizard_state.get("done"))
+                else "running"
+                if running_actions
+                else "in_progress"
+            )
+            _write_full_qa_wizard_state(
+                profile_id,
+                _serialize_wizard_state(payload, status=state_status, reason=reason),
+            )
+
+        def _mark_interrupted_step(payload: dict[str, Any], step_id: str, action_id: str) -> None:
+            for step in _payload_steps(payload):
+                if str(step.get("id", "")) != step_id:
+                    continue
+                step["status"] = "interrupted"
+                step["source_status"] = "interrupted"
+                step["summary"] = (
+                    f"{step.get('label', 'Step')} was interrupted before the local action completed. "
+                    "Re-run this step before treating it as evidence."
+                )
+                step_payload = step.get("payload", {}) if isinstance(step.get("payload"), dict) else {}
+                step_payload["status"] = "interrupted"
+                step_payload["summary"] = str(step["summary"])
+                step_payload["interrupted_action_id"] = action_id
+                step["payload"] = step_payload
+                break
 
         def _should_queue_bulk_ack(step: dict[str, Any]) -> bool:
             step_id = str(step.get("id", ""))
@@ -5926,6 +6053,7 @@ def _render_full_qa_pass_panel(
                     enabled=bool(notifications_control.value),
                 )
                 wizard_state["full_qa_notified"] = True
+                _persist_wizard_state(payload, reason="notification_sent", status="completed")
 
             timer_ref["timer"] = _start_background_poll_timer(2.0, _send_notification)
 
@@ -5943,8 +6071,80 @@ def _render_full_qa_pass_panel(
             wizard_state["bulk_ack_high_risk_prompt"] = False
             wizard_state["bulk_handoff_text"] = ""
             wizard_state["action_results"].clear()
+            wizard_state["running_step_id"] = ""
+            wizard_state["running_action_id"] = ""
             wizard_state["done"] = False
             wizard_state["full_qa_notified"] = False
+
+        def _restore_wizard_state(saved_state: dict[str, Any]) -> dict[str, Any]:
+            payload = saved_state.get("payload", {}) if isinstance(saved_state.get("payload"), dict) else {}
+            _reset_wizard_run_state(payload)
+            wizard_state["index"] = _safe_int(saved_state.get("current_step_index"))
+            wizard_state["completed"].update(str(item) for item in saved_state.get("completed_step_ids", []))
+            wizard_state["skipped"].update(str(item) for item in saved_state.get("skipped_step_ids", []))
+            wizard_state["bulk_ack_queued"].update(
+                str(item) for item in saved_state.get("bulk_ack_queued_step_ids", [])
+            )
+            if isinstance(saved_state.get("bulk_acknowledged"), dict):
+                wizard_state["bulk_acknowledged"].update(saved_state["bulk_acknowledged"])
+            if isinstance(saved_state.get("bulk_ack_outcomes"), dict):
+                wizard_state["bulk_ack_outcomes"].update(saved_state["bulk_ack_outcomes"])
+            if isinstance(saved_state.get("bulk_ack_values"), dict):
+                wizard_state["bulk_ack_values"].update(saved_state["bulk_ack_values"])
+            wizard_state["full_qa_notified"] = bool(saved_state.get("full_qa_notified"))
+            status = str(saved_state.get("status", "")).strip().casefold()
+            running_step_id = str(saved_state.get("running_step_id", "")).strip()
+            running_action_id = str(saved_state.get("running_action_id", "")).strip()
+            if status == "running" and running_step_id:
+                _mark_interrupted_step(payload, running_step_id, running_action_id)
+                if running_action_id:
+                    wizard_state["auto_started"].add(running_action_id)
+                steps = _payload_steps(payload)
+                for index, step in enumerate(steps):
+                    if str(step.get("id", "")) == running_step_id:
+                        wizard_state["index"] = index
+                        break
+                wizard_state["done"] = False
+            else:
+                steps = _payload_steps(payload)
+                wizard_state["done"] = bool(status == "completed" or wizard_state["index"] >= len(steps))
+            return payload
+
+        def _resume_saved_wizard_state() -> None:
+            saved_state = _read_full_qa_wizard_state(profile_id)
+            if not saved_state:
+                _notify_ui("No saved Full QA Pass state is available.")
+                return
+            payload = _restore_wizard_state(saved_state)
+            notice.text = f"Resumed Full QA Pass state saved at {saved_state.get('saved_at_utc', 'unknown time')}."
+            _render_resume_prompt()
+            _render_payload(payload, preserve_index=True)
+
+        def _discard_saved_wizard_state() -> None:
+            _delete_full_qa_wizard_state(profile_id)
+            _render_resume_prompt()
+            _reset_wizard_run_state(initial_payload)
+            notice.text = "Saved Full QA Pass state discarded."
+            _render_payload(initial_payload)
+
+        def _render_resume_prompt() -> None:
+            resume_prompt_host.clear()
+            saved_state = _read_full_qa_wizard_state(profile_id)
+            if not saved_state:
+                return
+            saved_at = str(saved_state.get("saved_at_utc", "unknown time"))
+            status = str(saved_state.get("status", "unknown"))
+            step_id = str(saved_state.get("current_step_id") or saved_state.get("running_step_id") or "unknown")
+            with resume_prompt_host:
+                with ui.column().classes("sgfx-resume-prompt"):
+                    ui.label(f"Resume Full QA Pass for {profile_id}?").classes("sgfx-panel-tagline")
+                    ui.label(f"Saved {saved_at}; status {status}; step {step_id}.").classes("sgfx-muted")
+                    ui.label(
+                        "Resume restores local progress. If a subprocess was active, that step is marked interrupted."
+                    ).classes("sgfx-muted")
+                    with ui.row().classes("sgfx-confirm-actions"):
+                        ui.button("Resume", on_click=_resume_saved_wizard_state).props("color=primary")
+                        ui.button("Discard", on_click=_discard_saved_wizard_state).props("flat")
 
         def _first_focus_index(steps: list[dict[str, Any]], *, start: int = 0) -> int:
             non_blocking = {
@@ -6313,6 +6513,8 @@ def _render_full_qa_pass_panel(
                 current_index = len(steps)
                 wizard_state["index"] = current_index
             wizard_state["done"] = bool(wizard_state.get("done")) or current_index >= len(steps)
+            if steps:
+                _persist_wizard_state(payload, reason="render")
             result_host.clear()
             with result_host:
                 progress = payload.get("progress", {}) if isinstance(payload.get("progress"), dict) else {}
@@ -6631,6 +6833,7 @@ def _render_full_qa_pass_panel(
             ui.button("Run full QA pass", on_click=_run_full_pass).classes("sgfx-html-action-button"),
             "Start the local evidence chain for the selected profile.",
         )
+        _render_resume_prompt()
         _render_payload(initial_payload)
 
 
@@ -6832,6 +7035,7 @@ def _render_dashboard(
             .sgfx-wizard-overlay { position: fixed; inset: 0; z-index: 9200; display: flex; align-items: center; justify-content: center; background: rgba(4, 8, 10, 0.72); padding: 20px; animation: sgfx-overlay-in 120ms ease-out; }
             .sgfx-wizard-modal { width: min(92vw, 640px); gap: 10px; border: 1px solid var(--sgfx-warning-border); border-radius: 8px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); padding: 18px; box-shadow: 0 22px 58px rgba(0, 0, 0, 0.45); animation: sgfx-wizard-card-in 160ms ease-out; }
             .sgfx-wizard-done { border: 1px solid #3b6f55; background: #223027; }
+            .sgfx-resume-prompt { width: min(100%, 860px); align-self: center; gap: 8px; border: 1px solid var(--sgfx-warning-border); border-radius: 8px; background: var(--sgfx-warning-bg); padding: 14px 16px; margin: 12px auto; }
             .sgfx-step-running { border-color: var(--sgfx-accent); background: #203530; }
             .sgfx-step-passed { border-color: #3b6f55; background: #223027; }
             .sgfx-step-failed { border-color: #8f4d4d; background: #332425; }

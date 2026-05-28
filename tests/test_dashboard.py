@@ -609,6 +609,28 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"SGFX_DESKTOP_NOTIFICATIONS": "0"}, clear=False):
                 self.assertFalse(main._dashboard_notifications_enabled(workspace))
 
+    def test_full_qa_wizard_state_sidecar_round_trips_under_sgfx_outputs(self) -> None:
+        from sg_preflight.dashboard import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            state = {
+                "schema_version": 1,
+                "profile_id": "F70",
+                "status": "running",
+                "current_step_index": 3,
+                "running_step_id": "screenshot-test-state",
+            }
+
+            path = main._write_full_qa_wizard_state("F70", state, home=home)
+
+            self.assertEqual(path.name, ".wizard_state.json")
+            self.assertEqual(path.parent.name, "f70")
+            self.assertEqual(path.parent.parent.name, "sgfx_outputs")
+            self.assertEqual(main._read_full_qa_wizard_state("F70", home=home)["status"], "running")
+            main._delete_full_qa_wizard_state("F70", home=home)
+            self.assertEqual(main._read_full_qa_wizard_state("F70", home=home), {})
+
     def test_full_qa_completion_notification_uses_review_count_and_failure_copy(self) -> None:
         from sg_preflight.dashboard.main import _full_qa_completion_notification
 
@@ -733,6 +755,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("_schedule_full_qa_notification", source)
         self.assertIn("has_socket_connection", source)
         self.assertIn("_reset_wizard_run_state", source)
+        self.assertIn("Resume Full QA Pass for", source)
+        self.assertIn("interrupted", source)
+        self.assertIn('wizard_state["auto_started"].add(running_action_id)', source)
+        self.assertIn(".wizard_state.json", source)
         self.assertIn("Start the local evidence chain for the selected profile.", source)
         self.assertIn("_snapshot_with_full_qa_payload(snapshot, payload)", source)
         self.assertIn("Manual mode opt-out", source)
