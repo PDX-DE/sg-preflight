@@ -19,6 +19,7 @@ import threading
 import time
 from time import monotonic
 from typing import Any, Callable
+from urllib.parse import quote_plus
 from urllib.parse import quote
 
 from sg_preflight.activity_log import append_activity_entry
@@ -1068,6 +1069,14 @@ def _batch_full_qa_pass_page(profile_id: str, workspace: Path) -> dict[str, Any]
         "payload": payload,
         "confluence_anchors": list(payload.get("confluence_anchors", [])),
     }
+
+
+_TRUTHY_TRIGGERS = frozenset({"1", "true", "yes", "on"})
+
+
+def _is_truthy_trigger(value: str | None, *, default: str = "") -> bool:
+    raw = str(value if value is not None else default or "").strip().casefold()
+    return raw in _TRUTHY_TRIGGERS
 
 
 def _snapshot_with_full_qa_payload(snapshot: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
@@ -7284,8 +7293,8 @@ def _render_dashboard(
             else dict(base_snapshot)
         )
         snapshot["theme"] = _clean_theme(ui_mode or load_dashboard_preference(workspace))
-        if str(full_qa_run or "").strip().casefold() in {"1", "true", "yes", "on"}:
-            trusted = str(automatic_mode or "1").strip().casefold() in {"1", "true", "yes", "on"}
+        if _is_truthy_trigger(full_qa_run):
+            trusted = _is_truthy_trigger(automatic_mode, default="1")
             payload = build_full_qa_pass(
                 str(snapshot.get("profile_id", query_profile or initial_profile_id)),
                 workspace=workspace,
@@ -7301,6 +7310,11 @@ def _render_dashboard(
                 note=f"Full QA Pass run with automatic_mode={trusted}.",
             )
             snapshot = _snapshot_with_full_qa_payload(snapshot, payload)
+            profile_for_redirect = str(
+                snapshot.get("profile_id", query_profile or initial_profile_id)
+            )
+            ui.navigate.to(f"/?profile={quote_plus(profile_for_redirect)}")
+            return
         theme = str(snapshot.get("theme", "clean"))
         ui.dark_mode().enable()
         ui.query("body").classes(f"sgfx-dashboard sgfx-theme-{theme}")

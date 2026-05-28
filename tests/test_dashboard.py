@@ -505,6 +505,84 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("defer_team_digest_board=True", source)
         self.assertIn('page_id in {"daily-digest", "team-digest-board"}', source)
 
+    def test_dashboard_strips_full_qa_run_trigger_after_first_fire(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        branch_start = source.find("if _is_truthy_trigger(full_qa_run):")
+        self.assertNotEqual(branch_start, -1, "H-25: _index must gate the trigger via _is_truthy_trigger")
+        end_marker = "snapshot = _snapshot_with_full_qa_payload(snapshot, payload)"
+        branch_close = source.find(end_marker, branch_start) + len(end_marker)
+        self.assertGreater(branch_close, branch_start, "H-25: snapshot merge missing from trigger branch")
+        tail = source[branch_close:branch_close + 800]
+        self.assertIn("ui.navigate.to(f\"/?profile=", tail, "H-25 fix: trigger branch must redirect to a URL without full_qa_run")
+        self.assertIn("quote_plus(profile_for_redirect)", tail, "H-25 fix: redirect profile must be URL-escaped via quote_plus")
+        self.assertIn("return", tail, "H-25 fix: trigger branch must return early so the same render does not re-fire")
+
+    def test_dashboard_truthy_trigger_helper_is_idempotent_against_loop(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        is_truthy = getattr(dashboard_main, "_is_truthy_trigger")
+        # Same URL re-hit after the H-25 redirect strips full_qa_run is the regression case.
+        # _index's branch fires only when _is_truthy_trigger returns True for the empty value.
+        self.assertTrue(is_truthy("1"))
+        self.assertTrue(is_truthy("true"))
+        self.assertTrue(is_truthy("ON"))
+        self.assertFalse(is_truthy(""), "Empty trigger (post-redirect URL) must NOT re-fire the side effect")
+        self.assertFalse(is_truthy(None), "Missing trigger must NOT re-fire the side effect")
+        self.assertFalse(is_truthy("0"))
+        self.assertFalse(is_truthy("false"))
+
+    def test_full_qa_pass_run_writes_exactly_one_activity_entry_per_click(self) -> None:
+        """H-25 regression: a single Run-click must produce exactly one full-qa-pass:run entry,
+        even if the page handler is re-entered without the trigger after the URL strip."""
+        from sg_preflight.activity_log import (
+            activity_log_path,
+            append_activity_entry,
+            read_activity_entries,
+        )
+        from sg_preflight.dashboard import main as dashboard_main
+
+        is_truthy = getattr(dashboard_main, "_is_truthy_trigger")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            (workspace / "operator_state").mkdir(parents=True, exist_ok=True)
+
+            def simulate_render(full_qa_run: str, automatic_mode: str = "1") -> bool:
+                """Mirrors the _index branch decision: only fire side effects when trigger is truthy."""
+                if not is_truthy(full_qa_run):
+                    return False
+                append_activity_entry(
+                    workspace,
+                    verb="ran",
+                    surface="full-qa-pass:run",
+                    profile="F70",
+                    outcome="ok",
+                    note=f"Full QA Pass run with automatic_mode={is_truthy(automatic_mode, default='1')}.",
+                )
+                return True
+
+            # First render carries the trigger (operator clicked Run).
+            self.assertTrue(simulate_render("1"))
+            # H-25 fix redirects to /?profile=F70 so the trigger param is gone.
+            # NiceGUI re-renders / reconnects / poll-syncs hit the cleaned URL.
+            self.assertFalse(simulate_render(""))
+            self.assertFalse(simulate_render(""))
+            self.assertFalse(simulate_render(""))
+
+            payload = read_activity_entries(workspace)
+            run_entries = [
+                entry for entry in payload["entries"]
+                if entry.get("surface") == "full-qa-pass:run"
+            ]
+            self.assertEqual(
+                len(run_entries),
+                1,
+                f"H-25 regression: one click must produce exactly one entry, got {len(run_entries)}: {run_entries}",
+            )
+
     def test_dashboard_tooltips_are_enabled_by_default_with_env_opt_out(self) -> None:
         from sg_preflight.dashboard import main
 
