@@ -466,6 +466,15 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("data-sgfx-nav-item", source)
         self.assertIn("functionKeys", source)
         self.assertIn("F11", source)
+        self.assertIn("data-sgfx-feedback-button", source)
+        self.assertIn("window.sgfxOpenFeedback", source)
+        self.assertIn("mailto:", source)
+        self.assertIn("daviderikgarciaarenas@gmail.com", source)
+        self.assertIn("SGFX feedback", source)
+        self.assertIn("Build SHA", source)
+        self.assertIn(".exe SHA", source)
+        self.assertIn("No telemetry was sent automatically", source)
+        self.assertIn("feedback_email", source)
 
     def test_dashboard_source_accepts_profile_query_for_walkthrough_harness(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -530,6 +539,41 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             self.assertIs(main._attach_tooltip(ui, element, "Hidden by opt-out"), element)
             self.assertEqual(ui.tooltips, [])
             self.assertEqual(element.enter_count, 0)
+
+    def test_dashboard_feedback_recipient_prefers_operator_setting_then_env(self) -> None:
+        from sg_preflight.dashboard import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch.dict(os.environ, {"SGFX_FEEDBACK_EMAIL": "team.feedback@example.com"}, clear=False):
+                self.assertEqual(main._dashboard_feedback_recipient(workspace), "team.feedback@example.com")
+
+                state_root = workspace / "operator_state"
+                state_root.mkdir()
+                (state_root / "dashboard_preferences.json").write_text(
+                    json.dumps({"feedback_email": "operator.feedback@example.com"}),
+                    encoding="utf-8",
+                )
+                self.assertEqual(main._dashboard_feedback_recipient(workspace), "operator.feedback@example.com")
+
+                (state_root / "dashboard_preferences.json").write_text(
+                    json.dumps({"feedback_email": "bad address?<>"}),
+                    encoding="utf-8",
+                )
+                self.assertEqual(main._dashboard_feedback_recipient(workspace), "team.feedback@example.com")
+
+    def test_dashboard_feedback_context_marks_source_runs_without_hashing_python(self) -> None:
+        from sg_preflight.dashboard import main
+
+        main._dashboard_build_sha.cache_clear()
+        main._dashboard_exe_sha256.cache_clear()
+        with tempfile.TemporaryDirectory() as tmp:
+            context = main._dashboard_feedback_context(tmp)
+
+        self.assertIn("to", context)
+        self.assertIn("build_sha", context)
+        self.assertEqual(context["exe_sha"], "source-run")
+        self.assertTrue(context["os_version"])
 
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

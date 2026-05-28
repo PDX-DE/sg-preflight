@@ -3,9 +3,12 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
+import hashlib
 from html import escape as html_escape
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import socket
@@ -93,6 +96,8 @@ BROWSER_FALLBACK_ENV = "SGFX_PREFLIGHT_BROWSER_FALLBACK"
 FORCE_FROZEN_NATIVE_ENV = "SGFX_PREFLIGHT_FORCE_FROZEN_NATIVE"
 VERBOSE_TOOLTIP_ENV = "SGFX_DASHBOARD_VERBOSE_TOOLTIPS"
 FIRST_LAUNCH_DISMISS_STORAGE_KEY = "sgfx.firstLaunch.dismissed"
+FEEDBACK_EMAIL_ENV = "SGFX_FEEDBACK_EMAIL"
+DEFAULT_FEEDBACK_EMAIL = "daviderikgarciaarenas@gmail.com"
 DASHBOARD_GUARDRAILS = (
     "Manual review remains required.",
     "Decision: not approval — evidence only.",
@@ -534,6 +539,95 @@ def _read_operator_state_json(workspace: Path | str, filename: str) -> dict[str,
     except (OSError, ValueError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _dashboard_feedback_recipient(workspace: Path | str) -> str:
+    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
+    for raw in (payload.get("feedback_email"), os.environ.get(FEEDBACK_EMAIL_ENV, ""), DEFAULT_FEEDBACK_EMAIL):
+        configured = str(raw or "").strip()
+        if configured and re.fullmatch(r"[A-Za-z0-9._%+\-@,;]+", configured):
+            return configured
+    return DEFAULT_FEEDBACK_EMAIL
+
+
+def _candidate_git_roots() -> list[Path]:
+    roots: list[Path] = []
+    for start in (Path(__file__).resolve(), Path.cwd().resolve(), Path(sys.executable).resolve()):
+        roots.extend([start, *start.parents])
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root).casefold()
+        if key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
+
+
+@lru_cache(maxsize=1)
+def _dashboard_build_sha() -> str:
+    for root in _candidate_git_roots():
+        if not (root / ".git").exists():
+            continue
+        try:
+            completed = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                timeout=3,
+                check=False,
+                **hidden_subprocess_kwargs(),
+            )
+        except Exception:
+            continue
+        value = completed.stdout.strip()
+        if completed.returncode == 0 and value:
+            try:
+                dirty = subprocess.run(
+                    ["git", "status", "--short", "--untracked-files=no"],
+                    cwd=root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                    **hidden_subprocess_kwargs(),
+                )
+            except Exception:
+                return value
+            suffix = "-dirty" if dirty.returncode == 0 and dirty.stdout.strip() else ""
+            return f"{value}{suffix}"
+    return "unknown"
+
+
+@lru_cache(maxsize=1)
+def _dashboard_exe_sha256() -> str:
+    if not getattr(sys, "frozen", False):
+        return "source-run"
+    executable = Path(sys.executable)
+    if not executable.is_file():
+        return "unavailable"
+    digest = hashlib.sha256()
+    try:
+        with executable.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return "unavailable"
+    return digest.hexdigest().upper()
+
+
+def _dashboard_feedback_context(workspace: Path | str) -> dict[str, str]:
+    return {
+        "to": _dashboard_feedback_recipient(workspace),
+        "build_sha": _dashboard_build_sha(),
+        "exe_sha": _dashboard_exe_sha256(),
+        "os_version": platform.platform(),
+    }
 
 
 def _dashboard_preferred_profile_id(workspace: Path | str | None, options: list[dict[str, str]]) -> str:
@@ -5935,6 +6029,9 @@ def _render_dashboard(
             .sgfx-about-logo { width: 240px; max-width: 42vw; height: auto; object-fit: contain; flex: 0 0 auto; }
             .sgfx-content { width: 100%; }
             .sgfx-footer { border-top: 1px solid var(--sgfx-border); padding-top: 12px; margin-top: 12px; }
+            .sgfx-footer-actions { gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+            .sgfx-feedback-button { border: 1px solid var(--sgfx-border) !important; border-radius: 6px; background: var(--sgfx-bg-elev) !important; color: var(--sgfx-fg) !important; min-height: 32px; padding: 0 12px; cursor: pointer; }
+            .sgfx-feedback-button:hover { border-color: var(--sgfx-accent) !important; color: var(--sgfx-accent) !important; }
             .sgfx-guardrail { color: var(--sgfx-fg-muted); font-size: 13px; line-height: 1.55; }
             .sgfx-page-panel { border-radius: 8px; box-shadow: none; border: 1px solid var(--sgfx-border); width: 100%; padding: 18px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); margin-bottom: 14px; }
             .sgfx-first-launch-card { gap: 8px; padding: 14px 16px; border-color: rgba(78, 201, 176, 0.42); background: #22302d; }
@@ -6041,6 +6138,7 @@ def _render_dashboard(
         state: dict[str, Any] = {"snapshot": snapshot, "active_page_id": first_page_id}
         content_holder: dict[str, Any] = {}
         controls: dict[str, Any] = {}
+        feedback_context = _dashboard_feedback_context(workspace)
 
         def _pages_by_id() -> dict[str, dict[str, Any]]:
             return {str(page["id"]): page for page in state["snapshot"]["pages"]}
@@ -6121,6 +6219,22 @@ def _render_dashboard(
             if show_all_control is not None and bool(state["snapshot"].get("profile_show_all", False)):
                 show_all_control.value = True
             _sync_profile_select()
+            _sync_body_context()
+
+        def _sync_body_context() -> None:
+            payload = {
+                "profileId": str(state["snapshot"].get("profile_id", "")),
+                "activePage": str(state.get("active_page_id", "")),
+            }
+            ui.run_javascript(
+                f"""
+                (() => {{
+                    const payload = {json.dumps(payload)};
+                    document.body.dataset.sgfxProfileId = payload.profileId || '';
+                    document.body.dataset.sgfxActivePage = payload.activePage || 'unknown';
+                }})();
+                """
+            )
 
         def _render_current_page() -> None:
             content = content_holder.get("content")
@@ -6222,6 +6336,7 @@ def _render_dashboard(
                 f"""
                 (() => {{
                     const messages = {json.dumps(messages)};
+                    const feedbackContext = {json.dumps(feedback_context)};
                     const firstLaunchStorageKey = {json.dumps(FIRST_LAUNCH_DISMISS_STORAGE_KEY)};
                     const functionKeys = Array.from({{ length: 12 }}, (_, index) => `F${{index + 1}}`);
                     let hideTimer = null;
@@ -6273,6 +6388,27 @@ def _render_dashboard(
                     window.sgfxDismissFirstLaunch = () => {{
                         window.localStorage.setItem(firstLaunchStorageKey, '1');
                         window.sgfxApplyFirstLaunchState();
+                    }};
+                    window.sgfxBuildFeedbackMailto = () => {{
+                        const profile = document.body.dataset.sgfxProfileId || {json.dumps(str(snapshot.get("profile_id", "")))};
+                        const page = document.body.dataset.sgfxActivePage || 'unknown';
+                        const subject = `SGFX feedback — ${{profile}} — ${{feedbackContext.build_sha || 'unknown'}}`;
+                        const body = [
+                            'Please describe what happened:',
+                            '',
+                            'Context:',
+                            `Profile: ${{profile}}`,
+                            `Dashboard surface: ${{page}}`,
+                            `Build SHA: ${{feedbackContext.build_sha || 'unknown'}}`,
+                            `.exe SHA: ${{feedbackContext.exe_sha || 'unavailable'}}`,
+                            `OS version: ${{feedbackContext.os_version || 'unknown'}}`,
+                            '',
+                            'No telemetry was sent automatically. Review this message before sending.',
+                        ].join('\\r\\n');
+                        return `mailto:${{feedbackContext.to || ''}}?subject=${{encodeURIComponent(subject)}}&body=${{encodeURIComponent(body)}}`;
+                    }};
+                    window.sgfxOpenFeedback = () => {{
+                        window.location.href = window.sgfxBuildFeedbackMailto();
                     }};
                     window.sgfxSetSidebarOpen = (open) => {{
                         const isOpen = Boolean(open);
@@ -6432,9 +6568,22 @@ def _render_dashboard(
                 content_holder["content"] = content
                 _render_current_page()
                 with ui.column().classes("sgfx-footer full-width"):
+                    with ui.row().classes("sgfx-footer-actions"):
+                        _attach_tooltip(
+                            ui,
+                            ui.html(
+                                '<button type="button" class="sgfx-feedback-button" '
+                                'data-sgfx-feedback-button="true" '
+                                'onclick="window.sgfxOpenFeedback && window.sgfxOpenFeedback()">'
+                                "Send feedback</button>",
+                                sanitize=False,
+                            ),
+                            "Open a prefilled email draft. Nothing is sent until the operator reviews it.",
+                        )
                     for guardrail in state["snapshot"]["guardrails"]:
                         ui.label(str(guardrail)).classes("sgfx-guardrail")
         _install_shortcut_script()
+        _sync_body_context()
 
 
 def run_dashboard(
