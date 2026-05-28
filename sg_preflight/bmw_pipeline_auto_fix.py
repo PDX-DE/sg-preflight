@@ -254,13 +254,21 @@ def _run_retry_capture(
             "manual_review_required": True,
             "is_approval": False,
         }
-    job = start_screenshot_capture(
-        profile_id=profile_id,
-        workspace=workspace,
-        bmw_root=bmw_root,
-        operator_confirmed=True,
-        timeout_seconds=timeout_seconds,
-    )
+    try:
+        job = start_screenshot_capture(
+            profile_id=profile_id,
+            workspace=workspace,
+            bmw_root=bmw_root,
+            operator_confirmed=True,
+            timeout_seconds=timeout_seconds,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {
+            "status": "unavailable",
+            "summary": f"Retry screenshot capture did not start: {exc}",
+            "manual_review_required": True,
+            "is_approval": False,
+        }
     while True:
         result = poll_screenshot_capture(job)
         if result is not None:

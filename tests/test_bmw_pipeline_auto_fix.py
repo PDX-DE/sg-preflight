@@ -127,6 +127,28 @@ class TestBmwPipelineAutoFix(unittest.TestCase):
             self.assertEqual(commands[1][:2], ["svn", "update"])
             self.assertFalse(payload["operator_confirmation_required"])
 
+    def test_retry_capture_reports_unavailable_when_preflight_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root, expected_root, actual_root = self._fixture(root)
+
+            payload = run_missing_actual_diagnostic_chain(
+                profile_id="G70",
+                workspace=root,
+                project_root=project_root,
+                expected_root=expected_root,
+                candidate_roots=(actual_root,),
+                output_root=root / "out",
+                operator_confirmed_read_refresh=True,
+                retry_capture=True,
+                operator_confirmed_retry_capture=True,
+            )
+
+            retry_step = next(step for step in payload["steps"] if step["id"] == "retry-capture")
+            self.assertEqual(payload["status"], "auto_fix_exhausted_escalation_required")
+            self.assertEqual(retry_step["status"], "unavailable")
+            self.assertIn("Retry screenshot capture did not start", retry_step["detail"])
+
     def test_cli_missing_actuals_outputs_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

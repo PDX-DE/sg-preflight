@@ -6347,6 +6347,7 @@ def _render_full_qa_pass_panel(
         def _run_diagnostic_chain_action(
             action: dict[str, Any],
             *,
+            prompt_overlay: Any,
             status_label: Any,
             eta_label: Any,
             progress: Any,
@@ -6356,6 +6357,8 @@ def _render_full_qa_pass_panel(
             visual_host: Any,
             completion_label: Any,
             set_running_controls: Callable[[bool], None] | None = None,
+            operator_confirmed_read_refresh: bool = False,
+            retry_capture: bool = False,
         ) -> None:
             if not bool(action.get("enabled", True)):
                 completion_label.text = str(action.get("disabled_reason", "Diagnostic chain is not available."))
@@ -6366,11 +6369,19 @@ def _render_full_qa_pass_panel(
             wizard_state["running_step_id"] = str(action.get("step_id", ""))
             status_label.text = "running"
             eta_label.text = _eta_text(typical=str(action.get("typical_range", "typical <1 min")))
-            completion_label.text = "Building missing-actual diagnostic chain..."
+            completion_label.text = (
+                "Running confirmed read-refresh and screenshot retry..."
+                if operator_confirmed_read_refresh
+                else "Building missing-actual diagnostic chain..."
+            )
             progress.visible = True
             progress.props("indeterminate")
             live_output.visible = True
-            live_output.value = "Reading local screenshot state, diagnostic patterns, and test config..."
+            live_output.value = (
+                "Running operator-confirmed BMW Git/SVN read-refresh, then retrying screenshot capture..."
+                if operator_confirmed_read_refresh
+                else "Reading local screenshot state, diagnostic patterns, and test config..."
+            )
             details_host.clear()
             details_host.visible = False
             visual_label.visible = False
@@ -6403,6 +6414,9 @@ def _render_full_qa_pass_panel(
                         if str(item).strip()
                     ),
                     output_root=_missing_actual_diagnostics_output_root(workspace, profile_id),
+                    operator_confirmed_read_refresh=operator_confirmed_read_refresh,
+                    retry_capture=retry_capture,
+                    operator_confirmed_retry_capture=retry_capture,
                 )
             except Exception as exc:  # noqa: BLE001
                 result = {
@@ -6427,6 +6441,56 @@ def _render_full_qa_pass_panel(
             live_output.value = _action_output_text(result)
             _scroll_live_output_to_bottom()
             _merge_missing_actual_diagnostic_result(str(action.get("step_id", "")), result)
+            if bool(result.get("operator_confirmation_required", False)) and not operator_confirmed_read_refresh:
+                def _confirm_followup(current: dict[str, Any] = action) -> None:
+                    _hide_prompt_overlay(prompt_overlay)
+                    _run_diagnostic_chain_action(
+                        current,
+                        prompt_overlay=prompt_overlay,
+                        status_label=status_label,
+                        eta_label=eta_label,
+                        progress=progress,
+                        live_output=live_output,
+                        details_host=details_host,
+                        visual_label=visual_label,
+                        visual_host=visual_host,
+                        completion_label=completion_label,
+                        set_running_controls=set_running_controls,
+                        operator_confirmed_read_refresh=True,
+                        retry_capture=True,
+                    )
+
+                def _show_followup_prompt() -> None:
+                    prompt_overlay.clear()
+                    prompt_overlay.visible = True
+                    with prompt_overlay:
+                        with ui.column().classes("sgfx-wizard-modal"):
+                            ui.label("Confirm read-refresh and retry").classes("sgfx-panel-title")
+                            ui.label(str(result.get("confirmation_message", ""))).classes("sgfx-summary")
+                            ui.label(
+                                "This only runs read-refresh and screenshot retry. SVN writes stay locked."
+                            ).classes("sgfx-muted")
+                            paths = [str(path) for path in action.get("target_paths", []) if str(path).strip()]
+                            if paths:
+                                ui.label("Target paths").classes("sgfx-panel-tagline")
+                                for path in paths:
+                                    ui.label(path).classes("sgfx-muted")
+                            with ui.row().classes("sgfx-wizard-modal-actions"):
+                                ui.button("Yes", on_click=lambda _event=None: _confirm_followup()).props(
+                                    "color=primary"
+                                )
+                                ui.button("Cancel", on_click=lambda: _hide_prompt_overlay(prompt_overlay))
+
+                details_host.clear()
+                details_host.visible = True
+                with details_host:
+                    ui.label("Read-refresh and retry are waiting for operator confirmation.").classes(
+                        "sgfx-panel-tagline"
+                    )
+                    ui.label(str(result.get("confirmation_message", ""))).classes("sgfx-muted")
+                    ui.button("Run read-refresh and retry", on_click=lambda _event=None: _show_followup_prompt()).props(
+                        "color=primary"
+                    )
             _append_activity(
                 action=action_id,
                 outcome="error" if status == "failed" else "ok",
@@ -6684,6 +6748,7 @@ def _render_full_qa_pass_panel(
                 def _run_diagnostic_action(current: dict[str, Any] = action) -> None:
                     _run_diagnostic_chain_action(
                         current,
+                        prompt_overlay=prompt_overlay,
                         status_label=status_label,
                         eta_label=eta_label,
                         progress=progress,
