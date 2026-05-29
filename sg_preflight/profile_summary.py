@@ -39,7 +39,7 @@ GUARDRAILS = (
 ESCALATION_CONTACTS = (
     ("Data prep / CI team", "see the 3D Cars Delivery Checklist Confluence page for current owner + ticket queue"),
     ("Topic Owner", "the per-feature TO recorded in the Jira epic for this profile"),
-    ("SGFX tool questions", "David / Yondaime — Seriengrafik / 3D Car team"),
+    ("SGFX tool questions", "Seriengrafik / 3D Car team"),
 )
 
 CONFLUENCE_ANCHORS = (

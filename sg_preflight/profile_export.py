@@ -12,8 +12,9 @@ The CLI surface is `sgfx-preflight.exe profile-summary export --profile X
 
 PAT-shaped tokens are masked to `****<last4>` and personal Windows paths
 collapsed to `C:\\Users\\<operator>\\…` BEFORE any file enters the zip per
-`[[feedback-secrets-never-in-chat]]`. The manifest carries a sanitization
-log entry for every file scrubbed.
+`[[feedback-secrets-never-in-chat]]`. Manifest source paths are also
+operator-home redacted before writing. The manifest carries a sanitization log
+entry for every file scrubbed.
 """
 from __future__ import annotations
 
@@ -35,6 +36,14 @@ EXPORT_SCHEMA_VERSION = 1
 
 # Match the H-30 PAT regex.
 _PAT_RE = re.compile(r"\b([A-Za-z0-9_\-]{32,})\b")
+_OPERATOR_HOME_PREFIX_RE = re.compile(r"(?i)^[A-Z]:\\Users\\<operator>(?=\\|$)")
+_OPERATOR_SGFX_OUTPUTS_RE = re.compile(r"(?i)^[A-Z]:\\Users\\<operator>\\sgfx_outputs(?=\\|$)")
+
+
+def _redact_manifest_path(value: str) -> str:
+    text = redact_personal_paths(value)
+    text = _OPERATOR_SGFX_OUTPUTS_RE.sub(r"~\\sgfx_outputs", text)
+    return _OPERATOR_HOME_PREFIX_RE.sub("<operator-home>", text)
 
 
 @dataclass(frozen=True)
@@ -62,7 +71,7 @@ class ExportResult:
             "entries": [
                 {
                     "archive_name": e.archive_name,
-                    "source_path": e.source_path,
+                    "source_path": _redact_manifest_path(e.source_path),
                     "bytes": e.bytes,
                     "sanitized": e.sanitized,
                 }
@@ -195,7 +204,7 @@ def build_manifest(
         "entries": [
             {
                 "archive_name": e.archive_name,
-                "source_path": e.source_path,
+                "source_path": _redact_manifest_path(e.source_path),
                 "bytes": e.bytes,
                 "sanitized": e.sanitized,
             }

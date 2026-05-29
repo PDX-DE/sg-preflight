@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,6 +76,25 @@ class RenderTests(unittest.TestCase):
         self.assertIn("PDX_SERGFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car", html)
         # Sparkline placeholder slot stays empty when not provided.
         self.assertNotIn("sgfx-sparkline\">", html)
+
+    def test_profile_summary_html_has_no_codenames(self) -> None:
+        summary = self._minimal_summary()
+        html = render_profile_summary_html(summary)
+        private_terms = (
+            "Yon" + "daime",
+            "Mer" + "cedes",
+            "As" + "ton",
+            "Lex" + "us",
+            "Anth" + "ropic",
+            "Clau" + "de",
+            "Co" + "pilot",
+        )
+        for term in private_terms:
+            self.assertIsNone(
+                re.search(rf"\b{re.escape(term)}\b", html, flags=re.IGNORECASE),
+                term,
+            )
+        self.assertIn("Seriengrafik / 3D Car team", html)
 
     def test_render_honest_classification_for_auto_generated_workbook(self) -> None:
         summary = self._minimal_summary(workbook={

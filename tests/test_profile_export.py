@@ -10,9 +10,11 @@ from pathlib import Path
 
 from sg_preflight.profile_export import (
     EXPORT_SCHEMA_VERSION,
+    ExportManifestEntry,
     _filter_activity_log,
     _scrub_pat_tokens,
     _scrub_text_file,
+    build_manifest,
     export_profile_evidence,
 )
 
@@ -196,6 +198,34 @@ class ExportRoundTripTests(unittest.TestCase):
             # Every entry has a non-negative byte count.
             for entry in payload["entries"]:
                 self.assertGreaterEqual(entry["bytes"], 0)
+
+    def test_profile_export_zip_manifest_redacts_personal_paths(self) -> None:
+        manifest = build_manifest(
+            profile_id="G70",
+            generated_at_utc="2026-05-29T21:30:00Z",
+            build_commit="abcd123",
+            exe_sha256="dead" * 16,
+            entries=[
+                ExportManifestEntry(
+                    archive_name="full_qa_history.json",
+                    source_path=r"C:\Users\someoperator\sgfx_outputs\g70\run_history.json",
+                    bytes=128,
+                    sanitized=False,
+                ),
+                ExportManifestEntry(
+                    archive_name="notes.txt",
+                    source_path=r"C:\Users\someoperator\Documents\notes.txt",
+                    bytes=64,
+                    sanitized=False,
+                ),
+            ],
+            sanitization_log=[],
+        )
+        manifest_text = json.dumps(manifest)
+        self.assertIsNone(re.search(r"(?i)[A-Z]:\\Users\\[^\\]+\\", manifest_text))
+        source_paths = [entry["source_path"] for entry in manifest["entries"]]
+        self.assertIn(r"~\sgfx_outputs\g70\run_history.json", source_paths)
+        self.assertIn(r"<operator-home>\Documents\notes.txt", source_paths)
 
 
 if __name__ == "__main__":
