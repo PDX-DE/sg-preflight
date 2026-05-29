@@ -1079,6 +1079,60 @@ def _is_truthy_trigger(value: str | None, *, default: str = "") -> bool:
     return raw in _TRUTHY_TRIGGERS
 
 
+# H-28: process-local dedup for the Full QA Pass trigger so a NiceGUI WebSocket
+# reconnect storm cannot re-fire `build_full_qa_pass` after the H-25 ui.navigate.to
+# redirect (the storm re-hits the page handler with the cached `?full_qa_run=1`
+# URL before the redirect lands client-side, observed 2026-05-29 07:17:28-31:
+# 5 fires for G70 within 2.4s).
+#
+# The dedup key is per-profile (not per-second) so even storms that span
+# multiple wall-clock seconds collide on the same recorded token. The 30s
+# expiry releases the lock once any reasonable operator re-click cadence has
+# passed. The redirect + early-return path stays as belt+suspenders.
+FULL_QA_PASS_DEDUP_WINDOW_SECONDS = 30.0
+_full_qa_pass_dedup_lock = threading.Lock()
+_full_qa_pass_dedup_tokens: dict[str, float] = {}
+
+
+def _full_qa_pass_token(profile_id: str, ts_seconds: int | None = None) -> str:
+    """Per-directive shape `full-qa-pass:<profile>:<ts_floor_seconds>` — the
+    suffix preserves audit-trail readability; the dedup decision keys on the
+    `profile_id` component (see `_should_fire_full_qa_pass`)."""
+    if ts_seconds is None:
+        ts_seconds = int(time.time())
+    return f"full-qa-pass:{profile_id}:{int(ts_seconds)}"
+
+
+def _full_qa_pass_dedup_key(profile_id: str) -> str:
+    """The dict key — per-profile so multi-second reconnect storms still dedup."""
+    return f"full-qa-pass:{str(profile_id or '').strip().upper() or 'UNKNOWN'}"
+
+
+def _should_fire_full_qa_pass(profile_id: str, *, now: float | None = None) -> bool:
+    """Return True iff this profile has NOT been fired within the dedup window.
+
+    Side effect on a True return: records the new fire so any subsequent call
+    within `FULL_QA_PASS_DEDUP_WINDOW_SECONDS` returns False. Side effect on a
+    False return: none. Prunes expired tokens on every call.
+    """
+    key = _full_qa_pass_dedup_key(profile_id)
+    current = now if now is not None else time.monotonic()
+    with _full_qa_pass_dedup_lock:
+        expired = [k for k, exp in _full_qa_pass_dedup_tokens.items() if exp <= current]
+        for k in expired:
+            _full_qa_pass_dedup_tokens.pop(k, None)
+        if key in _full_qa_pass_dedup_tokens:
+            return False
+        _full_qa_pass_dedup_tokens[key] = current + FULL_QA_PASS_DEDUP_WINDOW_SECONDS
+        return True
+
+
+def _reset_full_qa_pass_dedup() -> None:
+    """Test helper: clear the dedup cache so each unit test starts clean."""
+    with _full_qa_pass_dedup_lock:
+        _full_qa_pass_dedup_tokens.clear()
+
+
 def _publish_live_state(
     workspace: Path | str,
     *,
@@ -7340,9 +7394,24 @@ def _render_dashboard(
         )
         snapshot["theme"] = _clean_theme(ui_mode or load_dashboard_preference(workspace))
         if _is_truthy_trigger(full_qa_run):
+            profile_for_trigger = str(
+                snapshot.get("profile_id", query_profile or initial_profile_id)
+            )
+            # H-28: dedup BEFORE firing so a NiceGUI WebSocket reconnect storm
+            # cannot re-execute build_full_qa_pass with the cached trigger URL.
+            if not _should_fire_full_qa_pass(profile_for_trigger):
+                _publish_live_state(
+                    workspace,
+                    dashboard_surface="full-qa-pass:run-dedupped",
+                    profile_id=profile_for_trigger,
+                    last_operator_action=("ran", "full-qa-pass:run"),
+                    last_error="Re-fire suppressed by 30s dedup window",
+                )
+                ui.navigate.to(f"/?profile={quote_plus(profile_for_trigger)}")
+                return
             trusted = _is_truthy_trigger(automatic_mode, default="1")
             payload = build_full_qa_pass(
-                str(snapshot.get("profile_id", query_profile or initial_profile_id)),
+                profile_for_trigger,
                 workspace=workspace,
                 bmw_root=bmw_root,
                 trusted_tool_mode=trusted,
@@ -7353,7 +7422,7 @@ def _render_dashboard(
                 surface="full-qa-pass:run",
                 profile=str(payload.get("profile_id", snapshot.get("profile_id", ""))),
                 outcome="ok",
-                note=f"Full QA Pass run with automatic_mode={trusted}.",
+                note=f"Full QA Pass run with automatic_mode={trusted}; dedup_token={_full_qa_pass_token(profile_for_trigger)}.",
             )
             snapshot = _snapshot_with_full_qa_payload(snapshot, payload)
             profile_for_redirect = str(

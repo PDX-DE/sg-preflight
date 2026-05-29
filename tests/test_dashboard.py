@@ -534,6 +534,46 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertFalse(is_truthy("0"))
         self.assertFalse(is_truthy("false"))
 
+    def test_full_qa_pass_dedup_token_blocks_reconnect_storm(self) -> None:
+        """H-28: a NiceGUI WebSocket reconnect storm re-hits the page handler with
+        the cached ?full_qa_run=1 URL faster than ui.navigate.to can land. The
+        process-local dedup token must block all but the first fire."""
+        from sg_preflight.dashboard import main as dashboard_main
+
+        should_fire = getattr(dashboard_main, "_should_fire_full_qa_pass")
+        token_for = getattr(dashboard_main, "_full_qa_pass_token")
+        reset = getattr(dashboard_main, "_reset_full_qa_pass_dedup")
+
+        reset()
+        # Reproduces Lexus' 2026-05-29 07:17:28-31 G70 storm: 5 fires over 2.4s
+        # at wall-clock seconds 28 / 29 / 30 / 31 / 31. With per-profile dedup
+        # only the FIRST should fire; the other four must return False.
+        results = [
+            should_fire("G70", now=0.0),  # 07:17:28.960
+            should_fire("G70", now=0.798),  # 07:17:29.758
+            should_fire("G70", now=1.494),  # 07:17:30.454
+            should_fire("G70", now=2.202),  # 07:17:31.162
+            should_fire("G70", now=2.406),  # 07:17:31.366
+        ]
+        self.assertEqual(
+            results,
+            [True, False, False, False, False],
+            f"H-28 regression: reconnect storm produced {sum(results)} fires (expected 1). Got: {results}",
+        )
+
+        # Different profile must NOT be blocked by G70's dedup.
+        self.assertTrue(should_fire("F70", now=2.5), "Per-profile dedup must not bleed across profiles")
+
+        # After the 30s window elapses, G70 may fire again (intentional re-run).
+        self.assertTrue(
+            should_fire("G70", now=2.0 + dashboard_main.FULL_QA_PASS_DEDUP_WINDOW_SECONDS + 1.0),
+            "After the 30s dedup window, an intentional operator re-click must be allowed",
+        )
+
+        # Token shape matches the directive: full-qa-pass:<profile>:<ts_floor_seconds>
+        token = token_for("G70", ts_seconds=1716950000)
+        self.assertEqual(token, "full-qa-pass:G70:1716950000")
+
     def test_full_qa_pass_run_writes_exactly_one_activity_entry_per_click(self) -> None:
         """H-25 regression: a single Run-click must produce exactly one full-qa-pass:run entry,
         even if the page handler is re-entered without the trigger after the URL strip."""
