@@ -1516,6 +1516,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_render_options(profile_summary_build, formats=("text", "json"))
 
+    profile_summary_export = profile_summary_sub.add_parser(
+        "export",
+        help="Bundle per-profile evidence into an operator-shareable zip",
+        description=(
+            "Bundles summary.html (from build) + screenshot-review/ PNGs + "
+            "delivery-workbook/ + activity_log.jsonl (filtered to profile + "
+            "last N days) + full_qa_history.json + manifest.json. PAT-shaped "
+            "tokens are masked to ****<last4> and personal Windows paths "
+            "collapsed to C:\\Users\\<operator>\\… before zip write."
+        ),
+    )
+    profile_summary_export.add_argument("--profile", required=True, help="Profile id such as F70 or G70")
+    profile_summary_export.add_argument("--workspace", required=True, help="SVN trunk workspace root override")
+    profile_summary_export.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    profile_summary_export.add_argument(
+        "--zip-output",
+        dest="zip_output",
+        required=True,
+        help="Where to write the .zip (parent directory auto-created)",
+    )
+    profile_summary_export.add_argument(
+        "--history-limit",
+        type=int,
+        default=10,
+        help="Number of recent Full QA Pass runs to include in summary.html (default 10)",
+    )
+    profile_summary_export.add_argument(
+        "--activity-log-window-days",
+        type=int,
+        default=7,
+        help="Filter activity_log entries to the last N days (default 7)",
+    )
+    profile_summary_export.add_argument("--json", action="store_true", help="Print the export manifest as JSON")
+    _add_render_options(profile_summary_export, formats=("text", "json"))
+
     activity_log = sub.add_parser("activity-log", help="Read or append the operator-local SGFX activity log")
     activity_log_sub = activity_log.add_subparsers(dest="activity_log_command", required=True)
     activity_read = activity_log_sub.add_parser("read", help="Read operator-local activity log entries")
@@ -2771,6 +2806,71 @@ def _main_impl(argv: list[str] | None = None) -> int:
                     ),
                     args,
                 )
+            return 0
+        if args.profile_summary_command == "export":
+            from sg_preflight.profile_summary import (
+                build_profile_summary,
+                render_profile_summary_html,
+            )
+            from sg_preflight.profile_export import export_profile_evidence
+            workspace_path = Path(args.workspace).resolve()
+            bmw_root_value = (
+                Path(args.bmw_root).resolve() if getattr(args, "bmw_root", None) else None
+            )
+            zip_output = Path(args.zip_output).resolve()
+            try:
+                build_commit, exe_sha256 = _build_metadata_for_summary()
+                summary = build_profile_summary(
+                    args.profile,
+                    workspace=workspace_path,
+                    bmw_root=bmw_root_value,
+                    history_limit=int(getattr(args, "history_limit", 10)),
+                    build_commit=build_commit,
+                    exe_sha256=exe_sha256,
+                )
+                try:
+                    from sg_preflight.risk_sparkline import (
+                        build_sparkline_data,
+                        render_sparkline_svg,
+                        sparkline_fallback_text,
+                    )
+                    spark_data = build_sparkline_data(summary.full_qa_runs)
+                    spark_svg = render_sparkline_svg(spark_data)
+                    spark_fallback = sparkline_fallback_text(spark_data)
+                except Exception:
+                    spark_svg = ""
+                    spark_fallback = ""
+                summary_html = render_profile_summary_html(
+                    summary,
+                    sparkline_svg=spark_svg,
+                    sparkline_fallback_text=spark_fallback,
+                )
+                result = export_profile_evidence(
+                    profile_id=args.profile,
+                    workspace=workspace_path,
+                    bmw_root=bmw_root_value,
+                    output_path=zip_output,
+                    activity_log_window_days=int(getattr(args, "activity_log_window_days", 7)),
+                    build_commit=build_commit,
+                    exe_sha256=exe_sha256,
+                    summary_html=summary_html,
+                )
+            except Exception as exc:
+                print(_console_safe(f"profile-summary export failed: {exc}"), file=sys.stderr)
+                return 1
+            payload = result.to_payload()
+            output_format = _resolve_render_format(args, parser, formats=("text", "json"))
+            if output_format == "json":
+                _emit_json(payload, args)
+            else:
+                lines = [
+                    f"Wrote {result.zip_path}",
+                    f"profile:        {result.profile_id}",
+                    f"generated:      {result.generated_at_utc}",
+                    f"entries:        {len(result.entries)}",
+                    f"sanitization:   {len(result.sanitization_log)} action(s) logged",
+                ]
+                _emit_text(_console_safe("\n".join(lines)), args)
             return 0
         parser.error(f"Unhandled profile-summary command: {args.profile_summary_command}")
         return 1
