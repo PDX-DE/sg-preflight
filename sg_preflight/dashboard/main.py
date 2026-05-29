@@ -20,6 +20,7 @@ import time
 from time import monotonic
 from typing import Any, Callable
 from urllib.parse import quote_plus
+import webbrowser
 from urllib.parse import quote
 
 from sg_preflight.activity_log import append_activity_entry
@@ -5355,6 +5356,43 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                 )
 
 
+def _open_jira_ticket_in_browser(ui: Any, url: str, key: str) -> None:
+    """H-35 Part A: open `url` in the operator's default external browser via
+    `webbrowser.open(url, new=2)` and ALSO copy the URL to the clipboard via JS
+    as a belt+suspenders fallback. The action is never lost even if the OS
+    default-browser launch fails (browser misconfigured, popup blocked, packaged
+    .exe in a restricted profile) — the operator can paste the URL manually.
+
+    Operator-local; never crosses external boundaries; the URL is the Jira
+    browse link that was already in the rendered HTML.
+    """
+    opened = False
+    try:
+        opened = bool(webbrowser.open(url, new=2, autoraise=True))
+    except Exception:
+        opened = False
+    # JS-side: copy to clipboard. Failures swallowed so the notify call still fires.
+    try:
+        ui.run_javascript(
+            "(async () => { try { "
+            f"await navigator.clipboard.writeText({json.dumps(url)}); "
+            "} catch (err) { console.warn('clipboard.writeText failed', err); } })();"
+        )
+    except Exception:
+        pass
+    if opened:
+        message = f"Opened {key} in your default browser; URL copied to clipboard."
+    else:
+        message = (
+            f"Could not launch a browser for {key} automatically; URL copied to clipboard so "
+            "you can paste it into your default browser."
+        )
+    try:
+        ui.notify(message, position="bottom")
+    except Exception:
+        pass
+
+
 def _render_jira_profile_tickets_card(
     ui: Any,
     profile_id: str,
@@ -5392,15 +5430,17 @@ def _render_jira_profile_tickets_card(
                 url = str(ticket.get("url", "") or "")
                 with ui.row().classes("sgfx-jira-ticket-row full-width items-center"):
                     if url:
-                        # H-29: raw <a target="_blank" rel="noopener"> instead of
-                        # ui.link to guarantee browser click-through across NiceGUI
-                        # versions. ui.link with new_tab=True did not consistently
-                        # open the URL in real-browser walkthroughs (observed
-                        # 2026-05-29 07:17 on the H-26 exe — clicks did nothing).
-                        ui.html(
-                            f'<a class="sgfx-jira-ticket-key" href="{html_escape(url)}" '
-                            f'target="_blank" rel="noopener noreferrer">{html_escape(key)}</a>'
-                        )
+                        # H-35 Part A: open the Jira URL in the operator's default
+                        # external browser via webbrowser.open + copy to clipboard
+                        # as belt+suspenders. Replaces the H-29 `<a target="_blank">`
+                        # anchor (which routed through the NiceGUI embedded webview
+                        # on the packaged exe and re-prompted for auth) with a
+                        # Python-side browser handoff so the operator's SSO session
+                        # in their daily browser handles the redirect.
+                        ui.button(
+                            key,
+                            on_click=lambda url=url, key=key: _open_jira_ticket_in_browser(ui, url, key),
+                        ).props("flat dense no-caps").classes("sgfx-jira-ticket-key")
                     else:
                         ui.label(key).classes("sgfx-jira-ticket-key")
                     ui.label(str(ticket.get("status", "unknown"))).classes("sgfx-jira-status-pill")
@@ -8022,7 +8062,7 @@ def _render_dashboard(
                     window.sgfxOpenFeedback = () => {{
                         window.location.href = window.sgfxBuildFeedbackMailto();
                     }};
-                    window.sgfxOpenFeedbackTeams = () => {{
+                    window.sgfxOpenFeedbackTeams = async () => {{
                         // Try to open Teams deep-link via a transient anchor so the
                         // browser surfaces the protocol prompt instead of just leaving
                         // a flicker. If the protocol handler is not registered (Teams
@@ -8036,6 +8076,38 @@ def _render_dashboard(
                         document.body.appendChild(link);
                         link.click();
                         setTimeout(() => link.remove(), 100);
+                        // H-35 Part B: clipboard fallback so the operator's
+                        // prefilled message is never lost even if Teams doesn't
+                        // open (msteams:// protocol handler unregistered, browser
+                        // blocking schemes, packaged exe restrictions, etc.).
+                        try {{
+                            const composed = window.sgfxBuildFeedbackBody();
+                            const fullMessage = composed.subject + '\\r\\n\\r\\n' + composed.body;
+                            await navigator.clipboard.writeText(fullMessage);
+                            window.sgfxNotifyFeedbackToast && window.sgfxNotifyFeedbackToast(
+                                'Teams should open; message also copied to clipboard.'
+                            );
+                        }} catch (err) {{
+                            console.warn('Teams clipboard fallback failed', err);
+                        }}
+                    }};
+                    window.sgfxNotifyFeedbackToast = (message) => {{
+                        // Lightweight inline toast — no NiceGUI dependency so the
+                        // feedback JS can fire even when the NiceGUI WebSocket is
+                        // not connected (operator on a stale tab).
+                        const existing = document.getElementById('sgfxFeedbackToast');
+                        if (existing) existing.remove();
+                        const toast = document.createElement('div');
+                        toast.id = 'sgfxFeedbackToast';
+                        toast.textContent = message;
+                        toast.style.cssText = (
+                            'position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); ' +
+                            'background: #252526; color: #d4d4d4; border: 1px solid #3c3c3c; ' +
+                            'border-radius: 6px; padding: 8px 14px; font-size: 12px; z-index: 9999; ' +
+                            'box-shadow: 0 4px 12px rgba(0,0,0,0.4); pointer-events: none;'
+                        );
+                        document.body.appendChild(toast);
+                        setTimeout(() => toast.remove(), 3500);
                     }};
                     window.sgfxSetSidebarOpen = (open) => {{
                         const isOpen = Boolean(open);

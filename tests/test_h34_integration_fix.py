@@ -191,20 +191,27 @@ class IntegrationCoverageAuditTests(unittest.TestCase):
     """H-34 Part C — verify shipped packs actually activate at the operator-
     visible surfaces, not just behind the CLI subparsers."""
 
-    def test_h29_jira_inline_render_uses_target_blank_anchor_with_url_field(self) -> None:
+    def test_h29_jira_inline_render_opens_external_browser_with_clipboard_fallback(self) -> None:
+        """H-29 origin + H-35 evolution: the Jira inline ticket render now opens
+        the URL in the operator's external browser via `webbrowser.open` AND
+        copies the URL to clipboard as a belt+suspenders fallback. The old raw
+        `<a target="_blank">` anchor was replaced with a button so the operator's
+        existing SSO browser session handles Jira auth without re-login."""
         source = (
             Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py"
         ).read_text(encoding="utf-8")
-        # The Jira ticket render block hoists `url = str(ticket.get("url", "") or "")`
-        # into a local var, then builds the anchor via html_escape(url). Both
-        # patterns prove H-29 is wired in the live UI.
+        # Render block must use the button + helper.
         idx = source.find("sgfx-jira-ticket-key")
         self.assertNotEqual(idx, -1, "Jira ticket render block not found")
         block = source[max(idx - 800, 0):idx + 1200]
-        self.assertIn('target="_blank"', block)
-        self.assertIn('rel="noopener', block)
-        self.assertIn('ticket.get("url"', block)
-        self.assertIn("html_escape(url)", block)
+        self.assertIn("ui.button(", block)
+        self.assertIn("_open_jira_ticket_in_browser(ui, url, key)", block)
+        # Helper must do webbrowser.open + clipboard.writeText.
+        self.assertIn("def _open_jira_ticket_in_browser", source)
+        helper_idx = source.find("def _open_jira_ticket_in_browser")
+        helper_body = source[helper_idx:helper_idx + 1500]
+        self.assertIn("webbrowser.open(url, new=2", helper_body)
+        self.assertIn("navigator.clipboard.writeText", helper_body)
 
     def test_h31_sparkline_renders_in_dashboard_risk_score_page(self) -> None:
         source = (

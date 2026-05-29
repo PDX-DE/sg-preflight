@@ -506,21 +506,32 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn('page_id in {"daily-digest", "team-digest-board"}', source)
 
     def test_jira_inline_tickets_render_as_target_blank_external_link(self) -> None:
-        """H-29: clicking a Jira ticket in the inline panel must open the Jira
-        URL in a new browser tab. Previous ui.link(new_tab=True) did not work
-        consistently across NiceGUI versions in real-browser walkthroughs."""
+        """H-29 + H-35 Part A: clicking a Jira ticket in the inline panel must
+        open the Jira URL in the operator's default EXTERNAL browser (not the
+        NiceGUI embedded webview) and also copy the URL to the clipboard as a
+        belt+suspenders fallback. H-29 originally used a raw `<a target="_blank">`
+        anchor; H-35 replaces it with a NiceGUI button calling Python-side
+        `webbrowser.open(url, new=2)` so the operator's existing SSO session
+        in their daily browser handles auth without prompting for re-login."""
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"
         )
         # Locate the Jira ticket renderer.
         render_marker = "if tickets:"
         idx = source.find(render_marker, source.find("_render_jira_profile_tickets_card"))
-        self.assertNotEqual(idx, -1, "H-29: Jira ticket renderer 'if tickets:' block not found")
-        block = source[idx:idx + 1200]
-        self.assertIn('target="_blank"', block, "H-29 fix: Jira ticket link must use target=\"_blank\"")
-        self.assertIn("rel=\"noopener", block, "H-29 fix: external link must carry rel=\"noopener\" for security")
-        self.assertIn('href="{html_escape(url)}"', block, "H-29 fix: href must be the html-escaped url field")
-        self.assertIn('sgfx-jira-ticket-key', block, "H-29 fix: anchor must keep the sgfx-jira-ticket-key class for styling")
+        self.assertNotEqual(idx, -1, "H-29 / H-35: Jira ticket renderer 'if tickets:' block not found")
+        block = source[idx:idx + 1500]
+        # H-35 Part A: button path that calls the external-browser handoff.
+        self.assertIn("ui.button(", block, "H-35 fix: Jira ticket must render as a button (not anchor)")
+        self.assertIn("_open_jira_ticket_in_browser(ui, url, key)", block, "H-35 fix: button must call _open_jira_ticket_in_browser")
+        self.assertIn("sgfx-jira-ticket-key", block, "H-29 styling class must remain")
+        # The helper must use webbrowser.open + JS clipboard.writeText.
+        self.assertIn("def _open_jira_ticket_in_browser", source)
+        helper_idx = source.find("def _open_jira_ticket_in_browser")
+        helper_block = source[helper_idx:helper_idx + 1500]
+        self.assertIn("webbrowser.open(url, new=2", helper_block, "H-35 fix: helper must call webbrowser.open(url, new=2)")
+        self.assertIn("navigator.clipboard.writeText", helper_block, "H-35 fix: helper must copy URL to clipboard as fallback")
+        self.assertIn("URL copied to clipboard", helper_block, "H-35 fix: notify wording must mention clipboard fallback")
 
     def test_dashboard_strips_full_qa_run_trigger_after_first_fire(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1332,8 +1343,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["status"], "unavailable")
+        # H-34 Part A tightened the missing-workbook wording: it no longer
+        # echoes the full operator workspace path (better privacy posture per
+        # `[[feedback-secrets-never-in-chat]]`). The finder reports a search-
+        # count signal + raw-data status instead. Verify the full path is
+        # still scrubbed AND the new finder wording is present.
         self.assertNotIn(str(Path(tmp).resolve()), delivery["summary"])
-        self.assertIn(Path(tmp).name, delivery["summary"])
+        self.assertIn("documented Format A / Format B locations", delivery["summary"])
+        self.assertIn("Manual review remains required", delivery["summary"])
 
     def test_delivery_unavailable_page_exposes_generation_action_with_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
