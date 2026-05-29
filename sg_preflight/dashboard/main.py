@@ -110,7 +110,7 @@ FORCE_FROZEN_NATIVE_ENV = "SGFX_PREFLIGHT_FORCE_FROZEN_NATIVE"
 VERBOSE_TOOLTIP_ENV = "SGFX_DASHBOARD_VERBOSE_TOOLTIPS"
 FIRST_LAUNCH_DISMISS_STORAGE_KEY = "sgfx.firstLaunch.dismissed"
 FEEDBACK_EMAIL_ENV = "SGFX_FEEDBACK_EMAIL"
-DEFAULT_FEEDBACK_EMAIL = "daviderikgarciaarenas@gmail.com"
+DEFAULT_FEEDBACK_EMAIL = "david-erik.garcia-arenas@paradoxcat.com"
 DESKTOP_NOTIFICATIONS_ENV = "SGFX_DESKTOP_NOTIFICATIONS"
 LONG_RUNNING_NOTIFICATION_SECONDS = 30
 DASHBOARD_GUARDRAILS = (
@@ -566,12 +566,19 @@ def _read_operator_state_json(workspace: Path | str, filename: str) -> dict[str,
 
 
 def _dashboard_feedback_recipient(workspace: Path | str) -> str:
+    # H-33: precedence — operator-local feedback_routing.json (work email default) →
+    # legacy dashboard_preferences.json `feedback_email` → SGFX_FEEDBACK_EMAIL env →
+    # DEFAULT_FEEDBACK_EMAIL hardcoded fallback.
+    from sg_preflight.feedback_routing import load_feedback_routing
+    routing = load_feedback_routing()
+    if routing.config_loaded and routing.email_recipient:
+        return routing.email_recipient
     payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
-    for raw in (payload.get("feedback_email"), os.environ.get(FEEDBACK_EMAIL_ENV, ""), DEFAULT_FEEDBACK_EMAIL):
+    for raw in (payload.get("feedback_email"), os.environ.get(FEEDBACK_EMAIL_ENV, ""), routing.email_recipient):
         configured = str(raw or "").strip()
         if configured and re.fullmatch(r"[A-Za-z0-9._%+\-@,;]+", configured):
             return configured
-    return DEFAULT_FEEDBACK_EMAIL
+    return routing.email_recipient or DEFAULT_FEEDBACK_EMAIL
 
 
 def _candidate_git_roots() -> list[Path]:
@@ -646,8 +653,16 @@ def _dashboard_exe_sha256() -> str:
 
 
 def _dashboard_feedback_context(workspace: Path | str) -> dict[str, str]:
+    # H-33: include Teams routing + primary so the JS can build a Teams deep-link
+    # alongside the existing mailto. Falls back to hardcoded defaults when the
+    # operator-local feedback_routing.json is missing.
+    from sg_preflight.feedback_routing import load_feedback_routing
+    routing = load_feedback_routing()
     return {
         "to": _dashboard_feedback_recipient(workspace),
+        "teams_recipient": routing.teams_recipient,
+        "primary": routing.primary,
+        "subject_prefix": routing.subject_prefix,
         "build_sha": _dashboard_build_sha(),
         "exe_sha": _dashboard_exe_sha256(),
         "os_version": platform.platform(),
@@ -7899,10 +7914,10 @@ def _render_dashboard(
                         window.localStorage.setItem(firstLaunchStorageKey, '1');
                         window.sgfxApplyFirstLaunchState();
                     }};
-                    window.sgfxBuildFeedbackMailto = () => {{
+                    window.sgfxBuildFeedbackBody = () => {{
                         const profile = document.body.dataset.sgfxProfileId || {json.dumps(str(snapshot.get("profile_id", "")))};
                         const page = document.body.dataset.sgfxActivePage || 'unknown';
-                        const subject = `SGFX feedback — ${{profile}} — ${{feedbackContext.build_sha || 'unknown'}}`;
+                        const subject = `${{feedbackContext.subject_prefix || 'SGFX feedback'}} — ${{profile}} — ${{feedbackContext.build_sha || 'unknown'}}`;
                         const body = [
                             'Please describe what happened:',
                             '',
@@ -7915,10 +7930,43 @@ def _render_dashboard(
                             '',
                             'No telemetry was sent automatically. Review this message before sending.',
                         ].join('\\r\\n');
-                        return `mailto:${{feedbackContext.to || ''}}?subject=${{encodeURIComponent(subject)}}&body=${{encodeURIComponent(body)}}`;
+                        return {{ subject, body }};
+                    }};
+                    window.sgfxBuildFeedbackMailto = () => {{
+                        const composed = window.sgfxBuildFeedbackBody();
+                        return `mailto:${{feedbackContext.to || ''}}?subject=${{encodeURIComponent(composed.subject)}}&body=${{encodeURIComponent(composed.body)}}`;
+                    }};
+                    window.sgfxBuildFeedbackTeams = () => {{
+                        // H-33: Microsoft Teams native deep-link. Opens a 1:1 chat with
+                        // the configured recipient + a pre-filled message. Body length
+                        // capped at ~1800 chars per Teams URL practicality limits with
+                        // an explicit "continue in Teams" suffix.
+                        const composed = window.sgfxBuildFeedbackBody();
+                        let messageBody = `${{composed.subject}}\\r\\n\\r\\n${{composed.body}}`;
+                        const cap = 1800;
+                        if (messageBody.length > cap) {{
+                            messageBody = messageBody.slice(0, cap) + '\\r\\n…continue in Teams';
+                        }}
+                        const recipient = feedbackContext.teams_recipient || feedbackContext.to || '';
+                        return `msteams://l/chat/0/0?users=${{encodeURIComponent(recipient)}}&message=${{encodeURIComponent(messageBody)}}`;
                     }};
                     window.sgfxOpenFeedback = () => {{
                         window.location.href = window.sgfxBuildFeedbackMailto();
+                    }};
+                    window.sgfxOpenFeedbackTeams = () => {{
+                        // Try to open Teams deep-link via a transient anchor so the
+                        // browser surfaces the protocol prompt instead of just leaving
+                        // a flicker. If the protocol handler is not registered (Teams
+                        // not installed, browser blocked), the email button next to
+                        // this one still works.
+                        const url = window.sgfxBuildFeedbackTeams();
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.rel = 'noopener noreferrer';
+                        link.style.display = 'none';
+                        document.body.appendChild(link);
+                        link.click();
+                        setTimeout(() => link.remove(), 100);
                     }};
                     window.sgfxSetSidebarOpen = (open) => {{
                         const isOpen = Boolean(open);
@@ -8084,11 +8132,28 @@ def _render_dashboard(
                             ui.html(
                                 '<button type="button" class="sgfx-feedback-button" '
                                 'data-sgfx-feedback-button="true" '
+                                'data-sgfx-feedback-channel="email" '
                                 'onclick="window.sgfxOpenFeedback && window.sgfxOpenFeedback()">'
-                                "Send feedback</button>",
+                                "Open email</button>",
                                 sanitize=False,
                             ),
                             "Open a prefilled email draft. Nothing is sent until the operator reviews it.",
+                        )
+                        # H-33: Teams direct-message option. msteams:// deep-link opens
+                        # the Teams app to a 1:1 chat with the configured recipient
+                        # plus a pre-filled message. Falls back gracefully to the
+                        # email button next to it if Teams isn't installed.
+                        _attach_tooltip(
+                            ui,
+                            ui.html(
+                                '<button type="button" class="sgfx-feedback-button" '
+                                'data-sgfx-feedback-button="true" '
+                                'data-sgfx-feedback-channel="teams" '
+                                'onclick="window.sgfxOpenFeedbackTeams && window.sgfxOpenFeedbackTeams()">'
+                                "Open Teams</button>",
+                                sanitize=False,
+                            ),
+                            "Open a Teams chat with the prefilled message. Falls back to email if Teams is not installed.",
                         )
                     for guardrail in state["snapshot"]["guardrails"]:
                         ui.label(str(guardrail)).classes("sgfx-guardrail")

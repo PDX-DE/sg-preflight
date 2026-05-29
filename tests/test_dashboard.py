@@ -475,7 +475,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("data-sgfx-feedback-button", source)
         self.assertIn("window.sgfxOpenFeedback", source)
         self.assertIn("mailto:", source)
-        self.assertIn("daviderikgarciaarenas@gmail.com", source)
+        self.assertIn("david-erik.garcia-arenas@paradoxcat.com", source)
         self.assertIn("SGFX feedback", source)
         self.assertIn("Build SHA", source)
         self.assertIn(".exe SHA", source)
