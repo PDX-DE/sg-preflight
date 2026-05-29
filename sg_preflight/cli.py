@@ -1283,6 +1283,27 @@ def build_parser() -> argparse.ArgumentParser:
     delivery_workbook_trigger.add_argument("--markdown", action="store_true", help="Print trigger as Markdown")
     _add_render_options(delivery_workbook_trigger)
 
+    delivery_workbook_find = delivery_workbook_sub.add_parser(
+        "find",
+        help="Discover the size-analysis workbook across the documented Format A/B locations",
+        description=(
+            "Walks the eight documented size-analysis workbook locations and prints the "
+            "selected (newest mtime) workbook + all candidates + the search paths. If no "
+            "workbook is found AND raw export-size data is available locally, auto-"
+            "generates a Format A workbook to ~/sgfx_outputs/<profile>/delivery-workbook/."
+        ),
+    )
+    delivery_workbook_find.add_argument("--profile", required=True, help="Profile id such as G70")
+    delivery_workbook_find.add_argument("--workspace", help="SVN trunk workspace root override")
+    delivery_workbook_find.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    delivery_workbook_find.add_argument(
+        "--auto-generate",
+        action="store_true",
+        help="When no workbook is found, attempt to auto-generate from raw BMW export-size data",
+    )
+    delivery_workbook_find.add_argument("--json", action="store_true", help="Print the resolution as JSON")
+    _add_render_options(delivery_workbook_find, formats=("text", "json"))
+
     export_size = sub.add_parser(
         "export-size-analysis",
         help="Read the operator-local export-size analysis workbook without writing to it",
@@ -2366,6 +2387,53 @@ def _main_impl(argv: list[str] | None = None) -> int:
                     bmw_root=Path(args.bmw_root).resolve() if getattr(args, "bmw_root", None) else None,
                     trusted_tool_mode=bool(getattr(args, "trusted_tool_mode", False)),
                 )
+            elif args.delivery_workbook_command == "find":
+                from sg_preflight.workbook_finder import resolve_workbook, render_resolution_text
+                bmw_root_value = (
+                    Path(args.bmw_root).resolve() if getattr(args, "bmw_root", None) else None
+                )
+                resolution = resolve_workbook(
+                    args.profile,
+                    workspace=workbook_root,
+                    bmw_root=bmw_root_value,
+                )
+                payload = resolution.to_payload()
+                if resolution.selected is None and getattr(args, "auto_generate", False):
+                    try:
+                        from sg_preflight.workbook_generator import auto_generate_if_raw_available
+                        candidate = auto_generate_if_raw_available(
+                            args.profile,
+                            workspace=workbook_root,
+                            bmw_root=bmw_root_value,
+                        )
+                        if candidate is not None:
+                            # Re-resolve so the newly written file becomes the selected candidate.
+                            resolution = resolve_workbook(
+                                args.profile,
+                                workspace=workbook_root,
+                                bmw_root=bmw_root_value,
+                            )
+                            payload = resolution.to_payload()
+                            payload["auto_generated"] = {
+                                "path": str(candidate.path),
+                                "source_classification": candidate.source_classification,
+                            }
+                        else:
+                            payload["auto_generated"] = {
+                                "status": "skipped",
+                                "note": "No raw export-size data available in the documented locations.",
+                            }
+                    except ImportError as exc:
+                        payload["auto_generated"] = {
+                            "status": "unavailable",
+                            "note": f"openpyxl is required for auto-generation: {exc}",
+                        }
+                output_format = _resolve_render_format(args, parser, formats=("text", "json"))
+                if output_format == "json":
+                    _emit_json(payload, args)
+                else:
+                    _emit_text(render_resolution_text(resolution), args)
+                return 0
             else:
                 parser.error(f"Unhandled delivery-workbook command: {args.delivery_workbook_command}")
                 return 1

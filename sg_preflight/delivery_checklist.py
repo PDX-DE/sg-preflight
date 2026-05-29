@@ -190,6 +190,8 @@ def resolve_delivery_checklist_workbook(
     workbook_path: Path | str | None = None,
     brand: str | None = "BMW",
     profile_id: str = "",
+    bmw_root: Path | str | None = None,
+    enable_auto_generate: bool | None = None,
 ) -> Path:
     if workbook_path is not None:
         return Path(workbook_path).resolve()
@@ -201,6 +203,25 @@ def resolve_delivery_checklist_workbook(
     latest_size_analysis = _find_latest_size_analysis_workbook(root, profile_id)
     if latest_size_analysis is not None:
         candidates.append(latest_size_analysis)
+    # H-27: when the legacy lookup misses, fall back to the multi-location finder
+    # that walks all eight documented Format A/B locations + the operator-local
+    # auto-generated workbook directory.
+    if latest_size_analysis is None and profile_id:
+        try:
+            from sg_preflight.workbook_finder import resolve_workbook
+            resolution = resolve_workbook(profile_id, workspace=root, bmw_root=bmw_root)
+            if resolution.selected is not None:
+                candidates.append(resolution.selected.path)
+            elif enable_auto_generate:
+                # No CI workbook found anywhere — try auto-generation as the last
+                # resort before falling back to honest unavailable wording.
+                from sg_preflight.workbook_generator import auto_generate_if_raw_available
+                generated = auto_generate_if_raw_available(profile_id, workspace=root, bmw_root=bmw_root)
+                if generated is not None:
+                    candidates.append(generated.path)
+        except ImportError:
+            # openpyxl missing → leave behaviour identical to pre-H-27.
+            pass
     candidates.extend(
         [
             root / "repositories" / "trunk" / "Cars" / brand_label / export_size_workbook_name,
