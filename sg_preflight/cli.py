@@ -1043,10 +1043,10 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
     ("screenshot-triage", "Run deterministic screenshot triage.", r"sgfx-preflight.exe screenshot-triage --profile F70 --workspace C:\repositories\trunk --json"),
     ("materialize", "Create a normalized validation bundle from SG-shaped inputs.", r"sgfx-preflight.exe materialize --output-bundle out\bundle --repo-root C:\repositories\trunk"),
     ("probe", "Discover SG-style repository roots and likely inputs.", r"sgfx-preflight.exe probe --search-root C:\repositories\trunk"),
-    ("demo-good", "Run the bundled good demo.", "sgfx-preflight.exe demo-good"),
-    ("demo-broken", "Run the bundled failing demo.", "sgfx-preflight.exe demo-broken"),
-    ("ui", "Deprecated compatibility UI route.", "sgfx-preflight.exe ui --help"),
-    ("retro-extract", "Parse a team retrospective export.", r"sgfx-preflight.exe retro-extract --html out\team-retro.html --json-out out\team-retro.json"),
+    # H-37f: `demo-good`, `demo-broken`, `ui`, `retro-extract` subcommands stay
+    # registered for backward compat but are hidden from the operator-facing
+    # action map. They're dev / legacy entries that don't belong in the daily-
+    # use list.
 )
 
 
