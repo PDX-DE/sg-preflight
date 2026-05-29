@@ -284,6 +284,27 @@ def _emit_json(payload: object, args: argparse.Namespace) -> None:
     _emit_text(_json_text(payload), args)
 
 
+def _build_metadata_for_summary() -> tuple[str, str]:
+    """Return (build_commit, exe_sha256) — best-effort, never raises."""
+    commit = ""
+    sha = ""
+    try:
+        from sg_preflight import __version__  # noqa: F401
+        # Reuse the dashboard helpers when available.
+        from sg_preflight.dashboard import main as dashboard_main
+        try:
+            commit = dashboard_main._dashboard_build_sha()
+        except Exception:
+            commit = ""
+        try:
+            sha = dashboard_main._dashboard_exe_sha256()
+        except Exception:
+            sha = ""
+    except Exception:
+        pass
+    return commit or "unknown", sha or "unavailable"
+
+
 def _stream_activity_log_tail(
     workspace: Path,
     *,
@@ -1452,6 +1473,48 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
     _add_render_options(workflow_list, formats=("text", "json"))
+
+    profile_summary = sub.add_parser(
+        "profile-summary",
+        help="Build a self-contained per-profile HTML summary",
+        description=(
+            "Composes a self-contained dark-theme HTML page summarising one BMW "
+            "profile: workbook status, active Jira tickets, recent Full QA Pass "
+            "runs, manual-review state, escalation contacts, and Confluence "
+            "anchors. Operator-local; no PAT / no personal paths in the output."
+        ),
+    )
+    profile_summary_sub = profile_summary.add_subparsers(dest="profile_summary_command", required=True)
+    profile_summary_build = profile_summary_sub.add_parser(
+        "build", help="Render a shareable summary HTML for one profile"
+    )
+    profile_summary_build.add_argument("--profile", required=True, help="Profile id such as F70 or G70")
+    profile_summary_build.add_argument("--workspace", required=True, help="SVN trunk workspace root override")
+    profile_summary_build.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
+    profile_summary_build.add_argument(
+        "--html-output",
+        dest="html_output",
+        required=True,
+        help="Where to write the .html (parent directory auto-created)",
+    )
+    profile_summary_build.add_argument(
+        "--history-limit",
+        type=int,
+        default=5,
+        help="Number of recent Full QA Pass runs to include (default 5)",
+    )
+    profile_summary_build.add_argument(
+        "--note",
+        action="append",
+        default=[],
+        help="Optional operator note to include; pass multiple times for multiple notes",
+    )
+    profile_summary_build.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the data payload as JSON to stdout in addition to writing the HTML",
+    )
+    _add_render_options(profile_summary_build, formats=("text", "json"))
 
     activity_log = sub.add_parser("activity-log", help="Read or append the operator-local SGFX activity log")
     activity_log_sub = activity_log.add_subparsers(dest="activity_log_command", required=True)
@@ -2646,6 +2709,71 @@ def _main_impl(argv: list[str] | None = None) -> int:
         output_format = _resolve_render_format(args, parser, formats=("text", "json"))
         _emit_console(lambda: _console_workflow_status(items, as_json=output_format == "json"), args)
         return 0
+
+    if args.command == "profile-summary":
+        if args.profile_summary_command == "build":
+            from sg_preflight import __version__ as sgfx_version
+            from sg_preflight.profile_summary import (
+                build_profile_summary,
+                write_profile_summary_html,
+            )
+            workspace_path = Path(args.workspace).resolve()
+            bmw_root_value = (
+                Path(args.bmw_root).resolve() if getattr(args, "bmw_root", None) else None
+            )
+            output_path = Path(args.html_output).resolve()
+            try:
+                build_commit, exe_sha256 = _build_metadata_for_summary()
+                summary = build_profile_summary(
+                    args.profile,
+                    workspace=workspace_path,
+                    bmw_root=bmw_root_value,
+                    history_limit=int(getattr(args, "history_limit", 5)),
+                    build_commit=build_commit,
+                    exe_sha256=exe_sha256,
+                    notes=list(getattr(args, "note", []) or []),
+                )
+            except Exception as exc:
+                print(_console_safe(f"profile-summary build failed: {exc}"), file=sys.stderr)
+                return 1
+            try:
+                from sg_preflight.risk_sparkline import (
+                    build_sparkline_data,
+                    render_sparkline_svg,
+                    sparkline_fallback_text,
+                )
+                spark_data = build_sparkline_data(summary.full_qa_runs)
+                spark_svg = render_sparkline_svg(spark_data)
+                spark_fallback = sparkline_fallback_text(spark_data)
+            except Exception:
+                spark_svg = ""
+                spark_fallback = ""
+            write_profile_summary_html(
+                summary,
+                output_path,
+                sparkline_svg=spark_svg,
+                sparkline_fallback_text=spark_fallback,
+            )
+            payload = summary.to_payload()
+            payload["output_path"] = str(output_path)
+            output_format = _resolve_render_format(args, parser, formats=("text", "json"))
+            if output_format == "json":
+                _emit_json(payload, args)
+            else:
+                _emit_text(
+                    _console_safe(
+                        f"Wrote {output_path}\n"
+                        f"profile:    {summary.profile_id}\n"
+                        f"generated:  {summary.generated_at_utc}\n"
+                        f"workbook:   {payload.get('workbook', {}).get('status', 'unavailable')}\n"
+                        f"jira:       {payload.get('jira_tickets', {}).get('status', 'unavailable')}\n"
+                        f"runs:       {len(payload.get('full_qa_runs', []))} included"
+                    ),
+                    args,
+                )
+            return 0
+        parser.error(f"Unhandled profile-summary command: {args.profile_summary_command}")
+        return 1
 
     if args.command == "activity-log":
         activity_root = Path(args.workspace).resolve()
