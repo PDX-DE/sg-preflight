@@ -331,9 +331,48 @@ def render_risk_score_text(payload: dict[str, Any]) -> str:
         f"Manual-review session: {latest.get('session_id', '') or 'not found'}",
         f"Manual-review steps: {latest.get('recorded_steps', 0)} recorded / {latest.get('pending_steps', 0)} not_run",
         f"Delta since latest review: {delta.get('changed_file_count', 0)} changed screenshot file(s)",
-        str(payload.get("note", RISK_SCORE_NOTE)),
     ]
+    # H-34 Part C wiring: surface the H-31 ASCII sparkline + honest <3-run
+    # fallback so the risk-score CLI text path matches the H-30 HTML signal.
+    sparkline_line = _risk_score_sparkline_line(payload)
+    if sparkline_line:
+        lines.append(sparkline_line)
+    lines.append(str(payload.get("note", RISK_SCORE_NOTE)))
     return "\n".join(lines)
+
+
+def _risk_score_sparkline_line(payload: dict[str, Any]) -> str:
+    """Pull recent Full QA Pass runs for this profile and render the ASCII
+    sparkline. Returns an empty string when the profile_id is missing or the
+    sparkline module is unavailable (defensive — the risk-score surface must
+    never crash because of an optional visualisation)."""
+    profile_id = str(payload.get("profile_id", "") or "").strip()
+    if not profile_id:
+        return ""
+    try:
+        from sg_preflight.full_qa_history import read_full_qa_run_list
+        from sg_preflight.risk_sparkline import (
+            build_sparkline_data,
+            render_sparkline_ascii,
+            sparkline_fallback_text,
+        )
+    except Exception:
+        return ""
+    try:
+        runs = read_full_qa_run_list(profile_id, limit=10)
+        data = build_sparkline_data(runs, profile_id=profile_id)
+    except Exception:
+        return ""
+    if data.has_trend:
+        ascii_chart = render_sparkline_ascii(data)
+        if ascii_chart:
+            scores = ",".join(str(score) for score in data.risk_scores)
+            return f"Risk trend (last {len(data.risk_scores)} runs): {ascii_chart}  [{scores}]"
+        return ""
+    fallback = sparkline_fallback_text(data)
+    if fallback:
+        return f"Risk trend: {fallback}"
+    return ""
 
 
 def render_risk_score_markdown(payload: dict[str, Any]) -> str:

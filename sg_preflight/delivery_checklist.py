@@ -344,17 +344,69 @@ def delivery_workbook_missing_escalation(profile_id: str) -> dict[str, str]:
     }
 
 
-def delivery_workbook_missing_summary(profile_id: str, *, lookup_path: Path | str | None = None) -> str:
+def delivery_workbook_missing_summary(
+    profile_id: str,
+    *,
+    lookup_path: Path | str | None = None,
+    workspace: Path | str | None = None,
+    bmw_root: Path | str | None = None,
+) -> str:
+    """H-34: honest wording that reports the H-27 multi-location search results
+    when the finder ran (8 paths checked + raw-data availability), and the legacy
+    single-path wording only when finder hasn't been invoked.
+    """
     profile = profile_id.strip() or "profile"
     parts = [
         f"delivery-checklist data unavailable: size-analysis workbook not found for {profile}.",
-        "BMW export may be complete, but workbook generation is a CI team operation.",
-        f"Expected at {delivery_workbook_expected_path(profile)} (date-stamped or v-tagged).",
     ]
-    if lookup_path is not None:
-        parts.append(f"Looked in {Path(lookup_path)}.")
+
+    # When workspace is available, consult the H-27 finder so the operator sees
+    # every location SGFX actually checked rather than just one legacy path.
+    finder_searched = False
+    raw_data_status = ""
+    if workspace is not None:
+        try:
+            from sg_preflight.workbook_finder import resolve_workbook
+            resolution = resolve_workbook(profile, workspace=workspace, bmw_root=bmw_root)
+            finder_searched = True
+            candidate_count = len(resolution.candidates)
+            search_count = len(resolution.search_paths)
+            parts.append(
+                f"Checked {search_count} documented Format A / Format B locations across "
+                "SVN trunk + BMW Git + the operator-local auto-generated workbook dir; "
+                f"found {candidate_count} candidate(s)."
+            )
+        except Exception:
+            finder_searched = False
+        try:
+            from sg_preflight.workbook_generator import find_raw_export_size_data
+            raw = find_raw_export_size_data(profile, workspace=workspace, bmw_root=bmw_root)
+            if raw is not None and raw.rows:
+                raw_data_status = (
+                    f"Raw export-size data was found at {raw.source_path} but auto-generation did not produce a workbook in this run."
+                )
+            else:
+                raw_data_status = (
+                    "No raw export-size data was found in any of the four documented locations "
+                    "(`<bmw_root>/cars/BMW/<profile>(_EVO)/export/size_data.{csv,json}` or the SVN equivalents)."
+                )
+        except Exception:
+            raw_data_status = ""
+
+    if not finder_searched:
+        parts.append(
+            f"Expected at {delivery_workbook_expected_path(profile)} (date-stamped or v-tagged)."
+        )
+        if lookup_path is not None:
+            parts.append(f"Looked in {Path(lookup_path)}.")
+
+    if raw_data_status:
+        parts.append(raw_data_status)
+
     parts.extend(
         [
+            "BMW export may be complete, but workbook generation is a CI team operation; "
+            "SGFX can auto-generate a Format A workbook locally only when raw export-size data is available.",
             "Escalation: see the 3D Cars Delivery Checklist Confluence page "
             f"({DELIVERY_CHECKLIST_ESCALATION_PAGE}) for the CI workbook step + contact.",
             "Manual review remains required. Decision: not approval — evidence only.",
@@ -632,20 +684,35 @@ def read_delivery_checklist(
     workspace: Path | str | None = None,
     workbook_path: Path | str | None = None,
     brand: str | None = "BMW",
+    bmw_root: Path | str | None = None,
+    enable_auto_generate: bool | None = True,
 ) -> dict[str, Any]:
     profile = profile_id.strip()
+    # H-34: activate the H-27 finder + generator at the call site. Pre-fix the
+    # finder ran but with bmw_root=None so the BMW Git slots were never walked,
+    # and enable_auto_generate=None meant raw-data discovery never fired. The
+    # operator then saw the OLD single-path "not found in size-analysis" wording
+    # even when the autonomous-orchestrator path should have resolved or
+    # generated the workbook.
     workbook = resolve_delivery_checklist_workbook(
         workspace=workspace,
         workbook_path=workbook_path,
         brand=brand,
         profile_id=profile,
+        bmw_root=bmw_root,
+        enable_auto_generate=enable_auto_generate,
     )
     if not workbook.exists():
         return _missing_payload(
             profile,
             workbook,
             "unavailable",
-            delivery_workbook_missing_summary(profile, lookup_path=workbook),
+            delivery_workbook_missing_summary(
+                profile,
+                lookup_path=workbook,
+                workspace=workspace,
+                bmw_root=bmw_root,
+            ),
             brand=brand,
             escalation=delivery_workbook_missing_escalation(profile),
         )

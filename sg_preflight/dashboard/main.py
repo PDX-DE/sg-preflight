@@ -983,7 +983,12 @@ def _delivery_checklist_page(
         page_id="delivery-checklist",
         title="Delivery Checklist",
         tagline="Workbook evidence per delivery profile (read-only).",
-        reader=lambda: read_delivery_checklist(profile_id=profile_id, workspace=workspace),
+        reader=lambda: read_delivery_checklist(
+            profile_id=profile_id,
+            workspace=workspace,
+            bmw_root=bmw_root,
+            enable_auto_generate=True,
+        ),
         workspace=workspace,
     )
     page["confluence_anchors"] = [DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR]
@@ -1109,13 +1114,22 @@ _full_qa_pass_dedup_lock = threading.Lock()
 _full_qa_pass_dedup_tokens: dict[str, float] = {}
 
 
+FULL_QA_PASS_DEDUP_BUCKET_SECONDS = 5
+
+
 def _full_qa_pass_token(profile_id: str, ts_seconds: int | None = None) -> str:
-    """Per-directive shape `full-qa-pass:<profile>:<ts_floor_seconds>` — the
-    suffix preserves audit-trail readability; the dedup decision keys on the
-    `profile_id` component (see `_should_fire_full_qa_pass`)."""
+    """Audit-trail token. H-34 Part B widens the timestamp suffix from per-second
+    to per-5-second buckets so back-to-back fires that cross a second boundary
+    (Lexus observed 12:09:14.x / 12:09:15.x storm on G70 — three log entries
+    inside 1.1s) collapse to the same token rather than three distinct ones.
+
+    The dedup DECISION still keys on `profile_id` only via
+    `_full_qa_pass_dedup_key`; the bucketed timestamp is for log readability.
+    """
     if ts_seconds is None:
         ts_seconds = int(time.time())
-    return f"full-qa-pass:{profile_id}:{int(ts_seconds)}"
+    bucket = (int(ts_seconds) // FULL_QA_PASS_DEDUP_BUCKET_SECONDS) * FULL_QA_PASS_DEDUP_BUCKET_SECONDS
+    return f"full-qa-pass:{profile_id}:{bucket}"
 
 
 def _full_qa_pass_dedup_key(profile_id: str) -> str:
@@ -1307,6 +1321,26 @@ def _risk_score_page(
     page["confluence_anchors"] = list(payload.get("confluence_anchors", []))
     if page.get("status") == "not_run":
         page["empty_state_note"] = RISK_SCORE_EMPTY_NOTE
+    # H-34 Part C wiring: attach the H-31 sparkline to the risk-score page so
+    # the dashboard live UI surfaces the same trend signal that already lands
+    # in the H-30 HTML + the H-31-extended risk-score CLI text output.
+    try:
+        from sg_preflight.full_qa_history import read_full_qa_run_list
+        from sg_preflight.risk_sparkline import (
+            build_sparkline_data,
+            render_sparkline_svg,
+            sparkline_fallback_text,
+        )
+        runs = read_full_qa_run_list(profile_id, limit=10)
+        data = build_sparkline_data(runs, profile_id=profile_id)
+        page["risk_sparkline"] = {
+            "svg": render_sparkline_svg(data),
+            "fallback": sparkline_fallback_text(data),
+            "has_trend": bool(data.has_trend),
+            "run_count": len(data.risk_scores),
+        }
+    except Exception:
+        page["risk_sparkline"] = {"svg": "", "fallback": "", "has_trend": False, "run_count": 0}
     return page
 
 
@@ -4516,6 +4550,17 @@ def _render_risk_score_panel(ui: Any, snapshot: dict[str, Any]) -> None:
         ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
         ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
         _render_empty_state_note(ui, page)
+        # H-34 Part C wiring: H-31 sparkline next to the risk-score numbers so
+        # the dashboard live UI surfaces the same trend signal that lands in
+        # the H-30 HTML + the H-31-extended risk-score CLI text output.
+        sparkline = page.get("risk_sparkline") if isinstance(page.get("risk_sparkline"), dict) else {}
+        if sparkline:
+            with ui.row().classes("items-center sgfx-risk-sparkline"):
+                ui.label("Risk trend (last N runs):").classes("sgfx-panel-tagline")
+                if sparkline.get("svg"):
+                    ui.html(str(sparkline.get("svg")), sanitize=False)
+                elif sparkline.get("fallback"):
+                    ui.label(str(sparkline.get("fallback"))).classes("sgfx-muted")
         with ui.row().classes("full-width"):
             with ui.column().classes("sgfx-risk-metric"):
                 ui.label("Current evidence").classes("sgfx-panel-tagline")
@@ -7397,6 +7442,30 @@ def _render_dashboard(
     def _full_qa_pass_api(profile: str = "", trusted_tool_mode: str = "1") -> dict[str, Any]:
         requested_profile = str(profile or base_snapshot.get("profile_id") or initial_profile_id).strip()
         trusted = str(trusted_tool_mode).strip().casefold() in {"1", "true", "yes", "on"}
+        # H-34 Part B: same per-profile 30s dedup as the `_index` page handler.
+        # Pre-fix this JSON API was an unguarded second entry point for the same
+        # build_full_qa_pass invocation; NiceGUI's WebSocket reconnect or any
+        # client polling against this URL would re-fire the side effect even
+        # when the H-28 dashboard gate was holding.
+        if not _should_fire_full_qa_pass(requested_profile):
+            _publish_live_state(
+                workspace,
+                dashboard_surface="full-qa-pass:api-dedupped",
+                profile_id=requested_profile,
+                last_operator_action=("ran", "full-qa-pass:api"),
+                last_error="Re-fire suppressed by 30s dedup window",
+            )
+            return {
+                "status": "dedupped",
+                "profile_id": requested_profile,
+                "dedup_token": _full_qa_pass_token(requested_profile),
+                "summary": (
+                    "Full QA Pass already fired for this profile within the "
+                    "30s dedup window. Manual review remains required."
+                ),
+                "manual_review_required": True,
+                "is_approval": False,
+            }
         return build_full_qa_pass(
             requested_profile,
             workspace=workspace,

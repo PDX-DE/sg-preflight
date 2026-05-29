@@ -464,7 +464,12 @@ def _step_defs(
         (
             "delivery-checklist",
             "Delivery checklist",
-            lambda: read_delivery_checklist(profile_id=profile, workspace=workspace),
+            lambda: read_delivery_checklist(
+                profile_id=profile,
+                workspace=workspace,
+                bmw_root=bmw_root,
+                enable_auto_generate=True,
+            ),
             True,
             lambda _payload: 0,
             lambda _payload: 0,

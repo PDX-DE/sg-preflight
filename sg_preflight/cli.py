@@ -960,6 +960,11 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
         r"sgfx-preflight.exe cross-car-comparison snapshot --profile G70 --comparison-profile G65 --workspace C:\repositories\trunk --format json",
     ),
     (
+        "profile-summary",
+        "Build a shareable per-profile HTML or export the full evidence zip.",
+        r"sgfx-preflight.exe profile-summary build --profile G70 --workspace C:\repositories\trunk --html-output G70_summary.html",
+    ),
+    (
         "operator-handoff",
         "Record or read an operator-local stopping point.",
         r"sgfx-preflight.exe operator-handoff latest --profile G65 --workspace C:\repositories\trunk --format markdown",
@@ -1269,6 +1274,17 @@ def build_parser() -> argparse.ArgumentParser:
     delivery_checklist_read.add_argument("--profile", required=True, help="Profile id such as <profile>")
     delivery_checklist_read.add_argument("--brand", default="BMW", help="Workbook brand label such as BMW or Mini")
     delivery_checklist_read.add_argument("--workbook", help="Explicit delivery checklist workbook path")
+    delivery_checklist_read.add_argument(
+        "--bmw-root",
+        help="Explicit digital-3d-car-models checkout path (enables H-27 multi-location finder + auto-gen)",
+    )
+    delivery_checklist_read.add_argument(
+        "--no-auto-generate",
+        dest="enable_auto_generate",
+        action="store_false",
+        default=True,
+        help="Disable the H-27 raw-data → Format A xlsx auto-generation fallback",
+    )
     delivery_checklist_read.add_argument("--json", action="store_true", help="Print delivery checklist payload as JSON")
     delivery_checklist_read.add_argument("--markdown", action="store_true", help="Print delivery checklist payload as Markdown")
     _add_render_options(delivery_checklist_read)
@@ -2459,6 +2475,8 @@ def _main_impl(argv: list[str] | None = None) -> int:
                     workspace=checklist_root,
                     workbook_path=Path(args.workbook).resolve() if args.workbook else None,
                     brand=args.brand,
+                    bmw_root=Path(args.bmw_root).resolve() if getattr(args, "bmw_root", None) else None,
+                    enable_auto_generate=bool(getattr(args, "enable_auto_generate", True)),
                 )
             else:
                 parser.error(f"Unhandled delivery-checklist command: {args.delivery_checklist_command}")
