@@ -256,6 +256,41 @@ Other text
         self.assertIn("summary+~+%22G65%22", calls[0][1])
         self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
 
+    def test_profile_ticket_rows_carry_browse_url_for_click_through(self) -> None:
+        """H-29: every ticket row must include a fully-qualified `url` field that
+        points at the operator-configured Jira base URL so the dashboard inline
+        panel can render a working browser link. Regression after 2026-05-29 07:17
+        Yondaime walkthrough where ticket clicks did nothing."""
+        from sg_preflight.jira_client import _profile_ticket_rows
+
+        response = {
+            "issues": [
+                {
+                    "key": "IDCEVODEV-1009244",
+                    "fields": {
+                        "summary": "Quality-Hero CW20 review for F70",
+                        "status": {"name": "In Review"},
+                        "labels": ["seriengrafik"],
+                    },
+                },
+                {
+                    "key": "IDCEVODEV-1009239",
+                    "fields": {"summary": "G70 delivery checklist", "status": {"name": "Open"}},
+                },
+            ]
+        }
+        rows = _profile_ticket_rows(response, "https://jira.cc.bmwgroup.net")
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertIn("url", row)
+            self.assertTrue(row["url"].startswith("https://jira.cc.bmwgroup.net/browse/"))
+            self.assertIn(row["key"], row["url"])
+        # First row URL is fully formed and click-ready.
+        self.assertEqual(
+            rows[0]["url"],
+            "https://jira.cc.bmwgroup.net/browse/IDCEVODEV-1009244",
+        )
+
     def test_profile_ticket_search_reports_missing_credentials_without_transport(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(Path(temp_dir) / "missing")}):

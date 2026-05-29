@@ -505,6 +505,23 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("defer_team_digest_board=True", source)
         self.assertIn('page_id in {"daily-digest", "team-digest-board"}', source)
 
+    def test_jira_inline_tickets_render_as_target_blank_external_link(self) -> None:
+        """H-29: clicking a Jira ticket in the inline panel must open the Jira
+        URL in a new browser tab. Previous ui.link(new_tab=True) did not work
+        consistently across NiceGUI versions in real-browser walkthroughs."""
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+        # Locate the Jira ticket renderer.
+        render_marker = "if tickets:"
+        idx = source.find(render_marker, source.find("_render_jira_profile_tickets_card"))
+        self.assertNotEqual(idx, -1, "H-29: Jira ticket renderer 'if tickets:' block not found")
+        block = source[idx:idx + 1200]
+        self.assertIn('target="_blank"', block, "H-29 fix: Jira ticket link must use target=\"_blank\"")
+        self.assertIn("rel=\"noopener", block, "H-29 fix: external link must carry rel=\"noopener\" for security")
+        self.assertIn('href="{html_escape(url)}"', block, "H-29 fix: href must be the html-escaped url field")
+        self.assertIn('sgfx-jira-ticket-key', block, "H-29 fix: anchor must keep the sgfx-jira-ticket-key class for styling")
+
     def test_dashboard_strips_full_qa_run_trigger_after_first_fire(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"

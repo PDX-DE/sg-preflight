@@ -5329,8 +5329,20 @@ def _render_jira_profile_tickets_card(
         if tickets:
             for ticket in tickets:
                 key = str(ticket.get("key", "") or "")
+                url = str(ticket.get("url", "") or "")
                 with ui.row().classes("sgfx-jira-ticket-row full-width items-center"):
-                    ui.link(key, str(ticket.get("url", "") or ""), new_tab=True).classes("sgfx-jira-ticket-key")
+                    if url:
+                        # H-29: raw <a target="_blank" rel="noopener"> instead of
+                        # ui.link to guarantee browser click-through across NiceGUI
+                        # versions. ui.link with new_tab=True did not consistently
+                        # open the URL in real-browser walkthroughs (observed
+                        # 2026-05-29 07:17 on the H-26 exe — clicks did nothing).
+                        ui.html(
+                            f'<a class="sgfx-jira-ticket-key" href="{html_escape(url)}" '
+                            f'target="_blank" rel="noopener noreferrer">{html_escape(key)}</a>'
+                        )
+                    else:
+                        ui.label(key).classes("sgfx-jira-ticket-key")
                     ui.label(str(ticket.get("status", "unknown"))).classes("sgfx-jira-status-pill")
                     ui.label(str(ticket.get("summary", ""))).classes("sgfx-muted")
         elif status != "available":
