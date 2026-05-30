@@ -1121,7 +1121,7 @@ FULL_QA_PASS_DEDUP_BUCKET_SECONDS = 5
 def _full_qa_pass_token(profile_id: str, ts_seconds: int | None = None) -> str:
     """Audit-trail token. H-34 Part B widens the timestamp suffix from per-second
     to per-5-second buckets so back-to-back fires that cross a second boundary
-    (Lexus observed 12:09:14.x / 12:09:15.x storm on G70 — three log entries
+    (observed in testing: a 12:09:14.x / 12:09:15.x burst on one profile — three log entries
     inside 1.1s) collapse to the same token rather than three distinct ones.
 
     The dedup DECISION still keys on `profile_id` only via

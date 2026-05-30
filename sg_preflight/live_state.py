@@ -7,7 +7,7 @@ and never crosses external boundaries — per [[feedback-secrets-never-in-chat]]
 payloads carry no PAT, no credentials, and no absolute personal paths beyond
 what is already in the workspace string itself.
 
-Schema (per Lexus 2026-05-29 01:10 directive):
+Schema:
 
     {
       "ts": "<iso ms>",

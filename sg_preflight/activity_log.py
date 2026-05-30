@@ -153,7 +153,7 @@ def _utc_now(value: datetime | None = None) -> str:
 
     H-26 upgrade: pre-H-26 entries used second precision; the reader continues to
     parse both forms (see `_parse_ts`). New entries are written at ms precision so
-    Mercedes/Aston/Lexus can correlate activity log + live_state.json updates
+    operators and tooling can correlate activity log + live_state.json updates
     without ambiguity when events land within the same second.
     """
     current = value or datetime.now(timezone.utc)

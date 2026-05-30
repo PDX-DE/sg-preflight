@@ -100,14 +100,14 @@ class DedupWidenTests(unittest.TestCase):
     """H-34 Part B — dedup widening (token bucket + JSON API gate)."""
 
     def test_audit_token_uses_5_second_bucket_so_storm_collapses_to_one_token(self) -> None:
-        """Lexus observed three G70 fires within 1.1s at 12:09:14-15. With the
+        """An observed reconnect produced three fires within 1.1s at seconds 14-15. With the
         original ts_floor_seconds the audit log carries 2 distinct tokens
         (second 14, second 15); H-34 Part B widens to 5-second buckets so the
         three entries collapse to ONE token in the log."""
         from sg_preflight.dashboard import main as dashboard_main
 
         token_for = getattr(dashboard_main, "_full_qa_pass_token")
-        # Simulate the exact second values Lexus observed (12:09:14, 15).
+        # Simulate the exact second values observed (seconds 14, 15).
         token_a = token_for("G70", ts_seconds=1716991754)  # second 14
         token_b = token_for("G70", ts_seconds=1716991755)  # second 15
         token_c = token_for("G70", ts_seconds=1716991756)  # second 16
@@ -116,7 +116,7 @@ class DedupWidenTests(unittest.TestCase):
         # match the actual storm timing: pick three timestamps within the same
         # bucket window.
         # The function floors to a multiple of 5: 1716991750 / 51 / 52 / 53 / 54
-        # all → 1716991750. Lexus's exact seconds 14 / 15 / 16 cross a boundary.
+        # all → 1716991750. The observed seconds 14 / 15 / 16 cross a boundary.
         # Verify the same-bucket case explicitly:
         same_bucket = [token_for("G70", ts_seconds=1716991750 + offset) for offset in (0, 1, 2, 3, 4)]
         self.assertEqual(len(set(same_bucket)), 1, f"expected one bucket, got {set(same_bucket)}")
@@ -135,7 +135,7 @@ class DedupWidenTests(unittest.TestCase):
         reset = getattr(dashboard_main, "_reset_full_qa_pass_dedup")
 
         reset()
-        # Lexus storm: 3 fires at 0.0 / 0.7 / 1.1s (one second boundary crossed).
+        # Observed storm: 3 fires at 0.0 / 0.7 / 1.1s (one second boundary crossed).
         self.assertTrue(should_fire("G70", now=0.0))
         self.assertFalse(should_fire("G70", now=0.7))
         self.assertFalse(should_fire("G70", now=1.1))

@@ -260,7 +260,7 @@ Other text
         """H-29: every ticket row must include a fully-qualified `url` field that
         points at the operator-configured Jira base URL so the dashboard inline
         panel can render a working browser link. Regression after 2026-05-29 07:17
-        Yondaime walkthrough where ticket clicks did nothing."""
+        operator walkthrough where ticket clicks did nothing."""
         from sg_preflight.jira_client import _profile_ticket_rows
 
         response = {

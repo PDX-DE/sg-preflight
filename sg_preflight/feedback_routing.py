@@ -12,7 +12,7 @@ with the shape:
       "subject_prefix": "SGFX feedback"
     }
 
-When the file is missing, falls back to the work-email default + Yondaime
+When the file is missing, falls back to the work-email default + the same address
 as the Teams recipient. All values are operator-local and never logged with
 credentials per `[[feedback-secrets-never-in-chat]]`.
 """
@@ -25,7 +25,7 @@ from pathlib import Path
 import re
 
 
-# Hardcoded fallbacks (per Lexus 2026-05-29 07:40 directive — H-33).
+# Hardcoded fallbacks.
 DEFAULT_EMAIL_RECIPIENT = "david-erik.garcia-arenas@paradoxcat.com"
 DEFAULT_TEAMS_RECIPIENT = "david-erik.garcia-arenas@paradoxcat.com"
 DEFAULT_SUBJECT_PREFIX = "SGFX feedback"

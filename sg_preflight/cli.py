@@ -384,7 +384,7 @@ def _stream_live_state_tail(
 ) -> int:
     """H-26: poll live_state.json and print updates as they appear.
 
-    Per Lexus 01:10 directive: agents tail this during operator walkthroughs to
+    Agents and operators tail this during walkthroughs to
     observe ground-truth telemetry instead of asking the operator what they see.
     """
     from sg_preflight.live_state import live_state_path, read_live_state, render_live_state_text

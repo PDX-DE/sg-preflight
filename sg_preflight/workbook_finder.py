@@ -5,7 +5,7 @@ Searches the documented Format A (date-stamped IDC_EVO) and Format B
 worktrees. Returns the newest match plus all candidates so the delivery
 checklist surface can cite the resolved path verbatim.
 
-Search precedence (per Lexus 2026-05-29 07:20 directive, eight locations):
+Search precedence (eight locations):
 
 1. `<workspace>/Cars/size_analysis/<PROFILE>_*.xlsx` (Format A, date-stamped IDC_EVO)
 2. `<workspace>/Cars/size_analysis/<PROFILE>_v*.xlsx` (Format B, version-tagged IDC_23)

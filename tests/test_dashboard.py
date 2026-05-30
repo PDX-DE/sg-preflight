@@ -573,7 +573,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         reset = getattr(dashboard_main, "_reset_full_qa_pass_dedup")
 
         reset()
-        # Reproduces Lexus' 2026-05-29 07:17:28-31 G70 storm: 5 fires over 2.4s
+        # Reproduces an observed reconnect storm: 5 fires over 2.4s
         # at wall-clock seconds 28 / 29 / 30 / 31 / 31. With per-profile dedup
         # only the FIRST should fire; the other four must return False.
         results = [
