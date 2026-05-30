@@ -376,9 +376,9 @@ else {
     Add-SkippedStage -Name "introduction-project-sanity-run" -Notes "Introduction reference corpus not found; skipped"
 }
 
-$currentRepoRoot = Join-Path $repoRoot "OneDrive_4_14-04-2026"
-$currentProjectRoot = Join-Path $repoRoot "OneDrive_5_14-04-2026\Debug\MiniKombi"
-$currentCarpaintSource = Join-Path $repoRoot "Markus_Delete\Documents\Carpaints.xlsx"
+$currentRepoRoot = Join-Path $repoRoot "sample_repo"
+$currentProjectRoot = Join-Path $repoRoot "sample_project\Debug\example_car"
+$currentCarpaintSource = Join-Path $repoRoot "data\Carpaints.xlsx"
 $currentBundle = Join-Path $OutputRoot "current-source-bundle"
 
 if ((Test-Path $currentRepoRoot) -and (Test-Path $currentProjectRoot) -and (Test-Path $currentCarpaintSource)) {
@@ -388,11 +388,11 @@ if ((Test-Path $currentRepoRoot) -and (Test-Path $currentProjectRoot) -and (Test
         "--repo-root", $currentRepoRoot,
         "--project-root", $currentProjectRoot,
         "--carpaints-source", $currentCarpaintSource,
-        "--context", "car_model=MiniKombi",
+        "--context", "car_model=example_car",
         "--context", "trim_line=unknown",
         "--context", "delivery_phase=pre_access_reference",
         "--context", "review_target=current_source_drop",
-        "--context", "evidence_source=OneDrive_and_local_tool_drops"
+        "--context", "evidence_source=sample_local_tool_drops"
     )
 
     if ($currentMaterializeResult.Passed) {

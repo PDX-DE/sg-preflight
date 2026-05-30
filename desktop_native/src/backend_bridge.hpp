@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,6 +13,8 @@ namespace sg_preflight::native_shell {
 struct BackendConfig {
     std::wstring workspace_root;
     std::wstring python_executable = L"python";
+    std::string initial_profile_id;
+    std::string initial_action_id;
 };
 
 struct ProfileItem {
@@ -42,6 +45,16 @@ struct EvidenceItem {
 struct ArtifactItem {
     std::string label;
     std::string path;
+};
+
+struct ManualEvidenceItem {
+    std::string id;
+    std::string kind;
+    std::string label;
+    std::string path;
+    std::string note;
+    std::string source_path;
+    std::string created_at_utc;
 };
 
 struct CopyItem {
@@ -107,6 +120,11 @@ struct ActionSnapshot {
     std::string current_command;
     std::string child_run_id;
     std::string linked_run_id;
+    std::string workspace_root;
+    std::string project_root;
+    std::string output_root;
+    std::string error_message;
+    int exit_code = 0;
     std::vector<std::string> summary_lines;
     std::vector<EvidenceItem> top_paths;
     std::vector<std::string> manual_followups;
@@ -123,9 +141,17 @@ struct RunSnapshot {
     std::string profile_id;
     std::string profile_label;
     std::string status;
+    bool initializing = false;
     std::string created_at_utc;
     std::string workflow_stage_label;
     std::string summary_title;
+    std::string current_command;
+    std::string log_path;
+    std::string log_tail;
+    std::string output_root;
+    std::string project_root;
+    std::string error_message;
+    int exit_code = 0;
     std::vector<std::string> summary_lines;
     std::vector<std::string> grouped_lines;
     std::vector<std::string> notes;
@@ -133,6 +159,138 @@ struct RunSnapshot {
     std::vector<ArtifactItem> artifacts;
     std::vector<ArtifactItem> source_files;
     std::vector<CopyItem> copy_items;
+};
+
+struct EnvironmentDoctorItem {
+    std::string key;
+    std::string category;
+    std::string label;
+    std::string state;
+    std::string summary;
+    std::string path;
+    std::string next_action;
+};
+
+struct OperatorOverview {
+    std::string workspace_root;
+    std::string generated_at_utc;
+    std::string recommended_profile_id;
+    std::string recommended_action_id;
+    int ready_profile_count = 0;
+    int action_count = 0;
+    int ready_action_count = 0;
+    int blocked_action_count = 0;
+    int blocker_count = 0;
+    int manual_card_count = 0;
+    std::map<std::string, int> environment_state_counts;
+    std::string latest_action_run_id;
+    std::string latest_action_status;
+    std::string latest_run_id;
+    std::string latest_run_status;
+    std::string summary_line;
+    std::string export_size_analysis_status;
+    int export_size_analysis_variant_count = 0;
+    std::string export_size_analysis_workbook_date;
+    std::string export_size_analysis_summary;
+    std::string export_size_analysis_workbook_path;
+};
+
+struct ReviewPriorityItem {
+    std::string profile_id;
+    std::string filter_name;
+    std::string verdict;
+    std::string priority_level;
+    std::string attention_category;
+    int priority_score = 0;
+    std::string reason;
+    std::string recommendation;
+    std::string log_path;
+    std::vector<std::string> signals;
+    bool is_new_since_previous_run = false;
+};
+
+struct ReviewOwnerDecisionItem {
+    std::string key;
+    std::string title;
+    std::string status;
+    std::string owner;
+    std::string date;
+    std::string notes;
+    bool pending = true;
+};
+
+struct ExternalFindingItem {
+    std::string finding_id;
+    std::string source;
+    std::string reported_by;
+    std::string type;
+    std::string category;
+    std::vector<std::string> scope;
+    std::string finding;
+    std::string owner;
+    std::string status;
+    std::string note;
+    std::vector<std::string> related_investigation_surfaces;
+};
+
+struct ManualReviewProfileItem {
+    std::string profile_id;
+    std::string status;
+    std::string summary;
+    std::string note;
+    std::string copy_review_note_text;
+    std::string raco_scene_path;
+    bool raco_scene_exists = false;
+    std::string blender_workfile_path;
+    bool blender_workfile_exists = false;
+    std::string candidate_gallery_path;
+    bool candidate_gallery_exists = false;
+    std::string screenshot_triage_path;
+    bool screenshot_triage_exists = false;
+    std::string manual_review_record_path;
+    bool manual_review_record_exists = false;
+    std::string screenshot_evidence_slots_path;
+    bool screenshot_evidence_slots_exists = false;
+};
+
+struct ReviewBoardState {
+    std::string ticket_id;
+    std::string title;
+    std::vector<std::string> scope;
+    std::string package_path;
+    std::string package_zip_path;
+    std::string generated_at;
+    std::string review_owner_update_text;
+    std::string morning_digest_text;
+    std::string verification_status;
+    std::string dod_overall_status;
+    int visible_dod_progress_percent = 0;
+    int smoke_completed = 0;
+    int smoke_total = 0;
+    int battery_total = 0;
+    int exact_candidate_ready = 0;
+    int proxy_candidate_ready = 0;
+    int runtime_crash = 0;
+    bool has_previous_run = false;
+    int new_failures_count = 0;
+    int resolved_failures_count = 0;
+    int new_screenshot_diffs_count = 0;
+    int unchanged_blockers_count = 0;
+    std::string daily_delta_headline;
+    std::vector<std::string> new_failures;
+    std::vector<std::string> resolved_failures;
+    std::vector<std::string> new_screenshot_diffs;
+    std::vector<std::string> unchanged_blockers;
+    std::vector<std::string> review_first_preview;
+    std::string operator_next_step;
+    std::vector<std::string> unresolved_families;
+    std::vector<std::string> open_items;
+    std::vector<ReviewPriorityItem> review_priority_items;
+    std::vector<std::string> decision_status_options;
+    std::vector<ReviewOwnerDecisionItem> decisions;
+    std::vector<ExternalFindingItem> external_findings;
+    std::vector<ManualReviewProfileItem> manual_review_profiles;
+    std::vector<ArtifactItem> artifacts;
 };
 
 std::wstring ToWide(const std::string& text);
@@ -152,6 +310,41 @@ std::vector<RecentRunItem> LoadRecentRuns(
     const BackendConfig& config,
     const std::string& profile_id,
     int limit
+);
+std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& config);
+OperatorOverview LoadOperatorOverview(const BackendConfig& config, const std::string& profile_id);
+ReviewBoardState LoadReviewBoard(const BackendConfig& config, const std::string& ticket_id);
+ReviewBoardState SetReviewDecision(
+    const BackendConfig& config,
+    const std::string& ticket_id,
+    const std::string& decision_key,
+    const std::string& status,
+    const std::string& owner = {},
+    const std::string& note = {},
+    const std::string& date = {},
+    const std::string& title = {}
+);
+ReviewBoardState AddExternalFinding(
+    const BackendConfig& config,
+    const std::string& ticket_id,
+    const std::string& source,
+    const std::string& reported_by,
+    const std::string& category,
+    const std::vector<std::string>& scope,
+    const std::string& finding,
+    const std::string& owner = {},
+    const std::string& status = {},
+    const std::string& note = {},
+    const std::string& finding_type = {},
+    const std::vector<std::string>& related_investigation_surfaces = {}
+);
+ManualEvidenceItem AttachManualEvidence(
+    const BackendConfig& config,
+    const std::string& run_id_or_path,
+    const std::string& kind,
+    const std::string& label,
+    const std::wstring& source_path,
+    const std::wstring& note_text
 );
 ActionSnapshot LoadSnapshot(const BackendConfig& config, const std::string& run_id_or_path);
 RunSnapshot LoadRunSnapshot(const BackendConfig& config, const std::string& run_id_or_path);

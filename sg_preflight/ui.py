@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from sg_preflight.assets import runtime_asset_dir, runtime_asset_path, runtime_asset_root
 from sg_preflight.mirror_audit import (
     MirrorAuditReport,
     load_cached_audit,
@@ -30,6 +31,12 @@ from sg_preflight.qa_actions import (
     load_action_record,
     save_action_record as save_action_task_record,
 )
+from sg_preflight.review_state import (
+    build_review_board_state,
+    load_latest_review_package,
+    review_board_unavailable_state,
+)
+from sg_preflight.review_tracking import add_external_finding, set_review_decision
 from sg_preflight.reporting import build_report_presentation, finding_hint, retheme_html_report
 from sg_preflight.services import (
     RunRequest,
@@ -52,11 +59,11 @@ from sg_preflight.services import (
 
 
 def _templates() -> Jinja2Templates:
-    return Jinja2Templates(directory=str(Path(__file__).with_name("templates")))
+    return Jinja2Templates(directory=str(runtime_asset_dir("sg_preflight/templates")))
 
 
 def _static_root() -> Path:
-    return Path(__file__).with_name("static")
+    return runtime_asset_dir("sg_preflight/static")
 
 
 def _profile_map(profiles: list[RunProfile]) -> dict[str, RunProfile]:
@@ -200,12 +207,40 @@ def _doc_file_link(root: Path, relative_path: str) -> dict[str, str]:
     }
 
 
+def _review_board_file_card(label: str, artifact: dict[str, Any]) -> dict[str, str]:
+    path = Path(str(artifact.get("absolute_path", ""))) if artifact.get("absolute_path") else Path()
+    href = _file_href(path) if artifact.get("exists") else ""
+    return {
+        "label": label,
+        "path": str(path) if path else "",
+        "relative_path": str(artifact.get("relative_path", "")),
+        "href": href,
+    }
+
+
+def _split_multi_value(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        items = value
+    else:
+        items = [value]
+    normalized: list[str] = []
+    for item in items:
+        for chunk in str(item).split(","):
+            trimmed = chunk.strip()
+            if trimmed:
+                normalized.append(trimmed)
+    return normalized
+
+
 def _profile_card(root: Path, profile: RunProfile) -> dict[str, Any]:
     live_signal = _latest_matrix_signal(root, profile)
-    is_ready = profile.project_root.exists() and profile.config_path.exists()
+    source_project_root = profile.source_project_root()
+    is_ready = source_project_root.exists() and profile.config_path.exists()
     return {
         "profile": profile,
-        "project_exists": profile.project_root.exists(),
+        "project_exists": source_project_root.exists(),
         "config_exists": profile.config_path.exists(),
         "is_ready": is_ready,
         "readiness_label": "Ready for a local run" if is_ready else "Needs local setup attention",
@@ -248,10 +283,9 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
                 "Runs the widest useful SG-side flow on this machine",
                 "Best first stop before review, rack, or handoff",
             ),
-            "best_profiles": ("G70", "G65", "G45"),
+            "best_profiles": ("G70", "G45"),
             "profile_help": {
                 "G70": "Best first stop when you touched general delivery files and want broad sanity checks.",
-                "G65": "Best first stop when you touched one car and also want constants evidence.",
                 "G45": "Best first stop when you touched a classic slice and want low-noise anchor sanity.",
             },
         },
@@ -267,10 +301,9 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
                 "Checks expected vs exported engineering values",
                 "Best when you want hard evidence for a value mismatch",
             ),
-            "best_profiles": ("G65",),
+            "best_profiles": ("G70",),
             "profile_help": {
-                "G65": "Best current live slice for constants drift and engineering-value evidence.",
-                "G70": "Useful if you changed G70 constants and want a fast value-only pass.",
+                "G70": "Useful if you changed a profile's constants and want a fast value-only pass.",
                 "G45": "Useful if you changed classic constants and only want the constants pack.",
             },
         },
@@ -290,7 +323,6 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
             "profile_help": {
                 "G45": "Best current live slice for classic anchor-family sanity.",
                 "G70": "Useful if you changed the G70 anchor scene and want a quick structure pass.",
-                "G65": "Useful if you changed the G65 anchor scene and want a quick structure pass.",
             },
         },
         {
@@ -305,10 +337,9 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
                 "Checks duplicate IDs and normalized paint data",
                 "Best before any rack-side paint review",
             ),
-            "best_profiles": ("G70", "G65", "G45"),
+            "best_profiles": ("G70", "G45"),
             "profile_help": {
                 "G70": "Good first stop for shared BMW CarPaint issues on the live IDCevo side.",
-                "G65": "Good first stop if you want shared BMW CarPaint issues plus the G65 live slice.",
                 "G45": "Good first stop if you want the same shared BMW catalog checked from the classic side.",
             },
         },
@@ -327,7 +358,6 @@ def _guided_job_specs() -> tuple[dict[str, Any], ...]:
             "best_profiles": ("G70",),
             "profile_help": {
                 "G70": "Best current live slice for cross-car references and unused-Lua signal.",
-                "G65": "Useful if you changed G65 project files and want a project-sanity-only pass.",
                 "G45": "Useful if you changed classic project files and want legacy sanity only.",
             },
         },
@@ -2367,10 +2397,15 @@ def create_app(
     app.state.preview_cache = {}
 
     app.mount("/ui/static", StaticFiles(directory=str(_static_root())), name="ui_static")
+    app.mount("/sgfx-assets", StaticFiles(directory=str(runtime_asset_root())), name="sgfx_assets")
 
     @app.get("/")
     async def root_redirect() -> RedirectResponse:
         return RedirectResponse(url="/ui", status_code=302)
+
+    @app.get("/favicon.ico")
+    async def favicon() -> FileResponse:
+        return FileResponse(runtime_asset_path("sgfx_icon.png"), media_type="image/png")
 
     @app.get("/ui")
     async def home(request: Request) -> Any:
@@ -2417,6 +2452,41 @@ def create_app(
                     app.state.workspace_root,
                     profiles=list(app.state.profiles.values()),
                 ),
+            },
+        )
+
+    @app.get("/ui/review-board")
+    async def review_board_view(request: Request, ticket_id: str = "") -> Any:
+        try:
+            state = build_review_board_state(ticket_id or None, app.state.workspace_root)
+        except FileNotFoundError as exc:
+            unavailable = review_board_unavailable_state(ticket_id or None, str(exc))
+            return app.state.templates.TemplateResponse(
+                request,
+                "review_board_unavailable.html",
+                {
+                    "ticket_id": ticket_id,
+                    "unavailable_reason": unavailable["message"],
+                },
+            )
+        artifact_refs = state.get("artifact_references", {})
+        file_cards = [
+            _review_board_file_card("Candidate gallery", artifact_refs.get("candidate_gallery", {})),
+            _review_board_file_card("DoD matrix", artifact_refs.get("dod_matrix", {})),
+            _review_board_file_card("Daily summary", artifact_refs.get("latest_daily_snapshot_markdown", {})),
+            _review_board_file_card("Review-priority ranking", artifact_refs.get("review_priority_markdown", {})),
+            _review_board_file_card("Daily delta", artifact_refs.get("daily_delta_markdown", {})),
+            _review_board_file_card("Review-owner decisions", artifact_refs.get("review_owner_decisions", {})),
+            _review_board_file_card("External findings", artifact_refs.get("external_findings_markdown", {})),
+            _review_board_file_card("Package manifest", artifact_refs.get("package_manifest", {})),
+            _review_board_file_card("Package ZIP", artifact_refs.get("package_zip", {})),
+        ]
+        return app.state.templates.TemplateResponse(
+            request,
+            "review_board.html",
+            {
+                "review_board": state,
+                "file_cards": [item for item in file_cards if item["path"]],
             },
         )
 
@@ -2726,6 +2796,98 @@ def create_app(
         payload["live_log_tail"] = _tail_text_file(record.paths.get("log", ""), limit=24)
         return JSONResponse(payload)
 
+    @app.get("/ui/api/review-board/latest")
+    async def review_board_api(ticket_id: str = "") -> JSONResponse:
+        try:
+            return JSONResponse(build_review_board_state(ticket_id or None, app.state.workspace_root))
+        except FileNotFoundError as exc:
+            return JSONResponse(review_board_unavailable_state(ticket_id or None, str(exc)))
+
+    @app.post("/ui/api/review-decisions")
+    async def review_decisions_set_api(request: Request) -> JSONResponse:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+
+        ticket_id = str(payload.get("ticket_id", "")).strip()
+        decision_key = str(payload.get("decision_key", "")).strip()
+        status = str(payload.get("status", "")).strip()
+        if not ticket_id:
+            raise HTTPException(status_code=400, detail="ticket_id is required")
+        if not decision_key:
+            raise HTTPException(status_code=400, detail="decision_key is required")
+        if not status:
+            raise HTTPException(status_code=400, detail="status is required")
+
+        package = load_latest_review_package(ticket_id, app.state.workspace_root)
+        fallback_path = Path(package["review_owner_decisions"]["absolute_path"]) if package["review_owner_decisions"]["absolute_path"] else None
+        decision_state = set_review_decision(
+            ticket_id,
+            decision_key,
+            status=status,
+            owner=str(payload.get("owner", "")).strip(),
+            note=str(payload.get("note", "")).strip(),
+            date=str(payload.get("date", "")).strip(),
+            title=str(payload.get("title", "")).strip(),
+            workspace=app.state.workspace_root,
+            fallback_markdown_path=fallback_path,
+        )
+        return JSONResponse(
+            {
+                "ok": True,
+                "decision_state": decision_state,
+                "review_board": build_review_board_state(ticket_id, app.state.workspace_root),
+            }
+        )
+
+    @app.post("/ui/api/external-findings")
+    async def external_findings_add_api(request: Request) -> JSONResponse:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+
+        ticket_id = str(payload.get("ticket_id", "")).strip()
+        source = str(payload.get("source", "")).strip()
+        reported_by = str(payload.get("reported_by", "")).strip()
+        category = str(payload.get("category", "")).strip()
+        finding = str(payload.get("finding", "")).strip()
+        scope = _split_multi_value(payload.get("scope", []))
+        related_surfaces = _split_multi_value(payload.get("related_investigation_surfaces", []))
+        if not ticket_id:
+            raise HTTPException(status_code=400, detail="ticket_id is required")
+        if not source:
+            raise HTTPException(status_code=400, detail="source is required")
+        if not reported_by:
+            raise HTTPException(status_code=400, detail="reported_by is required")
+        if not category:
+            raise HTTPException(status_code=400, detail="category is required")
+        if not finding:
+            raise HTTPException(status_code=400, detail="finding is required")
+        if not scope:
+            raise HTTPException(status_code=400, detail="scope is required")
+
+        finding_state = add_external_finding(
+            ticket_id,
+            source=source,
+            reported_by=reported_by,
+            category=category,
+            scope=scope,
+            finding=finding,
+            owner=str(payload.get("owner", "")).strip(),
+            status=str(payload.get("status", "")).strip() or "reported",
+            note=str(payload.get("note", "")).strip(),
+            finding_type=str(payload.get("finding_type", "")).strip() or "finding",
+            related_investigation_surfaces=related_surfaces,
+            workspace=app.state.workspace_root,
+        )
+        return JSONResponse(
+            {
+                "ok": True,
+                "finding_state": finding_state,
+                "review_board": build_review_board_state(ticket_id, app.state.workspace_root),
+            }
+        )
+
     @app.get("/ui/audits/mirror/deep")
     async def run_deep_audit() -> RedirectResponse:
         profiles = list(app.state.profiles.values())
@@ -2780,8 +2942,19 @@ def run_ui(host: str = "127.0.0.1", port: int = 8765, reload: bool = False) -> i
             host=host,
             port=port,
             log_level="warning",
+            http="h11",
+            log_config=None,
+            access_log=False,
             reload=True,
         )
     else:
-        uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+        uvicorn.run(
+            create_app(),
+            host=host,
+            port=port,
+            log_level="warning",
+            http="h11",
+            log_config=None,
+            access_log=False,
+        )
     return 0

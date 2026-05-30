@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 
 from sg_preflight.checker_evidence import (
     parse_delivery_checklist_log,
@@ -21,6 +22,7 @@ from sg_preflight.qa_actions import (
     get_operator_action,
     save_action_record as save_action_task_record,
 )
+from sg_preflight.review_tracking import add_external_finding
 from sg_preflight.services import (
     RUN_PROGRESS_PLAN,
     RunRequest,
@@ -29,10 +31,23 @@ from sg_preflight.services import (
     save_run_record,
 )
 from sg_preflight.ui import create_app
-from tests.operator_helpers import create_temp_g65_profile, write_text
+from tests.operator_helpers import create_review_package_fixture, create_temp_g65_profile, write_text
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "checkers"
+
+
+def _write_export_size_analysis_workbook(path: Path, *, profile: str = "NA8") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Overview"
+    sheet.append([profile])
+    sheet.append([])
+    sheet.append(["VARIANT", "TextureCube", "Mesh", "TOTAL"])
+    sheet.append(["BEV-Basis", 5616, 23049.11, 28665.11])
+    sheet.append(["PHEV-MSP", 5620, 23100.55, 28720.55])
+    workbook.save(path)
 
 
 def _checker_fixture(name: str) -> str:
@@ -40,6 +55,35 @@ def _checker_fixture(name: str) -> str:
 
 
 class TestOperatorUI(unittest.TestCase):
+    def test_web_ui_serves_sgfx_favicon_and_header_logo(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            favicon = client.get("/favicon.ico")
+            home = client.get("/ui")
+
+        self.assertEqual(favicon.status_code, 200)
+        self.assertIn(favicon.headers.get("content-type", ""), {"image/png", "image/png; charset=utf-8"})
+        self.assertEqual(home.status_code, 200)
+        self.assertIn("/sgfx-assets/framework_sgfx_logo.png", home.text)
+        self.assertIn('rel="icon"', home.text)
+
+    def test_web_ui_pins_h11_for_packaged_executable_server(self) -> None:
+        from sg_preflight.ui import run_ui
+
+        app = object()
+        with mock.patch("sg_preflight.ui.create_app", return_value=app):
+            with mock.patch("uvicorn.run") as runner:
+                self.assertEqual(run_ui(host="127.0.0.1", port=8123), 0)
+
+        runner.assert_called_once()
+        self.assertIs(runner.call_args.args[0], app)
+        self.assertEqual(runner.call_args.kwargs["http"], "h11")
+        self.assertIsNone(runner.call_args.kwargs["log_config"])
+        self.assertFalse(runner.call_args.kwargs["access_log"])
+
     def test_home_and_run_pages_render_profile_information(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -50,6 +94,7 @@ class TestOperatorUI(unittest.TestCase):
                     label="BMW G70 test slice",
                     repo_root=profile.repo_root,
                     project_root=profile.project_root,
+                    project_relative=profile.project_relative,
                     config_path=profile.config_path,
                     default_context=profile.default_context,
                     description=profile.description,
@@ -66,6 +111,7 @@ class TestOperatorUI(unittest.TestCase):
                     label="BMW G45 test slice",
                     repo_root=profile.repo_root,
                     project_root=profile.project_root,
+                    project_relative=profile.project_relative,
                     config_path=profile.config_path,
                     default_context=profile.default_context,
                     description=profile.description,
@@ -102,7 +148,7 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Check one car, open the right file, and copy the proof.", home.text)
         self.assertIn('href="#change-type-start"', home.text)
         self.assertIn("Pick the change type first.", home.text)
-        self.assertIn("Best current start: G65", home.text)
+        self.assertIn("Best current start: G70", home.text)
         self.assertIn("Show more tools, direct car picks, and recent checks", home.text)
         self.assertIn("Pick a car directly", home.text)
         self.assertIn("Check all live cars", home.text)
@@ -122,7 +168,7 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Start from the kind of change", stage_view.text)
         self.assertEqual(guided.status_code, 200)
         self.assertIn("Use this car first", guided.text)
-        self.assertIn("Run constants check for G65", guided.text)
+        self.assertIn("Run constants check for G70", guided.text)
         self.assertIn("Other cars", guided.text)
         self.assertIn("Recommended", guided.text)
         self.assertEqual(stage_guided.status_code, 200)
@@ -250,6 +296,128 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("You are done when...", result_page.text)
         self.assertEqual(evidence_page.status_code, 200)
         self.assertIn("Attach the result in the real ticket", evidence_page.text)
+
+    def test_review_board_page_and_api_render_latest_structured_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            create_review_package_fixture(root)
+            _write_export_size_analysis_workbook(
+                root / "repositories" / "trunk" / "Cars" / "size_analysis" / "NA8_20251002.xlsx",
+                profile="NA8",
+            )
+            add_external_finding(
+                "IDCEVODEV-960073",
+                source="Teams / 3D Car - Bug Reports / Jana",
+                reported_by="Jana",
+                category="changelog",
+                scope=["G78"],
+                finding="G78 LightFX / HeadLights update",
+                owner="Ana-Karina Nazare",
+                status="reported",
+                note="Track separately from the sent package.",
+                workspace=root,
+            )
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            page = client.get("/ui/review-board?ticket_id=IDCEVODEV-960073")
+            payload = client.get("/ui/api/review-board/latest?ticket_id=IDCEVODEV-960073")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("SGFX QA status", page.text)
+        self.assertIn("IDCEVODEV-960073", page.text)
+        self.assertIn("Copy Review Owner Update", page.text)
+        self.assertIn("Copy Morning Digest", page.text)
+        self.assertIn("Representative smoke: 3/3 passed", page.text)
+        self.assertIn("lights_OnlyCones", page.text)
+        self.assertIn("External findings", page.text)
+        self.assertIn("Next operator step", page.text)
+        self.assertIn("Delta detail", page.text)
+        self.assertIn("Export-size analysis evidence", page.text)
+        self.assertIn("Export-size analysis NA8", page.text)
+        self.assertIn("read-only", page.text.lower())
+        self.assertIn("G78 LightFX / HeadLights update", page.text)
+        self.assertIn("Save decision", page.text)
+        self.assertIn("Save external finding", page.text)
+        self.assertEqual(payload.status_code, 200)
+        self.assertEqual(payload.json()["ticket_id"], "IDCEVODEV-960073")
+        self.assertEqual(payload.json()["screenshot_battery_counts"]["runtime_crash"], 1)
+        self.assertEqual(payload.json()["export_size_analysis"][0]["status"], "available")
+        self.assertEqual(payload.json()["export_size_analysis"][0]["variant_count"], 2)
+        self.assertIn("IDCEVODEV-960073 QA status", payload.json()["review_owner_update_text"])
+        self.assertEqual(payload.json()["external_findings"]["count"], 1)
+
+    def test_review_board_page_and_api_report_unavailable_without_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            client = TestClient(create_app(root=root, profiles=[profile]), raise_server_exceptions=False)
+
+            page = client.get("/ui/review-board?ticket_id=IDCEVODEV-960073")
+            payload = client.get("/ui/api/review-board/latest?ticket_id=IDCEVODEV-960073")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("SGFX QA Status Board unavailable", page.text)
+        self.assertIn("No matching review package was found", page.text)
+        self.assertEqual(payload.status_code, 200)
+        self.assertEqual(payload.json()["status"], "unavailable")
+        self.assertFalse(payload.json()["available"])
+        self.assertFalse(payload.json()["is_approval"])
+
+    def test_review_board_decision_api_updates_tracked_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            create_review_package_fixture(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            response = client.post(
+                "/ui/api/review-decisions",
+                json={
+                    "ticket_id": "IDCEVODEV-960073",
+                    "decision_key": "lights_OnlyCones",
+                    "title": "lights_OnlyCones",
+                    "status": "follow_up",
+                    "owner": "Adrian",
+                    "note": "Treat as follow-up unless delivery is blocked.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["decision_state"]["decisions"][0]["status"], "follow_up")
+        self.assertEqual(payload["review_board"]["review_owner_decisions"]["sections"][0]["owner"], "Adrian")
+
+    def test_review_board_external_findings_api_updates_tracked_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            create_review_package_fixture(root)
+            client = TestClient(create_app(root=root, profiles=[profile]))
+
+            response = client.post(
+                "/ui/api/external-findings",
+                json={
+                    "ticket_id": "IDCEVODEV-960073",
+                    "source": "Teams / 3D Car - Bug Reports / Jana",
+                    "reported_by": "Jana",
+                    "category": "changelog",
+                    "scope": "NA8, G78",
+                    "finding": "Missing changelog entry for light cones position change",
+                    "owner": "Ana-Karina Nazare",
+                    "status": "reported",
+                    "related_investigation_surfaces": "lights_OnlyCones, Pivot Master",
+                    "note": "Track separately from screenshot/export evidence.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["finding_state"]["count"], 1)
+        self.assertEqual(payload["review_board"]["external_findings"]["count"], 1)
+        self.assertIn("lights_OnlyCones", payload["review_board"]["external_findings"]["related_investigation_surfaces"])
 
     def test_result_page_shows_diff_against_previous_completed_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -407,7 +575,7 @@ class TestOperatorUI(unittest.TestCase):
 
         self.assertEqual(result_page.status_code, 200)
         self.assertIn("This automation is blocked here", result_page.text)
-        self.assertIn("Scene check needs both the mirrored", result_page.text)
+        self.assertIn("check_scenes.py", result_page.text)
         self.assertIn("Do this next", result_page.text)
         self.assertNotIn("Raw log", result_page.text)
 
@@ -674,11 +842,23 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn(':root[data-theme="light"] .shell-header {', css)
         self.assertIn(':root[data-theme="light"] .hero-panel,', css)
         self.assertIn(':root[data-theme="light"] .button {', css)
+        self.assertIn(':root[data-ui-mode="clean"] {', css)
+        self.assertIn(':root[data-ui-mode="clean"] body {', css)
+        self.assertIn("font-size: clamp(16px, 1.05vw, 18px);", css)
+        self.assertIn(':root[data-ui-mode="clean"] .loading-native,', css)
         js = (ROOT / "sg_preflight" / "static" / "operator.js").read_text(encoding="utf-8")
         self.assertIn("const syncOverlayExpandedState = function (resetScroll)", js)
         self.assertIn("if (resetScroll && expanded)", js)
         self.assertIn("Show exactly what the tool is doing", js)
+        self.assertIn("const uiModeToggle = document.getElementById(\"ui-mode-toggle\");", js)
+        self.assertIn("const applyUiMode = function (mode)", js)
+        self.assertIn("new URLSearchParams(window.location.search)", js)
+        self.assertIn("sg-ui-mode", js)
+        self.assertIn("theme=clean", js)
         base = (ROOT / "sg_preflight" / "templates" / "base.html").read_text(encoding="utf-8")
+        self.assertIn("dataset.uiMode", base)
+        self.assertIn("ui-mode-toggle", base)
+        self.assertIn("Clean mode", base)
         self.assertIn("loading-native-screen", base)
         self.assertIn("Show exactly what the tool is doing", base)
         self.assertIn("20260417l", base)
@@ -708,6 +888,7 @@ class TestOperatorUI(unittest.TestCase):
                 label="BMW G65 test slice",
                 repo_root=mirror_root,
                 project_root=mirror_root / "Cars_IDCevo" / "BMW" / "G65",
+                project_relative=Path("Cars_IDCevo/BMW/G65"),
                 config_path=root / "config" / "sg_rules_live_g65.json",
                 mirror_audit_targets=("Cars_IDCevo/BMW/G65", "Cars/BMW/CarPaint.json"),
                 reference_repo_root=reference_root,

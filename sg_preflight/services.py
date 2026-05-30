@@ -16,12 +16,14 @@ from sg_preflight.adapters.materialize import (
     materialize_bundle,
     resolve_materialize_inputs,
 )
+from sg_preflight.bmw_delivery import discover_bmw_models_repo
 from sg_preflight.bundle import load_bundle
 from sg_preflight.checker_catalog import list_checker_catalog
 from sg_preflight.config_loader import load_config, load_json
 from sg_preflight.models import Report
-from sg_preflight.profiles import RunProfile, list_run_profiles
+from sg_preflight.profiles import RunProfile, list_run_profiles, mirror_repo_root, resolve_source_repo_root
 from sg_preflight.reporting import write_html_report, write_json_report, write_markdown_report
+from sg_preflight.tool_readiness import probe_raco_runtime, representative_raco_scene
 from sg_preflight.utils import ensure_parent
 from sg_preflight.validators.anchors import validate_anchors
 from sg_preflight.validators.carpaints import validate_carpaints
@@ -249,8 +251,8 @@ class RunRecord:
 
 def preview_profile_sources(profile: RunProfile) -> MaterializePreview:
     inputs = resolve_materialize_inputs(
-        repo_root=profile.repo_root,
-        project_root=profile.project_root,
+        repo_root=profile.source_repo_root(),
+        project_root=profile.source_project_root(),
     )
     return MaterializePreview(source_paths=inputs.source_map(), notes=inputs.notes)
 
@@ -325,6 +327,7 @@ def _default_run_id(profile_id: str) -> str:
 
 def _resolved_context(profile: RunProfile, request: RunRequest) -> dict[str, str]:
     context = dict(profile.default_context)
+    context["evidence_source"] = profile.source_evidence_source()
     context.update(request.context_overrides)
     return context
 
@@ -361,8 +364,8 @@ def build_run_record(
         fail_on=request.fail_on,
         packs=list(request.packs),
         context=_resolved_context(profile, request),
-        repo_root=str(profile.repo_root),
-        project_root=str(profile.project_root),
+        repo_root=str(profile.source_repo_root()),
+        project_root=str(profile.source_project_root()),
         config_path=str(profile.config_path),
         reference_repo_root=str(profile.reference_repo_root),
         paths={
@@ -608,7 +611,7 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
         step_key="scene_hierarchy",
         percent=6,
         label="Preparing SG sources",
-        detail=f"Materializing {profile.profile_id} from the mirrored live slice.",
+        detail=f"Materializing {profile.profile_id} from the live SG source tree.",
     )
 
     try:
@@ -623,11 +626,11 @@ def execute_profile_run(profile: RunProfile, request: RunRequest, repo_root: Pat
 
         materialized = materialize_bundle(
             output_bundle=Path(record.paths["bundle"]),
-            repo_root=profile.repo_root,
-            project_root=profile.project_root,
+            repo_root=profile.source_repo_root(),
+            project_root=profile.source_project_root(),
             env={
-                "SG-Repo": str(profile.repo_root),
-                "SG-CarModels-Repo": str(profile.repo_root),
+                "SG-Repo": str(profile.source_repo_root()),
+                "SG-CarModels-Repo": str(profile.source_repo_root()),
             },
             report_context=record.context,
             progress_callback=progress_callback,
@@ -714,6 +717,7 @@ def _raco_headless_path(root: Path) -> Path:
     path, from_env = _env_or_default_path(
         ("SG_RACO_HEADLESS", "RACO_HEADLESS_EXE"),
         (
+            root / "external" / "ramses" / "bin" / "RelWithDebInfo" / "RaCoHeadless.exe",
             root / "external" / "ramses" / "RaCoHeadless.exe",
             root.parent / "RamsesComposerWindows" / "bin" / "RelWithDebInfo" / "RaCoHeadless.exe",
             Path(r"C:\RamsesComposerWindows\bin\RelWithDebInfo\RaCoHeadless.exe"),
@@ -728,39 +732,89 @@ def _raco_headless_path(root: Path) -> Path:
     return path
 
 
-def _bmw_models_repo_path(root: Path) -> Path:
-    path, _ = _env_or_default_path(
-        ("SG_CARMODELS_REPO",),
+def _raco_gui_path(root: Path) -> Path:
+    path, from_env = _env_or_default_path(
+        ("SG_RACO_GUI", "SG_RACO_EDITOR", "RACO_GUI_EXE"),
         (
-            root / "external" / "digital-3d-car-models",
-            root.parent / "digital-3d-car-models",
-            Path(r"C:\repos\digital-3d-car-models"),
+            root / "external" / "ramses" / "bin" / "RelWithDebInfo" / "RamsesComposer.exe",
+            root / "external" / "ramses" / "RamsesComposer.exe",
+            root.parent / "RamsesComposerWindows" / "bin" / "RelWithDebInfo" / "RamsesComposer.exe",
+            Path(r"C:\RamsesComposerWindows\bin\RelWithDebInfo\RamsesComposer.exe"),
         ),
     )
+    if from_env:
+        return path
+
+    command_path = shutil.which("RamsesComposer.exe")
+    if command_path:
+        return Path(command_path)
     return path
 
 
+def _blender_executable_path(root: Path) -> Path:
+    external_root = root / "external"
+    external_candidates = tuple(
+        child / "blender.exe"
+        for child in sorted(external_root.glob("blender*"))
+        if child.is_dir()
+    )
+    path, from_env = _env_or_default_path(
+        ("SG_BLENDER_EXE", "BLENDER_EXE"),
+        (
+            root / "external" / "blender" / "blender.exe",
+            root.parent / "Blender" / "blender.exe",
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"),
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.4\blender.exe"),
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.2\blender.exe"),
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.1\blender.exe"),
+            Path(r"C:\Program Files\Blender Foundation\Blender 4.0\blender.exe"),
+            Path(r"C:\Program Files\Blender Foundation\Blender 3.6\blender.exe"),
+        ) + external_candidates,
+    )
+    if from_env:
+        return path
+
+    command_path = shutil.which("blender.exe")
+    if command_path:
+        return Path(command_path)
+    return path
+
+
+def _bmw_models_repo_path(root: Path) -> Path:
+    return discover_bmw_models_repo(root)
+
+
 def _delivery_checklist_root(root: Path) -> Path:
-    return root / "repositories" / "trunk" / ".pdx" / "checkers" / "deliveryChecklist"
+    return mirror_repo_root(root) / ".pdx" / "checkers" / "deliveryChecklist"
 
 
 def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
     root = workspace_root(repo_root)
-    mirror_root = root / "repositories" / "trunk"
+    mirror_root = mirror_repo_root(root)
+    source_root = resolve_source_repo_root(root)
+    checker_root = mirror_root / ".pdx" / "checkers"
     bmw_models_repo = _bmw_models_repo_path(root)
     delivery_checklist_root = _delivery_checklist_root(root)
     raco_headless = _raco_headless_path(root)
+    raco_gui = _raco_gui_path(root)
+    blender_executable = _blender_executable_path(root)
     checks = [
         ("workspace_root", root),
+        ("source_root", source_root),
         ("mirror_root", mirror_root),
+        ("checker_root", checker_root),
         ("reference_root", Path(r"C:\repositories\trunk")),
         ("bmw_models_repo", bmw_models_repo),
+        ("execute_checks", checker_root / "executeChecks.py"),
+        ("unused_resource_checker", checker_root / "printNotUsedResources.py"),
         (
             "carpaint_helper",
             mirror_root / ".pdx" / "raco" / "scripts" / "testing" / "read_json_carpaints.py",
         ),
         ("scene_checker", mirror_root / "check_scenes.py"),
         ("raco_headless", raco_headless),
+        ("raco_gui", raco_gui),
+        ("blender_executable", blender_executable),
         ("carmodel_data", mirror_root / ".pdx" / "python" / "carmodel_data.json"),
         ("resource_mappings", mirror_root / ".pdx" / "python" / "resource_mappings.json"),
         ("delivery_checklist_tool", delivery_checklist_root / "deliveryChecklist.exe"),
@@ -781,6 +835,30 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
                 "status": "available" if path.exists() else "missing",
             }
         )
+
+    raco_probe_scene = representative_raco_scene(root)
+    raco_headless_record = next((item for item in payload if item["key"] == "raco_headless"), None)
+    raco_headless_probe: dict[str, str] | None = None
+    if raco_headless_record is not None and raco_headless_record["status"] == "available":
+        raco_headless_probe = probe_raco_runtime(raco_headless, raco_probe_scene, gui=False)
+        raco_headless_record["status"] = raco_headless_probe["status"]
+        if raco_headless_probe["detail"]:
+            raco_headless_record["detail"] = raco_headless_probe["detail"]
+        if raco_headless_probe["probe_path"]:
+            raco_headless_record["probe_path"] = raco_headless_probe["probe_path"]
+
+    raco_gui_record = next((item for item in payload if item["key"] == "raco_gui"), None)
+    if raco_gui_record is not None and raco_gui_record["status"] == "available":
+        raco_gui_record["detail"] = (
+            "GUI launch availability is path-based here so the shell does not force Ramses Composer windows open during startup or review refresh."
+        )
+        if raco_probe_scene.exists():
+            raco_gui_record["probe_path"] = str(raco_probe_scene)
+        if raco_headless_probe is not None and raco_headless_probe["status"] == "incompatible":
+            raco_gui_record["detail"] += (
+                " Representative scene compatibility is still tracked through RaCoHeadless and is not green yet. "
+                + raco_headless_probe["detail"]
+            )
 
     screenshot_readme = bmw_models_repo / "ci" / "scripts" / "README.md"
     payload.append(
@@ -853,7 +931,7 @@ def qa_workflow_status(
     ready_profiles = [
         profile
         for profile in live_profiles
-        if profile.project_root.exists() and profile.config_path.exists()
+        if profile.source_project_root().exists() and profile.config_path.exists()
     ]
 
     bmw_models_ready = readiness.get("bmw_models_repo", {}).get("status") == "available"
@@ -891,11 +969,11 @@ def qa_workflow_status(
                 else "No canonical live profile is currently ready on this machine."
             ),
             "sg_preflight_role": (
-                "This is the current core scope: catch deterministic issues early on the mirrored SG slices and persist reusable evidence."
+                "This is the current core scope: catch deterministic issues early on the live SG source tree and persist reusable evidence."
             ),
             "blockers": []
             if ready_profiles
-            else ["The mirrored SG live slices or their configs are missing on this machine."],
+            else ["The live SG slices or their configs are missing on this machine."],
         },
         {
             "key": "repo_scene_checks",

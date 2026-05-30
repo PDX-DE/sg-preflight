@@ -15,6 +15,7 @@
   const overlayLogTail = document.getElementById("loading-log-tail");
   const overlayWordmark = document.querySelector(".loading-native-wordmark");
   const themeToggle = document.getElementById("theme-toggle");
+  const uiModeToggle = document.getElementById("ui-mode-toggle");
   const guideToggle = document.getElementById("guide-toggle");
   let selectedStepKey = "";
   let nestedStepRequestId = 0;
@@ -75,6 +76,16 @@
     }
   };
 
+  const applyUiMode = function (mode) {
+    const resolved = mode === "grafiks" || mode === "sgfx" ? "grafiks" : "clean";
+    rootElement.dataset.uiMode = resolved;
+    if (uiModeToggle) {
+      const cleanMode = resolved === "clean";
+      uiModeToggle.setAttribute("aria-pressed", cleanMode ? "true" : "false");
+      uiModeToggle.textContent = cleanMode ? "Grafiks mode" : "Clean mode";
+    }
+  };
+
   const applyGuideMode = function (mode) {
     const resolved = mode === "off" ? "off" : "on";
     document.body.dataset.guideMode = resolved;
@@ -86,10 +97,15 @@
   };
 
   try {
+    const query = new URLSearchParams(window.location.search);
+    const cleanThemeAlias = query.toString().includes("theme=clean") || query.get("theme") === "clean";
+    const requestedUiMode = query.get("ui-mode") || (cleanThemeAlias ? "clean" : "");
     applyTheme(window.localStorage.getItem("sg-theme") || rootElement.dataset.theme || "dark");
+    applyUiMode(requestedUiMode || window.localStorage.getItem("sg-ui-mode") || rootElement.dataset.uiMode || "clean");
     applyGuideMode(window.localStorage.getItem("sg-guide-mode") || document.body.dataset.guideMode || "on");
   } catch (_error) {
     applyTheme(rootElement.dataset.theme || "dark");
+    applyUiMode(rootElement.dataset.uiMode || "clean");
     applyGuideMode(document.body.dataset.guideMode || "on");
   }
 
@@ -541,6 +557,18 @@
     });
   }
 
+  if (uiModeToggle) {
+    uiModeToggle.addEventListener("click", function () {
+      const nextMode = rootElement.dataset.uiMode === "clean" ? "grafiks" : "clean";
+      applyUiMode(nextMode);
+      try {
+        window.localStorage.setItem("sg-ui-mode", nextMode);
+      } catch (_error) {
+        return;
+      }
+    });
+  }
+
   if (guideToggle) {
     guideToggle.addEventListener("click", function () {
       const nextMode = document.body.dataset.guideMode === "off" ? "on" : "off";
@@ -611,6 +639,124 @@
         button.textContent = "Copy failed";
         window.setTimeout(function () {
           button.textContent = originalText;
+        }, 1800);
+      }
+    });
+  });
+
+  document.querySelectorAll(".review-decision-form").forEach((form) => {
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+
+      const ticketId = form.getAttribute("data-ticket-id") || "";
+      const decisionKey = form.getAttribute("data-decision-key") || "";
+      const title = form.getAttribute("data-decision-title") || "";
+      const statusField = form.querySelector('select[name="status"]');
+      const ownerField = form.querySelector('input[name="owner"]');
+      const noteField = form.querySelector('textarea[name="note"]');
+      const submitButton = form.querySelector('button[type="submit"]');
+      if (!ticketId || !decisionKey || !statusField || !submitButton) {
+        return;
+      }
+
+      const originalText = submitButton.textContent;
+      submitButton.disabled = true;
+      submitButton.textContent = "Saving...";
+      try {
+        const response = await fetch("/ui/api/review-decisions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticket_id: ticketId,
+            decision_key: decisionKey,
+            title: title,
+            status: statusField.value,
+            owner: ownerField ? ownerField.value : "",
+            note: noteField ? noteField.value : ""
+          })
+        });
+        if (!response.ok) {
+          submitButton.textContent = "Save failed";
+          window.setTimeout(function () {
+            submitButton.disabled = false;
+            submitButton.textContent = originalText;
+          }, 1800);
+          return;
+        }
+
+        submitButton.textContent = "Saved";
+        window.setTimeout(function () {
+          window.location.reload();
+        }, 250);
+      } catch (_error) {
+        submitButton.textContent = "Save failed";
+        window.setTimeout(function () {
+          submitButton.disabled = false;
+          submitButton.textContent = originalText;
+        }, 1800);
+      }
+    });
+  });
+
+  document.querySelectorAll(".external-finding-form").forEach((form) => {
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+
+      const ticketId = form.getAttribute("data-ticket-id") || "";
+      const sourceField = form.querySelector('input[name="source"]');
+      const reportedByField = form.querySelector('input[name="reported_by"]');
+      const categoryField = form.querySelector('input[name="category"]');
+      const typeField = form.querySelector('input[name="finding_type"]');
+      const scopeField = form.querySelector('input[name="scope"]');
+      const findingField = form.querySelector('textarea[name="finding"]');
+      const ownerField = form.querySelector('input[name="owner"]');
+      const statusField = form.querySelector('input[name="status"]');
+      const relatedField = form.querySelector('input[name="related_investigation_surfaces"]');
+      const noteField = form.querySelector('textarea[name="note"]');
+      const submitButton = form.querySelector('button[type="submit"]');
+      if (!ticketId || !sourceField || !reportedByField || !categoryField || !scopeField || !findingField || !submitButton) {
+        return;
+      }
+
+      const originalText = submitButton.textContent;
+      submitButton.disabled = true;
+      submitButton.textContent = "Saving...";
+      try {
+        const response = await fetch("/ui/api/external-findings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticket_id: ticketId,
+            source: sourceField.value,
+            reported_by: reportedByField.value,
+            category: categoryField.value,
+            finding_type: typeField ? typeField.value : "",
+            scope: scopeField.value,
+            finding: findingField.value,
+            owner: ownerField ? ownerField.value : "",
+            status: statusField ? statusField.value : "",
+            related_investigation_surfaces: relatedField ? relatedField.value : "",
+            note: noteField ? noteField.value : ""
+          })
+        });
+        if (!response.ok) {
+          submitButton.textContent = "Save failed";
+          window.setTimeout(function () {
+            submitButton.disabled = false;
+            submitButton.textContent = originalText;
+          }, 1800);
+          return;
+        }
+
+        submitButton.textContent = "Saved";
+        window.setTimeout(function () {
+          window.location.reload();
+        }, 250);
+      } catch (_error) {
+        submitButton.textContent = "Save failed";
+        window.setTimeout(function () {
+          submitButton.disabled = false;
+          submitButton.textContent = originalText;
         }, 1800);
       }
     });

@@ -37,7 +37,7 @@ struct AudioEngine {
     IXAudio2MasteringVoice* mastering_voice = nullptr;
     IXAudio2SourceVoice* music_voice = nullptr;
     bool mci_music_open = false;
-    std::wstring mci_music_alias = L"sergfx_shell_music";
+    std::wstring mci_music_alias = L"sgfx_shell_music";
     std::shared_ptr<LoadedWave> music_wave;
     std::unordered_map<std::wstring, std::shared_ptr<LoadedWave>> wave_cache;
     std::vector<OneShotVoice> one_shots;
@@ -703,6 +703,26 @@ bool StartLoopingWaveMusic(const std::filesystem::path& path, unsigned volume_pe
     g_audio.music_wave = wave;
     ClearLastErrorLocked();
     return true;
+}
+
+void SetLoopingMusicVolume(float volume) {
+    std::lock_guard<std::mutex> lock(g_audio.mutex);
+
+    const float clamped_volume = std::clamp(volume, 0.0f, 1.0f);
+    if (g_audio.music_voice != nullptr) {
+        g_audio.music_voice->SetVolume(clamped_volume);
+    }
+
+    if (g_audio.mci_music_open) {
+        wchar_t volume_command[128] = {};
+        swprintf_s(
+            volume_command,
+            L"setaudio %ls volume to %u",
+            g_audio.mci_music_alias.c_str(),
+            static_cast<unsigned>(clamped_volume * 1000.0f)
+        );
+        mciSendStringW(volume_command, nullptr, 0U, nullptr);
+    }
 }
 
 void StopLoopingWaveMusic() {

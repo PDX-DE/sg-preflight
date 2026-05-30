@@ -1,6 +1,6 @@
 param(
     [string]$OutputRoot = "",
-    [string[]]$Cars = @("G70", "G65", "G45")
+    [string[]]$Cars = @("G70", "NA8", "F70", "U10")
 )
 
 Set-StrictMode -Version Latest

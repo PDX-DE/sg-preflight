@@ -11,6 +11,13 @@ dist/
 .ruff_cache/
 imgui.ini
 /out/
+/external/
+/blender-*.zip
+operator_state/
+**/operator_state/jira_pat.json
+**/operator_state/*credentials*.json
+**/operator_state/*pat*.json
+**/operator_state/*token*.json
 
 # Local source drops and archive snapshots
 /3D Car Delivery Retro/
@@ -21,3 +28,11 @@ imgui.ini
 /OneDrive_*.zip
 /Ramses_Composer_Current/
 /repositories/
+/BAChefPeePee.*
+/SERGFX.*
+/D3D12/
+/dxcompiler.dll
+/dxil.dll
+/UnleashedRecomp*/
+/Unleashed Recomp*/
+/UnleashedRecompResources*/

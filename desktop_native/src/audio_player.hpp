@@ -9,6 +9,7 @@ bool PrimeAudio(std::string* error = nullptr);
 bool PreloadWave(const std::filesystem::path& path, std::string* error = nullptr);
 bool PlayWaveOneShot(const std::filesystem::path& path);
 bool StartLoopingWaveMusic(const std::filesystem::path& path, unsigned volume_percent = 22U);
+void SetLoopingMusicVolume(float volume);
 void StopLoopingWaveMusic();
 std::string GetAudioLastError();
 void ShutdownAudio();

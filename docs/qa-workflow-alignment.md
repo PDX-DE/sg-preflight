@@ -82,47 +82,57 @@ What this means:
 - repo checker now runs the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
 - the per-car action list now also wraps `printNotUsedResources.py` for local unused-resource scans against the mirrored car project
 - the per-car action list now also wraps the mirrored `.pdx/checkers/deliveryChecklist` assets as a local readiness bridge before BMW-owned delivery steps
+- the CLI can read the operator-local `Delivery Data - BMW.xlsx` workbook for one profile as evidence guidance, without writing back or turning the workbook state into an approval verdict
+- the CLI can read operator-local `Cars\size_analysis\<profile>_<date>.xlsx` export-size analysis workbooks as a separate read-only evidence source, without running the external export-size workflow or modifying those workbooks
 - scene check is also wrapped, but only runs when a local `RaCoHeadless.exe` is configured
 
 Current blocker:
 
 - scene execution still depends on a local `RaCoHeadless.exe`
 - the BMW-backed `deliveryChecklist` procedure is still only bridged here; actual execution still depends on BMW repo access plus the external `ci/scripts` helpers
+- export-size analysis workbook parsing depends on the external operator workflow having generated the workbook first
 
-### 6. BMW screenshot / export / interface smoke
+### 6. BMW / MINI screenshot / export / interface smoke
 
-Current status: blocked or partial, depending on machine access
+Current status: partially covered as read-only screenshot-test state; execution remains external
 
 What this means:
 
 - this remains a real part of the SG QA workflow
 - it is still maintained on the BMW / Team Wombat side
 - `sg-preflight` now exposes this stage as an explicit per-car action instead of leaving it as an undocumented external dependency
-- the action remains blocked here until BMW repo access and per-car mapping exist
+- `screenshot-test-state read` can read local BMW / MINI Git `export/tests/expected`, `actuals`, `diff`, and `test_config.lua` folders for a profile and surface the counts in the daily digest
+- `bmw-git-readiness read` can read the local BMW / MINI `digital-3d-car-models` profile folder and surface profile-folder context such as latest local commit, README, main scene, screenshot test config, perspectives JSON, changelog, and `lids.json`
+- `qa-hero-readiness read` can read the same local BMW / MINI profile folder and surface presence/counts for LightFX, WelcomeFX, ShadesFX, CarPaint, anchor points, constants, and perspectives as readiness guidance for the documented Quality Hero checklist
+- this read-only state follows the documented delivery workflow: run BMW screenshot tooling, check the `diff` folder, compare `actuals`, and document intended differences in the delivery ticket
 
 Current blocker:
 
-- without BMW Git access and a local `digital-3d-car-models` clone, this stage cannot be validated end-to-end from this machine
-- the current live profiles still need explicit BMW smoke target mapping before the action can run even after access exists
+- running the BMW / MINI screenshot tests still depends on BMW Git helper scripts, Python environment setup, viewer/runtime setup, and the operator-owned external workflow
+- BMW Git readiness is context only: it does not fetch from the remote, does not write to BMW Git, and does not decide whether a profile is approved for delivery
+- QA Hero readiness is presence/count evidence only: it does not run RaCo or Blender and does not replace the documented manual review steps
+- screenshot counts and folder paths are not visual verdicts; the reviewer still compares the images and records the manual decision
 
 Even after access is available, the intended role of `sg-preflight` is still upstream:
 catch deterministic issues before the heavier BMW smoke runs start.
 
-### 7. Rack, carpaint tuning, and manual visual approval
+### 7. RaCo / Blender, carpaint tuning, and manual visual approval
 
-Current status: manual and hardware-dependent
+Current status: local alpha companion; verdicts remain manual and hardware-dependent
 
 What this means:
 
-- rack work, designer approval, and final visual judgement remain manual
+- RaCo / Blender work, designer approval, and final visual judgement remain manual
+- `manual-review` can create a step-through session for the documented Quality Hero checklist and capture the operator's per-step verdict, notes, and optional screenshot references
+- `qa-hero-readiness read` can prepare the operator by showing whether profile-level LightFX, WelcomeFX, ShadesFX, CarPaint, anchor-point, constants, and perspective inputs are visible locally
 - carpaint catalog sanity can be preflighted here
-- final look approval on rack is still outside the current automation boundary
+- final look approval in RaCo / Blender / rack review is still outside the current automation boundary
 
 Current blocker:
 
-- full end-to-end validation requires rack access, BMW-side setup, and usually `adb`
+- full end-to-end validation requires RaCo / Blender setup, rack access where relevant, BMW-side setup, and usually `adb`
 
-`sg-preflight` should reduce the number of avoidable issues that reach rack sessions.
+`sg-preflight` should make the manual review record more reproducible without turning the tool into the reviewer.
 
 ### 8. Delivery handoff and traceable evidence
 
@@ -155,8 +165,8 @@ The product direction should stay anchored to those workflow failures, not gener
 
 These are not claimed as solved by the current framework:
 
-- Blender visual quality review
-- final look comparison between Blender, RaCo, and Epic
+- automated Blender visual quality review
+- automated final look comparison between Blender, RaCo, and Epic
 - hardware-specific rack behavior
 - BMW screenshot baseline management
 - profiler / size-analysis execution

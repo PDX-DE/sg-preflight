@@ -1,13 +1,55 @@
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 import json
+import hashlib
+import os
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from sg_preflight.profiles import RunProfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BMW_REPO_ENV_KEYS = (
+    "Digital-3D-Car-Repo",
+    "SG_BMW_CAR_MODELS_ROOT",
+    "SG_CARMODELS_REPO",
+    "SG-CarModels-Repo",
+)
+TOOL_ENV_KEYS = (
+    "SG_RACO_HEADLESS",
+    "RACO_HEADLESS_EXE",
+    "SG_RACO_GUI",
+    "SG_RACO_EDITOR",
+    "RACO_GUI_EXE",
+    "SG_BLENDER_EXE",
+    "BLENDER_EXE",
+)
+
+
+@contextmanager
+def isolated_missing_external_dependencies(temp_root: Path):
+    missing_root = temp_root / "missing"
+    missing_tool_paths = {
+        "SG_RACO_HEADLESS": missing_root / "RaCoHeadless.exe",
+        "RACO_HEADLESS_EXE": missing_root / "RaCoHeadless.exe",
+        "SG_RACO_GUI": missing_root / "RamsesComposer.exe",
+        "SG_RACO_EDITOR": missing_root / "RamsesComposer.exe",
+        "RACO_GUI_EXE": missing_root / "RamsesComposer.exe",
+        "SG_BLENDER_EXE": missing_root / "blender.exe",
+        "BLENDER_EXE": missing_root / "blender.exe",
+    }
+    env_values = {
+        **{key: str(missing_root / "digital-3d-car-models") for key in BMW_REPO_ENV_KEYS},
+        **{key: str(missing_tool_paths[key]) for key in TOOL_ENV_KEYS},
+    }
+    with ExitStack() as stack:
+        stack.enter_context(mock.patch.dict(os.environ, env_values, clear=False))
+        stack.enter_context(mock.patch("sg_preflight.checker_catalog.shutil.which", return_value=None))
+        stack.enter_context(mock.patch("sg_preflight.services.shutil.which", return_value=None))
+        yield
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -216,6 +258,7 @@ return constants
         label="BMW G65 test slice",
         repo_root=repo_root,
         project_root=project_root,
+        project_relative=Path("Cars_IDCevo/BMW/G65"),
         config_path=ROOT / "config" / "sg_rules_live_g65.json",
         default_context={
             "car_model": "G65",
@@ -237,3 +280,258 @@ return constants
         mirror_audit_targets=("Cars_IDCevo/BMW/G65", "Cars/BMW/CarPaint.json"),
         reference_repo_root=repo_root,
     )
+
+
+def create_review_package_fixture(temp_root: Path, ticket_id: str = "IDCEVODEV-960073") -> dict[str, Path]:
+    out_root = temp_root / "out"
+    package_root = out_root / f"{ticket_id}-review-package-2026-04-22"
+    snapshot_root = out_root / "daily-3d-car-qa-summary-2026-04-22-163526"
+    package_snapshot_root = package_root / "artifacts" / "daily-snapshot"
+    repo_root = temp_root / "repositories" / "trunk"
+
+    daily_payload = {
+        "created_at": "2026-04-22T16:50:52",
+        "scope_profiles": ["NA8", "G78", "G50"],
+        "smoke_results": [
+            {"profile_id": "NA8", "status": "completed"},
+            {"profile_id": "G78", "status": "completed"},
+            {"profile_id": "G50", "status": "completed"},
+        ],
+        "battery_results": [
+            {"profile_id": "NA8", "filter_name": "default", "verdict": "baseline_candidate_ready"},
+            {"profile_id": "NA8", "filter_name": "lights_LowBeam", "verdict": "proxy_candidate_ready"},
+            {"profile_id": "NA8", "filter_name": "lights_OnlyCones", "verdict": "runtime_crash"},
+        ],
+        "top_review_items": [
+            "NA8: `default` generated a candidate output; baseline review can be done quickly.",
+            "NA8: `lights_LowBeam` has a proxy lamp-state screenshot ready; exact cone effect is still blocked locally.",
+        ],
+        "blocked_steps": [
+            "Jira writeback remains external to this local snapshot.",
+            "NA8: `lights_OnlyCones` crashes the local BMW viewer; this is a runtime/content issue.",
+        ],
+    }
+
+    review_priority_payload = {
+        "created_at": "2026-04-22T16:50:52",
+        "scope_profiles": ["NA8", "G78", "G50"],
+        "ranked_items": [
+            {
+                "profile_id": "NA8",
+                "filter_name": "default",
+                "verdict": "baseline_candidate_ready",
+                "priority_score": 80,
+                "reason": "Exact candidate output exists; baseline review can be done quickly.",
+                "recommendation": "Candidate output exists; quick baseline-review pass is possible.",
+                "log_path": str((snapshot_root / "na8-bmw-battery.log").resolve()),
+            },
+            {
+                "profile_id": "NA8",
+                "filter_name": "lights_OnlyCones",
+                "verdict": "runtime_crash",
+                "priority_score": 10,
+                "reason": "Viewer crashes locally.",
+                "recommendation": "Treat as technical blocker, not human review.",
+                "log_path": str((snapshot_root / "na8-bmw-battery.log").resolve()),
+            },
+        ],
+    }
+
+    delta_payload = {
+        "current_created_at": "2026-04-22T16:50:52",
+        "previous_created_at": "2026-04-22T10:50:33",
+        "new_failures": [],
+        "resolved_failures": [],
+        "new_screenshot_diffs": [],
+        "unchanged_blockers": [
+            "Jira writeback remains external to this local snapshot.",
+        ],
+        "changed_counts": {
+            "current": {
+                "baseline_candidate_ready": 1,
+                "proxy_candidate_ready": 1,
+                "runtime_crash": 1,
+                "smoke_completed": 3,
+            },
+            "previous": {
+                "baseline_candidate_ready": 1,
+                "proxy_candidate_ready": 1,
+                "runtime_crash": 1,
+                "smoke_completed": 3,
+            },
+        },
+        "top_five_to_review": [
+            "NA8: `default` generated a candidate output; baseline review can be done quickly.",
+        ],
+    }
+
+    review_bundle = {
+        "ticket_id": ticket_id,
+        "title": ticket_id,
+        "generated_at_utc": "2026-04-22T14:35:37.106276+00:00",
+        "overall_status": "partial",
+        "profile_ids": ["NA8", "G78", "G50"],
+        "scope_note": "Confirmed delivery scope from Jana is NA8, G78, and G50.",
+        "blockers": [
+            "screenshot tests bmws: Representative local smoke evidence is attached for the confirmed cars.",
+            "Support: Need Jana to confirm reporting cadence.",
+        ],
+        "next_questions": [
+            "Should lights_OnlyCones be treated as a blocker or a follow-up?",
+        ],
+        "evidence_index": [],
+    }
+
+    for profile_id in ("NA8", "G78", "G50"):
+        profile_slug = profile_id.lower()
+        scene_path = repo_root / "Cars_IDCevo" / "BMW" / profile_id / "main" / f"Main_{profile_id}.rca"
+        blend_path = repo_root / "Cars_IDCevo" / "BMW" / profile_id / "_Workfiles" / "blender" / f"{profile_id}_WheelFX.blend"
+        expected_root = repo_root / "Cars_IDCevo" / "BMW" / profile_id / "export" / "tests" / "expected"
+        actuals_root = temp_root / "digital-3d-car-models" / "cars" / "BMW" / f"{profile_id}_EVO" / "export" / "tests" / "actuals"
+        diff_root = temp_root / "digital-3d-car-models" / "cars" / "BMW" / f"{profile_id}_EVO" / "export" / "tests" / "diff"
+        manual_root = package_root / "artifacts" / "manual-review" / profile_slug
+        triage_path = package_root / "artifacts" / "screenshot-triage" / profile_slug / "screenshot-triage.md"
+        companion_path = manual_root / "manual-review-companion.md"
+        record_path = manual_root / "manual-review-record.md"
+        slots_path = manual_root / "screenshot-evidence-slots.md"
+        blender_raco_path = manual_root / "blender-vs-raco-checklist.md"
+        visual_checklist_path = manual_root / "visual-review-checklist.md"
+
+        write_text(scene_path, "fixture rca\n")
+        write_text(blend_path, "fixture blend\n")
+        expected_root.mkdir(parents=True, exist_ok=True)
+        actuals_root.mkdir(parents=True, exist_ok=True)
+        diff_root.mkdir(parents=True, exist_ok=True)
+        write_text(triage_path, f"# {profile_id} screenshot triage\n")
+        write_text(
+            companion_path,
+            "\n".join(
+                [
+                    f"# Manual review companion - {profile_id}",
+                    "",
+                    f"- Ticket: {ticket_id}",
+                    f"- Profile: {profile_id}",
+                    "- Changelog heading: [1.1.0] - NOT YET DELIVERED",
+                    f"- Representative RaCo scene: `{scene_path}`",
+                    f"- Representative Blender workfile: `{blend_path}`",
+                    f"- Screenshot baseline root: `{expected_root}`",
+                    f"- BMW actuals root: `{actuals_root}`",
+                    f"- BMW diff root: `{diff_root}`",
+                    f"- Screenshot triage: `{triage_path}`",
+                ]
+            )
+            + "\n",
+        )
+        write_text(
+            record_path,
+            "\n".join(
+                [
+                    f"# Manual review record - {profile_id}",
+                    "",
+                    f"- Ticket: {ticket_id}",
+                    f"- Profile: {profile_id}",
+                    "- Manual checks:",
+                    "- Blender vs RaCo compared: [ ] yes [ ] no",
+                    "- Multi-angle review completed: [ ] yes [ ] no",
+                    "- Screenshot evidence attached: [ ] yes [ ] no",
+                    "- Rack / BMW smoke blocker documented: [ ] yes [ ] no",
+                    "",
+                    "Notes:",
+                    "-",
+                ]
+            )
+            + "\n",
+        )
+        write_text(slots_path, f"# Screenshot evidence slots - {profile_id}\n")
+        write_text(
+            blender_raco_path,
+            "\n".join(
+                [
+                    f"# Blender vs RaCo checklist - {profile_id}",
+                    "",
+                    f"- Ticket: {ticket_id}",
+                    f"- Profile: {profile_id}",
+                    f"- RaCo scene: `{scene_path}`",
+                    f"- Blender workfile: `{blend_path}`",
+                ]
+            )
+            + "\n",
+        )
+        write_text(visual_checklist_path, f"# Visual review checklist - {profile_id}\n")
+        review_bundle["evidence_index"].extend(
+            [
+                {"label": f"{profile_id} screenshot triage", "path": str(triage_path), "detail": ""},
+                {"label": f"{profile_id} manual review companion", "path": str(companion_path), "detail": ""},
+                {"label": f"{profile_id} manual review record", "path": str(record_path), "detail": ""},
+                {"label": f"{profile_id} screenshot evidence slots", "path": str(slots_path), "detail": ""},
+                {"label": f"{profile_id} Blender vs RaCo checklist", "path": str(blender_raco_path), "detail": ""},
+                {"label": f"{profile_id} visual review checklist", "path": str(visual_checklist_path), "detail": ""},
+            ]
+        )
+
+    write_json(package_root / f"{ticket_id}-review-bundle.json", review_bundle)
+    write_text(
+        package_root / "SENT_PACKAGE_MANIFEST.md",
+        "\n".join(
+            [
+                "# SENT PACKAGE MANIFEST",
+                "",
+                f"- Ticket ID: `{ticket_id}`",
+                "- Visible DoD progress (conservative): `70%`",
+            ]
+        )
+        + "\n",
+    )
+    write_text(
+        package_root / "review-owner-decisions.md",
+        "\n".join(
+            [
+                "# Review-owner decisions",
+                "",
+                "## lights_OnlyCones",
+                "Decision: blocker / follow-up / accepted limitation / needs more investigation",
+                "Owner:",
+                "Date:",
+                "Notes:",
+                "",
+                "## Screenshot candidate/proxy outputs",
+                "Decision: accepted / needs changes / partial",
+                "Owner:",
+                "Date:",
+                "Notes:",
+            ]
+        )
+        + "\n",
+    )
+    write_text(package_root / f"{ticket_id}-dod-matrix.md", "# DoD Matrix\n")
+    write_text(package_root / f"{ticket_id}-review-status.md", "# Review Status\n")
+    write_text(package_root / f"{ticket_id}-teams-update.md", "# Teams Update\n")
+    write_text(package_snapshot_root / "daily-3d-car-qa-summary.md", "# Daily Summary\n")
+    write_json(package_snapshot_root / "daily-3d-car-qa-summary.json", daily_payload)
+    write_text(
+        package_snapshot_root / "candidate-review-gallery.html",
+        "<html><body><img src=\"images/na8/default/default.png\" /></body></html>",
+    )
+    write_text(package_snapshot_root / "logs" / "na8-bmw-smoke.log", "Export finished\nFile sizes: Ramses=123456b RLogic=0b\n")
+    write_text(package_snapshot_root / "logs" / "na8-bmw-battery.log", "battery fixture\n")
+    write_text(package_snapshot_root / "images" / "na8" / "default" / "default.png", "png fixture\n")
+
+    write_text(snapshot_root / "daily-3d-car-qa-summary.md", "# Daily Summary\n")
+    write_json(snapshot_root / "daily-3d-car-qa-summary.json", daily_payload)
+    write_text(snapshot_root / "review-priority-ranking.md", "# Review Priority Ranking\n")
+    write_json(snapshot_root / "review-priority-ranking.json", review_priority_payload)
+    write_text(snapshot_root / "daily-qa-delta-summary.md", "# Daily Delta Summary\n")
+    write_json(snapshot_root / "daily-qa-delta-summary.json", delta_payload)
+    write_text(snapshot_root / "na8-bmw-battery.log", "battery fixture\n")
+
+    zip_path = package_root.with_suffix(".zip")
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("placeholder.txt", "fixture\n")
+    digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    write_text(zip_path.with_suffix(zip_path.suffix + ".sha256"), f"{digest} *{zip_path.name}\n")
+
+    return {
+        "package_root": package_root,
+        "zip_path": zip_path,
+        "snapshot_root": snapshot_root,
+    }

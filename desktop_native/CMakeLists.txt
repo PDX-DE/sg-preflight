@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(SERGFXProject3DCarQA LANGUAGES CXX)
+project(SGFXProjectQualityHero LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
-set(SG_NATIVE_SHELL_VERSION "1.0.0")
+set(SG_NATIVE_SHELL_VERSION "0.1.0-alpha")
 
 FetchContent_Declare(
   imgui
@@ -25,7 +25,6 @@ FetchContent_MakeAvailable(imgui nlohmann_json)
 add_library(
   sg_preflight_imgui STATIC
   ${imgui_SOURCE_DIR}/imgui.cpp
-  ${imgui_SOURCE_DIR}/imgui_demo.cpp
   ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
   ${imgui_SOURCE_DIR}/imgui_widgets.cpp
@@ -68,7 +67,24 @@ add_executable(
   src/localization.cpp
   src/main.cpp
   src/native_shell.rc
+  src/prompt.cpp
   src/screenshot_capture.cpp
+  src/sgfx_shell/sgfx_clean_status_menu.cpp
+  src/sgfx_shell/sgfx_diagnostic_overlay.cpp
+  src/sgfx_shell/sgfx_digest_menu.cpp
+  src/sgfx_shell/sgfx_evidence_summary_menu.cpp
+  src/sgfx_shell/sgfx_main_menu.cpp
+  src/sgfx_shell/sgfx_menu_background.cpp
+  src/sgfx_shell/sgfx_menu_base.cpp
+  src/sgfx_shell/sgfx_menu_controls_display.cpp
+  src/sgfx_shell/sgfx_menu_manager.cpp
+  src/sgfx_shell/sgfx_menu_scrolling.cpp
+  src/sgfx_shell/sgfx_quick_actions_menu.cpp
+  src/sgfx_shell/sgfx_settings_menu.cpp
+  src/sgfx_shell/sgfx_shared_resources.cpp
+  src/sgfx_shell/sgfx_shell_app.cpp
+  src/sgfx_shell/sgfx_workflow_menu.cpp
+  src/shell_state.cpp
   src/texture_loader.cpp
 )
 
@@ -89,6 +105,7 @@ target_link_libraries(
   PRIVATE
     sg_preflight_imgui
     nlohmann_json::nlohmann_json
+    comdlg32
     ole32
     windowscodecs
     xaudio2

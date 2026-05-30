@@ -324,6 +324,16 @@ void from_json(const json& payload, ArtifactItem& item) {
     item.path = ValueString(payload, "path");
 }
 
+void from_json(const json& payload, ManualEvidenceItem& item) {
+    item.id = ValueString(payload, "id");
+    item.kind = ValueString(payload, "kind");
+    item.label = ValueString(payload, "label");
+    item.path = ValueString(payload, "path");
+    item.note = ValueString(payload, "note");
+    item.source_path = ValueString(payload, "source_path");
+    item.created_at_utc = ValueString(payload, "created_at_utc");
+}
+
 void from_json(const json& payload, CopyItem& item) {
     item.key = ValueString(payload, "key");
     item.label = ValueString(payload, "label");
@@ -389,6 +399,11 @@ void from_json(const json& payload, ActionSnapshot& item) {
     item.current_command = ValueString(payload, "current_command");
     item.child_run_id = ValueString(payload, "child_run_id");
     item.linked_run_id = ValueString(payload, "linked_run_id");
+    item.workspace_root = ValueString(payload, "workspace_root");
+    item.project_root = ValueString(payload, "project_root");
+    item.output_root = ValueString(payload, "output_root");
+    item.error_message = ValueString(payload, "error_message");
+    item.exit_code = ValueInt(payload, "exit_code", 0);
     if (payload.contains("summary_lines") && payload.at("summary_lines").is_array()) {
         item.summary_lines = payload.at("summary_lines").get<std::vector<std::string>>();
     }
@@ -417,9 +432,17 @@ void from_json(const json& payload, RunSnapshot& item) {
     item.profile_id = ValueString(payload, "profile_id");
     item.profile_label = ValueString(payload, "profile_label");
     item.status = ValueString(payload, "status");
+    item.initializing = ValueBool(payload, "initializing", false);
     item.created_at_utc = ValueString(payload, "created_at_utc");
     item.workflow_stage_label = ValueString(payload, "workflow_stage_label");
     item.summary_title = ValueString(payload, "summary_title");
+    item.current_command = ValueString(payload, "current_command");
+    item.log_path = ValueString(payload, "log_path");
+    item.log_tail = ValueString(payload, "log_tail");
+    item.output_root = ValueString(payload, "output_root");
+    item.project_root = ValueString(payload, "project_root");
+    item.error_message = ValueString(payload, "error_message");
+    item.exit_code = ValueInt(payload, "exit_code", 0);
     if (payload.contains("summary_lines") && payload.at("summary_lines").is_array()) {
         item.summary_lines = payload.at("summary_lines").get<std::vector<std::string>>();
     }
@@ -440,6 +463,216 @@ void from_json(const json& payload, RunSnapshot& item) {
     }
     if (payload.contains("copy_items") && payload.at("copy_items").is_array()) {
         item.copy_items = payload.at("copy_items").get<std::vector<CopyItem>>();
+    }
+}
+
+void from_json(const json& payload, EnvironmentDoctorItem& item) {
+    item.key = ValueString(payload, "key");
+    item.category = ValueString(payload, "category");
+    item.label = ValueString(payload, "label");
+    item.state = ValueString(payload, "state");
+    item.summary = ValueString(payload, "summary");
+    item.path = ValueString(payload, "path");
+    item.next_action = ValueString(payload, "next_action");
+}
+
+void from_json(const json& payload, OperatorOverview& item) {
+    item.workspace_root = ValueString(payload, "workspace_root");
+    item.generated_at_utc = ValueString(payload, "generated_at_utc");
+    item.recommended_profile_id = ValueString(payload, "recommended_profile_id");
+    item.recommended_action_id = ValueString(payload, "recommended_action_id");
+    item.ready_profile_count = ValueInt(payload, "ready_profile_count", 0);
+    item.action_count = ValueInt(payload, "action_count", 0);
+    item.ready_action_count = ValueInt(payload, "ready_action_count", 0);
+    item.blocked_action_count = ValueInt(payload, "blocked_action_count", 0);
+    item.blocker_count = ValueInt(payload, "blocker_count", 0);
+    item.manual_card_count = ValueInt(payload, "manual_card_count", 0);
+    item.latest_action_run_id = ValueString(payload, "latest_action_run_id");
+    item.latest_action_status = ValueString(payload, "latest_action_status");
+    item.latest_run_id = ValueString(payload, "latest_run_id");
+    item.latest_run_status = ValueString(payload, "latest_run_status");
+    item.summary_line = ValueString(payload, "summary_line");
+    item.export_size_analysis_status = ValueString(payload, "export_size_analysis_status");
+    item.export_size_analysis_variant_count = ValueInt(payload, "export_size_analysis_variant_count", 0);
+    item.export_size_analysis_workbook_date = ValueString(payload, "export_size_analysis_workbook_date");
+    item.export_size_analysis_summary = ValueString(payload, "export_size_analysis_summary");
+    item.export_size_analysis_workbook_path = ValueString(payload, "export_size_analysis_workbook_path");
+    if (payload.contains("environment_state_counts") && payload.at("environment_state_counts").is_object()) {
+        for (const auto& [key, value] : payload.at("environment_state_counts").items()) {
+            if (value.is_number_integer()) {
+                item.environment_state_counts[key] = value.get<int>();
+            }
+        }
+    }
+}
+
+void from_json(const json& payload, ReviewPriorityItem& item) {
+    item.profile_id = ValueString(payload, "profile_id");
+    item.filter_name = ValueString(payload, "filter_name");
+    item.verdict = ValueString(payload, "verdict");
+    item.priority_level = ValueString(payload, "priority_level");
+    item.attention_category = ValueString(payload, "attention_category");
+    item.priority_score = ValueInt(payload, "priority_score", 0);
+    item.reason = ValueString(payload, "reason");
+    item.recommendation = ValueString(payload, "recommendation");
+    item.log_path = ValueString(payload, "log_path");
+    if (payload.contains("signals") && payload.at("signals").is_array()) {
+        item.signals = payload.at("signals").get<std::vector<std::string>>();
+    }
+    item.is_new_since_previous_run = ValueBool(payload, "is_new_since_previous_run", false);
+}
+
+void from_json(const json& payload, ReviewOwnerDecisionItem& item) {
+    item.key = ValueString(payload, "key");
+    item.title = ValueString(payload, "title");
+    item.status = ValueString(payload, "status");
+    item.owner = ValueString(payload, "owner");
+    item.date = ValueString(payload, "date");
+    item.notes = ValueString(payload, "notes");
+    item.pending = ValueBool(payload, "pending", true);
+}
+
+void from_json(const json& payload, ExternalFindingItem& item) {
+    item.finding_id = ValueString(payload, "finding_id");
+    item.source = ValueString(payload, "source");
+    item.reported_by = ValueString(payload, "reported_by");
+    item.type = ValueString(payload, "type");
+    item.category = ValueString(payload, "category");
+    if (payload.contains("scope") && payload.at("scope").is_array()) {
+        item.scope = payload.at("scope").get<std::vector<std::string>>();
+    }
+    item.finding = ValueString(payload, "finding");
+    item.owner = ValueString(payload, "owner");
+    item.status = ValueString(payload, "status");
+    item.note = ValueString(payload, "note");
+    if (payload.contains("related_investigation_surfaces") && payload.at("related_investigation_surfaces").is_array()) {
+        item.related_investigation_surfaces = payload.at("related_investigation_surfaces").get<std::vector<std::string>>();
+    }
+}
+
+void from_json(const json& payload, ManualReviewProfileItem& item) {
+    item.profile_id = ValueString(payload, "profile_id");
+    item.status = ValueString(payload, "status");
+    item.summary = ValueString(payload, "summary");
+    item.note = ValueString(payload, "note");
+    item.copy_review_note_text = ValueString(payload, "copy_review_note_text");
+    if (payload.contains("raco_scene") && payload.at("raco_scene").is_object()) {
+        item.raco_scene_path = ValueString(payload.at("raco_scene"), "absolute_path");
+        item.raco_scene_exists = ValueBool(payload.at("raco_scene"), "exists", false);
+    }
+    if (payload.contains("blender_workfile") && payload.at("blender_workfile").is_object()) {
+        item.blender_workfile_path = ValueString(payload.at("blender_workfile"), "absolute_path");
+        item.blender_workfile_exists = ValueBool(payload.at("blender_workfile"), "exists", false);
+    }
+    if (payload.contains("candidate_gallery") && payload.at("candidate_gallery").is_object()) {
+        item.candidate_gallery_path = ValueString(payload.at("candidate_gallery"), "absolute_path");
+        item.candidate_gallery_exists = ValueBool(payload.at("candidate_gallery"), "exists", false);
+    }
+    if (payload.contains("screenshot_triage") && payload.at("screenshot_triage").is_object()) {
+        item.screenshot_triage_path = ValueString(payload.at("screenshot_triage"), "absolute_path");
+        item.screenshot_triage_exists = ValueBool(payload.at("screenshot_triage"), "exists", false);
+    }
+    if (payload.contains("manual_review_record") && payload.at("manual_review_record").is_object()) {
+        item.manual_review_record_path = ValueString(payload.at("manual_review_record"), "absolute_path");
+        item.manual_review_record_exists = ValueBool(payload.at("manual_review_record"), "exists", false);
+    }
+    if (payload.contains("screenshot_evidence_slots") && payload.at("screenshot_evidence_slots").is_object()) {
+        item.screenshot_evidence_slots_path = ValueString(payload.at("screenshot_evidence_slots"), "absolute_path");
+        item.screenshot_evidence_slots_exists = ValueBool(payload.at("screenshot_evidence_slots"), "exists", false);
+    }
+}
+
+void from_json(const json& payload, ReviewBoardState& item) {
+    item.ticket_id = ValueString(payload, "ticket_id");
+    item.title = ValueString(payload, "title");
+    item.package_path = ValueString(payload, "package_path");
+    item.package_zip_path = ValueString(payload, "package_zip_path");
+    item.generated_at = ValueString(payload, "generated_at");
+    item.review_owner_update_text = ValueString(payload, "review_owner_update_text");
+    item.morning_digest_text = ValueString(payload, "morning_digest_text");
+    item.visible_dod_progress_percent = ValueInt(payload, "visible_dod_progress_percent", 0);
+    if (payload.contains("scope") && payload.at("scope").is_array()) {
+        item.scope = payload.at("scope").get<std::vector<std::string>>();
+    }
+    if (payload.contains("package_verification") && payload.at("package_verification").is_object()) {
+        item.verification_status = ValueString(payload.at("package_verification"), "status");
+    }
+    if (payload.contains("dod_status_summary") && payload.at("dod_status_summary").is_object()) {
+        item.dod_overall_status = ValueString(payload.at("dod_status_summary"), "overall_status");
+    }
+    if (payload.contains("daily_snapshot_summary") && payload.at("daily_snapshot_summary").is_object()) {
+        const json& summary = payload.at("daily_snapshot_summary");
+        item.smoke_completed = ValueInt(summary, "smoke_completed", 0);
+        item.smoke_total = ValueInt(summary, "smoke_total", 0);
+    }
+    if (payload.contains("screenshot_battery_counts") && payload.at("screenshot_battery_counts").is_object()) {
+        const json& counts = payload.at("screenshot_battery_counts");
+        item.battery_total = ValueInt(counts, "total", 0);
+        item.exact_candidate_ready = ValueInt(counts, "exact_candidate_ready", 0);
+        item.proxy_candidate_ready = ValueInt(counts, "proxy_candidate_ready", 0);
+        item.runtime_crash = ValueInt(counts, "runtime_crash", 0);
+    }
+    if (payload.contains("daily_delta_summary") && payload.at("daily_delta_summary").is_object()) {
+        const json& delta = payload.at("daily_delta_summary");
+        item.has_previous_run = ValueBool(delta, "has_previous_run", false);
+        item.new_failures_count = ValueInt(delta, "new_failures_count", 0);
+        item.resolved_failures_count = ValueInt(delta, "resolved_failures_count", 0);
+        item.new_screenshot_diffs_count = ValueInt(delta, "new_screenshot_diffs_count", 0);
+        item.unchanged_blockers_count = ValueInt(delta, "unchanged_blockers_count", 0);
+        item.daily_delta_headline = ValueString(delta, "headline");
+        if (delta.contains("new_failure_preview") && delta.at("new_failure_preview").is_array()) {
+            item.new_failures = delta.at("new_failure_preview").get<std::vector<std::string>>();
+        }
+        if (delta.contains("resolved_failure_preview") && delta.at("resolved_failure_preview").is_array()) {
+            item.resolved_failures = delta.at("resolved_failure_preview").get<std::vector<std::string>>();
+        }
+        if (delta.contains("new_screenshot_diff_preview") && delta.at("new_screenshot_diff_preview").is_array()) {
+            item.new_screenshot_diffs = delta.at("new_screenshot_diff_preview").get<std::vector<std::string>>();
+        }
+        if (delta.contains("unchanged_blocker_preview") && delta.at("unchanged_blocker_preview").is_array()) {
+            item.unchanged_blockers = delta.at("unchanged_blocker_preview").get<std::vector<std::string>>();
+        }
+        if (delta.contains("review_first_preview") && delta.at("review_first_preview").is_array()) {
+            item.review_first_preview = delta.at("review_first_preview").get<std::vector<std::string>>();
+        }
+    }
+    item.operator_next_step = ValueString(payload, "operator_next_step");
+    if (payload.contains("unresolved_families") && payload.at("unresolved_families").is_array()) {
+        item.unresolved_families = payload.at("unresolved_families").get<std::vector<std::string>>();
+    }
+    if (payload.contains("open_items") && payload.at("open_items").is_array()) {
+        item.open_items = payload.at("open_items").get<std::vector<std::string>>();
+    }
+    if (payload.contains("top_review_priority_items") && payload.at("top_review_priority_items").is_array()) {
+        item.review_priority_items = payload.at("top_review_priority_items").get<std::vector<ReviewPriorityItem>>();
+    }
+    if (payload.contains("review_owner_decisions") && payload.at("review_owner_decisions").is_object()) {
+        const json& decisions = payload.at("review_owner_decisions");
+        if (decisions.contains("status_options") && decisions.at("status_options").is_array()) {
+            item.decision_status_options = decisions.at("status_options").get<std::vector<std::string>>();
+        }
+        if (decisions.contains("sections") && decisions.at("sections").is_array()) {
+            item.decisions = decisions.at("sections").get<std::vector<ReviewOwnerDecisionItem>>();
+        }
+    }
+    if (payload.contains("external_findings") && payload.at("external_findings").is_object()) {
+        const json& findings = payload.at("external_findings");
+        if (findings.contains("items") && findings.at("items").is_array()) {
+            item.external_findings = findings.at("items").get<std::vector<ExternalFindingItem>>();
+        }
+    }
+    if (payload.contains("manual_review_profiles") && payload.at("manual_review_profiles").is_array()) {
+        item.manual_review_profiles = payload.at("manual_review_profiles").get<std::vector<ManualReviewProfileItem>>();
+    }
+    if (payload.contains("artifact_references") && payload.at("artifact_references").is_object()) {
+        for (const auto& [_, value] : payload.at("artifact_references").items()) {
+            ArtifactItem artifact;
+            artifact.label = ValueString(value, "label");
+            artifact.path = ValueString(value, "absolute_path");
+            if (!artifact.path.empty()) {
+                item.artifacts.push_back(artifact);
+            }
+        }
     }
 }
 
@@ -520,6 +753,179 @@ std::vector<RecentRunItem> LoadRecentRuns(
     }
     AppendWorkspace(args, config);
     return ParseArray<RecentRunItem>(RunJsonCommand(config, args));
+}
+
+std::vector<EnvironmentDoctorItem> LoadEnvironmentDoctor(const BackendConfig& config) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"environment",
+        L"--json",
+    };
+    AppendWorkspace(args, config);
+    return ParseArray<EnvironmentDoctorItem>(RunJsonCommand(config, args));
+}
+
+OperatorOverview LoadOperatorOverview(const BackendConfig& config, const std::string& profile_id) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"overview",
+        L"--json",
+    };
+    if (!profile_id.empty()) {
+        args.push_back(L"--profile-id");
+        args.push_back(ToWide(profile_id));
+    }
+    AppendWorkspace(args, config);
+    return RunJsonCommand(config, args).get<OperatorOverview>();
+}
+
+ReviewBoardState LoadReviewBoard(const BackendConfig& config, const std::string& ticket_id) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"review-board",
+        L"--json",
+    };
+    if (!ticket_id.empty()) {
+        args.push_back(L"--ticket-id");
+        args.push_back(ToWide(ticket_id));
+    }
+    AppendWorkspace(args, config);
+    return RunJsonCommand(config, args).get<ReviewBoardState>();
+}
+
+ReviewBoardState SetReviewDecision(
+    const BackendConfig& config,
+    const std::string& ticket_id,
+    const std::string& decision_key,
+    const std::string& status,
+    const std::string& owner,
+    const std::string& note,
+    const std::string& date,
+    const std::string& title
+) {
+    std::vector<std::wstring> args = {
+        L"review-decisions",
+        L"set",
+        ToWide(ticket_id),
+        ToWide(decision_key),
+        L"--status",
+        ToWide(status),
+        L"--json",
+    };
+    if (!owner.empty()) {
+        args.push_back(L"--owner");
+        args.push_back(ToWide(owner));
+    }
+    if (!note.empty()) {
+        args.push_back(L"--note");
+        args.push_back(ToWide(note));
+    }
+    if (!date.empty()) {
+        args.push_back(L"--date");
+        args.push_back(ToWide(date));
+    }
+    if (!title.empty()) {
+        args.push_back(L"--title");
+        args.push_back(ToWide(title));
+    }
+    AppendWorkspace(args, config);
+    (void)RunJsonCommand(config, args);
+    return LoadReviewBoard(config, ticket_id);
+}
+
+ReviewBoardState AddExternalFinding(
+    const BackendConfig& config,
+    const std::string& ticket_id,
+    const std::string& source,
+    const std::string& reported_by,
+    const std::string& category,
+    const std::vector<std::string>& scope,
+    const std::string& finding,
+    const std::string& owner,
+    const std::string& status,
+    const std::string& note,
+    const std::string& finding_type,
+    const std::vector<std::string>& related_investigation_surfaces
+) {
+    std::vector<std::wstring> args = {
+        L"external-findings",
+        L"add",
+        ToWide(ticket_id),
+        L"--source",
+        ToWide(source),
+        L"--reported-by",
+        ToWide(reported_by),
+        L"--category",
+        ToWide(category),
+        L"--finding",
+        ToWide(finding),
+        L"--json",
+    };
+    for (const auto& scope_item : scope) {
+        if (scope_item.empty()) {
+            continue;
+        }
+        args.push_back(L"--scope");
+        args.push_back(ToWide(scope_item));
+    }
+    if (!owner.empty()) {
+        args.push_back(L"--owner");
+        args.push_back(ToWide(owner));
+    }
+    if (!status.empty()) {
+        args.push_back(L"--status");
+        args.push_back(ToWide(status));
+    }
+    if (!note.empty()) {
+        args.push_back(L"--note");
+        args.push_back(ToWide(note));
+    }
+    if (!finding_type.empty()) {
+        args.push_back(L"--type");
+        args.push_back(ToWide(finding_type));
+    }
+    for (const auto& surface : related_investigation_surfaces) {
+        if (surface.empty()) {
+            continue;
+        }
+        args.push_back(L"--related-surface");
+        args.push_back(ToWide(surface));
+    }
+    AppendWorkspace(args, config);
+    (void)RunJsonCommand(config, args);
+    return LoadReviewBoard(config, ticket_id);
+}
+
+ManualEvidenceItem AttachManualEvidence(
+    const BackendConfig& config,
+    const std::string& run_id_or_path,
+    const std::string& kind,
+    const std::string& label,
+    const std::wstring& source_path,
+    const std::wstring& note_text
+) {
+    std::vector<std::wstring> args = {
+        L"desktop-state",
+        L"attach-manual-evidence",
+        ToWide(run_id_or_path),
+        L"--kind",
+        ToWide(kind),
+        L"--json",
+    };
+    if (!label.empty()) {
+        args.push_back(L"--label");
+        args.push_back(ToWide(label));
+    }
+    if (!source_path.empty()) {
+        args.push_back(L"--source");
+        args.push_back(source_path);
+    }
+    if (!note_text.empty()) {
+        args.push_back(L"--note");
+        args.push_back(note_text);
+    }
+    AppendWorkspace(args, config);
+    return RunJsonCommand(config, args).get<ManualEvidenceItem>();
 }
 
 ActionSnapshot LoadSnapshot(const BackendConfig& config, const std::string& run_id_or_path) {

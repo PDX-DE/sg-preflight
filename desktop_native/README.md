@@ -1,6 +1,8 @@
 # Native Operator Shell
 
-This is the experimental native desktop shell track for `sg-preflight`.
+> Deprecated 2026-05-19. Python desktop shell at `sg_preflight/desktop/` is the operator UI going forward. This directory is kept as historical reference through alpha.
+
+This is the native local operator shell track for `sg-preflight`.
 
 It does not replace the Python core.
 It calls the same action system and evidence model through the shared CLI/JSON contract:
@@ -14,13 +16,15 @@ It calls the same action system and evidence model through the shared CLI/JSON c
 - `python -m sg_preflight desktop-state snapshot ...`
 - `python -m sg_preflight desktop-state recent-runs ...`
 - `python -m sg_preflight desktop-state run-snapshot ...`
+- `python -m sg_preflight desktop-state environment ...`
 
 ## Scope
 
 Current native-shell milestone:
 
-- Dear ImGui + Win32 + DirectX 11 shell
+- Dear ImGui + Win32 + DirectX 12 shell
 - repo-root auto-discovery from the built executable path, so the native shell can launch `python -m sg_preflight` from `build\...\Release` without a manual workspace override
+- SGFX QA Status Board entry for ticket/scope, smoke status, screenshot-battery counts, unresolved families, decisions needed, copy-ready updates, and artifact links
 - live profile list
 - action tabs
 - recent action browsing
@@ -30,30 +34,18 @@ Current native-shell milestone:
 - linked run-report drilldown beside action state
 - run outputs and source-of-truth file panels
 - blocker/manual stage visibility
+- explicit manual review support for RaCo and Blender
 - local open / reveal actions
 - broader copy/export surfaces for Jira, QA Hero, pre-delivery, delivery-doc, quick-update, and full handoff text
+- Environment Doctor readiness page for backend, mirrored SG checker coverage, RaCo/Blender readiness, BMW blockers, and output write access
 - bottom button-guide band
-- borderless fullscreen startup by default, so the shell reads like a dedicated operator surface instead of a floating tool window
-- calmer installer-style screen flow instead of one dense dashboard:
-  - `SELECT`
-  - `RUN`
-  - `EVIDENCE`
-  - `FILES`
-  - `STAGES`
-- translated Unleashed-style shell systems in native code instead of stock ImGui widgets:
-  - animated scanline header bars
-  - amber title + activity-square choreography
-  - grid-framed dark panels
-  - animated action-tab highlight motion
-  - selection cards for profiles, recent runs, evidence, and artifacts
-  - local cue hooks for cursor / confirm / error feedback
-  - installer-style screen transitions and hero treatment
-- runtime Unleashed resource discovery:
-  - auto-detects a local `UnleashedRecompResources` / `UnleashedRecompResources-main` bundle when present beside the repo
-  - loads the real `general_window.dds`, `select.dds`, `light.dds`, and `options_static*.dds` textures into the D3D11 shell
-  - keeps direct OTF font loading temporarily instead of consuming `im_font_atlas.bin` because the upstream atlas is tied to the custom `ImFontAtlasSnapshot` path and exact ImGui snapshot format
-  - loads local WAV cues and optional installer background music from that same bundle, with shell-side toggles under `STAGES`
-  - intentionally does not render Sonic/cast character art in the operator shell; the native track now keeps the reference language abstract and workflow-first
+- work-focused startup by default, with background audio disabled
+
+## Manual Review Boundary
+
+The native shell can show readiness, open local paths, attach manual screenshot evidence, and copy manual review notes.
+
+It does not run RaCo or Blender automatically, does not embed external applications, and does not turn manual review into an automated pass/fail claim.
 
 ## Build
 
@@ -62,7 +54,7 @@ Requirements:
 - CMake 3.24+
 - MSVC / Visual Studio C++ build tools
 - Python available as `python` on PATH
-  - optional but preferred: a local `.venv\Scripts\python.exe` or `venv\Scripts\python.exe` in the repo root, which the native shell now auto-detects
+  - optional but preferred: a local `.venv\Scripts\python.exe` or `venv\Scripts\python.exe` in the repo root, which the native shell auto-detects
 
 Configure:
 
@@ -84,6 +76,18 @@ build\native\Release\sg_preflight_native_shell.exe
 
 Manual `--workspace-root` and `--python` overrides still work when needed.
 
+Optional native-shell startup overrides:
+
+```powershell
+build\native\Release\sg_preflight_native_shell.exe --profile F70 --action repo_checker_profile__f70
+```
+
+Verify the default safe bundle:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify_native_shell_bundle.ps1
+```
+
 The CMake file fetches:
 
 - Dear ImGui `v1.92.7-docking`
@@ -92,6 +96,7 @@ The CMake file fetches:
 ## Notes
 
 - This shell is Windows-first because the current operator environment is Windows.
-- It is intentionally separate from the PySide shell so the native track can move toward a closer Unleashed-style interaction feel without cloning the Python engine.
+- It is intentionally separate from the PySide shell and still consumes the same Python backend state.
+- Package staging defaults to a private-alpha bundle: repo mirrors, generated evidence, optional reference resources, optional fonts, and optional audio are excluded unless explicitly requested.
+- `scripts/package_native_shell_bundle.ps1` keeps the build pointer and writes a separate bundle pointer under `build/latest_native_shell_bundle_path.txt`.
 - BMW stages remain blocker/readiness surfaces until BMW-side access and scripts exist locally.
-- The current font path intentionally prefers direct local OTF files when available, because the upstream `im_font_atlas.bin` is a prebuilt snapshot generated for Unleashed's custom font-loading path rather than a drop-in ImGui runtime asset here.

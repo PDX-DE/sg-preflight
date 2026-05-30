@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
+
 
 def normalize_local_path(path: str | Path | None) -> Path | None:
     if path is None:
@@ -66,7 +68,7 @@ def open_local_path(path: str | Path) -> bool:
     command = build_open_command(normalized)
     if not command:
         return False
-    subprocess.Popen(command)
+    subprocess.Popen(command, **hidden_subprocess_kwargs())
     return True
 
 
@@ -79,5 +81,5 @@ def reveal_in_file_manager(path: str | Path) -> bool:
     command = build_reveal_command(normalized)
     if not command:
         return False
-    subprocess.Popen(command)
+    subprocess.Popen(command, **hidden_subprocess_kwargs())
     return True

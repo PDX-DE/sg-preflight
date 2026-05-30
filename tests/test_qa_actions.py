@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 from sg_preflight.qa_actions import execute_operator_action, get_operator_action, list_operator_actions
-from tests.operator_helpers import create_temp_g65_profile, write_text
+from tests.operator_helpers import create_temp_g65_profile, isolated_missing_external_dependencies, write_text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,16 +45,8 @@ class TestQaActions(unittest.TestCase):
             profile = create_temp_g65_profile(root)
             _create_checker_files(root)
 
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "SG_RACO_HEADLESS": str(root / "missing" / "RaCoHeadless.exe"),
-                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
-                },
-                clear=False,
-            ):
-                with mock.patch("sg_preflight.services.shutil.which", return_value=None):
-                    actions = list_operator_actions(root, profiles=[profile])
+            with isolated_missing_external_dependencies(root):
+                actions = list_operator_actions(root, profiles=[profile])
 
         action_map = {action.action_id: action for action in actions}
         self.assertTrue(action_map["daily_live_matrix"].ready)
@@ -131,25 +123,33 @@ class TestQaActions(unittest.TestCase):
                 },
                 clear=False,
             ):
-                action = get_operator_action("scene_check__g65", root, profiles=[profile])
                 with mock.patch(
-                    "sg_preflight.qa_actions.subprocess.run",
-                    side_effect=[
-                        subprocess.CompletedProcess(
-                            args=[str(raco_exe)],
-                            returncode=1,
-                            stdout=scene_error_output,
-                            stderr="",
-                        ),
-                        subprocess.CompletedProcess(
-                            args=[str(raco_exe)],
-                            returncode=0,
-                            stdout=scene_clean_output,
-                            stderr="",
-                        ),
-                    ],
+                    "sg_preflight.services.probe_raco_runtime",
+                    return_value={
+                        "status": "available",
+                        "detail": "Synthetic runtime accepted for test execution.",
+                        "probe_path": str(profile.project_root / "main.rca"),
+                    },
                 ):
-                    record = execute_operator_action(action, root)
+                    action = get_operator_action("scene_check__g65", root, profiles=[profile])
+                    with mock.patch(
+                        "sg_preflight.qa_actions.subprocess.run",
+                        side_effect=[
+                            subprocess.CompletedProcess(
+                                args=[str(raco_exe)],
+                                returncode=1,
+                                stdout=scene_error_output,
+                                stderr="",
+                            ),
+                            subprocess.CompletedProcess(
+                                args=[str(raco_exe)],
+                                returncode=0,
+                                stdout=scene_clean_output,
+                                stderr="",
+                            ),
+                        ],
+                    ):
+                        record = execute_operator_action(action, root)
 
             self.assertEqual(record.status, "completed")
             self.assertTrue(Path(record.paths["log"]).exists())
@@ -161,8 +161,8 @@ class TestQaActions(unittest.TestCase):
             self.assertEqual(checker_evidence.get("checked_scenes"), 2)
             self.assertEqual(checker_evidence.get("scenes_with_errors"), 1)
             self.assertEqual(
-                checker_evidence.get("top_paths", [{}])[0].get("path"),
-                str(profile.project_root / "main.rca"),
+                Path(checker_evidence.get("top_paths", [{}])[0].get("path", "")).resolve(),
+                (profile.project_root / "main.rca").resolve(),
             )
             affected = checker_evidence.get("affected_files", [{}])[0]
             self.assertIn("File Load Error", affected.get("message", ""))
@@ -208,11 +208,7 @@ class TestQaActions(unittest.TestCase):
             profile = create_temp_g65_profile(root)
             action = get_operator_action("delivery_checklist__g65", root, profiles=[profile])
 
-            with mock.patch.dict(
-                os.environ,
-                {"SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models")},
-                clear=False,
-            ):
+            with isolated_missing_external_dependencies(root):
                 record = execute_operator_action(action, root)
 
             self.assertEqual(record.status, "completed")

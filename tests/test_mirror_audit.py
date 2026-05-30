@@ -30,6 +30,7 @@ class TestMirrorAudit(unittest.TestCase):
                 label="BMW G65 test slice",
                 repo_root=mirror_root,
                 project_root=mirror_root / "Cars_IDCevo" / "BMW" / "G65",
+                project_relative=Path("Cars_IDCevo/BMW/G65"),
                 config_path=root / "config.json",
                 mirror_audit_targets=("Cars_IDCevo/BMW/G65", "Cars/BMW/CarPaint.json"),
                 reference_repo_root=reference_root,

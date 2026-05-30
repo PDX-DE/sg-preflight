@@ -11,5 +11,154 @@ See [LICENSE](LICENSE) for the governing internal proprietary license.
 - Do not publish copied SVN content, BMW/SG assets, or project-specific outputs to public repositories.
 - Keep generated evidence under `out/` and mirrored source trees such as `repositories/` untracked unless a deliberate internal release process says otherwise.
 - When preparing internal milestones, prefer sanitized examples and avoid embedding confidential asset payloads directly into docs or issue discussions.
+- Treat unrelated local reference/resource folders as local-only inputs unless a cleared internal distribution path exists for those assets.
 
-This notice is intentionally lightweight until the final company-side repository policy is defined.
+## Third-Party Notice Stub
+
+The native shell currently relies on the following third-party components. Keep this notice with any internal portable bundle or other packaged native-shell milestone.
+
+| Component | Version | License | Upstream | Current use |
+| --- | --- | --- | --- | --- |
+| Dear ImGui | `v1.92.7-docking` | MIT | `https://github.com/ocornut/imgui` | Native shell UI runtime, Win32 backend, DX12 backend |
+| nlohmann/json | `v3.12.0` | MIT | `https://github.com/nlohmann/json` | Backend bridge payload parsing and JSON transport |
+
+## Grafiks UI assets
+
+The native operator-shell Grafiks display mode (`--ui-mode grafiks`) carries UI chrome textures and audio cues adapted from the following open-source project. The clean display mode (`--ui-mode clean`, default) does not depend on these adapted assets.
+
+| Destination file | Upstream project | Upstream license | Upstream URL | Source path within upstream tree |
+| --- | --- | --- | --- | --- |
+| `desktop_native/assets/images/common/raw/general_window.png` | sonic3air | GPL-3.0 | https://github.com/Eukaryot/sonic3air | `Oxygen/oxygenengine/data/images/messagewindow_frame.png` |
+| `desktop_native/assets/images/common/raw/select.png` | sonic3air | GPL-3.0 | https://github.com/Eukaryot/sonic3air | `Oxygen/sonic3air/data/images/menu/achievements_frame.png` |
+| `desktop_native/assets/images/common/raw/light.png` | sonic3air | GPL-3.0 | https://github.com/Eukaryot/sonic3air | `Oxygen/sonic3air/data/images/menu/mainmenu_bg_separator.png` |
+| `desktop_native/assets/images/common/raw/options_static.png` | sonic3air | GPL-3.0 | https://github.com/Eukaryot/sonic3air | `Oxygen/sonic3air/data/images/menu/options_topbar_bg.png` |
+| `desktop_native/assets/images/common/raw/options_static_flash.png` | sonic3air | GPL-3.0 | https://github.com/Eukaryot/sonic3air | `Oxygen/oxygenengine/data/sprites/input/touch_overlay_highlight.png` |
+| `desktop_native/assets/sounds/ui_cursor.wav` | sonic3air (source-pick mapping pending) | GPL-3.0 | https://github.com/Eukaryot/sonic3air | Format-converted source mapping pending |
+| `desktop_native/assets/sounds/ui_confirm.wav` | sonic3air (source-pick mapping pending) | GPL-3.0 | https://github.com/Eukaryot/sonic3air | Format-converted source mapping pending |
+| `desktop_native/assets/sounds/ui_cancel.wav` | sonic3air (source-pick mapping pending) | GPL-3.0 | https://github.com/Eukaryot/sonic3air | Format-converted source mapping pending |
+| `desktop_native/assets/sounds/ui_panel_open.wav` | sonic3air (source-pick mapping pending) | GPL-3.0 | https://github.com/Eukaryot/sonic3air | Format-converted source mapping pending |
+| `desktop_native/assets/sounds/ui_panel_close.wav` | sonic3air (source-pick mapping pending) | GPL-3.0 | https://github.com/Eukaryot/sonic3air | Format-converted source mapping pending |
+| `desktop_native/assets/sounds/ui_page.wav` | sonic3air (source-pick mapping pending) | GPL-3.0 | https://github.com/Eukaryot/sonic3air | Format-converted source mapping pending |
+
+Adapted files use SGFX-neutral destination filenames. The upstream license text ships alongside the adapted assets at `desktop_native/assets/LICENSE-sonic3air`. Full upstream source remains publicly available at the URL above.
+
+These adapted assets are treated as GPL-3.0-scoped assets. A formal codebase-wide license review for non-asset code is deferred and tracked separately.
+
+## Grafiks-mode menu-architecture inspiration
+
+The native shell menu architecture for SGFX QA Preflight (class hierarchy, action-handler patterns, menu state organization, tab strip, and scrollable rows layout convention) is inspired by the open-source [sonic3air project](https://github.com/Eukaryot/sonic3air) (GPL-3.0).
+
+The current SGFX implementation under `desktop_native/src/sgfx_shell/` is original code. No sonic3air source files are imported or distributed in this codebase. The shell uses fresh Win32/GDI immediate-mode drawing and a lightweight presentation; it does not contain sonic3air's renderer, sprite system, transition pipeline, animation banks, custom-font system, or audio-event system.
+
+Full GPL-3.0 attribution will apply if and when sonic3air rendering subsystems (sprite batching, transition pipeline, animation banks, custom-font rendering, audio cues) are extracted in a future Grafiks update. Until then, this acknowledgement of architectural inspiration is the complete attribution scope for menu architecture.
+
+### Four-repurpose integration
+
+| Repurpose | Implementation surface | What it changes |
+| --- | --- | --- |
+| Templates tab | `desktop_native/src/sgfx_shell/sgfx_settings_menu.cpp` | Action handlers call the existing `sg_preflight/template_store.py` API. Templates persist to `<workspace>/templates/<name>.json`. |
+| Activity Log tab | `desktop_native/src/sgfx_shell/sgfx_digest_menu.cpp` | Adds Daily Digest, Readiness and Hygiene, and Activity Log views. The new operator-local JSONL file stays local and is never posted to Jira, SVN, or BMW Git. |
+| Diagnostic Mode overlay | `desktop_native/src/sgfx_shell/sgfx_diagnostic_overlay.cpp` | Provides read-only environment health checks for local paths, runtime prerequisites, alpha Git tip, Confluence anchor status, and free disk space. |
+| Theme and Accessibility tab | `desktop_native/src/sgfx_shell/sgfx_settings_menu.cpp` | Adds UI mode, font size, high-DPI scale, and contrast settings rows persisted through the local INI. |
+
+### Operator-local data files introduced by this shell update
+
+| File | Purpose | License scope |
+| --- | --- | --- |
+| `<workspace>/operator_state/activity_log.jsonl` | Append-only operator-action log written by SGFX CLI and native UI handlers. Vocabulary: `opened`, `ran`, `read`, `exported`, `refreshed`, `switched-profile`, `switched-mode`. Local-only and never posted. | Original SGFX data file. Not derived from sonic3air. |
+| `sg_preflight/activity_log.py` | Append and read helpers for the activity log JSONL. | Original SGFX code. Not derived from sonic3air. |
+
+### Future attribution
+
+If a later Grafiks update extracts sonic3air rendering subsystems, this section will be updated with the specific upstream files, adapted subsystem table, and license implications for that future work.
+
+## OpenHTF dependency
+
+SGFX QA Preflight uses OpenHTF as the local station runtime for phase execution, station UI hosting, and run history. The dependency is installed from PyPI and is not vendored or modified in this repository.
+
+| Component | Version | License | Upstream | Current use |
+| --- | --- | --- | --- | --- |
+| OpenHTF | `1.6.1` | Apache 2.0 | https://github.com/google/openhtf | Operator console hosting, phase execution, station UI, and run history |
+
+OpenHTF attribution:
+
+```text
+Copyright 2014 Google Inc.
+
+Licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+```
+
+## NiceGUI dependency
+
+SGFX QA Preflight uses [NiceGUI](https://github.com/zauberzeug/nicegui) (MIT License) as the primary operator-dashboard UI framework. The 4 SGFX evidence pages (Delivery Checklist, Screenshot Test State, Daily Digest, Manual Review Companion) render as NiceGUI pages over the existing `sg_preflight/` data layer, launched as a native desktop window via `ui.run(native=True)`.
+
+| Component | Version | License | Upstream | Current use |
+| --- | --- | --- | --- | --- |
+| NiceGUI | `nicegui[native]==3.11.1` | MIT | `https://github.com/zauberzeug/nicegui` | Primary operator-dashboard hosting, 4 evidence-page rendering, and native desktop window support via `ui.run(native=True)`; the `[native]` extra installs `pywebview` for native-window support |
+
+NiceGUI is installed via `pip install nicegui[native]==3.11.1` and pinned in `pyproject.toml`. The upstream source is not vendored, modified, or distributed by SGFX. MIT license terms apply to NiceGUI's portion of the runtime; SGFX-original code (`sg_preflight/` data layer, NiceGUI page wrappers under `sg_preflight/dashboard/`, dashboard launcher CLI) stays under the existing internal proprietary license unless and until a formal codebase-wide license review changes that.
+
+NiceGUI attribution:
+
+```text
+MIT License
+
+Copyright (c) 2021 Zauberzeug GmbH
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## PySide6 dependency
+
+SGFX QA Preflight uses [PySide6](https://wiki.qt.io/Qt_for_Python) as the Grafiks-mode operator-dashboard UI framework. PySide6 is the official Python binding for Qt 6, distributed by The Qt Company. The Grafiks-mode desktop shell at `sg_preflight/desktop/` renders the same four SGFX evidence surfaces (Delivery Checklist, Screenshot Test State, Daily Digest, Manual Review Companion) as the NiceGUI Clean-mode dashboard, over the existing `sg_preflight/` data layer.
+
+| Component | Version | License | Upstream | Current use |
+| --- | --- | --- | --- | --- |
+| PySide6 | `6.11.1` observed in the build venv; project constraint `>=6.7,<7` | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, with commercial Qt licensing available | `https://wiki.qt.io/Qt_for_Python` | Grafiks-mode operator-dashboard hosting and four evidence-page rendering via Qt 6 native widgets |
+
+PySide6 is installed through the `desktop` optional dependency group in `pyproject.toml`. The upstream source is not modified by SGFX. LGPL/GPL/commercial license terms apply to PySide6's portion of the runtime; SGFX-original code (`sg_preflight/` data layer, PySide6 widget subclasses under `sg_preflight/desktop/`, dashboard launcher CLI) stays under the existing internal proprietary license unless and until a formal codebase-wide license review changes that.
+
+PySide6 attribution:
+
+```text
+PySide6 is a Python binding for the Qt 6 framework. The community edition is
+available under LGPLv3/GPLv2/GPLv3 licensing, and commercial Qt licensing is
+available from The Qt Company. Full upstream license information is available at:
+https://doc.qt.io/qtforpython-6/commercial/index.html
+https://wiki.qt.io/Qt_for_Python
+```
+
+### LGPL-3.0 packaging note
+
+The source-install path keeps PySide6 as a separate pip dependency. The Windows executable build may package PySide6 runtime files for operator convenience. Before any broader bundle distribution, keep the applicable LGPL/GPL/commercial-license text and upstream source links with the bundle, and route PySide6 replacement/commercial-license questions through the internal license review path.
+
+### Packaging Rules
+
+- Keep `LICENSE` and this `NOTICE.md` in any internal native-shell bundle.
+- Do not treat unrelated local reference/resource folders as redistributable bundle inputs by default.
+- Do not bundle mirrored `repositories/` or generated `out/` evidence unless there is a deliberate internal reason and a conscious opt-in.
+- Keep upstream license texts under `desktop_native/assets/LICENSE-*` alongside any adapted Grafiks UI assets they apply to; do not strip license texts from a packaged bundle.
+- If OpenHTF is ever vendored or bundled directly, ship the matching Apache 2.0 license text alongside that component; the current alpha installs OpenHTF from PyPI instead.
+- NiceGUI is a runtime dependency installed via pip. MIT license terms apply to the NiceGUI portion of any packaged bundle. If a bundle vendors NiceGUI for offline operator machines, ship the MIT LICENSE text from the NiceGUI upstream alongside the bundled package.
+- PySide6 is a runtime dependency installed via pip for source installs and may be included in the Windows executable bundle for operator convenience. LGPL/GPL/commercial Qt license terms apply to the PySide6 portion of any packaged bundle; if PySide6 runtime files are bundled, keep the applicable license text and upstream source links available with the bundle and route replacement/commercial-license questions through internal license review.
+- The clean display mode (`--ui-mode clean`, default) does not depend on the adapted Grafiks UI assets and remains usable without them.
+- The Grafiks-mode binary at this snapshot is original SGFX code; it does not bundle sonic3air source files. The upstream license text at `desktop_native/assets/LICENSE-sonic3air` covers the adapted assets. A future Grafiks update may extract sonic3air rendering subsystems; if that happens, this notice will grow to full GPL-3.0 attribution and the license text will cover the additional adapted source.
+
+This notice is intentionally lightweight until the final company-side repository policy is defined, but it is now explicit enough for internal alpha packaging.

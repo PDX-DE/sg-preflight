@@ -12,9 +12,20 @@ QWidget {
 QMainWindow {
   background: #091014;
 }
+QLabel#grafiksWipNotice {
+  color: #ffd57a;
+  background: rgba(50, 32, 8, 200);
+  border: 1px solid rgba(255, 191, 84, 130);
+  border-radius: 5px;
+  padding: 8px 12px;
+  font-family: "Bahnschrift SemiBold", "Segoe UI", sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  margin: 2px 0;
+}
 QLabel#modeLabel,
 QLabel#panelHint,
-QLabel#progressDetail,
+QLabel#progressInfo,
 QLabel#commandLabel,
 QLabel#runStatus {
   color: #89b89e;
@@ -110,9 +121,116 @@ QStatusBar {
   background: rgba(9, 16, 20, 235);
   color: #8bd8ab;
   border-top: 1px solid rgba(48, 132, 88, 120);
+  padding: 4px 10px;
 }
 QSplitter::handle {
   background: rgba(25, 78, 57, 120);
+  width: 4px;
+}
+QGroupBox {
+  margin-top: 14px;
+  padding: 8px;
+}
+QPushButton#presentationToggle {
+  background: #10181c;
+  color: #dfe9e2;
+  border: 1px solid #225846;
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-family: "Bahnschrift SemiBold", "Segoe UI", sans-serif;
+}
+QPushButton#presentationToggle:checked {
+  background: #146a47;
+  color: #ffffff;
+  border: 1px solid #74f6a6;
+}
+*[sgfxMode="clean"] {
+  color: #d4d4d4;
+  font-family: "Segoe UI", "Cascadia Code", sans-serif;
+  font-size: 12px;
+}
+QMainWindow[sgfxMode="clean"] {
+  background: #1e1e1e;
+}
+QLabel[sgfxMode="clean"]#modeLabel,
+QLabel[sgfxMode="clean"]#panelHint,
+QLabel[sgfxMode="clean"]#progressInfo,
+QLabel[sgfxMode="clean"]#commandLabel,
+QLabel[sgfxMode="clean"]#runStatus {
+  color: #9da3a8;
+}
+QLabel[sgfxMode="clean"]#runTitle {
+  color: #ececec;
+  font-family: "Segoe UI Semibold", "Segoe UI", sans-serif;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+QLabel[sgfxMode="clean"]#grafiksWipNotice {
+  color: #e8c07d;
+  background: rgba(58, 47, 24, 220);
+  border: 1px solid rgba(107, 80, 36, 200);
+}
+QPlainTextEdit[sgfxMode="clean"],
+QListWidget[sgfxMode="clean"] {
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 5px;
+  selection-background-color: #264f44;
+  selection-color: #ececec;
+  color: #d4d4d4;
+  padding: 5px;
+}
+QPlainTextEdit[sgfxMode="clean"]#summaryText,
+QPlainTextEdit[sgfxMode="clean"]#logTail {
+  background: #1e1e1e;
+}
+QListWidget[sgfxMode="clean"]::item {
+  background: transparent;
+  color: #d4d4d4;
+  padding: 7px 8px;
+  margin: 2px 0px;
+  border: 1px solid transparent;
+}
+QListWidget[sgfxMode="clean"]::item:selected {
+  background: #264f44;
+  color: #ececec;
+  border: 1px solid #4ec9b0;
+}
+QListWidget[sgfxMode="clean"]::item:hover:!selected {
+  background: #2b2b2b;
+}
+QProgressBar[sgfxMode="clean"] {
+  min-height: 18px;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 5px;
+  text-align: center;
+  color: #d4d4d4;
+}
+QProgressBar[sgfxMode="clean"]::chunk {
+  background: #4ec9b0;
+  border-radius: 4px;
+}
+QStatusBar[sgfxMode="clean"] {
+  background: #252526;
+  color: #9da3a8;
+  border-top: 1px solid #3c3c3c;
+}
+QSplitter[sgfxMode="clean"]::handle {
+  background: #3c3c3c;
   width: 3px;
+}
+QPushButton[sgfxMode="clean"]#presentationToggle {
+  background: #2b2b2b;
+  color: #d4d4d4;
+  border: 1px solid #3c3c3c;
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-family: "Segoe UI Semibold", "Segoe UI", sans-serif;
+}
+QPushButton[sgfxMode="clean"]#presentationToggle:checked {
+  background: #264f44;
+  color: #ececec;
+  border: 1px solid #4ec9b0;
 }
 """

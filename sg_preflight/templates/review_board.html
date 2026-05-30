@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% block title %}SGFX QA Status Board - SG Preflight Operator UI{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="#package-card">
+    <span class="shell-route-title">Open the latest review package</span>
+    <span class="shell-route-detail">Use the packaged evidence, not local guesswork.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#review-priority">
+    <span class="shell-route-title">Check review priority first</span>
+    <span class="shell-route-detail">Start with the highest-signal screenshot items.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#open-decisions">
+    <span class="shell-route-title">Resolve owner decisions</span>
+    <span class="shell-route-detail">Keep blocker/follow-up calls explicit.</span>
+  </a>
+</li>
+{% endblock %}
+{% block content %}
+{% set board = review_board %}
+<section class="hero-panel hero-panel--simple" id="package-card">
+  <div class="hero-copy">
+    <p class="eyebrow">SGFX QA status</p>
+    <h2>{{ board.ticket_id }} - {{ board.scope|join(", ") }}</h2>
+    <p class="hero-text">
+      Latest structured operator state for the sendable review package, the current daily snapshot, and the remaining review-owner decisions.
+    </p>
+    <div class="hero-bullets">
+      <span>Package verification: {{ board.package_verification.status }}</span>
+      <span>DoD status: {{ board.dod_status_summary.overall_status }}</span>
+      <span>Visible progress: {{ board.visible_dod_progress_percent if board.visible_dod_progress_percent is not none else "n/a" }}%</span>
+      <span>Generated: {{ board.generated_at }}</span>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Execution summary</h3>
+      <p>The Python backend owns this state. The web surface only renders the current structured snapshot.</p>
+    </div>
+  </div>
+  <div class="quick-start-grid">
+    <article class="quick-start-card">
+      <p class="eyebrow">Smoke</p>
+      <h4>{{ board.daily_snapshot_summary.smoke_completed }}/{{ board.daily_snapshot_summary.smoke_total }} passed</h4>
+      <p>Representative BMW local export + screenshot smoke for the current scope.</p>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Battery</p>
+      <h4>{{ board.screenshot_battery_counts.exact_candidate_ready }} exact / {{ board.screenshot_battery_counts.proxy_candidate_ready }} proxy / {{ board.screenshot_battery_counts.runtime_crash }} crash</h4>
+      <p>{{ board.screenshot_battery_counts.total }} total broader screenshot checks in the latest snapshot.</p>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Unresolved family</p>
+      <h4>{{ board.unresolved_families|join(", ") if board.unresolved_families else "none" }}</h4>
+      <p>Exact runtime/content families that still need review-owner direction or follow-up.</p>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Since previous run</p>
+      <h4>{{ board.daily_delta_summary.headline }}</h4>
+      <p>{{ board.daily_delta_summary.operator_signal }}</p>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">External findings</p>
+      <h4>{{ board.external_findings.headline }}</h4>
+      <p>
+        {% if board.external_findings.related_investigation_surfaces %}
+        Related surfaces: {{ board.external_findings.related_investigation_surfaces[:3]|join(", ") }}{% if board.external_findings.related_investigation_surfaces|length > 3 %}, ...{% endif %}
+        {% else %}
+        Human-reported findings tracked alongside the automated QA state.
+        {% endif %}
+      </p>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Next operator step</p>
+      <h4>{{ board.operator_next_step }}</h4>
+      <p>Keep the daily loop explicit: inspect first, decide next, then open the right artifact.</p>
+    </article>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Copy-ready updates</h3>
+      <p>Use the short status update for review-owner communication and the digest for the daily operating loop.</p>
+    </div>
+  </div>
+  <div class="action-row action-row--wrap">
+    <button class="button copy-button" type="button" data-copy-target="review-owner-update">Copy Review Owner Update</button>
+    <button class="button subtle copy-button" type="button" data-copy-target="morning-digest">Copy Morning Digest</button>
+  </div>
+  <div class="quick-start-grid">
+    <article class="quick-start-card">
+      <p class="eyebrow">Review-owner update</p>
+      <div class="note-block"><pre>{{ board.review_owner_update_text }}</pre></div>
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Morning digest</p>
+      <div class="note-block"><pre>{{ board.morning_digest_text }}</pre></div>
+    </article>
+  </div>
+  <textarea id="review-owner-update" hidden>{{ board.review_owner_update_text }}</textarea>
+  <textarea id="morning-digest" hidden>{{ board.morning_digest_text }}</textarea>
+</section>
+
+<section class="panel" id="review-priority">
+  <div class="panel-head">
+    <div>
+      <h3>Top review-priority items</h3>
+      <p>Use these before opening the full gallery or browsing all artifacts.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for item in board.top_review_priority_items %}
+    <div class="run-card">
+      <div class="min-w-0">
+        <strong>{{ item.profile_id }} - {{ item.filter_name }}</strong>
+        <div class="muted">{{ item.priority_level }} / {{ item.attention_category }} / {{ item.verdict }} / priority {{ item.priority_score }}{% if item.is_new_since_previous_run %} / new{% endif %}</div>
+        {% if item.reason %}
+        <div class="muted">{{ item.reason }}</div>
+        {% endif %}
+        {% if item.signals %}
+        <div class="muted">Signals: {{ item.signals|join(", ") }}</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel" id="export-size-analysis">
+  <div class="panel-head">
+    <div>
+      <h3>Export-size analysis evidence</h3>
+      <p>Read-only workbook evidence from operator-local size_analysis files. Manual review remains required.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for item in board.export_size_analysis_evidence %}
+    <div class="run-card">
+      <div class="min-w-0">
+        <strong>{{ item.label }}</strong>
+        <div class="muted">{{ item.status }}{% if item.detail %} / {{ item.detail }}{% endif %}</div>
+        {% if item.path %}
+        <div class="muted">{{ item.path }}</div>
+        {% endif %}
+        {% if item.note %}
+        <div class="muted">{{ item.note }}</div>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="note-block">No export-size analysis evidence recorded in the current state.</div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Delta detail</h3>
+      <p>Make the previous-run comparison explicit so operators can tell what changed without opening another report first.</p>
+    </div>
+  </div>
+  <div class="quick-start-grid">
+    <article class="quick-start-card">
+      <p class="eyebrow">New failures</p>
+      <h4>{{ board.daily_delta_summary.new_failures_count }}</h4>
+      {% if board.daily_delta_summary.new_failure_preview %}
+      <p>{{ board.daily_delta_summary.new_failure_preview|join(" | ") }}</p>
+      {% else %}
+      <p>No new failures in the latest comparison.</p>
+      {% endif %}
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Resolved</p>
+      <h4>{{ board.daily_delta_summary.resolved_failures_count }}</h4>
+      {% if board.daily_delta_summary.resolved_failure_preview %}
+      <p>{{ board.daily_delta_summary.resolved_failure_preview|join(" | ") }}</p>
+      {% else %}
+      <p>No failures were resolved since the previous run.</p>
+      {% endif %}
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">New diffs</p>
+      <h4>{{ board.daily_delta_summary.new_screenshot_diffs_count }}</h4>
+      {% if board.daily_delta_summary.new_screenshot_diff_preview %}
+      <p>{{ board.daily_delta_summary.new_screenshot_diff_preview|join(" | ") }}</p>
+      {% else %}
+      <p>No new screenshot diffs were detected.</p>
+      {% endif %}
+    </article>
+    <article class="quick-start-card">
+      <p class="eyebrow">Unchanged blockers</p>
+      <h4>{{ board.daily_delta_summary.unchanged_blockers_count }}</h4>
+      {% if board.daily_delta_summary.unchanged_blocker_preview %}
+      <p>{{ board.daily_delta_summary.unchanged_blocker_preview|join(" | ") }}</p>
+      {% else %}
+      <p>No unchanged blockers were carried over.</p>
+      {% endif %}
+    </article>
+  </div>
+</section>
+
+<section class="panel" id="open-decisions">
+  <div class="panel-head">
+    <div>
+      <h3>Open review-owner decisions</h3>
+      <p>These are still waiting for human owner input.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for section in board.review_owner_decisions.sections %}
+    <div class="run-card">
+      <div class="min-w-0">
+        <strong>{{ section.title }}</strong>
+        <div class="muted">{{ section.status }}{% if section.owner %} / {{ section.owner }}{% endif %}{% if section.date %} / {{ section.date }}{% endif %}</div>
+        <form class="review-decision-form stack" data-ticket-id="{{ board.ticket_id }}" data-decision-key="{{ section.key }}" data-decision-title="{{ section.title }}">
+          <label class="muted">
+            Status
+            <select name="status">
+              {% for option in board.review_owner_decisions.status_options %}
+              <option value="{{ option }}" {% if option == section.status %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="muted">
+            Owner
+            <input type="text" name="owner" value="{{ section.owner }}" placeholder="Adrian / Jana / reviewer">
+          </label>
+          <label class="muted">
+            Note
+            <textarea name="note" rows="3" placeholder="Decision rationale or follow-up note">{{ section.notes }}</textarea>
+          </label>
+          <div class="action-row action-row--wrap">
+            <button class="button subtle" type="submit">Save decision</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>External findings</h3>
+      <p>Human-reported findings from Teams, manual review, or other non-automated channels.</p>
+    </div>
+  </div>
+  <div class="run-card">
+    <div class="min-w-0">
+      <strong>Capture external finding</strong>
+      <div class="muted">This writes to tracked JSON first and regenerates the Markdown view from that state.</div>
+      <form class="external-finding-form stack" data-ticket-id="{{ board.ticket_id }}">
+        <label class="muted">
+          Source
+          <input type="text" name="source" value="Teams / 3D Car - Bug Reports / Jana" placeholder="Teams / 3D Car - Bug Reports / Jana">
+        </label>
+        <label class="muted">
+          Reported by
+          <input type="text" name="reported_by" value="Jana" placeholder="Jana">
+        </label>
+        <label class="muted">
+          Category
+          <input type="text" name="category" value="changelog" placeholder="changelog">
+        </label>
+        <label class="muted">
+          Type
+          <input type="text" name="finding_type" value="finding" placeholder="finding">
+        </label>
+        <label class="muted">
+          Scope
+          <input type="text" name="scope" value="{{ board.scope|join(', ') }}" placeholder="NA8, G78, G50">
+        </label>
+        <label class="muted">
+          Finding
+          <textarea name="finding" rows="3" placeholder="Missing changelog entry for light cones position change"></textarea>
+        </label>
+        <label class="muted">
+          Owner
+          <input type="text" name="owner" value="" placeholder="Ana-Karina Nazare">
+        </label>
+        <label class="muted">
+          Status
+          <input type="text" name="status" value="reported" placeholder="reported">
+        </label>
+        <label class="muted">
+          Related surfaces
+          <input type="text" name="related_investigation_surfaces" value="lights_OnlyCones" placeholder="lights_OnlyCones, Pivot Master">
+        </label>
+        <label class="muted">
+          Note
+          <textarea name="note" rows="3" placeholder="Track separately from screenshot/export evidence."></textarea>
+        </label>
+        <div class="action-row action-row--wrap">
+          <button class="button subtle" type="submit">Save external finding</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <div class="stack">
+    {% if board.external_findings["items"] %}
+      {% for item in board.external_findings["items"] %}
+      <div class="run-card">
+        <div class="min-w-0">
+          <strong>{{ item.finding }}</strong>
+          <div class="muted">{{ item.category }} / {{ item.status }} / {{ item.source }}</div>
+          <div class="muted">Scope: {{ item.scope|join(", ") if item.scope else "n/a" }}{% if item.owner %} / Owner: {{ item.owner }}{% endif %}</div>
+          {% if item.note %}
+          <div class="muted">{{ item.note }}</div>
+          {% endif %}
+          {% if item.related_investigation_surfaces %}
+          <div class="muted">Related surfaces: {{ item.related_investigation_surfaces|join(", ") }}</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="note-block">No external findings have been recorded yet.</div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Open items / blockers</h3>
+      <p>Current unresolved items merged from the package, latest snapshot, and package verification.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for item in board.open_items %}
+    <div class="note-block note-block--warn">{{ item }}</div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Artifact links</h3>
+      <p>Open the main packaged evidence directly from the current workspace.</p>
+    </div>
+  </div>
+  <div class="stack">
+    {% for item in file_cards %}
+    <div class="run-card">
+      <div class="min-w-0">
+        <strong>{{ item.label }}</strong>
+        {% if item.relative_path %}
+        <div class="muted">{{ item.relative_path }}</div>
+        {% else %}
+        <div class="muted">{{ item.path }}</div>
+        {% endif %}
+      </div>
+      <div class="run-card-actions">
+        {% if item.href %}
+        <a href="{{ item.href }}">Open</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

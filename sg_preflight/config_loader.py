@@ -6,8 +6,13 @@ from typing import Any
 
 
 def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Malformed JSON in {path}: line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from exc
 
 
 def load_config(path: Path) -> dict[str, Any]:

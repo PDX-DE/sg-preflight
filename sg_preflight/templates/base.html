@@ -7,22 +7,26 @@
   <script>
     (function () {
       try {
+        var params = new URLSearchParams(window.location.search);
         var theme = window.localStorage.getItem("sg-theme") || "dark";
+        var requestedMode = params.get("ui-mode") || (params.get("theme") === "clean" ? "clean" : "");
+        var uiMode = requestedMode || window.localStorage.getItem("sg-ui-mode") || "clean";
         document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.uiMode = (uiMode === "grafiks" || uiMode === "sgfx") ? "grafiks" : "clean";
       } catch (_error) {
         document.documentElement.dataset.theme = "dark";
+        document.documentElement.dataset.uiMode = "clean";
       }
     })();
   </script>
+  <link rel="icon" type="image/png" href="/favicon.ico" />
   <link rel="stylesheet" href="/ui/static/operator.css?v=20260417l" />
 </head>
 <body data-guide-mode="on" {% block body_attrs %}{% endblock %}>
   <header class="shell-header">
     <div class="shell-brand">
       <div class="shell-brand-mark" aria-hidden="true">
-        <span></span>
-        <span></span>
-        <span></span>
+        <img class="shell-brand-logo" src="/sgfx-assets/framework_sgfx_logo.png" alt="" />
       </div>
       <div class="shell-brand-copy">
         <p class="eyebrow">Paradox Cat GmbH Seriengrafik / 3D Car</p>
@@ -32,6 +36,7 @@
     </div>
     <nav class="shell-nav">
       <a href="/ui">Home</a>
+      <a href="/ui/review-board">SGFX QA Status Board</a>
       <details class="inline-help shell-help">
         <summary>What is this for?</summary>
         <div class="inline-help-panel">
@@ -45,6 +50,9 @@
       </button>
       <button class="button subtle shell-toggle" id="theme-toggle" type="button" aria-pressed="true">
         Light mode
+      </button>
+      <button class="button subtle shell-toggle" id="ui-mode-toggle" type="button" aria-pressed="false">
+        Clean mode
       </button>
     </nav>
   </header>

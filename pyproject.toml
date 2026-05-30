@@ -14,6 +14,8 @@ dependencies = [
   "uvicorn>=0.35,<1",
   "httpx>=0.28,<1",
   "openpyxl>=3.1,<4",
+  "openhtf==1.6.1",
+  "nicegui[native]==3.11.1",
 ]
 license = {text = "Proprietary - Paradox Cat GmbH internal use only"}
 authors = [
@@ -28,6 +30,12 @@ classifiers = [
 desktop = [
   "PySide6>=6.7,<7",
 ]
+native-build = [
+  "Pillow>=10,<12",
+]
+packaging = [
+  "PyInstaller>=6.20,<7",
+]
 
 [project.scripts]
 sg-preflight = "sg_preflight.cli:main"
@@ -40,4 +48,4 @@ where = ["."]
 include = ["sg_preflight*"]
 
 [tool.setuptools.package-data]
-sg_preflight = ["templates/*.html", "static/*.css", "static/*.js"]
+sg_preflight = ["templates/*.html", "static/*.css", "static/*.js", "data/*.json"]

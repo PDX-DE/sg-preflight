@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}SGFX QA Status Board unavailable - SG Preflight Operator UI{% endblock %}
+{% block content %}
+<section class="hero-panel hero-panel--simple">
+  <div class="hero-copy">
+    <p class="eyebrow">SGFX QA status</p>
+    <h2>SGFX QA Status Board unavailable</h2>
+    <p class="hero-text">
+      {{ unavailable_reason }}
+    </p>
+    <div class="hero-bullets">
+      <span>Generate or copy a review package before opening the board.</span>
+      <span>Evidence is not approval.</span>
+      <span>Manual screenshot review remains required.</span>
+    </div>
+  </div>
+</section>
+{% endblock %}

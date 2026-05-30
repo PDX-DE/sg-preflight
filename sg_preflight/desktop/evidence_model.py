@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import importlib.util
 from dataclasses import dataclass
+import json
+import os
 from pathlib import Path
+import sys
 from typing import Any
+import uuid
 
+from sg_preflight.bmw_delivery import read_bmw_screenshot_state
+from sg_preflight.cross_car_comparison import build_cross_car_comparison
+from sg_preflight.daily_digest import build_latest_daily_digest
+from sg_preflight.delivery_checklist import read_delivery_checklist
+from sg_preflight.manual_review import QUALITY_HERO_STEPS
+from sg_preflight.operator_handoff import build_operator_handoff_snapshot
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.qa_actions import ActionRecord, list_operator_actions, list_recent_action_records, load_action_record
+from sg_preflight.export_size_analysis import read_export_size_analysis
 from sg_preflight.reporting import build_report_presentation
+from sg_preflight.risk_scoring import read_per_car_risk_score
+from sg_preflight.team_digest_board import build_team_daily_digest_board
 from sg_preflight.services import (
     RunRecord,
     list_recent_run_records,
@@ -15,8 +29,10 @@ from sg_preflight.services import (
     load_run_report,
     prerequisite_status,
     qa_workflow_status,
+    utc_now,
     workspace_root,
 )
+from sg_preflight.visual_review import build_visual_review_prep
 
 
 PRIMARY_ACTION_TEMPLATE = (
@@ -25,6 +41,18 @@ PRIMARY_ACTION_TEMPLATE = (
     "scene_check__{profile}",
     "unused_resources__{profile}",
     "delivery_checklist__{profile}",
+)
+DELIVERY_CHECKLIST_EMPTY_NOTE = (
+    "No size-analysis workbook yet for this profile. Click Generate to invoke the BMW pipeline export step."
+)
+SCREENSHOT_TEST_STATE_EMPTY_NOTE = (
+    "No captured screenshots yet — run the lane-correct BMW Git screenshot command for this profile to generate."
+)
+DAILY_DIGEST_EMPTY_NOTE = (
+    "No review package on this workspace yet. Click Build to generate one for the active ticket."
+)
+MANUAL_REVIEW_EMPTY_NOTE = (
+    "Manual review session not started. Click Start Session below to begin, then Record evidence on each Quality-Hero step as you complete it."
 )
 
 
@@ -88,6 +116,14 @@ class DesktopManualCard:
 
 
 @dataclass(frozen=True)
+class DesktopSurfaceItem:
+    key: str
+    label: str
+    state: str
+    summary: str
+
+
+@dataclass(frozen=True)
 class DesktopRecentActionItem:
     run_id: str
     action_id: str
@@ -132,6 +168,11 @@ class DesktopActionSnapshot:
     current_command: str
     child_run_id: str
     linked_run_id: str
+    workspace_root: str
+    project_root: str
+    output_root: str
+    error_message: str
+    exit_code: int
     summary_lines: tuple[str, ...]
     top_paths: tuple[DesktopEvidenceItem, ...]
     manual_followups: tuple[str, ...]
@@ -149,9 +190,17 @@ class DesktopRunSnapshot:
     profile_id: str
     profile_label: str
     status: str
+    initializing: bool
     created_at_utc: str
     workflow_stage_label: str
     summary_title: str
+    current_command: str
+    log_path: str
+    log_tail: str
+    output_root: str
+    project_root: str
+    error_message: str
+    exit_code: int
     summary_lines: tuple[str, ...]
     grouped_lines: tuple[str, ...]
     notes: tuple[str, ...]
@@ -161,12 +210,48 @@ class DesktopRunSnapshot:
     copy_items: tuple[DesktopCopyItem, ...]
 
 
+@dataclass(frozen=True)
+class DesktopEnvironmentItem:
+    key: str
+    category: str
+    label: str
+    state: str
+    summary: str
+    path: str
+    next_action: str
+
+
+@dataclass(frozen=True)
+class DesktopOperatorOverview:
+    workspace_root: str
+    generated_at_utc: str
+    recommended_profile_id: str
+    recommended_action_id: str
+    ready_profile_count: int
+    action_count: int
+    ready_action_count: int
+    blocked_action_count: int
+    blocker_count: int
+    manual_card_count: int
+    environment_state_counts: dict[str, int]
+    latest_action_run_id: str
+    latest_action_status: str
+    latest_run_id: str
+    latest_run_status: str
+    summary_line: str
+    export_size_analysis_status: str = "no_profile"
+    export_size_analysis_variant_count: int = 0
+    export_size_analysis_workbook_date: str = ""
+    export_size_analysis_summary: str = ""
+    export_size_analysis_workbook_path: str = ""
+
+
 def _ready_profiles(root: Path, profiles: list[RunProfile] | None = None) -> list[RunProfile]:
     live_profiles = profiles if profiles is not None else list_run_profiles(root)
     return [
         profile
         for profile in live_profiles
-        if profile.project_root.exists() and profile.config_path.exists()
+        if profile.source_project_root().exists()
     ]
 
 
@@ -213,6 +298,412 @@ def latest_run_links(profile_id: str, workspace: Path | None = None) -> DesktopL
         html_report=str(record.paths.get("html_report", "")),
         markdown_report=str(record.paths.get("markdown_report", "")),
         json_report=str(record.paths.get("json_report", "")),
+    )
+
+
+def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnvironmentItem]:
+    root = workspace_root(workspace)
+    readiness = {item["key"]: item for item in prerequisite_status(root)}
+
+    def _ready_from_prereq(key: str) -> bool:
+        return str(readiness.get(key, {}).get("status", "")).strip().lower() == "available"
+
+    def _status_from_prereq(key: str) -> str:
+        return str(readiness.get(key, {}).get("status", "")).strip().lower()
+
+    def _detail_from_prereq(key: str) -> str:
+        return str(readiness.get(key, {}).get("detail", "")).strip()
+
+    def _probe_path_from_prereq(key: str) -> str:
+        return str(readiness.get(key, {}).get("probe_path", "")).strip()
+
+    def _item(
+        *,
+        key: str,
+        category: str,
+        label: str,
+        state: str,
+        summary: str,
+        path: str,
+        next_action: str,
+    ) -> DesktopEnvironmentItem:
+        return DesktopEnvironmentItem(
+            key=key,
+            category=category,
+            label=label,
+            state=state,
+            summary=summary,
+            path=path,
+            next_action=next_action,
+        )
+
+    sg_module_spec = importlib.util.find_spec("sg_preflight")
+    sg_module_path = ""
+    if sg_module_spec is not None:
+        if sg_module_spec.origin:
+            sg_module_path = str(Path(sg_module_spec.origin))
+        elif sg_module_spec.submodule_search_locations:
+            sg_module_path = str(next(iter(sg_module_spec.submodule_search_locations), ""))
+
+    delivery_keys = (
+        "delivery_checklist_tool",
+        "delivery_checklist_helper",
+        "delivery_checklist_readme",
+        "delivery_checklist_camera_crane",
+    )
+    delivery_ready = sum(1 for key in delivery_keys if _ready_from_prereq(key))
+    if delivery_ready == len(delivery_keys):
+        delivery_state = "available"
+        delivery_summary = "The mirrored delivery-checklist bridge assets are present locally. This remains SG-side readiness, not BMW execution."
+    elif delivery_ready > 0:
+        delivery_state = "partial"
+        delivery_summary = "Some delivery-checklist bridge assets exist locally, but the mirrored set is incomplete."
+    else:
+        delivery_state = "blocked"
+        delivery_summary = "The mirrored delivery-checklist bridge assets are not available locally yet."
+
+    bmw_script_keys = (
+        "bmw_screenshot_scripts",
+        "bmw_car_manager_script",
+        "bmw_test_main_script",
+    )
+    bmw_script_ready = sum(1 for key in bmw_script_keys if _ready_from_prereq(key))
+    if bmw_script_ready == len(bmw_script_keys):
+        bmw_scripts_state = "available"
+        bmw_scripts_summary = "The BMW smoke helper script surface is present locally."
+    elif bmw_script_ready > 0:
+        bmw_scripts_state = "partial"
+        bmw_scripts_summary = "Some BMW smoke helper files were found locally, but the full helper surface is incomplete."
+    else:
+        bmw_scripts_state = "blocked"
+        bmw_scripts_summary = "BMW smoke helper scripts are still blocked on repo access and local checkout."
+
+    output_root = root / "out" / "operator-ui"
+    output_state = "not_run"
+    output_summary = "Operator output write access is not probed during this read-only desktop overview."
+    output_path = str(output_root)
+
+    python_path = str(Path(sys.executable).resolve())
+    python_ready = Path(python_path).exists()
+    raco_headless_status = _status_from_prereq("raco_headless")
+    raco_headless_detail = _detail_from_prereq("raco_headless")
+    raco_headless_probe = _probe_path_from_prereq("raco_headless")
+    raco_gui_status = _status_from_prereq("raco_gui")
+    raco_gui_detail = _detail_from_prereq("raco_gui")
+    raco_gui_probe = _probe_path_from_prereq("raco_gui")
+
+    items = [
+        _item(
+            key="python_backend",
+            category="Python backend",
+            label="Python backend",
+            state="available" if python_ready else "missing",
+            summary=(
+                "The shell has a concrete Python executable available for backend commands."
+                if python_ready
+                else "The shell does not have a working Python executable path for backend commands."
+            ),
+            path=python_path,
+            next_action="Use the bundled environment or launch the shell with --python pointing at a working interpreter.",
+        ),
+        _item(
+            key="sg_preflight_import",
+            category="Python backend",
+            label="sg_preflight import",
+            state="available" if sg_module_spec is not None else "blocked",
+            summary=(
+                "The shared SG Preflight backend module can be imported by the active interpreter."
+                if sg_module_spec is not None
+                else "The active interpreter cannot import the shared SG Preflight backend module."
+            ),
+            path=sg_module_path or "sg_preflight",
+            next_action="Install the workspace package into the active interpreter or switch the shell to the bundled environment.",
+        ),
+        _item(
+            key="mirror_root",
+            category="SG mirror",
+            label="repositories/trunk mirror",
+            state="available" if _ready_from_prereq("mirror_root") else "missing",
+            summary=(
+                "The mirrored Seriengrafik working tree is available locally."
+                if _ready_from_prereq("mirror_root")
+                else "The mirrored Seriengrafik working tree is missing locally."
+            ),
+            path=str(readiness.get("mirror_root", {}).get("path", "")),
+            next_action="Sync the working mirror into repositories\\trunk before relying on SG-side checker coverage.",
+        ),
+        _item(
+            key="checker_root",
+            category="SG mirror",
+            label=".pdx/checkers",
+            state="available" if _ready_from_prereq("checker_root") else "missing",
+            summary=(
+                "The mirrored SG checker root is available."
+                if _ready_from_prereq("checker_root")
+                else "The mirrored SG checker root is missing."
+            ),
+            path=str(readiness.get("checker_root", {}).get("path", "")),
+            next_action="Mirror the .pdx/checkers folder from Seriengrafik into the local workspace.",
+        ),
+        _item(
+            key="execute_checks",
+            category="SG mirror",
+            label="executeChecks.py",
+            state="available" if _ready_from_prereq("execute_checks") else "missing",
+            summary=(
+                "The main SG checker dispatcher is available locally."
+                if _ready_from_prereq("execute_checks")
+                else "The main SG checker dispatcher is missing locally."
+            ),
+            path=str(readiness.get("execute_checks", {}).get("path", "")),
+            next_action="Mirror executeChecks.py into .pdx/checkers so repo and stack actions can stay truthful.",
+        ),
+        _item(
+            key="unused_resource_checker",
+            category="SG mirror",
+            label="printNotUsedResources.py",
+            state="available" if _ready_from_prereq("unused_resource_checker") else "missing",
+            summary=(
+                "The SG unused-resource checker is available locally."
+                if _ready_from_prereq("unused_resource_checker")
+                else "The SG unused-resource checker is missing locally."
+            ),
+            path=str(readiness.get("unused_resource_checker", {}).get("path", "")),
+            next_action="Mirror printNotUsedResources.py into .pdx/checkers so unused-resource scans stay wired.",
+        ),
+        _item(
+            key="delivery_checklist_assets",
+            category="SG mirror",
+            label="deliveryChecklist assets",
+            state=delivery_state,
+            summary=delivery_summary,
+            path=str(readiness.get("delivery_checklist_tool", {}).get("path", "")),
+            next_action="Keep this surface as a readiness bridge until the BMW-owned delivery execution path is actually available.",
+        ),
+        _item(
+            key="raco_headless",
+            category="Local tools",
+            label="RaCoHeadless",
+            state=(
+                "available"
+                if raco_headless_status == "available"
+                else "partial"
+                if raco_headless_status == "incompatible"
+                else "missing"
+            ),
+            summary=(
+                "RaCoHeadless is available for local scene-side readiness checks."
+                if raco_headless_status == "available"
+                else (
+                    "RaCoHeadless exists locally, but the configured build cannot open the representative SG scene here."
+                    + (f" {raco_headless_detail}" if raco_headless_detail else "")
+                )
+                if raco_headless_status == "incompatible"
+                else "RaCoHeadless is not configured on this machine yet."
+            ),
+            path=str(readiness.get("raco_headless", {}).get("path", "")),
+            next_action=(
+                "Point SG_RACO_HEADLESS at a Ramses Composer build that can open the current SG scene feature level."
+                + (f" Probe scene: {raco_headless_probe}" if raco_headless_probe else "")
+            )
+            if raco_headless_status == "incompatible"
+            else "Set SG_RACO_HEADLESS or install the standard Ramses Composer build on this machine.",
+        ),
+        _item(
+            key="raco_gui",
+            category="Local tools",
+            label="Ramses Composer / RaCo GUI",
+            state=(
+                "available"
+                if raco_gui_status == "available" and raco_headless_status != "incompatible"
+                else "partial"
+                if raco_gui_status == "available"
+                else "missing"
+            ),
+            summary=(
+                "A Ramses Composer GUI executable is available for first-pass open-in-RaCo adapters."
+                if raco_gui_status == "available" and raco_headless_status != "incompatible"
+                else (
+                    "A Ramses Composer GUI executable is available for manual open-in-RaCo adapters, but representative scene compatibility is still only partial because RaCoHeadless is not green yet."
+                    + (f" {raco_headless_detail}" if raco_headless_detail else "")
+                )
+                if raco_gui_status == "available"
+                else "No Ramses Composer GUI executable is configured locally yet."
+            ),
+            path=str(readiness.get("raco_gui", {}).get("path", "")),
+            next_action=(
+                "Point SG_RACO_HEADLESS at a Ramses Composer build that can open the current SG scene feature level, then keep the GUI adapter for manual review."
+                + (f" Probe scene: {raco_headless_probe or raco_gui_probe}" if (raco_headless_probe or raco_gui_probe) else "")
+            )
+            if raco_gui_status == "available" and raco_headless_status == "incompatible"
+            else "Set SG_RACO_GUI or install the standard Ramses Composer GUI build before exposing open-in-RaCo adapters.",
+        ),
+        _item(
+            key="blender_executable",
+            category="Local tools",
+            label="Blender executable",
+            state="available" if _ready_from_prereq("blender_executable") else "missing",
+            summary=(
+                "A Blender executable path is available for local opening/adapter flows."
+                if _ready_from_prereq("blender_executable")
+                else "No Blender executable path is configured locally yet."
+            ),
+            path=str(readiness.get("blender_executable", {}).get("path", "")),
+            next_action="Set SG_BLENDER_EXE or install the standard Blender build before adding Blender-open adapters.",
+        ),
+        _item(
+            key="bmw_models_repo",
+            category="BMW / External",
+            label="BMW digital-3d-car repo",
+            state="available" if _ready_from_prereq("bmw_models_repo") else "blocked",
+            summary=(
+                "The BMW models repository is available locally."
+                if _ready_from_prereq("bmw_models_repo")
+                else "The BMW models repository is still blocked on access or local checkout."
+            ),
+            path=str(readiness.get("bmw_models_repo", {}).get("path", "")),
+            next_action="Set SG_CARMODELS_REPO once access exists and the BMW repository is cloned locally.",
+        ),
+        _item(
+            key="bmw_helper_scripts",
+            category="BMW / External",
+            label="BMW helper scripts",
+            state=bmw_scripts_state,
+            summary=bmw_scripts_summary,
+            path=str(readiness.get("bmw_test_main_script", {}).get("path", "")),
+            next_action="Treat BMW smoke as blocked until the repo, helper scripts, and target mapping are all present locally.",
+        ),
+        _item(
+            key="jira_qa_hero",
+            category="BMW / External",
+            label="Jira / QA Hero",
+            state="blocked",
+            summary="Direct Jira or QA Hero integration is not connected here yet. The current product surface is copy export, not API automation.",
+            path="copy exports only",
+            next_action="Keep using the SG-side copy exports until the real ticket integration path is agreed and available.",
+        ),
+        _item(
+            key="output_write_access",
+            category="Operator output",
+            label="out/operator-ui write access",
+            state=output_state,
+            summary=output_summary,
+            path=output_path,
+            next_action="Ensure the workspace output folder stays writable so evidence, screenshots, and action records can be persisted.",
+        ),
+    ]
+    return items
+
+
+def _state_counts(items: list[DesktopEnvironmentItem]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        state = item.state.strip().lower() or "unknown"
+        counts[state] = counts.get(state, 0) + 1
+    return counts
+
+
+def desktop_operator_overview(
+    workspace: Path | None = None,
+    *,
+    profile_id: str = "",
+    profiles: list[RunProfile] | None = None,
+) -> DesktopOperatorOverview:
+    root = workspace_root(workspace)
+    ready_profiles = _ready_profiles(root, profiles)
+    normalized_profile = profile_id.strip().lower()
+    selected_profile = next(
+        (
+            profile
+            for profile in ready_profiles
+            if profile.profile_id.strip().lower() == normalized_profile
+        ),
+        ready_profiles[0] if ready_profiles else None,
+    )
+    selected_profile_id = selected_profile.profile_id if selected_profile is not None else ""
+    recommended_action_id = (
+        f"qa_stack__{selected_profile_id.lower()}" if selected_profile_id else ""
+    )
+
+    actions = (
+        desktop_actions_for_profile(selected_profile_id, root, profiles=ready_profiles)
+        if selected_profile_id
+        else []
+    )
+    blockers = (
+        desktop_blocker_items(selected_profile_id, root, profiles=ready_profiles)
+        if selected_profile_id
+        else []
+    )
+    manual_cards = (
+        desktop_manual_cards(selected_profile_id, root, profiles=ready_profiles)
+        if selected_profile_id
+        else []
+    )
+    environment_items = desktop_environment_doctor(root)
+    recent_action_items = (
+        desktop_recent_actions(root, profile_id=selected_profile_id, limit=1)
+        if selected_profile_id
+        else []
+    )
+    recent_run_items = (
+        desktop_recent_runs(root, profile_id=selected_profile_id, limit=1)
+        if selected_profile_id
+        else []
+    )
+
+    ready_action_count = sum(1 for action in actions if action.ready)
+    blocked_action_count = len(actions) - ready_action_count
+    blocker_count = sum(
+        1
+        for item in blockers
+        if item.state.strip().lower() not in {"available", "covered"}
+    )
+    latest_action = recent_action_items[0] if recent_action_items else None
+    latest_run = recent_run_items[0] if recent_run_items else None
+
+    if selected_profile_id:
+        summary_line = (
+            f"{selected_profile_id}: {ready_action_count}/{len(actions)} native actions available; "
+            f"{blocker_count} blocker card(s); {len(manual_cards)} manual card(s)."
+        )
+        if latest_action is not None:
+            summary_line += f" Latest action: {latest_action.status}."
+        export_size_analysis = read_export_size_analysis(
+            profile_id=selected_profile_id,
+            workspace=root,
+            latest=True,
+        )
+    else:
+        summary_line = "No available SG profile is available for the native operator overview."
+        export_size_analysis = {}
+
+    export_size_analysis_summary = str(export_size_analysis.get("note", "")).strip()
+    if not export_size_analysis_summary:
+        export_size_analysis_summary = str(export_size_analysis.get("summary", "")).strip()
+
+    return DesktopOperatorOverview(
+        workspace_root=str(root),
+        generated_at_utc=utc_now(),
+        recommended_profile_id=selected_profile_id,
+        recommended_action_id=recommended_action_id,
+        ready_profile_count=len(ready_profiles),
+        action_count=len(actions),
+        ready_action_count=ready_action_count,
+        blocked_action_count=blocked_action_count,
+        blocker_count=blocker_count,
+        manual_card_count=len(manual_cards),
+        environment_state_counts=_state_counts(environment_items),
+        latest_action_run_id=latest_action.run_id if latest_action is not None else "",
+        latest_action_status=latest_action.status if latest_action is not None else "",
+        latest_run_id=latest_run.run_id if latest_run is not None else "",
+        latest_run_status=latest_run.status if latest_run is not None else "",
+        summary_line=summary_line,
+        export_size_analysis_status=str(export_size_analysis.get("status", "no_profile")).strip(),
+        export_size_analysis_variant_count=int(export_size_analysis.get("variant_count", 0) or 0),
+        export_size_analysis_workbook_date=str(export_size_analysis.get("workbook_date", "")).strip(),
+        export_size_analysis_summary=export_size_analysis_summary,
+        export_size_analysis_workbook_path=str(export_size_analysis.get("workbook_path", "")).strip(),
     )
 
 
@@ -288,13 +779,13 @@ def desktop_blocker_items(
 
     def _machine_item(key: str, label: str, summary: str) -> DesktopBlockerItem:
         item = readiness.get(key, {})
-        state = "ready" if item.get("status") == "available" else "blocked"
-        blocker = () if state == "ready" else (f"{label} is not available locally: {item.get('path', '')}",)
+        state = "available" if item.get("status") == "available" else "blocked"
+        blocker = () if state == "available" else (f"{label} is not available locally: {item.get('path', '')}",)
         return DesktopBlockerItem(
             key=key,
             label=label,
             state=state,
-            summary=summary if state == "ready" else f"{summary} Missing on this machine.",
+            summary=summary if state == "available" else f"{summary} Missing on this machine.",
             blockers=blocker,
         )
 
@@ -336,30 +827,144 @@ def desktop_manual_cards(
 ) -> list[DesktopManualCard]:
     root = workspace_root(workspace)
     live_profiles = _ready_profiles(root, profiles)
+    normalized_profile = profile_id.strip().lower()
+    selected_profile = next(
+        (profile for profile in live_profiles if profile.profile_id.strip().lower() == normalized_profile),
+        None,
+    )
     readiness = {item["key"]: item for item in prerequisite_status(root)}
     workflow = {item["key"]: item for item in qa_workflow_status(root, live_profiles)}
-    raco_ready = readiness.get("raco_headless", {}).get("status") == "available"
+    raco_status = str(readiness.get("raco_gui", {}).get("status", "missing"))
+    raco_ready = raco_status == "available"
+    blender_ready = str(readiness.get("blender_executable", {}).get("status", "missing")) == "available"
     delivery = workflow.get("delivery_checklist", {})
     bmw = workflow.get("bmw_screenshot_smoke", {})
+    bmw_checklist_path = root / "docs" / "bmw-access-integration-checklist.md"
+    bmw_checklist_note = (
+        f"Keep the intake steps in {bmw_checklist_path} so BMW access, repo setup, helper discovery, and first dry run are available the moment access lands."
+        if bmw_checklist_path.exists()
+        else "Add docs/bmw-access-integration-checklist.md so BMW access and smoke setup can be tracked inside the shell flow."
+    )
+    review_prep = (
+        build_visual_review_prep(
+            selected_profile.profile_id,
+            selected_profile.source_project_root(),
+            repo_root=selected_profile.source_repo_root(),
+        )
+        if selected_profile is not None and selected_profile.source_project_root().exists()
+        else None
+    )
 
-    return [
+    visual_review_summary = (
+        "Open the changed area in Blender and RaCo, compare both views, then record the result as first-class manual evidence."
+        if blender_ready and raco_ready
+        else "At least one visual-review tool is still missing or incompatible locally, so keep the checklist explicit instead of assuming the visual pass happened."
+    )
+    if review_prep is not None and review_prep.screenshot_count:
+        visual_review_summary = (
+            f"Compare the changed area in Blender and RaCo, then cross-check it against "
+            f"{review_prep.screenshot_count} live screenshot baselines."
+        )
+
+    visual_review_note = (
+        "Use ATTACH VISUAL REVIEW CHECKLIST to save: project changelog reviewed, screenshot baseline reviewed, Blender scene opened, "
+        "RaCo scene opened, Blender vs RaCo compared, key camera checked, screenshot captured, and finding documented."
+    )
+    if review_prep is not None and review_prep.priority_screenshots:
+        visual_review_note += " After running a profile action, open the generated Visual review gallery from Files and start with: " + ", ".join(review_prep.priority_screenshots[:6]) + "."
+
+    cards = [
         DesktopManualCard(
-            key="blender_raco_compare",
-            label="Blender vs RaCo review",
-            state="manual" if raco_ready else "blocked",
-            summary=(
-                "Compare the changed area in Blender and RaCo before treating the slice as visually safe."
-                if raco_ready
-                else "RaCoHeadless is missing locally, so only the manual Blender side is currently available."
-            ),
-            note="Keep the deterministic evidence open while doing the visual compare.",
+            key="visual_review_session",
+            label="Visual review session",
+            state="manual" if (blender_ready or raco_ready) else "blocked",
+            summary=visual_review_summary,
+            note=visual_review_note,
         ),
+    ]
+
+    if review_prep is not None:
+        cards.append(
+            DesktopManualCard(
+                key="project_changelog_review",
+                label="Project changelog review",
+                state="manual" if review_prep.changelog_path else "blocked",
+                summary=review_prep.changelog_heading or "Project changelog is not available locally.",
+                note=(
+                    "Focus lines: " + " | ".join(review_prep.changelog_focus_lines[:4])
+                    if review_prep.changelog_focus_lines
+                    else "Review the latest car changelog before trusting the visual baseline."
+                ),
+            )
+        )
+        cards.append(
+            DesktopManualCard(
+                key="screenshot_baseline_review",
+                label="Screenshot baseline review",
+                state="manual" if review_prep.screenshot_count else "blocked",
+                summary=(
+                    f"{review_prep.screenshot_count} live screenshot baselines are available for local reference."
+                    if review_prep.screenshot_count
+                    else "No live screenshot baselines were detected under export/tests/expected."
+                ),
+                note=(
+                    "Priority shortlist: " + ", ".join(review_prep.priority_screenshots[:6])
+                    if review_prep.priority_screenshots
+                    else "Run a profile action first, then open the generated Visual review gallery from Files."
+                ),
+            )
+        )
+        cards.append(
+            DesktopManualCard(
+                key="tool_entrypoints",
+                label="Tool entry points",
+                state="manual" if (review_prep.raco_scene_path or review_prep.blender_workfile_path) else "blocked",
+                summary="Representative local files are available for first-pass open-in-RaCo / open-in-Blender checks.",
+                note=" | ".join(
+                    part
+                    for part in (
+                        f"RaCo: {Path(review_prep.raco_scene_path).name}" if review_prep.raco_scene_path else "",
+                        f"Blender: {Path(review_prep.blender_workfile_path).name}" if review_prep.blender_workfile_path else "",
+                        f"Constants README: {Path(review_prep.constants_readme_path).name}" if review_prep.constants_readme_path else "",
+                    )
+                    if part
+                ) or "Representative RaCo or Blender files were not detected for this profile.",
+            )
+        )
+        cards.append(
+            DesktopManualCard(
+                key="shared_bmw_docs_review",
+                label="Shared BMW docs review",
+                state="manual" if (review_prep.shared_doc_paths or review_prep.shared_svn_log_lines) else "blocked",
+                summary=(
+                    f"{len(review_prep.shared_doc_paths)} shared BMW README / CHANGELOG file(s) were prioritized from the latest shared SVN log."
+                    if review_prep.shared_doc_paths
+                    else "No shared BMW README / CHANGELOG shortlist was generated."
+                ),
+                note=(
+                    "Shared SVN: " + " | ".join(review_prep.shared_svn_log_lines[:2])
+                    if review_prep.shared_svn_log_lines
+                    else "Open the generated Visual review prep from Files to inspect shared BMW SVN and README / CHANGELOG context."
+                ),
+            )
+        )
+
+    cards.extend([
         DesktopManualCard(
             key="screenshot_slots",
             label="Screenshot evidence slot",
             state="manual",
             summary="Capture the important proof shots early instead of waiting for delivery pressure.",
             note=f"Attach the screenshot path next to the {profile_id} evidence bundle once you have it.",
+        ),
+        DesktopManualCard(
+            key="bmw_access_intake",
+            label="BMW access intake checklist",
+            state="blocked" if str(bmw.get("state", "blocked")) == "blocked" else "manual",
+            summary=(
+                "BMW-side smoke is still blocked locally, so the intake checklist has to stay visible in the shell instead of living in chat memory."
+            ),
+            note=bmw_checklist_note,
         ),
         DesktopManualCard(
             key="delivery_note",
@@ -375,9 +980,129 @@ def desktop_manual_cards(
             summary=(
                 "After integration, record positive and negative outcomes in Jira or QA Hero with the same evidence links."
                 if str(bmw.get("state", "blocked")) != "blocked"
-                else "BMW-side follow-up is still blocked locally, so keep the SG-side post-integration note ready without pretending the BMW stage ran."
+                else "BMW-side follow-up is still blocked locally, so keep the SG-side post-integration note visible without pretending the BMW stage ran."
             ),
             note="Use the SG-side report links first, then append the BMW-side outcome once access exists.",
+        ),
+    ])
+    return cards
+
+
+def _surface_state(payload: dict[str, Any]) -> str:
+    raw_status = str(payload.get("status", "unknown") or "unknown").strip()
+    if bool(payload.get("data_available", False)):
+        return "available"
+    if raw_status == "no_review_package":
+        return "incomplete"
+    if raw_status in {"no_workbook", "unavailable", "profile_not_found"}:
+        return "unavailable"
+    if raw_status in {"missing", "not_found", "no_overview_sheet"}:
+        return "missing"
+    if raw_status in {"error", "failed", "unreadable"}:
+        return "unknown"
+    return raw_status or "unknown"
+
+
+def _abbreviate_workspace_text(text: str, root: Path) -> str:
+    root_text = str(root.resolve())
+    if root_text not in text:
+        return text
+    return text.replace(root_text, root.name or str(root))
+
+
+def _surface_empty_note(key: str, payload: dict[str, Any]) -> str:
+    if key == "delivery-checklist" and _surface_state(payload) == "unavailable":
+        return DELIVERY_CHECKLIST_EMPTY_NOTE
+    if key == "daily-digest" and str(payload.get("status", "")) == "no_review_package":
+        return DAILY_DIGEST_EMPTY_NOTE
+    if key == "screenshot-test-state":
+        try:
+            actual_count = int(payload.get("actual_count", 0) or 0)
+            diff_count = int(payload.get("diff_count", 0) or 0)
+        except (TypeError, ValueError):
+            actual_count = 0
+            diff_count = 0
+        if actual_count == 0 and diff_count == 0:
+            return SCREENSHOT_TEST_STATE_EMPTY_NOTE
+    return ""
+
+
+def _surface_summary(key: str, payload: dict[str, Any], fallback: str, root: Path) -> str:
+    raw = payload.get("summary", "")
+    if isinstance(raw, dict):
+        raw = ""
+    text = str(raw or payload.get("no_data_message", "") or payload.get("note", "") or fallback)
+    note = _surface_empty_note(key, payload)
+    if note and note not in text:
+        text = f"{text} {note}"
+    return _abbreviate_workspace_text(text, root)
+
+
+def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> list[DesktopSurfaceItem]:
+    root = workspace_root(workspace)
+    normalized_profile = profile_id.strip() or "profile"
+
+    def _from_payload(key: str, label: str, payload: dict[str, Any]) -> DesktopSurfaceItem:
+        return DesktopSurfaceItem(
+            key=key,
+            label=label,
+            state=_surface_state(payload),
+            summary=_surface_summary(key, payload, "No summary available.", root),
+        )
+
+    def _safe_item(key: str, label: str, reader) -> DesktopSurfaceItem:
+        try:
+            payload = reader()
+        except Exception as exc:
+            return DesktopSurfaceItem(
+                key=key,
+                label=label,
+                state="unknown",
+                summary=f"{label} could not be read: {exc}",
+            )
+        return _from_payload(key, label, payload)
+
+    return [
+        _safe_item(
+            "delivery-checklist",
+            "Delivery Checklist",
+            lambda: read_delivery_checklist(profile_id=normalized_profile, workspace=root),
+        ),
+        _safe_item(
+            "screenshot-test-state",
+            "Screenshot Test State",
+            lambda: read_bmw_screenshot_state(normalized_profile, workspace=root, sg_project_root=root),
+        ),
+        _safe_item(
+            "risk-score",
+            "Risk Score",
+            lambda: read_per_car_risk_score(normalized_profile, workspace=root),
+        ),
+        _safe_item(
+            "cross-car-comparison",
+            "Cross-Car Comparison",
+            lambda: build_cross_car_comparison(workspace=root, left_profile="G70", right_profile="G65"),
+        ),
+        _safe_item(
+            "daily-digest",
+            "Daily Digest",
+            lambda: build_latest_daily_digest(workspace=root),
+        ),
+        _safe_item(
+            "team-digest-board",
+            "Team Digest Board",
+            lambda: build_team_daily_digest_board(workspace=root, profiles=(normalized_profile, "G70", "G65")),
+        ),
+        _safe_item(
+            "operator-handoff",
+            "Operator Handoff",
+            lambda: build_operator_handoff_snapshot(workspace=root, profile_id=normalized_profile),
+        ),
+        DesktopSurfaceItem(
+            key="manual-review",
+            label="Manual Review Companion",
+            state="not_run",
+            summary=MANUAL_REVIEW_EMPTY_NOTE,
         ),
     ]
 
@@ -513,6 +1238,19 @@ def _artifact_items(record: ActionRecord) -> tuple[DesktopArtifactItem, ...]:
             )
         )
     return _dedupe_artifact_items(items)
+
+
+def _manual_evidence_copy_lines(record: ActionRecord) -> tuple[str, ...]:
+    lines: list[str] = []
+    for raw in record.manual_evidence[:6]:
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("label", "Manual evidence")).strip() or "Manual evidence"
+        path = str(raw.get("path", "")).strip()
+        if not path:
+            continue
+        lines.append(f"- {label}: {path}")
+    return tuple(lines)
 
 
 def _tail_text(path: str, limit: int = 30) -> str:
@@ -660,6 +1398,7 @@ def _quick_update_text(
     primary_line: str,
     html_report: str,
     project_root: str,
+    manual_evidence_lines: tuple[str, ...] = (),
 ) -> str:
     lines = [
         f"{heading} - {profile_id}",
@@ -672,6 +1411,8 @@ def _quick_update_text(
         lines.extend(["", f"Open first: {primary_line}"])
     if grouped_lines:
         lines.extend(["", "Top findings:", *grouped_lines[:4]])
+    if manual_evidence_lines:
+        lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
     lines.extend(["", "Open if needed:"])
     if html_report:
         lines.append(f"HTML report: {html_report}")
@@ -692,6 +1433,7 @@ def _export_copy_items(
     markdown_report: str,
     project_root: str,
     output_root: str,
+    manual_evidence_lines: tuple[str, ...] = (),
 ) -> tuple[DesktopCopyItem, ...]:
     primary_problem = primary_line or (grouped_lines[0] if grouped_lines else "No deterministic finding is currently blocking the run.")
     quick_update = _quick_update_text(
@@ -704,6 +1446,7 @@ def _export_copy_items(
         primary_line=primary_line,
         html_report=html_report,
         project_root=project_root,
+        manual_evidence_lines=manual_evidence_lines,
     )
     implementation_lines = [
         f"Jira implementation update - {profile_id}",
@@ -753,7 +1496,7 @@ def _export_copy_items(
         counts_line,
         f"Primary issue: {primary_problem}",
         "",
-        "Evidence ready:",
+        "Evidence available:",
         f"- HTML report: {html_report}",
         f"- Markdown report: {markdown_report}",
         f"- Output root: {output_root}",
@@ -765,6 +1508,13 @@ def _export_copy_items(
         f"- Primary issue: {primary_problem}",
         f"- Evidence: {html_report}",
     ]
+    if manual_evidence_lines:
+        implementation_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        positive_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        negative_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        qa_hero_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        pre_delivery_lines.extend(["", "Manual evidence attached:", *manual_evidence_lines[:4]])
+        delivery_doc_lines.extend(["- Manual evidence:", *manual_evidence_lines[:4]])
     if workflow_stage_label:
         implementation_lines.insert(1, f"Workflow stage: {workflow_stage_label}")
         positive_lines.insert(1, f"Workflow stage: {workflow_stage_label}")
@@ -796,6 +1546,72 @@ def _load_text_path(path_value: str) -> str:
     return candidate.read_text(encoding="utf-8", errors="replace").strip()
 
 
+def _load_visual_review_payload(record: ActionRecord) -> dict[str, Any]:
+    candidate = Path(str(record.paths.get("visual_review_prep_json", "")).strip())
+    if not candidate.exists() or not candidate.is_file():
+        return {}
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _visual_review_copy_item(record: ActionRecord) -> DesktopCopyItem | None:
+    payload = _load_visual_review_payload(record)
+    if not payload:
+        return None
+
+    profile_id = str(payload.get("profile_id", record.profile_id or record.action_id)).strip()
+    changelog_heading = str(payload.get("changelog_heading", "")).strip()
+    changelog_focus = [str(item).strip() for item in payload.get("changelog_focus_lines", []) if str(item).strip()]
+    priority_screenshots = [str(item).strip() for item in payload.get("priority_screenshots", []) if str(item).strip()]
+    raco_scene_path = str(payload.get("raco_scene_path", "")).strip()
+    blender_workfile_path = str(payload.get("blender_workfile_path", "")).strip()
+    screenshot_root = str(payload.get("screenshot_root", "")).strip()
+
+    lines = [f"Visual review note - {profile_id}"]
+    if changelog_heading:
+        lines.append(f"Changelog focus: {changelog_heading}")
+    lines.append("")
+    lines.append("Manual review prep:")
+    if changelog_focus:
+        lines.extend(f"- {line}" for line in changelog_focus[:6])
+    else:
+        lines.append("- No changelog focus lines were detected.")
+    if priority_screenshots:
+        lines.append("")
+        lines.append("Priority screenshot baselines:")
+        lines.extend(f"- {name}" for name in priority_screenshots[:8])
+    if screenshot_root:
+        lines.append(f"- Screenshot baseline root: {screenshot_root}")
+    if raco_scene_path or blender_workfile_path:
+        lines.append("")
+        lines.append("Tool entry points:")
+        if raco_scene_path:
+            lines.append(f"- RaCo scene: {raco_scene_path}")
+        if blender_workfile_path:
+            lines.append(f"- Blender workfile: {blender_workfile_path}")
+    lines.extend(
+        [
+            "",
+            "Checklist:",
+            "- Project changelog reviewed: [ ]",
+            "- Screenshot baseline set reviewed: [ ]",
+            "- Representative RaCo scene opened: [ ]",
+            "- Representative Blender workfile opened: [ ]",
+            "- Findings documented with evidence: [ ]",
+            "- Notes:",
+            "- ",
+        ]
+    )
+    return DesktopCopyItem(
+        key="visual_review",
+        label="Copy visual review note",
+        text="\n".join(lines).strip(),
+    )
+
+
 def _copy_items(
     record: ActionRecord,
     items: tuple[DesktopEvidenceItem, ...],
@@ -803,10 +1619,11 @@ def _copy_items(
 ) -> tuple[DesktopCopyItem, ...]:
     title = str(record.summary.get("title", record.label)) if isinstance(record.summary, dict) else record.label
     primary_line = _primary_evidence_line(items)
+    manual_evidence_lines = _manual_evidence_copy_lines(record)
     if run_record is not None:
         grouped_items = _report_grouped_items(run_record)
         grouped_lines = _grouped_finding_lines(grouped_items)
-        return _export_copy_items(
+        export_items = list(_export_copy_items(
             profile_id=record.profile_id or record.action_id,
             workflow_stage_label=_workflow_stage_label(run_record.context),
             title=title,
@@ -817,7 +1634,12 @@ def _copy_items(
             markdown_report=str(run_record.paths.get("markdown_report", "")).strip(),
             project_root=str(run_record.project_root).strip(),
             output_root=str(run_record.paths.get("output_root", "")).strip(),
-        )
+            manual_evidence_lines=manual_evidence_lines,
+        ))
+        visual_review_item = _visual_review_copy_item(record)
+        if visual_review_item is not None:
+            export_items.append(visual_review_item)
+        return tuple(item for item in export_items if item.text.strip())
 
     summary_lines = _summary_lines(record.summary)
     quick_update = _quick_update_text(
@@ -830,8 +1652,9 @@ def _copy_items(
         primary_line=primary_line,
         html_report="",
         project_root=record.project_root,
+        manual_evidence_lines=manual_evidence_lines,
     )
-    return tuple(
+    fallback_items = [
         item
         for item in (
             DesktopCopyItem(key="jira", label="Copy Jira note", text=quick_update),
@@ -840,7 +1663,11 @@ def _copy_items(
             DesktopCopyItem(key="handoff", label="Copy full handoff", text=quick_update),
         )
         if item.text.strip()
-    )
+    ]
+    visual_review_item = _visual_review_copy_item(record)
+    if visual_review_item is not None:
+        fallback_items.append(visual_review_item)
+    return tuple(fallback_items)
 
 
 def _action_grouped_lines(
@@ -892,6 +1719,13 @@ def _desktop_run_snapshot_from_action_record(
     progress = record.progress if isinstance(record.progress, dict) else {}
     progress_label = str(progress.get("label", "")).strip()
     progress_detail = str(progress.get("detail", "")).strip()
+    current_step = str(progress.get("step_key", "")).strip()
+    step_details = progress.get("step_details", []) if isinstance(progress.get("step_details"), list) else []
+    current_meta: dict[str, Any] = {}
+    for item in step_details:
+        if isinstance(item, dict) and str(item.get("key", "")).strip() == current_step:
+            current_meta = dict(item.get("meta", {})) if isinstance(item.get("meta"), dict) else {}
+            break
 
     summary_title = str(summary.get("title", record.label)).strip() or record.label
     summary_lines: list[str] = []
@@ -909,6 +1743,7 @@ def _desktop_run_snapshot_from_action_record(
             break
 
     notes = [str(note).strip() for note in record.notes if str(note).strip()]
+    notes.extend(_manual_evidence_copy_lines(record))
     if record.error_message.strip():
         notes.append(record.error_message.strip())
 
@@ -921,9 +1756,17 @@ def _desktop_run_snapshot_from_action_record(
         profile_id=record.profile_id,
         profile_label=profile_label,
         status=record.status,
+        initializing=False,
         created_at_utc=record.created_at_utc,
         workflow_stage_label=progress_label,
         summary_title=summary_title,
+        current_command=str(current_meta.get("command", record.command_preview)).strip(),
+        log_path=str(record.paths.get("log", "")).strip(),
+        log_tail=_tail_text(str(record.paths.get("log", "")).strip()),
+        output_root=str(record.paths.get("output_root", "")).strip(),
+        project_root=str(record.project_root).strip(),
+        error_message=str(record.error_message).strip(),
+        exit_code=int(record.exit_code or 0),
         summary_lines=tuple(summary_lines[:6]),
         grouped_lines=_action_grouped_lines(record, summary, evidence_items),
         notes=tuple(notes[:8]),
@@ -945,6 +1788,9 @@ def desktop_run_snapshot(
         try:
             action_record = load_action_record(run_id_or_path, root)
         except (FileNotFoundError, OSError, ValueError):
+            reference = str(run_id_or_path).strip()
+            if _looks_like_transient_run_reference(reference):
+                return _initializing_run_snapshot(reference)
             raise run_error
         return _desktop_run_snapshot_from_action_record(action_record, root)
 
@@ -966,9 +1812,17 @@ def desktop_run_snapshot(
         profile_id=run_record.profile_id,
         profile_label=run_record.profile_label,
         status=run_record.status,
+        initializing=False,
         created_at_utc=run_record.created_at_utc,
         workflow_stage_label=stage_label,
         summary_title=summary_title,
+        current_command="",
+        log_path="",
+        log_tail="",
+        output_root=str(run_record.paths.get("output_root", "")).strip(),
+        project_root=str(run_record.project_root).strip(),
+        error_message="",
+        exit_code=0,
         summary_lines=tuple(summary_lines),
         grouped_lines=grouped_lines,
         notes=tuple(str(note).strip() for note in run_record.notes if str(note).strip()),
@@ -987,6 +1841,54 @@ def desktop_run_snapshot(
             project_root=str(run_record.project_root).strip(),
             output_root=str(run_record.paths.get("output_root", "")).strip(),
         ),
+    )
+
+
+def _looks_like_transient_run_reference(reference: str) -> bool:
+    normalized = reference.strip().replace("/", "\\").lower()
+    if not normalized:
+        return False
+    if "\\out\\operator-ui\\" in normalized:
+        return True
+    try:
+        uuid.UUID(reference.strip())
+        return True
+    except (ValueError, AttributeError):
+        return False
+
+
+def _initializing_run_snapshot(reference: str) -> DesktopRunSnapshot:
+    summary_lines = (
+        "Action record is initializing.",
+        "The native shell is waiting for the nested action bundle to be written.",
+    )
+    notes = (
+        "This is a transient operator-state refresh while a long-running action is still materializing its nested run bundle.",
+        "Refresh again in a moment; the structured run snapshot should replace this placeholder automatically.",
+    )
+    return DesktopRunSnapshot(
+        run_id=reference,
+        profile_id="",
+        profile_label="Initializing action record",
+        status="queued",
+        initializing=True,
+        created_at_utc="",
+        workflow_stage_label="Initializing action record",
+        summary_title="Action record is initializing",
+        current_command="",
+        log_path="",
+        log_tail="",
+        output_root="",
+        project_root="",
+        error_message="",
+        exit_code=0,
+        summary_lines=summary_lines,
+        grouped_lines=(),
+        notes=notes,
+        packs=(),
+        artifacts=(),
+        source_files=(),
+        copy_items=(),
     )
 
 
@@ -1019,9 +1921,14 @@ def desktop_action_snapshot(
         progress_percent=int(progress.get("percent", 0) or 0),
         progress_label=str(progress.get("label", record.status.title())).strip(),
         progress_detail=current_detail,
-        current_command=str(current_meta.get("command", "")).strip(),
+        current_command=str(current_meta.get("command", record.command_preview)).strip(),
         child_run_id=str(current_meta.get("child_run_id", "")).strip(),
         linked_run_id=(str(current_meta.get("child_run_id", "")).strip() or (run_record.run_id if run_record is not None else "")),
+        workspace_root=str(record.workspace_root).strip(),
+        project_root=str(record.project_root).strip(),
+        output_root=str(record.paths.get("output_root", "")).strip(),
+        error_message=str(record.error_message).strip(),
+        exit_code=int(record.exit_code or 0),
         summary_lines=_summary_lines(summary),
         top_paths=evidence_items,
         manual_followups=tuple(str(item).strip() for item in evidence.get("manual_followups", []) if str(item).strip()),

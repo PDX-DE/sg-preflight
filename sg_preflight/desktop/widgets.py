@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from random import Random
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QGroupBox, QPushButton, QWidget, QListWidget
 
 
@@ -18,6 +19,15 @@ SURFACE_DEEP = QColor("#0b1114")
 INK = QColor("#e7efe9")
 MUTED = QColor("#87ad98")
 PANEL_LINE = QColor("#225846")
+
+
+def _widget_mode(widget: QWidget) -> str:
+    value = str(widget.property("sgfxMode") or "clean").strip().casefold()
+    return value if value in {"clean", "grafiks"} else "clean"
+
+
+def _is_clean(widget: QWidget) -> bool:
+    return _widget_mode(widget) == "clean"
 
 
 def _with_alpha(color: QColor, alpha: int) -> QColor:
@@ -36,6 +46,18 @@ class OperatorChrome(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         rect = self.rect()
+        if _is_clean(self):
+            painter.fillRect(rect, QColor("#f5f7f8"))
+            painter.setPen(QPen(QColor("#d7dde2"), 1))
+            grid_step = 64
+            for x in range(0, rect.width(), grid_step):
+                painter.drawLine(x, 0, x, rect.height())
+            for y in range(0, rect.height(), grid_step):
+                painter.drawLine(0, y, rect.width(), y)
+            painter.fillRect(QRectF(0.0, 0.0, float(rect.width()), 54.0), QColor("#ffffff"))
+            painter.setPen(QPen(QColor("#c7d0d8"), 1))
+            painter.drawLine(0, 54, rect.width(), 54)
+            return
 
         background = QLinearGradient(0.0, 0.0, 0.0, float(rect.height()))
         background.setColorAt(0.0, QColor("#0f1315"))
@@ -88,10 +110,19 @@ class OperatorChrome(QWidget):
 
 
 class HeaderBanner(QWidget):
-    def __init__(self, title: str, subtitle: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        title: str,
+        subtitle: str,
+        parent: QWidget | None = None,
+        *,
+        logo_path: Path | str | None = None,
+    ) -> None:
         super().__init__(parent)
         self.title = title
         self.subtitle = subtitle
+        self.logo_path = Path(logo_path) if logo_path else None
+        self.logo_pixmap = QPixmap(str(self.logo_path)) if self.logo_path and self.logo_path.is_file() else QPixmap()
         self._phase = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(50)
@@ -108,6 +139,19 @@ class HeaderBanner(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         rect = QRectF(self.rect())
+        if _is_clean(self):
+            painter.fillRect(rect, QColor("#ffffff"))
+            title_font = QFont("Segoe UI Semibold", 17)
+            subtitle_font = QFont("Segoe UI", 9)
+            painter.setPen(QColor("#17212b"))
+            painter.setFont(title_font)
+            painter.drawText(QRectF(0.0, 8.0, rect.width(), 32.0), Qt.AlignLeft | Qt.AlignVCenter, self.title)
+            painter.setPen(QColor("#66717c"))
+            painter.setFont(subtitle_font)
+            painter.drawText(QRectF(0.0, 42.0, rect.width(), 18.0), Qt.AlignLeft | Qt.AlignVCenter, self.subtitle)
+            painter.setPen(QPen(QColor("#d5dce3"), 1))
+            painter.drawLine(0, int(rect.bottom() - 8), int(rect.width()), int(rect.bottom() - 8))
+            return
 
         painter.setPen(Qt.NoPen)
         halo = QLinearGradient(rect.topLeft(), rect.bottomRight())
@@ -144,8 +188,21 @@ class HeaderBanner(QWidget):
         painter.setPen(QPen(_with_alpha(GREEN_SOFT, 70), 1))
         painter.drawLine(int(square_x + square_w + 14), 56, int(rect.width() * 0.78), 56)
 
+        if not self.logo_pixmap.isNull():
+            logo = self.logo_pixmap.scaledToWidth(
+                100,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            logo_rect = QRectF(
+                rect.width() - float(logo.width()) - 16.0,
+                max(8.0, (rect.height() - float(logo.height())) / 2.0 - 4.0),
+                float(logo.width()),
+                float(logo.height()),
+            )
+            painter.drawPixmap(logo_rect.toRect(), logo)
 
-class UnleashedPanel(QGroupBox):
+
+class OperatorPanel(QGroupBox):
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(title, parent)
         self.setContentsMargins(16, 34, 16, 16)
@@ -155,6 +212,15 @@ class UnleashedPanel(QGroupBox):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         rect = QRectF(self.rect()).adjusted(1.0, 12.0, -1.0, -1.0)
+        if _is_clean(self):
+            painter.fillRect(rect, QColor("#ffffff"))
+            painter.setPen(QPen(QColor("#d6dde4"), 1))
+            painter.drawRect(rect)
+            title_font = QFont("Segoe UI Semibold", 9)
+            painter.setFont(title_font)
+            painter.setPen(QColor("#26323d"))
+            painter.drawText(QRectF(rect.left() + 12.0, 0.0, rect.width() - 24.0, 26.0), Qt.AlignLeft | Qt.AlignVCenter, self.title())
+            return
 
         painter.fillRect(rect, _with_alpha(SURFACE, 230))
         painter.fillRect(rect.adjusted(8.0, 8.0, -8.0, -8.0), _with_alpha(SURFACE_DEEP, 245))
@@ -202,6 +268,21 @@ class ActionTabButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         rect = QRectF(self.rect()).adjusted(1.0, 1.0, -1.0, -1.0)
+        if _is_clean(self):
+            active = self.isChecked()
+            hovered = self.underMouse()
+            fill = QColor("#e8f0f8") if active else QColor("#ffffff")
+            if hovered and not active:
+                fill = QColor("#f0f4f7")
+            border = QColor("#4e7aa6") if active else QColor("#cfd8e1")
+            painter.setPen(QPen(border, 1.1))
+            painter.setBrush(fill)
+            painter.drawRoundedRect(rect, 5.0, 5.0)
+            font = QFont("Segoe UI Semibold", 9)
+            painter.setFont(font)
+            painter.setPen(QColor("#15212b") if self._ready else QColor("#7c8792"))
+            painter.drawText(rect.adjusted(10.0, 0.0, -10.0, 0.0), Qt.AlignCenter, self._label)
+            return
 
         active = self.isChecked()
         hovered = self.underMouse()
@@ -249,6 +330,20 @@ class GuideButton(QPushButton):
         enabled = self.isEnabled()
         hovered = self.underMouse()
         pressed = self.isDown()
+        if _is_clean(self):
+            fill = QColor("#ffffff") if enabled else QColor("#f0f2f4")
+            if hovered and enabled:
+                fill = QColor("#eef3f7")
+            if pressed and enabled:
+                fill = QColor("#e3ebf2")
+            painter.setPen(QPen(QColor("#cbd5df") if enabled else QColor("#dde2e7"), 1.0))
+            painter.setBrush(fill)
+            painter.drawRoundedRect(rect, 5.0, 5.0)
+            font = QFont("Segoe UI Semibold", 9)
+            painter.setFont(font)
+            painter.setPen(QColor("#25313d") if enabled else QColor("#8e99a3"))
+            painter.drawText(rect.adjusted(10.0, 0.0, -10.0, 0.0), Qt.AlignCenter, f"{self._guide_code}  {self._label}")
+            return
 
         gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
         gradient.setColorAt(0.0, QColor("#1b4f36") if enabled else QColor("#131719"))
@@ -303,6 +398,10 @@ class StaticListWidget(QListWidget):
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.Antialiasing, False)
         rect = QRectF(self.viewport().rect())
+        if _is_clean(self):
+            painter.fillRect(rect, QColor("#ffffff"))
+            super().paintEvent(event)
+            return
 
         bg = QLinearGradient(rect.topLeft(), rect.bottomLeft())
         bg.setColorAt(0.0, QColor("#0d1417"))

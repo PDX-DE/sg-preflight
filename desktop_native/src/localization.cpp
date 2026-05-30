@@ -17,8 +17,8 @@ constexpr std::array<LanguageOption, 4> kSupportedLanguages = {{
 
 const char* TranslateEnglish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
-    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
+    case HeaderPreflight: return "SGFX: Project Quality-Hero";
+    case HeaderChecking: return "SGFX: Project Quality-Hero";
     case ImageSlotReserved: return "";
     case Continue: return "Continue";
     case Review: return "Review";
@@ -27,6 +27,7 @@ const char* TranslateEnglish(UiText text) {
     case OpenFirst: return "Open First";
     case Files: return "Files";
     case Stages: return "Stages";
+    case Environment: return "Environment";
     case Return: return "Return";
     case Next: return "Next";
     case Back: return "Back";
@@ -63,7 +64,7 @@ const char* TranslateEnglish(UiText text) {
     case UiSoundEffects: return "UI sound effects";
     case UiSoundEffectsSummary: return "Menu sounds stay on so navigation, confirm, cancel, and prompt feedback are always audible.";
     case InstallerBackgroundMusic: return "Installer background music";
-    case InstallerBackgroundMusicSummary: return "Plays background music while the shell is open. It stays off by default unless enabled in imgui.ini or here.";
+    case InstallerBackgroundMusicSummary: return "Plays background music while the shell is open. The executable-local imgui.ini keeps the last choice for music and shell mode.";
     case Summary: return "SUMMARY";
     case Snapshot: return "SNAPSHOT";
     case GroupedFindings: return "GROUPED FINDINGS";
@@ -88,9 +89,9 @@ const char* TranslateEnglish(UiText text) {
     case LanguageScreenTitle: return "Please select a language.";
     case LanguageScreenBody: return "Choose the language used by the shell interface.";
     case LanguageScreenHint: return "This only changes the shell text. Project data and generated results stay the same.";
-    case IntroWelcome: return "Welcome to SERGFX.";
-    case IntroBodyPrimary: return "SERGFX: Project 3D Car QA Review is the local desktop review shell for automotive 3D car QA.\n\nIt brings slice selection, check execution, evidence capture, reports, exports, and follow-up material into one operator flow.";
-    case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the local check, review what will run, start the run, then open the first files, reports, exports, and follow-up material collected for you.";
+    case IntroWelcome: return "Welcome to SGFX: Project Quality-Hero.";
+    case IntroBodyPrimary: return "SGFX: Project Quality-Hero is the local desktop operator shell for SG-side 3D Car QA review.\n\nIt brings slice selection, SG checker execution, evidence capture, reports, exports, and follow-up material into one operator flow.";
+    case IntroBodySecondary: return "Use it from left to right: choose the slice, choose the local check, review what will run, start the run, then open the first files, reports, exports, and blocked/manual follow-up collected for you.\n\nIt does not replace Blender visual review, RaCo / RaCoHeadless, rack sessions, or BMW screenshot smoke. Use it to turn deterministic SG evidence into a cleaner bug-report handoff.";
     case SelectLoadingTitle: return "Loading local project data.";
     case SelectLoadingBody: return "The shell is loading the available slices, checks, and recent local results so you can choose what to run.";
     case SelectTitle: return "Choose the slice and local check for this run.";
@@ -103,7 +104,7 @@ const char* TranslateEnglish(UiText text) {
     case RunTitle: return "Run the selected local check and watch its live status.";
     case EvidenceTitle: return "Open the first result that needs attention.";
     case FilesTitle: return "Open generated files, reports, and exports.";
-    case StagesTitle: return "Review blocked steps, manual follow-up, display mode, and audio settings.";
+    case StagesTitle: return "Keep blocked/manual stages visible and capture follow-up.";
     case ReadyToRun: return "This local SG action is ready to run.";
     case ActionNotReady: return "This action is not ready on the current machine.";
     case CurrentOutputHelp: return "Default startup uses the current monitor size. Use --windowed --width <n> --height <n> if you want an override.";
@@ -120,7 +121,7 @@ const char* TranslateEnglish(UiText text) {
     case NoRecentRuns: return "No recent run records yet for this profile.";
     case NoRecentResults: return "No recent run records yet for this profile.";
     case NoManualFollowUp: return "No additional manual follow-up is attached to the current evidence selection.";
-    case PromptQuitTitle: return "QUIT SERGFX";
+    case PromptQuitTitle: return "QUIT QUALITY-HERO";
     case PromptQuitMessage: return "Are you sure you want to quit?";
     case PromptQuitRunningMessage: return "Are you sure you want to quit? The current check will keep running in the background.";
     case PromptLeaveRunTitle: return "LEAVE RUN SCREEN";
@@ -135,8 +136,8 @@ const char* TranslateRomanian(UiText text);
 
 const char* TranslateSpanish(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
-    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
+    case HeaderPreflight: return "SGFX: Project Quality-Hero";
+    case HeaderChecking: return "SGFX: Project Quality-Hero";
     case ImageSlotReserved: return "ESPACIO DE IMAGEN RESERVADO";
     case Continue: return "CONTINUAR";
     case Review: return "REVISAR";
@@ -145,6 +146,7 @@ const char* TranslateSpanish(UiText text) {
     case OpenFirst: return "ABRIR PRIMERO";
     case Files: return "ARCHIVOS";
     case Stages: return "ETAPAS";
+    case Environment: return "ENTORNO";
     case Return: return "VOLVER";
     case Next: return "SIGUIENTE";
     case Back: return "ATRAS";
@@ -206,7 +208,7 @@ const char* TranslateSpanish(UiText text) {
     case LanguageScreenTitle: return "Seleccione un idioma.";
     case LanguageScreenBody: return "Elija primero el idioma del shell y luego continue al flujo SG.";
     case LanguageScreenHint: return "Solo se traduce el texto del shell. Los datos reales de SG y la salida de checkers siguen tal cual.";
-    case IntroWelcome: return "Bienvenido a SERGFX.";
+    case IntroWelcome: return "Bienvenido a SGFX: Project Quality-Hero.";
     case IntroBodyPrimary: return "Seleccione la slice SG, confirme la preparacion local, ejecute una vez la accion real con checkers SG y luego siga Open First, Archivos y el seguimiento bloqueado/manual en orden.";
     case IntroBodySecondary: return "Este shell nativo sigue siendo solo una capa sobre el backend de Python. El flujo web, los packs deterministas, la evidencia SG y la honestidad sobre bloqueos BMW siguen intactos.";
     case SelectLoadingTitle: return "Cargando el estado SG.";
@@ -221,7 +223,7 @@ const char* TranslateSpanish(UiText text) {
     case RunTitle: return "Ejecute o refresque la accion SG actual.";
     case EvidenceTitle: return "Abra primero la evidencia SG mas fuerte.";
     case FilesTitle: return "Revise archivos y reportes generados.";
-    case StagesTitle: return "Mantenga visibles las etapas BMW bloqueadas/manuales y ajuste el shell sin ocultar los bloqueos reales.";
+    case StagesTitle: return "Mantenga visibles las etapas bloqueadas/manuales y capture el seguimiento.";
     case ReadyToRun: return "Esta accion SG local esta lista para ejecutarse.";
     case ActionNotReady: return "Esta accion no esta lista en esta maquina.";
     case CurrentOutputHelp: return "El arranque por defecto usa el tamano actual del monitor. Use --windowed --width <n> --height <n> si quiere forzarlo.";
@@ -238,8 +240,8 @@ const char* TranslateSpanish(UiText text) {
     case NoRecentRuns: return "Todavia no hay registros recientes para este perfil.";
     case NoRecentResults: return "Todavia no hay resultados recientes para este perfil.";
     case NoManualFollowUp: return "No hay seguimiento manual adicional para la evidencia actual.";
-    case PromptQuitTitle: return "SALIR DE SERGFX";
-    case PromptQuitMessage: return "Cerrar SERGFX ahora?";
+    case PromptQuitTitle: return "SALIR DE QUALITY-HERO";
+    case PromptQuitMessage: return "Cerrar SGFX: Project Quality-Hero ahora?";
     case PromptQuitRunningMessage: return "Cerrar el shell ahora? La accion SG actual seguira ejecutandose en segundo plano.";
     case PromptLeaveRunTitle: return "SALIR DE LA PANTALLA";
     case PromptLeaveRunMessage: return "La accion SG actual sigue ejecutandose. Salir de esta pagina de todos modos? La accion seguira en segundo plano.";
@@ -249,8 +251,8 @@ const char* TranslateSpanish(UiText text) {
 
 const char* TranslateGerman(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
-    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
+    case HeaderPreflight: return "SGFX: Project Quality-Hero";
+    case HeaderChecking: return "SGFX: Project Quality-Hero";
     case ImageSlotReserved: return "BILDPLATZ RESERVIERT";
     case Continue: return "WEITER";
     case Review: return "PRUEFEN";
@@ -259,6 +261,7 @@ const char* TranslateGerman(UiText text) {
     case OpenFirst: return "ZUERST OEFFNEN";
     case Files: return "DATEIEN";
     case Stages: return "STUFEN";
+    case Environment: return "UMGEBUNG";
     case Return: return "ZURUECK";
     case Next: return "WEITER";
     case Back: return "ZURUECK";
@@ -320,7 +323,7 @@ const char* TranslateGerman(UiText text) {
     case LanguageScreenTitle: return "Bitte waehlen Sie eine Sprache.";
     case LanguageScreenBody: return "Waehlen Sie zuerst die Shell-Sprache und gehen Sie dann in den SG-Operatorfluss.";
     case LanguageScreenHint: return "Nur Shell-eigener Text wird uebersetzt. Echte SG-Daten und Checker-Ausgaben bleiben original.";
-    case IntroWelcome: return "Willkommen bei SERGFX.";
+    case IntroWelcome: return "Willkommen bei SGFX: Project Quality-Hero.";
     case IntroBodyPrimary: return "Waehlen Sie die SG-Slice, bestaetigen Sie die lokale Bereitschaft, starten Sie die echte SG-Checker-Aktion einmal und gehen Sie dann durch Open First, Dateien und blockierte/manuelle Nacharbeit.";
     case IntroBodySecondary: return "Dieses native Shell bleibt nur eine Huelle ueber dem Python-Backend. Browserfluss, deterministische Packs, SG-Evidence und BMW-Blocker-Ehrlichkeit bleiben erhalten.";
     case SelectLoadingTitle: return "SG-Status wird geladen.";
@@ -335,7 +338,7 @@ const char* TranslateGerman(UiText text) {
     case RunTitle: return "Aktuelle SG-Aktion starten oder aktualisieren.";
     case EvidenceTitle: return "Oeffnen Sie zuerst die staerkste SG-Evidence.";
     case FilesTitle: return "Erzeugte Dateien und Berichte pruefen.";
-    case StagesTitle: return "Halten Sie blockierte/manuelle BMW-Stufen sichtbar und passen Sie das Shell-Verhalten an, ohne reale Blocker zu verstecken.";
+    case StagesTitle: return "Halten Sie blockierte/manuelle Stufen sichtbar und erfassen Sie das Follow-up.";
     case ReadyToRun: return "Diese lokale SG-Aktion ist startbereit.";
     case ActionNotReady: return "Diese Aktion ist auf diesem Rechner nicht bereit.";
     case CurrentOutputHelp: return "Der Standardstart nutzt die aktuelle Monitoraufloesung. Verwenden Sie --windowed --width <n> --height <n> fuer einen Override.";
@@ -352,8 +355,8 @@ const char* TranslateGerman(UiText text) {
     case NoRecentRuns: return "Noch keine letzten Laufdaten fuer dieses Profil.";
     case NoRecentResults: return "Noch keine letzten Ergebnisse fuer dieses Profil.";
     case NoManualFollowUp: return "Keine zusaetzliche manuelle Nacharbeit an diese Evidence angehaengt.";
-    case PromptQuitTitle: return "SERGFX BEENDEN";
-    case PromptQuitMessage: return "SERGFX jetzt schliessen?";
+    case PromptQuitTitle: return "QUALITY-HERO BEENDEN";
+    case PromptQuitMessage: return "SGFX: Project Quality-Hero jetzt schliessen?";
     case PromptQuitRunningMessage: return "Shell jetzt schliessen? Die aktuelle SG-Aktion laeuft im Hintergrund weiter.";
     case PromptLeaveRunTitle: return "LAUFSEITE VERLASSEN";
     case PromptLeaveRunMessage: return "Die aktuelle SG-Aktion laeuft noch. Diese Seite trotzdem verlassen? Die Aktion laeuft im Hintergrund weiter.";
@@ -363,8 +366,8 @@ const char* TranslateGerman(UiText text) {
 
 const char* TranslateRomanian(UiText text) {
     switch (text) {
-    case HeaderPreflight: return "SERGFX: Project 3D Car QA Review";
-    case HeaderChecking: return "SERGFX: Project 3D Car QA Review";
+    case HeaderPreflight: return "SGFX: Project Quality-Hero";
+    case HeaderChecking: return "SGFX: Project Quality-Hero";
     case ImageSlotReserved: return "SPATIU IMAGINE REZERVAT";
     case Continue: return "CONTINUA";
     case Review: return "REVIZUIRE";
@@ -373,6 +376,7 @@ const char* TranslateRomanian(UiText text) {
     case OpenFirst: return "DESCHIDE INTII";
     case Files: return "FISIERE";
     case Stages: return "ETAPE";
+    case Environment: return "MEDIU";
     case Return: return "INAPOI";
     case Next: return "URMATORUL";
     case Back: return "INAPOI";
@@ -434,7 +438,7 @@ const char* TranslateRomanian(UiText text) {
     case LanguageScreenTitle: return "Selectati o limba.";
     case LanguageScreenBody: return "Alegeti mai intai limba shell-ului, apoi continuati in fluxul operator SG.";
     case LanguageScreenHint: return "Se traduce doar textul shell-ului. Datele SG reale si iesirea checkerelor raman in forma originala.";
-    case IntroWelcome: return "Bine ati venit la SERGFX.";
+    case IntroWelcome: return "Bine ati venit la SGFX: Project Quality-Hero.";
     case IntroBodyPrimary: return "Alegeti slice-ul SG, confirmati pregatirea locala, rulati o singura data actiunea reala cu checkere SG, apoi treceti prin Open First, Fisiere si urmarirea blocata/manuala.";
     case IntroBodySecondary: return "Acest shell nativ ramane doar o interfata peste backend-ul Python. Fluxul din browser, pachetele deterministe, evidenta SG si onestitatea fata de blocajele BMW raman intacte.";
     case SelectLoadingTitle: return "Se incarca starea SG.";
@@ -449,7 +453,7 @@ const char* TranslateRomanian(UiText text) {
     case RunTitle: return "Rulati sau reimprospatati actiunea SG curenta.";
     case EvidenceTitle: return "Deschideti mai intai cea mai puternica evidenta SG.";
     case FilesTitle: return "Revizuiti fisierele si rapoartele generate.";
-    case StagesTitle: return "Pastrati vizibile etapele BMW blocate/manuale si ajustati shell-ul fara sa ascundeti blocajele reale.";
+    case StagesTitle: return "Pastrati vizibile etapele blocate/manuale si capturati pasii de follow-up.";
     case ReadyToRun: return "Aceasta actiune SG locala este gata de rulare.";
     case ActionNotReady: return "Aceasta actiune nu este gata pe aceasta masina.";
     case CurrentOutputHelp: return "Pornirea implicita foloseste dimensiunea monitorului curent. Folositi --windowed --width <n> --height <n> daca doriti o suprascriere.";
@@ -466,8 +470,8 @@ const char* TranslateRomanian(UiText text) {
     case NoRecentRuns: return "Nu exista inca inregistrari recente pentru acest profil.";
     case NoRecentResults: return "Nu exista inca rezultate recente pentru acest profil.";
     case NoManualFollowUp: return "Nu exista urmarire manuala suplimentara atasata selectiei curente.";
-    case PromptQuitTitle: return "IESIRE DIN SERGFX";
-    case PromptQuitMessage: return "Inchideti SERGFX acum?";
+    case PromptQuitTitle: return "IESIRE DIN QUALITY-HERO";
+    case PromptQuitMessage: return "Inchideti SGFX: Project Quality-Hero acum?";
     case PromptQuitRunningMessage: return "Inchideti shell-ul acum? Actiunea SG curenta va continua in fundal.";
     case PromptLeaveRunTitle: return "PARASIRE ECRAN RULARE";
     case PromptLeaveRunMessage: return "Actiunea SG curenta ruleaza inca. Parasiti totusi aceasta pagina? Actiunea va continua in fundal.";
@@ -653,6 +657,20 @@ std::string FormatMusicStatus(ShellLanguage language, bool enabled) {
     case Romanian: return std::string("Muzica instalatorului este ") + (enabled ? "activata." : "dezactivata.");
     }
     return std::string("Installer background music ") + (enabled ? "enabled." : "disabled.");
+}
+
+std::string FormatDisplayModeStatus(ShellLanguage language, bool work_mode) {
+    switch (language) {
+    case English:
+        return work_mode ? "Display mode set to Work. Background music stays off." : "Display mode set to SGFX.";
+    case Spanish:
+        return work_mode ? "Modo de pantalla cambiado a Trabajo. La musica queda desactivada." : "Modo de pantalla cambiado a SGFX.";
+    case German:
+        return work_mode ? "Anzeigemodus auf Arbeit gesetzt. Hintergrundmusik bleibt aus." : "Anzeigemodus auf SGFX gesetzt.";
+    case Romanian:
+        return work_mode ? "Modul de afisare a fost setat pe Work. Muzica de fundal ramane oprita." : "Modul de afisare a fost setat pe SGFX.";
+    }
+    return work_mode ? "Display mode set to Work. Background music stays off." : "Display mode set to SGFX.";
 }
 
 std::string FormatLoadedChromeStatus(ShellLanguage language) {
