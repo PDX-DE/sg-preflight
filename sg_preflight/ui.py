@@ -21,6 +21,7 @@ from sg_preflight.mirror_audit import (
     save_cached_audit,
 )
 from sg_preflight.models import Finding, Report
+from sg_preflight.delivery_readiness import build_delivery_readiness_board
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.qa_actions import (
     build_action_record,
@@ -2493,6 +2494,16 @@ def create_app(
             },
         )
 
+    @app.get("/ui/delivery-readiness")
+    async def delivery_readiness_view(request: Request) -> Any:
+        return app.state.templates.TemplateResponse(
+            request,
+            "delivery_readiness.html",
+            {
+                "board": build_delivery_readiness_board(workspace_root=app.state.workspace_root).to_dict(),
+            },
+        )
+
     @app.get("/ui/setup")
     async def setup_doctor_view(request: Request) -> Any:
         return app.state.templates.TemplateResponse(
@@ -2815,6 +2826,10 @@ def create_app(
             return JSONResponse(build_review_board_state(ticket_id or None, app.state.workspace_root))
         except FileNotFoundError as exc:
             return JSONResponse(review_board_unavailable_state(ticket_id or None, str(exc)))
+
+    @app.get("/ui/api/delivery-readiness")
+    async def delivery_readiness_api() -> JSONResponse:
+        return JSONResponse(build_delivery_readiness_board(workspace_root=app.state.workspace_root).to_dict())
 
     @app.get("/ui/api/setup-doctor")
     async def setup_doctor_api() -> JSONResponse:

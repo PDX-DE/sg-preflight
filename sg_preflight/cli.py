@@ -126,6 +126,10 @@ from sg_preflight.qa_hero_readiness import (
     render_qa_hero_readiness_markdown,
     render_qa_hero_readiness_text,
 )
+from sg_preflight.delivery_readiness import (
+    build_delivery_readiness_board,
+    write_delivery_readiness_board,
+)
 from sg_preflight.profiles import get_run_profile, list_run_profiles
 from sg_preflight.risk_scoring import (
     read_per_car_risk_score,
@@ -1236,6 +1240,55 @@ def _default_prog() -> str:
     return "sg-preflight"
 
 
+def _console_delivery_readiness(payload: dict[str, object]) -> None:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    print("Delivery Readiness")
+    print(f"Source: {payload.get('repo_root', '')}")
+    print(f"State: {payload.get('source_state', '')}")
+    print(
+        "Summary -> "
+        f"total: {counts.get('total', 0)} | "
+        f"delivered: {counts.get('delivered', 0)} | "
+        f"not delivered yet: {counts.get('not_delivered_yet', 0)} | "
+        f"unknown: {counts.get('unknown', 0)}"
+    )
+    print(str(payload.get("manual_approval_banner", "")))
+    catalog = payload.get("catalog")
+    if isinstance(catalog, dict):
+        print(
+            "Catalog -> "
+            f"state: {catalog.get('catalog_state', '')} | "
+            f"targets: {catalog.get('catalog_target_count', 0)} | "
+            f"mapped: {catalog.get('catalog_targets_mapped_count', 0)} | "
+            f"missing dirs: {catalog.get('catalog_targets_missing_dir_count', 0)} | "
+            f"dirs without catalog: {catalog.get('dirs_without_catalog_count', 0)}"
+        )
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        if artifacts.get("json_path"):
+            print(f"JSON: {artifacts['json_path']}")
+        if artifacts.get("markdown_path"):
+            print(f"Markdown: {artifacts['markdown_path']}")
+    print("-" * 80)
+    entries = payload.get("entries", [])
+    if not isinstance(entries, list) or not entries:
+        print("No car delivery rows found.")
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        version = entry.get("version") or "no version"
+        date = f" / {entry['delivered_date']}" if entry.get("delivered_date") else ""
+        print(
+            _console_safe(
+                f"- {entry.get('source_root')}/{entry.get('brand')}/{entry.get('model_id')}: "
+                f"{entry.get('status_label')} ({version}{date})"
+            )
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _SgfxArgumentParser(prog=_default_prog())
     parser.add_argument("--version", action=_VersionAction, help="Show version and build metadata")
@@ -1538,6 +1591,16 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="Run the SGFX setup doctor")
     doctor.add_argument("--workspace", help="Workspace root override")
     doctor.add_argument("--json", action="store_true", help="Print setup doctor report as JSON")
+
+    delivery_readiness = sub.add_parser(
+        "delivery-readiness",
+        help="Build the read-only delivery readiness board from car CHANGELOG.md files",
+    )
+    delivery_readiness.add_argument("--workspace", help="Workspace root override")
+    delivery_readiness.add_argument("--repo-root", help="SVN trunk root override")
+    delivery_readiness.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    delivery_readiness.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    delivery_readiness.add_argument("--json", action="store_true", help="Print delivery readiness payload as JSON")
 
     sub.add_parser(
         "list-workflows",
@@ -2385,6 +2448,15 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_review_board_parser.add_argument("--workspace", help="Workspace root override")
     desktop_review_board_parser.add_argument("--json", action="store_true", help="Print review-board payload as JSON")
 
+    desktop_delivery_parser = desktop_state_sub.add_parser(
+        "delivery-readiness",
+        help="Load the Delivery Readiness board for native-shell consumers",
+    )
+    desktop_delivery_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_delivery_parser.add_argument("--repo-root", help="SVN trunk root override")
+    desktop_delivery_parser.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    desktop_delivery_parser.add_argument("--json", action="store_true", help="Print delivery-readiness payload as JSON")
+
     desktop_attach_manual_parser = desktop_state_sub.add_parser(
         "attach-manual-evidence",
         help="Attach manual evidence into one action bundle",
@@ -3204,6 +3276,20 @@ def _main_impl(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         doctor_root = Path(args.workspace).resolve() if args.workspace else root
         _console_setup_doctor(build_setup_doctor_report(doctor_root), as_json=args.json)
+        return 0
+
+    if args.command == "delivery-readiness":
+        readiness_root = Path(args.workspace).resolve() if args.workspace else root
+        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+        bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
+        board = build_delivery_readiness_board(repo_root, workspace_root=readiness_root, bmw_repo_root=bmw_repo_root)
+        payload = board.to_dict()
+        if args.output_root:
+            payload["artifacts"] = write_delivery_readiness_board(board, Path(args.output_root).resolve())
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            _console_delivery_readiness(payload)
         return 0
 
     if args.command == "list-workflows":
@@ -4054,6 +4140,14 @@ def _main_impl(argv: list[str] | None = None) -> int:
             payload = desktop_environment_doctor(state_root)
         elif args.desktop_state_command == "review-board":
             payload = build_review_board_state(args.ticket_id or None, state_root)
+        elif args.desktop_state_command == "delivery-readiness":
+            repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+            bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
+            payload = build_delivery_readiness_board(
+                repo_root,
+                workspace_root=state_root,
+                bmw_repo_root=bmw_repo_root,
+            ).to_dict()
         elif args.desktop_state_command == "attach-manual-evidence":
             payload = attach_manual_evidence(
                 args.run_id_or_path,

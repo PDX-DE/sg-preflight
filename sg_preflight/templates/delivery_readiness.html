@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Delivery Readiness - SG Preflight Operator UI{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="#delivery-summary">
+    <span class="shell-route-title">Read the evidence banner</span>
+    <span class="shell-route-detail">This board is status evidence, not delivery approval.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#delivery-rows">
+    <span class="shell-route-title">Check car rows</span>
+    <span class="shell-route-detail">Rows include car folders with missing changelogs.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#delivery-catalog">
+    <span class="shell-route-title">Check catalog match</span>
+    <span class="shell-route-detail">BMW catalog targets are reconciled against listed dirs.</span>
+  </a>
+</li>
+{% endblock %}
+{% block content %}
+<section class="hero-panel hero-panel--simple" id="delivery-summary">
+  <div class="hero-copy">
+    <p class="eyebrow">Delivery Readiness</p>
+    <h2>CHANGELOG status board</h2>
+    <p class="hero-text">
+      Read-only delivery evidence from car folders under <code>Cars</code> and <code>Cars_IDCevo</code>, including catalogued model dirs that do not yet have a <code>CHANGELOG.md</code>.
+    </p>
+    <div class="hero-bullets">
+      <span>Total cars: {{ board.counts.total }}</span>
+      <span>Delivered: {{ board.counts.delivered }}</span>
+      <span>Not delivered yet: {{ board.counts.not_delivered_yet }}</span>
+      <span>Unknown: {{ board.counts.unknown }}</span>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="note-block note-block--warn">
+    <strong>{{ board.manual_approval_banner }}</strong>
+    <div>Source: <code>{{ board.repo_root }}</code></div>
+    <div>Generated: <code>{{ board.generated_at_utc }}</code></div>
+  </div>
+</section>
+
+<section class="panel" id="delivery-catalog">
+  <div class="panel-head">
+    <div>
+      <h3>BMW Catalog Reconciliation</h3>
+      <p>Catalog targets are mapped to the listed model dirs by model id, with brand match preferred when the SVN folder exists.</p>
+    </div>
+  </div>
+  <div class="hero-bullets">
+    <span>Catalog state: {{ board.catalog.catalog_state }}</span>
+    <span>Targets: {{ board.catalog.catalog_target_count }}</span>
+    <span>Mapped targets: {{ board.catalog.catalog_targets_mapped_count }}</span>
+    <span>Targets without dir: {{ board.catalog.catalog_targets_missing_dir_count }}</span>
+    <span>Dirs without catalog: {{ board.catalog.dirs_without_catalog_count }}</span>
+  </div>
+  <div class="note-block">
+    <div>Catalog: <code>{{ board.catalog.catalog_path or "not available" }}</code></div>
+    {% if board.catalog.notes %}
+    {% for note in board.catalog.notes %}
+    <div>{{ note }}</div>
+    {% endfor %}
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel" id="delivery-rows">
+  <div class="panel-head">
+    <div>
+      <h3>Cars</h3>
+      <p>Status is classified from the first version header in each car changelog. Missing changelogs are listed as unknown evidence. Shared folders and interface-contract changelogs are excluded.</p>
+    </div>
+  </div>
+  {% if board.entries %}
+  <div class="stack">
+    {% for item in board.entries %}
+    <div class="run-card {% if item.status == 'unknown' %}delivery-unknown-row{% endif %}">
+      <div class="min-w-0">
+        <strong>{{ item.source_root }}/{{ item.brand }}/{{ item.model_id }}</strong>
+        <div class="muted">
+          Version {{ item.version or "unknown" }}{% if item.delivered_date %} / {{ item.delivered_date }}{% endif %}
+        </div>
+        <div class="muted">{{ item.latest_header or "No CHANGELOG.md found" }}</div>
+        {% if item.catalog_targets %}
+        <div class="muted">Catalog: {{ item.catalog_targets | join(", ") }}</div>
+        {% endif %}
+        <div class="muted"><code>{{ item.relative_path }}</code></div>
+      </div>
+      <div class="run-card-actions">
+        <span class="badge {% if item.status == 'delivered' %}ok{% elif item.status == 'not_delivered_yet' %}warn{% else %}info{% endif %}">
+          {{ item.status_label }}
+        </span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <strong>No car delivery rows found.</strong>
+    <p>Check that the SVN trunk path is available and contains <code>Cars</code> or <code>Cars_IDCevo</code>.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
