@@ -1,0 +1,67 @@
+{
+  "schema": "sgfx_qa_workflow",
+  "version": 1,
+  "id": "raco_manual_review",
+  "name": "Ramses Composer Manual Review",
+  "description": "Manual review checklist run inside Ramses Composer for the selected profile. Each dod_items entry must be ticked off by the reviewer before the workflow status flips to ready_for_review. The runner records the review pass to <output_root>/raco_manual_review/<profile>/run.json so Sprint Review evidence is reproducible.",
+
+  "scope_kinds": ["profile"],
+  "profiles": ["G65", "G70", "G45", "G60"],
+
+  "dod_items": [
+    "Anchor scene loads in Ramses Composer with no missing references",
+    "Pivot_Master vs Module_constants drift visualised and accepted",
+    "CarPaint catalog renders for every required carpaint id",
+    "Material LUT preview matches retail expectation",
+    "Lua bindings load without unused-resource warnings"
+  ],
+
+  "checks": [
+    {
+      "id": "raco_version",
+      "kind": "preflight_cli",
+      "subcommand": "list-checkers",
+      "args": ["--json"],
+      "required": true,
+      "description": "Cross-check that the local RACO version matches the recommended pin recorded in sg_rules_live.json."
+    },
+    {
+      "id": "manual_review_record",
+      "kind": "manual_attestation",
+      "required": true,
+      "prompts": [
+        "Anchor scene OK?",
+        "Pivot/Module drift OK?",
+        "CarPaint catalog OK?",
+        "Material LUT OK?",
+        "Lua bindings OK?"
+      ],
+      "description": "Operator-driven manual attestation. The runner records the timestamps and operator id; the workflow_status output reflects ready_for_review only when ALL dod_items are ticked."
+    }
+  ],
+
+  "required_artifacts": [
+    {
+      "id": "manual_review_log",
+      "kind": "file",
+      "path_template": "{output_root}/raco_manual_review/{profile}/manual_log.md",
+      "auto_generate_if_missing": true
+    }
+  ],
+
+  "status_mapping": {
+    "all_required_pass": "ready_for_review",
+    "any_required_fail": "blocked",
+    "no_checks_run":     "not_started",
+    "partial":           "in_progress"
+  },
+
+  "outputs": [
+    {
+      "id": "summary_json",
+      "kind": "json",
+      "path_template": "{output_root}/{id}/{profile}/run.json",
+      "fields": ["id", "name", "profile", "status", "checks", "artifacts", "started_at_utc", "finished_at_utc"]
+    }
+  ]
+}

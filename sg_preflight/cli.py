@@ -1490,6 +1490,37 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
     _add_render_options(workflow_list, formats=("text", "json"))
 
+    sub.add_parser(
+        "list-workflows",
+        help="List JSON-defined SG QA workflows under qa_workflows/",
+    ).add_argument("--json", action="store_true", help="Print workflow registry as JSON")
+
+    validate_workflow_p = sub.add_parser(
+        "validate-workflow",
+        help="Validate one or all workflow JSON files against the sgfx_qa_workflow schema",
+    )
+    validate_workflow_p.add_argument(
+        "id_or_path",
+        nargs="?",
+        default="",
+        help="Workflow id (e.g. idcevo_screenshot_changelog), absolute path, or empty to validate all",
+    )
+    validate_workflow_p.add_argument("--json", action="store_true", help="Print validation result as JSON")
+
+    run_workflow_p = sub.add_parser(
+        "run-workflow",
+        help="Run a JSON-defined workflow by id (executes preflight_cli checks; manual_attestation -> pending)",
+    )
+    run_workflow_p.add_argument("workflow_id", help="Workflow id (matches the 'id' field in qa_workflows/<id>.json)")
+    run_workflow_p.add_argument("--profile", default="", help="Optional profile id (G65, G70, ...) substituted into checks")
+    run_workflow_p.add_argument("--ticket-id", default="", help="Optional ticket id substituted into checks")
+    run_workflow_p.add_argument(
+        "--output-root",
+        default="",
+        help="Override output root (defaults to <workspace>/out/qa_workflows/)",
+    )
+    run_workflow_p.add_argument("--json", action="store_true", help="Print run summary as JSON")
+
     profile_summary = sub.add_parser(
         "profile-summary",
         help="Build a self-contained per-profile HTML summary",
@@ -3120,6 +3151,91 @@ def _main_impl(argv: list[str] | None = None) -> int:
             renderer = render_jira_post_text if args.jira_command == "post" else render_jira_action_text
             _emit_text(renderer(payload), args)
         return 0
+    if args.command == "list-workflows":
+        from sg_preflight import qa_workflows as qw
+        summaries = [s.to_dict() for s in qw.list_workflows(workspace_root=root)]
+        if args.json:
+            print(json.dumps(summaries, indent=2))
+        else:
+            if not summaries:
+                print("(no workflows found in qa_workflows/)")
+            for s in summaries:
+                print(f"- {s['id']:<40} {s['name']}")
+                print(f"    scope: {','.join(s['scope_kinds'])}  profiles: {','.join(s['profiles']) or '-'}")
+                print(f"    dod: {s['dod_count']}  checks: {s['check_count']}  status: {s['last_status']}")
+        return 0
+
+    if args.command == "validate-workflow":
+        from sg_preflight import qa_workflows as qw
+        target = (args.id_or_path or "").strip()
+        candidates: list[Path] = []
+        if not target:
+            candidates = list(qw.discover(workspace_root=root))
+        elif Path(target).is_file():
+            candidates = [Path(target).resolve()]
+        else:
+            for p in qw.discover(workspace_root=root):
+                try:
+                    doc = json.loads(p.read_text(encoding="utf-8-sig"))
+                except Exception:
+                    continue
+                if doc.get("id") == target:
+                    candidates = [p]
+                    break
+        if not candidates:
+            msg = f"workflow not found: {target!r}"
+            print(json.dumps({"ok": False, "errors": [msg]})) if args.json else print(msg, file=sys.stderr)
+            return 2
+        all_ok = True
+        results = []
+        for p in candidates:
+            try:
+                doc = json.loads(p.read_text(encoding="utf-8-sig"))
+            except Exception as e:
+                results.append({"path": str(p), "ok": False, "errors": [f"JSON parse: {e}"], "warnings": []})
+                all_ok = False
+                continue
+            r = qw.validate_doc(doc, p)
+            results.append({"path": str(p), "ok": r.ok, "errors": r.errors, "warnings": r.warnings})
+            if not r.ok:
+                all_ok = False
+        if args.json:
+            print(json.dumps({"ok": all_ok, "results": results}, indent=2))
+        else:
+            for r in results:
+                tag = "OK" if r["ok"] else "FAIL"
+                print(f"[{tag}] {r['path']}")
+                for e in r["errors"]:
+                    print(f"  ERROR: {e}")
+                for w in r["warnings"]:
+                    print(f"  warn:  {w}")
+        return 0 if all_ok else 1
+
+    if args.command == "run-workflow":
+        from sg_preflight import qa_workflows as qw
+        out_root = Path(args.output_root).resolve() if args.output_root else None
+        try:
+            summary = qw.run_workflow(
+                args.workflow_id,
+                profile=args.profile or None,
+                ticket_id=args.ticket_id or None,
+                output_root=out_root,
+                workspace_root=root,
+            )
+        except FileNotFoundError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(summary, indent=2))
+        else:
+            print(f"workflow:  {summary['id']}")
+            print(f"profile:   {summary.get('profile') or '(workspace-scoped)'}")
+            print(f"status:    {summary['status']}")
+            print(f"checks:    {len(summary.get('checks', []))}")
+            for c in summary.get("checks", []):
+                req = "[req]" if c.get("required") else "[opt]"
+                print(f"  {req} {c['id']:<30} {c['status']}")
+        return 0 if summary["status"] in ("ready_for_review", "in_progress", "not_started", "covered") else 1
 
     if args.command == "ticket-review":
         review_root = Path(args.workspace).resolve() if args.workspace else root

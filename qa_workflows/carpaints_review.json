@@ -1,0 +1,62 @@
+{
+  "schema": "sgfx_qa_workflow",
+  "version": 1,
+  "id": "carpaints_review",
+  "name": "Carpaints Review",
+  "description": "Cross-car carpaints catalog review. Validates that the BMW carpaint catalog has no shared-id collisions with non-BMW slices, that every required key (id, name, finish, roughness, metallic, base_color, clearcoat) is present, and that operator eyes-on the rendered swatch pass approves the visual.",
+
+  "scope_kinds": ["workspace"],
+  "profiles": [],
+
+  "dod_items": [
+    "No carpaint id collisions across BMW IDCevo slices",
+    "All required keys present per sg_rules_live.json",
+    "Roughness / metallic / clearcoat ranges within tolerance",
+    "Visual swatch render approved by reviewer"
+  ],
+
+  "checks": [
+    {
+      "id": "carpaints_pack",
+      "kind": "preflight_cli",
+      "subcommand": "list-checkers",
+      "args": ["--json"],
+      "required": true,
+      "description": "Pull the checker readiness table; the carpaints checker entry must report state='ready' for this workflow to proceed."
+    },
+    {
+      "id": "swatch_attestation",
+      "kind": "manual_attestation",
+      "required": true,
+      "prompts": [
+        "Swatch grid loaded?",
+        "All carpaints render correctly?"
+      ]
+    }
+  ],
+
+  "required_artifacts": [
+    {
+      "id": "swatch_log",
+      "kind": "file",
+      "path_template": "{output_root}/carpaints_review/swatch_log.md",
+      "auto_generate_if_missing": true
+    }
+  ],
+
+  "status_mapping": {
+    "all_required_pass": "ready_for_review",
+    "any_required_fail": "blocked",
+    "no_checks_run":     "not_started",
+    "partial":           "in_progress"
+  },
+
+  "outputs": [
+    {
+      "id": "summary_json",
+      "kind": "json",
+      "path_template": "{output_root}/{id}/run.json",
+      "fields": ["id", "name", "status", "checks", "artifacts", "started_at_utc", "finished_at_utc"]
+    }
+  ]
+}
