@@ -277,6 +277,21 @@
       </details>
     </div>
 
+    {% if setup_report is defined %}
+    <div class="note-block {% if not setup_report.ready %}note-block--warn{% endif %}">
+      <strong>Setup doctor: {{ setup_report.headline }}</strong>
+      <div>
+        {{ setup_report.found_count }} found · {{ setup_report.required_missing_count }} required missing · {{ setup_report.optional_missing_count }} optional missing.
+        <a href="/ui/setup">Open Setup / Doctor</a>
+      </div>
+      {% if setup_report.next_action is defined %}
+      <div>
+        Next: {{ setup_report.next_action.label }}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <details class="foldout">
       <summary>Show machine setup</summary>
       <div class="stack tight">

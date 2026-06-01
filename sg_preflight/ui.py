@@ -56,6 +56,7 @@ from sg_preflight.services import (
     sg_checker_catalog,
     workspace_root,
 )
+from sg_preflight.setup_doctor import build_setup_doctor_report
 
 
 def _templates() -> Jinja2Templates:
@@ -2412,6 +2413,7 @@ def create_app(
         fast_audit = _load_or_create_fast_audit(app)
         deep_audit = _load_cached_deep_audit(app)
         primary_prereqs, secondary_prereqs = _primary_prerequisites(app.state.workspace_root)
+        setup_report = build_setup_doctor_report(app.state.workspace_root).to_dict()
         ordered_profiles = list(app.state.profiles.values())
         return app.state.templates.TemplateResponse(
             request,
@@ -2433,6 +2435,7 @@ def create_app(
                 "recent_actions": list_recent_action_records(app.state.workspace_root),
                 "primary_prerequisites": primary_prereqs,
                 "secondary_prerequisites": secondary_prereqs,
+                "setup_report": setup_report,
                 "fast_audit": _audit_view_model(fast_audit),
                 "deep_audit": _audit_view_model(deep_audit),
                 "matrix_summary": _summary_file_link(app.state.workspace_root),
@@ -2487,6 +2490,16 @@ def create_app(
             {
                 "review_board": state,
                 "file_cards": [item for item in file_cards if item["path"]],
+            },
+        )
+
+    @app.get("/ui/setup")
+    async def setup_doctor_view(request: Request) -> Any:
+        return app.state.templates.TemplateResponse(
+            request,
+            "setup.html",
+            {
+                "report": build_setup_doctor_report(app.state.workspace_root).to_dict(),
             },
         )
 
@@ -2802,6 +2815,10 @@ def create_app(
             return JSONResponse(build_review_board_state(ticket_id or None, app.state.workspace_root))
         except FileNotFoundError as exc:
             return JSONResponse(review_board_unavailable_state(ticket_id or None, str(exc)))
+
+    @app.get("/ui/api/setup-doctor")
+    async def setup_doctor_api() -> JSONResponse:
+        return JSONResponse(build_setup_doctor_report(app.state.workspace_root).to_dict())
 
     @app.post("/ui/api/review-decisions")
     async def review_decisions_set_api(request: Request) -> JSONResponse:

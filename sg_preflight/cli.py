@@ -162,6 +162,7 @@ from sg_preflight.services import (
     sg_checker_catalog,
 )
 from sg_preflight.subprocess_utils import sgfx_cli_command
+from sg_preflight.setup_doctor import build_setup_doctor_report
 from sg_preflight.daily_snapshot import materialize_daily_qa_snapshot
 from sg_preflight.review_state import (
     build_review_board_state,
@@ -579,6 +580,50 @@ def _console_workflow_status(items: list[dict[str, object]], *, as_json: bool) -
             print("  blockers:")
             for blocker in blockers:
                 print(f"    - {blocker}")
+
+
+def _console_setup_doctor(report: object, *, as_json: bool) -> None:
+    payload = report.to_dict()
+    if as_json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+
+    print(payload["headline"])
+    print(f"Workspace: {payload['workspace_root']}")
+    print(
+        "Summary -> "
+        f"found: {payload['found_count']} | "
+        f"required missing: {payload['required_missing_count']} | "
+        f"optional missing: {payload['optional_missing_count']}"
+    )
+    print(f"Mode: {payload['mode']}")
+    next_action = payload.get("next_action", {})
+    if isinstance(next_action, dict):
+        print(f"Next action: {next_action.get('label', '')}")
+        if next_action.get("detail"):
+            print(f"  {next_action['detail']}")
+    wizard_steps = payload.get("wizard_steps", [])
+    if wizard_steps:
+        print("-" * 80)
+        print("Wizard steps:")
+        for step in wizard_steps:
+            if not isinstance(step, dict):
+                continue
+            print(f"- {step.get('label', '')}: {step.get('status', '')}")
+            if step.get("detail"):
+                print(f"  {step['detail']}")
+    print("-" * 80)
+    for item in payload["items"]:
+        marker = "OK" if item["status"] == "found" else ("OPTIONAL" if not item["required"] else "MISSING")
+        print(f"[{marker}] {item['label']} ({item['category']})")
+        if item["version"]:
+            print(f"  version: {item['version']}")
+        if item["path"]:
+            print(f"  path: {item['path']}")
+        if item["detail"]:
+            print(f"  detail: {item['detail']}")
+        if item["status"] != "found" and item["fix"]:
+            print(f"  fix: {item['fix']}")
 
 
 def _console_desktop_payload(payload: object) -> None:
@@ -1489,6 +1534,10 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_list = sub.add_parser("workflow-status", help="List workflow coverage, partial areas, and blockers")
     workflow_list.add_argument("--json", action="store_true", help="Print workflow status as JSON")
     _add_render_options(workflow_list, formats=("text", "json"))
+
+    doctor = sub.add_parser("doctor", help="Run the SGFX setup doctor")
+    doctor.add_argument("--workspace", help="Workspace root override")
+    doctor.add_argument("--json", action="store_true", help="Print setup doctor report as JSON")
 
     sub.add_parser(
         "list-workflows",
@@ -3151,6 +3200,12 @@ def _main_impl(argv: list[str] | None = None) -> int:
             renderer = render_jira_post_text if args.jira_command == "post" else render_jira_action_text
             _emit_text(renderer(payload), args)
         return 0
+
+    if args.command == "doctor":
+        doctor_root = Path(args.workspace).resolve() if args.workspace else root
+        _console_setup_doctor(build_setup_doctor_report(doctor_root), as_json=args.json)
+        return 0
+
     if args.command == "list-workflows":
         from sg_preflight import qa_workflows as qw
         summaries = [s.to_dict() for s in qw.list_workflows(workspace_root=root)]
