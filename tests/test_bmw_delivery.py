@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from sg_preflight.bmw_delivery import (
     detect_lane,
@@ -14,6 +16,14 @@ from sg_preflight.bmw_delivery import (
 )
 from sg_preflight.services import prerequisite_status
 from tests.operator_helpers import write_text
+
+
+def _clear_bmw_repo_env() -> dict[str, str]:
+    return {
+        "SG_BMW_CAR_MODELS_ROOT": "",
+        "SG_CARMODELS_REPO": "",
+        "SG-CarModels-Repo": "",
+    }
 
 
 class TestBmwDelivery(unittest.TestCase):
@@ -129,7 +139,8 @@ class TestBmwDelivery(unittest.TestCase):
             repo_root = root / "digital-3d-car-models"
             write_text(repo_root / "ci" / "scripts" / "README.md", "fixture\n")
 
-            detected = discover_bmw_models_repo(root)
+            with mock.patch.dict(os.environ, _clear_bmw_repo_env(), clear=False):
+                detected = discover_bmw_models_repo(root)
 
             self.assertEqual(detected.resolve(), repo_root.resolve())
 
@@ -157,7 +168,8 @@ class TestBmwDelivery(unittest.TestCase):
             (tests_root / "actuals").mkdir(parents=True, exist_ok=True)
             (tests_root / "diff").mkdir(parents=True, exist_ok=True)
 
-            surface = inspect_bmw_screenshot_surface("G50", workspace_root=root, sg_project_root=sg_project_root)
+            with mock.patch.dict(os.environ, _clear_bmw_repo_env(), clear=False):
+                surface = inspect_bmw_screenshot_surface("G50", workspace_root=root, sg_project_root=sg_project_root)
 
             self.assertEqual(surface.bmw_profile_id, "G50_EVO")
             self.assertEqual(surface.actual_count, 0)
@@ -310,7 +322,8 @@ class TestBmwDelivery(unittest.TestCase):
             write_text(repo_root / "ci" / "scripts" / "README.md", "fixture\n")
             write_text(repo_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
 
-            status_map = {item["key"]: item for item in prerequisite_status(root)}
+            with mock.patch.dict(os.environ, _clear_bmw_repo_env(), clear=False):
+                status_map = {item["key"]: item for item in prerequisite_status(root)}
 
             self.assertEqual(status_map["bmw_models_repo"]["status"], "available")
             self.assertEqual(status_map["bmw_car_manager_script"]["status"], "available")

@@ -14,6 +14,7 @@ from typing import Any
 
 import openpyxl
 
+from sg_preflight.bmw_process import bmw_interface_smoke_commands
 from sg_preflight.checker_evidence import (
     merge_checker_evidence,
     parse_delivery_checklist_log,
@@ -60,6 +61,7 @@ ACTION_PROGRESS_PLANS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "bmw_screenshot_smoke": (
         ("queued", "Queued"),
+        ("interface", "Run BMW interface smoke"),
         ("export", "Run BMW export"),
         ("screenshots", "Run BMW screenshots"),
         ("finalize", "Finalize action record"),
@@ -543,8 +545,13 @@ def list_operator_actions(
                 profile_id=profile.profile_id,
                 project_root=str(source_project_root),
                 command_preview=(
-                    f"{sys.executable} {bmw_script} export {target} && "
-                    f"{sys.executable} {bmw_script} screenshots --diff {target}"
+                    " && ".join(
+                        bmw_interface_smoke_commands(
+                            target,
+                            python_executable=sys.executable,
+                            script=str(bmw_script),
+                        )
+                    )
                     if target
                     else "BMW screenshot smoke target mapping is not configured yet."
                 ),
@@ -1897,8 +1904,26 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
 
     _set_action_progress(
         record,
+        step_key="interface",
+        percent=16,
+        label="Running BMW interface smoke",
+        detail=f"Launching BMW interface smoke for target {target}.",
+        meta={
+            "target": target,
+            "command": f"{sys.executable} {script_path} test -c {target} -ns",
+        },
+    )
+    interface_process = subprocess.run(
+        [sys.executable, str(script_path), "test", "-c", target, "-ns"],
+        cwd=scripts_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    _set_action_progress(
+        record,
         step_key="export",
-        percent=28,
+        percent=42,
         label="Running BMW export",
         detail=f"Launching BMW export for target {target}.",
         meta={
@@ -1916,7 +1941,7 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
     _set_action_progress(
         record,
         step_key="screenshots",
-        percent=68,
+        percent=72,
         label="Running BMW screenshots",
         detail=f"Capturing screenshot diff output for target {target}.",
         meta={
@@ -1933,6 +1958,9 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
     )
     combined_log = "\n\n".join(
         [
+            "=== interface smoke ===",
+            (interface_process.stdout or "").strip(),
+            (interface_process.stderr or "").strip(),
             "=== export ===",
             (export_process.stdout or "").strip(),
             (export_process.stderr or "").strip(),
@@ -1947,10 +1975,12 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
         "title": "BMW screenshot smoke result",
         "lines": [
             f"Target: {target}",
+            f"Interface smoke exit code: {interface_process.returncode}",
             f"Export exit code: {export_process.returncode}",
             f"Screenshot exit code: {screenshots_process.returncode}",
         ],
         "target": target,
+        "interface_exit_code": interface_process.returncode,
         "export_exit_code": export_process.returncode,
         "screenshots_exit_code": screenshots_process.returncode,
     }

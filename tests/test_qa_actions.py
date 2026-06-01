@@ -38,6 +38,15 @@ def _create_checker_files(root: Path) -> None:
     (mirror_root / "Cars").mkdir(parents=True, exist_ok=True)
 
 
+def _missing_bmw_repo_env(root: Path) -> dict[str, str]:
+    missing = str(root / "missing" / "digital-3d-car-models")
+    return {
+        "SG_BMW_CAR_MODELS_ROOT": missing,
+        "SG_CARMODELS_REPO": missing,
+        "SG-CarModels-Repo": missing,
+    }
+
+
 class TestQaActions(unittest.TestCase):
     def test_action_registry_marks_repo_checker_ready_and_scene_check_blocked_without_raco(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -119,7 +128,7 @@ class TestQaActions(unittest.TestCase):
                 os.environ,
                 {
                     "SG_RACO_HEADLESS": str(raco_exe),
-                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
+                    **_missing_bmw_repo_env(root),
                 },
                 clear=False,
             ):
@@ -240,7 +249,7 @@ class TestQaActions(unittest.TestCase):
                 os.environ,
                 {
                     "SG_RACO_HEADLESS": str(root / "missing" / "RaCoHeadless.exe"),
-                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
+                    **_missing_bmw_repo_env(root),
                 },
                 clear=False,
             ):
@@ -318,7 +327,7 @@ starting  luacheck on  12  files
                 os.environ,
                 {
                     "SG_RACO_HEADLESS": str(root / "missing" / "RaCoHeadless.exe"),
-                    "SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models"),
+                    **_missing_bmw_repo_env(root),
                 },
                 clear=False,
             ):

@@ -30,6 +30,23 @@ def _checker_fixture(name: str) -> str:
     return (FIXTURE_ROOT / name).read_text(encoding="utf-8")
 
 
+def _missing_bmw_repo_env(root: Path) -> dict[str, str]:
+    missing = str(root / "missing" / "digital-3d-car-models")
+    return {
+        "SG_BMW_CAR_MODELS_ROOT": missing,
+        "SG_CARMODELS_REPO": missing,
+        "SG-CarModels-Repo": missing,
+    }
+
+
+def _missing_raco_env(root: Path) -> dict[str, str]:
+    missing = str(root / "missing" / "RaCoHeadless.exe")
+    return {
+        "SG_RACO_HEADLESS": missing,
+        "RACO_HEADLESS_EXE": missing,
+    }
+
+
 def _create_checker_files(root: Path) -> None:
     mirror_root = root / "repositories" / "trunk"
     repositories_root = root / "repositories"
@@ -306,14 +323,10 @@ class TestTicketReview(unittest.TestCase):
             _create_native_verification(root)
             _create_daily_snapshot_fixture(root, "G65")
 
-            delivery_action = get_operator_action("delivery_checklist__g65", root, profiles=[profile])
             repo_action = get_operator_action("repo_checker_profile__g65", root, profiles=[profile])
 
-            with mock.patch.dict(
-                os.environ,
-                {"SG_CARMODELS_REPO": str(root / "missing" / "digital-3d-car-models")},
-                clear=False,
-            ):
+            with mock.patch.dict(os.environ, _missing_bmw_repo_env(root), clear=False):
+                delivery_action = get_operator_action("delivery_checklist__g65", root, profiles=[profile])
                 with mock.patch("sg_preflight.visual_review._run_svn", return_value=""):
                     execute_operator_action(delivery_action, root)
 
