@@ -41,6 +41,7 @@ from sg_preflight.delivery_readiness import (
     STATUS_UNKNOWN,
     build_delivery_readiness_board,
 )
+from sg_preflight.disabled_tests import CAUTIOUS_BASELINE_LABEL, build_disabled_tests_board
 from sg_preflight.delivery_workbook_generation import (
     GENERATE_WORKBOOK_ACTION_ID,
     GENERATE_WORKBOOK_ACTION_LABEL,
@@ -128,6 +129,7 @@ GRAFIKS_SHELL_EXE_NAME = "sgfx_cine_cinematic_shell.exe"
 GRAFIKS_CXX_BUILD_DIR = Path("cpp") / "build" / "vs2022-ramses-28.16" / "Release"
 GRAFIKS_DEFAULT_BMW_CARS_ROOT = Path(r"C:\3D Car git\digital-3d-car-models\cars\BMW")
 GRAFIKS_MODE_WIP_HINT = "Grafiks mode is WIP - use Clean for now unless the C++ cinematic shell is installed."
+CANONICAL_SOURCE_REPO_ROOT = Path(r"C:\repositories\trunk")
 DASHBOARD_GUARDRAILS = (
     "Manual review remains required.",
     "Decision: not approval — evidence only.",
@@ -139,6 +141,7 @@ DASHBOARD_NAVIGATION = (
     ("batch-full-qa-pass", "Batch Full QA Pass"),
     ("delivery-checklist", "Delivery Checklist"),
     ("delivery-readiness", "Delivery Readiness"),
+    ("disabled-tests", "Disabled Tests"),
     ("onboarding-guide", "Onboarding Guide"),
     ("setup-doctor", "Setup Doctor"),
     ("qa-workflows", "QA Workflows"),
@@ -324,6 +327,39 @@ def _workspace(workspace: Path | str) -> Path:
 def _path_label(path: Path | str) -> str:
     value = Path(path)
     return value.name or str(value)
+
+
+def _source_repo_root_candidates(workspace: Path | str) -> list[str]:
+    candidates: list[Path] = [CANONICAL_SOURCE_REPO_ROOT]
+    for key in ("SG_SOURCE_REPO_ROOT", "SG_REPO"):
+        raw = os.environ.get(key, "").strip()
+        if raw:
+            candidates.append(Path(raw).expanduser())
+    workspace_path = Path(workspace).resolve()
+    candidates.extend((workspace_path, workspace_path / "repositories" / "trunk"))
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        text = str(candidate.resolve() if candidate.exists() else candidate)
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(text)
+    return unique
+
+
+def _preferred_source_repo_root(workspace: Path | str) -> Path | None:
+    for raw in _source_repo_root_candidates(workspace):
+        candidate = Path(raw).expanduser()
+        if candidate.is_dir() and ((candidate / "Cars").is_dir() or (candidate / "Cars_IDCevo").is_dir()):
+            return candidate.resolve()
+    return None
+
+
+def _source_repo_root_from_value(value: str | Path | None) -> Path | None:
+    raw = str(value or "").strip().strip('"')
+    return Path(raw).expanduser().resolve() if raw else None
 
 
 def _abbreviate_workspace_text(text: str, workspace: Path | str | None) -> str:
@@ -1174,8 +1210,15 @@ def _delivery_checklist_page(
     return page
 
 
-def _delivery_readiness_payload(workspace: Path, bmw_root: Path | str | None = None) -> dict[str, Any]:
+def _delivery_readiness_payload(
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+    *,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    selected_repo_root = _source_repo_root_from_value(repo_root) or _preferred_source_repo_root(workspace)
     board = build_delivery_readiness_board(
+        selected_repo_root,
         workspace_root=workspace,
         bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
     ).to_dict()
@@ -1189,6 +1232,11 @@ def _delivery_readiness_payload(workspace: Path, bmw_root: Path | str | None = N
     unknown = int(counts.get(STATUS_UNKNOWN, 0) or 0)
     entries = [entry for entry in board.get("entries", []) if isinstance(entry, dict)]
     rows: list[dict[str, str]] = [
+        {
+            "label": "Reading from",
+            "status": source_state,
+            "detail": str(board.get("repo_root", "")),
+        },
         {
             "label": "Cars listed",
             "status": str(total),
@@ -1230,9 +1278,11 @@ def _delivery_readiness_payload(workspace: Path, bmw_root: Path | str | None = N
         )
     board["status"] = "available" if ready else "missing"
     board["data_available"] = ready
+    board["selected_source_root"] = str(board.get("repo_root", ""))
+    board["source_root_candidates"] = _source_repo_root_candidates(workspace)
     board["summary"] = (
         f"{total} car(s): {delivered} delivered, {not_delivered} not delivered yet, "
-        f"{unknown} unknown/no changelog. Source: {source_state}."
+        f"{unknown} unknown/no changelog. Reading from {board.get('repo_root', '')}. Source: {source_state}."
     )
     board["board_rows"] = rows
     return board
@@ -1248,6 +1298,125 @@ def _delivery_readiness_page(workspace: Path, *, bmw_root: Path | str | None = N
         ownership_note="Evidence only - delivery approval remains manual: SG peer, Wombat merge, and BMW CCB.",
     )
     page["confluence_anchors"] = [DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR]
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["source_selector"] = {
+        "selected_source_root": str(payload.get("selected_source_root", "")),
+        "source_root_candidates": list(payload.get("source_root_candidates", [])),
+    }
+    return page
+
+
+def _disabled_tests_payload(
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+    *,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    selected_repo_root = _source_repo_root_from_value(repo_root) or _preferred_source_repo_root(workspace)
+    board = build_disabled_tests_board(
+        selected_repo_root,
+        workspace_root=workspace,
+        bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
+    ).to_dict()
+    counts = board.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    baseline = board.get("baseline", {})
+    if not isinstance(baseline, dict):
+        baseline = {}
+    entries = [entry for entry in board.get("entries", []) if isinstance(entry, dict)]
+    rows: list[dict[str, str]] = [
+        {
+            "label": "Reading from",
+            "status": str(board.get("source_state", "unknown")),
+            "detail": str(board.get("repo_root", "")),
+        },
+        {
+            "label": "Config coverage",
+            "status": f"{counts.get('configured', 0)}/{counts.get('total', 0)}",
+            "detail": f"{counts.get('no_config', 0)} car(s) have no export/tests/test_config.lua.",
+        },
+        {
+            "label": "Disabled calls",
+            "status": str(counts.get("disabled_call_total", 0)),
+            "detail": (
+                f"{counts.get('disabled_unique_total', 0)} unique disabled name(s); "
+                f"{counts.get('added_call_total', 0)} addTest call(s)."
+            ),
+        },
+        {
+            "label": "Review flags",
+            "status": str(counts.get("duplicate_entry_count", 0) + counts.get("baseline_review_entry_count", 0)),
+            "detail": (
+                f"{counts.get('duplicate_entry_count', 0)} duplicate-disable row(s); "
+                f"{counts.get('baseline_review_entry_count', 0)} row(s) with {CAUTIOUS_BASELINE_LABEL}."
+            ),
+        },
+        {
+            "label": "Baseline evidence",
+            "status": str(baseline.get("state", "unknown")),
+            "detail": f"{baseline.get('test_count', 0)} discovered test name(s).",
+        },
+    ]
+    for entry in entries[:18]:
+        flags = []
+        duplicates = entry.get("duplicate_disabled_tests", [])
+        baseline_review = entry.get("baseline_review_disabled_tests", [])
+        if isinstance(duplicates, list) and duplicates:
+            flags.append("duplicates: " + ", ".join(str(name) for name in duplicates[:4]))
+        if isinstance(baseline_review, list) and baseline_review:
+            flags.append(CAUTIOUS_BASELINE_LABEL + ": " + ", ".join(str(name) for name in baseline_review[:4]))
+        detail = (
+            f"{entry.get('relative_path', '')}; off {entry.get('disabled_count', 0)}; "
+            f"added {entry.get('added_count', 0)}"
+        )
+        if flags:
+            detail += "; " + "; ".join(flags)
+        rows.append(
+            {
+                "label": f"{entry.get('brand', '')} {entry.get('model_id', '')}".strip(),
+                "status": str(entry.get("config_status", "unknown")),
+                "detail": detail,
+            }
+        )
+    if len(entries) > 18:
+        rows.append(
+            {
+                "label": "Additional cars",
+                "status": str(len(entries) - 18),
+                "detail": "Open the CLI JSON or evidence export for the remaining rows.",
+            }
+        )
+    board["status"] = "available" if str(board.get("source_state", "")) == "ready" else "missing"
+    board["data_available"] = str(board.get("source_state", "")) == "ready"
+    board["selected_source_root"] = str(board.get("repo_root", ""))
+    board["source_root_candidates"] = _source_repo_root_candidates(workspace)
+    board["summary"] = (
+        f"{counts.get('configured', 0)}/{counts.get('total', 0)} car(s) have test_config.lua; "
+        f"{counts.get('disabled_call_total', 0)} active disableTest call(s); "
+        f"{counts.get('no_config', 0)} no-config row(s). Reading from {board.get('repo_root', '')}."
+    )
+    board["board_rows"] = rows
+    return board
+
+
+def _disabled_tests_page(workspace: Path, *, bmw_root: Path | str | None = None) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="disabled-tests",
+        title="Disabled Tests",
+        tagline="Per-car disabled-test inventory from local test_config.lua files.",
+        reader=lambda: _disabled_tests_payload(workspace, bmw_root),
+        workspace=workspace,
+        ownership_note=(
+            "Evidence only. Review flags use cautious wording: "
+            f"{CAUTIOUS_BASELINE_LABEL}."
+        ),
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["source_selector"] = {
+        "selected_source_root": str(payload.get("selected_source_root", "")),
+        "source_root_candidates": list(payload.get("source_root_candidates", [])),
+    }
     return page
 
 
@@ -1942,6 +2111,10 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "sections",
         "profiles",
         "board_rows",
+        "selected_source_root",
+        "source_root_candidates",
+        "counts",
+        "baseline",
         "comparison_axis",
         "comparison_rows",
         "left_profile",
@@ -2459,6 +2632,7 @@ def build_dashboard_snapshot(
             _batch_full_qa_pass_page(resolved_profile_id, root),
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _delivery_readiness_page(root, bmw_root=bmw_root),
+            _disabled_tests_page(root, bmw_root=bmw_root),
             _onboarding_guide_page(
                 resolved_profile_id,
                 root,
@@ -3864,6 +4038,113 @@ def _attach_tooltip(ui: Any, element: Any, text: str) -> Any:
     return element
 
 
+def _render_reader_rows(ui: Any, rows: list[dict[str, str]]) -> None:
+    if rows:
+        _attach_tooltip(
+            ui,
+            ui.table(
+                columns=[
+                    {"name": "label", "label": "Item", "field": "label", "align": "left"},
+                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                    {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+                ],
+                rows=rows,
+                row_key="label",
+            ).classes("sgfx-table"),
+            "Evidence rows are read from local files only.",
+        )
+    else:
+        ui.label("No rows loaded for this page.").classes("sgfx-muted")
+
+
+def _reader_rows_from_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        {
+            "label": str(item.get("label", "")),
+            "status": str(item.get("status", "")),
+            "detail": str(item.get("detail", "")),
+        }
+        for item in _payload_items(payload)
+        if isinstance(item, dict)
+    ]
+
+
+def _render_source_root_reader_panel(
+    ui: Any,
+    page: dict[str, Any],
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+    payload_builder: Callable[..., dict[str, Any]],
+) -> None:
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    selector = page.get("source_selector", {}) if isinstance(page.get("source_selector"), dict) else {}
+    selected_source = str(selector.get("selected_source_root") or payload.get("selected_source_root") or "")
+    source_candidates = [
+        str(candidate)
+        for candidate in selector.get("source_root_candidates", payload.get("source_root_candidates", []))
+        if str(candidate).strip()
+    ]
+    with _attach_tooltip(
+        ui,
+        ui.column().classes("sgfx-page-panel"),
+        "Read-only evidence card for the selected local SVN checkout.",
+    ):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "unknown")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        _render_page_confluence_anchors(ui, page)
+        ownership_note = str(page.get("ownership_note", "")).strip()
+        if ownership_note:
+            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
+        summary_label = ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        _render_empty_state_note(ui, page)
+        source_input = ui.input(label="SVN trunk root", value=selected_source).classes("full-width")
+        source_status = ui.label(f"Reading from: {selected_source or 'auto-discovery'}").classes("sgfx-muted")
+        rows_host = ui.column().classes("full-width")
+
+        def _render_payload_rows(next_payload: dict[str, Any]) -> None:
+            rows_host.clear()
+            with rows_host:
+                _render_reader_rows(ui, _reader_rows_from_payload(next_payload))
+
+        def _reload() -> None:
+            try:
+                next_payload = payload_builder(
+                    workspace,
+                    bmw_root,
+                    repo_root=_source_repo_root_from_value(source_input.value),
+                )
+            except Exception as exc:  # noqa: BLE001
+                summary_label.text = f"{page['title']} could not be read: {exc}"
+                source_status.text = "Reading from: unavailable"
+                rows_host.clear()
+                with rows_host:
+                    ui.label("No rows loaded for this page.").classes("sgfx-muted")
+                return
+            summary_label.text = _payload_summary(next_payload, str(page["title"]), workspace=workspace)
+            source_status.text = f"Reading from: {next_payload.get('repo_root', source_input.value)}"
+            _render_payload_rows(next_payload)
+            ui.notify(f"{page['title']} refreshed.")
+
+        with ui.row().classes("items-center"):
+            _attach_tooltip(
+                ui,
+                ui.button("Reload", on_click=_reload).props("no-caps"),
+                "Reload this evidence page from the selected local SVN checkout.",
+            )
+            for candidate in source_candidates[:4]:
+                label = Path(candidate).name or candidate
+                _attach_tooltip(
+                    ui,
+                    ui.button(label, on_click=lambda value=candidate: (setattr(source_input, "value", value), _reload()))
+                    .props("flat no-caps"),
+                    f"Use {candidate}",
+                )
+        _render_payload_rows(payload)
+
+
 def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
     with _attach_tooltip(
         ui,
@@ -3889,22 +4170,7 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
             for item in page.get("items", [])
             if isinstance(item, dict)
         ]
-        if rows:
-            _attach_tooltip(
-                ui,
-                ui.table(
-                    columns=[
-                        {"name": "label", "label": "Item", "field": "label", "align": "left"},
-                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                        {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
-                    ],
-                    rows=rows,
-                    row_key="label",
-                ).classes("sgfx-table"),
-                "Evidence rows are read from local files only.",
-            )
-        else:
-            ui.label("No rows loaded for this page.").classes("sgfx-muted")
+        _render_reader_rows(ui, rows)
 
 
 def _render_empty_state_note(ui: Any, page: dict[str, Any]) -> None:
@@ -7786,6 +8052,20 @@ def _render_selected_page(
             _render_full_qa_pass_panel(ui, snapshot, workspace)
         elif page_id == "delivery-checklist":
             _render_delivery_checklist_panel(ui, snapshot, workspace)
+        elif page_id == "delivery-readiness":
+            _render_source_root_reader_panel(
+                ui,
+                pages_by_id[page_id],
+                workspace,
+                payload_builder=_delivery_readiness_payload,
+            )
+        elif page_id == "disabled-tests":
+            _render_source_root_reader_panel(
+                ui,
+                pages_by_id[page_id],
+                workspace,
+                payload_builder=_disabled_tests_payload,
+            )
         elif page_id == "screenshot-test-state":
             _render_screenshot_test_state_panel(ui, snapshot, workspace)
         elif page_id == "risk-score":
@@ -8229,6 +8509,22 @@ def _render_dashboard(
                         state["snapshot"],
                         workspace,
                         on_setup_completed=_refresh_snapshot,
+                    )
+                elif active_page_id == "delivery-readiness":
+                    _render_source_root_reader_panel(
+                        ui,
+                        _pages_by_id()[active_page_id],
+                        workspace,
+                        bmw_root=bmw_root,
+                        payload_builder=_delivery_readiness_payload,
+                    )
+                elif active_page_id == "disabled-tests":
+                    _render_source_root_reader_panel(
+                        ui,
+                        _pages_by_id()[active_page_id],
+                        workspace,
+                        bmw_root=bmw_root,
+                        payload_builder=_disabled_tests_payload,
                     )
                 elif active_page_id == "full-qa-pass":
                     _render_full_qa_pass_panel(

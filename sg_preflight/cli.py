@@ -130,6 +130,11 @@ from sg_preflight.delivery_readiness import (
     build_delivery_readiness_board,
     write_delivery_readiness_board,
 )
+from sg_preflight.disabled_tests import (
+    CAUTIOUS_BASELINE_LABEL,
+    build_disabled_tests_board,
+    write_disabled_tests_board,
+)
 from sg_preflight.profiles import get_run_profile, list_run_profiles
 from sg_preflight.risk_scoring import (
     read_per_car_risk_score,
@@ -1289,6 +1294,62 @@ def _console_delivery_readiness(payload: dict[str, object]) -> None:
         )
 
 
+def _console_disabled_tests(payload: dict[str, object]) -> None:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    baseline = payload.get("baseline", {})
+    if not isinstance(baseline, dict):
+        baseline = {}
+    print("Disabled-Test Coverage")
+    print(f"Source: {payload.get('repo_root', '')}")
+    print(f"State: {payload.get('source_state', '')}")
+    print(
+        "Summary -> "
+        f"total: {counts.get('total', 0)} | "
+        f"configured: {counts.get('configured', 0)} | "
+        f"no config: {counts.get('no_config', 0)} | "
+        f"disabled calls: {counts.get('disabled_call_total', 0)} | "
+        f"added calls: {counts.get('added_call_total', 0)}"
+    )
+    print(
+        "Review flags -> "
+        f"duplicates: {counts.get('duplicate_entry_count', 0)} | "
+        f"{CAUTIOUS_BASELINE_LABEL}: {counts.get('baseline_review_entry_count', 0)}"
+    )
+    print(f"Baseline evidence: {baseline.get('state', '')} ({baseline.get('test_count', 0)} names)")
+    print(str(payload.get("manual_review_banner", "")))
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        if artifacts.get("json_path"):
+            print(f"JSON: {artifacts['json_path']}")
+        if artifacts.get("markdown_path"):
+            print(f"Markdown: {artifacts['markdown_path']}")
+    print("-" * 80)
+    entries = payload.get("entries", [])
+    if not isinstance(entries, list) or not entries:
+        print("No car test-config rows found.")
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        flags = []
+        duplicates = entry.get("duplicate_disabled_tests", [])
+        baseline_review = entry.get("baseline_review_disabled_tests", [])
+        if isinstance(duplicates, list) and duplicates:
+            flags.append("duplicates: " + ", ".join(str(name) for name in duplicates))
+        if isinstance(baseline_review, list) and baseline_review:
+            flags.append(CAUTIOUS_BASELINE_LABEL + ": " + ", ".join(str(name) for name in baseline_review))
+        detail = "; ".join(flags) if flags else "no review flags"
+        print(
+            _console_safe(
+                f"- {entry.get('source_root')}/{entry.get('brand')}/{entry.get('model_id')}: "
+                f"{entry.get('config_status')} | off {entry.get('disabled_count', 0)} | "
+                f"added {entry.get('added_count', 0)} | {detail}"
+            )
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _SgfxArgumentParser(prog=_default_prog())
     parser.add_argument("--version", action=_VersionAction, help="Show version and build metadata")
@@ -1601,6 +1662,16 @@ def build_parser() -> argparse.ArgumentParser:
     delivery_readiness.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     delivery_readiness.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     delivery_readiness.add_argument("--json", action="store_true", help="Print delivery readiness payload as JSON")
+
+    disabled_tests = sub.add_parser(
+        "disabled-tests",
+        help="Build the read-only disabled-test inventory from car test_config.lua files",
+    )
+    disabled_tests.add_argument("--workspace", help="Workspace root override")
+    disabled_tests.add_argument("--repo-root", help="SVN trunk root override")
+    disabled_tests.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    disabled_tests.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    disabled_tests.add_argument("--json", action="store_true", help="Print disabled-test payload as JSON")
 
     sub.add_parser(
         "list-workflows",
@@ -2457,6 +2528,15 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_delivery_parser.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     desktop_delivery_parser.add_argument("--json", action="store_true", help="Print delivery-readiness payload as JSON")
 
+    desktop_disabled_parser = desktop_state_sub.add_parser(
+        "disabled-tests",
+        help="Load the disabled-test inventory for native-shell consumers",
+    )
+    desktop_disabled_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_disabled_parser.add_argument("--repo-root", help="SVN trunk root override")
+    desktop_disabled_parser.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    desktop_disabled_parser.add_argument("--json", action="store_true", help="Print disabled-test payload as JSON")
+
     desktop_attach_manual_parser = desktop_state_sub.add_parser(
         "attach-manual-evidence",
         help="Attach manual evidence into one action bundle",
@@ -3290,6 +3370,20 @@ def _main_impl(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
             _console_delivery_readiness(payload)
+        return 0
+
+    if args.command == "disabled-tests":
+        disabled_root = Path(args.workspace).resolve() if args.workspace else root
+        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+        bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
+        board = build_disabled_tests_board(repo_root, workspace_root=disabled_root, bmw_repo_root=bmw_repo_root)
+        payload = board.to_dict()
+        if args.output_root:
+            payload["artifacts"] = write_disabled_tests_board(board, Path(args.output_root).resolve())
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            _console_disabled_tests(payload)
         return 0
 
     if args.command == "list-workflows":
@@ -4155,6 +4249,14 @@ def _main_impl(argv: list[str] | None = None) -> int:
             repo_root = Path(args.repo_root).resolve() if args.repo_root else None
             bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
             payload = build_delivery_readiness_board(
+                repo_root,
+                workspace_root=state_root,
+                bmw_repo_root=bmw_repo_root,
+            ).to_dict()
+        elif args.desktop_state_command == "disabled-tests":
+            repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+            bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
+            payload = build_disabled_tests_board(
                 repo_root,
                 workspace_root=state_root,
                 bmw_repo_root=bmw_repo_root,

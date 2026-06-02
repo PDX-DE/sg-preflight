@@ -159,7 +159,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_fifteen_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_sixteen_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -173,6 +173,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "batch-full-qa-pass",
                 "delivery-checklist",
                 "delivery-readiness",
+                "disabled-tests",
                 "onboarding-guide",
                 "setup-doctor",
                 "qa-workflows",
@@ -202,6 +203,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "batch-full-qa-pass", "label": "Batch Full QA Pass"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
                 {"id": "delivery-readiness", "label": "Delivery Readiness"},
+                {"id": "disabled-tests", "label": "Disabled Tests"},
                 {"id": "onboarding-guide", "label": "Onboarding Guide"},
                 {"id": "setup-doctor", "label": "Setup Doctor"},
                 {"id": "qa-workflows", "label": "QA Workflows"},
@@ -233,6 +235,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(
             pages_by_id["delivery-readiness"]["tagline"],
             "Per-car CHANGELOG delivery status from local SVN and BMW catalog evidence.",
+        )
+        self.assertEqual(
+            pages_by_id["disabled-tests"]["tagline"],
+            "Per-car disabled-test inventory from local test_config.lua files.",
         )
         self.assertEqual(
             pages_by_id["onboarding-guide"]["tagline"],
@@ -440,7 +446,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 15)
+                self.assertEqual(len(snapshot["pages"]), 16)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1111,7 +1117,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 15)
+        self.assertEqual(len(snapshot["pages"]), 16)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -1125,7 +1131,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 15)
+        self.assertEqual(len(snapshot["pages"]), 16)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")
