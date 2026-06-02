@@ -73,6 +73,12 @@ from sg_preflight.export_size_analysis import (
     render_export_size_analysis_markdown,
     render_export_size_analysis_text,
 )
+from sg_preflight.export_size_trend import (
+    SIGNIFICANT_CHANGE_LABEL,
+    UNREADABLE_LAYOUT_LABEL,
+    build_export_size_trend_board,
+    write_export_size_trend_board,
+)
 from sg_preflight.full_qa_pass import (
     build_full_qa_pass,
     render_full_qa_pass_markdown,
@@ -1479,6 +1485,53 @@ def _console_country_variant_coverage(payload: dict[str, object]) -> None:
             )
 
 
+def _console_export_size_trend(payload: dict[str, object]) -> None:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    print("Export Size Trend")
+    print(f"Source: {payload.get('repo_root', '')}")
+    print(f"State: {payload.get('source_state', '')}")
+    print(
+        "Summary -> "
+        f"workbooks: {counts.get('workbook_count', 0)} | "
+        f"profiles: {counts.get('profile_count', 0)} | "
+        f"trend changes: {counts.get('trend_change_count', 0)} | "
+        f"review changes: {counts.get('review_change_count', 0)}"
+    )
+    print(str(payload.get("manual_review_banner", "")))
+    print(f"Review label: {payload.get('significant_change_label', SIGNIFICANT_CHANGE_LABEL)}")
+    print(f"Unreadable label: {payload.get('unreadable_layout_label', UNREADABLE_LAYOUT_LABEL)}")
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        if artifacts.get("json_path"):
+            print(f"JSON: {artifacts['json_path']}")
+        if artifacts.get("markdown_path"):
+            print(f"Markdown: {artifacts['markdown_path']}")
+    print("-" * 80)
+    changes = payload.get("trend_changes", [])
+    if isinstance(changes, list):
+        for change in changes[:18]:
+            if not isinstance(change, dict):
+                continue
+            flags = change.get("review_flags", [])
+            flags_text = ""
+            if isinstance(flags, list) and flags:
+                flags_text = "; " + ", ".join(str(flag) for flag in flags[:3])
+            print(
+                _console_safe(
+                    f"- {change.get('profile_id', '')}: "
+                    f"{Path(str(change.get('previous_workbook', ''))).name} -> "
+                    f"{Path(str(change.get('current_workbook', ''))).name}; "
+                    f"delta {float(change.get('delta_total', 0) or 0):.2f} "
+                    f"({float(change.get('delta_percent', 0) or 0):.2f}%)"
+                    f"{flags_text}"
+                )
+            )
+        if len(changes) > 18:
+            print(f"... {len(changes) - 18} more change row(s)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _SgfxArgumentParser(prog=_default_prog())
     parser.add_argument("--version", action=_VersionAction, help="Show version and build metadata")
@@ -1821,6 +1874,15 @@ def build_parser() -> argparse.ArgumentParser:
     country_variant_coverage.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     country_variant_coverage.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     country_variant_coverage.add_argument("--json", action="store_true", help="Print country-variant coverage payload as JSON")
+
+    export_size_trend = sub.add_parser(
+        "export-size-trend",
+        help="Build the read-only export-size workbook trend board",
+    )
+    export_size_trend.add_argument("--workspace", help="Workspace root override")
+    export_size_trend.add_argument("--repo-root", help="SVN trunk root override")
+    export_size_trend.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    export_size_trend.add_argument("--json", action="store_true", help="Print export-size trend payload as JSON")
 
     sub.add_parser(
         "list-workflows",
@@ -2704,6 +2766,14 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_country_variant_parser.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     desktop_country_variant_parser.add_argument("--json", action="store_true", help="Print country-variant coverage payload as JSON")
 
+    desktop_export_size_trend_parser = desktop_state_sub.add_parser(
+        "export-size-trend",
+        help="Load the export-size trend board for native-shell consumers",
+    )
+    desktop_export_size_trend_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_export_size_trend_parser.add_argument("--repo-root", help="SVN trunk root override")
+    desktop_export_size_trend_parser.add_argument("--json", action="store_true", help="Print export-size trend payload as JSON")
+
     desktop_attach_manual_parser = desktop_state_sub.add_parser(
         "attach-manual-evidence",
         help="Attach manual evidence into one action bundle",
@@ -3583,6 +3653,19 @@ def _main_impl(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
             _console_country_variant_coverage(payload)
+        return 0
+
+    if args.command == "export-size-trend":
+        trend_root = Path(args.workspace).resolve() if args.workspace else root
+        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+        board = build_export_size_trend_board(repo_root, workspace_root=trend_root)
+        payload = board.to_dict()
+        if args.output_root:
+            payload["artifacts"] = write_export_size_trend_board(board, Path(args.output_root).resolve())
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            _console_export_size_trend(payload)
         return 0
 
     if args.command == "list-workflows":
@@ -4475,6 +4558,12 @@ def _main_impl(argv: list[str] | None = None) -> int:
                 repo_root,
                 workspace_root=state_root,
                 bmw_repo_root=bmw_repo_root,
+            ).to_dict()
+        elif args.desktop_state_command == "export-size-trend":
+            repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+            payload = build_export_size_trend_board(
+                repo_root,
+                workspace_root=state_root,
             ).to_dict()
         elif args.desktop_state_command == "attach-manual-evidence":
             payload = attach_manual_evidence(

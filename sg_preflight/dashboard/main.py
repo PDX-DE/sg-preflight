@@ -48,6 +48,11 @@ from sg_preflight.country_variant_coverage import (
     NO_RUNTIME_LABEL,
     build_country_variant_coverage_board,
 )
+from sg_preflight.export_size_trend import (
+    SIGNIFICANT_CHANGE_LABEL,
+    UNREADABLE_LAYOUT_LABEL,
+    build_export_size_trend_board,
+)
 from sg_preflight.disabled_tests import CAUTIOUS_BASELINE_LABEL, build_disabled_tests_board
 from sg_preflight.delivery_workbook_generation import (
     GENERATE_WORKBOOK_ACTION_ID,
@@ -151,6 +156,7 @@ DASHBOARD_NAVIGATION = (
     ("disabled-tests", "Disabled Tests"),
     ("api-version-coverage", "API Version"),
     ("country-variant-coverage", "Country Variants"),
+    ("export-size-trend", "Size Trend"),
     ("onboarding-guide", "Onboarding Guide"),
     ("setup-doctor", "Setup Doctor"),
     ("qa-workflows", "QA Workflows"),
@@ -1675,6 +1681,127 @@ def _country_variant_coverage_page(workspace: Path, *, bmw_root: Path | str | No
     return page
 
 
+def _export_size_trend_payload(
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+    *,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    _ = bmw_root
+    selected_repo_root = _source_repo_root_from_value(repo_root) or _preferred_source_repo_root(workspace)
+    board = build_export_size_trend_board(
+        selected_repo_root,
+        workspace_root=workspace,
+    ).to_dict()
+    counts = board.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    layout_counts = counts.get("layout_counts", {})
+    if not isinstance(layout_counts, dict):
+        layout_counts = {}
+    date_source_counts = counts.get("date_source_counts", {})
+    if not isinstance(date_source_counts, dict):
+        date_source_counts = {}
+    changes = [item for item in board.get("trend_changes", []) if isinstance(item, dict)]
+    workbooks = [item for item in board.get("workbooks", []) if isinstance(item, dict)]
+    review_changes = [item for item in changes if item.get("review_flags")]
+    rows: list[dict[str, str]] = [
+        {
+            "label": "Reading from",
+            "status": str(board.get("source_state", "unknown")),
+            "detail": str(board.get("workbook_dir", "")),
+        },
+        {
+            "label": "Workbooks",
+            "status": str(counts.get("workbook_count", 0)),
+            "detail": f"{counts.get('profile_count', 0)} profile(s); {counts.get('parsed_workbook_count', 0)} parsed.",
+        },
+        {
+            "label": "Overview layouts",
+            "status": str(len(layout_counts)),
+            "detail": "; ".join(f"{key}={value}" for key, value in sorted(layout_counts.items())),
+        },
+        {
+            "label": "Date sources",
+            "status": str(len(date_source_counts)),
+            "detail": "; ".join(f"{key}={value}" for key, value in sorted(date_source_counts.items())),
+        },
+        {
+            "label": "Review prompts",
+            "status": str(counts.get("review_change_count", 0)),
+            "detail": f"{SIGNIFICANT_CHANGE_LABEL}; {UNREADABLE_LAYOUT_LABEL}.",
+        },
+    ]
+    for change in review_changes[:8]:
+        rows.append(
+            {
+                "label": f"{change.get('profile_id', '')} size change".strip(),
+                "status": f"{float(change.get('delta_percent', 0) or 0):.2f}%",
+                "detail": (
+                    f"{Path(str(change.get('previous_workbook', ''))).name} -> "
+                    f"{Path(str(change.get('current_workbook', ''))).name}; "
+                    f"delta {float(change.get('delta_total', 0) or 0):.2f}; "
+                    f"{'; '.join(str(flag) for flag in change.get('review_flags', []))}"
+                ),
+            }
+        )
+    for change in [item for item in changes if not item.get("review_flags")][:10]:
+        rows.append(
+            {
+                "label": f"{change.get('profile_id', '')} latest/prior".strip(),
+                "status": f"{float(change.get('delta_percent', 0) or 0):.2f}%",
+                "detail": (
+                    f"{Path(str(change.get('previous_workbook', ''))).name} -> "
+                    f"{Path(str(change.get('current_workbook', ''))).name}; "
+                    f"delta {float(change.get('delta_total', 0) or 0):.2f}."
+                ),
+            }
+        )
+    unreadable = [item for item in workbooks if str(item.get("status", "")) != "parsed"]
+    for workbook in unreadable[:6]:
+        flags = workbook.get("review_flags", [])
+        flag_text = "; ".join(str(flag) for flag in flags) if isinstance(flags, list) else ""
+        rows.append(
+            {
+                "label": Path(str(workbook.get("relative_path", workbook.get("workbook_path", "")))).name,
+                "status": str(workbook.get("status", "")),
+                "detail": flag_text or UNREADABLE_LAYOUT_LABEL,
+            }
+        )
+    board["status"] = "available" if str(board.get("source_state", "")) == "ready" else "missing"
+    board["data_available"] = str(board.get("source_state", "")) == "ready"
+    board["selected_source_root"] = str(board.get("repo_root", ""))
+    board["source_root_candidates"] = _source_repo_root_candidates(workspace)
+    board["summary"] = (
+        f"{counts.get('workbook_count', 0)} export-size workbook(s) across "
+        f"{counts.get('profile_count', 0)} profile(s); "
+        f"{counts.get('trend_change_count', 0)} trend comparison(s); "
+        f"{counts.get('review_change_count', 0)} review prompt(s). "
+        f"Reading from {board.get('repo_root', '')}."
+    )
+    board["board_rows"] = rows
+    return board
+
+
+def _export_size_trend_page(workspace: Path, *, bmw_root: Path | str | None = None) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="export-size-trend",
+        title="Size Trend",
+        tagline="Export-size workbook trends from local size_analysis evidence.",
+        reader=lambda: _export_size_trend_payload(workspace, bmw_root),
+        workspace=workspace,
+        ownership_note=(
+            "Evidence only. Size changes are review prompts, not delivery or regression verdicts."
+        ),
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["source_selector"] = {
+        "selected_source_root": str(payload.get("selected_source_root", "")),
+        "source_root_candidates": list(payload.get("source_root_candidates", [])),
+    }
+    return page
+
+
 def _setup_doctor_payload(workspace: Path) -> dict[str, Any]:
     report = build_setup_doctor_report(workspace).to_dict()
     rows = []
@@ -2890,6 +3017,7 @@ def build_dashboard_snapshot(
             _disabled_tests_page(root, bmw_root=bmw_root),
             _api_version_coverage_page(root, bmw_root=bmw_root),
             _country_variant_coverage_page(root, bmw_root=bmw_root),
+            _export_size_trend_page(root, bmw_root=bmw_root),
             _onboarding_guide_page(
                 resolved_profile_id,
                 root,
@@ -8337,6 +8465,13 @@ def _render_selected_page(
                 workspace,
                 payload_builder=_country_variant_coverage_payload,
             )
+        elif page_id == "export-size-trend":
+            _render_source_root_reader_panel(
+                ui,
+                pages_by_id[page_id],
+                workspace,
+                payload_builder=_export_size_trend_payload,
+            )
         elif page_id == "screenshot-test-state":
             _render_screenshot_test_state_panel(ui, snapshot, workspace)
         elif page_id == "risk-score":
@@ -8812,6 +8947,14 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         payload_builder=_country_variant_coverage_payload,
+                    )
+                elif active_page_id == "export-size-trend":
+                    _render_source_root_reader_panel(
+                        ui,
+                        _pages_by_id()[active_page_id],
+                        workspace,
+                        bmw_root=bmw_root,
+                        payload_builder=_export_size_trend_payload,
                     )
                 elif active_page_id == "full-qa-pass":
                     _render_full_qa_pass_panel(
