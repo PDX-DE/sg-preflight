@@ -4,11 +4,19 @@ import os
 import shutil
 import subprocess
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 import unittest
 from unittest import mock
 
-from sg_preflight.qa_actions import execute_operator_action, get_operator_action, list_operator_actions
+from sg_preflight.qa_actions import (
+    BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS,
+    build_action_record,
+    execute_operator_action,
+    get_operator_action,
+    list_operator_actions,
+    load_action_record,
+)
 from tests.operator_helpers import create_temp_g65_profile, isolated_missing_external_dependencies, write_text
 
 
@@ -385,6 +393,36 @@ starting  luacheck on  12  files
                 str(profile.project_root / "resources" / "textures" / "unused_diffuse.png"),
             )
             self.assertEqual(checker_evidence.get("source_kind"), "daily_live_matrix")
+
+    def test_bmw_screenshot_smoke_timeout_persists_failed_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = replace(create_temp_g65_profile(root), bmw_smoke_target="G65_EVO")
+            bmw_repo = root / "digital-3d-car-models"
+            write_text(bmw_repo / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "SG_BMW_CAR_MODELS_ROOT": str(bmw_repo),
+                    "SG_CARMODELS_REPO": str(bmw_repo),
+                    "SG-CarModels-Repo": str(bmw_repo),
+                },
+                clear=False,
+            ):
+                action = get_operator_action("bmw_screenshot_smoke__g65", root, profiles=[profile])
+                record = build_action_record(action, root)
+                with mock.patch(
+                    "sg_preflight.qa_actions.subprocess.run",
+                    side_effect=subprocess.TimeoutExpired(cmd=["python"], timeout=BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS),
+                ) as run:
+                    with self.assertRaisesRegex(RuntimeError, "timed out"):
+                        execute_operator_action(action, root, record=record)
+
+            saved = load_action_record(record.run_id, root)
+            self.assertEqual(saved.status, "failed")
+            self.assertEqual(saved.exit_code, 1)
+            self.assertIn("timed out", saved.error_message)
+            self.assertEqual(run.call_args.kwargs["timeout"], BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS)
 
 
 if __name__ == "__main__":

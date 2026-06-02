@@ -85,6 +85,7 @@ ACTION_PROGRESS_PLANS: dict[str, tuple[tuple[str, str], ...]] = {
         ("finalize", "Finalize action record"),
     ),
 }
+BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS = 300
 
 
 def operator_ui_actions_root(explicit_root: Path | None = None) -> Path:
@@ -1913,12 +1914,9 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
             "command": f"{sys.executable} {script_path} test -c {target} -ns",
         },
     )
-    interface_process = subprocess.run(
+    interface_process = _run_bmw_smoke_step(
         [sys.executable, str(script_path), "test", "-c", target, "-ns"],
-        cwd=scripts_root,
-        capture_output=True,
-        text=True,
-        check=False,
+        scripts_root,
     )
     _set_action_progress(
         record,
@@ -1931,12 +1929,9 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
             "command": f"{sys.executable} {script_path} export {target}",
         },
     )
-    export_process = subprocess.run(
+    export_process = _run_bmw_smoke_step(
         [sys.executable, str(script_path), "export", target],
-        cwd=scripts_root,
-        capture_output=True,
-        text=True,
-        check=False,
+        scripts_root,
     )
     _set_action_progress(
         record,
@@ -1949,12 +1944,9 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
             "command": f"{sys.executable} {script_path} screenshots --diff {target}",
         },
     )
-    screenshots_process = subprocess.run(
+    screenshots_process = _run_bmw_smoke_step(
         [sys.executable, str(script_path), "screenshots", "--diff", target],
-        cwd=scripts_root,
-        capture_output=True,
-        text=True,
-        check=False,
+        scripts_root,
     )
     combined_log = "\n\n".join(
         [
@@ -1986,6 +1978,23 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
     }
     artifacts = [_artifact("BMW screenshot smoke log", Path(record.paths["log"]))]
     return summary, artifacts, []
+
+
+def _run_bmw_smoke_step(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        command = " ".join(str(item) for item in args)
+        raise RuntimeError(
+            f"BMW screenshot smoke timed out after {BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS} seconds: {command}"
+        ) from exc
 
 
 def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:

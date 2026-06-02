@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -55,9 +56,12 @@ from sg_preflight.services import (
     run_notes,
     save_run_record,
     sg_checker_catalog,
+    utc_now,
     workspace_root,
 )
 from sg_preflight.setup_doctor import build_setup_doctor_report
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _templates() -> Jinja2Templates:
@@ -1799,8 +1803,9 @@ def _coerce_run_payload(payload: dict[str, Any]) -> tuple[str, RunRequest]:
 def _run_profile_background(profile: RunProfile, request: RunRequest, root: Path) -> None:
     try:
         execute_profile_run(profile, request, root)
-    except Exception:
-        return
+    except Exception as exc:
+        LOGGER.exception("Background profile run failed for %s", profile.profile_id)
+        _persist_background_run_failure(request.run_id or "", root, exc)
 
 
 def _run_action_background(action_id: str, run_id: str, root: Path) -> None:
@@ -1808,8 +1813,43 @@ def _run_action_background(action_id: str, run_id: str, root: Path) -> None:
         action = get_operator_action(action_id, root)
         record = load_action_record(run_id, root)
         execute_operator_action(action, root, record=record)
-    except Exception:
+    except Exception as exc:
+        LOGGER.exception("Background action failed for %s", action_id)
+        _persist_background_action_failure(run_id, root, exc)
+
+
+def _persist_background_run_failure(run_id: str, root: Path, exc: Exception) -> None:
+    if not run_id:
         return
+    try:
+        record = load_run_record(run_id, root)
+    except Exception:
+        LOGGER.exception("Could not load failed background run record %s", run_id)
+        return
+    if record.status in {"completed", "failed", "blocked"}:
+        return
+    record.status = "failed"
+    record.exit_code = 1
+    record.completed_at_utc = utc_now()
+    record.error_message = str(exc) or exc.__class__.__name__
+    save_run_record(record)
+
+
+def _persist_background_action_failure(run_id: str, root: Path, exc: Exception) -> None:
+    if not run_id:
+        return
+    try:
+        record = load_action_record(run_id, root)
+    except Exception:
+        LOGGER.exception("Could not load failed background action record %s", run_id)
+        return
+    if record.status in {"completed", "failed", "blocked"}:
+        return
+    record.status = "failed"
+    record.exit_code = 1
+    record.completed_at_utc = utc_now()
+    record.error_message = str(exc) or exc.__class__.__name__
+    save_action_task_record(record)
 
 
 def _finding_rows(report: Report, record: Any, config: dict[str, Any]) -> list[dict[str, Any]]:
