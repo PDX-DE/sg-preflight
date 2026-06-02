@@ -20,7 +20,6 @@ import time
 from time import monotonic
 from typing import Any, Callable
 from urllib.parse import quote_plus
-import webbrowser
 from urllib.parse import quote
 
 from sg_preflight.activity_log import append_activity_entry
@@ -6034,7 +6033,14 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                     jira_link_host.clear()
                     with jira_link_host:
                         if jira_url:
-                            ui.link("Open Jira attachment", jira_url, new_tab=True).classes("sgfx-muted")
+                            ui.button(
+                                "Copy Jira attachment URL",
+                                on_click=lambda jira_url=jira_url: _copy_dashboard_link_to_clipboard(
+                                    ui,
+                                    jira_url,
+                                    "Jira attachment URL",
+                                ),
+                            ).props("flat dense no-caps").classes("sgfx-muted")
                         else:
                             ui.label("Jira attachment URL unavailable in response.").classes("sgfx-muted")
                     ui.notify("Quality-Hero report attached to Jira.")
@@ -6361,39 +6367,25 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                 )
 
 
-def _open_jira_ticket_in_browser(ui: Any, url: str, key: str) -> None:
-    """H-35 Part A: open `url` in the operator's default external browser via
-    `webbrowser.open(url, new=2)` and ALSO copy the URL to the clipboard via JS
-    as a belt+suspenders fallback. The action is never lost even if the OS
-    default-browser launch fails (browser misconfigured, popup blocked, packaged
-    .exe in a restricted profile) — the operator can paste the URL manually.
-
-    Operator-local; never crosses external boundaries; the URL is the Jira
-    browse link that was already in the rendered HTML.
-    """
-    opened = False
-    try:
-        opened = bool(webbrowser.open(url, new=2, autoraise=True))
-    except Exception:
-        opened = False
-    # JS-side: copy to clipboard. Failures swallowed so the notify call still fires.
+def _copy_dashboard_link_to_clipboard(ui: Any, url: str, label: str) -> None:
+    clean_url = str(url or "").strip()
+    clean_label = str(label or clean_url or "link").strip()
+    if not clean_url:
+        try:
+            ui.notify(f"No URL available for {clean_label}.", position="bottom")
+        except Exception:
+            pass
+        return
     try:
         ui.run_javascript(
             "(async () => { try { "
-            f"await navigator.clipboard.writeText({json.dumps(url)}); "
+            f"await navigator.clipboard.writeText({json.dumps(clean_url)}); "
             "} catch (err) { console.warn('clipboard.writeText failed', err); } })();"
         )
     except Exception:
         pass
-    if opened:
-        message = f"Opened {key} in your default browser; URL copied to clipboard."
-    else:
-        message = (
-            f"Could not launch a browser for {key} automatically; URL copied to clipboard so "
-            "you can paste it into your default browser."
-        )
     try:
-        ui.notify(message, position="bottom")
+        ui.notify(f"Copied to clipboard: {clean_label}", position="bottom")
     except Exception:
         pass
 
@@ -6435,16 +6427,9 @@ def _render_jira_profile_tickets_card(
                 url = str(ticket.get("url", "") or "")
                 with ui.row().classes("sgfx-jira-ticket-row full-width items-center"):
                     if url:
-                        # H-35 Part A: open the Jira URL in the operator's default
-                        # external browser via webbrowser.open + copy to clipboard
-                        # as belt+suspenders. Replaces the H-29 `<a target="_blank">`
-                        # anchor (which routed through the NiceGUI embedded webview
-                        # on the packaged exe and re-prompted for auth) with a
-                        # Python-side browser handoff so the operator's SSO session
-                        # in their daily browser handles the redirect.
                         ui.button(
                             key,
-                            on_click=lambda url=url, key=key: _open_jira_ticket_in_browser(ui, url, key),
+                            on_click=lambda url=url, key=key: _copy_dashboard_link_to_clipboard(ui, url, key),
                         ).props("flat dense no-caps").classes("sgfx-jira-ticket-key")
                     else:
                         ui.label(key).classes("sgfx-jira-ticket-key")

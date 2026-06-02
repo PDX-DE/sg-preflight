@@ -553,14 +553,9 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("defer_team_digest_board=True", source)
         self.assertIn('page_id in {"daily-digest", "team-digest-board"}', source)
 
-    def test_jira_inline_tickets_render_as_target_blank_external_link(self) -> None:
-        """H-29 + H-35 Part A: clicking a Jira ticket in the inline panel must
-        open the Jira URL in the operator's default EXTERNAL browser (not the
-        NiceGUI embedded webview) and also copy the URL to the clipboard as a
-        belt+suspenders fallback. H-29 originally used a raw `<a target="_blank">`
-        anchor; H-35 replaces it with a NiceGUI button calling Python-side
-        `webbrowser.open(url, new=2)` so the operator's existing SSO session
-        in their daily browser handles auth without prompting for re-login."""
+    def test_jira_inline_tickets_render_as_copy_only_buttons(self) -> None:
+        """Clicking a Jira ticket in the inline panel copies the URL only and
+        shows a visible toast. It must not auto-open a browser."""
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"
         )
@@ -569,17 +564,19 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         idx = source.find(render_marker, source.find("_render_jira_profile_tickets_card"))
         self.assertNotEqual(idx, -1, "H-29 / H-35: Jira ticket renderer 'if tickets:' block not found")
         block = source[idx:idx + 1500]
-        # H-35 Part A: button path that calls the external-browser handoff.
-        self.assertIn("ui.button(", block, "H-35 fix: Jira ticket must render as a button (not anchor)")
-        self.assertIn("_open_jira_ticket_in_browser(ui, url, key)", block, "H-35 fix: button must call _open_jira_ticket_in_browser")
+        self.assertIn("ui.button(", block, "Jira ticket must render as a button (not anchor)")
+        self.assertIn(
+            "_copy_dashboard_link_to_clipboard(ui, url, key)",
+            block,
+            "Jira ticket button must copy only",
+        )
         self.assertIn("sgfx-jira-ticket-key", block, "H-29 styling class must remain")
-        # The helper must use webbrowser.open + JS clipboard.writeText.
-        self.assertIn("def _open_jira_ticket_in_browser", source)
-        helper_idx = source.find("def _open_jira_ticket_in_browser")
+        self.assertIn("def _copy_dashboard_link_to_clipboard", source)
+        helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
         helper_block = source[helper_idx:helper_idx + 1500]
-        self.assertIn("webbrowser.open(url, new=2", helper_block, "H-35 fix: helper must call webbrowser.open(url, new=2)")
-        self.assertIn("navigator.clipboard.writeText", helper_block, "H-35 fix: helper must copy URL to clipboard as fallback")
-        self.assertIn("URL copied to clipboard", helper_block, "H-35 fix: notify wording must mention clipboard fallback")
+        self.assertNotIn("webbrowser.open", helper_block, "Jira helper must not auto-open a browser")
+        self.assertIn("navigator.clipboard.writeText", helper_block, "Jira helper must copy URL to clipboard")
+        self.assertIn("Copied to clipboard:", helper_block, "notify wording must mention clipboard")
 
     def test_dashboard_strips_full_qa_run_trigger_after_first_fire(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
