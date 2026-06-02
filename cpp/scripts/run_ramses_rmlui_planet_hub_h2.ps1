@@ -72,7 +72,7 @@ try {
     Write-Host "Enter hub after ms: $EnterHubAfterMs"
     Write-Host "Planet producer frames: $PlanetFrames"
     Write-Host "Planet render size: ${PlanetRenderWidth}x${PlanetRenderHeight}"
-    Write-Host "Hub nodes: 7 fixed RmlUi overlay capitals"
+    Write-Host "Hub nodes: 6 fixed RmlUi overlay capitals, five Bucket B data nodes wired"
     Write-Host "Asset root: $assetRoot"
     Write-Host "Font root: $fontRoot"
     Write-Host "Evidence root: $EvidenceRoot"
@@ -122,15 +122,15 @@ try {
         output = $outputPath
         readback = $readbackPath
         target = "sgfx_cine_cinematic_shell"
-        hub_slice = "H2: seven RmlUi capital nodes over the Ramses SGFX planet"
+        hub_slice = "H2: six RmlUi capital nodes over the Ramses SGFX planet"
         ramses_version = $RamsesVersion
         renderer_backend = "RmlUi GL3"
         planet_pipe = "Ramses procedural scene -> offscreen buffer -> readPixels -> RmlUi-owned CallbackTexture decorator"
-        node_layer = "RmlUi overlay capitals; 3D Car live, Delivery wired, four coming placeholders"
+        node_layer = "RmlUi overlay capitals; 3D Car live, five Bucket B data capitals wired"
         node_count = 6
         live_node = "3D Car"
-        wired_nodes = @("Delivery")
-        coming_nodes = @("Disabled Tests", "API Version", "Country Variants", "Size Trend")
+        wired_nodes = @("Delivery", "Disabled Tests", "API Version", "Country Variants", "Size Trend")
+        coming_nodes = @()
         planet_render_size = "${PlanetRenderWidth}x${PlanetRenderHeight}"
         planet_producer_frames = $PlanetFrames
         menu_route = "Modules / Pipelines -> Seriengrafik world hub"

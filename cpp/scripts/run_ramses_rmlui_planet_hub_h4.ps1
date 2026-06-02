@@ -4,6 +4,7 @@ param(
     [int]$Frames = 180,
     [int]$SkipAfterMs = 500,
     [int]$EnterHubAfterMs = 850,
+    [int]$SelectedNodeIndex = 1,
     [int]$PlanetFrames = 72,
     [int]$PlanetRenderWidth = 1280,
     [int]$PlanetRenderHeight = 960,
@@ -77,6 +78,7 @@ try {
     Write-Host "Frames: $Frames"
     Write-Host "Skip after ms: $SkipAfterMs"
     Write-Host "Enter hub after ms: $EnterHubAfterMs"
+    Write-Host "Selected hub node index: $SelectedNodeIndex"
     Write-Host "Planet producer frames: $PlanetFrames"
     Write-Host "Planet render size: ${PlanetRenderWidth}x${PlanetRenderHeight}"
     Write-Host "Hub polish: soft planet atlas background, route lines, capital glow, no boxed planet border"
@@ -112,6 +114,7 @@ try {
             --skip-after-ms $SkipAfterMs `
             --demo-menu-focus 2 `
             --demo-enter-viewer-after-ms $EnterHubAfterMs `
+            --demo-hub-node-index $SelectedNodeIndex `
             --hub-planet `
             --hub-nodes `
             --hub-planet-frames $PlanetFrames `
@@ -134,11 +137,12 @@ try {
         renderer_backend = "RmlUi GL3"
         planet_pipe = "Ramses procedural world-map scene -> offscreen buffer -> readPixels -> soft-background RmlUi-owned CallbackTexture decorator"
         planet_polish = "Faceted SGFX regions, route lines, capital glow, atmospheric rim halo, soft atlas background"
-        node_layer = "Polished RmlUi overlay capitals; 3D Car live, Delivery wired, four coming placeholders"
+        node_layer = "Polished RmlUi overlay capitals; 3D Car live, five Bucket B data capitals wired"
         node_count = 6
         live_node = "3D Car"
-        wired_nodes = @("Delivery")
-        coming_nodes = @("Disabled Tests", "API Version", "Country Variants", "Size Trend")
+        wired_nodes = @("Delivery", "Disabled Tests", "API Version", "Country Variants", "Size Trend")
+        coming_nodes = @()
+        selected_node_index = $SelectedNodeIndex
         planet_render_size = "${PlanetRenderWidth}x${PlanetRenderHeight}"
         planet_producer_frames = $PlanetFrames
         menu_route = "Modules / Pipelines -> Seriengrafik world hub"

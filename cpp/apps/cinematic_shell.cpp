@@ -119,6 +119,7 @@ struct Options
     int demoMenuFocus = -1;
     int demoMenuPulseAfterMs = -1;
     int demoEnterViewerAfterMs = -1;
+    int demoHubNodeIndex = 1;
     int demoHubNodeEnterAfterMs = -1;
     int demoViewerBackAfterMs = -1;
     bool fusionEnabled = false;
@@ -221,6 +222,8 @@ Options parseOptions(int argc, char** argv)
             options.demoMenuPulseAfterMs = std::stoi(takeValue("--demo-menu-pulse-after-ms"));
         else if (arg == "--demo-enter-viewer-after-ms")
             options.demoEnterViewerAfterMs = std::stoi(takeValue("--demo-enter-viewer-after-ms"));
+        else if (arg == "--demo-hub-node-index")
+            options.demoHubNodeIndex = std::stoi(takeValue("--demo-hub-node-index"));
         else if (arg == "--demo-hub-node-enter-after-ms")
             options.demoHubNodeEnterAfterMs = std::stoi(takeValue("--demo-hub-node-enter-after-ms"));
         else if (arg == "--demo-viewer-back-after-ms")
@@ -294,6 +297,7 @@ Options parseOptions(int argc, char** argv)
                 << "       [--asset-root PATH] [--font-root PATH]\n"
                 << "       [--demo-menu-focus 0..5] [--demo-menu-pulse-after-ms N]\n"
                 << "       [--demo-enter-viewer-after-ms N]\n"
+                << "       [--demo-hub-node-index 0..5]\n"
                 << "       [--demo-hub-node-enter-after-ms N] [--demo-viewer-back-after-ms N]\n"
                 << "       [--fusion-scene-file PATH] [--fusion-render-width N] [--fusion-render-height N]\n"
                 << "       [--fusion-cars-root PATH] [--profile-registry-file PATH]\n"
@@ -324,12 +328,14 @@ Options parseOptions(int argc, char** argv)
     require(!options.interactive || options.demoMenuFocus < 0, "--interactive cannot be combined with --demo-menu-focus");
     require(!options.interactive || options.demoMenuPulseAfterMs < 0, "--interactive cannot be combined with --demo-menu-pulse-after-ms");
     require(!options.interactive || options.demoEnterViewerAfterMs < 0, "--interactive cannot be combined with --demo-enter-viewer-after-ms");
+    require(!options.interactive || options.demoHubNodeIndex == 1, "--interactive cannot be combined with --demo-hub-node-index");
     require(!options.interactive || options.demoHubNodeEnterAfterMs < 0, "--interactive cannot be combined with --demo-hub-node-enter-after-ms");
     require(!options.interactive || options.demoViewerBackAfterMs < 0, "--interactive cannot be combined with --demo-viewer-back-after-ms");
     require(!options.interactive || options.demoCarPickIndex < 0, "--interactive cannot be combined with --demo-car-pick-index");
     require(!options.interactive || options.demoCarPickAfterMs < 0, "--interactive cannot be combined with --demo-car-pick-after-ms");
     require(options.demoMenuFocus < 0 || options.demoMenuFocus < 6, "--demo-menu-focus must be 0..5");
     require(options.demoHubNodeEnterAfterMs < 0 || options.hubNodesEnabled, "--demo-hub-node-enter-after-ms requires --hub-nodes");
+    require(options.demoHubNodeIndex >= 0 && options.demoHubNodeIndex < 6, "--demo-hub-node-index must be 0..5");
     require(options.demoViewerBackAfterMs < 0 || options.demoHubNodeEnterAfterMs >= 0, "--demo-viewer-back-after-ms requires --demo-hub-node-enter-after-ms");
     require(options.demoCarPickIndex < 0 || options.demoCarPickAfterMs >= 0, "--demo-car-pick-index requires --demo-car-pick-after-ms");
     if (options.fusionEnabled)
@@ -1968,24 +1974,52 @@ std::string runProcessCapture(const std::string& command, int& exitCode)
     return output;
 }
 
-struct DeliveryReadinessCapital
+std::string shortError(const std::string& value)
 {
+    if (value.empty())
+        return {};
+    return value.substr(0u, std::min<size_t>(value.size(), 220u));
+}
+
+std::string formatSignedPercent(double value)
+{
+    std::ostringstream stream;
+    if (value > 0.0)
+        stream << "+";
+    stream << std::fixed << std::setprecision(2) << value << "%";
+    return stream.str();
+}
+
+struct HubCapitalSummary
+{
+    std::string label;
     bool loaded = false;
-    int total = 0;
-    int delivered = 0;
-    int notDeliveredYet = 0;
-    int unknown = 0;
+    std::string statusText = "UNAVAILABLE";
+    std::string primaryText = "DATA UNAVAILABLE";
+    std::string secondaryText = "CHECK PYTHON DATA LAYER";
+    std::string bannerText = "Evidence unavailable - use Clean dashboard.";
+    std::string sourceBanner;
     std::string sourceState;
     std::string sourceRoot;
     std::string bmwRoot;
-    std::string banner;
     std::string error;
     std::string command;
 };
 
-DeliveryReadinessCapital loadDeliveryReadinessCapital()
+struct HubCapitalSummaries
 {
-    DeliveryReadinessCapital summary;
+    HubCapitalSummary delivery;
+    HubCapitalSummary disabledTests;
+    HubCapitalSummary apiVersion;
+    HubCapitalSummary countryVariants;
+    HubCapitalSummary sizeTrend;
+};
+
+template <typename Parser>
+HubCapitalSummary loadDesktopStateCapital(const std::string& label, const std::string& action, bool includeBmwRoot, Parser parser)
+{
+    HubCapitalSummary summary;
+    summary.label = label;
     const std::filesystem::path workspaceRoot = findWorkspaceRoot();
     const std::filesystem::path sourceRoot = resolveSourceRepoRoot();
     const std::filesystem::path bmwRoot = resolveBmwRepoRoot();
@@ -1993,11 +2027,13 @@ DeliveryReadinessCapital loadDeliveryReadinessCapital()
     if (workspaceRoot.empty())
     {
         summary.error = "sg_preflight package root not found";
+        summary.secondaryText = summary.error;
         return summary;
     }
     if (sourceRoot.empty())
     {
         summary.error = "source repo root not found";
+        summary.secondaryText = summary.error;
         return summary;
     }
     summary.sourceRoot = sourceRoot.string();
@@ -2006,10 +2042,10 @@ DeliveryReadinessCapital loadDeliveryReadinessCapital()
     std::ostringstream command;
     command << "set \"PYTHONPATH=" << workspaceRoot.string() << ";%PYTHONPATH%\" && "
             << pythonLauncherCommand()
-            << " -B -m sg_preflight desktop-state delivery-readiness"
+            << " -B -m sg_preflight desktop-state " << action
             << " --workspace " << quoteCmdArg(sourceRoot)
             << " --repo-root " << quoteCmdArg(sourceRoot);
-    if (!bmwRoot.empty())
+    if (includeBmwRoot && !bmwRoot.empty())
         command << " --bmw-repo-root " << quoteCmdArg(bmwRoot);
     command << " --json";
     summary.command = command.str();
@@ -2018,57 +2054,191 @@ DeliveryReadinessCapital loadDeliveryReadinessCapital()
     const std::string output = runProcessCapture(summary.command, exitCode);
     if (exitCode != 0)
     {
-        summary.error = output.empty() ? "desktop-state delivery-readiness failed" : output.substr(0u, std::min<size_t>(output.size(), 220u));
+        summary.error = output.empty() ? "desktop-state " + action + " failed" : shortError(output);
+        summary.secondaryText = summary.error;
         return summary;
     }
 
     try
     {
         const nlohmann::json payload = nlohmann::json::parse(output);
-        const nlohmann::json counts = payload.value("counts", nlohmann::json::object());
-        summary.total = counts.value("total", 0);
-        summary.delivered = counts.value("delivered", 0);
-        summary.notDeliveredYet = counts.value("not_delivered_yet", 0);
-        summary.unknown = counts.value("unknown", 0);
         summary.sourceState = payload.value("source_state", std::string{});
-        summary.banner = payload.value("manual_approval_banner", std::string{});
+        summary.sourceBanner = payload.value("manual_review_banner", payload.value("manual_approval_banner", std::string{}));
+        summary.bannerText = summary.sourceBanner.empty() ? "Evidence only - manual review required." : "Evidence only - manual review required.";
+        parser(payload, summary);
         summary.loaded = true;
     }
     catch (const std::exception& exc)
     {
-        summary.error = std::string("delivery-readiness JSON parse failed: ") + exc.what();
+        summary.error = std::string(action) + " JSON parse failed: " + exc.what();
+        summary.secondaryText = summary.error;
     }
     return summary;
 }
 
-std::string deliveryNodeStatus(const DeliveryReadinessCapital& delivery)
+HubCapitalSummary loadDeliveryCapital()
 {
-    if (!delivery.loaded)
-        return "UNAVAILABLE";
-    return std::to_string(delivery.delivered) + " / " + std::to_string(delivery.notDeliveredYet) + " / " + std::to_string(delivery.unknown);
+    return loadDesktopStateCapital("Delivery Readiness", "delivery-readiness", true, [](const nlohmann::json& payload, HubCapitalSummary& summary) {
+        const nlohmann::json counts = payload.value("counts", nlohmann::json::object());
+        const int total = counts.value("total", 0);
+        const int delivered = counts.value("delivered", 0);
+        const int notDeliveredYet = counts.value("not_delivered_yet", 0);
+        const int unknown = counts.value("unknown", 0);
+        summary.statusText = std::to_string(delivered) + " / " + std::to_string(notDeliveredYet) + " / " + std::to_string(unknown);
+        summary.primaryText = std::to_string(total) + " cars: " + std::to_string(delivered) + " delivered";
+        summary.secondaryText = std::to_string(notDeliveredYet) + " not-yet / " + std::to_string(unknown) + " unknown";
+        summary.bannerText = "Evidence only - manual approval required.";
+    });
 }
 
-std::string deliveryPrimaryText(const DeliveryReadinessCapital& delivery)
+HubCapitalSummary loadDisabledTestsCapital()
 {
-    if (!delivery.loaded)
-        return "DELIVERY DATA UNAVAILABLE";
-    return std::to_string(delivery.total) + " cars: " + std::to_string(delivery.delivered) + " delivered";
+    return loadDesktopStateCapital("Disabled Tests", "disabled-tests", true, [](const nlohmann::json& payload, HubCapitalSummary& summary) {
+        const nlohmann::json counts = payload.value("counts", nlohmann::json::object());
+        const int configured = counts.value("configured", 0);
+        const int noConfig = counts.value("no_config", 0);
+        const int disabledCalls = counts.value("disabled_call_total", 0);
+        const int disabledUnique = counts.value("disabled_unique_total", 0);
+        std::string topCar = "none";
+        int topDisabled = 0;
+        for (const auto& entry : payload.value("entries", nlohmann::json::array()))
+        {
+            const int disabledCount = entry.value("disabled_count", 0);
+            if (disabledCount > topDisabled)
+            {
+                topDisabled = disabledCount;
+                topCar = entry.value("model_id", std::string("unknown"));
+            }
+        }
+        summary.statusText = std::to_string(disabledCalls) + " OFF";
+        summary.primaryText = std::to_string(disabledCalls) + " disabled calls";
+        summary.secondaryText = topDisabled > 0
+            ? topCar + " top: " + std::to_string(topDisabled) + " off / " + std::to_string(disabledUnique) + " unique"
+            : std::to_string(configured) + " configured / " + std::to_string(noConfig) + " no config";
+    });
 }
 
-std::string deliverySecondaryText(const DeliveryReadinessCapital& delivery)
+HubCapitalSummary loadApiVersionCapital()
 {
-    if (!delivery.loaded)
-        return delivery.error.empty() ? "REVIEW IN CLEAN MODE" : "CHECK PYTHON DATA LAYER";
-    return std::to_string(delivery.notDeliveredYet) + " not-yet / " + std::to_string(delivery.unknown) + " unknown";
+    return loadDesktopStateCapital("API Version", "api-version-coverage", true, [](const nlohmann::json& payload, HubCapitalSummary& summary) {
+        const nlohmann::json counts = payload.value("counts", nlohmann::json::object());
+        std::string version = "unknown";
+        std::string versionDate;
+        const nlohmann::json currentVersions = counts.value("current_api_versions", nlohmann::json::object());
+        if (currentVersions.is_object() && !currentVersions.empty())
+        {
+            const auto first = currentVersions.begin();
+            version = first.key();
+            if (first.value().is_string())
+                versionDate = first.value().get<std::string>();
+        }
+        else if (currentVersions.is_array() && !currentVersions.empty() && currentVersions.front().is_string())
+        {
+            const std::string combined = currentVersions.front().get<std::string>();
+            const size_t separator = combined.find(':');
+            if (separator == std::string::npos)
+            {
+                version = combined;
+            }
+            else
+            {
+                version = combined.substr(0u, separator);
+                versionDate = combined.substr(separator + 1u);
+            }
+        }
+        const int reviewCars = counts.value("impact_review_car_count", 0);
+        const int reviewFiles = counts.value("impact_file_match_count", 0);
+        summary.statusText = "API [" + version + "]";
+        summary.primaryText = "Current [" + version + "]" + (versionDate.empty() ? std::string{} : " / " + versionDate);
+        summary.secondaryText = std::to_string(reviewCars) + " cars / " + std::to_string(reviewFiles) + " files review";
+    });
 }
 
-std::string deliveryBannerText(const DeliveryReadinessCapital& delivery)
+HubCapitalSummary loadCountryVariantsCapital()
 {
-    if (!delivery.loaded)
-        return delivery.error.empty() ? "Evidence unavailable - use Clean dashboard." : delivery.error;
-    if (!delivery.banner.empty())
-        return "Evidence only - manual approval required.";
-    return "Evidence only - manual review required.";
+    return loadDesktopStateCapital("Country Variants", "country-variant-coverage", true, [](const nlohmann::json& payload, HubCapitalSummary& summary) {
+        const nlohmann::json counts = payload.value("counts", nlohmann::json::object());
+        const int rows = counts.value("row_total", 0);
+        const int cars = counts.value("car_with_rows_count", 0);
+        const int reviews = counts.value("review_row_count", 0);
+        const int mappingReviews = counts.value("mapping_review_count", 0);
+        summary.statusText = std::to_string(reviews) + " REVIEW";
+        summary.primaryText = std::to_string(rows) + " rows / " + std::to_string(cars) + " cars";
+        summary.secondaryText = std::to_string(reviews) + " review / " + std::to_string(mappingReviews) + " mapping";
+    });
+}
+
+HubCapitalSummary loadSizeTrendCapital()
+{
+    return loadDesktopStateCapital("Size Trend", "export-size-trend", false, [](const nlohmann::json& payload, HubCapitalSummary& summary) {
+        const nlohmann::json counts = payload.value("counts", nlohmann::json::object());
+        const int workbooks = counts.value("workbook_count", 0);
+        const int profiles = counts.value("profile_count", 0);
+        const int reviewChanges = counts.value("review_change_count", 0);
+        std::vector<std::string> reviewLabels;
+        for (const auto& change : payload.value("trend_changes", nlohmann::json::array()))
+        {
+            if (!change.value("needs_review", false))
+                continue;
+            const std::string profile = change.value("profile_id", std::string("unknown"));
+            const double percent = change.value("delta_percent", 0.0);
+            reviewLabels.push_back(profile + " " + formatSignedPercent(percent));
+            if (reviewLabels.size() >= 2u)
+                break;
+        }
+        summary.statusText = std::to_string(reviewChanges) + " REVIEW";
+        summary.primaryText = std::to_string(workbooks) + " workbooks / " + std::to_string(profiles) + " profiles";
+        if (reviewLabels.empty())
+            summary.secondaryText = "no significant trend review flags";
+        else if (reviewLabels.size() == 1u)
+            summary.secondaryText = reviewLabels.front();
+        else
+            summary.secondaryText = reviewLabels[0] + " / " + reviewLabels[1];
+    });
+}
+
+HubCapitalSummaries loadHubCapitalSummaries()
+{
+    HubCapitalSummaries summaries;
+    summaries.delivery = loadDeliveryCapital();
+    summaries.disabledTests = loadDisabledTestsCapital();
+    summaries.apiVersion = loadApiVersionCapital();
+    summaries.countryVariants = loadCountryVariantsCapital();
+    summaries.sizeTrend = loadSizeTrendCapital();
+    return summaries;
+}
+
+void logCapitalSummary(const HubCapitalSummary& summary, bool includeBmwRoot)
+{
+    if (summary.loaded)
+    {
+        std::cout << "SGFX cinematic shell " << summary.label << " capital: "
+                  << summary.primaryText << ", " << summary.secondaryText
+                  << ", source=" << (summary.sourceState.empty() ? std::string("unknown") : summary.sourceState)
+                  << "\n";
+        std::cout << "SGFX cinematic shell " << summary.label << " roots: source="
+                  << summary.sourceRoot;
+        if (includeBmwRoot)
+            std::cout << ", bmw=" << (summary.bmwRoot.empty() ? std::string("unavailable") : summary.bmwRoot);
+        std::cout << "\n";
+        std::cout << "SGFX cinematic shell " << summary.label << " banner: " << summary.bannerText << "\n";
+        if (!summary.sourceBanner.empty())
+            std::cout << "SGFX cinematic shell " << summary.label << " source banner: " << summary.sourceBanner << "\n";
+    }
+    else
+    {
+        std::cout << "SGFX cinematic shell " << summary.label << " capital unavailable: "
+                  << (summary.error.empty() ? std::string("no data") : summary.error) << "\n";
+    }
+}
+
+void logHubCapitalSummaries(const HubCapitalSummaries& summaries)
+{
+    logCapitalSummary(summaries.delivery, true);
+    logCapitalSummary(summaries.disabledTests, true);
+    logCapitalSummary(summaries.apiVersion, true);
+    logCapitalSummary(summaries.countryVariants, true);
+    logCapitalSummary(summaries.sizeTrend, false);
 }
 
 std::string stripEvoSuffix(std::string value)
@@ -4268,14 +4438,18 @@ struct HubNodeDefinition
 constexpr int kHubNodeCount = 6;
 constexpr int kHubNodeLiveIndex = 0;
 constexpr int kHubNodeDeliveryIndex = 1;
-constexpr int kHubNodeComingCount = kHubNodeCount - 2;
+constexpr int kHubNodeDisabledIndex = 2;
+constexpr int kHubNodeApiIndex = 3;
+constexpr int kHubNodeCountryIndex = 4;
+constexpr int kHubNodeSizeIndex = 5;
+constexpr int kHubDataNodeCount = kHubNodeCount - 1;
 constexpr std::array<HubNodeDefinition, kHubNodeCount> kHubNodes = {{
     {"hub-node-car", "3D Car", "LIVE QA SURFACE", "#FFC94D", true, 818.0, 308.0, 174.0, 50.0},
     {"hub-node-delivery", "Delivery", "LOADING", "#FF6B81", false, 552.0, 412.0, 166.0, 44.0},
-    {"hub-node-disabled", "Disabled Tests", "COMING", "#2FD6E6", false, 562.0, 228.0, 176.0, 44.0},
-    {"hub-node-api", "API Version", "COMING", "#BFE9FF", false, 744.0, 136.0, 166.0, 44.0},
-    {"hub-node-country", "Country Variants", "COMING", "#25E8C8", false, 982.0, 242.0, 184.0, 44.0},
-    {"hub-node-size", "Size Trend", "COMING", "#FFB36B", false, 990.0, 430.0, 148.0, 44.0},
+    {"hub-node-disabled", "Disabled Tests", "LOADING", "#2FD6E6", false, 562.0, 228.0, 176.0, 44.0},
+    {"hub-node-api", "API Version", "LOADING", "#BFE9FF", false, 744.0, 136.0, 166.0, 44.0},
+    {"hub-node-country", "Country Variants", "LOADING", "#25E8C8", false, 982.0, 242.0, 184.0, 44.0},
+    {"hub-node-size", "Size Trend", "LOADING", "#FFB36B", false, 990.0, 430.0, 148.0, 44.0},
 }};
 
 bool isHubDeliveryNode(int index)
@@ -4283,10 +4457,57 @@ bool isHubDeliveryNode(int index)
     return index == kHubNodeDeliveryIndex;
 }
 
-std::string hubNodeStatusText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+const HubCapitalSummary* hubCapitalForIndex(int index, const HubCapitalSummaries& summaries)
 {
-    if (isHubDeliveryNode(index))
-        return deliveryNodeStatus(delivery);
+    switch (index)
+    {
+    case kHubNodeDeliveryIndex: return &summaries.delivery;
+    case kHubNodeDisabledIndex: return &summaries.disabledTests;
+    case kHubNodeApiIndex: return &summaries.apiVersion;
+    case kHubNodeCountryIndex: return &summaries.countryVariants;
+    case kHubNodeSizeIndex: return &summaries.sizeTrend;
+    default: return nullptr;
+    }
+}
+
+bool isHubDataNode(int index)
+{
+    return index >= kHubNodeDeliveryIndex && index <= kHubNodeSizeIndex;
+}
+
+bool isHubDataNodeLoaded(int index, const HubCapitalSummaries& summaries)
+{
+    const HubCapitalSummary* capital = hubCapitalForIndex(index, summaries);
+    return capital && capital->loaded;
+}
+
+int loadedHubCapitalCount(const HubCapitalSummaries& summaries)
+{
+    int count = 0;
+    for (int index = kHubNodeDeliveryIndex; index <= kHubNodeSizeIndex; ++index)
+    {
+        if (isHubDataNodeLoaded(index, summaries))
+            ++count;
+    }
+    return count;
+}
+
+std::string hubWiringSummary(const HubCapitalSummaries& summaries)
+{
+    const int loaded = loadedHubCapitalCount(summaries);
+    const int unavailable = kHubDataNodeCount - loaded;
+    std::ostringstream text;
+    text << "wired=" << loaded << " data capitals";
+    if (unavailable > 0)
+        text << ", unavailable=" << unavailable;
+    return text.str();
+}
+
+std::string hubNodeStatusText(const HubNodeDefinition& node, int index, const HubCapitalSummaries& summaries)
+{
+    const HubCapitalSummary* capital = hubCapitalForIndex(index, summaries);
+    if (capital)
+        return capital->loaded ? capital->statusText : "UNAVAILABLE";
     return node.status;
 }
 
@@ -4303,19 +4524,19 @@ std::string buildHubNodeCss()
     return css.str();
 }
 
-std::string buildHubNodeMarkup(const DeliveryReadinessCapital& delivery)
+std::string buildHubNodeMarkup(const HubCapitalSummaries& summaries)
 {
     std::ostringstream markup;
     for (int index = 0; index < kHubNodeCount; ++index)
     {
         const HubNodeDefinition& node = kHubNodes[static_cast<size_t>(index)];
         markup << "<div id=\"" << node.elementId << "\" class=\"hub-node";
-        if (node.live)
+        if (node.live || isHubDataNodeLoaded(index, summaries))
             markup << " hub-node-live";
         markup << "\">";
         markup << "<div class=\"hub-node-beacon\"></div>";
         markup << "<div class=\"hub-node-label\">" << escapeRmlText(node.label) << "</div>";
-        markup << "<div class=\"hub-node-status\">" << escapeRmlText(hubNodeStatusText(node, index, delivery)) << "</div>";
+        markup << "<div class=\"hub-node-status\">" << escapeRmlText(hubNodeStatusText(node, index, summaries)) << "</div>";
         markup << "</div>";
     }
     return markup.str();
@@ -4417,7 +4638,7 @@ std::string buildHubStatusMarkup(
     int selectedCarIndex,
     size_t registeredProfileCount,
     const std::string& activeProfileId,
-    const DeliveryReadinessCapital& delivery)
+    const HubCapitalSummaries& summaries)
 {
     std::ostringstream markup;
     markup << "<div id=\"hub-status-panel\">";
@@ -4428,11 +4649,15 @@ std::string buildHubStatusMarkup(
     markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">CAR FLEET</div><div id=\"hub-status-fleet\" class=\"hub-status-value\">"
            << escapeRmlText(buildRegisteredCarCountText(candidates.size(), registeredProfileCount))
            << "</div></div>";
-    markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">DELIVERY</div><div class=\"hub-status-value\">"
-           << escapeRmlText(delivery.loaded ? deliveryPrimaryText(delivery) : std::string("UNAVAILABLE"))
+    markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">BUCKET B</div><div class=\"hub-status-value\">"
+           << escapeRmlText(std::to_string(loadedHubCapitalCount(summaries)) + " DATA CAPITALS WIRED")
            << "</div></div>";
-    markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">RISK</div><div class=\"hub-status-value\">MANUAL REVIEW REQUIRED</div></div>";
-    markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">TICKET</div><div class=\"hub-status-value\">SEE SGFX BOARD</div></div>";
+    markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">DELIVERY</div><div class=\"hub-status-value\">"
+           << escapeRmlText(summaries.delivery.loaded ? summaries.delivery.primaryText : std::string("UNAVAILABLE"))
+           << "</div></div>";
+    markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">REVIEW</div><div class=\"hub-status-value\">"
+           << escapeRmlText(summaries.sizeTrend.loaded ? summaries.sizeTrend.secondaryText : std::string("SEE CLEAN BOARD"))
+           << "</div></div>";
     markup << "</div>";
     return markup.str();
 }
@@ -4464,7 +4689,7 @@ std::string buildDocument(
     const std::string& activeProfileId,
     bool hubPlanetEnabled,
     bool hubNodesEnabled,
-    const DeliveryReadinessCapital& delivery)
+    const HubCapitalSummaries& summaries)
 {
     std::string document = R"rml(
 <rml>
@@ -5251,8 +5476,8 @@ __SGFX_HUB_NODE_CSS__
     replaceAll(document, "__SGFX_FUSION_PERSPECTIVE_PICKER__", fusionEnabled ? buildPerspectivePickerMarkup(perspective) : "");
     replaceAll(document, "__SGFX_HUB_PLANET_DECORATOR__", hubPlanetEnabled ? "decorator: sgfx-hub-planet();" : "");
     replaceAll(document, "__SGFX_HUB_NODE_CSS__", buildHubNodeCss());
-    replaceAll(document, "__SGFX_HUB_STATUS__", buildHubStatusMarkup(fusionEnabled, carCandidates, selectedCarIndex, registeredProfileCount, activeProfileId, delivery));
-    replaceAll(document, "__SGFX_HUB_NODES__", buildHubNodeMarkup(delivery));
+    replaceAll(document, "__SGFX_HUB_STATUS__", buildHubStatusMarkup(fusionEnabled, carCandidates, selectedCarIndex, registeredProfileCount, activeProfileId, summaries));
+    replaceAll(document, "__SGFX_HUB_NODES__", buildHubNodeMarkup(summaries));
     replaceAll(document, "__SGFX_HUB_ACTIONS__", buildHubActionMarkup());
     replaceAll(document, "__SGFX_HUB_BADGE_TEXT__", hubNodesEnabled ? "H4: WORLD-MAP PLANET ONLINE" : "H4: RAMSES PLANET POLISHED");
     return document;
@@ -5762,58 +5987,60 @@ void moveHubNodeSelection(HubController& hub, int delta, double elapsed)
         startHubNodePulse(hub, next, elapsed);
 }
 
-std::string hubActionTargetText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+std::string hubActionTargetText(const HubNodeDefinition& node, int index, const HubCapitalSummaries& summaries)
 {
-    if (isHubDeliveryNode(index))
-        return std::string(node.label) + " / " + deliveryNodeStatus(delivery);
+    const HubCapitalSummary* capital = hubCapitalForIndex(index, summaries);
+    if (capital)
+        return std::string(node.label) + " / " + (capital->loaded ? capital->statusText : "UNAVAILABLE");
     return std::string(node.label) + " / " + node.status;
 }
 
-std::string hubActionPrimaryText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+std::string hubActionPrimaryText(const HubNodeDefinition& node, int index, const HubCapitalSummaries& summaries)
 {
     if (node.live)
         return "DIVE INTO CAPITAL";
-    if (isHubDeliveryNode(index))
-        return deliveryPrimaryText(delivery);
+    const HubCapitalSummary* capital = hubCapitalForIndex(index, summaries);
+    if (capital)
+        return capital->primaryText;
     return "AREA COMING";
 }
 
-std::string hubActionSecondaryText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+std::string hubActionSecondaryText(const HubNodeDefinition& node, int index, const HubCapitalSummaries& summaries)
 {
     if (node.live)
         return "SELECT AREA";
-    if (isHubDeliveryNode(index))
-        return deliverySecondaryText(delivery);
+    const HubCapitalSummary* capital = hubCapitalForIndex(index, summaries);
+    if (capital)
+        return capital->secondaryText;
     return "SELECT WIRED CAPITAL";
 }
 
-std::string hubActionBannerText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+std::string hubActionBannerText(const HubNodeDefinition& node, int index, const HubCapitalSummaries& summaries)
 {
     if (node.live)
         return "Live Ramses viewer path.";
-    if (isHubDeliveryNode(index))
-        return deliveryBannerText(delivery);
+    const HubCapitalSummary* capital = hubCapitalForIndex(index, summaries);
+    if (capital)
+        return capital->bannerText;
     return "Not wired yet - honest placeholder.";
 }
 
-void logHubNodeActivation(int index, const DeliveryReadinessCapital& delivery)
+void logHubNodeActivation(int index, const HubCapitalSummaries& summaries)
 {
     const HubNodeDefinition& node = kHubNodes[static_cast<size_t>(std::max(0, std::min(kHubNodeCount - 1, index)))];
-    std::cout << "SGFX cinematic shell H2 hub node activated: " << node.label << " / " << hubNodeStatusText(node, index, delivery);
+    const HubCapitalSummary* capital = hubCapitalForIndex(index, summaries);
+    std::cout << "SGFX cinematic shell H2 hub node activated: " << node.label << " / " << hubNodeStatusText(node, index, summaries);
     if (node.live)
     {
         std::cout << " (H3 target: live 3D Car viewer)";
     }
-    else if (isHubDeliveryNode(index) && delivery.loaded)
+    else if (capital && capital->loaded)
     {
-        std::cout << " (Delivery Readiness: " << delivery.total << " cars, "
-                  << delivery.delivered << " delivered, "
-                  << delivery.notDeliveredYet << " not-yet, "
-                  << delivery.unknown << " unknown)";
+        std::cout << " (" << capital->label << ": " << capital->primaryText << "; " << capital->secondaryText << ")";
     }
-    else if (isHubDeliveryNode(index))
+    else if (capital)
     {
-        std::cout << " (Delivery Readiness unavailable: " << (delivery.error.empty() ? "no data" : delivery.error) << ")";
+        std::cout << " (" << capital->label << " unavailable: " << (capital->error.empty() ? "no data" : capital->error) << ")";
     }
     else
     {
@@ -5844,15 +6071,15 @@ void activateHubNode(
     int index,
     double elapsed,
     bool fusionReady,
-    const DeliveryReadinessCapital& delivery)
+    const HubCapitalSummaries& summaries)
 {
     startHubNodePulse(hub, index, elapsed);
-    logHubNodeActivation(index, delivery);
+    logHubNodeActivation(index, summaries);
     const HubNodeDefinition& node = kHubNodes[static_cast<size_t>(hub.selected)];
     if (node.live)
         startHubNodeFlyIn(state, transition, hub.selected, elapsed, fusionReady);
-    else if (isHubDeliveryNode(hub.selected))
-        std::cout << "SGFX cinematic shell Delivery capital held in hub with real desktop-state summary\n";
+    else if (isHubDataNode(hub.selected))
+        std::cout << "SGFX cinematic shell data capital held in hub with real desktop-state summary: " << node.label << "\n";
     else
         std::cout << "SGFX cinematic shell H3 coming node held in hub: " << node.label << "\n";
 }
@@ -6232,7 +6459,7 @@ void applyHubNodeFrame(
     ShellState state,
     double elapsed,
     bool hubNodesEnabled,
-    const DeliveryReadinessCapital& delivery)
+    const HubCapitalSummaries& summaries)
 {
     if (!hubNodesEnabled)
         return;
@@ -6240,9 +6467,7 @@ void applyHubNodeFrame(
     if (state == ShellState::Hub && !hub.readyLogged)
     {
         std::cout << "SGFX cinematic shell H2 hub capital nodes ready: "
-                  << kHubNodeCount << " nodes, live=3D Car, "
-                  << (delivery.loaded ? "wired=Delivery" : "Delivery=UNAVAILABLE")
-                  << ", coming=" << kHubNodeComingCount << "\n";
+                  << kHubNodeCount << " nodes, live=3D Car, " << hubWiringSummary(summaries) << "\n";
         hub.readyAt = elapsed;
         hub.readyLogged = true;
     }
@@ -6253,11 +6478,11 @@ void applyHubNodeFrame(
     const double pulse = (elapsed >= hub.pulseStartedAt && pulseT < 1.0) ? std::sin(pulseT * kPi) : 0.0;
 
     elements.hubActionTarget->SetInnerRML(
-        escapeRmlText(hubActionTargetText(selectedNode, hub.selected, delivery)));
-    elements.hubActionPrimary->SetInnerRML(escapeRmlText(hubActionPrimaryText(selectedNode, hub.selected, delivery)));
-    elements.hubActionSecondary->SetInnerRML(escapeRmlText(hubActionSecondaryText(selectedNode, hub.selected, delivery)));
-    elements.hubActionBanner->SetInnerRML(escapeRmlText(hubActionBannerText(selectedNode, hub.selected, delivery)));
-    const bool selectedWired = selectedNode.live || (isHubDeliveryNode(hub.selected) && delivery.loaded);
+        escapeRmlText(hubActionTargetText(selectedNode, hub.selected, summaries)));
+    elements.hubActionPrimary->SetInnerRML(escapeRmlText(hubActionPrimaryText(selectedNode, hub.selected, summaries)));
+    elements.hubActionSecondary->SetInnerRML(escapeRmlText(hubActionSecondaryText(selectedNode, hub.selected, summaries)));
+    elements.hubActionBanner->SetInnerRML(escapeRmlText(hubActionBannerText(selectedNode, hub.selected, summaries)));
+    const bool selectedWired = selectedNode.live || isHubDataNodeLoaded(hub.selected, summaries);
     setProperty(*elements.hubActionPrimary, "background-color", selectedWired ? "#FFC94D" : "#12224bcc");
     setProperty(*elements.hubActionPrimary, "color", selectedWired ? "#0E1530" : "#BFE9FF");
     setProperty(*elements.hubActionPrimary, "border", std::string("1px ") + (selectedWired ? "#FFFFFF" : "#2FD6E6"));
@@ -6266,7 +6491,7 @@ void applyHubNodeFrame(
     {
         const HubNodeDefinition& definition = kHubNodes[static_cast<size_t>(i)];
         Rml::Element& node = *elements.hubNodes[static_cast<size_t>(i)];
-        const bool live = definition.live || (isHubDeliveryNode(i) && delivery.loaded);
+        const bool live = definition.live || isHubDataNodeLoaded(i, summaries);
         const bool selected = i == hub.selected;
         const bool highlighted = i == focused;
         double revealOpacity = 1.0;
@@ -6589,7 +6814,7 @@ int run(int argc, char** argv)
     int activeCarIndex = chooseInitialCarCandidate(carCandidates, options);
     if (activeCarIndex >= 0)
         options = optionsForCarCandidate(options, carCandidates[static_cast<size_t>(activeCarIndex)], true);
-    const DeliveryReadinessCapital deliveryReadiness = loadDeliveryReadinessCapital();
+    const HubCapitalSummaries hubCapitals = loadHubCapitalSummaries();
 
     SdlRuntime sdl;
     SdlGlWindow windowRenderer("SGFX Cinematic Shell", options.width, options.height);
@@ -6641,7 +6866,7 @@ int run(int argc, char** argv)
             fusionCar ? fusionCar->profileId() : std::string{},
             hubPlanet && hubPlanet->ready(),
             options.hubNodesEnabled,
-            deliveryReadiness));
+            hubCapitals));
     if (!document)
         throw std::runtime_error("RmlUi document failed to load");
     document->Show();
@@ -6656,6 +6881,7 @@ int run(int argc, char** argv)
         menuController.selected = clampMenuIndex(options.demoMenuFocus);
     ViewerTransition viewerTransition;
     HubController hubController;
+    hubController.selected = std::max(0, std::min(kHubNodeCount - 1, options.demoHubNodeIndex));
     CarPickerController carPickerController;
     carPickerController.selected = activeCarIndex;
     carPickerController.active = activeCarIndex;
@@ -6677,28 +6903,7 @@ int run(int argc, char** argv)
     std::cout << "SGFX cinematic shell fly-into-zone: 0.70s in, 0.50s back, 3D Car viewer core destination\n";
     std::cout << "SGFX cinematic shell mode: " << (options.interactive ? "interactive run-until-close" : "framed evidence run") << "\n";
     std::cout << "SGFX cinematic shell skip: any key/click during splash or hero -> menu\n";
-    if (deliveryReadiness.loaded)
-    {
-        std::cout << "SGFX cinematic shell Delivery Readiness capital: "
-                  << deliveryReadiness.total << " cars, "
-                  << deliveryReadiness.delivered << " delivered, "
-                  << deliveryReadiness.notDeliveredYet << " not-yet, "
-                  << deliveryReadiness.unknown << " unknown, source="
-                  << (deliveryReadiness.sourceState.empty() ? std::string("unknown") : deliveryReadiness.sourceState)
-                  << "\n";
-        std::cout << "SGFX cinematic shell Delivery Readiness roots: source="
-                  << deliveryReadiness.sourceRoot << ", bmw="
-                  << (deliveryReadiness.bmwRoot.empty() ? std::string("unavailable") : deliveryReadiness.bmwRoot)
-                  << "\n";
-        std::cout << "SGFX cinematic shell Delivery Readiness banner: " << deliveryBannerText(deliveryReadiness) << "\n";
-        if (!deliveryReadiness.banner.empty())
-            std::cout << "SGFX cinematic shell Delivery Readiness source banner: " << deliveryReadiness.banner << "\n";
-    }
-    else
-    {
-        std::cout << "SGFX cinematic shell Delivery Readiness capital unavailable: "
-                  << (deliveryReadiness.error.empty() ? std::string("no data") : deliveryReadiness.error) << "\n";
-    }
+    logHubCapitalSummaries(hubCapitals);
     std::cout << "SGFX cinematic shell car picker discovered exports: " << carCandidates.size() << "\n";
     std::cout << "SGFX cinematic shell car picker registered profiles: "
               << carDiscovery.registeredProfileCount
@@ -6750,9 +6955,7 @@ int run(int argc, char** argv)
         if (options.hubNodesEnabled)
         {
             std::cout << "SGFX cinematic shell hub H4 nodes: polished RmlUi world-map labels, "
-                      << kHubNodeCount << " capitals, live=3D Car, "
-                      << (deliveryReadiness.loaded ? "wired=Delivery" : "Delivery=UNAVAILABLE")
-                      << ", coming=" << kHubNodeComingCount << "\n";
+                      << kHubNodeCount << " capitals, live=3D Car, " << hubWiringSummary(hubCapitals) << "\n";
             std::cout << "SGFX cinematic shell world-map layout chrome: status panel top-left, dive/select action bottom-right\n";
         }
     }
@@ -6814,7 +7017,7 @@ int run(int argc, char** argv)
                         moveHubNodeSelection(hubController, 1, elapsed);
                     else if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER || event.key.key == SDLK_SPACE)
                     {
-                        activateHubNode(state, viewerTransition, hubController, hubController.selected, elapsed, fusionCar && fusionCar->ready(), deliveryReadiness);
+                        activateHubNode(state, viewerTransition, hubController, hubController.selected, elapsed, fusionCar && fusionCar->ready(), hubCapitals);
                     }
                 }
                 else if (event.key.key == SDLK_ESCAPE)
@@ -6898,11 +7101,11 @@ int run(int argc, char** argv)
                 if (hit >= 0)
                 {
                     hubController.hovered = hit;
-                    activateHubNode(state, viewerTransition, hubController, hit, elapsed, fusionCar && fusionCar->ready(), deliveryReadiness);
+                    activateHubNode(state, viewerTransition, hubController, hit, elapsed, fusionCar && fusionCar->ready(), hubCapitals);
                 }
                 else if (hitTestHubAction(event.button.x, event.button.y))
                 {
-                    activateHubNode(state, viewerTransition, hubController, hubController.selected, elapsed, fusionCar && fusionCar->ready(), deliveryReadiness);
+                    activateHubNode(state, viewerTransition, hubController, hubController.selected, elapsed, fusionCar && fusionCar->ready(), hubCapitals);
                 }
             }
             else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && state == ShellState::ViewerZone && !carCandidates.empty())
@@ -6954,7 +7157,7 @@ int run(int argc, char** argv)
             hubController.readyAt >= 0.0 && !viewerTransition.demoHubNodeEnterFired &&
             (elapsed - hubController.readyAt) * 1000.0 >= static_cast<double>(options.demoHubNodeEnterAfterMs))
         {
-            activateHubNode(state, viewerTransition, hubController, kHubNodeLiveIndex, elapsed, fusionCar && fusionCar->ready(), deliveryReadiness);
+            activateHubNode(state, viewerTransition, hubController, kHubNodeLiveIndex, elapsed, fusionCar && fusionCar->ready(), hubCapitals);
             viewerTransition.demoHubNodeEnterFired = true;
             std::cout << "SGFX cinematic shell H3 demo hub node fly-in fired\n";
         }
@@ -6985,7 +7188,7 @@ int run(int argc, char** argv)
             hubPlanet && hubPlanet->ready(),
             options.hubNodesEnabled);
         applyHubTransitionFrame(elements, state, viewerTransition, elapsed, hubPlanet && hubPlanet->ready(), options.hubNodesEnabled);
-        applyHubNodeFrame(elements, hubController, state, elapsed, options.hubNodesEnabled, deliveryReadiness);
+        applyHubNodeFrame(elements, hubController, state, elapsed, options.hubNodesEnabled, hubCapitals);
 
         context->Update();
         windowRenderer.makeCurrent();
@@ -7048,11 +7251,9 @@ int run(int argc, char** argv)
     {
         const HubNodeDefinition& selectedNode = kHubNodes[static_cast<size_t>(hubController.selected)];
         std::cout << "SGFX cinematic shell hub H2 selected capital: " << selectedNode.label
-                  << " / " << hubNodeStatusText(selectedNode, hubController.selected, deliveryReadiness) << "\n";
+                  << " / " << hubNodeStatusText(selectedNode, hubController.selected, hubCapitals) << "\n";
         std::cout << "SGFX cinematic shell hub H2 nodes summary: "
-                  << kHubNodeCount << " capitals, 3D Car live, "
-                  << (deliveryReadiness.loaded ? "Delivery wired, " : "Delivery unavailable, ")
-                  << kHubNodeComingCount << " coming placeholders\n";
+                  << kHubNodeCount << " capitals, 3D Car live, " << hubWiringSummary(hubCapitals) << "\n";
         std::cout << "SGFX cinematic shell hub world-map layout: status panel + dive/select affordance\n";
     }
     std::cout << "SGFX cinematic shell splash->hero beat OK\n";
