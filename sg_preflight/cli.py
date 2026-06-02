@@ -1096,7 +1096,6 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
         r"sgfx-preflight.exe live-state --workspace C:\repositories\trunk --tail",
     ),
     ("station", "Run the optional local OpenHTF station surface.", r"sgfx-preflight.exe station run --profile G65 --workspace C:\repositories\trunk --no-browser --once"),
-    ("desktop", "Start the desktop operator shell.", r"sgfx-preflight.exe desktop --workspace C:\repositories\trunk --profile G65"),
     ("desktop-state", "Inspect desktop-shell state snapshots.", r"sgfx-preflight.exe desktop-state overview --profile-id G65 --workspace C:\repositories\trunk --json"),
     ("run-action", "Execute one registered local action.", r"sgfx-preflight.exe run-action qa_stack__g65 --workspace C:\repositories\trunk --json"),
     ("launch-action", "Queue one registered local action for polling clients.", r"sgfx-preflight.exe launch-action qa_stack__g65 --workspace C:\repositories\trunk --json"),
@@ -1140,9 +1139,8 @@ _COMMAND_EXAMPLES: dict[str, tuple[str, ...]] = {
     "screenshot-review-viewer build": (_MAIN_ACTION_MAP[3][2],),
     "dashboard": (_MAIN_ACTION_MAP[1][2], r"sgfx-preflight.exe dashboard run --workspace C:\repositories\trunk --ui-mode grafiks"),
     "dashboard run": (_MAIN_ACTION_MAP[1][2],),
-    "desktop": (_MAIN_ACTION_MAP[28][2],),
-    "desktop-state": (_MAIN_ACTION_MAP[29][2],),
-    "desktop-state overview": (_MAIN_ACTION_MAP[29][2],),
+    "desktop-state": (r"sgfx-preflight.exe desktop-state overview --profile-id G65 --workspace C:\repositories\trunk --json",),
+    "desktop-state overview": (r"sgfx-preflight.exe desktop-state overview --profile-id G65 --workspace C:\repositories\trunk --json",),
     "quality-hero-report": (_MAIN_ACTION_MAP[7][2],),
     "quality-hero-report generate": (_MAIN_ACTION_MAP[7][2],),
     "bmw-pipeline-diagnostics": (
@@ -2629,15 +2627,6 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     ui.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
     ui.add_argument("--reload", action="store_true", help="Reload automatically when local UI files change")
-
-    desktop = sub.add_parser(
-        "desktop",
-        help="Start the desktop operator shell",
-        description="Start the desktop operator shell",
-    )
-    desktop.add_argument("--profile", help="Optional initial profile id to focus when the shell opens")
-    desktop.add_argument("--workspace", help="Workspace root for SGFX read-only checks")
-    desktop.add_argument("--ui-mode", default="clean", choices=("clean", "grafiks"), help="Desktop presentation mode")
 
     desktop_state = sub.add_parser(
         "desktop-state",
@@ -4477,18 +4466,6 @@ def _main_impl(argv: list[str] | None = None) -> int:
         from sg_preflight.ui import run_ui
 
         return run_ui(host=args.host, port=args.port, reload=args.reload)
-
-    if args.command == "desktop":
-        try:
-            from sg_preflight.desktop.app import run_desktop_app
-            return run_desktop_app(
-                workspace=Path(args.workspace) if args.workspace else None,
-                initial_profile_id=args.profile or "",
-                initial_mode=args.ui_mode,
-            )
-        except RuntimeError as exc:
-            print(_console_safe(str(exc)), file=sys.stderr)
-            return 1
 
     if args.command == "desktop-state":
         state_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root

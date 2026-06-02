@@ -127,13 +127,13 @@ SOFTWARE.
 
 ## PySide6 dependency
 
-SGFX QA Preflight uses [PySide6](https://wiki.qt.io/Qt_for_Python) as the Grafiks-mode operator-dashboard UI framework. PySide6 is the official Python binding for Qt 6, distributed by The Qt Company. The Grafiks-mode desktop shell at `sg_preflight/desktop/` renders the same four SGFX evidence surfaces (Delivery Checklist, Screenshot Test State, Daily Digest, Manual Review Companion) as the NiceGUI Clean-mode dashboard, over the existing `sg_preflight/` data layer.
+SGFX QA Preflight uses [PySide6](https://wiki.qt.io/Qt_for_Python) for the packaged Clean desktop host. PySide6 is the official Python binding for Qt 6, distributed by The Qt Company. The PySide6 host embeds the NiceGUI Clean dashboard through Qt WebEngine; Grafiks mode is the separate C++ cinematic shell, not the PySide6 console.
 
 | Component | Version | License | Upstream | Current use |
 | --- | --- | --- | --- | --- |
-| PySide6 | `6.11.1` observed in the build venv; project constraint `>=6.7,<7` | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, with commercial Qt licensing available | `https://wiki.qt.io/Qt_for_Python` | Grafiks-mode operator-dashboard hosting and four evidence-page rendering via Qt 6 native widgets |
+| PySide6 | `6.11.1` observed in the build venv; project constraint `>=6.7,<7` | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, with commercial Qt licensing available | `https://wiki.qt.io/Qt_for_Python` | Packaged Clean desktop host and embedded Qt WebEngine window |
 
-PySide6 is installed through the `desktop` optional dependency group in `pyproject.toml`. The upstream source is not modified by SGFX. LGPL/GPL/commercial license terms apply to PySide6's portion of the runtime; SGFX-original code (`sg_preflight/` data layer, PySide6 widget subclasses under `sg_preflight/desktop/`, dashboard launcher CLI) stays under the existing internal proprietary license unless and until a formal codebase-wide license review changes that.
+PySide6 is installed through the `desktop` optional dependency group in `pyproject.toml`. The upstream source is not modified by SGFX. LGPL/GPL/commercial license terms apply to PySide6's portion of the runtime; SGFX-original code (`sg_preflight/` data layer, Clean host wrapper under `sg_preflight/desktop/`, dashboard launcher CLI) stays under the existing internal proprietary license unless and until a formal codebase-wide license review changes that.
 
 PySide6 attribution:
 

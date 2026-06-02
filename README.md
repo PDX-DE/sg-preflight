@@ -26,7 +26,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 ## Included Files
 
 - `sg_preflight/` - Python backend, CLI, state readers, digest generation, review support.
-- `sg_preflight/desktop/` - PySide6 desktop host kept for the packaged Clean window and compatibility alias.
+- `sg_preflight/desktop/` - PySide6 host kept only for the packaged Clean window and shared desktop-state helpers.
 - `sg_preflight/desktop_original_pyside6_backup/` - preserved copy of the original PySide6 shell source.
 - `desktop_native/` - deprecated native shell reference source kept in Git history; excluded from the standard SVN-stage alpha bundle.
 - `scripts/` - helper scripts for build, smoke, packaging, and verification.
@@ -71,12 +71,6 @@ Grafiks mode launches the experimental C++ cinematic shell when `sgfx_cine_cinem
 
 ```powershell
 python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
-```
-
-The direct PySide6 compatibility alias remains available:
-
-```powershell
-python -m sg_preflight desktop --workspace C:\repositories\trunk --profile <profile>
 ```
 
 When `dist\sgfx-preflight\sgfx-preflight.exe` is included in a prepared bundle, the same surfaces are available from one executable:

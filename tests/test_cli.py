@@ -291,11 +291,11 @@ class TestCLI(unittest.TestCase):
         self.assertIn("sgfx-preflight-startup-", source)
         self.assertIn("MessageBoxW", source)
 
-    def test_frozen_exe_entry_shows_startup_dialog_only_for_desktop_routes(self) -> None:
+    def test_frozen_exe_entry_shows_startup_dialog_only_for_dashboard_native_routes(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 
         self.assertTrue(module.should_show_startup_error([]))
-        self.assertTrue(module.should_show_startup_error(["desktop"]))
+        self.assertFalse(module.should_show_startup_error(["desktop"]))
         self.assertTrue(module.should_show_startup_error(["dashboard", "run", "--ui-mode", "grafiks"]))
         self.assertFalse(module.should_show_startup_error(["dashboard", "run", "--ui-mode", "clean", "--no-native"]))
         self.assertFalse(module.should_show_startup_error(["list-profiles", "--format", "json"]))
@@ -1642,7 +1642,7 @@ class TestCLI(unittest.TestCase):
             readme,
         )
 
-    def test_desktop_help_is_available(self) -> None:
+    def test_desktop_command_is_removed_from_cli(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "desktop", "--help"],
             cwd=ROOT,
@@ -1650,9 +1650,8 @@ class TestCLI(unittest.TestCase):
             text=True,
             check=False,
         )
-        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
-        self.assertIn("desktop operator shell", result.stdout.lower())
-        self.assertIn("--ui-mode", result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid choice", result.stderr.lower())
 
     def test_desktop_state_profiles_help_uses_available_vocab(self) -> None:
         result = subprocess.run(
@@ -1680,11 +1679,12 @@ class TestCLI(unittest.TestCase):
         self.assertIn("team retrospective export", result.stdout)
         self.assertNotIn("White" "board retro export", result.stdout)
 
-    def test_desktop_command_dispatches_to_runner(self) -> None:
+    def test_desktop_command_does_not_dispatch_to_runner(self) -> None:
         with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=7) as runner:
-            result = main(["desktop", "--profile", "G65"])
-        self.assertEqual(result, 7)
-        runner.assert_called_once_with(workspace=None, initial_profile_id="G65", initial_mode="clean")
+            with self.assertRaises(SystemExit) as exc:
+                main(["desktop", "--profile", "G65"])
+        self.assertEqual(exc.exception.code, 2)
+        runner.assert_not_called()
 
     def test_desktop_state_surfaces_returns_eight_grafiks_evidence_cards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

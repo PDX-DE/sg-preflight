@@ -3992,7 +3992,10 @@ def _render_confluence_anchor(ui: Any, anchor: str) -> None:
         ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
         url = _confluence_anchor_url(anchor)
         if url:
-            ui.link("View doc", url, new_tab=True).classes("sgfx-doc-link")
+            ui.button(
+                "Copy doc link",
+                on_click=lambda url=url, anchor=anchor: _copy_dashboard_link_to_clipboard(ui, url, anchor),
+            ).props("flat dense no-caps").classes("sgfx-doc-link")
         else:
             ui.label("View doc unavailable").classes("sgfx-muted")
 

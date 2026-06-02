@@ -578,6 +578,18 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("navigator.clipboard.writeText", helper_block, "Jira helper must copy URL to clipboard")
         self.assertIn("Copied to clipboard:", helper_block, "notify wording must mention clipboard")
 
+    def test_dashboard_doc_links_are_copy_only(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("new_tab=True", source)
+        anchor_idx = source.find("def _render_confluence_anchor")
+        self.assertNotEqual(anchor_idx, -1, "Confluence anchor renderer not found")
+        anchor_block = source[anchor_idx:anchor_idx + 900]
+        self.assertIn("Copy doc link", anchor_block)
+        self.assertIn("_copy_dashboard_link_to_clipboard(ui, url, anchor)", anchor_block)
+
     def test_dashboard_strips_full_qa_run_trigger_after_first_fire(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"
@@ -1762,15 +1774,16 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
         desktop_runner.assert_not_called()
         clean_runner.assert_called_once()
 
-    def test_desktop_alias_accepts_workspace_and_profile(self) -> None:
+    def test_desktop_alias_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.cli import main
 
             with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=5) as runner:
-                result = main(["desktop", "--profile", "G70", "--workspace", tmp])
+                with self.assertRaises(SystemExit) as exc:
+                    main(["desktop", "--profile", "G70", "--workspace", tmp])
 
-        self.assertEqual(result, 5)
-        runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="G70", initial_mode="clean")
+        self.assertEqual(exc.exception.code, 2)
+        runner.assert_not_called()
 
 
 # Phase B-3 + B-4 — Daily Digest action + partial-artifact surfacing + Screenshot Test State ownership note.

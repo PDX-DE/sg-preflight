@@ -53,10 +53,9 @@ On a fresh checkout with no review package, `daily-digest latest` exits 0 and pr
 ```powershell
 python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode clean
 python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
-python -m sg_preflight desktop --workspace C:\repositories\trunk --profile <profile>
 ```
 
-Clean mode launches the NiceGUI dashboard. Grafiks mode launches the PySide6 desktop console. Both modes read the same SGFX backend state and keep manual review human-owned.
+Clean mode launches the NiceGUI dashboard. Grafiks mode launches the experimental C++ cinematic shell when it is installed. Both modes read the same SGFX backend state and keep manual review human-owned.
 
 ### Operator-local command templates
 

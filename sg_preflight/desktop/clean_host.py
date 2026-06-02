@@ -7,9 +7,9 @@ import subprocess
 import urllib.error
 import urllib.request
 
-from PySide6.QtCore import QTimer, QUrl, Signal
+from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from sg_preflight.assets import runtime_asset_path
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs, sgfx_cli_command
@@ -29,8 +29,6 @@ def _find_open_dashboard_port(start_port: int = 8000, end_port: int = 8999) -> i
 
 
 class CleanDashboardWindow(QMainWindow):
-    switch_requested = Signal(str)
-
     def __init__(self, *, workspace: Path, initial_profile_id: str = "") -> None:
         super().__init__()
         self.workspace = workspace
@@ -62,19 +60,6 @@ class CleanDashboardWindow(QMainWindow):
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(0, 0, 0, 0)
         bar_layout.setSpacing(6)
-
-        self.clean_button = QPushButton("Clean", bar)
-        self.grafiks_button = QPushButton("Grafiks", bar)
-        for button in (self.clean_button, self.grafiks_button):
-            button.setObjectName("presentationToggle")
-            button.setProperty("sgfxMode", "clean")
-            button.setCheckable(True)
-            button.setMinimumHeight(30)
-            button.setMinimumWidth(96)
-        self.clean_button.setChecked(True)
-        self.grafiks_button.clicked.connect(lambda: self.switch_requested.emit("grafiks"))
-        bar_layout.addWidget(self.clean_button)
-        bar_layout.addWidget(self.grafiks_button)
 
         self.status_label = QLabel("Starting embedded dashboard...", bar)
         self.status_label.setObjectName("panelHint")

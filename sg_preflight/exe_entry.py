@@ -175,8 +175,6 @@ def show_startup_error(exc: BaseException, log_path: Path) -> None:
 def should_show_startup_error(args: list[str]) -> bool:
     if not args:
         return True
-    if args[0] == "desktop":
-        return True
     if _is_dashboard_run(args) and not _has_option(args, "--no-native"):
         return True
     return False
