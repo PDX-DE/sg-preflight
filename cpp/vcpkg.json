@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+  "name": "sgfx-cine",
+  "version-string": "0.1.0",
+  "builtin-baseline": "00d899c410b31467733472fc3a83a25729046b13",
+  "dependencies": [
+    "sdl3"
+  ]
+}

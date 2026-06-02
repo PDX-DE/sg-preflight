@@ -36,3 +36,15 @@ operator_state/
 /UnleashedRecomp*/
 /Unleashed Recomp*/
 /UnleashedRecompResources*/
+
+# C++ cinematic shell local build outputs
+/cpp/build/
+/cpp/external/*
+!/cpp/external/README.md
+/cpp/**/*.exe
+/cpp/**/*.dll
+/cpp/**/*.lib
+/cpp/**/*.pdb
+/cpp/**/*.obj
+/cpp/**/*.ilk
+/cpp/**/*.exp

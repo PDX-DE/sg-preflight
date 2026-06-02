@@ -1,0 +1,41 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2022-ramses-link",
+      "displayName": "VS2022 x64 Ramses link probe",
+      "generator": "Visual Studio 17 2022",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/build/install/${presetName}",
+        "SGFX_CINE_RAMSES_VERSION": "28.16.0"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2022-ramses-link-release",
+      "configurePreset": "vs2022-ramses-link",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "vs2022-ramses-link-release",
+      "configurePreset": "vs2022-ramses-link",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
