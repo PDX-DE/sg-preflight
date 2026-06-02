@@ -41,6 +41,7 @@ from sg_preflight.delivery_readiness import (
     STATUS_UNKNOWN,
     build_delivery_readiness_board,
 )
+from sg_preflight.api_version_coverage import IMPACT_REVIEW_LABEL, build_api_version_coverage_board
 from sg_preflight.disabled_tests import CAUTIOUS_BASELINE_LABEL, build_disabled_tests_board
 from sg_preflight.delivery_workbook_generation import (
     GENERATE_WORKBOOK_ACTION_ID,
@@ -142,6 +143,7 @@ DASHBOARD_NAVIGATION = (
     ("delivery-checklist", "Delivery Checklist"),
     ("delivery-readiness", "Delivery Readiness"),
     ("disabled-tests", "Disabled Tests"),
+    ("api-version-coverage", "API Version"),
     ("onboarding-guide", "Onboarding Guide"),
     ("setup-doctor", "Setup Doctor"),
     ("qa-workflows", "QA Workflows"),
@@ -1420,6 +1422,130 @@ def _disabled_tests_page(workspace: Path, *, bmw_root: Path | str | None = None)
     return page
 
 
+def _api_version_coverage_payload(
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+    *,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    selected_repo_root = _source_repo_root_from_value(repo_root) or _preferred_source_repo_root(workspace)
+    board = build_api_version_coverage_board(
+        selected_repo_root,
+        workspace_root=workspace,
+        bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
+    ).to_dict()
+    counts = board.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    refs = [item for item in board.get("shared_api_references", []) if isinstance(item, dict)]
+    interface_rows = [item for item in board.get("interface_family_entries", []) if isinstance(item, dict)]
+    impact_scans = [item for item in board.get("impact_scans", []) if isinstance(item, dict)]
+    rows: list[dict[str, str]] = [
+        {
+            "label": "Reading from",
+            "status": str(board.get("source_state", "unknown")),
+            "detail": str(board.get("repo_root", "")),
+        },
+        {
+            "label": "Shared API brands",
+            "status": f"{counts.get('shared_brand_ready', 0)}/{counts.get('shared_brand_total', 0)}",
+            "detail": "Current IDCevo shared MainInterfaces API versions from local CHANGELOG.md files.",
+        },
+        {
+            "label": "HMI export families",
+            "status": str(counts.get("interface_entry_total", 0)),
+            "detail": f"{counts.get('interface_known', 0)} known; {counts.get('interface_unknown', 0)} unknown.",
+        },
+        {
+            "label": "Impact hints",
+            "status": str(counts.get("impact_review_car_count", 0)),
+            "detail": f"{counts.get('impact_file_match_count', 0)} file match(es); {IMPACT_REVIEW_LABEL}.",
+        },
+        {
+            "label": "BMW catalog",
+            "status": str(board.get("catalog_state", "unknown")),
+            "detail": str(board.get("catalog_path", "")),
+        },
+    ]
+    for ref in refs:
+        rows.append(
+            {
+                "label": f"{ref.get('brand', '')} shared API".strip(),
+                "status": f"[{ref.get('current_version', '')}]",
+                "detail": f"{ref.get('current_date', '')}; {ref.get('changelog_path', '')}",
+            }
+        )
+    for entry in interface_rows[:10]:
+        version = entry.get("hmi_interface_version")
+        version_text = str(version) if version is not None else "unknown"
+        rows.append(
+            {
+                "label": f"{entry.get('brand', '')} {entry.get('model_id', '')}".strip(),
+                "status": version_text,
+                "detail": (
+                    f"{entry.get('hmi_family_label', '')}; catalog "
+                    f"{entry.get('catalog_name') or entry.get('match_status', '')}; "
+                    "not a per-car API compliance verdict."
+                ),
+            }
+        )
+    if len(interface_rows) > 10:
+        rows.append(
+            {
+                "label": "Additional HMI rows",
+                "status": str(len(interface_rows) - 10),
+                "detail": "Open the CLI JSON or evidence export for all interface-family rows.",
+            }
+        )
+    for scan in impact_scans[:8]:
+        change = scan.get("change", {})
+        if not isinstance(change, dict):
+            change = {}
+        target = f" -> {change.get('new_name')}" if change.get("new_name") else ""
+        rows.append(
+            {
+                "label": f"API {change.get('api_version', '')} {change.get('change_type', '')}".strip(),
+                "status": str(scan.get("matched_car_count", 0)),
+                "detail": (
+                    f"{change.get('old_name', '')}{target}; "
+                    f"{scan.get('matched_file_count', 0)} file match(es); {IMPACT_REVIEW_LABEL}."
+                ),
+            }
+        )
+    board["status"] = "available" if str(board.get("source_state", "")) == "ready" else "missing"
+    board["data_available"] = str(board.get("source_state", "")) == "ready"
+    board["selected_source_root"] = str(board.get("repo_root", ""))
+    board["source_root_candidates"] = _source_repo_root_candidates(workspace)
+    board["summary"] = (
+        f"{counts.get('shared_brand_ready', 0)}/{counts.get('shared_brand_total', 0)} shared API brand(s) ready; "
+        f"{counts.get('interface_entry_total', 0)} HMI export-family row(s); "
+        f"{counts.get('impact_review_car_count', 0)} car(s) with cautious impact hints. "
+        f"Reading from {board.get('repo_root', '')}."
+    )
+    board["board_rows"] = rows
+    return board
+
+
+def _api_version_coverage_page(workspace: Path, *, bmw_root: Path | str | None = None) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="api-version-coverage",
+        title="API Version",
+        tagline="Shared MainInterfaces API reference with cautious impact hints.",
+        reader=lambda: _api_version_coverage_payload(workspace, bmw_root),
+        workspace=workspace,
+        ownership_note=(
+            "Evidence only. Per-car API alignment is not recorded in the repo; "
+            "impact hints are review prompts, not verdicts."
+        ),
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["source_selector"] = {
+        "selected_source_root": str(payload.get("selected_source_root", "")),
+        "source_root_candidates": list(payload.get("source_root_candidates", [])),
+    }
+    return page
+
+
 def _setup_doctor_payload(workspace: Path) -> dict[str, Any]:
     report = build_setup_doctor_report(workspace).to_dict()
     rows = []
@@ -2633,6 +2759,7 @@ def build_dashboard_snapshot(
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _delivery_readiness_page(root, bmw_root=bmw_root),
             _disabled_tests_page(root, bmw_root=bmw_root),
+            _api_version_coverage_page(root, bmw_root=bmw_root),
             _onboarding_guide_page(
                 resolved_profile_id,
                 root,
@@ -8066,6 +8193,13 @@ def _render_selected_page(
                 workspace,
                 payload_builder=_disabled_tests_payload,
             )
+        elif page_id == "api-version-coverage":
+            _render_source_root_reader_panel(
+                ui,
+                pages_by_id[page_id],
+                workspace,
+                payload_builder=_api_version_coverage_payload,
+            )
         elif page_id == "screenshot-test-state":
             _render_screenshot_test_state_panel(ui, snapshot, workspace)
         elif page_id == "risk-score":
@@ -8525,6 +8659,14 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         payload_builder=_disabled_tests_payload,
+                    )
+                elif active_page_id == "api-version-coverage":
+                    _render_source_root_reader_panel(
+                        ui,
+                        _pages_by_id()[active_page_id],
+                        workspace,
+                        bmw_root=bmw_root,
+                        payload_builder=_api_version_coverage_payload,
                     )
                 elif active_page_id == "full-qa-pass":
                     _render_full_qa_pass_panel(

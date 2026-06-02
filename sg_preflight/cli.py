@@ -130,6 +130,11 @@ from sg_preflight.delivery_readiness import (
     build_delivery_readiness_board,
     write_delivery_readiness_board,
 )
+from sg_preflight.api_version_coverage import (
+    IMPACT_REVIEW_LABEL,
+    build_api_version_coverage_board,
+    write_api_version_coverage_board,
+)
 from sg_preflight.disabled_tests import (
     CAUTIOUS_BASELINE_LABEL,
     build_disabled_tests_board,
@@ -1350,6 +1355,62 @@ def _console_disabled_tests(payload: dict[str, object]) -> None:
         )
 
 
+def _console_api_version_coverage(payload: dict[str, object]) -> None:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    print("API Version Reference")
+    print(f"Source: {payload.get('repo_root', '')}")
+    print(f"State: {payload.get('source_state', '')}")
+    print(
+        "Summary -> "
+        f"shared brands: {counts.get('shared_brand_ready', 0)}/{counts.get('shared_brand_total', 0)} | "
+        f"HMI rows: {counts.get('interface_entry_total', 0)} | "
+        f"impact hints: {counts.get('impact_review_car_count', 0)} car(s)"
+    )
+    print(str(payload.get("manual_review_banner", "")))
+    print(f"Impact label: {payload.get('impact_review_label', IMPACT_REVIEW_LABEL)}")
+    print(f"Catalog: {payload.get('catalog_state', '')} ({payload.get('catalog_path', '')})")
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        if artifacts.get("json_path"):
+            print(f"JSON: {artifacts['json_path']}")
+        if artifacts.get("markdown_path"):
+            print(f"Markdown: {artifacts['markdown_path']}")
+    print("-" * 80)
+    refs = payload.get("shared_api_references", [])
+    if isinstance(refs, list):
+        print("Shared API versions (Cars_IDCevo MainInterfaces):")
+        for ref in refs:
+            if isinstance(ref, dict):
+                print(
+                    _console_safe(
+                        f"- {ref.get('brand', '')}: API [{ref.get('current_version', '')}] "
+                        f"{ref.get('current_date', '')} ({ref.get('state', '')})"
+                    )
+                )
+    interface_counts = counts.get("interface_family_counts", {})
+    if isinstance(interface_counts, dict):
+        print("HMI export-family rows: " + ", ".join(f"{key}={value}" for key, value in interface_counts.items()))
+    scans = payload.get("impact_scans", [])
+    if isinstance(scans, list):
+        print("Cautious impact hints:")
+        for scan in scans:
+            if not isinstance(scan, dict):
+                continue
+            change = scan.get("change", {})
+            if not isinstance(change, dict):
+                change = {}
+            target = f" -> {change.get('new_name')}" if change.get("new_name") else ""
+            print(
+                _console_safe(
+                    f"- API {change.get('api_version', '')} {change.get('change_type', '')}: "
+                    f"{change.get('old_name', '')}{target}; "
+                    f"{scan.get('matched_car_count', 0)} car(s), {scan.get('matched_file_count', 0)} file(s)"
+                )
+            )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _SgfxArgumentParser(prog=_default_prog())
     parser.add_argument("--version", action=_VersionAction, help="Show version and build metadata")
@@ -1672,6 +1733,16 @@ def build_parser() -> argparse.ArgumentParser:
     disabled_tests.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     disabled_tests.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     disabled_tests.add_argument("--json", action="store_true", help="Print disabled-test payload as JSON")
+
+    api_version_coverage = sub.add_parser(
+        "api-version-coverage",
+        help="Build the read-only shared API version reference and cautious impact scan",
+    )
+    api_version_coverage.add_argument("--workspace", help="Workspace root override")
+    api_version_coverage.add_argument("--repo-root", help="SVN trunk root override")
+    api_version_coverage.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    api_version_coverage.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    api_version_coverage.add_argument("--json", action="store_true", help="Print API version coverage payload as JSON")
 
     sub.add_parser(
         "list-workflows",
@@ -2537,6 +2608,15 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_disabled_parser.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     desktop_disabled_parser.add_argument("--json", action="store_true", help="Print disabled-test payload as JSON")
 
+    desktop_api_version_parser = desktop_state_sub.add_parser(
+        "api-version-coverage",
+        help="Load the API version reference for native-shell consumers",
+    )
+    desktop_api_version_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_api_version_parser.add_argument("--repo-root", help="SVN trunk root override")
+    desktop_api_version_parser.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    desktop_api_version_parser.add_argument("--json", action="store_true", help="Print API version coverage payload as JSON")
+
     desktop_attach_manual_parser = desktop_state_sub.add_parser(
         "attach-manual-evidence",
         help="Attach manual evidence into one action bundle",
@@ -3384,6 +3464,20 @@ def _main_impl(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
             _console_disabled_tests(payload)
+        return 0
+
+    if args.command == "api-version-coverage":
+        api_root = Path(args.workspace).resolve() if args.workspace else root
+        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+        bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
+        board = build_api_version_coverage_board(repo_root, workspace_root=api_root, bmw_repo_root=bmw_repo_root)
+        payload = board.to_dict()
+        if args.output_root:
+            payload["artifacts"] = write_api_version_coverage_board(board, Path(args.output_root).resolve())
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            _console_api_version_coverage(payload)
         return 0
 
     if args.command == "list-workflows":
@@ -4257,6 +4351,14 @@ def _main_impl(argv: list[str] | None = None) -> int:
             repo_root = Path(args.repo_root).resolve() if args.repo_root else None
             bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
             payload = build_disabled_tests_board(
+                repo_root,
+                workspace_root=state_root,
+                bmw_repo_root=bmw_repo_root,
+            ).to_dict()
+        elif args.desktop_state_command == "api-version-coverage":
+            repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+            bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
+            payload = build_api_version_coverage_board(
                 repo_root,
                 workspace_root=state_root,
                 bmw_repo_root=bmw_repo_root,
