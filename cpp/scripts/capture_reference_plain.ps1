@@ -31,10 +31,7 @@ function Resolve-Game {
         return Resolve-FirstExistingPath -Candidates @($GameExe)
     }
 
-    return Resolve-FirstExistingPath -Candidates @(
-        "C:\Users\DavidErikGarciaArena\Downloads\UI-UX Sonic World Adventure for SGFX - Project Quality Hero\Unleashed Recomp - Windows (Complete Installation) 1.0.3\SGFX - Project Quality-Hero.exe",
-        "C:\Users\DavidErikGarciaArena\Downloads\UI-UX Sonic World Adventure for SGFX - Project Quality Hero\SGFX - Project Quality-Hero.exe"
-    )
+    return ""
 }
 
 function Resolve-Ffmpeg {
@@ -73,7 +70,7 @@ $game = Resolve-Game
 $ffmpeg = Resolve-Ffmpeg
 
 if ([string]::IsNullOrWhiteSpace($game)) {
-    throw "SGFX - Project Quality-Hero.exe not found. Pass -GameExe with the recomp executable path."
+    throw "Reference application not found. Pass -GameExe with the reference application path."
 }
 
 if ([string]::IsNullOrWhiteSpace($WorkingDirectory)) {
@@ -90,13 +87,13 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 Write-Host "SGFX plain reference capture fallback"
-Write-Host "Game exe: $game"
+Write-Host "Reference application: $game"
 Write-Host "Working dir: $WorkingDirectory"
 Write-Host "Capture root: $CaptureRoot"
 Write-Host "Screenshot interval: $IntervalSeconds second(s), max duration: $MaxDurationSeconds second(s)"
 Write-Host "Clean-room line: captures are study evidence only; do not ship ripped assets; do not use Ghidra."
 Write-Host ""
-Write-Host "Fallback flow for David:"
+Write-Host "Fallback flow:"
 Write-Host "1. Let this script launch the game."
 Write-Host "2. Navigate to title/world-map views while it captures desktop stills."
 Write-Host "3. Close the game when enough evidence is visible."

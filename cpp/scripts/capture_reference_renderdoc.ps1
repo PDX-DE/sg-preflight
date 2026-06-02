@@ -33,13 +33,6 @@ function Resolve-RenderDoc {
         return Resolve-FirstExistingPath -Candidates @($RenderDocCmd)
     }
 
-    $known = Resolve-FirstExistingPath -Candidates @(
-        "C:\Users\DavidErikGarciaArena\Downloads\sgfx-rnd-tools\RenderDoc_1.44_64\RenderDoc_1.44_64\renderdoccmd.exe"
-    )
-    if (-not [string]::IsNullOrWhiteSpace($known)) {
-        return $known
-    }
-
     $command = Get-Command renderdoccmd.exe -ErrorAction SilentlyContinue
     if ($command) {
         return $command.Source
@@ -52,10 +45,7 @@ function Resolve-Game {
         return Resolve-FirstExistingPath -Candidates @($GameExe)
     }
 
-    return Resolve-FirstExistingPath -Candidates @(
-        "C:\Users\DavidErikGarciaArena\Downloads\UI-UX Sonic World Adventure for SGFX - Project Quality Hero\Unleashed Recomp - Windows (Complete Installation) 1.0.3\SGFX - Project Quality-Hero.exe",
-        "C:\Users\DavidErikGarciaArena\Downloads\UI-UX Sonic World Adventure for SGFX - Project Quality Hero\SGFX - Project Quality-Hero.exe"
-    )
+    return ""
 }
 
 function Format-CommandLine {
@@ -87,7 +77,7 @@ if ([string]::IsNullOrWhiteSpace($renderDoc)) {
 }
 
 if (-not $ProcessOnly -and [string]::IsNullOrWhiteSpace($game)) {
-    throw "SGFX - Project Quality-Hero.exe not found. Pass -GameExe with the recomp executable path."
+    throw "Reference application not found. Pass -GameExe with the reference application path."
 }
 
 if ([string]::IsNullOrWhiteSpace($WorkingDirectory) -and -not [string]::IsNullOrWhiteSpace($game)) {
@@ -102,11 +92,11 @@ $captureTemplate = Join-Path $CaptureRoot "sgfx-reference"
 
 Write-Host "SGFX RenderDoc reference capture helper"
 Write-Host "RenderDoc cmd: $renderDoc"
-Write-Host "Game exe: $game"
+Write-Host "Reference application: $game"
 Write-Host "Working dir: $WorkingDirectory"
 Write-Host "Capture root: $CaptureRoot"
 Write-Host ""
-Write-Host "Four-key flow for David:"
+Write-Host "Four-key flow:"
 Write-Host "1. Run this script without -DryRun."
 Write-Host "2. At the title screen, press F12 once."
 Write-Host "3. At the world map, press F12 once."
