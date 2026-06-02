@@ -857,13 +857,12 @@ def build_screenshot_review_viewer(
 
     items: list[ScreenshotReviewItem] = []
     for pair in triage_bundle.report.pairs[:max_items]:
-        diff_path = pair.diff_image_path
-        if not diff_path:
-            diff_path = str(
-                diff_lookup.get(pair.key.casefold())
-                or diff_lookup.get(Path(pair.key).with_suffix("").name.casefold())
-                or ""
-            )
+        diff_path = str(
+            diff_lookup.get(pair.key.casefold())
+            or diff_lookup.get(Path(pair.key).with_suffix("").name.casefold())
+            or pair.diff_image_path
+            or ""
+        )
         delta_badge, delta_histogram = _compute_diff_review_metrics(diff_path)
         regression_badge = _diff_regression_badge_from_previous(
             pair.key,

@@ -4030,11 +4030,22 @@ def _main_impl(argv: list[str] | None = None) -> int:
             return 1
 
     if args.command == "dashboard":
+        if args.dashboard_command == "run" and args.ui_mode == "grafiks":
+            try:
+                from sg_preflight.dashboard.main import run_grafiks_mode
+
+                return run_grafiks_mode(
+                    profile_id=args.profile or "",
+                    workspace=Path(args.workspace),
+                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+                )
+            except Exception as exc:
+                print(_console_safe(f"dashboard grafiks failed: {exc}"), file=sys.stderr)
+                return 1
         use_desktop_shell = (
             args.dashboard_command == "run"
             and (
-                args.ui_mode == "grafiks"
-                or (getattr(sys, "frozen", False) and not args.no_native and args.ui_mode in {None, "clean"})
+                getattr(sys, "frozen", False) and not args.no_native and args.ui_mode in {None, "clean"}
             )
         )
         if use_desktop_shell:

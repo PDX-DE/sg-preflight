@@ -6,19 +6,19 @@ It is not a production deployment, not a delivery package, and not a replacement
 
 ## What This Alpha Contains
 
-- Grafiks operator console: a PySide6 desktop shell over the same Python data layer used by the clean dashboard.
+- Grafiks mode: an experimental C++ cinematic shell launched from the dashboard command when the built shell executable is present.
 - Screenshot review prioritization: P0-P3 suggested review order with reasons and signals. No screenshots are hidden or approved by the tool.
 - Daily / morning QA digest: JSON, text, and Markdown summaries for evidence prepared, blockers, manual review pending, waiting-for-owner state, workflow status, and suggested review order.
 - Manual review companion: Quality Hero review steps surfaced for operator notes and verdict entry. `recorded_by_tool` stays false.
 - Delivery checklist workbook reader: read-only ingestion of operator-local delivery checklist workbook data.
 - Export-size analysis reader: read-only ingestion of operator-local `Cars\size_analysis\<profile>_<date>.xlsx` workbook data.
-- Clean and Grafiks evidence surfaces: delivery checklist, screenshot test state, daily digest, and manual review companion render from the same Python readers.
+- Clean evidence surfaces: delivery checklist, delivery readiness, setup doctor, workflows, screenshot test state, daily digest, and manual review companion render from the same Python readers.
 - Screenshot test state reader: read-only BMW / MINI screenshot baseline and test-config state from local BMW Git.
 - BMW Git readiness reader: read-only per-profile state from the local `digital-3d-car-models` checkout.
 - QA Hero readiness reader: read-only presence and count checks for documented Quality Hero assets such as LightFX, WelcomeFX, ShadesFX, CarPaint, AnchorPoints, Constants, and Perspectives.
 - CLI uniformity: read/status commands support `--format text|json|markdown` and `--output-path` / `--out` where relevant, while preserving compatible `--json` and `--markdown` aliases.
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
-- Clean dashboard mode: `python -m sg_preflight dashboard run --ui-mode clean` launches the neutral NiceGUI work view from source. The packaged Windows executable embeds that NiceGUI Clean layout inside a desktop window by default and lets the operator toggle to Grafiks inside the same `.exe`. Both modes are local evidence views and do not change backend QA logic.
+- Clean dashboard mode: `python -m sg_preflight dashboard run --ui-mode clean` launches the neutral NiceGUI work view from source. Grafiks mode launches the experimental C++ cinematic shell if it is installed; otherwise it prints a WIP hint and tells the operator to use Clean for now. Both modes are local evidence views and do not change backend QA logic.
 - OpenHTF station MVP: local station surface for delivery checklist, screenshot test state, daily digest, and manual review companion phases. Internal OpenHTF execution state is evidence status only; manual review remains required.
 - Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--auto-confirm`.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
@@ -26,9 +26,9 @@ It is not a production deployment, not a delivery package, and not a replacement
 ## Included Files
 
 - `sg_preflight/` - Python backend, CLI, state readers, digest generation, review support.
-- `sg_preflight/desktop/` - PySide6 Grafiks operator console.
+- `sg_preflight/desktop/` - PySide6 desktop host kept for the packaged Clean window and compatibility alias.
 - `sg_preflight/desktop_original_pyside6_backup/` - preserved copy of the original PySide6 shell source.
-- `desktop_native/` - deprecated C++ operator shell reference source kept in Git history; excluded from the standard SVN-stage alpha bundle.
+- `desktop_native/` - deprecated native shell reference source kept in Git history; excluded from the standard SVN-stage alpha bundle.
 - `scripts/` - helper scripts for build, smoke, packaging, and verification.
 - `tests/` - automated tests shipped with the curated bundle.
 - `config/` - SGFX rule and profile configuration.
@@ -63,13 +63,13 @@ Clean mode is the default local operator dashboard:
 python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode clean
 ```
 
-Grafiks mode opens the PySide6 desktop console over the same SGFX evidence readers:
+Grafiks mode launches the experimental C++ cinematic shell when `sgfx_cine_cinematic_shell.exe` is available. If it is not installed, the command prints a WIP hint and leaves Clean as the daily-driver fallback. Set `SGFX_GRAFIKS_SHELL_EXE` to the built executable when the shell lives outside this checkout.
 
 ```powershell
 python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
 ```
 
-The direct alias remains available:
+The direct PySide6 compatibility alias remains available:
 
 ```powershell
 python -m sg_preflight desktop --workspace C:\repositories\trunk --profile <profile>
@@ -84,7 +84,7 @@ When `dist\sgfx-preflight\sgfx-preflight.exe` is included in a prepared bundle, 
 .\dist\sgfx-preflight\sgfx-preflight.exe list-profiles --format json
 ```
 
-Double-clicking the executable without arguments opens the embedded NiceGUI Clean layout in a desktop window. In the packaged executable, Clean and Grafiks dashboard requests stay inside the `.exe`; `--no-native` is reserved for local server diagnostics. The packaged desktop path does not open an external browser. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
+Double-clicking the executable without arguments opens the embedded NiceGUI Clean layout in a desktop window. `--no-native` is reserved for local server diagnostics. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
 
 The legacy `python -m sg_preflight ui` command and `/ui` routes are deprecated compatibility surfaces. Use the packaged `.exe` Clean window or `dashboard run --ui-mode clean` for operator work.
 

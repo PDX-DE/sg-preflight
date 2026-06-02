@@ -1621,7 +1621,7 @@ class TestCLI(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
-        self.assertIn("sg-preflight 0.1.0", result.stdout)
+        self.assertIn("sg-preflight 0.1.1", result.stdout)
         self.assertIn("commit ", result.stdout)
         self.assertIn("build ", result.stdout)
         self.assertIn("python ", result.stdout)

@@ -31,9 +31,16 @@ from sg_preflight.bmw_pipeline_auto_fix import (
     render_missing_actual_diagnostic_text,
     run_missing_actual_diagnostic_chain,
 )
+from sg_preflight.bmw_process import workflow_contracts
 from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.daily_digest import build_latest_daily_digest
 from sg_preflight.delivery_checklist import read_delivery_checklist
+from sg_preflight.delivery_readiness import (
+    STATUS_DELIVERED,
+    STATUS_NOT_DELIVERED_YET,
+    STATUS_UNKNOWN,
+    build_delivery_readiness_board,
+)
 from sg_preflight.delivery_workbook_generation import (
     GENERATE_WORKBOOK_ACTION_ID,
     GENERATE_WORKBOOK_ACTION_LABEL,
@@ -77,6 +84,7 @@ from sg_preflight.profiles import (
     list_run_profiles,
 )
 from sg_preflight.profile_change_detection import detect_changed_profiles_since_last_run
+from sg_preflight.qa_workflows import list_workflows
 from sg_preflight.risk_scoring import read_per_car_risk_score
 from sg_preflight.screenshot_review_viewer import (
     build_screenshot_review_viewer,
@@ -93,6 +101,7 @@ from sg_preflight.screenshot_capture import (
     start_screenshot_capture,
 )
 from sg_preflight.services import operator_ui_root
+from sg_preflight.setup_doctor import build_setup_doctor_report
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs, sgfx_cli_command
 from sg_preflight.team_digest_board import build_team_daily_digest_board
 from sg_preflight.utils import ensure_parent
@@ -114,6 +123,11 @@ FEEDBACK_EMAIL_ENV = "SGFX_FEEDBACK_EMAIL"
 DEFAULT_FEEDBACK_EMAIL = "david-erik.garcia-arenas@paradoxcat.com"
 DESKTOP_NOTIFICATIONS_ENV = "SGFX_DESKTOP_NOTIFICATIONS"
 LONG_RUNNING_NOTIFICATION_SECONDS = 30
+GRAFIKS_SHELL_EXE_ENV_KEYS = ("SGFX_GRAFIKS_SHELL_EXE", "SGFX_CINEMATIC_SHELL_EXE")
+GRAFIKS_SHELL_EXE_NAME = "sgfx_cine_cinematic_shell.exe"
+GRAFIKS_CXX_BUILD_DIR = Path("cpp") / "build" / "vs2022-ramses-28.16" / "Release"
+GRAFIKS_DEFAULT_BMW_CARS_ROOT = Path(r"C:\3D Car git\digital-3d-car-models\cars\BMW")
+GRAFIKS_MODE_WIP_HINT = "Grafiks mode is WIP - use Clean for now unless the C++ cinematic shell is installed."
 DASHBOARD_GUARDRAILS = (
     "Manual review remains required.",
     "Decision: not approval — evidence only.",
@@ -124,7 +138,11 @@ DASHBOARD_NAVIGATION = (
     ("full-qa-pass", "Full QA Pass"),
     ("batch-full-qa-pass", "Batch Full QA Pass"),
     ("delivery-checklist", "Delivery Checklist"),
+    ("delivery-readiness", "Delivery Readiness"),
     ("onboarding-guide", "Onboarding Guide"),
+    ("setup-doctor", "Setup Doctor"),
+    ("qa-workflows", "QA Workflows"),
+    ("bmw-process", "BMW Process"),
     ("screenshot-test-state", "Screenshot Test State"),
     ("risk-score", "Risk Score"),
     ("cross-car-comparison", "Cross-Car Comparison"),
@@ -426,6 +444,144 @@ def _packaged_native_unavailable() -> RuntimeError:
         "Packaged native mode is hosted by the embedded desktop shell. "
         "Use the executable default mode, or pass --no-native only for local server diagnostics."
     )
+
+
+def _dashboard_source_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _unique_existing_order(paths: list[Path]) -> list[Path]:
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        key = str(resolved).casefold()
+        if key not in seen:
+            seen.add(key)
+            unique.append(resolved)
+    return unique
+
+
+def _grafiks_shell_exe_candidates(workspace: Path | str | None = None) -> list[Path]:
+    candidates: list[Path] = []
+    for key in GRAFIKS_SHELL_EXE_ENV_KEYS:
+        raw = os.environ.get(key, "").strip()
+        if not raw:
+            continue
+        configured = Path(raw)
+        candidates.append(configured / GRAFIKS_SHELL_EXE_NAME if configured.is_dir() else configured)
+
+    source_root = _dashboard_source_root()
+    roots = [source_root, Path.cwd()]
+    if workspace is not None:
+        roots.append(Path(workspace))
+    if source_root.parent != source_root:
+        roots.append(source_root.parent / "sg-preflight")
+
+    for root in _unique_existing_order(roots):
+        candidates.extend(
+            [
+                root / GRAFIKS_CXX_BUILD_DIR / GRAFIKS_SHELL_EXE_NAME,
+                root / "build" / "vs2022-ramses-28.16" / "Release" / GRAFIKS_SHELL_EXE_NAME,
+                root / GRAFIKS_SHELL_EXE_NAME,
+            ]
+        )
+    return _unique_existing_order(candidates)
+
+
+def _resolve_grafiks_shell_exe(workspace: Path | str | None = None) -> Path | None:
+    for candidate in _grafiks_shell_exe_candidates(workspace):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _grafiks_bmw_cars_root(bmw_root: Path | str | None = None) -> Path:
+    candidates: list[Path] = []
+    if bmw_root is not None:
+        root = Path(bmw_root)
+        candidates.extend([root / "cars" / "BMW", root])
+    raw = os.environ.get("SGFX_BMW_CARS_ROOT", "").strip()
+    if raw:
+        candidates.append(Path(raw))
+    candidates.append(GRAFIKS_DEFAULT_BMW_CARS_ROOT)
+    for candidate in _unique_existing_order(candidates):
+        if candidate.is_dir():
+            return candidate
+    return GRAFIKS_DEFAULT_BMW_CARS_ROOT
+
+
+def _grafiks_profile_registry_file() -> Path:
+    return _dashboard_source_root() / "sg_preflight" / "profiles.py"
+
+
+def _grafiks_shell_command(
+    exe_path: Path,
+    *,
+    profile_id: str = "",
+    bmw_root: Path | str | None = None,
+) -> list[str]:
+    command = [
+        str(exe_path),
+        "--interactive",
+        "--hub-planet",
+        "--hub-nodes",
+        "--fusion-cars-root",
+        str(_grafiks_bmw_cars_root(bmw_root)),
+        "--asset-root",
+        "assets",
+        "--font-root",
+        str(Path("assets") / "fonts"),
+    ]
+    registry_file = _grafiks_profile_registry_file()
+    if registry_file.is_file():
+        command.extend(["--profile-registry-file", str(registry_file)])
+    normalized_profile = str(profile_id or "").strip()
+    if normalized_profile:
+        command.extend(["--fusion-profile-id", normalized_profile])
+    return command
+
+
+def _grafiks_not_installed_message(workspace: Path | str | None = None) -> str:
+    expected = _grafiks_shell_exe_candidates(workspace)
+    first_expected = str(expected[0]) if expected else GRAFIKS_SHELL_EXE_NAME
+    return (
+        f"{GRAFIKS_MODE_WIP_HINT}\n"
+        f"C++ cinematic shell not installed or not found. Expected first: {first_expected}\n"
+        f"Set {GRAFIKS_SHELL_EXE_ENV_KEYS[0]} to the built {GRAFIKS_SHELL_EXE_NAME} to enable Grafiks mode."
+    )
+
+
+def run_grafiks_mode(
+    *,
+    profile_id: str = "",
+    workspace: Path | str,
+    bmw_root: Path | str | None = None,
+) -> int:
+    root = _workspace(workspace)
+    exe_path = _resolve_grafiks_shell_exe(root)
+    if exe_path is None:
+        message = _grafiks_not_installed_message(root)
+        append_startup_log(f"Grafiks mode unavailable: {message.replace(chr(10), ' | ')}")
+        print(message)
+        return 0
+
+    command = _grafiks_shell_command(exe_path, profile_id=profile_id, bmw_root=bmw_root)
+    append_startup_log(f"launching Grafiks C++ shell: {exe_path}")
+    print(GRAFIKS_MODE_WIP_HINT)
+    print(f"Launching Grafiks C++ shell: {exe_path}")
+    process = subprocess.Popen(command, cwd=exe_path.parent)
+    try:
+        exit_code = process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        return 0
+    if exit_code == 0:
+        return 0
+    print(f"Grafiks C++ shell exited early with code {exit_code}.", file=sys.stderr)
+    return int(exit_code)
 
 
 def _launch_browser_fallback_process(
@@ -1015,6 +1171,200 @@ def _delivery_checklist_page(
             "confluence_anchor": DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR,
         }
     ]
+    return page
+
+
+def _delivery_readiness_payload(workspace: Path, bmw_root: Path | str | None = None) -> dict[str, Any]:
+    board = build_delivery_readiness_board(
+        workspace_root=workspace,
+        bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
+    ).to_dict()
+    counts = board.get("counts", {})
+    catalog = board.get("catalog", {})
+    source_state = str(board.get("source_state", "unknown"))
+    ready = source_state == "ready"
+    total = int(counts.get("total", 0) or 0)
+    delivered = int(counts.get(STATUS_DELIVERED, 0) or 0)
+    not_delivered = int(counts.get(STATUS_NOT_DELIVERED_YET, 0) or 0)
+    unknown = int(counts.get(STATUS_UNKNOWN, 0) or 0)
+    entries = [entry for entry in board.get("entries", []) if isinstance(entry, dict)]
+    rows: list[dict[str, str]] = [
+        {
+            "label": "Cars listed",
+            "status": str(total),
+            "detail": f"{delivered} delivered; {not_delivered} not delivered yet; {unknown} unknown/no changelog.",
+        },
+        {
+            "label": "BMW catalog",
+            "status": str(catalog.get("catalog_state", "not_checked")),
+            "detail": (
+                f"{catalog.get('catalog_targets_mapped_count', 0)} mapped; "
+                f"{catalog.get('catalog_targets_missing_dir_count', 0)} missing dirs; "
+                f"{catalog.get('dirs_without_catalog_count', 0)} listed without catalog."
+            ),
+        },
+    ]
+    for entry in entries[:18]:
+        date = str(entry.get("delivered_date", "")).strip()
+        version = str(entry.get("version", "")).strip() or "version unknown"
+        detail_parts = [
+            str(entry.get("relative_path", "")).strip(),
+            version,
+        ]
+        if date:
+            detail_parts.append(date)
+        rows.append(
+            {
+                "label": f"{entry.get('brand', '')} {entry.get('model_id', '')}".strip(),
+                "status": str(entry.get("status_label", entry.get("status", "unknown"))),
+                "detail": "; ".join(part for part in detail_parts if part),
+            }
+        )
+    if len(entries) > 18:
+        rows.append(
+            {
+                "label": "Additional cars",
+                "status": str(len(entries) - 18),
+                "detail": "Open the full payload or CLI export for the remaining rows.",
+            }
+        )
+    board["status"] = "available" if ready else "missing"
+    board["data_available"] = ready
+    board["summary"] = (
+        f"{total} car(s): {delivered} delivered, {not_delivered} not delivered yet, "
+        f"{unknown} unknown/no changelog. Source: {source_state}."
+    )
+    board["board_rows"] = rows
+    return board
+
+
+def _delivery_readiness_page(workspace: Path, *, bmw_root: Path | str | None = None) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="delivery-readiness",
+        title="Delivery Readiness",
+        tagline="Per-car CHANGELOG delivery status from local SVN and BMW catalog evidence.",
+        reader=lambda: _delivery_readiness_payload(workspace, bmw_root),
+        workspace=workspace,
+        ownership_note="Evidence only - delivery approval remains manual: SG peer, Wombat merge, and BMW CCB.",
+    )
+    page["confluence_anchors"] = [DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR]
+    return page
+
+
+def _setup_doctor_payload(workspace: Path) -> dict[str, Any]:
+    report = build_setup_doctor_report(workspace).to_dict()
+    rows = []
+    for item in report.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        detail_parts = [
+            str(item.get("category", "")).strip(),
+            "required" if item.get("required") else "optional",
+            str(item.get("version", "")).strip(),
+            str(item.get("detail", "") or item.get("fix", "")).strip(),
+        ]
+        rows.append(
+            {
+                "label": str(item.get("label", item.get("key", "item"))),
+                "status": str(item.get("status", "unknown")),
+                "detail": "; ".join(part for part in detail_parts if part),
+            }
+        )
+    report["status"] = "available" if bool(report.get("ready")) else "blocked"
+    report["data_available"] = True
+    report["summary"] = (
+        f"{report.get('headline', 'Setup status generated.')} "
+        f"{report.get('found_count', 0)} found; "
+        f"{report.get('required_missing_count', 0)} required missing; "
+        f"{report.get('optional_missing_count', 0)} optional missing."
+    )
+    report["board_rows"] = rows
+    return report
+
+
+def _setup_doctor_page(workspace: Path) -> dict[str, Any]:
+    return _reader_page(
+        page_id="setup-doctor",
+        title="Setup Doctor",
+        tagline="Detect-only setup status for local SGFX dependencies.",
+        reader=lambda: _setup_doctor_payload(workspace),
+        workspace=workspace,
+        ownership_note="Detect-only. No installer or file copy runs without operator confirmation.",
+    )
+
+
+def _qa_workflows_payload(workspace: Path) -> dict[str, Any]:
+    workflows = [summary.to_dict() for summary in list_workflows(workspace_root=workspace)]
+    rows = []
+    for workflow in workflows:
+        profiles = ", ".join(str(profile) for profile in workflow.get("profiles", [])[:5]) or "profile-agnostic"
+        if len(workflow.get("profiles", [])) > 5:
+            profiles += ", ..."
+        rows.append(
+            {
+                "label": str(workflow.get("name") or workflow.get("id") or "workflow"),
+                "status": str(workflow.get("last_status", "not_started")),
+                "detail": (
+                    f"{workflow.get('check_count', 0)} check(s); "
+                    f"{workflow.get('dod_count', 0)} DoD item(s); profiles: {profiles}."
+                ),
+            }
+        )
+    return {
+        "schema_version": 1,
+        "status": "available" if workflows else "unavailable",
+        "data_available": bool(workflows),
+        "summary": f"{len(workflows)} local QA workflow definition(s) available for reviewed operator runs.",
+        "workflow_count": len(workflows),
+        "workflows": workflows,
+        "board_rows": rows,
+    }
+
+
+def _qa_workflows_page(workspace: Path) -> dict[str, Any]:
+    return _reader_page(
+        page_id="qa-workflows",
+        title="QA Workflows",
+        tagline="Local JSON workflow catalog with manual-attestation gates preserved.",
+        reader=lambda: _qa_workflows_payload(workspace),
+        workspace=workspace,
+        ownership_note="Workflow checks can gather evidence; manual attestation stays operator-reviewed.",
+    )
+
+
+def _bmw_process_payload() -> dict[str, Any]:
+    contracts = list(workflow_contracts())
+    rows = []
+    for contract in contracts:
+        steps = contract.get("steps", ())
+        evidence = contract.get("evidence", ())
+        rows.append(
+            {
+                "label": str(contract.get("label", contract.get("key", "workflow"))),
+                "status": "available",
+                "detail": f"{len(steps)} step(s); {len(evidence)} evidence item(s). {contract.get('source', '')}",
+            }
+        )
+    return {
+        "schema_version": 1,
+        "status": "available",
+        "data_available": True,
+        "summary": f"{len(contracts)} BMW process workflow contract(s) available for operator reference.",
+        "contract_count": len(contracts),
+        "contracts": contracts,
+        "board_rows": rows,
+    }
+
+
+def _bmw_process_page() -> dict[str, Any]:
+    page = _reader_page(
+        page_id="bmw-process",
+        title="BMW Process",
+        tagline="Read-only workflow contracts for BMW interface, triage, and visual review paths.",
+        reader=_bmw_process_payload,
+        ownership_note="Reference only. SGFX does not write BMW Git, Jira, SVN, or delivery approval state.",
+    )
+    page["confluence_anchors"] = [BMW_PIPELINE_PYTHON_CONFLUENCE_ANCHOR, QUALITY_HERO_CONFLUENCE_ANCHOR]
     return page
 
 
@@ -2096,7 +2446,7 @@ def build_dashboard_snapshot(
                 "Local-only preflight for collecting delivery evidence. "
                 "Choose the car profile first, then start Full QA Pass from the visible entry point."
             ),
-            "setup_page_id": "delivery-checklist",
+            "setup_page_id": "setup-doctor",
             "setup_action_count": len(
                 [action for action in setup_status.get("actions", []) if isinstance(action, dict)]
             ),
@@ -2108,12 +2458,16 @@ def build_dashboard_snapshot(
             _full_qa_pass_page(resolved_profile_id, root, bmw_root=bmw_root),
             _batch_full_qa_pass_page(resolved_profile_id, root),
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
+            _delivery_readiness_page(root, bmw_root=bmw_root),
             _onboarding_guide_page(
                 resolved_profile_id,
                 root,
                 bmw_root=bmw_root,
                 setup_status=setup_status,
             ),
+            _setup_doctor_page(root),
+            _qa_workflows_page(root),
+            _bmw_process_page(),
             _screenshot_test_state_page(resolved_profile_id, root, bmw_root=bmw_root),
             _risk_score_page(resolved_profile_id, root, bmw_root=bmw_root),
             _cross_car_comparison_page(root, bmw_root=bmw_root),
@@ -7861,7 +8215,7 @@ def _render_dashboard(
                 _render_first_run_welcome(
                     ui,
                     state["snapshot"],
-                    open_setup=lambda: _open_page("delivery-checklist"),
+                    open_setup=lambda: _open_page("setup-doctor"),
                     open_full_qa=lambda: _open_page("full-qa-pass"),
                 )
                 _render_changed_profiles_card(

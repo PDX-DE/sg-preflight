@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -157,7 +159,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_eleven_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_fifteen_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -170,7 +172,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "full-qa-pass",
                 "batch-full-qa-pass",
                 "delivery-checklist",
+                "delivery-readiness",
                 "onboarding-guide",
+                "setup-doctor",
+                "qa-workflows",
+                "bmw-process",
                 "screenshot-test-state",
                 "risk-score",
                 "cross-car-comparison",
@@ -195,7 +201,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "full-qa-pass", "label": "Full QA Pass"},
                 {"id": "batch-full-qa-pass", "label": "Batch Full QA Pass"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
+                {"id": "delivery-readiness", "label": "Delivery Readiness"},
                 {"id": "onboarding-guide", "label": "Onboarding Guide"},
+                {"id": "setup-doctor", "label": "Setup Doctor"},
+                {"id": "qa-workflows", "label": "QA Workflows"},
+                {"id": "bmw-process", "label": "BMW Process"},
                 {"id": "screenshot-test-state", "label": "Screenshot Test State"},
                 {"id": "risk-score", "label": "Risk Score"},
                 {"id": "cross-car-comparison", "label": "Cross-Car Comparison"},
@@ -218,28 +228,42 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             snapshot["pages"][1]["tagline"],
             "Run selected profiles sequentially; one profile finishes before the next starts.",
         )
-        self.assertEqual(snapshot["pages"][2]["tagline"], "Workbook evidence per delivery profile (read-only).")
+        pages_by_id = {page["id"]: page for page in snapshot["pages"]}
+        self.assertEqual(pages_by_id["delivery-checklist"]["tagline"], "Workbook evidence per delivery profile (read-only).")
         self.assertEqual(
-            snapshot["pages"][3]["tagline"],
+            pages_by_id["delivery-readiness"]["tagline"],
+            "Per-car CHANGELOG delivery status from local SVN and BMW catalog evidence.",
+        )
+        self.assertEqual(
+            pages_by_id["onboarding-guide"]["tagline"],
             "New-operator path through setup, evidence pages, manual review, and handoff.",
         )
-        self.assertEqual(snapshot["pages"][4]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
+        self.assertEqual(pages_by_id["setup-doctor"]["tagline"], "Detect-only setup status for local SGFX dependencies.")
         self.assertEqual(
-            snapshot["pages"][5]["tagline"],
+            pages_by_id["qa-workflows"]["tagline"],
+            "Local JSON workflow catalog with manual-attestation gates preserved.",
+        )
+        self.assertEqual(
+            pages_by_id["bmw-process"]["tagline"],
+            "Read-only workflow contracts for BMW interface, triage, and visual review paths.",
+        )
+        self.assertEqual(pages_by_id["screenshot-test-state"]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
+        self.assertEqual(
+            pages_by_id["risk-score"]["tagline"],
             "Per-car review focus signal with delta since latest local manual review.",
         )
-        self.assertEqual(snapshot["pages"][6]["tagline"], "G70 vs G65 risk-score widget side by side.")
-        self.assertEqual(snapshot["pages"][7]["tagline"], "Morning status snapshot for the SG Daily standup.")
+        self.assertEqual(pages_by_id["cross-car-comparison"]["tagline"], "G70 vs G65 risk-score widget side by side.")
+        self.assertEqual(pages_by_id["daily-digest"]["tagline"], "Morning status snapshot for the SG Daily standup.")
         self.assertEqual(
-            snapshot["pages"][8]["tagline"],
+            pages_by_id["team-digest-board"]["tagline"],
             "Local snapshot for standup review across selected car profiles.",
         )
         self.assertEqual(
-            snapshot["pages"][9]["tagline"],
+            pages_by_id["operator-handoff"]["tagline"],
             "Record the stopping point before a shift handoff.",
         )
         self.assertEqual(
-            snapshot["pages"][10]["tagline"],
+            pages_by_id["manual-review"]["tagline"],
             "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
         )
         self.assertIn("Manual review remains required.", snapshot["guardrails"])
@@ -416,7 +440,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 11)
+                self.assertEqual(len(snapshot["pages"]), 15)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1074,7 +1098,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp)
 
         self.assertTrue(snapshot["welcome"]["show"])
-        self.assertEqual(snapshot["welcome"]["setup_page_id"], "delivery-checklist")
+        self.assertEqual(snapshot["welcome"]["setup_page_id"], "setup-doctor")
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["setup_status"], fake_setup)
         self.assertEqual(delivery["setup_status"]["actions"][0]["label"], "Set up RaCo")
@@ -1087,7 +1111,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 11)
+        self.assertEqual(len(snapshot["pages"]), 15)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -1101,7 +1125,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 11)
+        self.assertEqual(len(snapshot["pages"]), 15)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")
@@ -1399,10 +1423,17 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "checks": [{"key": "bmw_screenshot_script", "status": "missing"}],
                 "confirmation_message": "This will run BMW pipeline screenshot capture for G70.",
             }
+            fake_state = {
+                "status": "available",
+                "data_available": True,
+                "summary": "0 expected / 0 actual / 0 diff screenshot file(s)",
+                "actual_count": 0,
+                "diff_count": 0,
+            }
             with mock.patch(
                 "sg_preflight.dashboard.main.check_screenshot_capture_environment",
                 return_value=fake_preflight,
-            ):
+            ), mock.patch("sg_preflight.dashboard.main.read_bmw_screenshot_state", return_value=fake_state):
                 snapshot = build_dashboard_snapshot("G70", tmp)
 
         screenshot_page = next(page for page in snapshot["pages"] if page["id"] == "screenshot-test-state")
@@ -1589,12 +1620,12 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
 
 class DashboardDualModeLaunchTests(unittest.TestCase):
-    def test_dashboard_grafiks_mode_dispatches_to_pyside_shell(self) -> None:
+    def test_dashboard_grafiks_mode_dispatches_to_cinematic_shell_launcher(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.cli import main
 
             with mock.patch("sg_preflight.dashboard.main.run_dashboard", return_value=11) as clean_runner:
-                with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=9) as grafiks_runner:
+                with mock.patch("sg_preflight.dashboard.main.run_grafiks_mode", return_value=9) as grafiks_runner:
                     result = main(
                         [
                             "dashboard",
@@ -1611,7 +1642,55 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
 
         self.assertEqual(result, 9)
         clean_runner.assert_not_called()
-        grafiks_runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="NA8", initial_mode="grafiks")
+        grafiks_runner.assert_called_once_with(profile_id="NA8", workspace=Path(tmp), bmw_root=None)
+
+    def test_grafiks_mode_launches_cinematic_shell_when_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard import main as dashboard_main
+
+            root = Path(tmp)
+            exe = root / "Release" / "sgfx_cine_cinematic_shell.exe"
+            exe.parent.mkdir(parents=True)
+            exe.write_text("fixture\n", encoding="utf-8")
+            bmw_root = root / "digital-3d-car-models"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+
+            process = mock.Mock()
+            process.wait.side_effect = subprocess.TimeoutExpired(str(exe), 2)
+            with mock.patch.dict(
+                os.environ,
+                {"SGFX_GRAFIKS_SHELL_EXE": str(exe)},
+                clear=False,
+            ):
+                with mock.patch("sg_preflight.dashboard.main.subprocess.Popen", return_value=process) as popen:
+                    result = dashboard_main.run_grafiks_mode(profile_id="G70", workspace=root, bmw_root=bmw_root)
+
+        self.assertEqual(result, 0)
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], str(exe.resolve()))
+        self.assertIn("--interactive", command)
+        self.assertIn("--hub-planet", command)
+        self.assertIn("--hub-nodes", command)
+        self.assertIn("--fusion-cars-root", command)
+        self.assertIn(str((bmw_root / "cars" / "BMW").resolve()), command)
+        self.assertIn("--fusion-profile-id", command)
+        self.assertIn("G70", command)
+        self.assertEqual(popen.call_args.kwargs["cwd"], exe.resolve().parent)
+
+    def test_grafiks_mode_missing_shell_degrades_with_wip_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard import main as dashboard_main
+
+            stdout = io.StringIO()
+            with mock.patch("sg_preflight.dashboard.main._resolve_grafiks_shell_exe", return_value=None):
+                with mock.patch("sg_preflight.dashboard.main.subprocess.Popen") as popen:
+                    with redirect_stdout(stdout):
+                        result = dashboard_main.run_grafiks_mode(profile_id="G70", workspace=tmp)
+
+        self.assertEqual(result, 0)
+        popen.assert_not_called()
+        self.assertIn("WIP - use Clean for now", stdout.getvalue())
+        self.assertIn("C++ cinematic shell not installed", stdout.getvalue())
 
     def test_frozen_clean_dashboard_dispatches_to_desktop_shell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
