@@ -12,8 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import openpyxl
-
 from sg_preflight.bmw_process import bmw_interface_smoke_commands
 from sg_preflight.checker_evidence import (
     merge_checker_evidence,
@@ -1998,6 +1996,8 @@ def _run_bmw_smoke_step(args: list[str], cwd: Path) -> subprocess.CompletedProce
 
 
 def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
+    import openpyxl
+
     status_map = _status_map(root)
     raco_exe = _path_from_status(status_map, "raco_headless")
     scene_checker = root / "repositories" / "trunk" / "check_scenes.py"
