@@ -134,10 +134,11 @@ try {
         renderer_backend = "RmlUi GL3"
         planet_pipe = "Ramses procedural world-map scene -> offscreen buffer -> readPixels -> soft-background RmlUi-owned CallbackTexture decorator"
         planet_polish = "Faceted SGFX regions, route lines, capital glow, atmospheric rim halo, soft atlas background"
-        node_layer = "Polished RmlUi overlay capitals; 3D Car live, six coming placeholders"
-        node_count = 7
+        node_layer = "Polished RmlUi overlay capitals; 3D Car live, Delivery wired, four coming placeholders"
+        node_count = 6
         live_node = "3D Car"
-        coming_nodes = @("Widgets", "Delivery", "SichtAbsicht", "Ambient", "Rack", "Tools")
+        wired_nodes = @("Delivery")
+        coming_nodes = @("Disabled Tests", "API Version", "Country Variants", "Size Trend")
         planet_render_size = "${PlanetRenderWidth}x${PlanetRenderHeight}"
         planet_producer_frames = $PlanetFrames
         menu_route = "Modules / Pipelines -> Seriengrafik world hub"

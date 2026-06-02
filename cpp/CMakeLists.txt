@@ -25,6 +25,12 @@ find_package(SDL3 CONFIG QUIET)
 find_package(RmlUi ${SGFX_CINE_RMLUI_VERSION} CONFIG QUIET)
 find_package(OpenGL REQUIRED)
 
+FetchContent_Declare(
+  nlohmann_json
+  URL https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.zip
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 if(NOT SDL3_FOUND AND SGFX_CINE_FETCH_SDL3)
   set(SDL_SHARED ON CACHE BOOL "" FORCE)
   set(SDL_STATIC OFF CACHE BOOL "" FORCE)
@@ -142,8 +148,16 @@ foreach(_sgfx_cine_ramses_import_lib IN LISTS ramses-shared-lib_LIBRARIES)
     list(APPEND SGFX_CINE_RAMSES_RUNTIME_DLLS
       "${_sgfx_cine_ramses_bin_dir}/${_sgfx_cine_ramses_name}.dll"
     )
+    foreach(_sgfx_cine_ramses_runtime_suffix IN ITEMS "-headless" "-renderer")
+      set(_sgfx_cine_ramses_runtime_sibling
+        "${_sgfx_cine_ramses_bin_dir}/${_sgfx_cine_ramses_name}${_sgfx_cine_ramses_runtime_suffix}.dll")
+      if(EXISTS "${_sgfx_cine_ramses_runtime_sibling}")
+        list(APPEND SGFX_CINE_RAMSES_RUNTIME_DLLS "${_sgfx_cine_ramses_runtime_sibling}")
+      endif()
+    endforeach()
   endif()
 endforeach()
+list(REMOVE_DUPLICATES SGFX_CINE_RAMSES_RUNTIME_DLLS)
 
 function(sgfx_cine_copy_ramses_runtime_dlls target_name)
   add_custom_command(TARGET ${target_name} POST_BUILD
@@ -250,6 +264,7 @@ target_link_libraries(sgfx_cine_cinematic_shell
     sgfx::cine
     ${SGFX_CINE_SDL3_TARGET}
     RmlUi::Core
+    nlohmann_json::nlohmann_json
     OpenGL::GL
 )
 

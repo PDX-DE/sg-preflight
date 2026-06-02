@@ -52,12 +52,14 @@
 #include <SDL3/SDL_opengl.h>
 
 #include <glm/gtc/quaternion.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -1887,6 +1889,186 @@ std::filesystem::path resolveCarsRoot(const Options& options)
         }
     }
     return {};
+}
+
+std::filesystem::path firstExistingDirectory(std::initializer_list<std::filesystem::path> candidates)
+{
+    for (const auto& candidate : candidates)
+    {
+        if (candidate.empty())
+            continue;
+        std::error_code ec;
+        const std::filesystem::path absoluteCandidate = std::filesystem::absolute(candidate, ec);
+        if (!ec && std::filesystem::is_directory(absoluteCandidate))
+            return absoluteCandidate;
+    }
+    return {};
+}
+
+std::filesystem::path resolveSourceRepoRoot()
+{
+    return firstExistingDirectory({
+        environmentPath("SGFX_SOURCE_REPO_ROOT"),
+        std::filesystem::path("C:\\repositories\\trunk"),
+        environmentPath("SG_SOURCE_REPO_ROOT"),
+        environmentPath("SG_REPO"),
+    });
+}
+
+std::filesystem::path resolveBmwRepoRoot()
+{
+    return firstExistingDirectory({
+        environmentPath("SGFX_BMW_CAR_MODELS_ROOT"),
+        environmentPath("Digital-3D-Car-Repo"),
+        std::filesystem::path("C:\\3D Car git\\digital-3d-car-models"),
+        environmentPath("SG_BMW_CAR_MODELS_ROOT"),
+        environmentPath("SG_CARMODELS_REPO"),
+    });
+}
+
+std::string quoteCmdArg(const std::string& value)
+{
+    std::string quoted = "\"";
+    for (char ch : value)
+    {
+        if (ch == '"')
+            quoted += "\\\"";
+        else
+            quoted.push_back(ch);
+    }
+    quoted += "\"";
+    return quoted;
+}
+
+std::string quoteCmdArg(const std::filesystem::path& value)
+{
+    return quoteCmdArg(value.string());
+}
+
+std::string pythonLauncherCommand()
+{
+    const char* configured = std::getenv("SGFX_PYTHON_EXE");
+    if (configured && *configured)
+        return quoteCmdArg(std::string(configured));
+    return "py -3";
+}
+
+std::string runProcessCapture(const std::string& command, int& exitCode)
+{
+    exitCode = 1;
+    FILE* pipe = _popen(command.c_str(), "rt");
+    if (!pipe)
+        return {};
+
+    std::string output;
+    std::array<char, 4096> buffer{};
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe))
+        output += buffer.data();
+    exitCode = _pclose(pipe);
+    return output;
+}
+
+struct DeliveryReadinessCapital
+{
+    bool loaded = false;
+    int total = 0;
+    int delivered = 0;
+    int notDeliveredYet = 0;
+    int unknown = 0;
+    std::string sourceState;
+    std::string sourceRoot;
+    std::string bmwRoot;
+    std::string banner;
+    std::string error;
+    std::string command;
+};
+
+DeliveryReadinessCapital loadDeliveryReadinessCapital()
+{
+    DeliveryReadinessCapital summary;
+    const std::filesystem::path workspaceRoot = findWorkspaceRoot();
+    const std::filesystem::path sourceRoot = resolveSourceRepoRoot();
+    const std::filesystem::path bmwRoot = resolveBmwRepoRoot();
+
+    if (workspaceRoot.empty())
+    {
+        summary.error = "sg_preflight package root not found";
+        return summary;
+    }
+    if (sourceRoot.empty())
+    {
+        summary.error = "source repo root not found";
+        return summary;
+    }
+    summary.sourceRoot = sourceRoot.string();
+    summary.bmwRoot = bmwRoot.string();
+
+    std::ostringstream command;
+    command << "set \"PYTHONPATH=" << workspaceRoot.string() << ";%PYTHONPATH%\" && "
+            << pythonLauncherCommand()
+            << " -B -m sg_preflight desktop-state delivery-readiness"
+            << " --workspace " << quoteCmdArg(sourceRoot)
+            << " --repo-root " << quoteCmdArg(sourceRoot);
+    if (!bmwRoot.empty())
+        command << " --bmw-repo-root " << quoteCmdArg(bmwRoot);
+    command << " --json";
+    summary.command = command.str();
+
+    int exitCode = 1;
+    const std::string output = runProcessCapture(summary.command, exitCode);
+    if (exitCode != 0)
+    {
+        summary.error = output.empty() ? "desktop-state delivery-readiness failed" : output.substr(0u, std::min<size_t>(output.size(), 220u));
+        return summary;
+    }
+
+    try
+    {
+        const nlohmann::json payload = nlohmann::json::parse(output);
+        const nlohmann::json counts = payload.value("counts", nlohmann::json::object());
+        summary.total = counts.value("total", 0);
+        summary.delivered = counts.value("delivered", 0);
+        summary.notDeliveredYet = counts.value("not_delivered_yet", 0);
+        summary.unknown = counts.value("unknown", 0);
+        summary.sourceState = payload.value("source_state", std::string{});
+        summary.banner = payload.value("manual_approval_banner", std::string{});
+        summary.loaded = true;
+    }
+    catch (const std::exception& exc)
+    {
+        summary.error = std::string("delivery-readiness JSON parse failed: ") + exc.what();
+    }
+    return summary;
+}
+
+std::string deliveryNodeStatus(const DeliveryReadinessCapital& delivery)
+{
+    if (!delivery.loaded)
+        return "UNAVAILABLE";
+    return std::to_string(delivery.delivered) + " / " + std::to_string(delivery.notDeliveredYet) + " / " + std::to_string(delivery.unknown);
+}
+
+std::string deliveryPrimaryText(const DeliveryReadinessCapital& delivery)
+{
+    if (!delivery.loaded)
+        return "DELIVERY DATA UNAVAILABLE";
+    return std::to_string(delivery.total) + " cars: " + std::to_string(delivery.delivered) + " delivered";
+}
+
+std::string deliverySecondaryText(const DeliveryReadinessCapital& delivery)
+{
+    if (!delivery.loaded)
+        return delivery.error.empty() ? "REVIEW IN CLEAN MODE" : "CHECK PYTHON DATA LAYER";
+    return std::to_string(delivery.notDeliveredYet) + " not-yet / " + std::to_string(delivery.unknown) + " unknown";
+}
+
+std::string deliveryBannerText(const DeliveryReadinessCapital& delivery)
+{
+    if (!delivery.loaded)
+        return delivery.error.empty() ? "Evidence unavailable - use Clean dashboard." : delivery.error;
+    if (!delivery.banner.empty())
+        return "Evidence only - manual approval required.";
+    return "Evidence only - manual review required.";
 }
 
 std::string stripEvoSuffix(std::string value)
@@ -4083,17 +4265,30 @@ struct HubNodeDefinition
     double height;
 };
 
-constexpr int kHubNodeCount = 7;
+constexpr int kHubNodeCount = 6;
 constexpr int kHubNodeLiveIndex = 0;
+constexpr int kHubNodeDeliveryIndex = 1;
+constexpr int kHubNodeComingCount = kHubNodeCount - 2;
 constexpr std::array<HubNodeDefinition, kHubNodeCount> kHubNodes = {{
     {"hub-node-car", "3D Car", "LIVE QA SURFACE", "#FFC94D", true, 818.0, 308.0, 174.0, 50.0},
-    {"hub-node-widgets", "Widgets", "COMING", "#2FD6E6", false, 562.0, 228.0, 148.0, 44.0},
-    {"hub-node-delivery", "Delivery", "COMING", "#FF6B81", false, 552.0, 412.0, 148.0, 44.0},
-    {"hub-node-sicht", "SichtAbsicht", "COMING", "#BFE9FF", false, 744.0, 136.0, 166.0, 44.0},
-    {"hub-node-ambient", "Ambient", "COMING", "#25E8C8", false, 1002.0, 242.0, 148.0, 44.0},
-    {"hub-node-rack", "Rack", "COMING", "#E9FBFF", false, 990.0, 430.0, 148.0, 44.0},
-    {"hub-node-tools", "Tools", "COMING", "#FFB36B", false, 766.0, 532.0, 148.0, 44.0},
+    {"hub-node-delivery", "Delivery", "LOADING", "#FF6B81", false, 552.0, 412.0, 166.0, 44.0},
+    {"hub-node-disabled", "Disabled Tests", "COMING", "#2FD6E6", false, 562.0, 228.0, 176.0, 44.0},
+    {"hub-node-api", "API Version", "COMING", "#BFE9FF", false, 744.0, 136.0, 166.0, 44.0},
+    {"hub-node-country", "Country Variants", "COMING", "#25E8C8", false, 982.0, 242.0, 184.0, 44.0},
+    {"hub-node-size", "Size Trend", "COMING", "#FFB36B", false, 990.0, 430.0, 148.0, 44.0},
 }};
+
+bool isHubDeliveryNode(int index)
+{
+    return index == kHubNodeDeliveryIndex;
+}
+
+std::string hubNodeStatusText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+{
+    if (isHubDeliveryNode(index))
+        return deliveryNodeStatus(delivery);
+    return node.status;
+}
 
 std::string buildHubNodeCss()
 {
@@ -4108,18 +4303,19 @@ std::string buildHubNodeCss()
     return css.str();
 }
 
-std::string buildHubNodeMarkup()
+std::string buildHubNodeMarkup(const DeliveryReadinessCapital& delivery)
 {
     std::ostringstream markup;
-    for (const HubNodeDefinition& node : kHubNodes)
+    for (int index = 0; index < kHubNodeCount; ++index)
     {
+        const HubNodeDefinition& node = kHubNodes[static_cast<size_t>(index)];
         markup << "<div id=\"" << node.elementId << "\" class=\"hub-node";
         if (node.live)
             markup << " hub-node-live";
         markup << "\">";
         markup << "<div class=\"hub-node-beacon\"></div>";
         markup << "<div class=\"hub-node-label\">" << escapeRmlText(node.label) << "</div>";
-        markup << "<div class=\"hub-node-status\">" << escapeRmlText(node.status) << "</div>";
+        markup << "<div class=\"hub-node-status\">" << escapeRmlText(hubNodeStatusText(node, index, delivery)) << "</div>";
         markup << "</div>";
     }
     return markup.str();
@@ -4220,7 +4416,8 @@ std::string buildHubStatusMarkup(
     const std::vector<FusionCarCandidate>& candidates,
     int selectedCarIndex,
     size_t registeredProfileCount,
-    const std::string& activeProfileId)
+    const std::string& activeProfileId,
+    const DeliveryReadinessCapital& delivery)
 {
     std::ostringstream markup;
     markup << "<div id=\"hub-status-panel\">";
@@ -4231,7 +4428,9 @@ std::string buildHubStatusMarkup(
     markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">CAR FLEET</div><div id=\"hub-status-fleet\" class=\"hub-status-value\">"
            << escapeRmlText(buildRegisteredCarCountText(candidates.size(), registeredProfileCount))
            << "</div></div>";
-    markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">LAST RUN</div><div class=\"hub-status-value\">SEE SGFX BOARD</div></div>";
+    markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">DELIVERY</div><div class=\"hub-status-value\">"
+           << escapeRmlText(delivery.loaded ? deliveryPrimaryText(delivery) : std::string("UNAVAILABLE"))
+           << "</div></div>";
     markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">RISK</div><div class=\"hub-status-value\">MANUAL REVIEW REQUIRED</div></div>";
     markup << "<div class=\"hub-status-row\"><div class=\"hub-status-label\">TICKET</div><div class=\"hub-status-value\">SEE SGFX BOARD</div></div>";
     markup << "</div>";
@@ -4246,6 +4445,7 @@ std::string buildHubActionMarkup()
     markup << "<div id=\"hub-action-target\">3D Car / LIVE QA SURFACE</div>";
     markup << "<div id=\"hub-action-primary\">DIVE INTO CAPITAL</div>";
     markup << "<div id=\"hub-action-secondary\">SELECT AREA</div>";
+    markup << "<div id=\"hub-action-banner\">Evidence only.</div>";
     markup << "</div>";
     return markup.str();
 }
@@ -4263,7 +4463,8 @@ std::string buildDocument(
     size_t registeredProfileCount,
     const std::string& activeProfileId,
     bool hubPlanetEnabled,
-    bool hubNodesEnabled)
+    bool hubNodesEnabled,
+    const DeliveryReadinessCapital& delivery)
 {
     std::string document = R"rml(
 <rml>
@@ -4880,7 +5081,7 @@ __SGFX_HUB_NODE_CSS__
   left: 938px;
   top: 560px;
   width: 222px;
-  height: 76px;
+  height: 96px;
   padding-left: 12px;
   padding-top: 9px;
   background-color: #07112fe8;
@@ -4929,6 +5130,14 @@ __SGFX_HUB_NODE_CSS__
   border: 1px #2FD6E6;
   color: #E9FBFF;
   font-size: 12px;
+}
+#hub-action-banner {
+  display: block;
+  width: 198px;
+  height: 14px;
+  margin-top: 4px;
+  color: #BFE9FF;
+  font-size: 10px;
 }
 #hub-return-label {
   position: absolute;
@@ -5042,8 +5251,8 @@ __SGFX_HUB_NODE_CSS__
     replaceAll(document, "__SGFX_FUSION_PERSPECTIVE_PICKER__", fusionEnabled ? buildPerspectivePickerMarkup(perspective) : "");
     replaceAll(document, "__SGFX_HUB_PLANET_DECORATOR__", hubPlanetEnabled ? "decorator: sgfx-hub-planet();" : "");
     replaceAll(document, "__SGFX_HUB_NODE_CSS__", buildHubNodeCss());
-    replaceAll(document, "__SGFX_HUB_STATUS__", buildHubStatusMarkup(fusionEnabled, carCandidates, selectedCarIndex, registeredProfileCount, activeProfileId));
-    replaceAll(document, "__SGFX_HUB_NODES__", buildHubNodeMarkup());
+    replaceAll(document, "__SGFX_HUB_STATUS__", buildHubStatusMarkup(fusionEnabled, carCandidates, selectedCarIndex, registeredProfileCount, activeProfileId, delivery));
+    replaceAll(document, "__SGFX_HUB_NODES__", buildHubNodeMarkup(delivery));
     replaceAll(document, "__SGFX_HUB_ACTIONS__", buildHubActionMarkup());
     replaceAll(document, "__SGFX_HUB_BADGE_TEXT__", hubNodesEnabled ? "H4: WORLD-MAP PLANET ONLINE" : "H4: RAMSES PLANET POLISHED");
     return document;
@@ -5084,6 +5293,7 @@ struct Elements
     Rml::Element* hubActionTarget = nullptr;
     Rml::Element* hubActionPrimary = nullptr;
     Rml::Element* hubActionSecondary = nullptr;
+    Rml::Element* hubActionBanner = nullptr;
     Rml::Element* hubBadge = nullptr;
     Rml::Element* hubReturnLabel = nullptr;
 };
@@ -5126,6 +5336,7 @@ Elements getElements(Rml::ElementDocument& document)
     elements.hubActionTarget = document.GetElementById("hub-action-target");
     elements.hubActionPrimary = document.GetElementById("hub-action-primary");
     elements.hubActionSecondary = document.GetElementById("hub-action-secondary");
+    elements.hubActionBanner = document.GetElementById("hub-action-banner");
     elements.hubBadge = document.GetElementById("hub-h1-badge");
     elements.hubReturnLabel = document.GetElementById("hub-return-label");
     require(
@@ -5135,7 +5346,7 @@ Elements getElements(Rml::ElementDocument& document)
             elements.hubScreen && elements.hubStage && elements.hubTitle && elements.hubSubtitle && elements.hubPlanetHalo &&
             elements.hubPlanet && elements.hubPlanetPlaceholder && elements.hubStatusPanel && elements.hubStatusProfile &&
             elements.hubStatusFleet && elements.hubActionPanel && elements.hubActionTarget && elements.hubActionPrimary &&
-            elements.hubActionSecondary && elements.hubBadge && elements.hubReturnLabel &&
+            elements.hubActionSecondary && elements.hubActionBanner && elements.hubBadge && elements.hubReturnLabel &&
             std::all_of(elements.hubNodes.begin(), elements.hubNodes.end(), [](const Rml::Element* item) { return item != nullptr; }) &&
             std::all_of(elements.menuItems.begin(), elements.menuItems.end(), [](const Rml::Element* item) { return item != nullptr; }),
         "Missing cinematic shell RmlUi element");
@@ -5300,7 +5511,7 @@ constexpr double kCarPickerRowStep = 25.0;
 constexpr double kHubActionLeft = 938.0;
 constexpr double kHubActionTop = 560.0;
 constexpr double kHubActionWidth = 234.0;
-constexpr double kHubActionHeight = 88.0;
+constexpr double kHubActionHeight = 108.0;
 
 constexpr std::array<const char*, kMenuItemCount> kMenuItemLabels = {
     "Resume last review",
@@ -5340,7 +5551,7 @@ struct ViewerTransition
 
 struct HubController
 {
-    int selected = kHubNodeLiveIndex;
+    int selected = kHubNodeDeliveryIndex;
     int hovered = -1;
     double readyAt = -1.0;
     double pulseStartedAt = -100.0;
@@ -5551,14 +5762,63 @@ void moveHubNodeSelection(HubController& hub, int delta, double elapsed)
         startHubNodePulse(hub, next, elapsed);
 }
 
-void logHubNodeActivation(int index)
+std::string hubActionTargetText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+{
+    if (isHubDeliveryNode(index))
+        return std::string(node.label) + " / " + deliveryNodeStatus(delivery);
+    return std::string(node.label) + " / " + node.status;
+}
+
+std::string hubActionPrimaryText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+{
+    if (node.live)
+        return "DIVE INTO CAPITAL";
+    if (isHubDeliveryNode(index))
+        return deliveryPrimaryText(delivery);
+    return "AREA COMING";
+}
+
+std::string hubActionSecondaryText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+{
+    if (node.live)
+        return "SELECT AREA";
+    if (isHubDeliveryNode(index))
+        return deliverySecondaryText(delivery);
+    return "SELECT WIRED CAPITAL";
+}
+
+std::string hubActionBannerText(const HubNodeDefinition& node, int index, const DeliveryReadinessCapital& delivery)
+{
+    if (node.live)
+        return "Live Ramses viewer path.";
+    if (isHubDeliveryNode(index))
+        return deliveryBannerText(delivery);
+    return "Not wired yet - honest placeholder.";
+}
+
+void logHubNodeActivation(int index, const DeliveryReadinessCapital& delivery)
 {
     const HubNodeDefinition& node = kHubNodes[static_cast<size_t>(std::max(0, std::min(kHubNodeCount - 1, index)))];
-    std::cout << "SGFX cinematic shell H2 hub node activated: " << node.label << " / " << node.status;
+    std::cout << "SGFX cinematic shell H2 hub node activated: " << node.label << " / " << hubNodeStatusText(node, index, delivery);
     if (node.live)
+    {
         std::cout << " (H3 target: live 3D Car viewer)";
+    }
+    else if (isHubDeliveryNode(index) && delivery.loaded)
+    {
+        std::cout << " (Delivery Readiness: " << delivery.total << " cars, "
+                  << delivery.delivered << " delivered, "
+                  << delivery.notDeliveredYet << " not-yet, "
+                  << delivery.unknown << " unknown)";
+    }
+    else if (isHubDeliveryNode(index))
+    {
+        std::cout << " (Delivery Readiness unavailable: " << (delivery.error.empty() ? "no data" : delivery.error) << ")";
+    }
     else
+    {
         std::cout << " (honest coming placeholder)";
+    }
     std::cout << "\n";
 }
 
@@ -5577,13 +5837,22 @@ void startHubNodeFlyIn(ShellState& state, ViewerTransition& transition, int inde
               << " -> " << (fusionReady ? "live Ramses car viewer" : "3D Car viewer placeholder") << "\n";
 }
 
-void activateHubNode(ShellState& state, ViewerTransition& transition, HubController& hub, int index, double elapsed, bool fusionReady)
+void activateHubNode(
+    ShellState& state,
+    ViewerTransition& transition,
+    HubController& hub,
+    int index,
+    double elapsed,
+    bool fusionReady,
+    const DeliveryReadinessCapital& delivery)
 {
     startHubNodePulse(hub, index, elapsed);
-    logHubNodeActivation(index);
+    logHubNodeActivation(index, delivery);
     const HubNodeDefinition& node = kHubNodes[static_cast<size_t>(hub.selected)];
     if (node.live)
         startHubNodeFlyIn(state, transition, hub.selected, elapsed, fusionReady);
+    else if (isHubDeliveryNode(hub.selected))
+        std::cout << "SGFX cinematic shell Delivery capital held in hub with real desktop-state summary\n";
     else
         std::cout << "SGFX cinematic shell H3 coming node held in hub: " << node.label << "\n";
 }
@@ -5957,7 +6226,13 @@ void applyHubStagedRevealFrame(Elements& elements, double age, bool hubPlanetEna
     }
 }
 
-void applyHubNodeFrame(Elements& elements, HubController& hub, ShellState state, double elapsed, bool hubNodesEnabled)
+void applyHubNodeFrame(
+    Elements& elements,
+    HubController& hub,
+    ShellState state,
+    double elapsed,
+    bool hubNodesEnabled,
+    const DeliveryReadinessCapital& delivery)
 {
     if (!hubNodesEnabled)
         return;
@@ -5965,7 +6240,9 @@ void applyHubNodeFrame(Elements& elements, HubController& hub, ShellState state,
     if (state == ShellState::Hub && !hub.readyLogged)
     {
         std::cout << "SGFX cinematic shell H2 hub capital nodes ready: "
-                  << kHubNodeCount << " nodes, live=3D Car, coming=" << (kHubNodeCount - 1) << "\n";
+                  << kHubNodeCount << " nodes, live=3D Car, "
+                  << (delivery.loaded ? "wired=Delivery" : "Delivery=UNAVAILABLE")
+                  << ", coming=" << kHubNodeComingCount << "\n";
         hub.readyAt = elapsed;
         hub.readyLogged = true;
     }
@@ -5976,18 +6253,20 @@ void applyHubNodeFrame(Elements& elements, HubController& hub, ShellState state,
     const double pulse = (elapsed >= hub.pulseStartedAt && pulseT < 1.0) ? std::sin(pulseT * kPi) : 0.0;
 
     elements.hubActionTarget->SetInnerRML(
-        escapeRmlText(std::string(selectedNode.label) + " / " + selectedNode.status));
-    elements.hubActionPrimary->SetInnerRML(selectedNode.live ? "DIVE INTO CAPITAL" : "AREA COMING");
-    elements.hubActionSecondary->SetInnerRML(selectedNode.live ? "SELECT AREA" : "SELECT 3D CAR");
-    setProperty(*elements.hubActionPrimary, "background-color", selectedNode.live ? "#FFC94D" : "#12224bcc");
-    setProperty(*elements.hubActionPrimary, "color", selectedNode.live ? "#0E1530" : "#BFE9FF");
-    setProperty(*elements.hubActionPrimary, "border", std::string("1px ") + (selectedNode.live ? "#FFFFFF" : "#2FD6E6"));
+        escapeRmlText(hubActionTargetText(selectedNode, hub.selected, delivery)));
+    elements.hubActionPrimary->SetInnerRML(escapeRmlText(hubActionPrimaryText(selectedNode, hub.selected, delivery)));
+    elements.hubActionSecondary->SetInnerRML(escapeRmlText(hubActionSecondaryText(selectedNode, hub.selected, delivery)));
+    elements.hubActionBanner->SetInnerRML(escapeRmlText(hubActionBannerText(selectedNode, hub.selected, delivery)));
+    const bool selectedWired = selectedNode.live || (isHubDeliveryNode(hub.selected) && delivery.loaded);
+    setProperty(*elements.hubActionPrimary, "background-color", selectedWired ? "#FFC94D" : "#12224bcc");
+    setProperty(*elements.hubActionPrimary, "color", selectedWired ? "#0E1530" : "#BFE9FF");
+    setProperty(*elements.hubActionPrimary, "border", std::string("1px ") + (selectedWired ? "#FFFFFF" : "#2FD6E6"));
 
     for (int i = 0; i < kHubNodeCount; ++i)
     {
         const HubNodeDefinition& definition = kHubNodes[static_cast<size_t>(i)];
         Rml::Element& node = *elements.hubNodes[static_cast<size_t>(i)];
-        const bool live = definition.live;
+        const bool live = definition.live || (isHubDeliveryNode(i) && delivery.loaded);
         const bool selected = i == hub.selected;
         const bool highlighted = i == focused;
         double revealOpacity = 1.0;
@@ -6310,6 +6589,7 @@ int run(int argc, char** argv)
     int activeCarIndex = chooseInitialCarCandidate(carCandidates, options);
     if (activeCarIndex >= 0)
         options = optionsForCarCandidate(options, carCandidates[static_cast<size_t>(activeCarIndex)], true);
+    const DeliveryReadinessCapital deliveryReadiness = loadDeliveryReadinessCapital();
 
     SdlRuntime sdl;
     SdlGlWindow windowRenderer("SGFX Cinematic Shell", options.width, options.height);
@@ -6360,7 +6640,8 @@ int run(int argc, char** argv)
             carDiscovery.registeredProfileCount,
             fusionCar ? fusionCar->profileId() : std::string{},
             hubPlanet && hubPlanet->ready(),
-            options.hubNodesEnabled));
+            options.hubNodesEnabled,
+            deliveryReadiness));
     if (!document)
         throw std::runtime_error("RmlUi document failed to load");
     document->Show();
@@ -6396,6 +6677,28 @@ int run(int argc, char** argv)
     std::cout << "SGFX cinematic shell fly-into-zone: 0.70s in, 0.50s back, 3D Car viewer core destination\n";
     std::cout << "SGFX cinematic shell mode: " << (options.interactive ? "interactive run-until-close" : "framed evidence run") << "\n";
     std::cout << "SGFX cinematic shell skip: any key/click during splash or hero -> menu\n";
+    if (deliveryReadiness.loaded)
+    {
+        std::cout << "SGFX cinematic shell Delivery Readiness capital: "
+                  << deliveryReadiness.total << " cars, "
+                  << deliveryReadiness.delivered << " delivered, "
+                  << deliveryReadiness.notDeliveredYet << " not-yet, "
+                  << deliveryReadiness.unknown << " unknown, source="
+                  << (deliveryReadiness.sourceState.empty() ? std::string("unknown") : deliveryReadiness.sourceState)
+                  << "\n";
+        std::cout << "SGFX cinematic shell Delivery Readiness roots: source="
+                  << deliveryReadiness.sourceRoot << ", bmw="
+                  << (deliveryReadiness.bmwRoot.empty() ? std::string("unavailable") : deliveryReadiness.bmwRoot)
+                  << "\n";
+        std::cout << "SGFX cinematic shell Delivery Readiness banner: " << deliveryBannerText(deliveryReadiness) << "\n";
+        if (!deliveryReadiness.banner.empty())
+            std::cout << "SGFX cinematic shell Delivery Readiness source banner: " << deliveryReadiness.banner << "\n";
+    }
+    else
+    {
+        std::cout << "SGFX cinematic shell Delivery Readiness capital unavailable: "
+                  << (deliveryReadiness.error.empty() ? std::string("no data") : deliveryReadiness.error) << "\n";
+    }
     std::cout << "SGFX cinematic shell car picker discovered exports: " << carCandidates.size() << "\n";
     std::cout << "SGFX cinematic shell car picker registered profiles: "
               << carDiscovery.registeredProfileCount
@@ -6447,7 +6750,9 @@ int run(int argc, char** argv)
         if (options.hubNodesEnabled)
         {
             std::cout << "SGFX cinematic shell hub H4 nodes: polished RmlUi world-map labels, "
-                      << kHubNodeCount << " capitals, live=3D Car, coming=" << (kHubNodeCount - 1) << "\n";
+                      << kHubNodeCount << " capitals, live=3D Car, "
+                      << (deliveryReadiness.loaded ? "wired=Delivery" : "Delivery=UNAVAILABLE")
+                      << ", coming=" << kHubNodeComingCount << "\n";
             std::cout << "SGFX cinematic shell world-map layout chrome: status panel top-left, dive/select action bottom-right\n";
         }
     }
@@ -6509,7 +6814,7 @@ int run(int argc, char** argv)
                         moveHubNodeSelection(hubController, 1, elapsed);
                     else if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER || event.key.key == SDLK_SPACE)
                     {
-                        activateHubNode(state, viewerTransition, hubController, hubController.selected, elapsed, fusionCar && fusionCar->ready());
+                        activateHubNode(state, viewerTransition, hubController, hubController.selected, elapsed, fusionCar && fusionCar->ready(), deliveryReadiness);
                     }
                 }
                 else if (event.key.key == SDLK_ESCAPE)
@@ -6593,11 +6898,11 @@ int run(int argc, char** argv)
                 if (hit >= 0)
                 {
                     hubController.hovered = hit;
-                    activateHubNode(state, viewerTransition, hubController, hit, elapsed, fusionCar && fusionCar->ready());
+                    activateHubNode(state, viewerTransition, hubController, hit, elapsed, fusionCar && fusionCar->ready(), deliveryReadiness);
                 }
                 else if (hitTestHubAction(event.button.x, event.button.y))
                 {
-                    activateHubNode(state, viewerTransition, hubController, hubController.selected, elapsed, fusionCar && fusionCar->ready());
+                    activateHubNode(state, viewerTransition, hubController, hubController.selected, elapsed, fusionCar && fusionCar->ready(), deliveryReadiness);
                 }
             }
             else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && state == ShellState::ViewerZone && !carCandidates.empty())
@@ -6649,7 +6954,7 @@ int run(int argc, char** argv)
             hubController.readyAt >= 0.0 && !viewerTransition.demoHubNodeEnterFired &&
             (elapsed - hubController.readyAt) * 1000.0 >= static_cast<double>(options.demoHubNodeEnterAfterMs))
         {
-            activateHubNode(state, viewerTransition, hubController, kHubNodeLiveIndex, elapsed, fusionCar && fusionCar->ready());
+            activateHubNode(state, viewerTransition, hubController, kHubNodeLiveIndex, elapsed, fusionCar && fusionCar->ready(), deliveryReadiness);
             viewerTransition.demoHubNodeEnterFired = true;
             std::cout << "SGFX cinematic shell H3 demo hub node fly-in fired\n";
         }
@@ -6680,7 +6985,7 @@ int run(int argc, char** argv)
             hubPlanet && hubPlanet->ready(),
             options.hubNodesEnabled);
         applyHubTransitionFrame(elements, state, viewerTransition, elapsed, hubPlanet && hubPlanet->ready(), options.hubNodesEnabled);
-        applyHubNodeFrame(elements, hubController, state, elapsed, options.hubNodesEnabled);
+        applyHubNodeFrame(elements, hubController, state, elapsed, options.hubNodesEnabled, deliveryReadiness);
 
         context->Update();
         windowRenderer.makeCurrent();
@@ -6743,10 +7048,11 @@ int run(int argc, char** argv)
     {
         const HubNodeDefinition& selectedNode = kHubNodes[static_cast<size_t>(hubController.selected)];
         std::cout << "SGFX cinematic shell hub H2 selected capital: " << selectedNode.label
-                  << " / " << selectedNode.status << "\n";
+                  << " / " << hubNodeStatusText(selectedNode, hubController.selected, deliveryReadiness) << "\n";
         std::cout << "SGFX cinematic shell hub H2 nodes summary: "
-                  << kHubNodeCount << " capitals, 3D Car live, " << (kHubNodeCount - 1)
-                  << " coming placeholders\n";
+                  << kHubNodeCount << " capitals, 3D Car live, "
+                  << (deliveryReadiness.loaded ? "Delivery wired, " : "Delivery unavailable, ")
+                  << kHubNodeComingCount << " coming placeholders\n";
         std::cout << "SGFX cinematic shell hub world-map layout: status panel + dive/select affordance\n";
     }
     std::cout << "SGFX cinematic shell splash->hero beat OK\n";

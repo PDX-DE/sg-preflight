@@ -126,10 +126,11 @@ try {
         ramses_version = $RamsesVersion
         renderer_backend = "RmlUi GL3"
         planet_pipe = "Ramses procedural scene -> offscreen buffer -> readPixels -> RmlUi-owned CallbackTexture decorator"
-        node_layer = "RmlUi overlay capitals; 3D Car live, six coming placeholders"
-        node_count = 7
+        node_layer = "RmlUi overlay capitals; 3D Car live, Delivery wired, four coming placeholders"
+        node_count = 6
         live_node = "3D Car"
-        coming_nodes = @("Widgets", "Delivery", "SichtAbsicht", "Ambient", "Rack", "Tools")
+        wired_nodes = @("Delivery")
+        coming_nodes = @("Disabled Tests", "API Version", "Country Variants", "Size Trend")
         planet_render_size = "${PlanetRenderWidth}x${PlanetRenderHeight}"
         planet_producer_frames = $PlanetFrames
         menu_route = "Modules / Pipelines -> Seriengrafik world hub"
