@@ -42,6 +42,12 @@ from sg_preflight.delivery_readiness import (
     build_delivery_readiness_board,
 )
 from sg_preflight.api_version_coverage import IMPACT_REVIEW_LABEL, build_api_version_coverage_board
+from sg_preflight.country_variant_coverage import (
+    MAPPING_REVIEW_LABEL,
+    MISSING_EXPECTED_LABEL,
+    NO_RUNTIME_LABEL,
+    build_country_variant_coverage_board,
+)
 from sg_preflight.disabled_tests import CAUTIOUS_BASELINE_LABEL, build_disabled_tests_board
 from sg_preflight.delivery_workbook_generation import (
     GENERATE_WORKBOOK_ACTION_ID,
@@ -144,6 +150,7 @@ DASHBOARD_NAVIGATION = (
     ("delivery-readiness", "Delivery Readiness"),
     ("disabled-tests", "Disabled Tests"),
     ("api-version-coverage", "API Version"),
+    ("country-variant-coverage", "Country Variants"),
     ("onboarding-guide", "Onboarding Guide"),
     ("setup-doctor", "Setup Doctor"),
     ("qa-workflows", "QA Workflows"),
@@ -1546,6 +1553,128 @@ def _api_version_coverage_page(workspace: Path, *, bmw_root: Path | str | None =
     return page
 
 
+def _country_variant_coverage_payload(
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+    *,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    selected_repo_root = _source_repo_root_from_value(repo_root) or _preferred_source_repo_root(workspace)
+    board = build_country_variant_coverage_board(
+        selected_repo_root,
+        workspace_root=workspace,
+        bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
+    ).to_dict()
+    counts = board.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    entries = [item for item in board.get("entries", []) if isinstance(item, dict)]
+    expectations = [item for item in board.get("expectations", []) if isinstance(item, dict)]
+    rows: list[dict[str, str]] = [
+        {
+            "label": "Reading from",
+            "status": str(board.get("source_state", "unknown")),
+            "detail": str(board.get("repo_root", "")),
+        },
+        {
+            "label": "Country-coding rows",
+            "status": str(counts.get("row_total", 0)),
+            "detail": f"{counts.get('car_with_rows_count', 0)} car(s) with active countryCoding_* tests.",
+        },
+        {
+            "label": "Expected baselines",
+            "status": f"{counts.get('expected_present_count', 0)}/{counts.get('row_total', 0)}",
+            "detail": f"{counts.get('expected_missing_count', 0)} row(s): {MISSING_EXPECTED_LABEL}.",
+        },
+        {
+            "label": "Runtime screenshots",
+            "status": str(counts.get("runtime_evidence_row_count", 0)),
+            "detail": f"{counts.get('actual_present_count', 0)} actual; {counts.get('diff_present_count', 0)} diff; {NO_RUNTIME_LABEL}.",
+        },
+        {
+            "label": "Review prompts",
+            "status": str(counts.get("review_row_count", 0)),
+            "detail": f"{counts.get('mapping_review_count', 0)} row(s): {MAPPING_REVIEW_LABEL}.",
+        },
+    ]
+    for entry in entries[:18]:
+        flags = entry.get("review_flags", [])
+        flag_text = ""
+        if isinstance(flags, list) and flags:
+            flag_text = "; " + "; ".join(str(flag) for flag in flags[:3])
+        rows.append(
+            {
+                "label": f"{entry.get('brand', '')} {entry.get('model_id', '')} {entry.get('test_name', '')}".strip(),
+                "status": str(entry.get("country_variant_id", "")),
+                "detail": (
+                    f"{entry.get('relative_path', '')}; variant {entry.get('variant_name', '')}; "
+                    f"expected {'yes' if entry.get('expected_present') else 'no'}; "
+                    f"actual {'yes' if entry.get('actual_present') else 'no'}; "
+                    f"diff {'yes' if entry.get('diff_present') else 'no'}"
+                    f"{flag_text}"
+                ),
+            }
+        )
+    if len(entries) > 18:
+        rows.append(
+            {
+                "label": "Additional country rows",
+                "status": str(len(entries) - 18),
+                "detail": "Open the CLI JSON or evidence export for all country-variant rows.",
+            }
+        )
+    for expectation in expectations:
+        expected_variants = expectation.get("expected_variants", [])
+        observed_rows = expectation.get("observed_rows", [])
+        if not isinstance(expected_variants, list):
+            expected_variants = []
+        if not isinstance(observed_rows, list):
+            observed_rows = []
+        rows.append(
+            {
+                "label": f"{expectation.get('car', '')} expectation".strip(),
+                "status": str(len(expected_variants)),
+                "detail": (
+                    f"{expectation.get('feature', '')}; expected {', '.join(str(item) for item in expected_variants)}; "
+                    f"observed {', '.join(str(item) for item in observed_rows) or 'none'}; "
+                    f"{expectation.get('review_label', '')}"
+                ),
+            }
+        )
+    board["status"] = "available" if str(board.get("source_state", "")) == "ready" else "missing"
+    board["data_available"] = str(board.get("source_state", "")) == "ready"
+    board["selected_source_root"] = str(board.get("repo_root", ""))
+    board["source_root_candidates"] = _source_repo_root_candidates(workspace)
+    board["summary"] = (
+        f"{counts.get('row_total', 0)} countryCoding row(s) across "
+        f"{counts.get('car_with_rows_count', 0)} car(s); "
+        f"{counts.get('expected_present_count', 0)}/{counts.get('row_total', 0)} expected baseline(s) present; "
+        f"{counts.get('review_row_count', 0)} review prompt row(s). Reading from {board.get('repo_root', '')}."
+    )
+    board["board_rows"] = rows
+    return board
+
+
+def _country_variant_coverage_page(workspace: Path, *, bmw_root: Path | str | None = None) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="country-variant-coverage",
+        title="Country Variants",
+        tagline="Country-coding test matrix with expected, actual, and diff evidence slots.",
+        reader=lambda: _country_variant_coverage_payload(workspace, bmw_root),
+        workspace=workspace,
+        ownership_note=(
+            "Evidence only. Missing baselines and country-table mismatches are review prompts, "
+            "not automated verdicts."
+        ),
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["source_selector"] = {
+        "selected_source_root": str(payload.get("selected_source_root", "")),
+        "source_root_candidates": list(payload.get("source_root_candidates", [])),
+    }
+    return page
+
+
 def _setup_doctor_payload(workspace: Path) -> dict[str, Any]:
     report = build_setup_doctor_report(workspace).to_dict()
     rows = []
@@ -2760,6 +2889,7 @@ def build_dashboard_snapshot(
             _delivery_readiness_page(root, bmw_root=bmw_root),
             _disabled_tests_page(root, bmw_root=bmw_root),
             _api_version_coverage_page(root, bmw_root=bmw_root),
+            _country_variant_coverage_page(root, bmw_root=bmw_root),
             _onboarding_guide_page(
                 resolved_profile_id,
                 root,
@@ -8200,6 +8330,13 @@ def _render_selected_page(
                 workspace,
                 payload_builder=_api_version_coverage_payload,
             )
+        elif page_id == "country-variant-coverage":
+            _render_source_root_reader_panel(
+                ui,
+                pages_by_id[page_id],
+                workspace,
+                payload_builder=_country_variant_coverage_payload,
+            )
         elif page_id == "screenshot-test-state":
             _render_screenshot_test_state_panel(ui, snapshot, workspace)
         elif page_id == "risk-score":
@@ -8667,6 +8804,14 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         payload_builder=_api_version_coverage_payload,
+                    )
+                elif active_page_id == "country-variant-coverage":
+                    _render_source_root_reader_panel(
+                        ui,
+                        _pages_by_id()[active_page_id],
+                        workspace,
+                        bmw_root=bmw_root,
+                        payload_builder=_country_variant_coverage_payload,
                     )
                 elif active_page_id == "full-qa-pass":
                     _render_full_qa_pass_panel(

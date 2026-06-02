@@ -350,6 +350,22 @@
             <span class="badge {% if step.state == 'covered' %}ok{% elif step.state == 'partial' %}info{% else %}warn{% endif %}">{{ step.state }}</span>
           </div>
           <p class="workflow-summary">{{ step.summary }}</p>
+          {% if step.expectations %}
+          <ul class="clean-list">
+            {% for key, expectation in step.expectations.items() %}
+            <li>
+              <strong>{{ key }}</strong>
+              {% if expectation.feature %} - {{ expectation.feature }}{% endif %}
+              {% if expectation.expected_selective_yellow_country_variants %}
+              <span class="muted">expected: {{ expectation.expected_selective_yellow_country_variants|join(', ') }}</span>
+              {% endif %}
+              {% if expectation.known_bad_signal %}
+              <span class="muted">{{ expectation.known_bad_signal }}</span>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
           {% if step.blockers %}
           <ul class="clean-list">
             {% for blocker in step.blockers %}

@@ -12,7 +12,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 - Manual review companion: Quality Hero review steps surfaced for operator notes and verdict entry. `recorded_by_tool` stays false.
 - Delivery checklist workbook reader: read-only ingestion of operator-local delivery checklist workbook data.
 - Export-size analysis reader: read-only ingestion of operator-local `Cars\size_analysis\<profile>_<date>.xlsx` workbook data.
-- Clean evidence surfaces: delivery checklist, delivery readiness, disabled-test inventory, API version reference, setup doctor, workflows, screenshot test state, daily digest, and manual review companion render from the same Python readers.
+- Clean evidence surfaces: delivery checklist, delivery readiness, disabled-test inventory, API version reference, country-variant matrix, setup doctor, workflows, screenshot test state, daily digest, and manual review companion render from the same Python readers.
 - Screenshot test state reader: read-only BMW / MINI screenshot baseline and test-config state from local BMW Git.
 - BMW Git readiness reader: read-only per-profile state from the local `digital-3d-car-models` checkout.
 - QA Hero readiness reader: read-only presence and count checks for documented Quality Hero assets such as LightFX, WelcomeFX, ShadesFX, CarPaint, AnchorPoints, Constants, and Perspectives.
@@ -50,6 +50,7 @@ python -m sg_preflight list-profiles --format json
 python -m sg_preflight desktop-state overview --profile-id <profile> --json
 python -m sg_preflight disabled-tests --repo-root C:\repositories\trunk --json
 python -m sg_preflight api-version-coverage --repo-root C:\repositories\trunk --json
+python -m sg_preflight country-variant-coverage --repo-root C:\repositories\trunk --json
 python -m sg_preflight daily-digest latest --format markdown
 ```
 

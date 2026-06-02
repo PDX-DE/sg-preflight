@@ -135,6 +135,13 @@ from sg_preflight.api_version_coverage import (
     build_api_version_coverage_board,
     write_api_version_coverage_board,
 )
+from sg_preflight.country_variant_coverage import (
+    MAPPING_REVIEW_LABEL,
+    MISSING_EXPECTED_LABEL,
+    NO_RUNTIME_LABEL,
+    build_country_variant_coverage_board,
+    write_country_variant_coverage_board,
+)
 from sg_preflight.disabled_tests import (
     CAUTIOUS_BASELINE_LABEL,
     build_disabled_tests_board,
@@ -1411,6 +1418,67 @@ def _console_api_version_coverage(payload: dict[str, object]) -> None:
             )
 
 
+def _console_country_variant_coverage(payload: dict[str, object]) -> None:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    print("Country-Variant Coverage")
+    print(f"Source: {payload.get('repo_root', '')}")
+    print(f"State: {payload.get('source_state', '')}")
+    print(
+        "Summary -> "
+        f"country rows: {counts.get('row_total', 0)} | "
+        f"cars: {counts.get('car_with_rows_count', 0)} | "
+        f"expected: {counts.get('expected_present_count', 0)}/{counts.get('row_total', 0)} | "
+        f"review rows: {counts.get('review_row_count', 0)}"
+    )
+    print(str(payload.get("manual_review_banner", "")))
+    print(f"Missing expected label: {payload.get('missing_expected_label', MISSING_EXPECTED_LABEL)}")
+    print(f"Mapping label: {payload.get('mapping_review_label', MAPPING_REVIEW_LABEL)}")
+    print(f"Runtime label: {payload.get('no_runtime_label', NO_RUNTIME_LABEL)}")
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        if artifacts.get("json_path"):
+            print(f"JSON: {artifacts['json_path']}")
+        if artifacts.get("markdown_path"):
+            print(f"Markdown: {artifacts['markdown_path']}")
+    print("-" * 80)
+    entries = payload.get("entries", [])
+    if isinstance(entries, list):
+        for entry in entries[:18]:
+            if not isinstance(entry, dict):
+                continue
+            flags = entry.get("review_flags", [])
+            flags_text = ""
+            if isinstance(flags, list) and flags:
+                flags_text = "; " + ", ".join(str(flag) for flag in flags[:3])
+            print(
+                _console_safe(
+                    f"- {entry.get('relative_path', '')}: {entry.get('test_name', '')} "
+                    f"ID {entry.get('country_variant_id', '')}; "
+                    f"expected={'yes' if entry.get('expected_present') else 'no'} "
+                    f"actual={'yes' if entry.get('actual_present') else 'no'} "
+                    f"diff={'yes' if entry.get('diff_present') else 'no'}"
+                    f"{flags_text}"
+                )
+            )
+        if len(entries) > 18:
+            print(f"... {len(entries) - 18} more row(s)")
+    expectations = payload.get("expectations", [])
+    if isinstance(expectations, list) and expectations:
+        print("Process expectations:")
+        for expectation in expectations:
+            if not isinstance(expectation, dict):
+                continue
+            print(
+                _console_safe(
+                    f"- {expectation.get('car', '')}: expected "
+                    f"{', '.join(str(item) for item in expectation.get('expected_variants', []))}; "
+                    f"observed rows {', '.join(str(item) for item in expectation.get('observed_rows', [])) or 'none'}"
+                )
+            )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _SgfxArgumentParser(prog=_default_prog())
     parser.add_argument("--version", action=_VersionAction, help="Show version and build metadata")
@@ -1743,6 +1811,16 @@ def build_parser() -> argparse.ArgumentParser:
     api_version_coverage.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     api_version_coverage.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     api_version_coverage.add_argument("--json", action="store_true", help="Print API version coverage payload as JSON")
+
+    country_variant_coverage = sub.add_parser(
+        "country-variant-coverage",
+        help="Build the read-only country-variant screenshot evidence matrix",
+    )
+    country_variant_coverage.add_argument("--workspace", help="Workspace root override")
+    country_variant_coverage.add_argument("--repo-root", help="SVN trunk root override")
+    country_variant_coverage.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    country_variant_coverage.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    country_variant_coverage.add_argument("--json", action="store_true", help="Print country-variant coverage payload as JSON")
 
     sub.add_parser(
         "list-workflows",
@@ -2617,6 +2695,15 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_api_version_parser.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     desktop_api_version_parser.add_argument("--json", action="store_true", help="Print API version coverage payload as JSON")
 
+    desktop_country_variant_parser = desktop_state_sub.add_parser(
+        "country-variant-coverage",
+        help="Load the country-variant coverage matrix for native-shell consumers",
+    )
+    desktop_country_variant_parser.add_argument("--workspace", help="Workspace root override")
+    desktop_country_variant_parser.add_argument("--repo-root", help="SVN trunk root override")
+    desktop_country_variant_parser.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    desktop_country_variant_parser.add_argument("--json", action="store_true", help="Print country-variant coverage payload as JSON")
+
     desktop_attach_manual_parser = desktop_state_sub.add_parser(
         "attach-manual-evidence",
         help="Attach manual evidence into one action bundle",
@@ -3478,6 +3565,24 @@ def _main_impl(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
             _console_api_version_coverage(payload)
+        return 0
+
+    if args.command == "country-variant-coverage":
+        variant_root = Path(args.workspace).resolve() if args.workspace else root
+        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+        bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
+        board = build_country_variant_coverage_board(
+            repo_root,
+            workspace_root=variant_root,
+            bmw_repo_root=bmw_repo_root,
+        )
+        payload = board.to_dict()
+        if args.output_root:
+            payload["artifacts"] = write_country_variant_coverage_board(board, Path(args.output_root).resolve())
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            _console_country_variant_coverage(payload)
         return 0
 
     if args.command == "list-workflows":
@@ -4359,6 +4464,14 @@ def _main_impl(argv: list[str] | None = None) -> int:
             repo_root = Path(args.repo_root).resolve() if args.repo_root else None
             bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
             payload = build_api_version_coverage_board(
+                repo_root,
+                workspace_root=state_root,
+                bmw_repo_root=bmw_repo_root,
+            ).to_dict()
+        elif args.desktop_state_command == "country-variant-coverage":
+            repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+            bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
+            payload = build_country_variant_coverage_board(
                 repo_root,
                 workspace_root=state_root,
                 bmw_repo_root=bmw_repo_root,
