@@ -13,6 +13,15 @@ ENTRY_POINT = ROOT / ENTRY_POINT_RELATIVE
 DIST_PATH = ROOT / "dist"
 WORK_PATH = ROOT / "build" / "pyinstaller"
 ICON_PATH = ROOT / "desktop_native" / "resources" / "exe_ico.ico"
+GRAFIKS_RUNTIME_ENV = "SGFX_GRAFIKS_RUNTIME_DIR"
+GRAFIKS_RUNTIME_SOURCE = ROOT / "cpp" / "build" / "vs2022-ramses-28.16" / "Release"
+GRAFIKS_RUNTIME_FILES = (
+    "sgfx_cine_cinematic_shell.exe",
+    "ramses-shared-lib-headless.dll",
+    "ramses-shared-lib-renderer.dll",
+    "ramses-shared-lib.dll",
+    "SDL3.dll",
+)
 
 
 def _data_arg(source: str, destination: str) -> str:
@@ -67,6 +76,38 @@ def clean_stale_outputs() -> None:
             shutil.rmtree(path)
 
 
+def _grafiks_runtime_source() -> Path | None:
+    configured = os.environ.get(GRAFIKS_RUNTIME_ENV, "").strip()
+    candidates = [Path(configured)] if configured else []
+    candidates.append(GRAFIKS_RUNTIME_SOURCE)
+    for candidate in candidates:
+        runtime_dir = candidate.resolve()
+        if (runtime_dir / GRAFIKS_RUNTIME_FILES[0]).is_file():
+            return runtime_dir
+    return None
+
+
+def copy_grafiks_runtime() -> list[Path]:
+    runtime_dir = _grafiks_runtime_source()
+    if runtime_dir is None:
+        print("Grafiks C++ runtime not found; skipping optional runtime copy.")
+        return []
+    missing = [name for name in GRAFIKS_RUNTIME_FILES if not (runtime_dir / name).is_file()]
+    if missing:
+        joined = ", ".join(missing)
+        raise SystemExit(f"Grafiks C++ runtime is incomplete in {runtime_dir}: missing {joined}")
+
+    target_dir = DIST_PATH / "sgfx-preflight" / "_internal"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    for name in GRAFIKS_RUNTIME_FILES:
+        target = target_dir / name
+        shutil.copy2(runtime_dir / name, target)
+        copied.append(target)
+    print(f"Copied Grafiks C++ runtime to {target_dir}")
+    return copied
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build the SGFX Preflight Windows executable.")
     parser.add_argument("--print-args", action="store_true", help="Print PyInstaller arguments without building")
@@ -85,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
 
     clean_stale_outputs()
     PyInstaller.__main__.run(pyinstaller_args)
+    copy_grafiks_runtime()
     return 0
 
 

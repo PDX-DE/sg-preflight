@@ -91,6 +91,10 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("sgfx-preflight", text)
         self.assertIn("desktop_native/resources/exe_ico.ico", text)
         self.assertIn("sg_preflight/exe_entry.py", text)
+        self.assertIn("GRAFIKS_RUNTIME_FILES", text)
+        self.assertIn("sgfx_cine_cinematic_shell.exe", text)
+        self.assertIn("ramses-shared-lib-headless.dll", text)
+        self.assertIn('DIST_PATH / "sgfx-preflight" / "_internal"', text)
         for asset_name in (
             "sgfx_icon.png",
             "framework_sgfx_logo.png",
