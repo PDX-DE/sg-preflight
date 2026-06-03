@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.time_utils import utc_now_ms as _utc_now
+
 
 ACTIVITY_LOG_BANNER = (
     "Activity log is operator-local. SGFX does not post activity entries to Jira, SVN, or BMW Git."
@@ -146,21 +148,6 @@ def _validate_outcome(value: str) -> str:
 def _clean_token(value: str, *, default: str) -> str:
     text = str(value or "").strip()
     return text or default
-
-
-def _utc_now(value: datetime | None = None) -> str:
-    """Return an ISO-8601 UTC timestamp with millisecond precision (Z suffix).
-
-    internal milestone upgrade: pre-internal milestone entries used second precision; the reader continues to
-    parse both forms (see `_parse_ts`). New entries are written at ms precision so
-    operators and tooling can correlate activity log + live_state.json updates
-    without ambiguity when events land within the same second.
-    """
-    current = value or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-    iso = current.astimezone(timezone.utc).isoformat(timespec="milliseconds")
-    return iso.replace("+00:00", "Z")
 
 
 def _parse_ts(value: str) -> datetime:
