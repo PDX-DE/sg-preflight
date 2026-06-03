@@ -484,6 +484,7 @@ def _run_nicegui(
         "reload": reload,
         "title": DASHBOARD_TITLE,
         "show": show,
+        "reconnect_timeout": 1.0,
     }
     if favicon_path.is_file():
         kwargs["favicon"] = str(favicon_path)
@@ -609,7 +610,7 @@ def _grafiks_not_installed_message(workspace: Path | str | None = None) -> str:
     first_expected = str(expected[0]) if expected else GRAFIKS_SHELL_EXE_NAME
     return (
         f"{GRAFIKS_MODE_WIP_HINT}\n"
-        f"C++ cinematic shell not installed or not found. Expected first: {first_expected}\n"
+        f"C++ shell not installed: cinematic shell not found. Expected first: {first_expected}\n"
         f"Set {GRAFIKS_SHELL_EXE_ENV_KEYS[0]} to the built {GRAFIKS_SHELL_EXE_NAME} to enable Grafiks mode."
     )
 
@@ -8978,11 +8979,16 @@ def _render_dashboard(
             .sgfx-mode-toggle { gap: 4px; padding: 3px; border: 1px solid var(--sgfx-border); border-radius: 8px; background: var(--sgfx-bg-elev); }
             .sgfx-mode-button { min-height: 30px; border-radius: 6px; color: var(--sgfx-fg) !important; }
             .sgfx-mode-button-active { background: var(--sgfx-accent-soft) !important; color: var(--sgfx-accent) !important; }
-            .sgfx-mode-warning-slot { margin-top: 12px; }
-            .sgfx-grafiks-warning { width: 100%; gap: 12px; align-items: center; border: 1px solid var(--sgfx-warning-border); background: var(--sgfx-warning-bg); color: var(--sgfx-warning-fg); border-radius: 8px; padding: 12px 14px; }
-            .sgfx-grafiks-warning img { width: 64px; height: 64px; object-fit: contain; flex: 0 0 auto; }
-            .sgfx-grafiks-warning-title { color: var(--sgfx-warning-fg); font-size: 15px; font-weight: 700; }
-            .sgfx-grafiks-warning-body { color: var(--sgfx-fg); font-size: 13px; line-height: 1.45; }
+            .sgfx-grafiks-dialog-card { width: min(92vw, 560px); gap: 12px; border: 1px solid var(--sgfx-warning-border); border-radius: 8px; background: var(--sgfx-bg-panel); color: var(--sgfx-fg); padding: 18px; box-shadow: 0 22px 58px rgba(0, 0, 0, 0.45); }
+            .sgfx-grafiks-dialog-icon { width: 72px; height: 72px; object-fit: contain; flex: 0 0 auto; }
+            .sgfx-grafiks-dialog-title { color: var(--sgfx-warning-fg); font-size: 16px; font-weight: 700; line-height: 1.35; }
+            .sgfx-grafiks-dialog-body { color: var(--sgfx-fg); font-size: 13px; line-height: 1.45; }
+            .sgfx-grafiks-dialog-detail { color: var(--sgfx-fg-muted); font-size: 12px; line-height: 1.4; }
+            .sgfx-grafiks-dialog-actions { gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+            #popup.nicegui-error-popup { max-width: min(88vw, 360px); margin: 14px; padding: 10px 14px 10px 34px; gap: 3px; border-color: rgba(78, 201, 176, 0.34); border-radius: 8px; background: rgba(18, 27, 31, 0.88) !important; color: var(--sgfx-fg-muted); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22); font-size: 12px; opacity: 0.9; }
+            #popup.nicegui-error-popup[aria-hidden="false"] { transition-delay: 650ms; }
+            #popup.nicegui-error-popup > span:first-child { color: var(--sgfx-fg); font-weight: 650; }
+            #popup.nicegui-error-popup:dir(ltr) > span:first-child::before { left: 12px; font-size: 12px; }
             .sgfx-shortcut-feedback { min-height: 22px; color: var(--sgfx-fg-muted); font-size: 13px; padding: 2px 0; }
             .sgfx-profile-select { min-width: 144px; }
             .sgfx-status { text-transform: none; }
@@ -9095,24 +9101,24 @@ def _render_dashboard(
         def _current_theme() -> str:
             return str(state["snapshot"].get("theme", "clean"))
 
-        def _render_mode_warning(detail: str = "") -> None:
-            holder = controls.get("mode_warning")
-            if holder is None:
-                return
-            holder.clear()
-            with holder:
-                with ui.row().classes("sgfx-grafiks-warning").props('data-sgfx-grafiks-warning="true"'):
-                    ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_DEBUG_ICON_ASSET}")
-                    with ui.column().classes("gap-1"):
-                        ui.label(GRAFIKS_MODE_WARNING_TITLE).classes("sgfx-grafiks-warning-title")
-                        ui.label(GRAFIKS_MODE_WARNING_BODY).classes("sgfx-grafiks-warning-body")
-                        for line in [part.strip() for part in detail.splitlines() if part.strip()]:
-                            ui.label(line).classes("sgfx-grafiks-warning-body")
+        def _set_grafiks_dialog_detail(detail: str) -> None:
+            label = controls.get("grafiks_dialog_detail")
+            if label is not None:
+                label.set_text(detail)
 
-        def _clear_mode_warning() -> None:
-            holder = controls.get("mode_warning")
-            if holder is not None:
-                holder.clear()
+        def _set_grafiks_continue_enabled(enabled: bool) -> None:
+            button = controls.get("grafiks_continue_button")
+            if button is None:
+                return
+            if enabled:
+                button.props(remove="disable")
+            else:
+                button.props("disable")
+
+        def _show_grafiks_confirm_dialog(detail: str, *, allow_continue: bool) -> None:
+            _set_grafiks_dialog_detail(detail)
+            _set_grafiks_continue_enabled(allow_continue)
+            grafiks_confirm_dialog.open()
 
         def _set_mode_button_state(mode: str) -> None:
             state["dashboard_mode"] = mode
@@ -9127,22 +9133,37 @@ def _render_dashboard(
 
         def _select_clean_mode() -> None:
             _set_mode_button_state("clean")
-            _clear_mode_warning()
+            grafiks_confirm_dialog.close()
 
-        def _select_grafiks_mode() -> None:
-            _set_mode_button_state("grafiks")
+        def _confirm_grafiks_launch() -> None:
             shell_path = _resolve_grafiks_shell_exe(workspace)
             if shell_path is None:
-                _render_mode_warning(_grafiks_not_installed_message(workspace))
+                _set_mode_button_state("clean")
+                _show_grafiks_confirm_dialog(_grafiks_not_installed_message(workspace), allow_continue=False)
                 return
-            _render_mode_warning(f"Launching Grafiks cinematic shell: {shell_path}")
+            _set_mode_button_state("grafiks")
+            grafiks_confirm_dialog.close()
             exit_code = run_grafiks_mode(
                 profile_id=str(state["snapshot"].get("profile_id", "")),
                 workspace=workspace,
                 bmw_root=bmw_root,
             )
             if exit_code:
-                _render_mode_warning(f"Grafiks cinematic shell exited early with code {exit_code}.")
+                _show_grafiks_confirm_dialog(
+                    f"Grafiks cinematic shell exited early with code {exit_code}.",
+                    allow_continue=True,
+                )
+
+        def _select_grafiks_mode() -> None:
+            shell_path = _resolve_grafiks_shell_exe(workspace)
+            if shell_path is None:
+                _set_mode_button_state("clean")
+                _show_grafiks_confirm_dialog(_grafiks_not_installed_message(workspace), allow_continue=False)
+                return
+            _show_grafiks_confirm_dialog(
+                f"Ready to launch Grafiks cinematic shell: {shell_path}",
+                allow_continue=True,
+            )
 
         def _header_text() -> str:
             active = state["snapshot"]
@@ -9599,6 +9620,23 @@ def _render_dashboard(
                 """
             )
 
+        with ui.dialog() as grafiks_confirm_dialog:
+            with ui.card().classes("sgfx-grafiks-dialog-card").props('data-sgfx-grafiks-dialog="true"'):
+                with ui.row().classes("items-start no-wrap"):
+                    ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_DEBUG_ICON_ASSET}").classes(
+                        "sgfx-grafiks-dialog-icon"
+                    )
+                    with ui.column().classes("gap-1"):
+                        ui.label(GRAFIKS_MODE_WARNING_TITLE).classes("sgfx-grafiks-dialog-title")
+                        ui.label(GRAFIKS_MODE_WARNING_BODY).classes("sgfx-grafiks-dialog-body")
+                        controls["grafiks_dialog_detail"] = ui.label("").classes("sgfx-grafiks-dialog-detail")
+                with ui.row().classes("sgfx-grafiks-dialog-actions full-width"):
+                    controls["grafiks_continue_button"] = ui.button(
+                        "Continue to Grafiks",
+                        on_click=_confirm_grafiks_launch,
+                    ).props("color=warning no-caps")
+                    ui.button("Cancel", on_click=grafiks_confirm_dialog.close).props("flat no-caps")
+
         ui.html(
             f"""
             <button type="button" class="sgfx-menu-button" aria-label="Open navigation" onclick="window.sgfxToggleSidebar && window.sgfxToggleSidebar()">
@@ -9643,6 +9681,16 @@ def _render_dashboard(
             with ui.column().classes("sgfx-main"):
                 with ui.row().classes("sgfx-header items-center justify-between full-width"):
                     with ui.row().classes("sgfx-brand-lockup items-center"):
+                        with ui.row().classes("sgfx-mode-toggle items-center").props('data-sgfx-mode-toggle="true"'):
+                            controls["mode_clean"] = ui.button(
+                                "Clean",
+                                on_click=_select_clean_mode,
+                            ).props("flat dense no-caps data-sgfx-mode-toggle=clean").classes("sgfx-mode-button")
+                            controls["mode_grafiks"] = ui.button(
+                                "Grafiks",
+                                on_click=_select_grafiks_mode,
+                            ).props("flat dense no-caps data-sgfx-mode-toggle=grafiks").classes("sgfx-mode-button")
+                        _set_mode_button_state("clean")
                         ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_BRAND_LOGO_ASSET}").classes("sgfx-brand-logo")
                         with ui.column():
                             controls["profile_label"] = ui.label(_header_text()).classes("sgfx-subtitle")
@@ -9656,16 +9704,6 @@ def _render_dashboard(
                                 str(registry.get("summary", "")) if isinstance(registry, dict) else ""
                             ).classes("sgfx-subtitle")
                     with ui.row().classes("items-center"):
-                        with ui.row().classes("sgfx-mode-toggle items-center").props('data-sgfx-mode-toggle="true"'):
-                            controls["mode_clean"] = ui.button(
-                                "Clean",
-                                on_click=_select_clean_mode,
-                            ).props("flat dense no-caps data-sgfx-mode-toggle=clean").classes("sgfx-mode-button")
-                            controls["mode_grafiks"] = ui.button(
-                                "Grafiks",
-                                on_click=_select_grafiks_mode,
-                            ).props("flat dense no-caps data-sgfx-mode-toggle=grafiks").classes("sgfx-mode-button")
-                        _set_mode_button_state("clean")
                         ui.label("F1 Help").classes("sgfx-shortcut")
                         ui.label("F12 Diagnostic").classes("sgfx-shortcut")
                         ui.label("Esc Quit").classes("sgfx-shortcut")
@@ -9706,7 +9744,6 @@ def _render_dashboard(
                             ),
                             "Re-read local evidence for the current profile and page.",
                         )
-                controls["mode_warning"] = ui.column().classes("sgfx-mode-warning-slot full-width")
                 content = ui.column().classes("sgfx-content")
                 content_holder["content"] = content
                 _render_current_page()

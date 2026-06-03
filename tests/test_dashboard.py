@@ -73,10 +73,16 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         self.assertIn('data-sgfx-mode-toggle="true"', source)
         self.assertIn("data-sgfx-mode-toggle=grafiks", source)
+        self.assertIn('data-sgfx-grafiks-dialog="true"', source)
         self.assertIn("GRAFIKS_MODE_WARNING_TITLE", source)
         self.assertIn("GRAFIKS_MODE_WARNING_BODY", source)
         self.assertIn("DASHBOARD_DEBUG_ICON_ASSET", source)
+        self.assertIn("Continue to Grafiks", source)
+        self.assertIn("Cancel", source)
+        self.assertIn("_confirm_grafiks_launch", source)
         self.assertIn("run_grafiks_mode(", source)
+        self.assertIn("grafiks_confirm_dialog.open()", source)
+        self.assertNotIn("sgfx-mode-warning-slot", source)
 
     def test_clipboard_copy_uses_fallback_and_only_client_reports_success(self) -> None:
         from sg_preflight.dashboard.main import _copy_dashboard_link_to_clipboard
@@ -1798,7 +1804,7 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
         self.assertEqual(result, 0)
         popen.assert_not_called()
         self.assertIn("WIP - use Clean for now", stdout.getvalue())
-        self.assertIn("C++ cinematic shell not installed", stdout.getvalue())
+        self.assertIn("C++ shell not installed", stdout.getvalue())
 
     def test_frozen_clean_dashboard_dispatches_to_desktop_shell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

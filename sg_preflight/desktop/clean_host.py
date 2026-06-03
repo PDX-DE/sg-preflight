@@ -147,7 +147,8 @@ class CleanDashboardWindow(QMainWindow):
             return
         self._ready = True
         self._poll_timer.stop()
-        self.status_label.setText("Dashboard ready")
+        self.status_label.setText("")
+        self.status_label.hide()
         self.web_view.setUrl(QUrl(url))
 
     def _stop_server(self) -> None:
