@@ -4415,6 +4415,11 @@ def _main_impl(argv: list[str] | None = None) -> int:
         )
         if use_desktop_shell:
             try:
+                import os
+
+                _existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+                _flags = "--disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
+                os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (_existing + " " + _flags).strip()
                 from sg_preflight.desktop.app import run_desktop_app
 
                 return run_desktop_app(

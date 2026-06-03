@@ -84,6 +84,15 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("grafiks_confirm_dialog.open()", source)
         self.assertNotIn("sgfx-mode-warning-slot", source)
 
+    def test_dashboard_uses_demo_safe_reconnect_timeout(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('"reconnect_timeout": 30.0', source)
+        self.assertIn("slow page handlers / jitter don't trigger reconnect storms", source)
+        self.assertNotIn('"reconnect_timeout": 1.0', source)
+
     def test_clipboard_copy_uses_fallback_and_only_client_reports_success(self) -> None:
         from sg_preflight.dashboard.main import _copy_dashboard_link_to_clipboard
 
@@ -1811,24 +1820,42 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
             import sg_preflight.cli as cli
 
             with mock.patch.object(cli.sys, "frozen", True, create=True):
-                with mock.patch("sg_preflight.dashboard.main.run_dashboard", return_value=11) as clean_runner:
-                    with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=9) as desktop_runner:
-                        result = cli.main(
-                            [
-                                "dashboard",
-                                "run",
-                                "--profile",
-                                "NA8",
-                                "--workspace",
-                                tmp,
-                                "--ui-mode",
-                                "clean",
-                            ]
-                        )
+                with mock.patch.dict(os.environ, {"QTWEBENGINE_CHROMIUM_FLAGS": "--existing-flag"}, clear=False):
+                    with mock.patch("sg_preflight.dashboard.main.run_dashboard", return_value=11) as clean_runner:
+                        with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=9) as desktop_runner:
+                            result = cli.main(
+                                [
+                                    "dashboard",
+                                    "run",
+                                    "--profile",
+                                    "NA8",
+                                    "--workspace",
+                                    tmp,
+                                    "--ui-mode",
+                                    "clean",
+                                ]
+                            )
+                            chromium_flags = os.environ["QTWEBENGINE_CHROMIUM_FLAGS"]
 
         self.assertEqual(result, 9)
+        self.assertIn("--existing-flag", chromium_flags)
+        self.assertIn("--disable-background-timer-throttling", chromium_flags)
+        self.assertIn("--disable-backgrounding-occluded-windows", chromium_flags)
+        self.assertIn("--disable-renderer-backgrounding", chromium_flags)
         clean_runner.assert_not_called()
         desktop_runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="NA8", initial_mode="clean")
+
+    def test_frozen_desktop_shell_sets_chromium_flags_before_qt_import(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "cli.py").read_text(encoding="utf-8")
+
+        self.assertIn("QTWEBENGINE_CHROMIUM_FLAGS", source)
+        self.assertIn("--disable-background-timer-throttling", source)
+        self.assertIn("--disable-backgrounding-occluded-windows", source)
+        self.assertIn("--disable-renderer-backgrounding", source)
+        self.assertLess(
+            source.index('os.environ["QTWEBENGINE_CHROMIUM_FLAGS"]'),
+            source.index("from sg_preflight.desktop.app import run_desktop_app"),
+        )
 
     def test_frozen_clean_dashboard_no_native_keeps_server_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

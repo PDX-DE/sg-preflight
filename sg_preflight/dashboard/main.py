@@ -484,7 +484,11 @@ def _run_nicegui(
         "reload": reload,
         "title": DASHBOARD_TITLE,
         "show": show,
-        "reconnect_timeout": 1.0,
+        # NiceGUI reconnect timeout: 30s for graceful stall tolerance, so sub-30s
+        # slow page handlers / jitter don't trigger reconnect storms. The 30s server-side
+        # Full QA dedup window (FULL_QA_PASS_DEDUP_WINDOW_SECONDS) is the safety net for
+        # cached ?full_qa_run=1 re-fires, not the primary defense.
+        "reconnect_timeout": 30.0,
     }
     if favicon_path.is_file():
         kwargs["favicon"] = str(favicon_path)
