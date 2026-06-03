@@ -2404,6 +2404,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(materialize.call_args.kwargs["smoke_test"], "openAllDoors_rightView")
         self.assertFalse(materialize.call_args.kwargs["run_smoke"])
 
+    @unittest.skipUnless((ROOT / "demo" / "good").exists(), "curated source-review bundle excludes demo fixtures")
     def test_good_demo_passes(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "demo-good"],
@@ -2418,6 +2419,7 @@ class TestCLI(unittest.TestCase):
         report = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertEqual(report["summary"]["errors"], 0)
 
+    @unittest.skipUnless((ROOT / "demo" / "broken").exists(), "curated source-review bundle excludes demo fixtures")
     def test_broken_demo_fails(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "demo-broken"],

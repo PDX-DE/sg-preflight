@@ -10,6 +10,10 @@ NATIVE_SRC = ROOT / "desktop_native" / "src"
 SHELL_SRC = NATIVE_SRC / "sgfx_shell"
 
 
+@unittest.skipUnless(
+    (ROOT / "desktop_native").exists(),
+    "curated source-review bundle excludes native R&D sources",
+)
 class TestNativeShellReplacement(unittest.TestCase):
     def test_native_entrypoint_is_thin_and_uses_replacement_shell(self) -> None:
         main_source = (NATIVE_SRC / "main.cpp").read_text(encoding="utf-8")

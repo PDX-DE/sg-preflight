@@ -58,6 +58,9 @@ def _checker_fixture(name: str) -> str:
 
 class TestOperatorUI(unittest.TestCase):
     def test_web_ui_serves_sgfx_favicon_and_header_logo(self) -> None:
+        if not (ROOT / "sgfx_icon.png").is_file():
+            self.skipTest("curated source-review bundle excludes root branding assets")
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)

@@ -10,6 +10,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@unittest.skipUnless(
+    (ROOT / "desktop_native").exists(),
+    "curated source-review bundle excludes native R&D sources",
+)
 class TestNativeScaffold(unittest.TestCase):
     def _load_clean_harness_module(self):
         harness_path = ROOT / "scripts" / "walkthrough_harness" / "capture_clean_pages.py"
