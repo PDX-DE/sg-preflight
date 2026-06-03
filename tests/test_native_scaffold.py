@@ -188,6 +188,8 @@ class TestNativeScaffold(unittest.TestCase):
             "desktop_native\\resources\\debug_icon.ico",
         ):
             self.assertIn(asset_name, text)
+        self.assertNotIn("desktop_native\\" + "assets", text)
+        self.assertNotIn("general_" + "window.png", text)
         self.assertIn("SGFX Preflight - Clean Mode.lnk", text)
         self.assertIn("SGFX Preflight - Grafiks Mode.lnk", text)
         self.assertNotIn("SGFX Preflight - Web Review Board.lnk", text)
