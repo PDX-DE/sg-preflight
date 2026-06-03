@@ -1,4 +1,4 @@
-"""H-26 live observability surface.
+"""internal milestone live observability surface.
 
 Writes a single JSON file at `<workspace>/operator_state/live_state.json`
 that reflects the current dashboard state. Writes are debounced (default 250ms)

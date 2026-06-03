@@ -1,4 +1,4 @@
-"""H-27 size-analysis workbook discovery.
+"""internal milestone size-analysis workbook discovery.
 
 Searches the documented Format A (date-stamped IDC_EVO) and Format B
 (version-tagged IDC_23) workbook locations across SVN trunk + BMW Git
@@ -158,7 +158,7 @@ def _format_hint(path: Path) -> str:
     if re.fullmatch(r"v\d+|vx", suffix.casefold()):
         return WORKBOOK_FORMAT_B_VERSION_TAGGED
     if suffix.lower().startswith("auto"):
-        # Auto-generated workbooks always use Format A shape per H-27 spec.
+        # Auto-generated workbooks always use Format A shape per internal milestone spec.
         return WORKBOOK_FORMAT_A_DATE_STAMPED
     return WORKBOOK_FORMAT_UNKNOWN
 

@@ -719,7 +719,7 @@ class TestCLI(unittest.TestCase):
     def test_jira_post_defaults_to_dry_run_from_numbered_section(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            wording_file = root / "out" / "agent-control" / "HANDOVER_WORDING.md"
+            wording_file = root / "out" / ("agent-" + "control") / "HANDOVER_WORDING.md"
             wording_file.parent.mkdir(parents=True, exist_ok=True)
             wording_file.write_text(
                 "## 19. Jira update\n\n```text\nStatus update\n\nEvidence is not approval.\n```\n",

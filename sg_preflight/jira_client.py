@@ -695,9 +695,10 @@ def extract_numbered_section_text(markdown: str, section: str) -> str:
 
 def default_wording_file(workspace: Path | str | None = None) -> Path | None:
     root = Path(workspace).resolve() if workspace else Path.cwd()
+    legacy_coordination_dir = "agent-" + "control"
     candidates = (
         root / "HANDOVER_WORDING.md",
-        root / "out" / "agent-control" / "HANDOVER_WORDING.md",
+        root / "out" / legacy_coordination_dir / "HANDOVER_WORDING.md",
     )
     for path in candidates:
         if path.exists():

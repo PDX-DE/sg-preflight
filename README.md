@@ -137,14 +137,15 @@ BMW pipeline execution uses lane-specific local roots: `Digital-3D-Car-Repo` poi
 
 ## Optional Jira REST
 
-Jira REST access is opt-in and confirmation-gated. Credentials are operator-local and are loaded from `SGFX_OPERATOR_STATE_DIR\jira_pat.json`, `~/sgfx_operator_state/jira_pat.json`, or `.\operator_state\jira_pat.json` in that order. The JSON shape is:
+Jira REST access is opt-in and confirmation-gated. The operator-local config is loaded from `SGFX_OPERATOR_STATE_DIR\jira_pat.json`, `~/sgfx_operator_state/jira_pat.json`, or `.\operator_state\jira_pat.json` in that order. The file stores only the configured Jira URL:
 
 ```json
 {
-  "jira_url": "https://jira.cc.bmwgroup.net",
-  "pat": "<token>"
+  "jira_url": "https://jira.cc.bmwgroup.net"
 }
 ```
+
+The personal access token is stored in the Windows Credential Manager and is never written to the JSON file.
 
 Check the local credential and ticket visibility with a read-only request:
 

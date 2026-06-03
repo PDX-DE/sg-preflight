@@ -1,9 +1,9 @@
-"""H-27 size-analysis workbook auto-generation.
+"""internal milestone size-analysis workbook auto-generation.
 
 When `workbook_finder.resolve_workbook` returns `unavailable` for a profile but
 the BMW pipeline has produced raw export-size data locally (CSV or JSON), this
 module renders a Format A workbook to `~/sgfx_outputs/<profile>/delivery-workbook/<PROFILE>_auto_<YYYYMMDD>.xlsx`
-matching the canonical schema documented in `out/agent-control/WORKBOOK_SCHEMA_AUDIT.md`.
+matching the canonical project workbook schema audit.
 
 The generated workbook is classified `auto_generated_locally` (NOT `from_ci`)
 in the resulting `WorkbookCandidate` so the delivery-checklist surface can be

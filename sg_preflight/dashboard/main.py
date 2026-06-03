@@ -787,7 +787,7 @@ def _read_operator_state_json(workspace: Path | str, filename: str) -> dict[str,
 
 
 def _dashboard_feedback_recipient(workspace: Path | str) -> str:
-    # H-33: precedence — operator-local feedback_routing.json (work email default) →
+    # internal milestone: precedence — operator-local feedback_routing.json (work email default) →
     # legacy dashboard_preferences.json `feedback_email` → SGFX_FEEDBACK_EMAIL env →
     # DEFAULT_FEEDBACK_EMAIL hardcoded fallback.
     from sg_preflight.feedback_routing import load_feedback_routing
@@ -874,7 +874,7 @@ def _dashboard_exe_sha256() -> str:
 
 
 def _dashboard_feedback_context(workspace: Path | str) -> dict[str, str]:
-    # H-33: include Teams routing + primary so the JS can build a Teams deep-link
+    # internal milestone: include Teams routing + primary so the JS can build a Teams deep-link
     # alongside the existing mailto. Falls back to hardcoded defaults when the
     # operator-local feedback_routing.json is missing.
     from sg_preflight.feedback_routing import load_feedback_routing
@@ -2039,8 +2039,8 @@ def _is_truthy_trigger(value: str | None, *, default: str = "") -> bool:
     return raw in _TRUTHY_TRIGGERS
 
 
-# H-28: process-local dedup for the Full QA Pass trigger so a NiceGUI WebSocket
-# reconnect storm cannot re-fire `build_full_qa_pass` after the H-25 ui.navigate.to
+# internal milestone: process-local dedup for the Full QA Pass trigger so a NiceGUI WebSocket
+# reconnect storm cannot re-fire `build_full_qa_pass` after the internal milestone ui.navigate.to
 # redirect (the storm re-hits the page handler with the cached `?full_qa_run=1`
 # URL before the redirect lands client-side, observed 2026-05-29 07:17:28-31:
 # 5 fires for G70 within 2.4s).
@@ -2058,7 +2058,7 @@ FULL_QA_PASS_DEDUP_BUCKET_SECONDS = 5
 
 
 def _full_qa_pass_token(profile_id: str, ts_seconds: int | None = None) -> str:
-    """Audit-trail token. H-34 Part B widens the timestamp suffix from per-second
+    """Audit-trail token. internal milestone Part B widens the timestamp suffix from per-second
     to per-5-second buckets so back-to-back fires that cross a second boundary
     (observed in testing: a 12:09:14.x / 12:09:15.x burst on one profile — three log entries
     inside 1.1s) collapse to the same token rather than three distinct ones.
@@ -2114,7 +2114,7 @@ def _publish_live_state(
     last_operator_action: tuple[str, str] | None = None,
     last_error: str | None = None,
 ) -> None:
-    """H-26 hookpoint: best-effort debounced write to live_state.json.
+    """internal milestone hookpoint: best-effort debounced write to live_state.json.
 
     All failures are swallowed — observability must never crash an operator
     surface. The debounced writer batches updates so a sub-250ms burst becomes
@@ -2261,9 +2261,9 @@ def _risk_score_page(
     page["confluence_anchors"] = list(payload.get("confluence_anchors", []))
     if page.get("status") == "not_run":
         page["empty_state_note"] = RISK_SCORE_EMPTY_NOTE
-    # H-34 Part C wiring: attach the H-31 sparkline to the risk-score page so
+    # internal milestone Part C wiring: attach the internal milestone sparkline to the risk-score page so
     # the dashboard live UI surfaces the same trend signal that already lands
-    # in the H-30 HTML + the H-31-extended risk-score CLI text output.
+    # in the internal milestone HTML + the internal milestone-extended risk-score CLI text output.
     try:
         from sg_preflight.full_qa_history import read_full_qa_run_list
         from sg_preflight.risk_sparkline import (
@@ -5598,9 +5598,9 @@ def _render_risk_score_panel(ui: Any, snapshot: dict[str, Any]) -> None:
         ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
         ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
         _render_empty_state_note(ui, page)
-        # H-34 Part C wiring: H-31 sparkline next to the risk-score numbers so
+        # internal milestone Part C wiring: internal milestone sparkline next to the risk-score numbers so
         # the dashboard live UI surfaces the same trend signal that lands in
-        # the H-30 HTML + the H-31-extended risk-score CLI text output.
+        # the internal milestone HTML + the internal milestone-extended risk-score CLI text output.
         sparkline = page.get("risk_sparkline") if isinstance(page.get("risk_sparkline"), dict) else {}
         if sparkline:
             with ui.row().classes("items-center sgfx-risk-sparkline"):
@@ -8814,11 +8814,11 @@ def _render_dashboard(
     def _full_qa_pass_api(profile: str = "", trusted_tool_mode: str = "1") -> dict[str, Any]:
         requested_profile = str(profile or base_snapshot.get("profile_id") or initial_profile_id).strip()
         trusted = str(trusted_tool_mode).strip().casefold() in {"1", "true", "yes", "on"}
-        # H-34 Part B: same per-profile 30s dedup as the `_index` page handler.
+        # internal milestone Part B: same per-profile 30s dedup as the `_index` page handler.
         # Pre-fix this JSON API was an unguarded second entry point for the same
         # build_full_qa_pass invocation; NiceGUI's WebSocket reconnect or any
         # client polling against this URL would re-fire the side effect even
-        # when the H-28 dashboard gate was holding.
+        # when the internal milestone dashboard gate was holding.
         if not _should_fire_full_qa_pass(requested_profile):
             _publish_live_state(
                 workspace,
@@ -8865,7 +8865,7 @@ def _render_dashboard(
             profile_for_trigger = str(
                 snapshot.get("profile_id", query_profile or initial_profile_id)
             )
-            # H-28: dedup BEFORE firing so a NiceGUI WebSocket reconnect storm
+            # internal milestone: dedup BEFORE firing so a NiceGUI WebSocket reconnect storm
             # cannot re-execute build_full_qa_pass with the cached trigger URL.
             if not _should_fire_full_qa_pass(profile_for_trigger):
                 _publish_live_state(
@@ -9504,7 +9504,7 @@ def _render_dashboard(
                         return `mailto:${{feedbackContext.to || ''}}?subject=${{encodeURIComponent(composed.subject)}}&body=${{encodeURIComponent(composed.body)}}`;
                     }};
                     window.sgfxBuildFeedbackTeams = () => {{
-                        // H-33: Microsoft Teams native deep-link. Opens a 1:1 chat with
+                        // internal milestone: Microsoft Teams native deep-link. Opens a 1:1 chat with
                         // the configured recipient + a pre-filled message. Body length
                         // capped at ~1800 chars per Teams URL practicality limits with
                         // an explicit "continue in Teams" suffix.
@@ -9534,7 +9534,7 @@ def _render_dashboard(
                         document.body.appendChild(link);
                         link.click();
                         setTimeout(() => link.remove(), 100);
-                        // H-35 Part B: clipboard fallback so the operator's
+                        // internal milestone Part B: clipboard fallback so the operator's
                         // prefilled message is never lost even if Teams doesn't
                         // open (msteams:// protocol handler unregistered, browser
                         // blocking schemes, packaged exe restrictions, etc.).
@@ -9765,7 +9765,7 @@ def _render_dashboard(
                             ),
                             "Open a prefilled email draft. Nothing is sent until the operator reviews it.",
                         )
-                        # H-33: Teams direct-message option. msteams:// deep-link opens
+                        # internal milestone: Teams direct-message option. msteams:// deep-link opens
                         # the Teams app to a 1:1 chat with the configured recipient
                         # plus a pre-filled message. Falls back gracefully to the
                         # email button next to it if Teams isn't installed.

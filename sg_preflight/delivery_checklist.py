@@ -203,7 +203,7 @@ def resolve_delivery_checklist_workbook(
     latest_size_analysis = _find_latest_size_analysis_workbook(root, profile_id)
     if latest_size_analysis is not None:
         candidates.append(latest_size_analysis)
-    # H-27: when the legacy lookup misses, fall back to the multi-location finder
+    # internal milestone: when the legacy lookup misses, fall back to the multi-location finder
     # that walks all eight documented Format A/B locations + the operator-local
     # auto-generated workbook directory.
     if latest_size_analysis is None and profile_id:
@@ -220,7 +220,7 @@ def resolve_delivery_checklist_workbook(
                 if generated is not None:
                     candidates.append(generated.path)
         except ImportError:
-            # openpyxl missing → leave behaviour identical to pre-H-27.
+            # openpyxl missing → leave behaviour identical to pre-internal milestone.
             pass
     candidates.extend(
         [
@@ -351,7 +351,7 @@ def delivery_workbook_missing_summary(
     workspace: Path | str | None = None,
     bmw_root: Path | str | None = None,
 ) -> str:
-    """H-34: honest wording that reports the H-27 multi-location search results
+    """internal milestone: honest wording that reports the internal milestone multi-location search results
     when the finder ran (8 paths checked + raw-data availability), and the legacy
     single-path wording only when finder hasn't been invoked.
     """
@@ -360,7 +360,7 @@ def delivery_workbook_missing_summary(
         f"delivery-checklist data unavailable: size-analysis workbook not found for {profile}.",
     ]
 
-    # When workspace is available, consult the H-27 finder so the operator sees
+    # When workspace is available, consult the internal milestone finder so the operator sees
     # every location SGFX actually checked rather than just one legacy path.
     finder_searched = False
     raw_data_status = ""
@@ -688,7 +688,7 @@ def read_delivery_checklist(
     enable_auto_generate: bool | None = True,
 ) -> dict[str, Any]:
     profile = profile_id.strip()
-    # H-34: activate the H-27 finder + generator at the call site. Pre-fix the
+    # internal milestone: activate the internal milestone finder + generator at the call site. Pre-fix the
     # finder ran but with bmw_root=None so the BMW Git slots were never walked,
     # and enable_auto_generate=None meant raw-data discovery never fired. The
     # operator then saw the OLD single-path "not found in size-analysis" wording

@@ -362,7 +362,7 @@ Other text
         self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
 
     def test_profile_ticket_rows_carry_browse_url_for_click_through(self) -> None:
-        """H-29: every ticket row must include a fully-qualified `url` field that
+        """internal milestone: every ticket row must include a fully-qualified `url` field that
         points at the operator-configured Jira base URL so the dashboard inline
         panel can render a working browser link. Regression after 2026-05-29 07:17
         operator walkthrough where ticket clicks did nothing."""

@@ -28,14 +28,10 @@ operator_state/
 /OneDrive_*.zip
 /Ramses_Composer_Current/
 /repositories/
-/BAChefPeePee.*
-/SERGFX.*
+/*.mp3
 /D3D12/
 /dxcompiler.dll
 /dxil.dll
-/UnleashedRecomp*/
-/Unleashed Recomp*/
-/UnleashedRecompResources*/
 
 # C++ cinematic shell local build outputs
 /cpp/build/

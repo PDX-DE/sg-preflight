@@ -1,4 +1,4 @@
-"""H-33 tests for the operator-configurable feedback routing module."""
+"""internal milestone tests for the operator-configurable feedback routing module."""
 from __future__ import annotations
 
 import json
@@ -16,7 +16,7 @@ class FeedbackRoutingDefaultsTests(unittest.TestCase):
             DEFAULT_TEAMS_RECIPIENT,
         )
 
-        # H-33: switched from personal gmail to work email so feedback lands in
+        # internal milestone: switched from personal gmail to work email so feedback lands in
         # the PDX inbox by default.
         self.assertEqual(DEFAULT_EMAIL_RECIPIENT, "david-erik.garcia-arenas@paradoxcat.com")
         self.assertEqual(DEFAULT_TEAMS_RECIPIENT, "david-erik.garcia-arenas@paradoxcat.com")
@@ -116,7 +116,7 @@ class FeedbackRoutingOverrideTests(unittest.TestCase):
 
 
 class FeedbackRoutingDashboardWiringTests(unittest.TestCase):
-    """H-33 source guards on the dashboard wiring — the buttons must exist + the
+    """internal milestone source guards on the dashboard wiring — the buttons must exist + the
     JS must read the routing context."""
 
     def test_dashboard_source_has_open_email_and_open_teams_buttons(self) -> None:

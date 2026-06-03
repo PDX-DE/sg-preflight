@@ -342,7 +342,7 @@ def _stream_activity_log_tail(
     interval: float,
     as_json: bool,
 ) -> int:
-    """H-26: poll the activity_log.jsonl and print only new entries as they appear.
+    """internal milestone: poll the activity_log.jsonl and print only new entries as they appear.
 
     Polls every `interval` seconds. Exits cleanly on Ctrl-C. Operator-local
     filesystem read; no network I/O.
@@ -410,7 +410,7 @@ def _stream_live_state_tail(
     interval: float,
     as_json: bool,
 ) -> int:
-    """H-26: poll live_state.json and print updates as they appear.
+    """internal milestone: poll live_state.json and print updates as they appear.
 
     Agents and operators tail this during walkthroughs to
     observe ground-truth telemetry instead of asking the operator what they see.
@@ -1114,7 +1114,7 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
     ("screenshot-triage", "Run deterministic screenshot triage.", r"sgfx-preflight.exe screenshot-triage --profile F70 --workspace C:\repositories\trunk --json"),
     ("materialize", "Create a normalized validation bundle from SG-shaped inputs.", r"sgfx-preflight.exe materialize --output-bundle out\bundle --repo-root C:\repositories\trunk"),
     ("probe", "Discover SG-style repository roots and likely inputs.", r"sgfx-preflight.exe probe --search-root C:\repositories\trunk"),
-    # H-37f: `demo-good`, `demo-broken`, `ui`, `retro-extract` subcommands stay
+    # internal milestone: `demo-good`, `demo-broken`, `ui`, `retro-extract` subcommands stay
     # registered for backward compat but are hidden from the operator-facing
     # action map. They're dev / legacy entries that don't belong in the daily-
     # use list.
@@ -1615,14 +1615,14 @@ def build_parser() -> argparse.ArgumentParser:
     delivery_checklist_read.add_argument("--workbook", help="Explicit delivery checklist workbook path")
     delivery_checklist_read.add_argument(
         "--bmw-root",
-        help="Explicit digital-3d-car-models checkout path (enables H-27 multi-location finder + auto-gen)",
+        help="Explicit digital-3d-car-models checkout path (enables multi-location finder + auto-generation)",
     )
     delivery_checklist_read.add_argument(
         "--no-auto-generate",
         dest="enable_auto_generate",
         action="store_false",
         default=True,
-        help="Disable the H-27 raw-data → Format A xlsx auto-generation fallback",
+        help="Disable the raw-data to Format A xlsx auto-generation fallback",
     )
     delivery_checklist_read.add_argument("--json", action="store_true", help="Print delivery checklist payload as JSON")
     delivery_checklist_read.add_argument("--markdown", action="store_true", help="Print delivery checklist payload as Markdown")

@@ -1,4 +1,4 @@
-"""H-35 source guards + light behavioural tests for dashboard clipboard flows."""
+"""internal milestone source guards + light behavioural tests for dashboard clipboard flows."""
 from __future__ import annotations
 
 import unittest
@@ -70,7 +70,7 @@ class JiraClipboardOnlyTests(unittest.TestCase):
 
 class TeamsClipboardFallbackTests(unittest.TestCase):
     def test_teams_open_handler_also_copies_message_to_clipboard(self) -> None:
-        """H-35 Part B source guard: the `sgfxOpenFeedbackTeams` JS handler must
+        """internal milestone Part B source guard: the `sgfxOpenFeedbackTeams` JS handler must
         ALSO write the prefilled message to the clipboard so the action is never
         lost if Teams doesn't open."""
         source = (
@@ -79,11 +79,11 @@ class TeamsClipboardFallbackTests(unittest.TestCase):
         idx = source.find("window.sgfxOpenFeedbackTeams")
         self.assertNotEqual(idx, -1, "sgfxOpenFeedbackTeams handler not found")
         block = source[idx:idx + 2500]
-        # msteams:// deep-link still fires (H-33 behaviour preserved).
+        # msteams:// deep-link still fires (internal milestone behaviour preserved).
         self.assertIn("window.sgfxBuildFeedbackTeams()", block)
         self.assertIn("document.createElement('a')", block)
         self.assertIn("link.click()", block)
-        # H-35 Part B: clipboard fallback.
+        # internal milestone Part B: clipboard fallback.
         self.assertIn("navigator.clipboard.writeText(fullMessage)", block)
         # Inline toast notifying the operator the message was also copied.
         self.assertIn("Teams should open; message also copied to clipboard.", block)

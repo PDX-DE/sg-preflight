@@ -616,7 +616,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         # Locate the Jira ticket renderer.
         render_marker = "if tickets:"
         idx = source.find(render_marker, source.find("_render_jira_profile_tickets_card"))
-        self.assertNotEqual(idx, -1, "H-29 / H-35: Jira ticket renderer 'if tickets:' block not found")
+        self.assertNotEqual(idx, -1, "internal milestone / internal milestone: Jira ticket renderer 'if tickets:' block not found")
         block = source[idx:idx + 1500]
         self.assertIn("ui.button(", block, "Jira ticket must render as a button (not anchor)")
         self.assertIn(
@@ -624,7 +624,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             block,
             "Jira ticket button must copy only",
         )
-        self.assertIn("sgfx-jira-ticket-key", block, "H-29 styling class must remain")
+        self.assertIn("sgfx-jira-ticket-key", block, "internal milestone styling class must remain")
         self.assertIn("def _copy_dashboard_link_to_clipboard", source)
         helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
         helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", helper_idx)
@@ -686,20 +686,20 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
 
         branch_start = source.find("if _is_truthy_trigger(full_qa_run):")
-        self.assertNotEqual(branch_start, -1, "H-25: _index must gate the trigger via _is_truthy_trigger")
+        self.assertNotEqual(branch_start, -1, "internal milestone: _index must gate the trigger via _is_truthy_trigger")
         end_marker = "snapshot = _snapshot_with_full_qa_payload(snapshot, payload)"
         branch_close = source.find(end_marker, branch_start) + len(end_marker)
-        self.assertGreater(branch_close, branch_start, "H-25: snapshot merge missing from trigger branch")
+        self.assertGreater(branch_close, branch_start, "internal milestone: snapshot merge missing from trigger branch")
         tail = source[branch_close:branch_close + 800]
-        self.assertIn("ui.navigate.to(f\"/?profile=", tail, "H-25 fix: trigger branch must redirect to a URL without full_qa_run")
-        self.assertIn("quote_plus(profile_for_redirect)", tail, "H-25 fix: redirect profile must be URL-escaped via quote_plus")
-        self.assertIn("return", tail, "H-25 fix: trigger branch must return early so the same render does not re-fire")
+        self.assertIn("ui.navigate.to(f\"/?profile=", tail, "internal milestone fix: trigger branch must redirect to a URL without full_qa_run")
+        self.assertIn("quote_plus(profile_for_redirect)", tail, "internal milestone fix: redirect profile must be URL-escaped via quote_plus")
+        self.assertIn("return", tail, "internal milestone fix: trigger branch must return early so the same render does not re-fire")
 
     def test_dashboard_truthy_trigger_helper_is_idempotent_against_loop(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main
 
         is_truthy = getattr(dashboard_main, "_is_truthy_trigger")
-        # Same URL re-hit after the H-25 redirect strips full_qa_run is the regression case.
+        # Same URL re-hit after the internal milestone redirect strips full_qa_run is the regression case.
         # _index's branch fires only when _is_truthy_trigger returns True for the empty value.
         self.assertTrue(is_truthy("1"))
         self.assertTrue(is_truthy("true"))
@@ -710,7 +710,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertFalse(is_truthy("false"))
 
     def test_full_qa_pass_dedup_token_blocks_reconnect_storm(self) -> None:
-        """H-28: a NiceGUI WebSocket reconnect storm re-hits the page handler with
+        """internal milestone: a NiceGUI WebSocket reconnect storm re-hits the page handler with
         the cached ?full_qa_run=1 URL faster than ui.navigate.to can land. The
         process-local dedup token must block all but the first fire."""
         from sg_preflight.dashboard import main as dashboard_main
@@ -733,7 +733,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(
             results,
             [True, False, False, False, False],
-            f"H-28 regression: reconnect storm produced {sum(results)} fires (expected 1). Got: {results}",
+            f"internal milestone regression: reconnect storm produced {sum(results)} fires (expected 1). Got: {results}",
         )
 
         # Different profile must NOT be blocked by G70's dedup.
@@ -750,7 +750,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(token, "full-qa-pass:G70:1716950000")
 
     def test_full_qa_pass_run_writes_exactly_one_activity_entry_per_click(self) -> None:
-        """H-25 regression: a single Run-click must produce exactly one full-qa-pass:run entry,
+        """internal milestone regression: a single Run-click must produce exactly one full-qa-pass:run entry,
         even if the page handler is re-entered without the trigger after the URL strip."""
         from sg_preflight.activity_log import (
             activity_log_path,
@@ -781,7 +781,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
             # First render carries the trigger (operator clicked Run).
             self.assertTrue(simulate_render("1"))
-            # H-25 fix redirects to /?profile=F70 so the trigger param is gone.
+            # internal milestone fix redirects to /?profile=F70 so the trigger param is gone.
             # NiceGUI re-renders / reconnects / poll-syncs hit the cleaned URL.
             self.assertFalse(simulate_render(""))
             self.assertFalse(simulate_render(""))
@@ -795,7 +795,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             self.assertEqual(
                 len(run_entries),
                 1,
-                f"H-25 regression: one click must produce exactly one entry, got {len(run_entries)}: {run_entries}",
+                f"internal milestone regression: one click must produce exactly one entry, got {len(run_entries)}: {run_entries}",
             )
 
     def test_dashboard_tooltips_are_enabled_by_default_with_env_opt_out(self) -> None:
@@ -1490,7 +1490,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["status"], "unavailable")
-        # H-34 Part A tightened the missing-workbook wording: it no longer
+        # internal milestone Part A tightened the missing-workbook wording: it no longer
         # echoes the full operator workspace path (better privacy posture per
         # `[[feedback-secrets-never-in-chat]]`). The finder reports a search-
         # count signal + raw-data status instead. Verify the full path is
