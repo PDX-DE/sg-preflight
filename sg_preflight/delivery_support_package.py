@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import zipfile
 
+from sg_preflight.io_utils import write_text as _write_text
 from sg_preflight.ticket_review import TicketReviewBundleResult, materialize_ticket_review_bundle
 
 
@@ -64,11 +65,6 @@ def _fresh_output_root(output_root: Path) -> Path:
         return output_root
     stamp = datetime.now().strftime("%H%M%S")
     return output_root.with_name(f"{output_root.name}-rerun-{stamp}")
-
-
-def _write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def _make_zip(package_root: Path) -> Path:

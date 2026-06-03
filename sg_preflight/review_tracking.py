@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.io_utils import write_text as _write_text
+
 _DEFAULT_DECISION_STATUS = "pending"
 _PENDING_DECISION_STATUSES = {"", "pending", "needs_more_investigation", "not_reviewed"}
 REVIEW_DECISION_STATUS_OPTIONS = (
@@ -44,11 +46,6 @@ def _slug(value: str) -> str:
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
-def _write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def _normalize_status(value: str) -> str:

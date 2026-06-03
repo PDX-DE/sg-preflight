@@ -12,6 +12,7 @@ from typing import Any
 from sg_preflight.bmw_process import country_variant_lightfx_expectations
 from sg_preflight.delivery_readiness import DeliveryReadinessEntry, build_delivery_readiness_board
 from sg_preflight.disabled_tests import CONFIG_RELATIVE_PATH, strip_lua_comments
+from sg_preflight.io_utils import read_text as _read_text
 
 
 EVIDENCE_ONLY_BANNER = (
@@ -182,13 +183,6 @@ class CountryVariantBoard:
 def _sort_numeric_text(value: str) -> tuple[int, str]:
     text = str(value)
     return (int(text), text) if text.isdigit() else (10**9, text)
-
-
-def _read_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        return path.read_text(encoding="utf-8", errors="replace")
 
 
 def _split_lua_args(text: str) -> tuple[str, ...]:

@@ -20,6 +20,7 @@ from sg_preflight.checker_evidence import (
     parse_scene_check_output,
     parse_unused_resources_output,
 )
+from sg_preflight.io_utils import write_text as _write_text
 from sg_preflight.profiles import RunProfile, list_run_profiles, resolve_source_repo_root
 from sg_preflight.services import (
     RunRequest,
@@ -857,11 +858,6 @@ def list_recent_action_records(workspace: Path | None = None, limit: int = 12) -
 
     records.sort(key=lambda item: item.created_at_utc, reverse=True)
     return records[:limit]
-
-
-def _write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def _artifact(label: str, path: Path) -> dict[str, str]:

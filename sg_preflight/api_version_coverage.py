@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from sg_preflight.delivery_readiness import build_delivery_readiness_board
+from sg_preflight.io_utils import read_text as _read_text
 from sg_preflight.profiles import resolve_source_repo_root
 
 
@@ -295,13 +296,6 @@ class ApiVersionCoverageBoard:
             "interface_family_entries": [entry.to_dict() for entry in self.interface_family_entries],
             "impact_scans": [scan.to_dict() for scan in self.impact_scans],
         }
-
-
-def _read_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        return path.read_text(encoding="utf-8", errors="replace")
 
 
 def _clean_yaml_value(value: str) -> str:

@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from sg_preflight.delivery_readiness import DeliveryReadinessEntry, build_delivery_readiness_board
+from sg_preflight.io_utils import read_text as _read_text
 
 
 CONFIG_RELATIVE_PATH = Path("export") / "tests" / "test_config.lua"
@@ -201,13 +202,6 @@ def extract_lua_test_calls(text: str) -> tuple[LuaTestCall, ...]:
             )
         )
     return tuple(calls)
-
-
-def _read_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        return path.read_text(encoding="utf-8", errors="replace")
 
 
 def _raw_call_count(text: str) -> int:
