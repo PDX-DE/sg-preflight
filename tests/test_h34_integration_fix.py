@@ -204,9 +204,12 @@ class IntegrationCoverageAuditTests(unittest.TestCase):
         self.assertIn("_copy_dashboard_link_to_clipboard(ui, url, key)", block)
         self.assertIn("def _copy_dashboard_link_to_clipboard", source)
         helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
-        helper_body = source[helper_idx:helper_idx + 1500]
+        helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", helper_idx)
+        self.assertNotEqual(helper_end, -1, "clipboard helper end marker not found")
+        helper_body = source[helper_idx:helper_end]
         self.assertNotIn("webbrowser.open", helper_body)
         self.assertIn("navigator.clipboard.writeText", helper_body)
+        self.assertIn("document.execCommand('copy')", helper_body)
         self.assertIn("Copied to clipboard:", helper_body)
 
     def test_h31_sparkline_renders_in_dashboard_risk_score_page(self) -> None:

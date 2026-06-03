@@ -66,6 +66,43 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(THEME_CHOICES, ["clean"])
         self.assertIsInstance(MANUAL_REVIEW_STATUSES, list)
 
+    def test_dashboard_header_exposes_grafiks_launch_toggle_and_warning(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('data-sgfx-mode-toggle="true"', source)
+        self.assertIn("data-sgfx-mode-toggle=grafiks", source)
+        self.assertIn("GRAFIKS_MODE_WARNING_TITLE", source)
+        self.assertIn("GRAFIKS_MODE_WARNING_BODY", source)
+        self.assertIn("DASHBOARD_DEBUG_ICON_ASSET", source)
+        self.assertIn("run_grafiks_mode(", source)
+
+    def test_clipboard_copy_uses_fallback_and_only_client_reports_success(self) -> None:
+        from sg_preflight.dashboard.main import _copy_dashboard_link_to_clipboard
+
+        class FakeUi:
+            def __init__(self) -> None:
+                self.javascript: list[str] = []
+                self.notifications: list[str] = []
+
+            def run_javascript(self, code: str) -> None:
+                self.javascript.append(code)
+
+            def notify(self, message: str, **_: object) -> None:
+                self.notifications.append(message)
+
+        ui = FakeUi()
+        _copy_dashboard_link_to_clipboard(ui, "http://127.0.0.1/example", "local link")
+
+        self.assertEqual(ui.notifications, [])
+        self.assertEqual(len(ui.javascript), 1)
+        script = ui.javascript[0]
+        self.assertIn("navigator.clipboard.writeText", script)
+        self.assertIn("document.execCommand('copy')", script)
+        self.assertIn("Copied to clipboard:", script)
+        self.assertIn("Couldn't copy automatically. Link:", script)
+
     def test_full_qa_bulk_ack_drafts_classify_high_risk_missing_candidate(self) -> None:
         from sg_preflight.dashboard.main import _full_qa_bulk_ack_drafts
 
@@ -573,7 +610,9 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("sgfx-jira-ticket-key", block, "H-29 styling class must remain")
         self.assertIn("def _copy_dashboard_link_to_clipboard", source)
         helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
-        helper_block = source[helper_idx:helper_idx + 1500]
+        helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", helper_idx)
+        self.assertNotEqual(helper_end, -1, "Jira helper end marker not found")
+        helper_block = source[helper_idx:helper_end]
         self.assertNotIn("webbrowser.open", helper_block, "Jira helper must not auto-open a browser")
         self.assertIn("navigator.clipboard.writeText", helper_block, "Jira helper must copy URL to clipboard")
         self.assertIn("Copied to clipboard:", helper_block, "notify wording must mention clipboard")

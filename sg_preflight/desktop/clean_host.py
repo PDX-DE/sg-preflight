@@ -46,6 +46,7 @@ class CleanDashboardWindow(QMainWindow):
 
         try:
             try:
+                from PySide6.QtWebEngineCore import QWebEngineSettings
                 from PySide6.QtWebEngineWidgets import QWebEngineView
             except ImportError as exc:
                 raise RuntimeError("Clean mode requires the PySide6 QtWebEngineWidgets runtime.") from exc
@@ -76,6 +77,9 @@ class CleanDashboardWindow(QMainWindow):
 
             self.web_view = QWebEngineView(central)
             self.web_view.setProperty("sgfxMode", "clean")
+            web_settings = self.web_view.settings()
+            web_settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+            web_settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanPaste, True)
             layout.addWidget(self.web_view, stretch=1)
             self.setCentralWidget(central)
 

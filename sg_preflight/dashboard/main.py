@@ -140,6 +140,8 @@ GRAFIKS_SHELL_EXE_NAME = "sgfx_cine_cinematic_shell.exe"
 GRAFIKS_CXX_BUILD_DIR = Path("cpp") / "build" / "vs2022-ramses-28.16" / "Release"
 GRAFIKS_DEFAULT_BMW_CARS_ROOT = Path(r"C:\3D Car git\digital-3d-car-models\cars\BMW")
 GRAFIKS_MODE_WIP_HINT = "Grafiks mode is WIP - use Clean for now unless the C++ cinematic shell is installed."
+GRAFIKS_MODE_WARNING_TITLE = "WARNING - Grafiks mode is still a work in progress."
+GRAFIKS_MODE_WARNING_BODY = "Expect instability and bugs. Thanks for your patience!"
 CANONICAL_SOURCE_REPO_ROOT = Path(r"C:\repositories\trunk")
 DASHBOARD_GUARDRAILS = (
     "Manual review remains required.",
@@ -6381,16 +6383,70 @@ def _copy_dashboard_link_to_clipboard(ui: Any, url: str, label: str) -> None:
         return
     try:
         ui.run_javascript(
-            "(async () => { try { "
-            f"await navigator.clipboard.writeText({json.dumps(clean_url)}); "
-            "} catch (err) { console.warn('clipboard.writeText failed', err); } })();"
+            """
+            (async () => {
+              const text = __SGFX_COPY_TEXT__;
+              const label = __SGFX_COPY_LABEL__;
+              const notify = (message, color) => {
+                if (window.Quasar && window.Quasar.Notify && typeof window.Quasar.Notify.create === 'function') {
+                  window.Quasar.Notify.create({ message, position: 'bottom', color, timeout: 4500 });
+                } else {
+                  console.log(message);
+                }
+              };
+              const fallbackCopy = () => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.left = '-9999px';
+                textarea.style.top = '0';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                let copied = false;
+                try {
+                  copied = document.execCommand('copy');
+                } finally {
+                  document.body.removeChild(textarea);
+                }
+                return copied;
+              };
+              let copied = false;
+              let lastError = null;
+              try {
+                if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                  await navigator.clipboard.writeText(text);
+                  copied = true;
+                }
+              } catch (err) {
+                lastError = err;
+                console.warn('navigator.clipboard.writeText failed', err);
+              }
+              if (!copied) {
+                try {
+                  copied = fallbackCopy();
+                } catch (err) {
+                  lastError = err;
+                  console.warn('document.execCommand copy fallback failed', err);
+                }
+              }
+              if (copied) {
+                notify(`Copied to clipboard: ${label}`, 'positive');
+              } else {
+                console.warn('clipboard copy failed', lastError);
+                notify(`Couldn't copy automatically. Link: ${text}`, 'warning');
+              }
+            })();
+            """.replace("__SGFX_COPY_TEXT__", json.dumps(clean_url)).replace(
+                "__SGFX_COPY_LABEL__", json.dumps(clean_label)
+            )
         )
     except Exception:
-        pass
-    try:
-        ui.notify(f"Copied to clipboard: {clean_label}", position="bottom")
-    except Exception:
-        pass
+        try:
+            ui.notify(f"Couldn't start clipboard copy. Link: {clean_url}", position="bottom")
+        except Exception:
+            pass
 
 
 def _render_jira_profile_tickets_card(
@@ -8673,6 +8729,14 @@ def _render_dashboard(
             .sgfx-doc-link { color: var(--sgfx-accent) !important; font-size: 13px; text-decoration: none; border-bottom: 1px solid rgba(78, 201, 176, 0.45); }
             .sgfx-summary { color: var(--sgfx-fg); font-size: 14px; line-height: 1.55; }
             .sgfx-warning { border: 1px solid var(--sgfx-warning-border); background: var(--sgfx-warning-bg); color: var(--sgfx-warning-fg); border-radius: 6px; padding: 9px 12px; }
+            .sgfx-mode-toggle { gap: 4px; padding: 3px; border: 1px solid var(--sgfx-border); border-radius: 8px; background: var(--sgfx-bg-elev); }
+            .sgfx-mode-button { min-height: 30px; border-radius: 6px; color: var(--sgfx-fg) !important; }
+            .sgfx-mode-button-active { background: var(--sgfx-accent-soft) !important; color: var(--sgfx-accent) !important; }
+            .sgfx-mode-warning-slot { margin-top: 12px; }
+            .sgfx-grafiks-warning { width: 100%; gap: 12px; align-items: center; border: 1px solid var(--sgfx-warning-border); background: var(--sgfx-warning-bg); color: var(--sgfx-warning-fg); border-radius: 8px; padding: 12px 14px; }
+            .sgfx-grafiks-warning img { width: 64px; height: 64px; object-fit: contain; flex: 0 0 auto; }
+            .sgfx-grafiks-warning-title { color: var(--sgfx-warning-fg); font-size: 15px; font-weight: 700; }
+            .sgfx-grafiks-warning-body { color: var(--sgfx-fg); font-size: 13px; line-height: 1.45; }
             .sgfx-shortcut-feedback { min-height: 22px; color: var(--sgfx-fg-muted); font-size: 13px; padding: 2px 0; }
             .sgfx-profile-select { min-width: 144px; }
             .sgfx-status { text-transform: none; }
@@ -8770,7 +8834,11 @@ def _render_dashboard(
             """
         )
         first_page_id = str(snapshot["navigation"][0]["id"])
-        state: dict[str, Any] = {"snapshot": snapshot, "active_page_id": first_page_id}
+        state: dict[str, Any] = {
+            "snapshot": snapshot,
+            "active_page_id": first_page_id,
+            "dashboard_mode": "clean",
+        }
         content_holder: dict[str, Any] = {}
         controls: dict[str, Any] = {}
         feedback_context = _dashboard_feedback_context(workspace)
@@ -8780,6 +8848,55 @@ def _render_dashboard(
 
         def _current_theme() -> str:
             return str(state["snapshot"].get("theme", "clean"))
+
+        def _render_mode_warning(detail: str = "") -> None:
+            holder = controls.get("mode_warning")
+            if holder is None:
+                return
+            holder.clear()
+            with holder:
+                with ui.row().classes("sgfx-grafiks-warning").props('data-sgfx-grafiks-warning="true"'):
+                    ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_DEBUG_ICON_ASSET}")
+                    with ui.column().classes("gap-1"):
+                        ui.label(GRAFIKS_MODE_WARNING_TITLE).classes("sgfx-grafiks-warning-title")
+                        ui.label(GRAFIKS_MODE_WARNING_BODY).classes("sgfx-grafiks-warning-body")
+                        for line in [part.strip() for part in detail.splitlines() if part.strip()]:
+                            ui.label(line).classes("sgfx-grafiks-warning-body")
+
+        def _clear_mode_warning() -> None:
+            holder = controls.get("mode_warning")
+            if holder is not None:
+                holder.clear()
+
+        def _set_mode_button_state(mode: str) -> None:
+            state["dashboard_mode"] = mode
+            for key, value in {"mode_clean": "clean", "mode_grafiks": "grafiks"}.items():
+                button = controls.get(key)
+                if button is None:
+                    continue
+                if value == mode:
+                    button.classes("sgfx-mode-button-active")
+                else:
+                    button.classes(remove="sgfx-mode-button-active")
+
+        def _select_clean_mode() -> None:
+            _set_mode_button_state("clean")
+            _clear_mode_warning()
+
+        def _select_grafiks_mode() -> None:
+            _set_mode_button_state("grafiks")
+            shell_path = _resolve_grafiks_shell_exe(workspace)
+            if shell_path is None:
+                _render_mode_warning(_grafiks_not_installed_message(workspace))
+                return
+            _render_mode_warning(f"Launching Grafiks cinematic shell: {shell_path}")
+            exit_code = run_grafiks_mode(
+                profile_id=str(state["snapshot"].get("profile_id", "")),
+                workspace=workspace,
+                bmw_root=bmw_root,
+            )
+            if exit_code:
+                _render_mode_warning(f"Grafiks cinematic shell exited early with code {exit_code}.")
 
         def _header_text() -> str:
             active = state["snapshot"]
@@ -9291,6 +9408,16 @@ def _render_dashboard(
                                 str(registry.get("summary", "")) if isinstance(registry, dict) else ""
                             ).classes("sgfx-subtitle")
                     with ui.row().classes("items-center"):
+                        with ui.row().classes("sgfx-mode-toggle items-center").props('data-sgfx-mode-toggle="true"'):
+                            controls["mode_clean"] = ui.button(
+                                "Clean",
+                                on_click=_select_clean_mode,
+                            ).props("flat dense no-caps data-sgfx-mode-toggle=clean").classes("sgfx-mode-button")
+                            controls["mode_grafiks"] = ui.button(
+                                "Grafiks",
+                                on_click=_select_grafiks_mode,
+                            ).props("flat dense no-caps data-sgfx-mode-toggle=grafiks").classes("sgfx-mode-button")
+                        _set_mode_button_state("clean")
                         ui.label("F1 Help").classes("sgfx-shortcut")
                         ui.label("F12 Diagnostic").classes("sgfx-shortcut")
                         ui.label("Esc Quit").classes("sgfx-shortcut")
@@ -9331,6 +9458,7 @@ def _render_dashboard(
                             ),
                             "Re-read local evidence for the current profile and page.",
                         )
+                controls["mode_warning"] = ui.column().classes("sgfx-mode-warning-slot full-width")
                 content = ui.column().classes("sgfx-content")
                 content_holder["content"] = content
                 _render_current_page()

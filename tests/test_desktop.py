@@ -72,6 +72,9 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         app_source = (ROOT / "sg_preflight" / "desktop" / "app.py").read_text(encoding="utf-8")
 
         self.assertIn("QWebEngineView", host_source)
+        self.assertIn("QWebEngineSettings", host_source)
+        self.assertIn("JavascriptCanAccessClipboard", host_source)
+        self.assertIn("JavascriptCanPaste", host_source)
         self.assertIn("--no-native", host_source)
         self.assertIn("stdout=subprocess.DEVNULL", host_source)
         self.assertIn("hidden_subprocess_kwargs", host_source)

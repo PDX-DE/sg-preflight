@@ -6,8 +6,8 @@ from pathlib import Path
 
 
 class JiraClipboardOnlyTests(unittest.TestCase):
-    def test_helper_copies_ticket_url_and_notifies_without_browser_open(self) -> None:
-        """Jira ticket clicks are copy-only: no browser handoff, visible toast."""
+    def test_helper_copies_ticket_url_without_browser_open(self) -> None:
+        """Jira ticket clicks are copy-only; the browser reports copy success."""
         from sg_preflight.dashboard import main as dashboard_main
 
         notifies: list[str] = []
@@ -28,10 +28,12 @@ class JiraClipboardOnlyTests(unittest.TestCase):
 
         self.assertEqual(len(js_calls), 1)
         self.assertIn("navigator.clipboard.writeText", js_calls[0])
+        self.assertIn("document.execCommand('copy')", js_calls[0])
         self.assertIn("https://jira.cc.bmwgroup.net/browse/IDCEVODEV-1009244", js_calls[0])
         self.assertIn("IDCEVODEV-1009244", js_calls[0])
-        self.assertEqual(len(notifies), 1)
-        self.assertEqual(notifies[0], "Copied to clipboard: IDCEVODEV-1009244")
+        self.assertIn("Copied to clipboard: ${label}", js_calls[0])
+        self.assertIn("Couldn't copy automatically. Link:", js_calls[0])
+        self.assertEqual(notifies, [])
 
     def test_helper_still_notifies_if_clipboard_javascript_fails(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main
@@ -47,7 +49,7 @@ class JiraClipboardOnlyTests(unittest.TestCase):
 
         dashboard_main._copy_dashboard_link_to_clipboard(FakeUi(), "https://example/browse/X-1", "X-1")
         self.assertEqual(len(notifies), 1)
-        self.assertEqual(notifies[0], "Copied to clipboard: X-1")
+        self.assertEqual(notifies[0], "Couldn't start clipboard copy. Link: https://example/browse/X-1")
 
     def test_dashboard_source_has_no_jira_webbrowser_open_path(self) -> None:
         source = (
@@ -56,10 +58,14 @@ class JiraClipboardOnlyTests(unittest.TestCase):
         self.assertNotIn("import webbrowser", source)
         jira_helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
         self.assertNotEqual(jira_helper_idx, -1, "clipboard helper not found")
-        helper_body = source[jira_helper_idx:jira_helper_idx + 1200]
+        helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", jira_helper_idx)
+        self.assertNotEqual(helper_end, -1, "clipboard helper end marker not found")
+        helper_body = source[jira_helper_idx:helper_end]
         self.assertNotIn("webbrowser.open", helper_body)
         self.assertIn("navigator.clipboard.writeText", helper_body)
+        self.assertIn("document.execCommand('copy')", helper_body)
         self.assertIn("Copied to clipboard:", helper_body)
+        self.assertIn("Couldn't copy automatically. Link:", helper_body)
 
 
 class TeamsClipboardFallbackTests(unittest.TestCase):
