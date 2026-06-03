@@ -26,7 +26,10 @@ JIRA_CREDENTIALS_FILENAME = "jira_pat.json"
 DEFAULT_JIRA_URL = "https://jira.cc.bmwgroup.net"
 JIRA_PROFILE_TICKET_CACHE_SECONDS = 60.0
 JIRA_PROFILE_TICKET_MAX_RESULTS = 8
+JIRA_MY_TICKETS_CACHE_SECONDS = 60.0
+JIRA_MY_TICKETS_MAX_RESULTS = 12
 _JIRA_PROFILE_TICKET_CACHE: dict[tuple[str, str, str, int], tuple[float, dict[str, Any]]] = {}
+_JIRA_MY_TICKETS_CACHE: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
 
 
 class JiraPostError(RuntimeError):
@@ -196,6 +199,10 @@ def clear_jira_profile_ticket_cache() -> None:
     _JIRA_PROFILE_TICKET_CACHE.clear()
 
 
+def clear_jira_my_tickets_cache() -> None:
+    _JIRA_MY_TICKETS_CACHE.clear()
+
+
 def build_profile_ticket_jql(profile_id: str) -> str:
     profile = _require_profile_id(profile_id)
     profile_lower = profile.lower()
@@ -209,6 +216,10 @@ def build_profile_ticket_jql(profile_id: str) -> str:
         f"(summary ~ {needle} OR description ~ {needle} OR labels in ({labels})) "
         "ORDER BY updated DESC"
     )
+
+
+def build_my_unresolved_ticket_jql() -> str:
+    return "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
 
 
 def search_jira_profile_tickets(
@@ -297,6 +308,97 @@ def search_jira_profile_tickets(
     if transport is None and cache_seconds > 0:
         expires_at = now + float(cache_seconds)
         _JIRA_PROFILE_TICKET_CACHE[cache_key] = (expires_at, _copy_profile_ticket_payload(payload))
+        payload["cache_expires_in_seconds"] = int(cache_seconds)
+    return payload
+
+
+def search_my_unresolved_tickets(
+    *,
+    api_version: str = DEFAULT_API_VERSION,
+    max_results: int = JIRA_MY_TICKETS_MAX_RESULTS,
+    cache_seconds: float = JIRA_MY_TICKETS_CACHE_SECONDS,
+    transport: Transport | None = None,
+    timeout_seconds: int = 30,
+) -> dict[str, Any]:
+    version = _normalize_api_version(api_version)
+    result_limit = max(1, min(int(max_results or JIRA_MY_TICKETS_MAX_RESULTS), 50))
+    jql = build_my_unresolved_ticket_jql()
+    try:
+        credentials = load_jira_credentials()
+    except ConfigError as exc:
+        return {
+            "status": "missing",
+            "jql": jql,
+            "ticket_count": 0,
+            "tickets": [],
+            "summary": "My Tickets unavailable. Register operator-local Jira credentials before using this page.",
+            "credential": {"status": "missing", "remediation": str(exc)},
+            "settings_hint": "Run sgfx-preflight.exe jira register from the operator machine.",
+            "cache_status": "skipped",
+            "read_only": True,
+            "is_approval": False,
+        }
+
+    cache_key = (str(credentials.get("jira_url", "")), version, result_limit)
+    now = monotonic()
+    if transport is None and cache_seconds > 0:
+        cached = _JIRA_MY_TICKETS_CACHE.get(cache_key)
+        if cached and now < cached[0]:
+            payload = _copy_profile_ticket_payload(cached[1])
+            payload["cache_status"] = "hit"
+            payload["cache_expires_in_seconds"] = max(0, int(cached[0] - now))
+            return payload
+
+    endpoint = _search_endpoint(
+        credentials["jira_url"],
+        version,
+        jql,
+        result_limit,
+        fields="summary,status,priority,updated,project,assignee",
+    )
+    try:
+        response = _request_json(
+            "GET",
+            endpoint,
+            credentials["pat"],
+            transport=transport,
+            timeout_seconds=timeout_seconds,
+        )
+    except JiraPostError as exc:
+        payload = {
+            "status": "failed",
+            "jql": jql,
+            "ticket_count": 0,
+            "tickets": [],
+            "summary": f"My Tickets unavailable: {exc}",
+            "credential": redact_jira_credentials(credentials),
+            "settings_hint": "Check Jira connection from the local setup page or run sgfx-preflight.exe jira status.",
+            "cache_status": "miss",
+            "read_only": True,
+            "is_approval": False,
+        }
+    else:
+        tickets = _my_ticket_rows(response.get("response"), credentials["jira_url"])
+        payload = {
+            "status": "available",
+            "jql": jql,
+            "ticket_count": len(tickets),
+            "tickets": tickets,
+            "summary": (
+                f"{len(tickets)} assigned unresolved Jira ticket(s) loaded."
+                if tickets
+                else "No assigned unresolved Jira tickets found."
+            ),
+            "credential": redact_jira_credentials(credentials),
+            "http_status": response.get("http_status", 0),
+            "cache_status": "miss",
+            "read_only": True,
+            "is_approval": False,
+        }
+
+    if transport is None and cache_seconds > 0:
+        expires_at = now + float(cache_seconds)
+        _JIRA_MY_TICKETS_CACHE[cache_key] = (expires_at, _copy_profile_ticket_payload(payload))
         payload["cache_expires_in_seconds"] = int(cache_seconds)
     return payload
 
@@ -813,12 +915,19 @@ def _comment_endpoint(base_url: str, issue_key: str, api_version: str) -> str:
     return f"{_issue_endpoint(base_url, issue_key, api_version)}/comment"
 
 
-def _search_endpoint(base_url: str, api_version: str, jql: str, max_results: int) -> str:
+def _search_endpoint(
+    base_url: str,
+    api_version: str,
+    jql: str,
+    max_results: int,
+    *,
+    fields: str = "summary,status,labels,updated",
+) -> str:
     query = urlencode(
         {
             "jql": jql,
             "maxResults": str(max_results),
-            "fields": "summary,status,labels,updated",
+            "fields": fields,
         }
     )
     return f"{_api_base(base_url, api_version)}/search?{query}"
@@ -1067,6 +1176,40 @@ def _profile_ticket_rows(response: Any, base_url: str) -> list[dict[str, Any]]:
                 "summary": _preview(str(fields.get("summary", "") or ""), limit=120),
                 "status": str(status.get("name", "") or "unknown"),
                 "labels": [str(label) for label in labels if str(label).strip()],
+                "updated": str(fields.get("updated", "") or ""),
+                "url": f"{browse_base}/browse/{quote(key, safe='')}",
+            }
+        )
+    return rows
+
+
+def _my_ticket_rows(response: Any, base_url: str) -> list[dict[str, Any]]:
+    if not isinstance(response, dict):
+        return []
+    issues = response.get("issues", [])
+    if not isinstance(issues, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    browse_base = str(base_url or DEFAULT_JIRA_URL).rstrip("/")
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        key = str(issue.get("key", "") or "").strip().upper()
+        if not key:
+            continue
+        fields = issue.get("fields", {}) if isinstance(issue.get("fields"), dict) else {}
+        status = fields.get("status", {}) if isinstance(fields.get("status"), dict) else {}
+        priority = fields.get("priority", {}) if isinstance(fields.get("priority"), dict) else {}
+        project = fields.get("project", {}) if isinstance(fields.get("project"), dict) else {}
+        assignee = fields.get("assignee", {}) if isinstance(fields.get("assignee"), dict) else {}
+        rows.append(
+            {
+                "key": key,
+                "summary": _preview(str(fields.get("summary", "") or ""), limit=140),
+                "status": str(status.get("name", "") or "unknown"),
+                "priority": str(priority.get("name", "") or ""),
+                "project": str(project.get("key", "") or project.get("name", "") or ""),
+                "assignee": str(assignee.get("displayName", "") or assignee.get("name", "") or ""),
                 "updated": str(fields.get("updated", "") or ""),
                 "url": f"{browse_base}/browse/{quote(key, safe='')}",
             }

@@ -196,7 +196,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_nineteen_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_twenty_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -208,6 +208,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             [
                 "full-qa-pass",
                 "batch-full-qa-pass",
+                "my-tickets",
                 "delivery-checklist",
                 "delivery-readiness",
                 "disabled-tests",
@@ -241,6 +242,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             [
                 {"id": "full-qa-pass", "label": "Full QA Pass"},
                 {"id": "batch-full-qa-pass", "label": "Batch Full QA Pass"},
+                {"id": "my-tickets", "label": "My Tickets"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
                 {"id": "delivery-readiness", "label": "Delivery Readiness"},
                 {"id": "disabled-tests", "label": "Disabled Tests"},
@@ -501,7 +503,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 19)
+                self.assertEqual(len(snapshot["pages"]), 20)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -616,6 +618,40 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn("webbrowser.open", helper_block, "Jira helper must not auto-open a browser")
         self.assertIn("navigator.clipboard.writeText", helper_block, "Jira helper must copy URL to clipboard")
         self.assertIn("Copied to clipboard:", helper_block, "notify wording must mention clipboard")
+
+    def test_my_tickets_page_is_read_only_with_editable_copy_drafts(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('("my-tickets", "My Tickets")', source)
+        self.assertIn("_my_tickets_page", source)
+        self.assertIn("_render_my_tickets_panel", source)
+        self.assertIn("search_my_unresolved_tickets", source)
+        from sg_preflight.jira_client import build_my_unresolved_ticket_jql
+
+        self.assertEqual(
+            build_my_unresolved_ticket_jql(),
+            "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
+        )
+        self.assertIn('data-sgfx-my-tickets-page="true"', source)
+        self.assertIn("Editable status draft", source)
+        self.assertIn("Copy status draft", source)
+        self.assertIn("No Jira post is sent", source)
+        self.assertNotIn("auto_confirm=True", source[source.find("def _render_my_tickets_panel"):source.find("def _render_batch_full_qa_pass_panel")])
+
+    def test_dashboard_snapshot_contains_my_tickets_page_without_jira_query(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
+
+        navigation = [item["id"] for item in snapshot["navigation"]]
+        self.assertIn("my-tickets", navigation)
+        pages = {page["id"]: page for page in snapshot["pages"]}
+        self.assertIn("my-tickets", pages)
+        self.assertEqual(pages["my-tickets"]["status"], "read_only")
+        self.assertIn("operator-local credentials", pages["my-tickets"]["summary"])
 
     def test_dashboard_doc_links_are_copy_only(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1183,7 +1219,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 19)
+        self.assertEqual(len(snapshot["pages"]), 20)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -1197,7 +1233,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 19)
+        self.assertEqual(len(snapshot["pages"]), 20)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")

@@ -12,7 +12,9 @@ from sg_preflight.jira_client import (
     JIRA_POSTING_BANNER,
     JiraPostError,
     attach_jira_file_action,
+    build_my_unresolved_ticket_jql,
     build_profile_ticket_jql,
+    clear_jira_my_tickets_cache,
     clear_jira_profile_ticket_cache,
     extract_numbered_section_text,
     jira_status,
@@ -20,6 +22,7 @@ from sg_preflight.jira_client import (
     post_jira_comment,
     post_jira_comment_action,
     search_jira_profile_tickets,
+    search_my_unresolved_tickets,
     update_jira_issue_action,
     write_jira_credentials,
 )
@@ -335,6 +338,63 @@ Other text
         self.assertIn('summary ~ "G65"', jql)
         self.assertIn('description ~ "G65"', jql)
         self.assertIn('labels in ("G65", "g65")', jql)
+
+    def test_my_unresolved_ticket_jql_matches_assignment_scope(self) -> None:
+        self.assertEqual(
+            build_my_unresolved_ticket_jql(),
+            "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
+        )
+
+    def test_my_unresolved_ticket_search_is_read_only_and_redacts_pat(self) -> None:
+        clear_jira_my_tickets_cache()
+        calls: list[tuple[str, str]] = []
+
+        def transport(request, timeout=30):
+            calls.append((request.get_method(), request.full_url))
+            return _FakeResponse(
+                200,
+                json.dumps(
+                    {
+                        "issues": [
+                            {
+                                "key": "IDCEVODEV-1000002",
+                                "fields": {
+                                    "summary": "G70 evidence package follow-up",
+                                    "status": {"name": "In Progress"},
+                                    "priority": {"name": "High"},
+                                    "project": {"key": "IDCEVODEV"},
+                                    "assignee": {"displayName": "Operator"},
+                                    "updated": "2026-06-03T10:00:00.000+0200",
+                                },
+                            }
+                        ]
+                    }
+                ).encode("utf-8"),
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            (state_dir / "jira_pat.json").write_text(
+                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                result = search_my_unresolved_tickets(max_results=3, transport=transport)
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["ticket_count"], 1)
+        self.assertTrue(result["read_only"])
+        self.assertFalse(result["is_approval"])
+        self.assertEqual(result["tickets"][0]["key"], "IDCEVODEV-1000002")
+        self.assertEqual(result["tickets"][0]["priority"], "High")
+        self.assertEqual(result["tickets"][0]["project"], "IDCEVODEV")
+        self.assertEqual(result["tickets"][0]["assignee"], "Operator")
+        self.assertEqual(result["tickets"][0]["url"], "https://jira.example/browse/IDCEVODEV-1000002")
+        self.assertEqual(calls[0][0], "GET")
+        self.assertIn("assignee+%3D+currentUser%28%29", calls[0][1])
+        self.assertIn("resolution+%3D+Unresolved", calls[0][1])
+        self.assertIn("fields=summary%2Cstatus%2Cpriority%2Cupdated%2Cproject%2Cassignee", calls[0][1])
+        self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
 
     def test_post_comment_action_previews_with_gets_before_auto_confirm_posts(self) -> None:
         calls: list[tuple[str, str, object]] = []

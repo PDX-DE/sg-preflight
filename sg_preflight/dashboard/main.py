@@ -32,7 +32,7 @@ from sg_preflight.bmw_pipeline_auto_fix import (
 )
 from sg_preflight.bmw_process import workflow_contracts
 from sg_preflight.cross_car_comparison import build_cross_car_comparison
-from sg_preflight.daily_digest import build_latest_daily_digest
+from sg_preflight.daily_digest import build_latest_daily_digest, render_daily_digest_text
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.delivery_readiness import (
     STATUS_DELIVERED,
@@ -71,7 +71,13 @@ from sg_preflight.dependency_onboarding import (
 )
 from sg_preflight.full_qa_pass import build_full_qa_pass
 from sg_preflight.full_qa_history import record_full_qa_run_history
-from sg_preflight.jira_client import DEFAULT_JIRA_URL, load_jira_credentials, search_jira_profile_tickets
+from sg_preflight.jira_client import (
+    DEFAULT_JIRA_URL,
+    build_my_unresolved_ticket_jql,
+    load_jira_credentials,
+    search_jira_profile_tickets,
+    search_my_unresolved_tickets,
+)
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
     apply_manual_review_suggestions,
@@ -152,6 +158,7 @@ DASHBOARD_GUARDRAILS = (
 DASHBOARD_NAVIGATION = (
     ("full-qa-pass", "Full QA Pass"),
     ("batch-full-qa-pass", "Batch Full QA Pass"),
+    ("my-tickets", "My Tickets"),
     ("delivery-checklist", "Delivery Checklist"),
     ("delivery-readiness", "Delivery Readiness"),
     ("disabled-tests", "Disabled Tests"),
@@ -1994,6 +2001,31 @@ def _batch_full_qa_pass_page(profile_id: str, workspace: Path) -> dict[str, Any]
     }
 
 
+def _my_tickets_page(profile_id: str, workspace: Path) -> dict[str, Any]:
+    jql = build_my_unresolved_ticket_jql()
+    payload = {
+        "schema_version": 1,
+        "profile_id": profile_id,
+        "workspace": str(workspace),
+        "status": "read_only",
+        "summary": "Open this page to load your assigned unresolved Jira tickets from operator-local credentials.",
+        "jql": jql,
+        "draft_source": "local SGFX review evidence; no Jira post is sent",
+        "read_only": True,
+        "is_approval": False,
+    }
+    return {
+        "id": "my-tickets",
+        "title": "My Tickets",
+        "tagline": "Read your assigned unresolved Jira tickets and prepare review-only status drafts.",
+        "status": "read_only",
+        "data_available": False,
+        "summary": str(payload["summary"]),
+        "items": [],
+        "payload": payload,
+    }
+
+
 _TRUTHY_TRIGGERS = frozenset({"1", "true", "yes", "on"})
 
 
@@ -3013,6 +3045,7 @@ def build_dashboard_snapshot(
         "pages": [
             _full_qa_pass_page(resolved_profile_id, root, bmw_root=bmw_root),
             _batch_full_qa_pass_page(resolved_profile_id, root),
+            _my_tickets_page(resolved_profile_id, root),
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _delivery_readiness_page(root, bmw_root=bmw_root),
             _disabled_tests_page(root, bmw_root=bmw_root),
@@ -6372,6 +6405,83 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                 )
 
 
+def _copy_dashboard_text_to_clipboard(ui: Any, text: str, label: str) -> None:
+    clean_text = str(text or "").strip()
+    clean_label = str(label or "text").strip()
+    if not clean_text:
+        try:
+            ui.notify(f"No text available for {clean_label}.", position="bottom")
+        except Exception:
+            pass
+        return
+    try:
+        ui.run_javascript(
+            """
+            (async () => {
+              const text = __SGFX_COPY_TEXT__;
+              const label = __SGFX_COPY_LABEL__;
+              const notify = (message, color) => {
+                if (window.Quasar && window.Quasar.Notify && typeof window.Quasar.Notify.create === 'function') {
+                  window.Quasar.Notify.create({ message, position: 'bottom', color, timeout: 4500 });
+                } else {
+                  console.log(message);
+                }
+              };
+              const fallbackCopy = () => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.left = '-9999px';
+                textarea.style.top = '0';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                let copied = false;
+                try {
+                  copied = document.execCommand('copy');
+                } finally {
+                  document.body.removeChild(textarea);
+                }
+                return copied;
+              };
+              let copied = false;
+              let lastError = null;
+              try {
+                if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                  await navigator.clipboard.writeText(text);
+                  copied = true;
+                }
+              } catch (err) {
+                lastError = err;
+                console.warn('navigator.clipboard.writeText failed', err);
+              }
+              if (!copied) {
+                try {
+                  copied = fallbackCopy();
+                } catch (err) {
+                  lastError = err;
+                  console.warn('document.execCommand copy fallback failed', err);
+                }
+              }
+              if (copied) {
+                notify(`Copied to clipboard: ${label}`, 'positive');
+              } else {
+                console.warn('clipboard copy failed', lastError);
+                notify(`Couldn't copy automatically. Text: ${text}`, 'warning');
+              }
+            })();
+            """.replace("__SGFX_COPY_TEXT__", json.dumps(clean_text)).replace(
+                "__SGFX_COPY_LABEL__", json.dumps(clean_label)
+            )
+        )
+    except Exception:
+        try:
+            ui.notify(f"Couldn't start clipboard copy. Text: {clean_text}", position="bottom")
+        except Exception:
+            pass
+
+
 def _copy_dashboard_link_to_clipboard(ui: Any, url: str, label: str) -> None:
     clean_url = str(url or "").strip()
     clean_label = str(label or clean_url or "link").strip()
@@ -6509,6 +6619,137 @@ def _render_jira_profile_tickets_card(
                 )
         else:
             ui.label("No open profile-matched Jira tickets were returned.").classes("sgfx-muted")
+
+
+def _my_ticket_status_draft(ticket: dict[str, Any], workspace: Path) -> str:
+    key = str(ticket.get("key", "") or "").strip().upper()
+    summary = str(ticket.get("summary", "") or "").strip()
+    status = str(ticket.get("status", "") or "unknown").strip()
+    priority = str(ticket.get("priority", "") or "").strip()
+    headline = f"Status update draft for {key}"
+    if summary:
+        headline += f" - {summary}"
+    meta = [f"Current Jira status: {status}"]
+    if priority:
+        meta.append(f"Priority: {priority}")
+    try:
+        digest = build_latest_daily_digest(ticket_id=key, workspace=workspace)
+    except Exception as exc:  # noqa: BLE001
+        return (
+            f"{headline}\n\n"
+            f"{'; '.join(meta)}.\n\n"
+            "SGFX could not read the local review evidence for this ticket yet. "
+            f"Local evidence read failed with: {exc}\n\n"
+            "Next step: build or refresh the local review package, then review the evidence before posting. "
+            "Manual review remains required."
+        )
+    if bool(digest.get("data_available", False)):
+        digest_text = render_daily_digest_text(digest).strip()
+        return (
+            f"{headline}\n\n"
+            f"{'; '.join(meta)}.\n\n"
+            f"{digest_text}\n\n"
+            "Operator note: review and edit this draft before copying it to Jira. "
+            "Manual review remains required; this is not an approval."
+        )
+    setup_hint = str(digest.get("setup_hint", "") or "").strip()
+    if not setup_hint:
+        setup_hint = f"sgfx-preflight.exe ticket-review {key} --profile <profile> --workspace {workspace} --json"
+    return (
+        f"{headline}\n\n"
+        f"{'; '.join(meta)}.\n\n"
+        "SGFX checked the local review evidence for this ticket and no review package is available in this workspace yet. "
+        "No Jira post is sent.\n\n"
+        f"Next step: {setup_hint}\n\n"
+        "After the package is built, refresh My Tickets and edit this draft from the loaded evidence before copying it."
+    )
+
+
+def _render_my_tickets_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "my-tickets")
+    try:
+        payload = search_my_unresolved_tickets(max_results=12, timeout_seconds=8)
+    except Exception as exc:  # noqa: BLE001
+        payload = {
+            "status": "failed",
+            "ticket_count": 0,
+            "tickets": [],
+            "summary": f"My Tickets unavailable: {exc}",
+            "settings_hint": "Check local Jira setup before retrying.",
+            "read_only": True,
+            "is_approval": False,
+            "jql": build_my_unresolved_ticket_jql(),
+        }
+    status = str(payload.get("status", "unknown"))
+    tickets = [ticket for ticket in payload.get("tickets", []) if isinstance(ticket, dict)]
+    with ui.column().classes("sgfx-page-panel").props('data-sgfx-my-tickets-page="true"'):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, status)
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        ui.label(str(payload.get("summary", page.get("summary", "My Tickets unavailable.")))).classes("sgfx-summary")
+        ui.label("Read-only Jira REST query. No Jira post is sent from this page.").classes("sgfx-muted")
+        jql = str(payload.get("jql", build_my_unresolved_ticket_jql()) or "")
+        if jql:
+            ui.label(f"JQL: {jql}").classes("sgfx-muted")
+        cache_status = str(payload.get("cache_status", "") or "").strip()
+        if cache_status:
+            ui.label(f"Cache: {cache_status}.").classes("sgfx-muted")
+        if not tickets:
+            settings_hint = str(payload.get("settings_hint", "") or "")
+            if settings_hint:
+                ui.label(settings_hint).classes("sgfx-muted")
+            elif status == "available":
+                ui.label("No assigned unresolved tickets were returned.").classes("sgfx-muted")
+            return
+        for ticket in tickets:
+            key = str(ticket.get("key", "") or "").strip().upper()
+            url = str(ticket.get("url", "") or "").strip()
+            draft = _my_ticket_status_draft(ticket, workspace)
+            with ui.column().classes("sgfx-my-ticket-item full-width").props('data-sgfx-my-ticket-row="true"'):
+                with ui.row().classes("items-center full-width sgfx-my-ticket-header"):
+                    if url:
+                        ui.button(
+                            key,
+                            on_click=lambda url=url, key=key: _copy_dashboard_link_to_clipboard(ui, url, key),
+                        ).props("flat dense no-caps").classes("sgfx-jira-ticket-key")
+                    else:
+                        ui.label(key).classes("sgfx-jira-ticket-key")
+                    ui.label(str(ticket.get("status", "unknown"))).classes("sgfx-jira-status-pill")
+                    priority = str(ticket.get("priority", "") or "").strip()
+                    if priority:
+                        ui.label(priority).classes("sgfx-jira-status-pill")
+                ui.label(str(ticket.get("summary", ""))).classes("sgfx-summary")
+                updated = str(ticket.get("updated", "") or "").strip()
+                if updated:
+                    ui.label(f"Updated: {updated}").classes("sgfx-muted")
+                draft_input = (
+                    ui.textarea(label=f"Editable status draft for {key}", value=draft)
+                    .props("outlined")
+                    .classes("full-width sgfx-my-ticket-draft")
+                )
+                with ui.row().classes("sgfx-confirm-actions"):
+                    _attach_tooltip(
+                        ui,
+                        ui.button(
+                            "Copy status draft",
+                            on_click=lambda draft_input=draft_input, key=key: _copy_dashboard_text_to_clipboard(
+                                ui,
+                                str(draft_input.value or ""),
+                                f"{key} status draft",
+                            ),
+                        ).props("color=primary no-caps"),
+                        "Copy the edited local draft. SGFX does not post it to Jira.",
+                    )
+                    if url:
+                        _attach_tooltip(
+                            ui,
+                            ui.button(
+                                "Copy ticket link",
+                                on_click=lambda url=url, key=key: _copy_dashboard_link_to_clipboard(ui, url, key),
+                            ).props("flat dense no-caps"),
+                            "Copy the Jira ticket link only.",
+                        )
 
 
 def _render_batch_full_qa_pass_panel(
@@ -8481,6 +8722,8 @@ def _render_selected_page(
             _render_full_qa_pass_panel(ui, snapshot, workspace)
         elif page_id == "delivery-checklist":
             _render_delivery_checklist_panel(ui, snapshot, workspace)
+        elif page_id == "my-tickets":
+            _render_my_tickets_panel(ui, snapshot, workspace)
         elif page_id == "delivery-readiness":
             _render_source_root_reader_panel(
                 ui,
@@ -8717,6 +8960,9 @@ def _render_dashboard(
             .sgfx-jira-ticket-row { border-top: 1px solid var(--sgfx-border); padding-top: 8px; gap: 8px; }
             .sgfx-jira-ticket-key { font-weight: 700; color: var(--sgfx-accent); text-decoration: none; }
             .sgfx-jira-status-pill { border: 1px solid var(--sgfx-border); border-radius: 999px; padding: 2px 8px; color: var(--sgfx-fg-muted); font-size: 12px; white-space: nowrap; }
+            .sgfx-my-ticket-item { gap: 8px; border-top: 1px solid var(--sgfx-border); padding: 14px 0 16px 0; }
+            .sgfx-my-ticket-header { gap: 8px; flex-wrap: wrap; }
+            .sgfx-my-ticket-draft textarea { min-height: 132px; line-height: 1.45; }
             .sgfx-batch-profile-links { gap: 8px; flex-wrap: wrap; margin-top: 8px; }
             .sgfx-first-launch-card { gap: 8px; padding: 14px 16px; border-color: rgba(78, 201, 176, 0.42); background: #22302d; }
             .sgfx-first-launch-card[data-sgfx-dismissed="true"] { display: none; }
@@ -9078,6 +9324,8 @@ def _render_dashboard(
                         open_profile=lambda profile_id: (_set_profile(profile_id), _open_page("full-qa-pass")),
                         default_profile_ids=state.get("batch_profile_prefill", []),
                     )
+                elif active_page_id == "my-tickets":
+                    _render_my_tickets_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
                 elif active_page_id == "risk-score":
