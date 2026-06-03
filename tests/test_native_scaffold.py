@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +14,15 @@ class TestNativeScaffold(unittest.TestCase):
     def _load_clean_harness_module(self):
         harness_path = ROOT / "scripts" / "walkthrough_harness" / "capture_clean_pages.py"
         spec = importlib.util.spec_from_file_location("capture_clean_pages_for_test", harness_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _load_build_exe_module(self):
+        script_path = ROOT / "scripts" / "build_sgfx_exe.py"
+        spec = importlib.util.spec_from_file_location("build_sgfx_exe_for_test", script_path)
         self.assertIsNotNone(spec)
         self.assertIsNotNone(spec.loader)
         module = importlib.util.module_from_spec(spec)
@@ -94,7 +105,11 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("GRAFIKS_RUNTIME_FILES", text)
         self.assertIn("sgfx_cine_cinematic_shell.exe", text)
         self.assertIn("ramses-shared-lib-headless.dll", text)
-        self.assertIn('DIST_PATH / "sgfx-preflight" / "_internal"', text)
+        self.assertIn("STAGING_DIST_PATH", text)
+        self.assertIn("validate_staged_bundle", text)
+        self.assertIn("swap_staged_bundle", text)
+        self.assertIn('bundle_dir / "_internal"', text)
+        self.assertNotIn("clean_stale_outputs", text)
         for asset_name in (
             "sgfx_icon.png",
             "framework_sgfx_logo.png",
@@ -109,6 +124,53 @@ class TestNativeScaffold(unittest.TestCase):
             "sg_preflight/data",
         ):
             self.assertIn(asset_name, text)
+
+    def test_windows_exe_build_script_swaps_staged_bundle_after_success(self) -> None:
+        module = self._load_build_exe_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            module.DIST_PATH = root / "dist"
+            module.WORK_PATH = root / "work"
+            module.BACKUP_BUNDLE_PATH = root / "backup"
+            module.BACKUP_SINGLE_FILE_PATH = root / "backup.exe"
+            staged_bundle = root / "staging" / "sgfx-preflight"
+            final_bundle = module.DIST_PATH / "sgfx-preflight"
+            staged_bundle.mkdir(parents=True)
+            final_bundle.mkdir(parents=True)
+            (staged_bundle / "sgfx-preflight.exe").write_text("new", encoding="utf-8")
+            (final_bundle / "sgfx-preflight.exe").write_text("old", encoding="utf-8")
+            (module.DIST_PATH / "sgfx-preflight.exe").write_text("old onefile", encoding="utf-8")
+
+            module.swap_staged_bundle(staged_bundle)
+
+            self.assertEqual((final_bundle / "sgfx-preflight.exe").read_text(encoding="utf-8"), "new")
+            self.assertFalse(staged_bundle.exists())
+            self.assertFalse((module.DIST_PATH / "sgfx-preflight.exe").exists())
+            self.assertFalse(module.BACKUP_BUNDLE_PATH.exists())
+            self.assertFalse(module.BACKUP_SINGLE_FILE_PATH.exists())
+
+    def test_windows_exe_build_script_restores_existing_bundle_after_swap_failure(self) -> None:
+        module = self._load_build_exe_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            module.DIST_PATH = root / "dist"
+            module.WORK_PATH = root / "work"
+            module.BACKUP_BUNDLE_PATH = root / "backup"
+            module.BACKUP_SINGLE_FILE_PATH = root / "backup.exe"
+            staged_bundle = root / "staging" / "sgfx-preflight"
+            final_bundle = module.DIST_PATH / "sgfx-preflight"
+            staged_bundle.mkdir(parents=True)
+            final_bundle.mkdir(parents=True)
+            (staged_bundle / "sgfx-preflight.exe").write_text("new", encoding="utf-8")
+            (final_bundle / "sgfx-preflight.exe").write_text("old", encoding="utf-8")
+
+            with mock.patch.object(module.shutil, "move", side_effect=RuntimeError("swap failed")):
+                with self.assertRaisesRegex(RuntimeError, "swap failed"):
+                    module.swap_staged_bundle(staged_bundle)
+
+            self.assertEqual((final_bundle / "sgfx-preflight.exe").read_text(encoding="utf-8"), "old")
+            self.assertTrue(staged_bundle.exists())
+            self.assertFalse(module.BACKUP_BUNDLE_PATH.exists())
 
     def test_bundle_script_copies_python_exe_and_sgfx_icon_assets(self) -> None:
         script_path = ROOT / "scripts" / "package_native_shell_bundle.ps1"

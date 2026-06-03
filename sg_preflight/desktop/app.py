@@ -58,7 +58,11 @@ def run_desktop_app(*, workspace: Path | None = None, initial_profile_id: str = 
         startup_splash=startup_splash,
     )
     app.aboutToQuit.connect(controller.close_all)
-    controller.show()
+    try:
+        controller.show()
+    except Exception:
+        controller.close_all()
+        raise
     return app.exec()
 
 

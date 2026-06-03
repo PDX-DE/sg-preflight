@@ -45,44 +45,47 @@ class CleanDashboardWindow(QMainWindow):
         self._start_server()
 
         try:
-            from PySide6.QtWebEngineWidgets import QWebEngineView
-        except ImportError as exc:
+            try:
+                from PySide6.QtWebEngineWidgets import QWebEngineView
+            except ImportError as exc:
+                raise RuntimeError("Clean mode requires the PySide6 QtWebEngineWidgets runtime.") from exc
+
+            icon_path = runtime_asset_path("desktop_native/resources/exe_ico.ico")
+            if icon_path.is_file():
+                self.setWindowIcon(QIcon(str(icon_path)))
+            self.setWindowTitle(CLEAN_WINDOW_TITLE)
+            self.resize(1440, 900)
+
+            central = QWidget(self)
+            central.setProperty("sgfxMode", "clean")
+            layout = QVBoxLayout(central)
+            layout.setContentsMargins(12, 10, 12, 12)
+            layout.setSpacing(8)
+
+            bar = QWidget(central)
+            bar.setProperty("sgfxMode", "clean")
+            bar_layout = QHBoxLayout(bar)
+            bar_layout.setContentsMargins(0, 0, 0, 0)
+            bar_layout.setSpacing(6)
+
+            self.status_label = QLabel("Starting embedded dashboard... first launch can take up to a minute.", bar)
+            self.status_label.setObjectName("panelHint")
+            self.status_label.setProperty("sgfxMode", "clean")
+            bar_layout.addWidget(self.status_label, stretch=1)
+            layout.addWidget(bar)
+
+            self.web_view = QWebEngineView(central)
+            self.web_view.setProperty("sgfxMode", "clean")
+            layout.addWidget(self.web_view, stretch=1)
+            self.setCentralWidget(central)
+
+            self._poll_timer = QTimer(self)
+            self._poll_timer.setInterval(DASHBOARD_POLL_INTERVAL_MS)
+            self._poll_timer.timeout.connect(self._poll_server)
+            self._poll_timer.start()
+        except Exception:
             self._stop_server()
-            raise RuntimeError("Clean mode requires the PySide6 QtWebEngineWidgets runtime.") from exc
-
-        icon_path = runtime_asset_path("desktop_native/resources/exe_ico.ico")
-        if icon_path.is_file():
-            self.setWindowIcon(QIcon(str(icon_path)))
-        self.setWindowTitle(CLEAN_WINDOW_TITLE)
-        self.resize(1440, 900)
-
-        central = QWidget(self)
-        central.setProperty("sgfxMode", "clean")
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(12, 10, 12, 12)
-        layout.setSpacing(8)
-
-        bar = QWidget(central)
-        bar.setProperty("sgfxMode", "clean")
-        bar_layout = QHBoxLayout(bar)
-        bar_layout.setContentsMargins(0, 0, 0, 0)
-        bar_layout.setSpacing(6)
-
-        self.status_label = QLabel("Starting embedded dashboard... first launch can take up to a minute.", bar)
-        self.status_label.setObjectName("panelHint")
-        self.status_label.setProperty("sgfxMode", "clean")
-        bar_layout.addWidget(self.status_label, stretch=1)
-        layout.addWidget(bar)
-
-        self.web_view = QWebEngineView(central)
-        self.web_view.setProperty("sgfxMode", "clean")
-        layout.addWidget(self.web_view, stretch=1)
-        self.setCentralWidget(central)
-
-        self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(DASHBOARD_POLL_INTERVAL_MS)
-        self._poll_timer.timeout.connect(self._poll_server)
-        self._poll_timer.start()
+            raise
 
     def _server_command(self) -> list[str]:
         command = sgfx_cli_command("dashboard", "run")
