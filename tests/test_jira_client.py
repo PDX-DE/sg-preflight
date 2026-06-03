@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
 from sg_preflight.jira_client import (
     ConfigError,
+    JIRA_KEYRING_SERVICE,
     JIRA_POSTING_BANNER,
     JiraPostError,
     attach_jira_file_action,
@@ -41,6 +43,32 @@ class _FakeResponse:
 
     def read(self) -> bytes:
         return self._body
+
+
+class _FakeKeyring:
+    def __init__(self) -> None:
+        self.store: dict[tuple[str, str], str] = {}
+
+    def set_password(self, service: str, account: str, password: str) -> None:
+        self.store[(service, account)] = password
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self.store.get((service, account))
+
+    def delete_password(self, service: str, account: str) -> None:
+        self.store.pop((service, account), None)
+
+
+def _write_keychain_credentials(
+    state_dir: Path,
+    fake_keyring: _FakeKeyring,
+    *,
+    jira_url: str = "https://jira.example",
+    pat: str = "test-pat-placeholder-not-real",
+) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "jira_pat.json").write_text(json.dumps({"jira_url": jira_url}), encoding="utf-8")
+    fake_keyring.store[(JIRA_KEYRING_SERVICE, jira_url)] = pat
 
 
 class TestJiraClient(unittest.TestCase):
@@ -86,6 +114,16 @@ Other text
         self.assertEqual(calls, [])
         self.assertEqual(result["note"], JIRA_POSTING_BANNER)
         self.assertIn("--confirm", result["guard"])
+
+    def test_jira_base_url_must_be_https_even_for_dry_run(self) -> None:
+        with self.assertRaises(ConfigError):
+            post_jira_comment(
+                "IDCEVODEV-977874",
+                "Status update",
+                base_url="http://jira.example",
+                token="test-pat-placeholder-not-real",
+                confirm=False,
+            )
 
     def test_confirm_requires_base_url_and_pat(self) -> None:
         with self.assertRaises(JiraPostError) as missing_base:
@@ -139,6 +177,7 @@ Other text
         self.assertEqual(body, "Ready for operator-confirmed posting.")
 
     def test_load_jira_credentials_prefers_operator_state_env_without_echoing_pat(self) -> None:
+        fake_keyring = _FakeKeyring()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir) / "state"
             path = state_dir / "jira_pat.json"
@@ -148,13 +187,30 @@ Other text
                 encoding="utf-8",
             )
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
-                credentials = load_jira_credentials()
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    credentials = load_jira_credentials()
+            saved = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(credentials["jira_url"], "https://jira.example")
         self.assertEqual(credentials["pat"], "test-pat-placeholder-not-real")
         self.assertTrue(credentials["path"].endswith("jira_pat.json"))
+        self.assertEqual(saved, {"jira_url": "https://jira.example"})
+        self.assertEqual(fake_keyring.store[(JIRA_KEYRING_SERVICE, "https://jira.example")], "test-pat-placeholder-not-real")
+
+    def test_load_jira_credentials_reads_pat_from_keychain(self) -> None:
+        fake_keyring = _FakeKeyring()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir) / "state"
+            _write_keychain_credentials(state_dir, fake_keyring)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    credentials = load_jira_credentials()
+
+        self.assertEqual(credentials["jira_url"], "https://jira.example")
+        self.assertEqual(credentials["pat"], "test-pat-placeholder-not-real")
 
     def test_load_jira_credentials_accepts_legacy_token_key_without_echoing_pat(self) -> None:
+        fake_keyring = _FakeKeyring()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir) / "state"
             path = state_dir / "jira_pat.json"
@@ -164,9 +220,13 @@ Other text
                 encoding="utf-8",
             )
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
-                credentials = load_jira_credentials()
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    credentials = load_jira_credentials()
+            saved = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(credentials["pat"], "test-pat-placeholder-not-real")
+        self.assertEqual(saved, {"jira_url": "https://jira.example"})
+        self.assertEqual(fake_keyring.store[(JIRA_KEYRING_SERVICE, "https://jira.example")], "test-pat-placeholder-not-real")
 
     def test_load_jira_credentials_reports_missing_with_remediation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -178,24 +238,69 @@ Other text
 
         self.assertIn("Jira PAT is missing", str(caught.exception))
 
-    def test_write_jira_credentials_records_operator_local_file_with_redacted_payload(self) -> None:
+    def test_load_jira_credentials_fails_closed_when_keychain_backend_errors(self) -> None:
+        class BrokenKeyring:
+            def get_password(self, service: str, account: str) -> str | None:
+                raise RuntimeError("backend unavailable")
+
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = write_jira_credentials(
-                jira_url="https://jira.example/",
-                pat="test-pat-placeholder-not-real",
-                state_dir=temp_dir,
+            state_dir = Path(temp_dir) / "state"
+            state_dir.mkdir()
+            path = state_dir / "jira_pat.json"
+            path.write_text(json.dumps({"jira_url": "https://jira.example"}), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": BrokenKeyring()}):
+                    with self.assertRaises(ConfigError) as caught:
+                        load_jira_credentials()
+            saved_after = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertIn("keychain", str(caught.exception))
+        self.assertNotIn("pat", json.dumps(saved_after).lower())
+
+    def test_load_jira_credentials_scrubs_legacy_pat_when_keychain_store_fails(self) -> None:
+        class BrokenKeyring:
+            def set_password(self, service: str, account: str, password: str) -> None:
+                raise RuntimeError("backend unavailable")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir) / "state"
+            state_dir.mkdir()
+            path = state_dir / "jira_pat.json"
+            path.write_text(
+                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
+                encoding="utf-8",
             )
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": BrokenKeyring()}):
+                    with self.assertRaises(ConfigError) as caught:
+                        load_jira_credentials()
+            saved_after = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertIn("keychain", str(caught.exception))
+        self.assertEqual(saved_after, {"jira_url": "https://jira.example"})
+
+    def test_write_jira_credentials_records_operator_local_file_with_redacted_payload(self) -> None:
+        fake_keyring = _FakeKeyring()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                result = write_jira_credentials(
+                    jira_url="https://jira.example/",
+                    pat="test-pat-placeholder-not-real",
+                    state_dir=temp_dir,
+                )
             path = Path(temp_dir) / "jira_pat.json"
             saved = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(result["status"], "recorded")
         self.assertEqual(saved["jira_url"], "https://jira.example")
-        self.assertEqual(saved["pat"], "test-pat-placeholder-not-real")
+        self.assertNotIn("pat", saved)
+        self.assertEqual(fake_keyring.store[(JIRA_KEYRING_SERVICE, "https://jira.example")], "test-pat-placeholder-not-real")
         self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
         self.assertEqual(result["credential"]["pat_fingerprint"], "****real")
 
     def test_jira_status_runs_read_only_connection_and_ticket_gets(self) -> None:
         calls: list[tuple[str, str]] = []
+        fake_keyring = _FakeKeyring()
 
         def transport(request, timeout=30):
             calls.append((request.get_method(), request.full_url))
@@ -203,12 +308,10 @@ Other text
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir)
-            (state_dir / "jira_pat.json").write_text(
-                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
-                encoding="utf-8",
-            )
+            _write_keychain_credentials(state_dir, fake_keyring)
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
-                result = jira_status(ticket="IDCEVODEV-1009244", transport=transport)
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    result = jira_status(ticket="IDCEVODEV-1009244", transport=transport)
 
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["connection_status"], "available")
@@ -218,6 +321,7 @@ Other text
 
     def test_profile_ticket_search_builds_read_only_jql_and_sanitizes_rows(self) -> None:
         calls: list[tuple[str, str]] = []
+        fake_keyring = _FakeKeyring()
 
         def transport(request, timeout=30):
             calls.append((request.get_method(), request.full_url))
@@ -242,12 +346,10 @@ Other text
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir)
-            (state_dir / "jira_pat.json").write_text(
-                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
-                encoding="utf-8",
-            )
+            _write_keychain_credentials(state_dir, fake_keyring)
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
-                result = search_jira_profile_tickets("G65", transport=transport)
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    result = search_jira_profile_tickets("G65", transport=transport)
 
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["ticket_count"], 1)
@@ -309,6 +411,7 @@ Other text
     def test_profile_ticket_search_uses_sixty_second_cache_for_real_transport(self) -> None:
         clear_jira_profile_ticket_cache()
         calls: list[str] = []
+        fake_keyring = _FakeKeyring()
 
         def transport(request, timeout=30):
             calls.append(request.full_url)
@@ -316,15 +419,13 @@ Other text
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir)
-            (state_dir / "jira_pat.json").write_text(
-                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
-                encoding="utf-8",
-            )
+            _write_keychain_credentials(state_dir, fake_keyring)
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
-                with mock.patch("sg_preflight.jira_client.urllib_request.urlopen", side_effect=transport):
-                    clear_jira_profile_ticket_cache()
-                    first = search_jira_profile_tickets("NA5")
-                    second = search_jira_profile_tickets("NA5")
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    with mock.patch("sg_preflight.jira_client.urllib_request.urlopen", side_effect=transport):
+                        clear_jira_profile_ticket_cache()
+                        first = search_jira_profile_tickets("NA5")
+                        second = search_jira_profile_tickets("NA5")
 
         self.assertEqual(first["cache_status"], "miss")
         self.assertEqual(second["cache_status"], "hit")
@@ -348,6 +449,7 @@ Other text
     def test_my_unresolved_ticket_search_is_read_only_and_redacts_pat(self) -> None:
         clear_jira_my_tickets_cache()
         calls: list[tuple[str, str]] = []
+        fake_keyring = _FakeKeyring()
 
         def transport(request, timeout=30):
             calls.append((request.get_method(), request.full_url))
@@ -374,12 +476,10 @@ Other text
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir)
-            (state_dir / "jira_pat.json").write_text(
-                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
-                encoding="utf-8",
-            )
+            _write_keychain_credentials(state_dir, fake_keyring)
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
-                result = search_my_unresolved_tickets(max_results=3, transport=transport)
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    result = search_my_unresolved_tickets(max_results=3, transport=transport)
 
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["ticket_count"], 1)
@@ -398,6 +498,7 @@ Other text
 
     def test_post_comment_action_previews_with_gets_before_auto_confirm_posts(self) -> None:
         calls: list[tuple[str, str, object]] = []
+        fake_keyring = _FakeKeyring()
 
         def transport(request, timeout=30):
             payload = json.loads(request.data.decode("utf-8")) if request.data else None
@@ -411,22 +512,20 @@ Other text
 
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir)
-            (state_dir / "jira_pat.json").write_text(
-                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
-                encoding="utf-8",
-            )
+            _write_keychain_credentials(state_dir, fake_keyring)
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
-                preview = post_jira_comment_action(
-                    "IDCEVODEV-1009244",
-                    "Integration test comment.",
-                    transport=transport,
-                )
-                posted = post_jira_comment_action(
-                    "IDCEVODEV-1009244",
-                    "Integration test comment.",
-                    auto_confirm=True,
-                    transport=transport,
-                )
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    preview = post_jira_comment_action(
+                        "IDCEVODEV-1009244",
+                        "Integration test comment.",
+                        transport=transport,
+                    )
+                    posted = post_jira_comment_action(
+                        "IDCEVODEV-1009244",
+                        "Integration test comment.",
+                        auto_confirm=True,
+                        transport=transport,
+                    )
 
         self.assertEqual(preview["status"], "skipped")
         self.assertTrue(preview["confirm_required"])
@@ -437,6 +536,7 @@ Other text
 
     def test_update_issue_and_attach_file_actions_are_confirmation_gated(self) -> None:
         calls: list[tuple[str, str]] = []
+        fake_keyring = _FakeKeyring()
 
         def transport(request, timeout=30):
             calls.append((request.get_method(), request.full_url))
@@ -445,23 +545,21 @@ Other text
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir) / "state"
             state_dir.mkdir()
-            (state_dir / "jira_pat.json").write_text(
-                json.dumps({"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"}),
-                encoding="utf-8",
-            )
+            _write_keychain_credentials(state_dir, fake_keyring)
             attachment = Path(temp_dir) / "evidence.txt"
             attachment.write_text("fixture\n", encoding="utf-8")
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
-                update_preview = update_jira_issue_action(
-                    "IDCEVODEV-1009244",
-                    {"summary": "Updated summary"},
-                    transport=transport,
-                )
-                attach_preview = attach_jira_file_action(
-                    "IDCEVODEV-1009244",
-                    attachment,
-                    transport=transport,
-                )
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    update_preview = update_jira_issue_action(
+                        "IDCEVODEV-1009244",
+                        {"summary": "Updated summary"},
+                        transport=transport,
+                    )
+                    attach_preview = attach_jira_file_action(
+                        "IDCEVODEV-1009244",
+                        attachment,
+                        transport=transport,
+                    )
 
         self.assertEqual(update_preview["status"], "skipped")
         self.assertEqual(update_preview["fields"]["fields"]["summary"], "Updated summary")

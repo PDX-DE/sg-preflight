@@ -635,7 +635,7 @@ def _check_jira_pat() -> SetupDoctorItem:
             category="Optional",
             path=path,
             detail="Jira writeback and inline ticket cards stay optional.",
-            fix="Create the PAT file only if you want Jira integration. The doctor checks the path only and never reads the value.",
+            fix="Run sgfx-preflight.exe jira register only if you want Jira integration. The doctor checks the URL config path only; the PAT stays in the OS keychain.",
         )
     return _found_item(
         key="jira_pat",
@@ -643,7 +643,7 @@ def _check_jira_pat() -> SetupDoctorItem:
         category="Optional",
         required=False,
         path=path,
-        detail="PAT file exists. Value was not read.",
+        detail="Jira URL config exists. PAT value was not read; it is expected to live in the OS keychain.",
     )
 
 

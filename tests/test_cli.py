@@ -16,6 +16,7 @@ from openpyxl import Workbook
 
 from sg_preflight.activity_log import read_activity_entries
 from sg_preflight.cli import main
+from sg_preflight.jira_client import JIRA_KEYRING_SERVICE
 from sg_preflight.qa_actions import build_action_record, get_operator_action, save_action_record
 from sg_preflight.services import RunRequest, execute_profile_run
 from tests.operator_helpers import create_review_package_fixture, create_temp_g65_profile, write_text
@@ -23,6 +24,20 @@ from tests.test_qa_actions import _create_checker_files
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class _FakeKeyring:
+    def __init__(self) -> None:
+        self.store: dict[tuple[str, str], str] = {}
+
+    def set_password(self, service: str, account: str, password: str) -> None:
+        self.store[(service, account)] = password
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self.store.get((service, account))
+
+    def delete_password(self, service: str, account: str) -> None:
+        self.store.pop((service, account), None)
 
 
 def _write_delivery_checklist_workbook(path: Path) -> None:
@@ -290,6 +305,23 @@ class TestCLI(unittest.TestCase):
 
         self.assertIn("sgfx-preflight-startup-", source)
         self.assertIn("MessageBoxW", source)
+
+    def test_frozen_exe_entry_sanitizes_startup_failure_log(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+        token = "A" * 40
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("tempfile.gettempdir", return_value=temp_dir):
+                with mock.patch.object(sys, "argv", ["sgfx-preflight.exe", "--token", token]):
+                    try:
+                        raise RuntimeError(f"Bearer {token}")
+                    except RuntimeError as exc:
+                        log_path = module.write_startup_error_log(exc)
+                content = log_path.read_text(encoding="utf-8")
+
+        self.assertNotIn(token, content)
+        self.assertIn("Bearer ****", content)
+        self.assertIn("****AAAA", content)
 
     def test_frozen_exe_entry_shows_startup_dialog_only_for_dashboard_native_routes(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
@@ -793,32 +825,35 @@ class TestCLI(unittest.TestCase):
         self.assertFalse(post_mock.call_args.kwargs["auto_confirm"])
 
     def test_jira_register_cli_writes_redacted_operator_local_credentials(self) -> None:
+        fake_keyring = _FakeKeyring()
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             pat_file = root / "pat.txt"
             pat_file.write_text("test-pat-placeholder-not-real\n", encoding="utf-8")
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
-                result = main(
-                    [
-                        "jira",
-                        "register",
-                        "--jira-url",
-                        "https://jira.example/",
-                        "--pat-file",
-                        str(pat_file),
-                        "--state-dir",
-                        str(root / "state"),
-                        "--format",
-                        "json",
-                    ]
-                )
+            with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                with redirect_stdout(stdout):
+                    result = main(
+                        [
+                            "jira",
+                            "register",
+                            "--jira-url",
+                            "https://jira.example/",
+                            "--pat-file",
+                            str(pat_file),
+                            "--state-dir",
+                            str(root / "state"),
+                            "--format",
+                            "json",
+                        ]
+                    )
             credential_path = root / "state" / "jira_pat.json"
             saved = json.loads(credential_path.read_text(encoding="utf-8"))
 
         self.assertEqual(result, 0)
         self.assertEqual(saved["jira_url"], "https://jira.example")
-        self.assertEqual(saved["pat"], "test-pat-placeholder-not-real")
+        self.assertNotIn("pat", saved)
+        self.assertEqual(fake_keyring.store[(JIRA_KEYRING_SERVICE, "https://jira.example")], "test-pat-placeholder-not-real")
         self.assertNotIn("test-pat-placeholder-not-real", stdout.getvalue())
 
     def test_jira_update_issue_cli_parses_fields_json(self) -> None:

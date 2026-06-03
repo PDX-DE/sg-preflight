@@ -7,6 +7,8 @@ import sys
 import tempfile
 import traceback
 
+from sg_preflight.live_state import sanitize_payload
+
 
 DEFAULT_DOUBLE_CLICK_ARGS = ["dashboard", "run", "--ui-mode", "clean"]
 DEFAULT_OPERATOR_WORKSPACE = Path(r"C:\repositories\trunk")
@@ -149,7 +151,11 @@ def write_startup_error_log(exc: BaseException) -> Path:
         "",
         "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
     ]
-    path.write_text("\n".join(details), encoding="utf-8")
+    path.write_text(str(sanitize_payload("\n".join(details))), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
     return path
 
 

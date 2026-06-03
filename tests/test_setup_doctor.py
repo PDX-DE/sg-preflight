@@ -79,7 +79,7 @@ class TestSetupDoctor(unittest.TestCase):
         self.assertEqual(items["idc23_worktree"]["status"], "found")
         self.assertEqual(items["qt_webengine_core"]["status"], "found")
         self.assertEqual(items["jira_pat"]["status"], "optional_missing")
-        self.assertIn("never reads the value", items["jira_pat"]["fix"])
+        self.assertIn("OS keychain", items["jira_pat"]["fix"])
 
     def test_report_marks_first_required_blocker_as_next_action(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -24,12 +25,15 @@ DEFAULT_API_VERSION = "2"
 JIRA_OPERATOR_STATE_ENV = "SGFX_OPERATOR_STATE_DIR"
 JIRA_CREDENTIALS_FILENAME = "jira_pat.json"
 DEFAULT_JIRA_URL = "https://jira.cc.bmwgroup.net"
+JIRA_KEYRING_SERVICE = "sgfx-quality-hero-jira"
+_LEGACY_PAT_FIELDS = ("pat", "pat_api_id", "token")
 JIRA_PROFILE_TICKET_CACHE_SECONDS = 60.0
 JIRA_PROFILE_TICKET_MAX_RESULTS = 8
 JIRA_MY_TICKETS_CACHE_SECONDS = 60.0
 JIRA_MY_TICKETS_MAX_RESULTS = 12
 _JIRA_PROFILE_TICKET_CACHE: dict[tuple[str, str, str, int], tuple[float, dict[str, Any]]] = {}
 _JIRA_MY_TICKETS_CACHE: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
+_LOG = logging.getLogger(__name__)
 
 
 class JiraPostError(RuntimeError):
@@ -91,6 +95,87 @@ def default_jira_credentials_path(state_dir: Path | str | None = None) -> Path:
     return Path.home() / "sgfx_operator_state" / JIRA_CREDENTIALS_FILENAME
 
 
+def _require_https(url: str) -> str:
+    cleaned = str(url or "").strip().rstrip("/")
+    if not cleaned.lower().startswith("https://"):
+        raise ConfigError("Jira URL must use HTTPS. Run `sgfx-preflight.exe jira register --jira-url https://...`.")
+    return cleaned
+
+
+def _jira_keyring_account(jira_url: str) -> str:
+    return _require_https(jira_url)
+
+
+def _keyring_module():
+    try:
+        import keyring  # type: ignore[import-not-found]
+    except Exception as exc:  # pragma: no cover - explicit backend failure tests cover the public behavior
+        raise ConfigError(
+            "Jira PAT keychain is unavailable. Install/repair the Windows keyring backend; "
+            "plaintext PAT storage is disabled."
+        ) from exc
+    return keyring
+
+
+def _store_jira_pat_in_keyring(jira_url: str, token: str) -> None:
+    keyring = _keyring_module()
+    try:
+        keyring.set_password(JIRA_KEYRING_SERVICE, _jira_keyring_account(jira_url), token)
+    except Exception as exc:
+        raise ConfigError("Jira PAT keychain is unavailable or locked; plaintext PAT storage is disabled.") from exc
+
+
+def _load_jira_pat_from_keyring(jira_url: str) -> str:
+    keyring = _keyring_module()
+    try:
+        token = keyring.get_password(JIRA_KEYRING_SERVICE, _jira_keyring_account(jira_url))
+    except Exception as exc:
+        raise ConfigError("Jira PAT keychain is unavailable or locked; cannot load Jira credentials.") from exc
+    token_value = str(token or "").strip()
+    if not token_value:
+        raise ConfigError("Jira PAT is missing from the OS keychain. Run `sgfx-preflight.exe jira register`.")
+    return token_value
+
+
+def _delete_jira_pat_from_keyring(jira_url: str) -> None:
+    keyring = _keyring_module()
+    try:
+        keyring.delete_password(JIRA_KEYRING_SERVICE, _jira_keyring_account(jira_url))
+    except Exception as exc:
+        raise ConfigError("Jira PAT keychain is unavailable or locked; cannot delete Jira credentials.") from exc
+
+
+def _legacy_pat_from_payload(payload: dict[str, Any]) -> str:
+    for field in _LEGACY_PAT_FIELDS:
+        token = str(payload.get(field, "") or "").strip()
+        if token:
+            return token
+    return ""
+
+
+def _write_jira_url_config(path: Path, jira_url: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"jira_url": jira_url}, indent=2) + "\n", encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError as exc:
+        _LOG.warning("Failed to restrict Jira URL config permissions at %s: %s", path, exc)
+
+
+def _migrate_legacy_jira_pat(path: Path, payload: dict[str, Any], jira_url: str) -> str:
+    legacy_token = _legacy_pat_from_payload(payload)
+    if not legacy_token:
+        return ""
+    try:
+        _store_jira_pat_in_keyring(jira_url, legacy_token)
+    except ConfigError:
+        _write_jira_url_config(path, jira_url)
+        raise
+    _write_jira_url_config(path, jira_url)
+    _LOG.info("Migrated Jira PAT from plaintext config into OS keychain: %s", _display_operator_path(path))
+    return legacy_token
+
+
 def load_jira_credentials() -> dict[str, str]:
     for path in jira_credentials_candidate_paths():
         if not path.exists():
@@ -102,17 +187,19 @@ def load_jira_credentials() -> dict[str, str]:
             raise ConfigError(f"Jira credential file is not valid JSON: {path_label}") from exc
         if not isinstance(payload, dict):
             raise ConfigError(f"Jira credential file must contain a JSON object: {path_label}")
-        jira_url = str(payload.get("jira_url", "") or "").strip().rstrip("/")
-        pat = str(payload.get("pat", "") or payload.get("pat_api_id", "") or payload.get("token", "") or "").strip()
-        if not jira_url:
+        configured_url = str(payload.get("jira_url", "") or "").strip()
+        if not configured_url:
             raise ConfigError(f"Jira credential file is missing jira_url: {path_label}")
+        jira_url = _require_https(configured_url)
+        pat = _migrate_legacy_jira_pat(path, payload, jira_url)
         if not pat:
-            raise ConfigError(f"Jira credential file is missing pat: {path_label}")
+            pat = _load_jira_pat_from_keyring(jira_url)
         return {"jira_url": jira_url, "pat": pat, "path": str(path)}
     checked = ", ".join(_display_operator_path(path) for path in jira_credentials_candidate_paths())
     raise ConfigError(
-        "Jira PAT is missing. Create "
-        f"{_display_operator_path(default_jira_credentials_path())} with JSON fields jira_url and pat. Checked: {checked}"
+        "Jira PAT is missing. Run `sgfx-preflight.exe jira register`; the URL config is stored at "
+        f"{_display_operator_path(default_jira_credentials_path())} and the PAT is stored in the OS keychain. "
+        f"Checked: {checked}"
     )
 
 
@@ -123,28 +210,33 @@ def write_jira_credentials(
     state_dir: Path | str | None = None,
     overwrite: bool = False,
 ) -> dict[str, Any]:
-    configured_url = str(jira_url or "").strip().rstrip("/")
+    raw_url = str(jira_url or "").strip()
     token = str(pat or "").strip()
-    if not configured_url:
+    if not raw_url:
         raise ConfigError("Jira URL is required.")
+    configured_url = _require_https(raw_url)
     if not token:
         raise ConfigError("Jira PAT is required.")
     path = default_jira_credentials_path(state_dir)
     if path.exists() and not overwrite:
+        try:
+            existing_payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing_payload = {}
+        if isinstance(existing_payload, dict):
+            existing_url = str(existing_payload.get("jira_url", "") or "").strip()
+            if existing_url:
+                _migrate_legacy_jira_pat(path, existing_payload, _require_https(existing_url))
         raise ConfigError(
             f"Jira credential file already exists: {_display_operator_path(path)}. Re-run with --force to replace it."
         )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"jira_url": configured_url, "pat": token}, indent=2) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    _store_jira_pat_in_keyring(configured_url, token)
+    _write_jira_url_config(path, configured_url)
     credentials = {"jira_url": configured_url, "pat": token, "path": str(path)}
     return {
         "status": "recorded",
         "credential": redact_jira_credentials(credentials),
-        "guard": "Credential file is operator-local and must not be committed or copied into SVN staging.",
+        "guard": "Jira URL config is operator-local; the PAT is stored in the OS keychain and must not be committed.",
     }
 
 
@@ -665,7 +757,8 @@ def post_jira_comment(
         raise JiraPostError("Jira ticket key is required.")
     comment = _require_body(body)
     version = _normalize_api_version(api_version)
-    configured_base_url = str(base_url or os.environ.get(base_url_env, "")).strip()
+    raw_base_url = str(base_url or os.environ.get(base_url_env, "")).strip()
+    configured_base_url = _require_https(raw_base_url) if raw_base_url else ""
     configured_token = str(token or os.environ.get(token_env, "")).strip()
     endpoint = _comment_endpoint(configured_base_url, ticket, version) if configured_base_url else ""
 
@@ -900,7 +993,7 @@ def _jql_quote(value: str) -> str:
 
 
 def _api_base(base_url: str, api_version: str) -> str:
-    return f"{base_url.rstrip('/')}/rest/api/{api_version}"
+    return f"{_require_https(base_url)}/rest/api/{api_version}"
 
 
 def _myself_endpoint(base_url: str, api_version: str) -> str:

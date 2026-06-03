@@ -65,6 +65,22 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
         "nicegui",
         "--collect-all",
         "PySide6",
+        "--collect-all",
+        "keyring",
+        "--hidden-import",
+        "keyring.backends.Windows",
+        "--hidden-import",
+        "win32ctypes.core",
+        "--hidden-import",
+        "win32ctypes.core.ctypes._authentication",
+        "--hidden-import",
+        "win32ctypes.core.ctypes._common",
+        "--hidden-import",
+        "win32ctypes.core.ctypes._dll",
+        "--hidden-import",
+        "win32ctypes.core.ctypes._util",
+        "--hidden-import",
+        "win32ctypes.pywin32.win32cred",
     ]
     for source, destination in data_files:
         args.extend(["--add-data", _data_arg(source, destination)])
