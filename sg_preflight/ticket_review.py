@@ -24,7 +24,7 @@ from sg_preflight.daily_snapshot import (
     _render_snapshot_markdown,
     find_latest_daily_qa_snapshot,
 )
-from sg_preflight.io_utils import write_text as _write_text
+from sg_preflight.io_utils import read_json, write_json, write_text as _write_text
 from sg_preflight.profiles import RunProfile, get_run_profile, resolve_source_repo_root
 from sg_preflight.qa_actions import ActionRecord, load_action_record, operator_ui_actions_root
 from sg_preflight.screenshot_triage import ScreenshotTriageBundle, ScreenshotTriageReport, materialize_screenshot_triage
@@ -647,12 +647,11 @@ def _slug(value: str) -> str:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json(path, payload)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = read_json(path)
     return payload if isinstance(payload, dict) else {}
 
 

@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from sg_preflight.io_utils import read_json_utf8sig
+
 
 SCHEMA_KEY     = "sgfx_qa_workflow"
 SCHEMA_VERSION = 1
@@ -123,8 +125,7 @@ class ValidationResult:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8-sig") as f:
-        return json.load(f)
+    return read_json_utf8sig(path)
 
 
 def validate_doc(doc: dict[str, Any], path: Path | None = None) -> ValidationResult:
