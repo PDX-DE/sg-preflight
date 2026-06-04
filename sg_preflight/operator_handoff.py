@@ -6,6 +6,7 @@ from pathlib import Path
 import uuid
 from typing import Any
 
+from sg_preflight.io_utils import read_jsonl as _read_jsonl
 from sg_preflight.time_utils import utc_now as _utc_now
 
 
@@ -52,22 +53,6 @@ def _clean_text(value: str, *, field: str, required: bool = False) -> str:
     if any(token in folded for token in _FORBIDDEN_TEXT):
         raise ValueError(f"{field} must stay evidence-only and avoid approval wording")
     return text
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    entries: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            entries.append(payload)
-    return entries
 
 
 def record_operator_handoff(

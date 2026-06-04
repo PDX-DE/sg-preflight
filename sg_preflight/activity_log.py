@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.io_utils import read_jsonl as _read_jsonl
 from sg_preflight.time_utils import utc_now_ms as _utc_now
 
 
@@ -113,22 +114,6 @@ def render_activity_log_text(payload: dict[str, Any]) -> str:
             f"{entry.get('outcome', '')} {entry.get('note', '')}".rstrip()
         )
     return "\n".join(lines)
-
-
-def _read_jsonl(path: Path) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    entries: list[dict[str, str]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(raw, dict):
-            entries.append({str(key): str(value) for key, value in raw.items()})
-    return entries
 
 
 def _validate_verb(value: str) -> str:
