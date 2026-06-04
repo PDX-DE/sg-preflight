@@ -495,19 +495,9 @@ def _console_checkers(as_json: bool) -> None:
 
 
 def _console_workflow_status(items: list[dict[str, object]], *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(items, indent=2, ensure_ascii=False))
-        return
+    from sg_preflight.cli.workflows import _console_workflow_status as render
 
-    print("Workflow status:")
-    for item in items:
-        print(f"- {item['label']}: state={item['state']}")
-        print(f"  {item['summary']}")
-        blockers = item.get("blockers", [])
-        if blockers:
-            print("  blockers:")
-            for blocker in blockers:
-                print(f"    - {blocker}")
+    render(items, as_json=as_json)
 
 
 def _console_setup_doctor(report: object, *, as_json: bool) -> None:
@@ -2721,10 +2711,9 @@ def _main_impl(argv: list[str] | None = None) -> int:
         return handle_readiness_command(args, parser)
 
     if args.command == "workflow-status":
-        items = qa_workflow_status(root)
-        output_format = _resolve_render_format(args, parser, formats=("text", "json"))
-        _emit_console(lambda: _console_workflow_status(items, as_json=output_format == "json"), args)
-        return 0
+        from sg_preflight.cli.workflows import handle_workflow_command
+
+        return handle_workflow_command(args, parser)
 
     if args.command == "profile-summary":
         from sg_preflight.cli.evidence import handle_evidence_command
@@ -2850,90 +2839,19 @@ def _main_impl(argv: list[str] | None = None) -> int:
         return handle_board_command(args, parser)
 
     if args.command == "list-workflows":
-        from sg_preflight import qa_workflows as qw
-        summaries = [s.to_dict() for s in qw.list_workflows(workspace_root=root)]
-        if args.json:
-            print(json.dumps(summaries, indent=2))
-        else:
-            if not summaries:
-                print("(no workflows found in qa_workflows/)")
-            for s in summaries:
-                print(f"- {s['id']:<40} {s['name']}")
-                print(f"    scope: {','.join(s['scope_kinds'])}  profiles: {','.join(s['profiles']) or '-'}")
-                print(f"    dod: {s['dod_count']}  checks: {s['check_count']}  status: {s['last_status']}")
-        return 0
+        from sg_preflight.cli.workflows import handle_workflow_command
+
+        return handle_workflow_command(args, parser)
 
     if args.command == "validate-workflow":
-        from sg_preflight import qa_workflows as qw
-        target = (args.id_or_path or "").strip()
-        candidates: list[Path] = []
-        if not target:
-            candidates = list(qw.discover(workspace_root=root))
-        elif Path(target).is_file():
-            candidates = [Path(target).resolve()]
-        else:
-            for p in qw.discover(workspace_root=root):
-                try:
-                    doc = json.loads(p.read_text(encoding="utf-8-sig"))
-                except Exception:
-                    continue
-                if doc.get("id") == target:
-                    candidates = [p]
-                    break
-        if not candidates:
-            msg = f"workflow not found: {target!r}"
-            print(json.dumps({"ok": False, "errors": [msg]})) if args.json else print(msg, file=sys.stderr)
-            return 2
-        all_ok = True
-        results = []
-        for p in candidates:
-            try:
-                doc = json.loads(p.read_text(encoding="utf-8-sig"))
-            except Exception as e:
-                results.append({"path": str(p), "ok": False, "errors": [f"JSON parse: {e}"], "warnings": []})
-                all_ok = False
-                continue
-            r = qw.validate_doc(doc, p)
-            results.append({"path": str(p), "ok": r.ok, "errors": r.errors, "warnings": r.warnings})
-            if not r.ok:
-                all_ok = False
-        if args.json:
-            print(json.dumps({"ok": all_ok, "results": results}, indent=2))
-        else:
-            for r in results:
-                tag = "OK" if r["ok"] else "FAIL"
-                print(f"[{tag}] {r['path']}")
-                for e in r["errors"]:
-                    print(f"  ERROR: {e}")
-                for w in r["warnings"]:
-                    print(f"  warn:  {w}")
-        return 0 if all_ok else 1
+        from sg_preflight.cli.workflows import handle_workflow_command
+
+        return handle_workflow_command(args, parser)
 
     if args.command == "run-workflow":
-        from sg_preflight import qa_workflows as qw
-        out_root = Path(args.output_root).resolve() if args.output_root else None
-        try:
-            summary = qw.run_workflow(
-                args.workflow_id,
-                profile=args.profile or None,
-                ticket_id=args.ticket_id or None,
-                output_root=out_root,
-                workspace_root=root,
-            )
-        except FileNotFoundError as e:
-            print(str(e), file=sys.stderr)
-            return 2
-        if args.json:
-            print(json.dumps(summary, indent=2))
-        else:
-            print(f"workflow:  {summary['id']}")
-            print(f"profile:   {summary.get('profile') or '(workspace-scoped)'}")
-            print(f"status:    {summary['status']}")
-            print(f"checks:    {len(summary.get('checks', []))}")
-            for c in summary.get("checks", []):
-                req = "[req]" if c.get("required") else "[opt]"
-                print(f"  {req} {c['id']:<30} {c['status']}")
-        return 0 if summary["status"] in ("ready_for_review", "in_progress", "not_started", "covered") else 1
+        from sg_preflight.cli.workflows import handle_workflow_command
+
+        return handle_workflow_command(args, parser)
 
     if args.command == "ticket-review":
         from sg_preflight.cli.evidence import handle_evidence_command
