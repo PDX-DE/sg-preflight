@@ -3538,64 +3538,15 @@ def _main_impl(argv: list[str] | None = None) -> int:
             _console_delivery_readiness(payload)
         return 0
 
-    if args.command == "disabled-tests":
-        disabled_root = Path(args.workspace).resolve() if args.workspace else root
-        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
-        bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
-        board = build_disabled_tests_board(repo_root, workspace_root=disabled_root, bmw_repo_root=bmw_repo_root)
-        payload = board.to_dict()
-        if args.output_root:
-            payload["artifacts"] = write_disabled_tests_board(board, Path(args.output_root).resolve())
-        if args.json:
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
-            _console_disabled_tests(payload)
-        return 0
+    if args.command in {
+        "disabled-tests",
+        "api-version-coverage",
+        "country-variant-coverage",
+        "export-size-trend",
+    }:
+        from sg_preflight.cli.boards import handle_board_command
 
-    if args.command == "api-version-coverage":
-        api_root = Path(args.workspace).resolve() if args.workspace else root
-        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
-        bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
-        board = build_api_version_coverage_board(repo_root, workspace_root=api_root, bmw_repo_root=bmw_repo_root)
-        payload = board.to_dict()
-        if args.output_root:
-            payload["artifacts"] = write_api_version_coverage_board(board, Path(args.output_root).resolve())
-        if args.json:
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
-            _console_api_version_coverage(payload)
-        return 0
-
-    if args.command == "country-variant-coverage":
-        variant_root = Path(args.workspace).resolve() if args.workspace else root
-        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
-        bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
-        board = build_country_variant_coverage_board(
-            repo_root,
-            workspace_root=variant_root,
-            bmw_repo_root=bmw_repo_root,
-        )
-        payload = board.to_dict()
-        if args.output_root:
-            payload["artifacts"] = write_country_variant_coverage_board(board, Path(args.output_root).resolve())
-        if args.json:
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
-            _console_country_variant_coverage(payload)
-        return 0
-
-    if args.command == "export-size-trend":
-        trend_root = Path(args.workspace).resolve() if args.workspace else root
-        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
-        board = build_export_size_trend_board(repo_root, workspace_root=trend_root)
-        payload = board.to_dict()
-        if args.output_root:
-            payload["artifacts"] = write_export_size_trend_board(board, Path(args.output_root).resolve())
-        if args.json:
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
-            _console_export_size_trend(payload)
-        return 0
+        return handle_board_command(args, parser)
 
     if args.command == "list-workflows":
         from sg_preflight import qa_workflows as qw
