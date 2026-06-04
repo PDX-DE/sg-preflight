@@ -3614,46 +3614,9 @@ def _main_impl(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "daily-qa-snapshot":
-        snapshot_root = Path(args.workspace).resolve() if args.workspace else root
-        output_root = Path(args.output_root).resolve() if args.output_root else None
-        profile_ids = tuple(str(item).strip() for item in args.profile if str(item).strip())
-        battery_filters = tuple(str(item).strip() for item in args.battery_filter if str(item).strip())
-        if args.battery_defaults:
-            battery_filters = (
-                "default",
-                "openAllDoors_",
-                "lights_drl_front",
-                "lights_LowBeam",
-                "lights_HighBeam",
-                "lights_OnlyCones",
-                "welcome_animation_",
-                "automatic_Doors_",
-                "highlighting_Doors",
-            ) + tuple(item for item in battery_filters if item not in {
-                "default",
-                "openAllDoors_",
-                "lights_drl_front",
-                "lights_LowBeam",
-                "lights_HighBeam",
-                "lights_OnlyCones",
-                "welcome_animation_",
-                "automatic_Doors_",
-                "highlighting_Doors",
-            })
-        try:
-            result = materialize_daily_qa_snapshot(
-                workspace_root=snapshot_root,
-                output_root=output_root,
-                profile_ids=profile_ids or ("NA8", "G78", "G50"),
-                run_smoke=not args.no_smoke,
-                smoke_test=args.smoke_test,
-                battery_filters=battery_filters,
-            )
-        except Exception as exc:
-            print(_console_safe(f"daily-qa-snapshot failed: {exc}"), file=sys.stderr)
-            return 1
-        _console_daily_snapshot(result, as_json=args.json)
-        return 0
+        from sg_preflight.cli.digest import handle_digest_command
+
+        return handle_digest_command(args, parser)
 
     if args.command == "review-board":
         review_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
@@ -3717,50 +3680,10 @@ def _main_impl(argv: list[str] | None = None) -> int:
         _console_desktop_payload(payload)
         return 0
 
-    if args.command == "daily-digest":
-        digest_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
-        try:
-            if args.daily_digest_command == "latest":
-                payload = build_latest_daily_digest(args.ticket_id, digest_root)
-            else:
-                parser.error(f"Unhandled daily-digest command: {args.daily_digest_command}")
-                return 1
-        except Exception as exc:
-            print(_console_safe(f"daily-digest failed: {exc}"), file=sys.stderr)
-            return 1
-        output_format = _resolve_render_format(args, parser)
-        if output_format == "json":
-            _emit_json(payload, args)
-        elif output_format == "markdown":
-            _emit_text(render_daily_digest_markdown(payload), args)
-        else:
-            _emit_text(render_daily_digest_text(payload), args)
-        return 0
+    if args.command in {"daily-digest", "team-digest-board"}:
+        from sg_preflight.cli.digest import handle_digest_command
 
-    if args.command == "team-digest-board":
-        board_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
-        try:
-            if args.team_digest_board_command == "snapshot":
-                payload = build_team_daily_digest_board(
-                    workspace=board_root,
-                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
-                    profiles=tuple(args.profile),
-                    ticket_id=args.ticket_id,
-                )
-            else:
-                parser.error(f"Unhandled team-digest-board command: {args.team_digest_board_command}")
-                return 1
-        except Exception as exc:
-            print(_console_safe(f"team-digest-board failed: {exc}"), file=sys.stderr)
-            return 1
-        output_format = _resolve_render_format(args, parser)
-        if output_format == "json":
-            _emit_json(payload, args)
-        elif output_format == "markdown":
-            _emit_text(render_team_digest_board_markdown(payload), args)
-        else:
-            _emit_text(render_team_digest_board_text(payload), args)
-        return 0
+        return handle_digest_command(args, parser)
 
     if args.command == "manual-review":
         review_root = Path(args.workspace).resolve() if getattr(args, "workspace", None) else root
