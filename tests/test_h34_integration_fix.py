@@ -259,7 +259,7 @@ class IntegrationCoverageAuditTests(unittest.TestCase):
 
     def test_h30_and_h32_promoted_to_daily_use_action_map(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1] / "sg_preflight" / "cli.py"
+            Path(__file__).resolve().parents[1] / "sg_preflight" / "cli" / "_common.py"
         ).read_text(encoding="utf-8")
         action_map_idx = source.find("_MAIN_ACTION_MAP")
         self.assertNotEqual(action_map_idx, -1)
