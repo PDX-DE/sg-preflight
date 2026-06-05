@@ -1849,7 +1849,9 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
         desktop_runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="NA8", initial_mode="clean")
 
     def test_frozen_desktop_shell_sets_chromium_flags_before_qt_import(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "cli.py").read_text(encoding="utf-8")
+        source = (
+            Path(__file__).resolve().parents[1] / "sg_preflight" / "cli" / "dashboard.py"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("QTWEBENGINE_CHROMIUM_FLAGS", source)
         self.assertIn("--disable-background-timer-throttling", source)

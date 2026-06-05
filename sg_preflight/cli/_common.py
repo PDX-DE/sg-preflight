@@ -2820,102 +2820,14 @@ def _main_impl(argv: list[str] | None = None) -> int:
         return handle_action_command(args, parser)
 
     if args.command == "station":
-        try:
-            from sg_preflight.openhtf_support.dependency import OpenHtfUnavailable
-            from sg_preflight.openhtf_support.station import run_station
+        from sg_preflight.cli.dashboard import handle_dashboard_command
 
-            if args.station_command == "run":
-                return run_station(
-                    profile_id=args.profile,
-                    workspace=Path(args.workspace),
-                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
-                    ui_mode=args.ui_mode,
-                    port=args.port,
-                    history_path=Path(args.history),
-                    open_browser=not args.no_browser,
-                    once=args.once,
-                )
-            parser.error(f"Unhandled station command: {args.station_command}")
-            return 1
-        except OpenHtfUnavailable as exc:
-            print(_console_safe(str(exc)), file=sys.stderr)
-            return 1
-        except Exception as exc:
-            print(_console_safe(f"station failed: {exc}"), file=sys.stderr)
-            return 1
+        return handle_dashboard_command(args, parser)
 
     if args.command == "dashboard":
-        if args.dashboard_command == "run" and args.ui_mode == "grafiks":
-            try:
-                from sg_preflight.dashboard.main import run_grafiks_mode
+        from sg_preflight.cli.dashboard import handle_dashboard_command
 
-                return run_grafiks_mode(
-                    profile_id=args.profile or "",
-                    workspace=Path(args.workspace),
-                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
-                )
-            except Exception as exc:
-                print(_console_safe(f"dashboard grafiks failed: {exc}"), file=sys.stderr)
-                return 1
-        use_desktop_shell = (
-            args.dashboard_command == "run"
-            and (
-                _is_frozen_exe() and not args.no_native and args.ui_mode in {None, "clean"}
-            )
-        )
-        if use_desktop_shell:
-            try:
-                import os
-
-                _existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-                _flags = "--disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
-                os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (_existing + " " + _flags).strip()
-                from sg_preflight.desktop.app import run_desktop_app
-
-                return run_desktop_app(
-                    workspace=Path(args.workspace),
-                    initial_profile_id=args.profile or "",
-                    initial_mode=args.ui_mode or "clean",
-                )
-            except RuntimeError as exc:
-                print(_console_safe(str(exc)), file=sys.stderr)
-                return 1
-        try:
-            from sg_preflight.dashboard.dependency import NiceGuiUnavailable
-            from sg_preflight.dashboard.main import run_dashboard
-
-            if args.dashboard_command == "run":
-                return run_dashboard(
-                    profile_id=args.profile,
-                    workspace=Path(args.workspace),
-                    bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
-                    ui_mode=args.ui_mode,
-                    host=args.host,
-                    port=args.port,
-                    native=not args.no_native,
-                    reload=args.reload,
-                )
-            parser.error(f"Unhandled dashboard command: {args.dashboard_command}")
-            return 1
-        except NiceGuiUnavailable as exc:
-            print(_console_safe(str(exc)), file=sys.stderr)
-            return 1
-        except Exception as exc:
-            log_path = None
-            if _is_frozen_exe():
-                try:
-                    from sg_preflight.exe_entry import write_startup_error_log
-
-                    log_path = write_startup_error_log(exc)
-                except Exception:
-                    log_path = None
-                if args.dashboard_command == "run" and not args.no_native:
-                    raise
-            message = f"dashboard failed: {exc}"
-            if log_path is not None:
-                message = f"{message}. Details were written to: {log_path}"
-            print(_console_safe(message), file=sys.stderr)
-            return 1
+        return handle_dashboard_command(args, parser)
 
     if args.command == "ui":
         from sg_preflight.ui import run_ui
