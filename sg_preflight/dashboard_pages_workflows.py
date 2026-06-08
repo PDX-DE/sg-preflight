@@ -2148,13 +2148,18 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                 path = Path(value)
                 return path if path.is_file() else None
 
-            def _build_quality_report() -> None:
+            async def _build_quality_report() -> None:
                 ticket_value = _selected_report_ticket()
                 if not ticket_value:
                     ui.notify("Choose or enter a Jira ticket before building the report.")
                     return
+                build_report_button.disable()
+                report_status.text = "Building Quality-Hero report..."
                 try:
-                    result = build_dashboard_quality_hero_report(
+                    from nicegui import run as nicegui_run
+
+                    result = await nicegui_run.io_bound(
+                        build_dashboard_quality_hero_report,
                         workspace=workspace,
                         profile_id=str(snapshot["profile_id"]),
                         ticket_id=ticket_value,
@@ -2163,6 +2168,8 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                     report_status.text = f"Quality-Hero report failed: {exc}"
                     ui.notify("Quality-Hero report failed.")
                     return
+                finally:
+                    build_report_button.enable()
                 report_state.clear()
                 report_state.update(result)
                 markdown_path = _report_markdown_path()
@@ -2208,14 +2215,19 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                     "sgfx-muted"
                 )
 
-                def _post_report_attachment() -> None:
+                async def _post_report_attachment() -> None:
                     ticket_value = _selected_report_ticket()
                     markdown_path = _report_markdown_path()
                     if not ticket_value or markdown_path is None:
                         ui.notify("Generate a report and choose a ticket before posting.")
                         return
+                    post_button.disable()
+                    attach_status.text = "Attaching Quality-Hero report to Jira..."
                     try:
-                        result = build_dashboard_quality_hero_report(
+                        from nicegui import run as nicegui_run
+
+                        result = await nicegui_run.io_bound(
+                            build_dashboard_quality_hero_report,
                             workspace=workspace,
                             profile_id=str(snapshot["profile_id"]),
                             ticket_id=ticket_value,
@@ -2228,6 +2240,8 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                         ui.notify("Jira attachment failed.")
                         attach_dialog.close()
                         return
+                    finally:
+                        post_button.enable()
                     report_state.clear()
                     report_state.update(result)
                     attachment_id = str(result.get("attachment_id", "") or "")
@@ -2252,14 +2266,14 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                     ui.notify("Quality-Hero report attached to Jira.")
                     attach_dialog.close()
 
-                _attach_tooltip(
+                post_button = _attach_tooltip(
                     ui,
                     ui.button("Post", on_click=_post_report_attachment).props("color=primary"),
                     "Attach this local Markdown report to the selected Jira ticket.",
                 )
                 ui.button("Cancel", on_click=attach_dialog.close)
 
-            _attach_tooltip(
+            build_report_button = _attach_tooltip(
                 ui,
                 ui.button(str(quality_action.get("label", QUALITY_HERO_REPORT_ACTION_LABEL)), on_click=_build_quality_report)
                 .props("color=primary"),
@@ -4563,14 +4577,26 @@ def _render_full_qa_pass_panel(
                         ui.label(str(guardrail)).classes("sgfx-guardrail")
             result_host.update()
 
-        def _run_full_pass() -> None:
+        async def _run_full_pass_async() -> None:
             trusted = bool(trusted_control.value)
-            payload = build_full_qa_pass(
-                profile_id,
-                workspace=workspace,
-                bmw_root=bmw_root,
-                trusted_tool_mode=trusted,
-            )
+            run_full_pass_button.disable()
+            notice.text = "Full QA Pass running off the UI event loop..."
+            try:
+                from nicegui import run as nicegui_run
+
+                payload = await nicegui_run.io_bound(
+                    build_full_qa_pass,
+                    profile_id,
+                    workspace=workspace,
+                    bmw_root=bmw_root,
+                    trusted_tool_mode=trusted,
+                )
+            except Exception as exc:  # noqa: BLE001
+                notice.text = f"Full QA Pass failed: {exc}"
+                _notify_ui("Full QA Pass failed.")
+                return
+            finally:
+                run_full_pass_button.enable()
             append_activity_entry(
                 workspace,
                 verb="ran",
@@ -4583,7 +4609,12 @@ def _render_full_qa_pass_panel(
             _reset_wizard_run_state(payload)
             _render_payload(payload)
 
-        _attach_tooltip(
+        def _run_full_pass() -> None:
+            from nicegui import background_tasks
+
+            background_tasks.create(_run_full_pass_async(), name="sgfx-full-qa-pass")
+
+        run_full_pass_button = _attach_tooltip(
             ui,
             ui.button("Run full QA pass", on_click=_run_full_pass).classes("sgfx-html-action-button"),
             "Start the local evidence chain for the selected profile.",

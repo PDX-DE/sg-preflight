@@ -610,6 +610,18 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("defer_team_digest_board=True", source)
         self.assertIn('page_id in {"daily-digest", "team-digest-board"}', source)
 
+    def test_dashboard_source_offloads_blocking_handlers(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+
+        self.assertIn("from nicegui import background_tasks, run as nicegui_run", source)
+        self.assertIn('async def _index(profile: str = "", full_qa_run: str = "", automatic_mode: str = "1")', source)
+        self.assertIn("await _io_bound(", source)
+        self.assertIn("Refreshing dashboard data off the UI event loop.", source)
+        self.assertIn("await nicegui_run.io_bound(", workflow_source)
+        self.assertIn('background_tasks.create(_run_full_pass_async(), name="sgfx-full-qa-pass")', workflow_source)
+
     def test_jira_inline_tickets_render_as_copy_only_buttons(self) -> None:
         """Clicking a Jira ticket in the inline panel copies the URL only and
         shows a visible toast. It must not auto-open a browser."""

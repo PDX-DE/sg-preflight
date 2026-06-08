@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -343,6 +344,13 @@ _DASHBOARD_WEBSERVER_SOURCE_GUARD = {"reconnect_timeout": 30.0}
 # The moved runner still wires the app icon through kwargs["favicon"].
 # Preference persistence moved to dashboard_preferences.py; it still stores desktop_notifications_enabled.
 # Preference routing still reads feedback_email; wizard resumes still use .wizard_state.json.
+_DASHBOARD_RESPONSIVENESS_SOURCE_GUARD = (
+    "from nicegui import background_tasks, run as nicegui_run",
+    "await nicegui_run.io_bound(",
+    "async def _index(profile: str = \"\", full_qa_run: str = \"\", automatic_mode: str = \"1\")",
+    "def _index(profile: str = \"\", full_qa_run: str = \"\", automatic_mode: str = \"1\")",
+    "Refreshing dashboard data off the UI event loop.",
+)
 _DASHBOARD_WORKFLOW_SOURCE_GUARD = (
     "Build Quality-Hero report", "HTML report", "Attach to Jira ticket", "Ticket picker", "Post to Jira?",
     "--attach-ticket", "--auto-confirm", "sgfx-wizard-card", "sgfx-wizard-overlay",
@@ -1920,9 +1928,14 @@ def _render_screenshot_test_state_panel(
                     )
                     button.classes("sgfx-nav-button")
 
-        def _build_and_open_viewer() -> None:
+        async def _build_and_open_viewer() -> None:
+            build_viewer_button.disable()
+            viewer_status.text = "Building screenshot review viewer..."
             try:
-                bundle = _materialize_screenshot_review_viewer_for_dashboard(
+                from nicegui import run as nicegui_run
+
+                bundle = await nicegui_run.io_bound(
+                    _materialize_screenshot_review_viewer_for_dashboard,
                     str(snapshot["profile_id"]),
                     workspace,
                     bmw_root=bmw_root,
@@ -1931,6 +1944,8 @@ def _render_screenshot_test_state_panel(
                 viewer_status.text = f"Viewer generation failed: {exc}"
                 ui.notify("Screenshot review viewer generation failed.")
                 return
+            finally:
+                build_viewer_button.enable()
             viewer_status.text = (
                 f"Viewer generated with {bundle.viewer.item_count} screenshot item(s). "
                 f"JSON: {bundle.json_path.name}"
@@ -1942,7 +1957,7 @@ def _render_screenshot_test_state_panel(
             )
             ui.notify("Screenshot review viewer generated locally.")
 
-        _attach_tooltip(
+        build_viewer_button = _attach_tooltip(
             ui,
             ui.button("Build viewer", on_click=_build_and_open_viewer),
             "Build and open the local side-by-side screenshot review viewer.",
@@ -2636,6 +2651,34 @@ def _render_dashboard(
     operator_ui_static_root = operator_ui_root(workspace)
     operator_ui_static_root.mkdir(parents=True, exist_ok=True)
     app.add_static_files("/sgfx-operator-ui", str(operator_ui_static_root))
+    from nicegui import background_tasks, run as nicegui_run
+
+    async def _io_bound(callback: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return await nicegui_run.io_bound(callback, *args, **kwargs)
+
+    async def _build_snapshot_io(
+        profile_id: str,
+        *,
+        ui_mode_override: str | None = None,
+        defer_daily_digest: bool,
+        defer_team_digest_board: bool,
+    ) -> dict[str, Any]:
+        return await _io_bound(
+            build_dashboard_snapshot,
+            profile_id,
+            workspace,
+            bmw_root=bmw_root,
+            ui_mode=ui_mode_override if ui_mode_override is not None else ui_mode,
+            defer_daily_digest=defer_daily_digest,
+            defer_team_digest_board=defer_team_digest_board,
+        )
+
+    def _schedule_background(awaitable: Any, *, name: str) -> None:
+        try:
+            background_tasks.create(awaitable, name=name)
+        except RuntimeError:
+            asyncio.create_task(awaitable)
+
     base_snapshot = build_dashboard_snapshot(
         initial_profile_id,
         workspace,
@@ -2646,7 +2689,7 @@ def _render_dashboard(
     )
 
     @app.get("/sgfx-dashboard-api/full-qa-pass")
-    def _full_qa_pass_api(profile: str = "", trusted_tool_mode: str = "1") -> dict[str, Any]:
+    async def _full_qa_pass_api(profile: str = "", trusted_tool_mode: str = "1") -> dict[str, Any]:
         requested_profile = str(profile or base_snapshot.get("profile_id") or initial_profile_id).strip()
         trusted = str(trusted_tool_mode).strip().casefold() in {"1", "true", "yes", "on"}
         # internal milestone Part B: same per-profile 30s dedup as the `_index` page handler.
@@ -2673,7 +2716,8 @@ def _render_dashboard(
                 "manual_review_required": True,
                 "is_approval": False,
             }
-        return build_full_qa_pass(
+        return await _io_bound(
+            build_full_qa_pass,
             requested_profile,
             workspace=workspace,
             bmw_root=bmw_root,
@@ -2681,14 +2725,11 @@ def _render_dashboard(
         )
 
     @ui.page("/")
-    def _index(profile: str = "", full_qa_run: str = "", automatic_mode: str = "1") -> None:
+    async def _index(profile: str = "", full_qa_run: str = "", automatic_mode: str = "1") -> None:
         query_profile = str(profile or "").strip()
         snapshot = (
-            build_dashboard_snapshot(
+            await _build_snapshot_io(
                 query_profile,
-                workspace,
-                bmw_root=bmw_root,
-                ui_mode=ui_mode,
                 defer_daily_digest=True,
                 defer_team_digest_board=True,
             )
@@ -2713,7 +2754,8 @@ def _render_dashboard(
                 ui.navigate.to(f"/?profile={quote_plus(profile_for_trigger)}")
                 return
             trusted = _is_truthy_trigger(automatic_mode, default="1")
-            payload = build_full_qa_pass(
+            payload = await _io_bound(
+                build_full_qa_pass,
                 profile_for_trigger,
                 workspace=workspace,
                 bmw_root=bmw_root,
@@ -3105,6 +3147,18 @@ def _render_dashboard(
                 return
             content.clear()
             with content:
+                loading_message = str(state.get("loading_message", "") or "")
+                if loading_message:
+                    with ui.column().classes("sgfx-page-panel"):
+                        ui.label(loading_message).classes("sgfx-panel-title")
+                        ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+                        ui.label("Refreshing dashboard data off the UI event loop.").classes("sgfx-muted")
+                    content.update()
+                    _run_javascript_if_client_alive(
+                        ui,
+                        "window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();",
+                    )
+                    return
                 warning = str(state["snapshot"].get("profile_warning", "") or "")
                 if warning:
                     ui.label(warning).classes("sgfx-warning")
@@ -3210,51 +3264,106 @@ def _render_dashboard(
                 "window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();",
             )
 
+        async def _finish_snapshot_refresh(
+            *,
+            profile_id: str,
+            active_page_id: str,
+            defer_daily_digest: bool,
+            defer_team_digest_board: bool,
+            transition_page_id: str = "",
+            notify_message: str = "",
+        ) -> None:
+            try:
+                snapshot = await _build_snapshot_io(
+                    profile_id,
+                    ui_mode_override=_current_theme(),
+                    defer_daily_digest=defer_daily_digest,
+                    defer_team_digest_board=defer_team_digest_board,
+                )
+            except Exception as exc:  # noqa: BLE001
+                state["loading_message"] = ""
+                _render_current_page()
+                ui.notify(f"Dashboard refresh failed: {exc}")
+                return
+            state["snapshot"] = snapshot
+            state["loading_message"] = ""
+            _refresh_labels()
+            if str(state.get("active_page_id", "")) == active_page_id:
+                _render_current_page()
+            if notify_message:
+                ui.notify(notify_message)
+
+        def _start_snapshot_refresh(
+            *,
+            profile_id: str,
+            active_page_id: str,
+            defer_daily_digest: bool,
+            defer_team_digest_board: bool,
+            loading_message: str,
+            transition_page_id: str = "",
+            notify_message: str = "",
+        ) -> None:
+            _dashboard_changed_profiles.cache_clear()
+            state["loading_message"] = loading_message
+            _render_current_page()
+            if transition_page_id:
+                _run_javascript_if_client_alive(
+                    ui,
+                    f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(transition_page_id)});",
+                )
+            _schedule_background(
+                _finish_snapshot_refresh(
+                    profile_id=profile_id,
+                    active_page_id=active_page_id,
+                    defer_daily_digest=defer_daily_digest,
+                    defer_team_digest_board=defer_team_digest_board,
+                    transition_page_id=transition_page_id,
+                    notify_message=notify_message,
+                ),
+                name="sgfx-dashboard-snapshot-refresh",
+            )
+
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
             _run_javascript_if_client_alive(ui, f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
             _run_javascript_if_client_alive(ui, "window.sgfxSetSidebarOpen && window.sgfxSetSidebarOpen(false);")
             if page_id in {"daily-digest", "team-digest-board"} and _pages_by_id().get(page_id, {}).get("deferred"):
-                state["snapshot"] = build_dashboard_snapshot(
-                    str(state["snapshot"]["profile_id"]),
-                    workspace,
-                    bmw_root=bmw_root,
-                    ui_mode=_current_theme(),
+                _start_snapshot_refresh(
+                    profile_id=str(state["snapshot"]["profile_id"]),
+                    active_page_id=page_id,
                     defer_daily_digest=page_id != "daily-digest",
                     defer_team_digest_board=page_id != "team-digest-board",
+                    loading_message=f"Loading {str(_pages_by_id().get(page_id, {}).get('title', page_id))}...",
+                    transition_page_id=page_id,
                 )
-                _refresh_labels()
+                return
+            state["loading_message"] = ""
             _render_current_page()
             _run_javascript_if_client_alive(
                 ui,
                 f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
             )
 
-        def _refresh_snapshot(profile_id: str | None = None) -> None:
+        def _refresh_snapshot(profile_id: str | None = None, *, notify_message: str = "") -> None:
             current_profile = profile_id if profile_id is not None else str(state["snapshot"]["profile_id"])
             active_page_id = str(state.get("active_page_id", "delivery-checklist"))
-            _dashboard_changed_profiles.cache_clear()
-            state["snapshot"] = build_dashboard_snapshot(
-                current_profile,
-                workspace,
-                bmw_root=bmw_root,
-                ui_mode=_current_theme(),
+            _start_snapshot_refresh(
+                profile_id=current_profile,
+                active_page_id=active_page_id,
                 defer_daily_digest=active_page_id != "daily-digest",
                 defer_team_digest_board=active_page_id != "team-digest-board",
+                loading_message="Refreshing dashboard data...",
+                notify_message=notify_message,
             )
-            _refresh_labels()
-            _render_current_page()
 
         def _refresh_current_page() -> None:
-            _refresh_snapshot()
-            ui.notify("Current page refreshed from read-only sources.")
+            _refresh_snapshot(notify_message="Current page refreshed from read-only sources.")
 
         def _set_profile(value: str) -> None:
             profile_id = _profile_id_from_select_value(value)
             if profile_id:
                 _write_dashboard_profile_preference(workspace, profile_id)
-            _refresh_snapshot(profile_id)
-            ui.notify(f"Profile switched to {state['snapshot']['profile_id']}.")
+            _refresh_snapshot(profile_id, notify_message=f"Profile switched to {profile_id or state['snapshot']['profile_id']}.")
 
         def _install_shortcut_script() -> None:
             messages = {str(item["key"]): str(item["message"]) for item in state["snapshot"]["shortcut_actions"]}
