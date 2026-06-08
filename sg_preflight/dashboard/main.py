@@ -575,6 +575,28 @@ def _start_background_poll_timer(interval: float, callback: Callable[[], None]) 
     return Timer(interval, callback, active=True, immediate=False)
 
 
+def _start_io_bound_poll_timer(
+    interval: float,
+    poll_fn: Callable[[], Any],
+    apply_fn: Callable[[Any], None],
+    error_fn: Callable[[Exception], None] | None = None,
+) -> Any:
+    from nicegui import run as nicegui_run
+    from nicegui.timer import Timer
+
+    async def _tick() -> None:
+        try:
+            result = await nicegui_run.io_bound(poll_fn)
+        except Exception as exc:  # noqa: BLE001
+            if error_fn is not None:
+                error_fn(exc)
+                return
+            raise
+        apply_fn(result)
+
+    return Timer(interval, _tick, active=True, immediate=False)
+
+
 def _cancel_background_poll_timer(timer: Any) -> None:
     if timer is None:
         return
@@ -1442,13 +1464,17 @@ def _render_setup_status_panel(
         )
         cancel_button.disable()
 
-        def _poll_setup() -> None:
+        def _poll_setup_io() -> dict[str, Any] | None:
+            job = job_state.get("job")
+            if job is None:
+                return {"_sgfx_stop_poll": True}
+            return poll_dependency_setup_action(job)
+
+        def _apply_setup_poll(result: dict[str, Any] | None) -> None:
             try:
-                job = job_state.get("job")
-                if job is None:
+                if isinstance(result, dict) and result.get("_sgfx_stop_poll"):
                     _stop_setup_poll_timer()
                     return
-                result = poll_dependency_setup_action(job)
                 if result is None:
                     return
                 _show_setup_progress()
@@ -1471,7 +1497,7 @@ def _render_setup_status_panel(
 
         def _start_setup_poll_timer() -> None:
             _stop_setup_poll_timer()
-            poll_timer_ref["timer"] = _start_background_poll_timer(1.0, _poll_setup)
+            poll_timer_ref["timer"] = _start_io_bound_poll_timer(1.0, _poll_setup_io, _apply_setup_poll)
 
         with ui.row().classes("items-center"):
             for action in actions:
@@ -1546,16 +1572,19 @@ def _render_setup_status_panel(
                             return False
                         return True
 
-                    def _run(
+                    async def _run(
                         action_payload: dict[str, Any] = action,
                         dialog: Any = confirm_dialog,
                         source_widget: Any = source_input,
                         target_widget: Any = target_input,
                     ) -> None:
+                        from nicegui import run as nicegui_run
+
                         selected_source = _input_value(source_widget, str(action_payload.get("source_path", "")))
                         selected_target = _input_value(target_widget, str(action_payload.get("target_path", "")))
                         try:
-                            job_state["job"] = start_dependency_setup_action(
+                            job_state["job"] = await nicegui_run.io_bound(
+                                start_dependency_setup_action,
                                 action_id=str(action_payload.get("id", "")),
                                 workspace=workspace,
                                 operator_confirmed=True,
@@ -1770,13 +1799,17 @@ def _render_delivery_checklist_panel(
             )
             cancel_button.disable()
 
-            def _poll() -> None:
+            def _poll_delivery_io() -> dict[str, Any] | None:
+                job = job_state.get("job")
+                if job is None:
+                    return {"_sgfx_stop_poll": True}
+                return poll_delivery_workbook_generation(job)
+
+            def _apply_delivery_poll(result: dict[str, Any] | None) -> None:
                 try:
-                    job = job_state.get("job")
-                    if job is None:
+                    if isinstance(result, dict) and result.get("_sgfx_stop_poll"):
                         _stop_delivery_poll_timer()
                         return
-                    result = poll_delivery_workbook_generation(job)
                     if result is None:
                         return
                     _show_live_progress()
@@ -1809,7 +1842,7 @@ def _render_delivery_checklist_panel(
 
             def _start_delivery_poll_timer() -> None:
                 _stop_delivery_poll_timer()
-                poll_timer_ref["timer"] = _start_background_poll_timer(1.0, _poll)
+                poll_timer_ref["timer"] = _start_io_bound_poll_timer(1.0, _poll_delivery_io, _apply_delivery_poll)
 
             with ui.dialog() as confirm_dialog, ui.card():
                 ui.label(str(action.get("confirmation_message", ""))).classes("sgfx-summary")
@@ -1817,9 +1850,12 @@ def _render_delivery_checklist_panel(
                     "sgfx-muted"
                 )
 
-                def _start() -> None:
+                async def _start() -> None:
+                    from nicegui import run as nicegui_run
+
                     try:
-                        job_state["job"] = start_delivery_workbook_generation(
+                        job_state["job"] = await nicegui_run.io_bound(
+                            start_delivery_workbook_generation,
                             profile_id=str(snapshot["profile_id"]),
                             workspace=workspace,
                             operator_confirmed=True,
@@ -2102,13 +2138,17 @@ def _render_screenshot_test_state_panel(
             )
             cancel_button.disable()
 
-            def _poll() -> None:
+            def _poll_screenshot_io() -> dict[str, Any] | None:
+                job = job_state.get("job")
+                if job is None:
+                    return {"_sgfx_stop_poll": True}
+                return poll_screenshot_capture(job)
+
+            def _apply_screenshot_poll(result: dict[str, Any] | None) -> None:
                 try:
-                    job = job_state.get("job")
-                    if job is None:
+                    if isinstance(result, dict) and result.get("_sgfx_stop_poll"):
                         _stop_screenshot_poll_timer()
                         return
-                    result = poll_screenshot_capture(job)
                     if result is None:
                         return
                     _show_live_progress()
@@ -2142,7 +2182,7 @@ def _render_screenshot_test_state_panel(
 
             def _start_screenshot_poll_timer() -> None:
                 _stop_screenshot_poll_timer()
-                poll_timer_ref["timer"] = _start_background_poll_timer(1.0, _poll)
+                poll_timer_ref["timer"] = _start_io_bound_poll_timer(1.0, _poll_screenshot_io, _apply_screenshot_poll)
 
             with ui.dialog() as confirm_dialog, ui.card():
                 ui.label(str(action.get("confirmation_message", ""))).classes("sgfx-summary")
@@ -2150,9 +2190,12 @@ def _render_screenshot_test_state_panel(
                     "sgfx-muted"
                 )
 
-                def _start() -> None:
+                async def _start() -> None:
+                    from nicegui import run as nicegui_run
+
                     try:
-                        job_state["job"] = start_screenshot_capture(
+                        job_state["job"] = await nicegui_run.io_bound(
+                            start_screenshot_capture,
                             profile_id=str(snapshot["profile_id"]),
                             workspace=workspace,
                             bmw_root=bmw_root,

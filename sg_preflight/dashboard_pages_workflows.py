@@ -95,6 +95,7 @@ _MAIN_GLOBAL_NAMES = (
     "_copy_dashboard_link_to_clipboard",
     "_render_jira_profile_tickets_card",
     "_start_background_poll_timer",
+    "_start_io_bound_poll_timer",
     "_cancel_background_poll_timer",
     "_parent_slot_deleted",
     "_ignorable_nicegui_runtime_error",
@@ -1629,9 +1630,11 @@ def _render_action_visuals(
                 for row in review_rows:
                     label = row["label"] or row["key"] or "screenshot diff"
 
-                    def _open(current: dict[str, str] = row) -> None:
+                    async def _open(current: dict[str, str] = row) -> None:
                         if open_screenshot_viewer is not None:
-                            open_screenshot_viewer(current["key"], current["label"])
+                            result = open_screenshot_viewer(current["key"], current["label"])
+                            if asyncio.iscoroutine(result):
+                                await result
 
                     with ui.column().classes("sgfx-diff-row-card"):
                         with ui.button(on_click=_open).props("flat no-caps").classes("sgfx-diff-triplet-button"):
@@ -2014,13 +2017,17 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             )
             cancel_button.disable()
 
-            def _poll_build() -> None:
+            def _poll_build_io() -> dict[str, Any] | None:
+                job = job_state.get("job")
+                if job is None:
+                    return {"_sgfx_stop_poll": True}
+                return poll_dashboard_review_package_build(job)
+
+            def _apply_build_poll(result: dict[str, Any] | None) -> None:
                 try:
-                    job = job_state.get("job")
-                    if job is None:
+                    if isinstance(result, dict) and result.get("_sgfx_stop_poll"):
                         _stop_build_poll_timer()
                         return
-                    result = poll_dashboard_review_package_build(job)
                     if result is None:
                         return
                     _show_build_progress()
@@ -2055,7 +2062,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
 
             def _start_build_poll_timer() -> None:
                 _stop_build_poll_timer()
-                poll_timer_ref["timer"] = _start_background_poll_timer(1.0, _poll_build)
+                poll_timer_ref["timer"] = _start_io_bound_poll_timer(1.0, _poll_build_io, _apply_build_poll)
 
             with ui.dialog() as confirm_dialog, ui.card():
                 ui.label("Build review package").classes("sgfx-panel-title")
@@ -2066,13 +2073,16 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                     "sgfx-muted"
                 )
 
-                def _build(ticket_input=ticket_input, status_label=status_label) -> None:
+                async def _build(ticket_input=ticket_input, status_label=status_label) -> None:
+                    from nicegui import run as nicegui_run
+
                     ticket_value = str(ticket_input.value or "").strip()
                     if not ticket_value:
                         ui.notify("Enter a ticket ID before building a review package.")
                         return
                     try:
-                        job_state["job"] = start_dashboard_review_package_build(
+                        job_state["job"] = await nicegui_run.io_bound(
+                            start_dashboard_review_package_build,
                             workspace=workspace,
                             profile_id=str(snapshot["profile_id"]),
                             ticket_id=ticket_value,
@@ -2837,13 +2847,17 @@ def _render_batch_full_qa_pass_panel(
                 start_button.enable()
                 cancel_button.disable()
 
-        def _poll() -> None:
+        def _poll_batch_io() -> dict[str, Any] | None:
+            job = job_ref.get("job")
+            if job is None:
+                return {"_sgfx_stop_poll": True}
+            return poll_dashboard_batch_full_qa_pass(job)
+
+        def _apply_batch_poll(result: dict[str, Any] | None) -> None:
             try:
-                job = job_ref.get("job")
-                if job is None:
+                if isinstance(result, dict) and result.get("_sgfx_stop_poll"):
                     _stop_timer()
                     return
-                result = poll_dashboard_batch_full_qa_pass(job)
                 if result is not None:
                     _apply_result(result)
             except RuntimeError as exc:
@@ -2853,9 +2867,11 @@ def _render_batch_full_qa_pass_panel(
 
         def _start_timer() -> None:
             _stop_timer()
-            timer_ref["timer"] = _start_background_poll_timer(1.0, _poll)
+            timer_ref["timer"] = _start_io_bound_poll_timer(1.0, _poll_batch_io, _apply_batch_poll)
 
-        def _start_batch() -> None:
+        async def _start_batch() -> None:
+            from nicegui import run as nicegui_run
+
             raw_profiles = profiles_select.value
             selected = raw_profiles if isinstance(raw_profiles, list) else [raw_profiles]
             profiles = [str(profile).strip() for profile in selected if str(profile).strip()]
@@ -2863,7 +2879,8 @@ def _render_batch_full_qa_pass_panel(
                 ui.notify("Select at least one profile before starting the batch.")
                 return
             try:
-                job_ref["job"] = start_dashboard_batch_full_qa_pass(
+                job_ref["job"] = await nicegui_run.io_bound(
+                    start_dashboard_batch_full_qa_pass,
                     workspace=workspace,
                     profile_ids=profiles,
                     bmw_root=bmw_root,
@@ -2879,7 +2896,9 @@ def _render_batch_full_qa_pass_panel(
             start_button.disable()
             cancel_button.enable()
             _start_timer()
-            _poll()
+            first_result = await nicegui_run.io_bound(poll_dashboard_batch_full_qa_pass, job_ref["job"])
+            if first_result is not None:
+                _apply_result(first_result)
 
         def _cancel_after_current() -> None:
             job = job_ref.get("job")
@@ -3047,9 +3066,16 @@ def _render_full_qa_pass_panel(
                 ).classes("sgfx-muted")
                 wizard_viewer_frame_host = ui.column().classes("sgfx-viewer-frame-host")
 
-        def _open_wizard_screenshot_viewer(item_key: str, label: str = "") -> None:
+        async def _open_wizard_screenshot_viewer(item_key: str, label: str = "") -> None:
+            from nicegui import run as nicegui_run
+
             try:
-                _materialize_screenshot_review_viewer_for_dashboard(profile_id, workspace, bmw_root=bmw_root)
+                await nicegui_run.io_bound(
+                    _materialize_screenshot_review_viewer_for_dashboard,
+                    profile_id,
+                    workspace,
+                    bmw_root=bmw_root,
+                )
             except Exception as exc:  # noqa: BLE001
                 _notify_ui(f"Screenshot viewer generation failed: {exc}")
                 return
@@ -3372,17 +3398,21 @@ def _render_full_qa_pass_panel(
                 job_state["timer"] = None
                 active_jobs.pop(action_id, None)
 
-            def _poll() -> None:
+            def _poll_action_io() -> dict[str, Any] | None:
+                job = job_state.get("job")
+                if job is None:
+                    return {"_sgfx_stop_poll": True}
+                poller = job_state.get("poller")
+                if poller is None:
+                    return None
+                return poller(job)
+
+            def _apply_action_poll(result: dict[str, Any] | None) -> None:
                 try:
-                    job = job_state.get("job")
-                    if job is None:
+                    if isinstance(result, dict) and result.get("_sgfx_stop_poll"):
                         _stop_timer()
                         return
-                    poller = job_state.get("poller")
-                    if poller is None:
-                        return
                     label = str(job_state.get("label", "local action"))
-                    result = poller(job)
                     if result is None:
                         return
                     live_output.value = _action_output_text(result)
@@ -3442,36 +3472,47 @@ def _render_full_qa_pass_panel(
                     if set_running_controls is not None:
                         set_running_controls(False)
 
-            def _launch_job() -> None:
-                _stop_launch_timer()
+            def _launch_job_io() -> dict[str, Any]:
                 try:
                     if action_id == GENERATE_WORKBOOK_ACTION_ID:
-                        job_state["job"] = start_delivery_workbook_generation(
-                            profile_id=profile_id,
-                            workspace=workspace,
-                            bmw_root=bmw_root,
-                            operator_confirmed=True,
-                        )
-                        job_state["poller"] = poll_delivery_workbook_generation
-                        job_state["label"] = "delivery workbook generation"
-                    elif action_id == SCREENSHOT_CAPTURE_ACTION_ID:
-                        job_state["job"] = start_screenshot_capture(
-                            profile_id=profile_id,
-                            workspace=workspace,
-                            bmw_root=bmw_root,
-                            operator_confirmed=True,
-                        )
-                        job_state["poller"] = poll_screenshot_capture
-                        job_state["label"] = "screenshot capture"
-                    else:
-                        raise ValueError(f"Unsupported Full QA Pass action: {action_id}")
+                        return {
+                            "job": start_delivery_workbook_generation(
+                                profile_id=profile_id,
+                                workspace=workspace,
+                                bmw_root=bmw_root,
+                                operator_confirmed=True,
+                            ),
+                            "poller": poll_delivery_workbook_generation,
+                            "label": "delivery workbook generation",
+                        }
+                    if action_id == SCREENSHOT_CAPTURE_ACTION_ID:
+                        return {
+                            "job": start_screenshot_capture(
+                                profile_id=profile_id,
+                                workspace=workspace,
+                                bmw_root=bmw_root,
+                                operator_confirmed=True,
+                            ),
+                            "poller": poll_screenshot_capture,
+                            "label": "screenshot capture",
+                        }
+                    raise ValueError(f"Unsupported Full QA Pass action: {action_id}")
                 except Exception as exc:  # noqa: BLE001
-                    _finish_start_failure(exc)
-                    return
-                _append_activity(action=action_id, note=f"Started {job_state['label']} from Full QA Pass.")
-                job_state["timer"] = _start_background_poll_timer(1.0, _poll)
+                    return {"error": exc}
 
-            job_state["launch_timer"] = _start_background_poll_timer(0.1, _launch_job)
+            def _apply_launch_job(result: dict[str, Any]) -> None:
+                _stop_launch_timer()
+                error = result.get("error") if isinstance(result, dict) else None
+                if isinstance(error, Exception):
+                    _finish_start_failure(error)
+                    return
+                job_state["job"] = result.get("job")
+                job_state["poller"] = result.get("poller")
+                job_state["label"] = str(result.get("label", "local action"))
+                _append_activity(action=action_id, note=f"Started {job_state['label']} from Full QA Pass.")
+                job_state["timer"] = _start_io_bound_poll_timer(1.0, _poll_action_io, _apply_action_poll)
+
+            job_state["launch_timer"] = _start_io_bound_poll_timer(0.1, _launch_job_io, _apply_launch_job)
 
         def _cancel_subprocess_action(
             action: dict[str, Any],
@@ -3792,7 +3833,10 @@ def _render_full_qa_pass_panel(
         def _schedule_full_qa_notification(notification: dict[str, str], payload: dict[str, Any]) -> None:
             timer_ref: dict[str, Any] = {"timer": None}
 
-            def _send_notification() -> None:
+            def _notification_tick_io() -> bool:
+                return True
+
+            def _send_notification(_ready: bool) -> None:
                 _cancel_background_poll_timer(timer_ref.get("timer"))
                 timer_ref["timer"] = None
                 if bool(wizard_state.get("full_qa_notified")):
@@ -3813,7 +3857,7 @@ def _render_full_qa_pass_panel(
                 wizard_state["full_qa_notified"] = True
                 _persist_wizard_state(payload, reason="notification_sent", status="completed")
 
-            timer_ref["timer"] = _start_background_poll_timer(2.0, _send_notification)
+            timer_ref["timer"] = _start_io_bound_poll_timer(2.0, _notification_tick_io, _send_notification)
 
         def _record_run_history_once(payload: dict[str, Any]) -> None:
             if bool(wizard_state.get("run_history_recorded")):
@@ -3996,7 +4040,7 @@ def _render_full_qa_pass_panel(
             wizard_state["action_results"][MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID] = result
             _persist_wizard_state(payload, reason="diagnostic_chain_completed", status="in_progress")
 
-        def _run_diagnostic_chain_action(
+        async def _run_diagnostic_chain_action(
             action: dict[str, Any],
             *,
             prompt_overlay: Any,
@@ -4099,9 +4143,9 @@ def _render_full_qa_pass_panel(
                 _scroll_live_output_to_bottom()
                 _merge_missing_actual_diagnostic_result(str(action.get("step_id", "")), result)
                 if bool(result.get("operator_confirmation_required", False)) and not operator_confirmed_read_refresh:
-                    def _confirm_followup(current: dict[str, Any] = action) -> None:
+                    async def _confirm_followup(_event: Any = None, current: dict[str, Any] = action) -> None:
                         _hide_prompt_overlay(prompt_overlay)
-                        _run_diagnostic_chain_action(
+                        await _run_diagnostic_chain_action(
                             current,
                             prompt_overlay=prompt_overlay,
                             status_label=status_label,
@@ -4133,7 +4177,7 @@ def _render_full_qa_pass_panel(
                                     for path in paths:
                                         ui.label(path).classes("sgfx-muted")
                                 with ui.row().classes("sgfx-wizard-modal-actions"):
-                                    ui.button("Yes", on_click=lambda _event=None: _confirm_followup()).props(
+                                    ui.button("Yes", on_click=_confirm_followup).props(
                                         "color=primary"
                                     )
                                     ui.button("Cancel", on_click=lambda: _hide_prompt_overlay(prompt_overlay))
@@ -4165,21 +4209,29 @@ def _render_full_qa_pass_panel(
                     worker_state["result"] = _execute_diagnostic_chain()
                     worker_state["completed"] = True
 
-                def _poll_worker() -> None:
-                    if not bool(worker_state.get("completed", False)):
+                def _poll_worker_io() -> dict[str, Any]:
+                    return {
+                        "completed": bool(worker_state.get("completed", False)),
+                        "result": worker_state.get("result"),
+                    }
+
+                def _apply_poll_worker(state_payload: dict[str, Any]) -> None:
+                    if not bool(state_payload.get("completed", False)):
                         return
                     _cancel_background_poll_timer(worker_state.get("timer"))
                     worker_state["timer"] = None
                     _clear_diagnostic_running_state()
-                    result = worker_state.get("result")
+                    result = state_payload.get("result")
                     if isinstance(result, dict):
                         _apply_diagnostic_result(result)
 
                 threading.Thread(target=_worker, name="sgfx-missing-actual-diagnostics", daemon=True).start()
-                worker_state["timer"] = _start_background_poll_timer(0.5, _poll_worker)
+                worker_state["timer"] = _start_io_bound_poll_timer(0.5, _poll_worker_io, _apply_poll_worker)
                 return
 
-            result = _execute_diagnostic_chain()
+            from nicegui import run as nicegui_run
+
+            result = await nicegui_run.io_bound(_execute_diagnostic_chain)
             _clear_diagnostic_running_state()
             _apply_diagnostic_result(result)
 
@@ -4430,8 +4482,8 @@ def _render_full_qa_pass_panel(
                 )
                 return
             if kind == "diagnostic_chain":
-                def _run_diagnostic_action(current: dict[str, Any] = action) -> None:
-                    _run_diagnostic_chain_action(
+                async def _run_diagnostic_action(_event: Any = None, current: dict[str, Any] = action) -> None:
+                    await _run_diagnostic_chain_action(
                         current,
                         prompt_overlay=prompt_overlay,
                         status_label=status_label,
@@ -4447,7 +4499,7 @@ def _render_full_qa_pass_panel(
 
                 button = _attach_tooltip(
                     ui,
-                    ui.button(label, on_click=lambda _event=None, current=action: _run_diagnostic_action(current)),
+                    ui.button(label, on_click=_run_diagnostic_action),
                     str(action.get("summary", "")),
                 )
                 action_buttons.append(button)

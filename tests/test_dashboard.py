@@ -661,6 +661,64 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("await nicegui_run.io_bound(", source_reader)
         self.assertNotIn("next_payload = payload_builder(", source_reader)
 
+    def test_dashboard_source_offloads_subprocess_lifecycle_timers(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+        combined = source + "\n" + workflow_source
+
+        helper_start = source.find("def _start_io_bound_poll_timer(")
+        helper_end = source.find("\n\ndef _cancel_background_poll_timer", helper_start)
+        self.assertNotEqual(helper_start, -1)
+        self.assertNotEqual(helper_end, -1)
+        helper_source = source[helper_start:helper_end]
+        self.assertIn("async def _tick()", helper_source)
+        self.assertIn("await nicegui_run.io_bound(poll_fn)", helper_source)
+        self.assertIn("apply_fn(result)", helper_source)
+        self.assertIn("Timer(interval, _tick", helper_source)
+
+        direct_background_timer_calls: list[str] = []
+        for path, text in {
+            "dashboard/main.py": source,
+            "dashboard_pages_workflows.py": workflow_source,
+        }.items():
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if "_start_background_poll_timer(" not in line:
+                    continue
+                if line.lstrip().startswith("def _start_background_poll_timer("):
+                    continue
+                direct_background_timer_calls.append(f"{path}:{line_number}:{line.strip()}")
+        self.assertEqual([], direct_background_timer_calls)
+
+        expected_timer_routes = [
+            "_start_io_bound_poll_timer(1.0, _poll_setup_io, _apply_setup_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_delivery_io, _apply_delivery_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_screenshot_io, _apply_screenshot_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_build_io, _apply_build_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_batch_io, _apply_batch_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_action_io, _apply_action_poll)",
+            "_start_io_bound_poll_timer(0.1, _launch_job_io, _apply_launch_job)",
+            "_start_io_bound_poll_timer(2.0, _notification_tick_io, _send_notification)",
+            "_start_io_bound_poll_timer(0.5, _poll_worker_io, _apply_poll_worker)",
+        ]
+        for route in expected_timer_routes:
+            self.assertIn(route, combined)
+
+        offloaded_handlers = [
+            "start_dependency_setup_action",
+            "start_delivery_workbook_generation",
+            "start_screenshot_capture",
+            "start_dashboard_review_package_build",
+            "start_dashboard_batch_full_qa_pass",
+            "_materialize_screenshot_review_viewer_for_dashboard",
+        ]
+        for handler in offloaded_handlers:
+            self.assertRegex(combined, rf"await\s+nicegui_run\.io_bound\(\s*{handler}\b")
+        self.assertRegex(workflow_source, r"await\s+nicegui_run\.io_bound\(_execute_diagnostic_chain\)")
+        self.assertIn('"job": start_delivery_workbook_generation(', workflow_source)
+        self.assertIn('"job": start_screenshot_capture(', workflow_source)
+        self.assertIn('job_state["launch_timer"] = _start_io_bound_poll_timer(0.1, _launch_job_io, _apply_launch_job)', workflow_source)
+
     def test_jira_inline_tickets_render_as_copy_only_buttons(self) -> None:
         """Clicking a Jira ticket in the inline panel copies the URL only and
         shows a visible toast. It must not auto-open a browser."""
