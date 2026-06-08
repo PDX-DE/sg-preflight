@@ -622,6 +622,45 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("await nicegui_run.io_bound(", workflow_source)
         self.assertIn('background_tasks.create(_run_full_pass_async(), name="sgfx-full-qa-pass")', workflow_source)
 
+    def test_dashboard_source_offloads_render_path_blockers(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+
+        jira_card = source[
+            source.find("def _render_jira_profile_tickets_card"):
+            source.find("\n\ndef _render_selected_page", source.find("def _render_jira_profile_tickets_card"))
+        ]
+        self.assertNotIn("search_jira_profile_tickets(", jira_card)
+        self.assertIn("jira_profile_tickets_loader=_load_jira_profile_tickets_payload", source)
+        self.assertIn("background_tasks.create(_load_jira_profile_tickets_card()", workflow_source)
+
+        my_tickets_panel = workflow_source[
+            workflow_source.find("def _render_my_tickets_panel"):
+            workflow_source.find("\n\ndef _render_full_qa_pass_panel", workflow_source.find("def _render_my_tickets_panel"))
+        ]
+        self.assertNotIn("search_my_unresolved_tickets(", my_tickets_panel)
+        self.assertNotIn("build_latest_daily_digest(", my_tickets_panel)
+        self.assertIn("await _io_bound(_build_my_tickets_payload, workspace)", source)
+        self.assertIn('page_id == "my-tickets"', source)
+
+        visual_renderer = workflow_source[
+            workflow_source.find("def _render_action_visuals"):
+            workflow_source.find("\n\ndef _render_screenshot_test_state_panel", workflow_source.find("def _render_action_visuals"))
+        ]
+        self.assertNotIn("_screenshot_review_visual_rows(", visual_renderer)
+        self.assertIn("await nicegui_run.io_bound(_build_action_visual_payload, result)", workflow_source)
+        self.assertIn("_schedule_action_visual_render(", workflow_source)
+        self.assertIn("_schedule_action_visual_payload(step_payload", workflow_source)
+
+        source_reader = source[
+            source.find("def _render_source_root_reader_panel"):
+            source.find("\n\ndef _render_page_panel", source.find("def _render_source_root_reader_panel"))
+        ]
+        self.assertIn("async def _reload()", source_reader)
+        self.assertIn("await nicegui_run.io_bound(", source_reader)
+        self.assertNotIn("next_payload = payload_builder(", source_reader)
+
     def test_jira_inline_tickets_render_as_copy_only_buttons(self) -> None:
         """Clicking a Jira ticket in the inline panel copies the URL only and
         shows a visible toast. It must not auto-open a browser."""

@@ -328,6 +328,7 @@ from sg_preflight.dashboard_pages_workflows import (
     _render_operator_handoff_panel,
     _render_manual_review_panel,
     _my_ticket_status_draft,
+    _build_my_tickets_payload,
     _render_my_tickets_panel,
     _render_batch_full_qa_pass_panel,
     _render_full_qa_pass_panel,
@@ -974,6 +975,7 @@ def _screenshot_review_visual_rows(result: dict[str, Any], *, limit: int = 4) ->
             profile_id,
             diff_path,
             key=str(row.get("key", "") or row.get("label", "")).strip(),
+            current=delta_badge,
         )
         if not any((expected_src, actual_src, diff_src)):
             continue
@@ -1106,15 +1108,29 @@ def _render_source_root_reader_panel(
         source_input = ui.input(label="SVN trunk root", value=selected_source).classes("full-width")
         source_status = ui.label(f"Reading from: {selected_source or 'auto-discovery'}").classes("sgfx-muted")
         rows_host = ui.column().classes("full-width")
+        reload_buttons: list[Any] = []
 
         def _render_payload_rows(next_payload: dict[str, Any]) -> None:
             rows_host.clear()
             with rows_host:
                 _render_reader_rows(ui, _reader_rows_from_payload(next_payload))
 
-        def _reload() -> None:
+        async def _reload() -> None:
+            from nicegui import run as nicegui_run
+
+            for button in reload_buttons:
+                try:
+                    button.disable()
+                except Exception:
+                    pass
+            source_status.text = f"Refreshing from: {source_input.value or 'auto-discovery'}"
+            rows_host.clear()
+            with rows_host:
+                ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+                ui.label("Reloading source evidence off the UI event loop...").classes("sgfx-muted")
             try:
-                next_payload = payload_builder(
+                next_payload = await nicegui_run.io_bound(
+                    payload_builder,
                     workspace,
                     bmw_root,
                     repo_root=_source_repo_root_from_value(source_input.value),
@@ -1126,25 +1142,38 @@ def _render_source_root_reader_panel(
                 with rows_host:
                     ui.label("No rows loaded for this page.").classes("sgfx-muted")
                 return
+            finally:
+                for button in reload_buttons:
+                    try:
+                        button.enable()
+                    except Exception:
+                        pass
             summary_label.text = _payload_summary(next_payload, str(page["title"]), workspace=workspace)
             source_status.text = f"Reading from: {next_payload.get('repo_root', source_input.value)}"
             _render_payload_rows(next_payload)
             ui.notify(f"{page['title']} refreshed.")
 
+        async def _use_source_candidate(value: str) -> None:
+            source_input.value = value
+            await _reload()
+
         with ui.row().classes("items-center"):
-            _attach_tooltip(
+            reload_button = _attach_tooltip(
                 ui,
                 ui.button("Reload", on_click=_reload).props("no-caps"),
                 "Reload this evidence page from the selected local SVN checkout.",
             )
+            reload_buttons.append(reload_button)
             for candidate in source_candidates[:4]:
                 label = Path(candidate).name or candidate
-                _attach_tooltip(
+                candidate_button = _attach_tooltip(
                     ui,
-                    ui.button(label, on_click=lambda value=candidate: (setattr(source_input, "value", value), _reload()))
-                    .props("flat no-caps"),
+                    ui.button(label, on_click=lambda value=candidate: _use_source_candidate(value)).props(
+                        "flat no-caps"
+                    ),
                     f"Use {candidate}",
                 )
+                reload_buttons.append(candidate_button)
         _render_payload_rows(payload)
 
 
@@ -2505,17 +2534,16 @@ def _render_jira_profile_tickets_card(
     ui: Any,
     profile_id: str,
     *,
+    payload: dict[str, Any] | None = None,
     open_page: Callable[[str], None] | None = None,
 ) -> None:
-    try:
-        payload = search_jira_profile_tickets(profile_id, max_results=5, timeout_seconds=8)
-    except Exception as exc:  # noqa: BLE001
+    if not isinstance(payload, dict):
         payload = {
-            "status": "failed",
+            "status": "loading",
             "ticket_count": 0,
             "tickets": [],
-            "summary": f"Jira tickets unavailable: {exc}",
-            "settings_hint": "Check local Jira setup before retrying.",
+            "summary": "Loading active profile tickets from operator-local Jira credentials...",
+            "settings_hint": "",
             "read_only": True,
             "is_approval": False,
         }
@@ -2527,6 +2555,8 @@ def _render_jira_profile_tickets_card(
             ui.label("Active tickets for this profile").classes("sgfx-panel-tagline")
             _render_status_chip(ui, status)
         ui.label(str(payload.get("summary", "Jira tickets unavailable."))).classes("sgfx-summary")
+        if status == "loading":
+            ui.linear_progress(value=0).props("indeterminate").classes("full-width")
         cache_status = str(payload.get("cache_status", "")).strip()
         if cache_status:
             ui.label(f"Read-only Jira REST query. Cache: {cache_status}; no Jira update is sent.").classes(
@@ -2971,6 +3001,8 @@ def _render_dashboard(
             "snapshot": snapshot,
             "active_page_id": first_page_id,
             "dashboard_mode": "clean",
+            "jira_profile_ticket_payloads": {},
+            "my_tickets_loading": False,
         }
         content_holder: dict[str, Any] = {}
         controls: dict[str, Any] = {}
@@ -3141,6 +3173,97 @@ def _render_dashboard(
             state["batch_profile_prefill"] = [str(profile).strip() for profile in profile_ids if str(profile).strip()]
             _open_page("batch-full-qa-pass")
 
+        def _jira_profile_ticket_loading_payload(profile_id: str) -> dict[str, Any]:
+            return {
+                "status": "loading",
+                "ticket_count": 0,
+                "tickets": [],
+                "summary": f"Loading active Jira tickets for {profile_id}...",
+                "read_only": True,
+                "is_approval": False,
+            }
+
+        def _my_tickets_loading_payload() -> dict[str, Any]:
+            return {
+                "status": "loading",
+                "ticket_count": 0,
+                "tickets": [],
+                "summary": "Loading active tickets and local status drafts from operator-local sources...",
+                "jql": build_my_unresolved_ticket_jql(),
+                "read_only": True,
+                "is_approval": False,
+            }
+
+        async def _load_jira_profile_tickets_payload(profile_id: str) -> dict[str, Any]:
+            cache_key = str(profile_id or "").strip().upper()
+            try:
+                payload = await _io_bound(search_jira_profile_tickets, cache_key, max_results=5, timeout_seconds=8)
+            except Exception as exc:  # noqa: BLE001
+                payload = {
+                    "status": "failed",
+                    "ticket_count": 0,
+                    "tickets": [],
+                    "summary": f"Jira tickets unavailable: {exc}",
+                    "settings_hint": "Check local Jira setup before retrying.",
+                    "read_only": True,
+                    "is_approval": False,
+                }
+            payloads = state.setdefault("jira_profile_ticket_payloads", {})
+            if isinstance(payloads, dict):
+                payloads[cache_key] = payload if isinstance(payload, dict) else {
+                    "status": "failed",
+                    "ticket_count": 0,
+                    "tickets": [],
+                    "summary": "Jira tickets unavailable: unexpected response.",
+                    "read_only": True,
+                    "is_approval": False,
+                }
+                return payloads[cache_key]
+            return payload
+
+        def _jira_profile_tickets_payload(profile_id: str) -> dict[str, Any]:
+            clean_profile = str(profile_id or "").strip().upper()
+            if not clean_profile:
+                return _jira_profile_ticket_loading_payload("profile")
+            payloads = state.setdefault("jira_profile_ticket_payloads", {})
+            if not isinstance(payloads, dict):
+                state["jira_profile_ticket_payloads"] = payloads = {}
+            payload = payloads.get(clean_profile)
+            if isinstance(payload, dict):
+                return payload
+            payload = _jira_profile_ticket_loading_payload(clean_profile)
+            payloads[clean_profile] = payload
+            return payload
+
+        async def _finish_my_tickets_refresh() -> None:
+            try:
+                payload = await _io_bound(_build_my_tickets_payload, workspace)
+            except Exception as exc:  # noqa: BLE001
+                payload = {
+                    "status": "failed",
+                    "ticket_count": 0,
+                    "tickets": [],
+                    "summary": f"My Tickets unavailable: {exc}",
+                    "settings_hint": "Check local Jira setup before retrying.",
+                    "read_only": True,
+                    "is_approval": False,
+                    "jql": build_my_unresolved_ticket_jql(),
+                }
+            state["snapshot"]["my_tickets_payload"] = payload
+            state["my_tickets_loading"] = False
+            if str(state.get("active_page_id", "")) == "my-tickets":
+                _render_current_page()
+
+        def _start_my_tickets_refresh(*, force: bool = False) -> None:
+            if bool(state.get("my_tickets_loading", False)):
+                return
+            current_payload = state["snapshot"].get("my_tickets_payload")
+            if isinstance(current_payload, dict) and current_payload.get("status") != "loading" and not force:
+                return
+            state["my_tickets_loading"] = True
+            state["snapshot"]["my_tickets_payload"] = _my_tickets_loading_payload()
+            _schedule_background(_finish_my_tickets_refresh(), name="sgfx-dashboard-my-tickets")
+
         def _render_current_page() -> None:
             content = content_holder.get("content")
             if content is None:
@@ -3228,6 +3351,10 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         open_page=_open_page,
+                        jira_profile_tickets_payload=_jira_profile_tickets_payload(
+                            str(state["snapshot"].get("profile_id", ""))
+                        ),
+                        jira_profile_tickets_loader=_load_jira_profile_tickets_payload,
                     )
                 elif active_page_id == "batch-full-qa-pass":
                     _render_batch_full_qa_pass_panel(
@@ -3239,6 +3366,7 @@ def _render_dashboard(
                         default_profile_ids=state.get("batch_profile_prefill", []),
                     )
                 elif active_page_id == "my-tickets":
+                    _start_my_tickets_refresh()
                     _render_my_tickets_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
@@ -3287,6 +3415,8 @@ def _render_dashboard(
                 return
             state["snapshot"] = snapshot
             state["loading_message"] = ""
+            if active_page_id == "my-tickets":
+                _start_my_tickets_refresh(force=True)
             _refresh_labels()
             if str(state.get("active_page_id", "")) == active_page_id:
                 _render_current_page()
@@ -3335,6 +3465,15 @@ def _render_dashboard(
                     defer_team_digest_board=page_id != "team-digest-board",
                     loading_message=f"Loading {str(_pages_by_id().get(page_id, {}).get('title', page_id))}...",
                     transition_page_id=page_id,
+                )
+                return
+            if page_id == "my-tickets" and _pages_by_id().get(page_id, {}).get("deferred"):
+                state["loading_message"] = ""
+                _start_my_tickets_refresh(force=True)
+                _render_current_page()
+                _run_javascript_if_client_alive(
+                    ui,
+                    f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
                 )
                 return
             state["loading_message"] = ""

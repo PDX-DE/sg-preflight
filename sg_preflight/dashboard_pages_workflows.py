@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
@@ -199,6 +200,7 @@ _MAIN_GLOBAL_NAMES = (
     "_attachment_response_url",
     "_attachment_response_id",
     "build_dashboard_quality_hero_report",
+    "_build_action_visual_payload",
     "_full_qa_int",
     "_full_qa_step_payload",
     "_full_qa_step_map",
@@ -212,6 +214,7 @@ _MAIN_GLOBAL_NAMES = (
     "_render_operator_handoff_panel",
     "_render_manual_review_panel",
     "_my_ticket_status_draft",
+    "_build_my_tickets_payload",
     "_render_my_tickets_panel",
     "_render_batch_full_qa_pass_panel",
     "_render_full_qa_pass_panel",
@@ -331,6 +334,7 @@ def _my_tickets_page(profile_id: str, workspace: Path) -> dict[str, Any]:
         "summary": str(payload["summary"]),
         "items": [],
         "payload": payload,
+        "deferred": True,
     }
 
 
@@ -1560,6 +1564,24 @@ def build_dashboard_quality_hero_report(
         "is_approval": False,
     }
 
+def _build_action_visual_payload(result: dict[str, Any]) -> dict[str, Any]:
+    workbook_preview = result.get("workbook_preview", {})
+    if not isinstance(workbook_preview, dict):
+        workbook_preview = {}
+    return {
+        "review_rows": _screenshot_review_visual_rows(result),
+        "image_items": _file_activity_visual_items(result),
+        "workbook_preview": workbook_preview,
+    }
+
+
+def _empty_action_visual_payload(result: dict[str, Any]) -> dict[str, Any]:
+    workbook_preview = result.get("workbook_preview", {})
+    if not isinstance(workbook_preview, dict):
+        workbook_preview = {}
+    return {"review_rows": [], "image_items": [], "workbook_preview": workbook_preview}
+
+
 def _render_action_visuals(
     ui: Any,
     result: dict[str, Any],
@@ -1567,11 +1589,13 @@ def _render_action_visuals(
     visual_label: Any,
     visual_host: Any,
     open_screenshot_viewer: Callable[[str, str], None] | None = None,
+    visual_payload: dict[str, Any] | None = None,
 ) -> None:
     visual_host.clear()
-    review_rows = _screenshot_review_visual_rows(result)
-    image_items = _file_activity_visual_items(result)
-    workbook_preview = result.get("workbook_preview", {})
+    payload = visual_payload if isinstance(visual_payload, dict) else _empty_action_visual_payload(result)
+    review_rows = [row for row in payload.get("review_rows", []) if isinstance(row, dict)]
+    image_items = [item for item in payload.get("image_items", []) if isinstance(item, dict)]
+    workbook_preview = payload.get("workbook_preview", {})
     if not isinstance(workbook_preview, dict):
         workbook_preview = {}
     has_workbook_preview = bool(workbook_preview.get("workbook_path"))
@@ -2563,8 +2587,7 @@ def _my_ticket_status_draft(ticket: dict[str, Any], workspace: Path) -> str:
     )
 
 
-def _render_my_tickets_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
-    page = next(page for page in snapshot["pages"] if page["id"] == "my-tickets")
+def _build_my_tickets_payload(workspace: Path) -> dict[str, Any]:
     try:
         payload = search_my_unresolved_tickets(max_results=12, timeout_seconds=8)
     except Exception as exc:  # noqa: BLE001
@@ -2578,6 +2601,36 @@ def _render_my_tickets_panel(ui: Any, snapshot: dict[str, Any], workspace: Path)
             "is_approval": False,
             "jql": build_my_unresolved_ticket_jql(),
         }
+    if not isinstance(payload, dict):
+        payload = {
+            "status": "failed",
+            "ticket_count": 0,
+            "tickets": [],
+            "summary": "My Tickets unavailable: Jira returned an unexpected response.",
+            "settings_hint": "Check local Jira setup before retrying.",
+            "read_only": True,
+            "is_approval": False,
+            "jql": build_my_unresolved_ticket_jql(),
+        }
+    tickets = [ticket for ticket in payload.get("tickets", []) if isinstance(ticket, dict)]
+    enriched_tickets: list[dict[str, Any]] = []
+    for ticket in tickets:
+        enriched = dict(ticket)
+        enriched["status_draft"] = _my_ticket_status_draft(enriched, workspace)
+        enriched_tickets.append(enriched)
+    payload["tickets"] = enriched_tickets
+    payload["ticket_count"] = len(enriched_tickets)
+    payload.setdefault("jql", build_my_unresolved_ticket_jql())
+    payload.setdefault("read_only", True)
+    payload.setdefault("is_approval", False)
+    return payload
+
+
+def _render_my_tickets_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "my-tickets")
+    payload = snapshot.get("my_tickets_payload", {}) if isinstance(snapshot.get("my_tickets_payload"), dict) else {}
+    if not payload:
+        payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
     status = str(payload.get("status", "unknown"))
     tickets = [ticket for ticket in payload.get("tickets", []) if isinstance(ticket, dict)]
     with ui.column().classes("sgfx-page-panel").props('data-sgfx-my-tickets-page="true"'):
@@ -2593,6 +2646,10 @@ def _render_my_tickets_panel(ui: Any, snapshot: dict[str, Any], workspace: Path)
         cache_status = str(payload.get("cache_status", "") or "").strip()
         if cache_status:
             ui.label(f"Cache: {cache_status}.").classes("sgfx-muted")
+        if status == "loading":
+            ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+            ui.label("Loading active tickets and local status drafts off the UI event loop.").classes("sgfx-muted")
+            return
         if not tickets:
             settings_hint = str(payload.get("settings_hint", "") or "")
             if settings_hint:
@@ -2603,7 +2660,12 @@ def _render_my_tickets_panel(ui: Any, snapshot: dict[str, Any], workspace: Path)
         for ticket in tickets:
             key = str(ticket.get("key", "") or "").strip().upper()
             url = str(ticket.get("url", "") or "").strip()
-            draft = _my_ticket_status_draft(ticket, workspace)
+            draft = str(ticket.get("status_draft", "") or "").strip()
+            if not draft:
+                draft = (
+                    f"Status update draft for {key}\n\n"
+                    "SGFX is still preparing the local evidence draft. Refresh My Tickets after the loader finishes."
+                )
             with ui.column().classes("sgfx-my-ticket-item full-width").props('data-sgfx-my-ticket-row="true"'):
                 with ui.row().classes("items-center full-width sgfx-my-ticket-header"):
                     if url:
@@ -2850,6 +2912,8 @@ def _render_full_qa_pass_panel(
     *,
     bmw_root: Path | str | None = None,
     open_page: Callable[[str], None] | None = None,
+    jira_profile_tickets_payload: dict[str, Any] | None = None,
+    jira_profile_tickets_loader: Callable[[str], Any] | None = None,
 ) -> None:
     running_navigation_message = "Action running — cancel first to navigate"
     page = next(page for page in snapshot["pages"] if page["id"] == "full-qa-pass")
@@ -2877,6 +2941,8 @@ def _render_full_qa_pass_panel(
         "bulk_ack_high_risk_prompt": False,
         "bulk_handoff_text": "",
         "action_results": {},
+        "visual_payloads": {},
+        "visual_payloads_loading": set(),
         "running_step_id": "",
         "running_action_id": "",
         "done": False,
@@ -2908,7 +2974,44 @@ def _render_full_qa_pass_panel(
             "Ramses may show a black offscreen-rendering window during screenshot capture; "
             "live output appears in the action panel."
         ).classes("sgfx-muted")
-        _render_jira_profile_tickets_card(ui, profile_id, open_page=open_page)
+        jira_card_host = ui.column().classes("full-width")
+
+        def _paint_jira_profile_tickets(payload: dict[str, Any] | None) -> None:
+            jira_card_host.clear()
+            with jira_card_host:
+                _render_jira_profile_tickets_card(
+                    ui,
+                    profile_id,
+                    payload=payload,
+                    open_page=open_page,
+                )
+
+        _paint_jira_profile_tickets(jira_profile_tickets_payload)
+        if (
+            jira_profile_tickets_loader is not None
+            and str((jira_profile_tickets_payload or {}).get("status", "")).casefold() == "loading"
+        ):
+            async def _load_jira_profile_tickets_card() -> None:
+                try:
+                    payload = await jira_profile_tickets_loader(profile_id)
+                except Exception as exc:  # noqa: BLE001
+                    payload = {
+                        "status": "failed",
+                        "ticket_count": 0,
+                        "tickets": [],
+                        "summary": f"Jira tickets unavailable: {exc}",
+                        "settings_hint": "Check local Jira setup before retrying.",
+                        "read_only": True,
+                        "is_approval": False,
+                    }
+                _paint_jira_profile_tickets(payload if isinstance(payload, dict) else None)
+
+            try:
+                from nicegui import background_tasks
+
+                background_tasks.create(_load_jira_profile_tickets_card(), name="sgfx-jira-profile-card")
+            except RuntimeError:
+                asyncio.create_task(_load_jira_profile_tickets_card())
 
         with ui.row().classes("sgfx-full-qa-controls"):
             trusted_control = ui.checkbox(
@@ -3025,6 +3128,147 @@ def _render_full_qa_pass_panel(
                 ".forEach((el) => { el.scrollTop = el.scrollHeight; });"
                 "}, 0);",
             )
+
+        def _result_may_have_visuals(result: dict[str, Any]) -> bool:
+            workbook_preview = result.get("workbook_preview", {})
+            return bool(
+                result.get("screenshot_review_rows")
+                or result.get("file_activity")
+                or (isinstance(workbook_preview, dict) and workbook_preview.get("workbook_path"))
+            )
+
+        def _action_visual_cache_key(result: dict[str, Any]) -> str:
+            row_parts: list[str] = []
+            rows = result.get("screenshot_review_rows", [])
+            if isinstance(rows, list):
+                for row in rows[:4]:
+                    if not isinstance(row, dict):
+                        continue
+                    row_parts.extend(
+                        str(row.get(key, "") or "")
+                        for key in ("key", "label", "expected_path", "actual_path", "diff_path")
+                    )
+            workbook_preview = result.get("workbook_preview", {})
+            workbook_path = (
+                str(workbook_preview.get("workbook_path", "") or "")
+                if isinstance(workbook_preview, dict)
+                else ""
+            )
+            return json.dumps(
+                {
+                    "action": str(result.get("action_id", "")),
+                    "status": str(result.get("status", "")),
+                    "summary": str(result.get("summary", "")),
+                    "rows": row_parts,
+                    "file_activity": [
+                        str(item.get("path", "") or "")
+                        for item in result.get("file_activity", [])
+                        if isinstance(item, dict)
+                    ][:4],
+                    "workbook_path": workbook_path,
+                },
+                sort_keys=True,
+            )
+
+        def _render_action_visuals_loading(visual_label: Any, visual_host: Any) -> None:
+            visual_host.clear()
+            visual_label.visible = True
+            visual_host.visible = True
+            with visual_host:
+                ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+                ui.label("Preparing visual evidence off the UI event loop...").classes("sgfx-muted")
+
+        def _action_visual_payload_for(result: dict[str, Any]) -> dict[str, Any] | None:
+            payloads = wizard_state.get("visual_payloads", {})
+            if not isinstance(payloads, dict):
+                wizard_state["visual_payloads"] = payloads = {}
+            payload = payloads.get(_action_visual_cache_key(result))
+            return payload if isinstance(payload, dict) else None
+
+        def _schedule_action_visual_payload(
+            result: dict[str, Any],
+            *,
+            on_ready: Callable[[dict[str, Any]], None],
+        ) -> None:
+            if not _result_may_have_visuals(result):
+                on_ready(_empty_action_visual_payload(result))
+                return
+            cache_key = _action_visual_cache_key(result)
+            payloads = wizard_state.get("visual_payloads", {})
+            if isinstance(payloads, dict) and isinstance(payloads.get(cache_key), dict):
+                on_ready(payloads[cache_key])
+                return
+            loading = wizard_state.get("visual_payloads_loading", set())
+            if not isinstance(loading, set):
+                wizard_state["visual_payloads_loading"] = loading = set()
+            if cache_key in loading:
+                return
+            loading.add(cache_key)
+
+            async def _build_and_apply() -> None:
+                try:
+                    from nicegui import run as nicegui_run
+
+                    payload = await nicegui_run.io_bound(_build_action_visual_payload, result)
+                except Exception:  # noqa: BLE001
+                    payload = _empty_action_visual_payload(result)
+                finally:
+                    loading.discard(cache_key)
+                payloads = wizard_state.get("visual_payloads", {})
+                if not isinstance(payloads, dict):
+                    wizard_state["visual_payloads"] = payloads = {}
+                payloads[cache_key] = payload
+                on_ready(payload)
+
+            try:
+                from nicegui import background_tasks
+
+                background_tasks.create(_build_and_apply(), name="sgfx-action-visuals")
+            except RuntimeError:
+                asyncio.create_task(_build_and_apply())
+
+        def _schedule_action_visual_render(
+            result: dict[str, Any],
+            *,
+            visual_label: Any,
+            visual_host: Any,
+            open_screenshot_viewer: Callable[[str, str], None] | None = None,
+        ) -> None:
+            cached = _action_visual_payload_for(result)
+            if cached is not None:
+                _render_action_visuals(
+                    ui,
+                    result,
+                    visual_label=visual_label,
+                    visual_host=visual_host,
+                    open_screenshot_viewer=open_screenshot_viewer,
+                    visual_payload=cached,
+                )
+                return
+            if _result_may_have_visuals(result):
+                _render_action_visuals_loading(visual_label, visual_host)
+            else:
+                _render_action_visuals(
+                    ui,
+                    result,
+                    visual_label=visual_label,
+                    visual_host=visual_host,
+                    open_screenshot_viewer=open_screenshot_viewer,
+                    visual_payload=_empty_action_visual_payload(result),
+                )
+                return
+
+            def _paint(payload: dict[str, Any]) -> None:
+                _render_action_visuals(
+                    ui,
+                    result,
+                    visual_label=visual_label,
+                    visual_host=visual_host,
+                    open_screenshot_viewer=open_screenshot_viewer,
+                    visual_payload=payload,
+                )
+
+            _schedule_action_visual_payload(result, on_ready=_paint)
 
         def _typical_range_for_step(step: dict[str, Any]) -> str:
             step_id = str(step.get("id", ""))
@@ -3147,8 +3391,7 @@ def _render_full_qa_pass_panel(
                         typical=str(result.get("typical_range", action.get("typical_range", "typical <1 min"))),
                     )
                     _render_action_technical_details(ui, result, details_host=details_host)
-                    _render_action_visuals(
-                        ui,
+                    _schedule_action_visual_render(
                         result,
                         visual_label=visual_label,
                         visual_host=visual_host,
@@ -3294,8 +3537,7 @@ def _render_full_qa_pass_panel(
                 completion_label.text = str(result.get("summary", "Action canceled."))
                 live_output.value = _action_output_text(result)
                 _render_action_technical_details(ui, result, details_host=details_host)
-                _render_action_visuals(
-                    ui,
+                _schedule_action_visual_render(
                     result,
                     visual_label=visual_label,
                     visual_host=visual_host,
@@ -4484,13 +4726,32 @@ def _render_full_qa_pass_panel(
                                 _render_action_technical_details(ui, step_payload, details_host=done_details_host)
                                 done_visual_label = ui.label("Live visual output").classes("sgfx-panel-tagline")
                                 done_visual_host = ui.row().classes("full-width sgfx-live-visuals")
-                                _render_action_visuals(
-                                    ui,
-                                    step_payload,
-                                    visual_label=done_visual_label,
-                                    visual_host=done_visual_host,
-                                    open_screenshot_viewer=_open_wizard_screenshot_viewer,
-                                )
+                                cached_visual_payload = _action_visual_payload_for(step_payload)
+                                if cached_visual_payload is not None:
+                                    _render_action_visuals(
+                                        ui,
+                                        step_payload,
+                                        visual_label=done_visual_label,
+                                        visual_host=done_visual_host,
+                                        open_screenshot_viewer=_open_wizard_screenshot_viewer,
+                                        visual_payload=cached_visual_payload,
+                                    )
+                                elif _result_may_have_visuals(step_payload):
+                                    _render_action_visuals_loading(done_visual_label, done_visual_host)
+
+                                    def _rerender_payload(_payload: dict[str, Any]) -> None:
+                                        _render_payload(payload, preserve_index=True)
+
+                                    _schedule_action_visual_payload(step_payload, on_ready=_rerender_payload)
+                                else:
+                                    _render_action_visuals(
+                                        ui,
+                                        step_payload,
+                                        visual_label=done_visual_label,
+                                        visual_host=done_visual_host,
+                                        open_screenshot_viewer=_open_wizard_screenshot_viewer,
+                                        visual_payload=_empty_action_visual_payload(step_payload),
+                                    )
                         for guardrail in payload.get("guardrails", []):
                             if str(guardrail).strip():
                                 ui.label(str(guardrail)).classes("sgfx-guardrail")
@@ -4676,6 +4937,7 @@ _dashboard_jira_attachment_endpoint = _with_main_globals(_dashboard_jira_attachm
 _attachment_response_url = _with_main_globals(_attachment_response_url)
 _attachment_response_id = _with_main_globals(_attachment_response_id)
 build_dashboard_quality_hero_report = _with_main_globals(build_dashboard_quality_hero_report)
+_build_action_visual_payload = _with_main_globals(_build_action_visual_payload)
 _render_action_visuals = _with_main_globals(_render_action_visuals)
 _render_action_technical_details = _with_main_globals(_render_action_technical_details)
 _full_qa_int = _with_main_globals(_full_qa_int)
@@ -4691,6 +4953,7 @@ _render_daily_digest_panel = _with_main_globals(_render_daily_digest_panel)
 _render_operator_handoff_panel = _with_main_globals(_render_operator_handoff_panel)
 _render_manual_review_panel = _with_main_globals(_render_manual_review_panel)
 _my_ticket_status_draft = _with_main_globals(_my_ticket_status_draft)
+_build_my_tickets_payload = _with_main_globals(_build_my_tickets_payload)
 _render_my_tickets_panel = _with_main_globals(_render_my_tickets_panel)
 _render_batch_full_qa_pass_panel = _with_main_globals(_render_batch_full_qa_pass_panel)
 _render_full_qa_pass_panel = _with_main_globals(_render_full_qa_pass_panel)

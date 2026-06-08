@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from html import escape
 import json
 import os
@@ -392,6 +393,7 @@ def compute_diff_regression_badge(
     *,
     key: str = "",
     threshold_percent: float | None = None,
+    current: DiffDeltaBadge | None = None,
 ) -> DiffRegressionBadge:
     clean_profile = str(profile_id or "").strip()
     if not clean_profile:
@@ -399,7 +401,7 @@ def compute_diff_regression_badge(
     path = Path(diff_path) if str(diff_path or "").strip() else Path()
     if not path:
         return DiffRegressionBadge(status="unavailable")
-    current = compute_diff_delta_badge(path)
+    current = current or compute_diff_delta_badge(path)
     row_key = key.strip() if key.strip() else path.with_suffix("").name
     for suffix in ("_color", "_diff"):
         if row_key.casefold().endswith(suffix):
@@ -571,12 +573,22 @@ def _decode_bmp_max_channel(path: Path) -> _DecodedDiffImage | None:
     return _DecodedDiffImage(width=width, height=height, channel_max=bytes(values), backend="bmp")
 
 
-def _decode_diff_image(path: Path) -> _DecodedDiffImage | None:
+@lru_cache(maxsize=64)
+def _decode_diff_image_cached(path_text: str, mtime_ns: int, size: int) -> _DecodedDiffImage | None:
+    path = Path(path_text)
     if not path.is_file():
         return None
     if path.suffix.lower() == ".bmp":
         return _decode_bmp_max_channel(path)
     return _decode_png_max_channel(path) or _decode_bmp_max_channel(path)
+
+
+def _decode_diff_image(path: Path) -> _DecodedDiffImage | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return _decode_diff_image_cached(str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size))
 
 
 def _max_delta_with_numpy(decoded: _DecodedDiffImage) -> tuple[int, int, int, str] | None:
