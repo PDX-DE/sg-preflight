@@ -1444,17 +1444,20 @@ def _render_setup_status_panel(
                 else:
                     ui.label("No file changes recorded yet.").classes("sgfx-muted")
 
-        def _cancel_setup() -> None:
+        async def _cancel_setup() -> None:
+            from nicegui import run as nicegui_run
+
             job = job_state.get("job")
             if job is None:
                 return
-            result = cancel_dependency_setup_action(job)
+            cancel_button.disable()
+            status_label.text = "Stopping dependency setup..."
+            result = await nicegui_run.io_bound(cancel_dependency_setup_action, job)
             progress.visible = False
             _show_setup_progress()
             _update_setup_progress(result)
             status_label.text = str(result.get("summary", "Dependency setup canceled."))
             _stop_setup_poll_timer()
-            cancel_button.disable()
             ui.notify("Dependency setup canceled.")
 
         cancel_button = _attach_tooltip(
@@ -3057,7 +3060,7 @@ def _render_dashboard(
         }
         content_holder: dict[str, Any] = {}
         controls: dict[str, Any] = {}
-        feedback_context = _dashboard_feedback_context(workspace)
+        feedback_context = await _io_bound(_dashboard_feedback_context, workspace)
 
         def _pages_by_id() -> dict[str, dict[str, Any]]:
             return {str(page["id"]): page for page in state["snapshot"]["pages"]}

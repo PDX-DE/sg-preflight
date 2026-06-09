@@ -2338,6 +2338,7 @@ def _render_operator_handoff_panel(ui: Any, snapshot: dict[str, Any], workspace:
     page = next(page for page in snapshot["pages"] if page["id"] == "operator-handoff")
     payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
     latest = payload.get("latest_handoff", {}) if isinstance(payload.get("latest_handoff"), dict) else {}
+    active_ticket_id = str(snapshot.get("active_ticket_id", "") or "").strip()
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(page["title"])).classes("sgfx-panel-title")
@@ -2386,7 +2387,7 @@ def _render_operator_handoff_panel(ui: Any, snapshot: dict[str, Any], workspace:
         ).classes("full-width")
         ticket_input = ui.input(
             "Ticket",
-            value=str(latest.get("ticket_id", "") or _dashboard_active_ticket_id(workspace)),
+            value=str(latest.get("ticket_id", "") or active_ticket_id),
             placeholder="Optional ticket id",
         ).classes("full-width")
         note_input = ui.textarea(
@@ -2452,8 +2453,11 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
             if selected_template:
                 ui.label(str(selected_template.get("title", ""))).classes("sgfx-muted")
 
-            def _start_session() -> None:
-                _ensure_manual_review_dashboard_session(
+            async def _start_session() -> None:
+                from nicegui import run as nicegui_run
+
+                await nicegui_run.io_bound(
+                    _ensure_manual_review_dashboard_session,
                     profile_id=str(snapshot["profile_id"]),
                     workspace=workspace,
                     family_id=str(family_select.value or ""),
@@ -2541,7 +2545,7 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                         f"Recorded: {current_verdict} | {recorded_at} | recorded_by_tool: {recorded_by_tool}"
                     ).classes("sgfx-muted")
 
-                def _record(
+                async def _record(
                     slug: str = slug,
                     verdict=verdict,
                     note=note,
@@ -2550,7 +2554,10 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                     if not selected:
                         ui.notify("Select a manual-review verdict before recording.")
                         return
-                    record_manual_review_dashboard_step(
+                    from nicegui import run as nicegui_run
+
+                    await nicegui_run.io_bound(
+                        record_manual_review_dashboard_step,
                         profile_id=str(snapshot["profile_id"]),
                         workspace=workspace,
                         step_slug=slug,

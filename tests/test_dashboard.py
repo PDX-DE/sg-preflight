@@ -722,36 +722,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
     def test_dashboard_source_enumerates_remaining_blocking_primitives(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        sources = {
-            "sg_preflight/dashboard/main.py": (root / "dashboard" / "main.py").read_text(encoding="utf-8"),
-            "sg_preflight/dashboard_pages_workflows.py": (
-                root / "dashboard_pages_workflows.py"
-            ).read_text(encoding="utf-8"),
+        source_paths = {
+            "sg_preflight/dashboard_pages_workflows.py": root / "dashboard_pages_workflows.py",
+            "sg_preflight/dashboard_preferences.py": root / "dashboard_preferences.py",
+            "sg_preflight/dashboard_pages_config.py": root / "dashboard_pages_config.py",
         }
-        blocking_primitives = {
-            "start_delivery_workbook_generation",
-            "start_screenshot_capture",
-            "start_dashboard_review_package_build",
-            "start_dashboard_batch_full_qa_pass",
-            "start_dependency_setup_action",
-            "cancel_delivery_workbook_generation",
-            "cancel_screenshot_capture",
-            "cancel_dashboard_review_package_build",
-            "notify_desktop_completion",
-            "_notify_completion_safe",
-            "run_grafiks_mode",
-            "_resolve_grafiks_shell_exe",
-            "build_manual_review_assist",
-            "search_jira_profile_tickets",
-            "search_my_unresolved_tickets",
-            "_materialize_screenshot_review_viewer_for_dashboard",
-            "_execute_diagnostic_chain",
-            "build_dashboard_snapshot",
-            "build_full_qa_pass",
-            "build_dashboard_quality_hero_report",
-            "_screenshot_review_visual_rows",
-            "_build_my_tickets_payload",
-        }
+        for path in sorted((root / "dashboard").glob("*.py")):
+            source_paths[f"sg_preflight/dashboard/{path.name}"] = path
+        sources = {relative_path: path.read_text(encoding="utf-8") for relative_path, path in source_paths.items()}
 
         workflow_source = sources["sg_preflight/dashboard_pages_workflows.py"]
         notify_start = workflow_source.find("def _notify_completion_safe(")
@@ -763,85 +741,196 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("nicegui_run.io_bound(", notify_source)
         self.assertIn("notify_desktop_completion", notify_source)
 
-        def _call_name(node: ast.Call) -> str:
-            if isinstance(node.func, ast.Name):
-                return node.func.id
-            if isinstance(node.func, ast.Attribute):
-                return node.func.attr
-            return ""
+        def _find_dashboard_blocking_violations(checked_sources: dict[str, str]) -> list[str]:
+            blocking_primitives = {
+                "start_delivery_workbook_generation",
+                "start_screenshot_capture",
+                "start_dashboard_review_package_build",
+                "start_dashboard_batch_full_qa_pass",
+                "start_dependency_setup_action",
+                "cancel_delivery_workbook_generation",
+                "cancel_screenshot_capture",
+                "cancel_dashboard_review_package_build",
+                "cancel_dependency_setup_action",
+                "notify_desktop_completion",
+                "_notify_completion_safe",
+                "run_grafiks_mode",
+                "_resolve_grafiks_shell_exe",
+                "build_manual_review_assist",
+                "search_jira_profile_tickets",
+                "search_my_unresolved_tickets",
+                "_materialize_screenshot_review_viewer_for_dashboard",
+                "_execute_diagnostic_chain",
+                "build_dashboard_snapshot",
+                "build_full_qa_pass",
+                "build_dashboard_quality_hero_report",
+                "_screenshot_review_visual_rows",
+                "_build_my_tickets_payload",
+                "_dashboard_feedback_context",
+                "_dashboard_exe_sha256",
+                "_dashboard_build_sha",
+                "_dashboard_active_ticket_id",
+                "_dashboard_ticket_from_git_branch",
+                "_ensure_manual_review_dashboard_session",
+                "record_manual_review_dashboard_step",
+            }
 
-        def _function_name(node: ast.AST) -> str:
-            if isinstance(node, ast.Name):
-                return node.id
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                return node.func.id
-            return ""
+            def _call_name(node: ast.Call) -> str:
+                if isinstance(node.func, ast.Name):
+                    return node.func.id
+                if isinstance(node.func, ast.Attribute):
+                    return node.func.attr
+                return ""
 
-        parsed_sources: dict[str, tuple[ast.Module, dict[ast.AST, ast.AST]]] = {}
-        offloaded_functions: set[str] = set()
-        for relative_path, source in sources.items():
-            tree = ast.parse(source)
-            parents: dict[ast.AST, ast.AST] = {}
-            for parent in ast.walk(tree):
-                for child in ast.iter_child_nodes(parent):
-                    parents[child] = parent
-            parsed_sources[relative_path] = (tree, parents)
+            def _attribute_path(node: ast.AST) -> str:
+                if isinstance(node, ast.Name):
+                    return node.id
+                if isinstance(node, ast.Attribute):
+                    prefix = _attribute_path(node.value)
+                    return f"{prefix}.{node.attr}" if prefix else node.attr
+                return ""
 
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
+            def _function_name(node: ast.AST) -> str:
+                if isinstance(node, ast.Name):
+                    return node.id
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    return node.func.id
+                return ""
+
+            def _contains_file_read(node: ast.AST) -> bool:
+                for child in ast.walk(node):
+                    if (
+                        isinstance(child, ast.Call)
+                        and isinstance(child.func, ast.Attribute)
+                        and child.func.attr in {"read", "read_bytes", "read_text"}
+                    ):
+                        return True
+                return False
+
+            def _raw_blocking_call(node: ast.Call) -> str:
+                func_path = _attribute_path(node.func)
                 call_name = _call_name(node)
-                if call_name in {"_io_bound", "io_bound"} and node.args:
-                    target = _function_name(node.args[0])
-                    if target:
-                        offloaded_functions.add(target)
-                if call_name == "_start_io_bound_poll_timer" and len(node.args) >= 2:
-                    target = _function_name(node.args[1])
-                    if target:
-                        offloaded_functions.add(target)
-                if call_name == "Thread":
-                    for keyword in node.keywords:
-                        if keyword.arg == "target":
-                            target = _function_name(keyword.value)
+                if func_path in {"subprocess.run", "subprocess.Popen"} or call_name == "Popen":
+                    return func_path or call_name
+                if call_name in {"wait", "communicate"}:
+                    return call_name
+                if func_path.startswith("requests."):
+                    return func_path
+                if func_path.startswith("urllib.") and not func_path.startswith("urllib.parse."):
+                    return func_path
+                if func_path in {"openpyxl.load_workbook", "Image.open", "PIL.Image.open"}:
+                    return func_path
+                if func_path == "os.walk":
+                    return func_path
+                if call_name in {"rglob", "glob", "read_bytes", "read_text"}:
+                    return call_name
+                if func_path.startswith("hashlib.") and any(_contains_file_read(arg) for arg in node.args):
+                    return func_path
+                return ""
+
+            parsed_sources: dict[str, tuple[ast.Module, dict[ast.AST, ast.AST]]] = {}
+            offloaded_functions: set[str] = set()
+            callback_functions: set[str] = set()
+            apply_functions: set[str] = set()
+            for relative_path, source in checked_sources.items():
+                tree = ast.parse(source)
+                parents: dict[ast.AST, ast.AST] = {}
+                for parent in ast.walk(tree):
+                    for child in ast.iter_child_nodes(parent):
+                        parents[child] = parent
+                parsed_sources[relative_path] = (tree, parents)
+
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    call_name = _call_name(node)
+                    if call_name in {"_io_bound", "io_bound"} and node.args:
+                        target = _function_name(node.args[0])
+                        if target:
+                            offloaded_functions.add(target)
+                    if call_name == "_start_io_bound_poll_timer":
+                        if len(node.args) >= 2:
+                            target = _function_name(node.args[1])
                             if target:
                                 offloaded_functions.add(target)
+                        if len(node.args) >= 3:
+                            target = _function_name(node.args[2])
+                            if target:
+                                apply_functions.add(target)
+                    if call_name == "Thread":
+                        for keyword in node.keywords:
+                            if keyword.arg == "target":
+                                target = _function_name(keyword.value)
+                                if target:
+                                    offloaded_functions.add(target)
+                    for keyword in node.keywords:
+                        if keyword.arg in {"on_click", "on_change"}:
+                            target = _function_name(keyword.value)
+                            if target:
+                                callback_functions.add(target)
 
-        violations: list[str] = []
-        for relative_path, (tree, parents) in parsed_sources.items():
-            def _enclosing_functions(node: ast.AST) -> list[str]:
-                names: list[str] = []
-                current = node
-                while current in parents:
-                    current = parents[current]
-                    if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        names.append(current.name)
-                return list(reversed(names))
+            violations: list[str] = []
+            for relative_path, (tree, parents) in parsed_sources.items():
+                def _enclosing_functions(node: ast.AST) -> list[str]:
+                    names: list[str] = []
+                    current = node
+                    while current in parents:
+                        current = parents[current]
+                        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            names.append(current.name)
+                    return list(reversed(names))
 
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                call_name = _call_name(node)
-                if call_name not in blocking_primitives:
-                    continue
-                scopes = _enclosing_functions(node)
-                if call_name == "_notify_completion_safe":
-                    continue
-                if any(scope in offloaded_functions for scope in scopes):
-                    continue
-                if (
-                    relative_path == "sg_preflight/dashboard/main.py"
-                    and call_name == "run_grafiks_mode"
-                    and scopes == ["run_grafiks_mode"]
-                ):
-                    continue
-                if (
-                    relative_path == "sg_preflight/dashboard/main.py"
-                    and call_name == "build_dashboard_snapshot"
-                    and scopes == ["_render_dashboard"]
-                ):
-                    continue
-                violations.append(f"{relative_path}:{node.lineno}:{call_name} in {'/'.join(scopes) or '<module>'}")
+                def _ui_sensitive(scopes: list[str]) -> bool:
+                    return any(
+                        scope.startswith("_render_")
+                        or scope in callback_functions
+                        or scope in apply_functions
+                        for scope in scopes
+                    )
 
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    call_name = _call_name(node)
+                    raw_blocker = _raw_blocking_call(node)
+                    if call_name not in blocking_primitives and not raw_blocker:
+                        continue
+                    scopes = _enclosing_functions(node)
+                    if not _ui_sensitive(scopes):
+                        continue
+                    if call_name == "_notify_completion_safe":
+                        continue
+                    if any(scope in offloaded_functions for scope in scopes):
+                        continue
+                    if (
+                        relative_path == "sg_preflight/dashboard/main.py"
+                        and call_name == "run_grafiks_mode"
+                        and scopes == ["run_grafiks_mode"]
+                    ):
+                        continue
+                    if (
+                        relative_path == "sg_preflight/dashboard/main.py"
+                        and call_name == "build_dashboard_snapshot"
+                        and scopes == ["_render_dashboard"]
+                    ):
+                        continue
+                    blocker = raw_blocker or call_name
+                    violations.append(f"{relative_path}:{node.lineno}:{blocker} in {'/'.join(scopes) or '<module>'}")
+            return violations
+
+        planted = {
+            "planted.py": (
+                "import subprocess\n"
+                "def _render_bad(ui):\n"
+                "    def _handler():\n"
+                "        subprocess.run(['git', 'status'])\n"
+                "    ui.button('Bad', on_click=_handler)\n"
+            )
+        }
+        planted_violations = _find_dashboard_blocking_violations(planted)
+        self.assertTrue(any("subprocess.run" in violation for violation in planted_violations), planted_violations)
+
+        violations = _find_dashboard_blocking_violations(sources)
         self.assertEqual([], violations)
 
     def test_jira_inline_tickets_render_as_copy_only_buttons(self) -> None:
