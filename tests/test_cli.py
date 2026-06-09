@@ -244,6 +244,19 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result, 19)
         runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "grafiks", "--workspace", r"C:\bundle"])
 
+    def test_frozen_exe_entry_adds_default_workspace_for_session_log_export(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=0) as runner:
+            with mock.patch.object(module, "default_workspace", return_value=r"C:\bundle"):
+                with mock.patch.object(module.sys, "frozen", True, create=True):
+                    result = module.main(["session-log", "export", "--zip-output", r"C:\diag.zip"])
+
+        self.assertEqual(result, 0)
+        runner.assert_called_once_with(
+            ["session-log", "export", "--zip-output", r"C:\diag.zip", "--workspace", r"C:\bundle"]
+        )
+
     def test_frozen_exe_entry_preserves_full_cli_surface_when_args_are_present(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 

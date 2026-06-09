@@ -723,7 +723,7 @@ def _activity_verb(raw_args: list[str]) -> str:
 def _record_cli_activity(raw_args: list[str], exit_code: int) -> None:
     # Skip self-recording for the observability surfaces themselves so they do
     # not pollute the very signal an operator is trying to inspect.
-    if not raw_args or raw_args[0] in {"activity-log", "live-state"}:
+    if not raw_args or raw_args[0] in {"activity-log", "live-state", "session-log"}:
         return
     import os
 
@@ -738,6 +738,56 @@ def _record_cli_activity(raw_args: list[str], exit_code: int) -> None:
             profile=_extract_arg_value(raw_args, "--profile", "--profile-id"),
             outcome="ok" if exit_code == 0 else "error",
             note=f"cli exit {exit_code}",
+        )
+    except Exception:
+        return
+
+
+def _session_log_workspace(raw_args: list[str]) -> Path:
+    import os
+
+    workspace = (
+        _extract_arg_value(raw_args, "--workspace")
+        or os.environ.get("SG_PREFLIGHT_ACTIVITY_WORKSPACE", "")
+        or os.environ.get("SGFX_PREFLIGHT_WORKSPACE", "")
+    )
+    return Path(workspace).resolve() if workspace else Path.cwd().resolve()
+
+
+def _start_cli_session_log(raw_args: list[str]) -> None:
+    if raw_args and raw_args[0] == "session-log":
+        return
+    try:
+        from sg_preflight.session_log import event as session_event
+        from sg_preflight.session_log import install_exception_hooks, start_session_log
+
+        workspace = _session_log_workspace(raw_args)
+        start_session_log(workspace, surface=_activity_surface(raw_args), detail={"command": list(raw_args)})
+        install_exception_hooks()
+        session_event(
+            source="cli",
+            surface=_activity_surface(raw_args),
+            profile=_extract_arg_value(raw_args, "--profile", "--profile-id"),
+            message="CLI invocation started",
+            detail={"command": list(raw_args), "workspace": str(workspace)},
+        )
+    except Exception:
+        return
+
+
+def _record_cli_session_event(raw_args: list[str], exit_code: int) -> None:
+    if raw_args and raw_args[0] == "session-log":
+        return
+    try:
+        from sg_preflight.session_log import event as session_event
+
+        session_event(
+            source="cli",
+            surface=_activity_surface(raw_args),
+            profile=_extract_arg_value(raw_args, "--profile", "--profile-id"),
+            message="CLI invocation completed",
+            level="info" if exit_code == 0 else "error",
+            detail={"command": list(raw_args), "exit_code": exit_code},
         )
     except Exception:
         return
@@ -893,6 +943,11 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
         "live-state",
         "Read or tail the operator-local dashboard live-state telemetry.",
         r"sgfx-preflight.exe live-state --workspace C:\repositories\trunk --tail",
+    ),
+    (
+        "session-log",
+        "Read or export the operator-local session diagnostic log.",
+        r"sgfx-preflight.exe session-log latest --workspace C:\repositories\trunk",
     ),
     ("station", "Run the optional local OpenHTF station surface.", r"sgfx-preflight.exe station run --profile G65 --workspace C:\repositories\trunk --no-browser --once"),
     ("desktop-state", "Inspect desktop-shell state snapshots.", r"sgfx-preflight.exe desktop-state overview --profile-id G65 --workspace C:\repositories\trunk --json"),
@@ -1797,6 +1852,37 @@ def build_parser() -> argparse.ArgumentParser:
     live_state.add_argument("--json", action="store_true", help="Print live state as JSON")
     _add_render_options(live_state, formats=("text", "json"))
 
+    session_log = sub.add_parser(
+        "session-log",
+        help="Read or export the operator-local SGFX session diagnostic log",
+        description=(
+            "Reads <workspace>/operator_state/sessions/*.jsonl. The log is operator-local, "
+            "sanitized of credentials, and intended for support/debugging handoff."
+        ),
+    )
+    session_log_sub = session_log.add_subparsers(dest="session_log_command", required=True)
+    session_latest = session_log_sub.add_parser("latest", help="Print the newest session log path and tail")
+    session_latest.add_argument("--workspace", default="", help="Workspace root that owns operator_state/sessions")
+    session_latest.add_argument("--tail", type=int, default=20, help="Number of recent records to print")
+    session_latest.add_argument("--json", action="store_true", help="Print latest session log as JSON")
+    _add_render_options(session_latest, formats=("text", "json"))
+
+    session_list = session_log_sub.add_parser("list", help="List recent session logs")
+    session_list.add_argument("--workspace", default="", help="Workspace root that owns operator_state/sessions")
+    session_list.add_argument("--limit", type=int, default=20, help="Maximum logs to list")
+    session_list.add_argument("--json", action="store_true", help="Print session log list as JSON")
+    _add_render_options(session_list, formats=("text", "json"))
+
+    session_export = session_log_sub.add_parser("export", help="Export latest session log and referenced action logs")
+    session_export.add_argument("--workspace", default="", help="Workspace root that owns operator_state/sessions")
+    session_export.add_argument(
+        "--zip-output",
+        required=True,
+        help="Where to write the scrubbed diagnostic .zip",
+    )
+    session_export.add_argument("--json", action="store_true", help="Print export manifest as JSON")
+    _add_render_options(session_export, formats=("text", "json"))
+
     activity_append = activity_log_sub.add_parser("append", help="Append one operator-local activity entry")
     activity_append.add_argument("--workspace", required=True, help="Workspace root that owns operator_state/activity_log.jsonl")
     activity_append.add_argument("--verb", required=True, help="Factual verb such as read, ran, refreshed, or opened")
@@ -2601,10 +2687,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
     exit_code = 1
+    _start_cli_session_log(raw_args)
     try:
         exit_code = _main_impl(raw_args)
         return exit_code
     finally:
+        _record_cli_session_event(raw_args, exit_code)
         _record_cli_activity(raw_args, exit_code)
 
 
@@ -2685,6 +2773,11 @@ def _main_impl(argv: list[str] | None = None) -> int:
         from sg_preflight.cli.activity import handle_activity_command
 
         return handle_activity_command(args, parser)
+
+    if args.command == "session-log":
+        from sg_preflight.cli.session_log import handle_session_log_command
+
+        return handle_session_log_command(args, parser)
 
     if args.command == "template":
         from sg_preflight.cli.templates import handle_template_command

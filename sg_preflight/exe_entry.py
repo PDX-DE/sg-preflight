@@ -45,8 +45,12 @@ def _is_dashboard_run(args: list[str]) -> bool:
     return len(args) >= 2 and args[0] == "dashboard" and args[1] == "run"
 
 
+def _uses_operator_workspace(args: list[str]) -> bool:
+    return _is_dashboard_run(args) or bool(args and args[0] == "session-log")
+
+
 def _with_default_workspace(args: list[str]) -> list[str]:
-    if _is_dashboard_run(args) and not _has_option(args, "--workspace"):
+    if _uses_operator_workspace(args) and not _has_option(args, "--workspace"):
         return [*args, "--workspace", default_workspace()]
     return args
 
@@ -191,6 +195,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = list(sys.argv[1:] if argv is None else argv)
     install_frozen_runtime_hooks()
+    try:
+        from sg_preflight.session_log import install_exception_hooks
+
+        install_exception_hooks()
+    except Exception:
+        pass
     ensure_standard_streams()
     if not args:
         args = list(DEFAULT_DOUBLE_CLICK_ARGS)
@@ -205,6 +215,12 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
+        try:
+            from sg_preflight.session_log import exception_event
+
+            exception_event(surface="exe_entry", exc=exc, message="Packaged startup failed")
+        except Exception:
+            pass
         log_path = write_startup_error_log(exc)
         if should_show_startup_error(startup_args):
             show_startup_error(exc, log_path)

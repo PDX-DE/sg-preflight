@@ -28,6 +28,7 @@ from sg_preflight.delivery_checklist import (
     read_delivery_checklist,
 )
 from sg_preflight.dependency_onboarding import load_dependency_onboarding_state
+from sg_preflight.session_log import event as _session_log_event
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
 
@@ -877,6 +878,7 @@ class DeliveryWorkbookGenerationJob:
     timeout_seconds: int
     preflight: dict[str, Any]
     completed: bool = False
+    session_completion_logged: bool = False
 
 
 def _elapsed_label(elapsed_seconds: float) -> str:
@@ -1193,6 +1195,15 @@ def _generation_result(
         stderr_path=job.stderr_path,
         summary="BMW pipeline export raised a technical traceback - see technical details and workbook/log evidence below.",
     )
+    _log_delivery_workbook_generation_completion(
+        job,
+        exit_code=exit_code,
+        status=status,
+        summary=summary,
+        elapsed_seconds=elapsed_seconds,
+        timed_out=timed_out,
+        canceled=canceled,
+    )
     return {
         "profile_id": job.profile_id,
         "workspace": str(job.workspace),
@@ -1281,6 +1292,15 @@ def start_delivery_workbook_generation(
             env=env,
             **hidden_subprocess_kwargs(),
         )
+    _log_delivery_workbook_generation_spawn(
+        profile_id=clean_profile,
+        workspace=workspace_path,
+        command=list(command_payload["command"]),
+        cwd=Path(str(command_payload["cwd"])).resolve(),
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        process=process,
+    )
     return DeliveryWorkbookGenerationJob(
         profile_id=clean_profile,
         workspace=workspace_path,
@@ -1294,6 +1314,66 @@ def start_delivery_workbook_generation(
         started_wall_time=started_wall_time,
         timeout_seconds=timeout_seconds,
         preflight=preflight,
+    )
+
+
+def _log_delivery_workbook_generation_spawn(
+    *,
+    profile_id: str,
+    workspace: Path,
+    command: list[str],
+    cwd: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+    process: subprocess.Popen[bytes],
+) -> None:
+    _session_log_event(
+        source="subprocess",
+        surface="delivery_workbook_generation",
+        profile=profile_id,
+        message="BMW pipeline export spawned",
+        detail={
+            "command": list(command),
+            "cwd": str(cwd),
+            "workspace": str(workspace),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "pid": getattr(process, "pid", None),
+        },
+    )
+
+
+def _log_delivery_workbook_generation_completion(
+    job: DeliveryWorkbookGenerationJob,
+    *,
+    exit_code: int,
+    status: str,
+    summary: str,
+    elapsed_seconds: float,
+    timed_out: bool,
+    canceled: bool,
+) -> None:
+    if job.session_completion_logged:
+        return
+    job.session_completion_logged = True
+    _session_log_event(
+        source="subprocess",
+        surface="delivery_workbook_generation",
+        profile=job.profile_id,
+        message="BMW pipeline export completed",
+        level="info" if exit_code == 0 and status in {"available", "unavailable"} else "error",
+        detail={
+            "command": list(job.command),
+            "exit_code": exit_code,
+            "status": status,
+            "summary": summary,
+            "elapsed_seconds": int(max(0, elapsed_seconds)),
+            "timed_out": timed_out,
+            "canceled": canceled,
+            "stdout_path": str(job.stdout_path),
+            "stderr_path": str(job.stderr_path),
+            "stderr_tail": _tail_text(job.stderr_path),
+        },
     )
 
 

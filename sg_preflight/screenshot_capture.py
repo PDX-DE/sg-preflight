@@ -44,6 +44,7 @@ from sg_preflight.delivery_workbook_generation import (
     _tail_text,
     _tool_check,
 )
+from sg_preflight.session_log import event as _session_log_event
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
 
@@ -354,6 +355,7 @@ class ScreenshotCaptureJob:
     timeout_seconds: int
     preflight: dict[str, Any]
     completed: bool = False
+    session_completion_logged: bool = False
 
 
 def _capture_file_activity(
@@ -683,6 +685,15 @@ def _capture_result(
         stderr_path=job.stderr_path,
         diff_count=int(screenshot_payload.get("diff_count", 0) or 0),
     )
+    _log_screenshot_capture_completion(
+        job,
+        exit_code=exit_code,
+        status=status,
+        summary=summary,
+        elapsed_seconds=elapsed_seconds,
+        timed_out=timed_out,
+        canceled=canceled,
+    )
     return {
         "profile_id": job.profile_id,
         "workspace": str(job.workspace),
@@ -771,6 +782,15 @@ def start_screenshot_capture(
             env=env,
             **hidden_subprocess_kwargs(),
         )
+    _log_screenshot_capture_spawn(
+        profile_id=clean_profile,
+        workspace=workspace_path,
+        command=list(command_payload["command"]),
+        cwd=Path(str(command_payload["cwd"])).resolve(),
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        process=process,
+    )
     return ScreenshotCaptureJob(
         profile_id=clean_profile,
         workspace=workspace_path,
@@ -784,6 +804,66 @@ def start_screenshot_capture(
         started_wall_time=started_wall_time,
         timeout_seconds=timeout_seconds,
         preflight=preflight,
+    )
+
+
+def _log_screenshot_capture_spawn(
+    *,
+    profile_id: str,
+    workspace: Path,
+    command: list[str],
+    cwd: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+    process: subprocess.Popen[bytes],
+) -> None:
+    _session_log_event(
+        source="subprocess",
+        surface="screenshot_capture",
+        profile=profile_id,
+        message="BMW screenshot capture spawned",
+        detail={
+            "command": list(command),
+            "cwd": str(cwd),
+            "workspace": str(workspace),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "pid": getattr(process, "pid", None),
+        },
+    )
+
+
+def _log_screenshot_capture_completion(
+    job: ScreenshotCaptureJob,
+    *,
+    exit_code: int,
+    status: str,
+    summary: str,
+    elapsed_seconds: float,
+    timed_out: bool,
+    canceled: bool,
+) -> None:
+    if job.session_completion_logged:
+        return
+    job.session_completion_logged = True
+    _session_log_event(
+        source="subprocess",
+        surface="screenshot_capture",
+        profile=job.profile_id,
+        message="BMW screenshot capture completed",
+        level="info" if exit_code == 0 and status in {"available", "incomplete"} else "error",
+        detail={
+            "command": list(job.command),
+            "exit_code": exit_code,
+            "status": status,
+            "summary": summary,
+            "elapsed_seconds": int(max(0, elapsed_seconds)),
+            "timed_out": timed_out,
+            "canceled": canceled,
+            "stdout_path": str(job.stdout_path),
+            "stderr_path": str(job.stderr_path),
+            "stderr_tail": _tail_text(job.stderr_path),
+        },
     )
 
 

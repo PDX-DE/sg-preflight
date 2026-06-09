@@ -3944,9 +3944,81 @@ def run_dashboard(
         append_startup_log(f"NiceGUI import failed: {type(exc).__name__}: {exc!r}")
         raise
     root = _workspace(workspace)
+
+    def _register_session_hook(name: str, handler: object) -> None:
+        callback = getattr(app, name, None)
+        if not callable(callback):
+            return
+        try:
+            callback(handler)
+        except Exception:
+            return
+
+    def _session_startup() -> None:
+        try:
+            from sg_preflight import session_log
+
+            session_log.start_session_log(
+                root,
+                source="ui",
+                surface="dashboard",
+                detail={"profile": profile_id, "ui_mode": ui_mode or "", "workspace": str(root)},
+            )
+            session_log.event(
+                source="ui",
+                surface="dashboard",
+                profile=profile_id,
+                message="Dashboard session started",
+                detail={"ui_mode": ui_mode or "", "workspace": str(root), "native": native},
+            )
+        except Exception:
+            return
+
+    def _session_exception(*args: object, **kwargs: object) -> None:
+        try:
+            import traceback
+            from sg_preflight import session_log
+
+            exc = next((item for item in [*args, *kwargs.values()] if isinstance(item, BaseException)), None)
+            if exc is not None:
+                detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            else:
+                detail = {"args": [str(item) for item in args], "kwargs": {key: str(value) for key, value in kwargs.items()}}
+            session_log.event(
+                source="exception",
+                surface="dashboard",
+                profile=profile_id,
+                message="NiceGUI exception",
+                detail=detail,
+                level="error",
+            )
+        except Exception:
+            return
+
+    def _session_shutdown() -> None:
+        try:
+            from sg_preflight import session_log
+
+            current = session_log.current_session_log()
+            if current is None:
+                return
+            current.close_summary(surface="dashboard", profile=profile_id, message="Dashboard session ended")
+        except Exception:
+            return
+
+    _register_session_hook("on_startup", _session_startup)
+    _register_session_hook("on_exception", _session_exception)
+    _register_session_hook("on_shutdown", _session_shutdown)
+
     try:
         _render_dashboard(ui, app, initial_profile_id=profile_id, workspace=root, bmw_root=bmw_root, ui_mode=ui_mode)
     except Exception as exc:
+        try:
+            from sg_preflight.session_log import exception_event
+
+            exception_event(surface="dashboard render", exc=exc, profile=profile_id, message="Dashboard render failed")
+        except Exception:
+            pass
         append_startup_log(f"dashboard render failed: {type(exc).__name__}: {exc!r}")
         raise
     favicon_path = runtime_asset_path("sgfx_icon.png")
