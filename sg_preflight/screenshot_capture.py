@@ -131,7 +131,7 @@ def resolve_screenshot_capture_command(
     root = Path(bmw_root).resolve()
     clean_profile = _clean_profile(profile_id)
     lane = detect_lane(clean_profile, bmw_root=root)
-    python_payload = _python_command_payload(workspace)
+    python_payload = _python_command_payload(workspace, bmw_root=root)
     if python_payload["status"] != "available":
         return {
             "status": "unavailable",
@@ -259,7 +259,7 @@ def check_screenshot_capture_environment(
     lane = detect_lane(clean_profile, bmw_root=repo_root) if repo_root is not None else LANE_UNKNOWN
     checks = [
         repo_check,
-        _python_check(workspace_path),
+        _python_check(workspace_path, bmw_root=repo_root),
         _tool_check("RaCoHeadless.exe", "RaCoHeadless", workspace=workspace_path),
         _tool_check("blender.exe", "Blender", workspace=workspace_path),
         _sgfx_output_root_check(clean_profile, workspace_path),

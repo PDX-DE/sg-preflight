@@ -10,7 +10,16 @@ import sys
 from typing import Any
 
 from sg_preflight.bmw_delivery import discover_bmw_models_repo
+from sg_preflight.dependency_onboarding import (
+    BMW_CI_IMPORT_PROBE,
+    BMW_CI_VENV_DIRNAME,
+    BMW_PIPELINE_PYTHON_ENV,
+    DIGITAL_3D_CAR_REPO_ENV,
+    DIGITAL_3D_CAR_REPO_IDC23_ENV,
+    load_dependency_onboarding_state,
+)
 from sg_preflight.profiles import mirror_repo_root, resolve_source_repo_root
+from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 
 
 DOCTOR_SCHEMA_VERSION = 1
@@ -32,8 +41,8 @@ _WIZARD_STEP_GROUPS: tuple[dict[str, object], ...] = (
     {
         "key": "bmw_worktrees",
         "label": "BMW worktrees",
-        "summary": "BMW Git worktrees and environment variables that back car discovery and IDC23 checks.",
-        "item_keys": ("bmw_git_worktree", "idc23_worktree"),
+        "summary": "BMW Git worktrees, environment variables, and BMW-CI Python dependencies for pipeline checks.",
+        "item_keys": ("bmw_git_worktree", "idc23_worktree", "bmw_ci_python_deps"),
     },
     {
         "key": "connected_extras",
@@ -518,6 +527,116 @@ def _check_idc23_worktree() -> SetupDoctorItem:
     )
 
 
+def _registered_dependency_path(root: Path, *keys: str) -> Path | None:
+    state = load_dependency_onboarding_state(root)
+    registered_paths = state.get("registered_paths", {})
+    if not isinstance(registered_paths, dict):
+        return None
+    for key in keys:
+        raw = str(registered_paths.get(key, "")).strip()
+        if raw:
+            return Path(raw).expanduser()
+    return None
+
+
+def _bmw_ci_venv_python(repo_root: Path) -> Path:
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    executable = "python.exe" if os.name == "nt" else "python"
+    return repo_root / BMW_CI_VENV_DIRNAME / scripts_dir / executable
+
+
+def _bmw_ci_repo_roots(root: Path) -> list[Path]:
+    candidates = [
+        _env_path(DIGITAL_3D_CAR_REPO_ENV, "SG_BMW_MODELS_REPO", "SG_CARMODELS_REPO"),
+        _env_path(DIGITAL_3D_CAR_REPO_IDC23_ENV),
+        _registered_dependency_path(root, "digital_3d_car_repo"),
+        _registered_dependency_path(root, "digital_3d_car_repo_idc23", "digital_3d_car_repo_assets_idc23"),
+        discover_bmw_models_repo(root),
+    ]
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate is None or not candidate.exists():
+            continue
+        resolved = candidate.resolve()
+        normalized = os.path.normcase(str(resolved))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        roots.append(resolved)
+    return roots
+
+
+def _resolve_bmw_ci_python(root: Path) -> tuple[Path | None, str]:
+    override = os.environ.get(BMW_PIPELINE_PYTHON_ENV, "").strip()
+    if override:
+        path = Path(override).expanduser()
+        if path.is_file():
+            return path.resolve(), f"{BMW_PIPELINE_PYTHON_ENV} points to a Python executable."
+        return None, f"{BMW_PIPELINE_PYTHON_ENV} is set, but the file does not exist: {path}"
+    registered = _registered_dependency_path(root, "bmw_pipeline_python", "python", "python_executable")
+    if registered is not None and registered.is_file():
+        return registered.resolve(), "BMW pipeline Python is registered in dependency onboarding."
+    for repo_root in _bmw_ci_repo_roots(root):
+        candidate = _bmw_ci_venv_python(repo_root)
+        if candidate.is_file():
+            return candidate.resolve(), f"BMW-CI venv Python was found at {candidate}."
+    fallback = _bmw_ci_venv_python(_bmw_ci_repo_roots(root)[0]) if _bmw_ci_repo_roots(root) else root / BMW_CI_VENV_DIRNAME
+    return None, f"No BMW-CI Python was found at {fallback}."
+
+
+def _check_bmw_ci_python_deps(root: Path) -> SetupDoctorItem:
+    python_path, detail = _resolve_bmw_ci_python(root)
+    if python_path is None:
+        return _missing_item(
+            key="bmw_ci_python_deps",
+            label="BMW CI Python requirements",
+            category="BMW",
+            required=True,
+            path="",
+            detail=detail,
+            fix="Run the 'Install BMW pipeline requirements' setup action from Setup Doctor / Dependency Onboarding.",
+        )
+    try:
+        completed = subprocess.run(
+            [str(python_path), "-c", BMW_CI_IMPORT_PROBE],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            **hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return _missing_item(
+            key="bmw_ci_python_deps",
+            label="BMW CI Python requirements",
+            category="BMW",
+            required=True,
+            path=python_path,
+            detail=f"{detail} Import probe failed: {exc}",
+            fix="Run the 'Install BMW pipeline requirements' setup action from Setup Doctor / Dependency Onboarding.",
+        )
+    if completed.returncode != 0:
+        output = (completed.stderr or completed.stdout or "").strip()
+        return _missing_item(
+            key="bmw_ci_python_deps",
+            label="BMW CI Python requirements",
+            category="BMW",
+            required=True,
+            path=python_path,
+            detail=f"{python_path} cannot import yaml and PIL yet. {output}",
+            fix="Run the 'Install BMW pipeline requirements' setup action from Setup Doctor / Dependency Onboarding.",
+        )
+    return _found_item(
+        key="bmw_ci_python_deps",
+        label="BMW CI Python requirements",
+        category="BMW",
+        required=True,
+        path=python_path,
+        detail=f"{python_path} can import yaml and PIL. {detail}",
+    )
+
+
 def _qt_webengine_candidates(root: Path) -> list[Path]:
     return [
         root / "dist" / "sgfx-preflight" / "_internal" / "PySide6" / "Qt6WebEngineCore.dll",
@@ -657,6 +776,7 @@ def build_setup_doctor_report(workspace: Path | None = None) -> SetupDoctorRepor
         _check_blender(root),
         _check_bmw_git(root),
         _check_idc23_worktree(),
+        _check_bmw_ci_python_deps(root),
         _check_qt_webengine(root),
         _check_ramses_sdk(root),
         _check_python_runtime(),

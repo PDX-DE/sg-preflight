@@ -146,6 +146,28 @@ class TestScreenshotCapture(unittest.TestCase):
         self.assertEqual(payload["command"][0], str(python_path.resolve()))
         self.assertEqual(payload["command"][-3:], ["screenshots", "--diff", "F70"])
 
+    def test_capture_command_prefers_bmw_ci_venv_before_path_probe(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+        from sg_preflight.screenshot_capture import resolve_screenshot_capture_command
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bmw_root = Path(temp_dir) / "digital-3d-car-models"
+            script = bmw_root / "ci" / "scripts" / "car_manager.py"
+            venv_python = bmw_root / ".venv_bmw_ci" / ("Scripts" if os.name == "nt" else "bin")
+            venv_python = venv_python / ("python.exe" if os.name == "nt" else "python")
+            write_text(script, "print('fixture')\n")
+            write_text(venv_python, "python\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(generation.shutil, "which", return_value=r"C:\Windows\py.exe"):
+                    payload = resolve_screenshot_capture_command(profile_id="G70", bmw_root=bmw_root)
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["command"][0], str(venv_python.resolve()))
+        self.assertEqual(payload["command"][-3:], ["screenshots", "--diff", "G70_EVO"])
+
     @unittest.skipUnless(
         os.environ.get("SGFX_REAL_BMW_PIPELINE_AVAILABLE") == "1",
         "real BMW pipeline smoke skipped; set SGFX_REAL_BMW_PIPELINE_AVAILABLE=1 to run",

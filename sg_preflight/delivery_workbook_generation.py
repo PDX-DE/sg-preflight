@@ -160,6 +160,48 @@ def _registered_dir(workspace: Path | str | None, keys: tuple[str, ...]) -> Path
     return None
 
 
+def _env_path(key: str) -> Path | None:
+    raw = os.environ.get(key, "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
+def _bmw_ci_venv_python(repo_root: Path) -> Path:
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    executable = "python.exe" if os.name == "nt" else "python"
+    return repo_root / ".venv_bmw_ci" / scripts_dir / executable
+
+
+def _bmw_ci_venv_python_candidates(
+    *,
+    workspace: Path | str | None,
+    bmw_root: Path | str | None,
+) -> list[Path]:
+    roots: list[Path] = []
+    if bmw_root is not None:
+        roots.append(Path(bmw_root).expanduser())
+    for candidate in (
+        _env_path(DIGITAL_3D_CAR_REPO_ENV),
+        _env_path(DIGITAL_3D_CAR_REPO_IDC23_ENV),
+        _registered_dir(workspace, _DIGITAL_REPO_REGISTRATION_KEYS),
+        _registered_dir(workspace, _DIGITAL_REPO_IDC23_REGISTRATION_KEYS),
+    ):
+        if candidate is not None:
+            roots.append(candidate)
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            resolved = root
+        normalized = os.path.normcase(str(resolved))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        candidates.append(_bmw_ci_venv_python(resolved))
+    return candidates
+
+
 def _digital_repo_check(
     bmw_root: Path | str | None = None,
     *,
@@ -315,15 +357,11 @@ def _tool_check(executable_name: str, label: str, *, workspace: Path | str | Non
     )
 
 
-def _python_command_payload(workspace: Path | str | None = None) -> dict[str, Any]:
-    registered = _registered_file(workspace, _PYTHON_REGISTRATION_KEYS)
-    if registered is not None:
-        return {
-            "status": "available",
-            "command": [str(registered)],
-            "path": str(registered),
-            "detail": "BMW pipeline Python is available from dependency setup registration.",
-        }
+def _python_command_payload(
+    workspace: Path | str | None = None,
+    *,
+    bmw_root: Path | str | None = None,
+) -> dict[str, Any]:
     override = os.environ.get(BMW_PIPELINE_PYTHON_ENV, "").strip()
     if override:
         override_path = Path(override).expanduser()
@@ -340,6 +378,25 @@ def _python_command_payload(workspace: Path | str | None = None) -> dict[str, An
             "path": str(override_path),
             "detail": f"{BMW_PIPELINE_PYTHON_ENV} is set, but the file does not exist.",
         }
+
+    registered = _registered_file(workspace, _PYTHON_REGISTRATION_KEYS)
+    if registered is not None:
+        return {
+            "status": "available",
+            "command": [str(registered)],
+            "path": str(registered),
+            "detail": "BMW pipeline Python is available from dependency setup registration.",
+        }
+
+    for candidate in _bmw_ci_venv_python_candidates(workspace=workspace, bmw_root=bmw_root):
+        if candidate.is_file():
+            resolved = candidate.resolve()
+            return {
+                "status": "available",
+                "command": [str(resolved)],
+                "path": str(resolved),
+                "detail": "BMW-CI .venv_bmw_ci Python is available for BMW pipeline script invocation.",
+            }
 
     candidates: list[str] = []
     for executable_name in ("py.exe", "python.exe", "python3.exe", "py", "python", "python3"):
@@ -368,8 +425,12 @@ def _python_command_payload(workspace: Path | str | None = None) -> dict[str, An
     }
 
 
-def _python_check(workspace: Path | str | None = None) -> dict[str, str]:
-    payload = _python_command_payload(workspace)
+def _python_check(
+    workspace: Path | str | None = None,
+    *,
+    bmw_root: Path | str | None = None,
+) -> dict[str, str]:
+    payload = _python_command_payload(workspace, bmw_root=bmw_root)
     if payload["status"] == "available":
         return _check(
             key="bmw_pipeline_python",
@@ -505,7 +566,7 @@ def check_delivery_workbook_generation_environment(
     lane = detect_lane(clean_profile, bmw_root=repo_root) if repo_root is not None else LANE_UNKNOWN
     checks = [
         repo_check,
-        _python_check(workspace_path),
+        _python_check(workspace_path, bmw_root=repo_root),
         _tool_check("raco.exe", "RaCo", workspace=workspace_path),
         _tool_check("RaCoHeadless.exe", "RaCoHeadless", workspace=workspace_path),
         _tool_check("blender.exe", "Blender", workspace=workspace_path),
@@ -686,7 +747,7 @@ def resolve_delivery_workbook_generation_command(
     root = Path(bmw_root).resolve()
     clean_profile = _clean_profile(profile_id)
     lane = detect_lane(clean_profile, bmw_root=root)
-    python_payload = _python_command_payload(workspace)
+    python_payload = _python_command_payload(workspace, bmw_root=root)
     if python_payload["status"] != "available":
         return {
             "status": "unavailable",

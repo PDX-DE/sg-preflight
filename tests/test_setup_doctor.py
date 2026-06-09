@@ -22,6 +22,12 @@ def _write_stub(path: Path, text: str = "stub") -> Path:
     return path
 
 
+def _bmw_ci_python_path(repo_root: Path) -> Path:
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    executable = "python.exe" if os.name == "nt" else "python"
+    return repo_root / ".venv_bmw_ci" / scripts_dir / executable
+
+
 def _doctor_fixture(root: Path) -> dict[str, str]:
     repo_root = root / "repositories" / "trunk"
     bmw_repo = root / "digital-3d-car-models"
@@ -34,6 +40,7 @@ def _doctor_fixture(root: Path) -> dict[str, str]:
     _write_stub(raco_gui)
     _write_stub(blender)
     _write_stub(bmw_repo / "ci" / "scripts" / "common" / "models_build_config.yaml", "models: []\n")
+    _write_stub(_bmw_ci_python_path(bmw_repo))
     _write_stub(root / "dist" / "sgfx-preflight" / "_internal" / "PySide6" / "Qt6WebEngineCore.dll")
     _write_stub(root / "cpp" / "build" / "vs2022-ramses-28.16" / "Release" / "ramses-shared-lib-headless.dll")
     repo_root.mkdir(parents=True, exist_ok=True)
@@ -77,9 +84,32 @@ class TestSetupDoctor(unittest.TestCase):
         self.assertEqual(items["raco_headless"]["status"], "found")
         self.assertEqual(items["bmw_git_worktree"]["status"], "found")
         self.assertEqual(items["idc23_worktree"]["status"], "found")
+        self.assertEqual(items["bmw_ci_python_deps"]["status"], "found")
         self.assertEqual(items["qt_webengine_core"]["status"], "found")
         self.assertEqual(items["jira_pat"]["status"], "optional_missing")
         self.assertIn("OS keychain", items["jira_pat"]["fix"])
+
+    def test_report_marks_bmw_ci_python_deps_missing_until_probe_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env = _doctor_fixture(root)
+            bmw_ci_python = _bmw_ci_python_path(Path(env["Digital-3D-Car-Repo"]))
+            bmw_ci_python.unlink()
+
+            with mock.patch.dict(os.environ, env, clear=False):
+                with mock.patch("sg_preflight.setup_doctor.Path.home", return_value=root / "home"):
+                    with mock.patch("sg_preflight.setup_doctor.subprocess.run") as run:
+                        run.return_value = mock.Mock(stdout="RaCo Headless 2.9.0\n", stderr="", returncode=0)
+                        missing_report = build_setup_doctor_report(root).to_dict()
+                        _write_stub(bmw_ci_python)
+                        found_report = build_setup_doctor_report(root).to_dict()
+
+        missing_items = {item["key"]: item for item in missing_report["items"]}
+        missing_steps = {step["key"]: step for step in missing_report["wizard_steps"]}
+        found_items = {item["key"]: item for item in found_report["items"]}
+        self.assertEqual(missing_items["bmw_ci_python_deps"]["status"], "missing")
+        self.assertEqual(missing_steps["bmw_worktrees"]["status"], "missing")
+        self.assertEqual(found_items["bmw_ci_python_deps"]["status"], "found")
 
     def test_report_marks_first_required_blocker_as_next_action(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

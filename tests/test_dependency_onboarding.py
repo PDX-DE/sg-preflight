@@ -11,6 +11,20 @@ from unittest import mock
 from tests.operator_helpers import write_text
 
 
+def _completed(
+    command: list[str] | None = None,
+    *,
+    returncode: int = 0,
+    stdout: str = "ok\n",
+    stderr: str = "",
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=command or ["python"], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def _write_bmw_ci_python(repo_root: Path) -> Path:
+    return write_text(repo_root / ".venv_bmw_ci" / "Scripts" / "python.exe", "python\n")
+
+
 class TestDependencyOnboarding(unittest.TestCase):
     def test_status_marks_missing_dependencies_and_first_run_without_writing_state(self) -> None:
         from sg_preflight import dependency_onboarding as onboarding
@@ -30,13 +44,14 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertTrue(payload["first_run"])
         self.assertFalse((root / "operator_state").exists())
         self.assertEqual(payload["counts"]["available"], 0)
-        self.assertEqual(payload["counts"]["missing"], 5)
+        self.assertEqual(payload["counts"]["missing"], 6)
         self.assertEqual([item["key"] for item in payload["items"]], [
             "raco_gui",
             "raco_headless",
             "blender",
             "digital_3d_car_repo",
             "digital_3d_car_repo_idc23",
+            "bmw_ci_requirements",
         ])
         self.assertTrue(all(action["requires_confirmation"] for action in payload["actions"]))
         self.assertIn("Manual review remains required.", payload["guardrails"])
@@ -53,14 +68,17 @@ class TestDependencyOnboarding(unittest.TestCase):
             blender = root / "tools" / "Blender 4.1" / "blender.exe"
             bmw_root = root / "digital-3d-car-models"
             idc23_root = root / "digital-3d-car-models-idc23"
+            bmw_ci_python = root / "tools" / "bmw-ci-python.exe"
             for path in (gui, headless, blender):
                 write_text(path, "fixture\n")
+            write_text(bmw_ci_python, "python\n")
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
             write_text(idc23_root / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
             (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
             onboarding.record_dependency_path(workspace=root, key="raco_gui", path=gui)
             onboarding.record_dependency_path(workspace=root, key="raco_headless", path=headless)
             onboarding.record_dependency_path(workspace=root, key="blender", path=blender)
+            onboarding.record_dependency_path(workspace=root, key="bmw_pipeline_python", path=bmw_ci_python)
 
             with mock.patch.dict(
                 os.environ,
@@ -71,11 +89,12 @@ class TestDependencyOnboarding(unittest.TestCase):
                 clear=True,
             ):
                 with mock.patch.object(onboarding, "_find_executable", return_value=None):
-                    payload = onboarding.build_dependency_onboarding_status(workspace=root)
+                    with mock.patch.object(onboarding.subprocess, "run", return_value=_completed()):
+                        payload = onboarding.build_dependency_onboarding_status(workspace=root)
 
         self.assertFalse(payload["first_run"])
         self.assertEqual(payload["status"], "available")
-        self.assertEqual(payload["counts"]["available"], 5)
+        self.assertEqual(payload["counts"]["available"], 6)
         self.assertFalse(payload["actions"])
 
     def test_fast_path_detection_auto_registers_paths_for_g70_generation_preflight(self) -> None:
@@ -93,6 +112,7 @@ class TestDependencyOnboarding(unittest.TestCase):
             for path in (gui, headless, blender):
                 write_text(path, "fixture\n")
             (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
+            _write_bmw_ci_python(bmw_root)
             write_text(idc23_root / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
             (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
             write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
@@ -109,7 +129,8 @@ class TestDependencyOnboarding(unittest.TestCase):
                 with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
                     with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[idc23_root]):
                         with mock.patch.object(onboarding, "_find_executable", return_value=None):
-                            setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
+                            with mock.patch.object(onboarding.subprocess, "run", return_value=_completed()):
+                                setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
             state = onboarding.load_dependency_onboarding_state(root)
             state_path = onboarding.dependency_onboarding_state_path(root)
             state_text = state_path.read_text(encoding="utf-8")
@@ -117,7 +138,8 @@ class TestDependencyOnboarding(unittest.TestCase):
                 with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
                     with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[idc23_root]):
                         with mock.patch.object(onboarding, "_find_executable", return_value=None):
-                            second_setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
+                            with mock.patch.object(onboarding.subprocess, "run", return_value=_completed()):
+                                second_setup_payload = onboarding.build_dependency_onboarding_status(workspace=root)
             second_state_text = state_path.read_text(encoding="utf-8")
 
             with mock.patch.dict(os.environ, {}, clear=True):
@@ -173,6 +195,7 @@ class TestDependencyOnboarding(unittest.TestCase):
             write_text(old_idc23_root / "ci" / "scripts" / "test" / "main.py", "print('old')\n")
             (old_idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
             (new_bmw_root / "cars" / "BMW").mkdir(parents=True)
+            _write_bmw_ci_python(new_bmw_root)
             write_text(new_idc23_root / "ci" / "scripts" / "test" / "main.py", "print('new')\n")
             (new_idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
             onboarding.record_dependency_path(workspace=root, key="raco_gui", path=old_gui)
@@ -185,7 +208,8 @@ class TestDependencyOnboarding(unittest.TestCase):
                 with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
                     with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[new_idc23_root]):
                         with mock.patch.object(onboarding, "_find_executable", return_value=None):
-                            payload = onboarding.build_dependency_onboarding_status(workspace=root)
+                            with mock.patch.object(onboarding.subprocess, "run", return_value=_completed()):
+                                payload = onboarding.build_dependency_onboarding_status(workspace=root)
             state = onboarding.load_dependency_onboarding_state(root)
 
         registered_paths = state["registered_paths"]
@@ -259,13 +283,15 @@ class TestDependencyOnboarding(unittest.TestCase):
 
             completed = subprocess.CompletedProcess(args=["setx"], returncode=0, stdout="ok\n", stderr="")
             with mock.patch.object(onboarding.sys, "platform", "win32"):
-                with mock.patch.object(onboarding.subprocess, "run", return_value=completed) as run_mock:
-                    result = onboarding.run_dependency_setup_action(
-                        action_id="setup-digital-3d-car-repo",
-                        workspace=root,
-                        operator_confirmed=True,
-                        target_path=bmw_root,
-                    )
+                with mock.patch.object(onboarding, "_candidate_bmw_repo_paths", return_value=[]):
+                    with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[]):
+                        with mock.patch.object(onboarding.subprocess, "run", return_value=completed) as run_mock:
+                            result = onboarding.run_dependency_setup_action(
+                                action_id="setup-digital-3d-car-repo",
+                                workspace=root,
+                                operator_confirmed=True,
+                                target_path=bmw_root,
+                            )
             state_path = root / "operator_state" / "dependency_onboarding.json"
             self.assertTrue(state_path.is_file())
 
@@ -506,6 +532,136 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertTrue(any(command[:2] == ["setx", onboarding.DIGITAL_3D_CAR_REPO_IDC23_ENV] for command in commands))
         self.assertEqual(Path(state["registered_paths"]["digital_3d_car_repo_idc23"]), idc23_root.resolve())
 
+    def test_bmw_ci_requirements_status_emits_setup_action_for_missing_imports(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            idc23_root = root / "worktrees" / "assets-idc23"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(bmw_root / "ci" / "scripts" / "requirements.txt", "PyYAML\nPillow\n")
+            write_text(idc23_root / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
+            (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "Digital-3D-Car-Repo": str(bmw_root),
+                    "Digital-3D-Car-Repo-IDC23": str(idc23_root),
+                },
+                clear=True,
+            ):
+                with mock.patch.object(onboarding, "_raco_install_roots", return_value=[]):
+                    with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
+                        with mock.patch.object(onboarding, "_blender_path_candidates", return_value=[]):
+                            with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                                payload = onboarding.build_dependency_onboarding_status(workspace=root)
+
+        item = next(item for item in payload["items"] if item["key"] == "bmw_ci_requirements")
+        action = item["setup_action"]
+        self.assertEqual(item["status"], "missing")
+        self.assertEqual(action["id"], "setup-bmw-ci-requirements")
+        self.assertTrue(action["requires_confirmation"])
+        self.assertIn(".venv_bmw_ci", action["command_preview"])
+        self.assertIn("pip install -r", action["command_preview"])
+
+    def test_bmw_ci_base_python_uses_py313_launcher_when_frozen(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            py_launcher = root / "Windows" / "py.exe"
+            py313 = root / "Python313" / "python.exe"
+            fallback_python = root / "WindowsApps" / "python.exe"
+            write_text(py_launcher, "launcher\n")
+            write_text(py313, "python\n")
+            write_text(fallback_python, "python\n")
+
+            def _find_executable(name: str) -> Path | None:
+                if name == "py.exe":
+                    return py_launcher
+                if name == "python.exe":
+                    return fallback_python
+                return None
+
+            def _run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                self.assertEqual(command[1], "-3.13")
+                self.assertIn("creationflags", kwargs)
+                return _completed(command, stdout=f"{py313}\n")
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(onboarding.sys, "frozen", True, create=True):
+                    with mock.patch.object(onboarding.sys, "executable", r"C:\bundle\sgfx-preflight.exe"):
+                        with mock.patch.object(onboarding, "_find_executable", side_effect=_find_executable):
+                            with mock.patch.object(onboarding.subprocess, "run", side_effect=_run):
+                                base_python = onboarding._base_python_for_bmw_ci_venv()
+
+        self.assertEqual(base_python, py313.resolve())
+
+    def test_bmw_ci_requirements_setup_builds_venv_installs_existing_requirements_and_records_python(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            base_python = root / "sgfx-venv" / "python.exe"
+            path_python = root / "system" / "python.exe"
+            bmw_root = root / "digital-3d-car-models"
+            idc23_root = root / "worktrees" / "assets-idc23"
+            idc23_requirements = idc23_root / "ci" / "scripts" / "requirements.txt"
+            write_text(base_python, "python\n")
+            write_text(path_python, "python\n")
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(idc23_requirements, "PyYAML\nPillow\n")
+            write_text(idc23_root / "ci" / "scripts" / "test" / "main.py", "print('fixture')\n")
+            (idc23_root / "cars" / "BMW" / "_Shared").mkdir(parents=True)
+            commands: list[list[str]] = []
+
+            def _find_executable(name: str) -> Path | None:
+                return path_python if name in {"python.exe", "python", "py.exe", "py"} else None
+
+            def _run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                self.assertIn("stdin", kwargs)
+                commands.append(command)
+                if command[1:3] == ["-m", "venv"]:
+                    _write_bmw_ci_python(idc23_root)
+                return _completed(command)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "Digital-3D-Car-Repo": str(bmw_root),
+                    "Digital-3D-Car-Repo-IDC23": str(idc23_root),
+                },
+                clear=True,
+            ):
+                with mock.patch.object(onboarding, "_raco_install_roots", return_value=[]):
+                    with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
+                        with mock.patch.object(onboarding, "_blender_path_candidates", return_value=[]):
+                            with mock.patch.object(onboarding, "_find_executable", side_effect=_find_executable):
+                                with mock.patch.object(onboarding.sys, "frozen", False, create=True):
+                                    with mock.patch.object(onboarding.sys, "executable", str(base_python)):
+                                        with mock.patch.object(onboarding.subprocess, "run", side_effect=_run):
+                                            result = onboarding.run_dependency_setup_action(
+                                                action_id="setup-bmw-ci-requirements",
+                                                workspace=root,
+                                                operator_confirmed=True,
+                                            )
+            state = onboarding.load_dependency_onboarding_state(root)
+            venv_python = idc23_root / ".venv_bmw_ci" / "Scripts" / "python.exe"
+
+        self.assertEqual(result["status"], "recorded")
+        self.assertEqual(Path(result["path"]), venv_python.resolve())
+        self.assertEqual(Path(state["registered_paths"]["bmw_pipeline_python"]), venv_python.resolve())
+        missing_requirements = {Path(path).resolve() for path in result["missing_requirements"]}
+        self.assertIn((bmw_root / "ci" / "scripts" / "requirements.txt").resolve(), missing_requirements)
+        venv_commands = [command for command in commands if command[1:3] == ["-m", "venv"]]
+        self.assertTrue(venv_commands)
+        self.assertEqual(Path(venv_commands[0][0]), base_python.resolve())
+        self.assertIn("--clear", venv_commands[0])
+        self.assertTrue(any(command[1:4] == ["-m", "pip", "install"] for command in commands))
+        self.assertTrue(any(command[-1] == onboarding.BMW_CI_IMPORT_PROBE for command in commands))
+
     def test_start_dependency_setup_action_spawns_hidden_worker_and_reports_progress_tail(self) -> None:
         from sg_preflight import dependency_onboarding as onboarding
 
@@ -521,14 +677,16 @@ class TestDependencyOnboarding(unittest.TestCase):
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
             fake_process = FakeProcess()
             with mock.patch.dict(os.environ, {}, clear=True):
-                with mock.patch.object(onboarding.subprocess, "Popen", return_value=fake_process) as popen_mock:
-                    with mock.patch.object(onboarding.sys, "platform", "win32"):
-                        job = onboarding.start_dependency_setup_action(
-                            action_id="setup-digital-3d-car-repo",
-                            workspace=root,
-                            operator_confirmed=True,
-                            target_path=bmw_root,
-                        )
+                with mock.patch.object(onboarding, "_candidate_bmw_repo_paths", return_value=[]):
+                    with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[]):
+                        with mock.patch.object(onboarding.subprocess, "Popen", return_value=fake_process) as popen_mock:
+                            with mock.patch.object(onboarding.sys, "platform", "win32"):
+                                job = onboarding.start_dependency_setup_action(
+                                    action_id="setup-digital-3d-car-repo",
+                                    workspace=root,
+                                    operator_confirmed=True,
+                                    target_path=bmw_root,
+                                )
             write_text(job.stdout_path, "\n".join(f"line {index:02d}" for index in range(25)))
             result = onboarding.poll_dependency_setup_action(job)
 
@@ -556,14 +714,16 @@ class TestDependencyOnboarding(unittest.TestCase):
             bmw_root = root / "digital-3d-car-models"
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
             with mock.patch.dict(os.environ, {}, clear=True):
-                with mock.patch.object(onboarding.subprocess, "Popen", return_value=FakeProcess()):
-                    with mock.patch.object(onboarding.sys, "platform", "win32"):
-                        job = onboarding.start_dependency_setup_action(
-                            action_id="setup-digital-3d-car-repo",
-                            workspace=root,
-                            operator_confirmed=True,
-                            target_path=bmw_root,
-                        )
+                with mock.patch.object(onboarding, "_candidate_bmw_repo_paths", return_value=[]):
+                    with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[]):
+                        with mock.patch.object(onboarding.subprocess, "Popen", return_value=FakeProcess()):
+                            with mock.patch.object(onboarding.sys, "platform", "win32"):
+                                job = onboarding.start_dependency_setup_action(
+                                    action_id="setup-digital-3d-car-repo",
+                                    workspace=root,
+                                    operator_confirmed=True,
+                                    target_path=bmw_root,
+                                )
             write_text(
                 job.stdout_path,
                 'progress\n{"status":"recorded","action_id":"setup-digital-3d-car-repo","summary":"ok"}\n',

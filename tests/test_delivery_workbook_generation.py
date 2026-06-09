@@ -347,13 +347,14 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             def fake_which(executable_name: str) -> str:
                 return r"C:\Windows\py.exe" if executable_name == "py.exe" else ""
 
-            with mock.patch.object(generation.sys, "frozen", True, create=True):
-                with mock.patch.object(generation.sys, "executable", r"C:\bundle\sgfx-preflight.exe"):
-                    with mock.patch.object(generation.shutil, "which", side_effect=fake_which):
-                        payload = generation.resolve_delivery_workbook_generation_command(
-                            profile_id="G70",
-                            bmw_root=bmw_root,
-                        )
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(generation.sys, "frozen", True, create=True):
+                    with mock.patch.object(generation.sys, "executable", r"C:\bundle\sgfx-preflight.exe"):
+                        with mock.patch.object(generation.shutil, "which", side_effect=fake_which):
+                            payload = generation.resolve_delivery_workbook_generation_command(
+                                profile_id="G70",
+                                bmw_root=bmw_root,
+                            )
 
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["command"][0], r"C:\Windows\py.exe")
@@ -373,13 +374,14 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             def fake_which(executable_name: str) -> str:
                 return r"C:\Windows\py.exe" if executable_name == "py.exe" else ""
 
-            with mock.patch.object(generation.sys, "frozen", False, create=True):
-                with mock.patch.object(generation.sys, "executable", r"C:\sgfx\.venv\Scripts\python.exe"):
-                    with mock.patch.object(generation.shutil, "which", side_effect=fake_which):
-                        payload = generation.resolve_delivery_workbook_generation_command(
-                            profile_id="G70",
-                            bmw_root=bmw_root,
-                        )
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(generation.sys, "frozen", False, create=True):
+                    with mock.patch.object(generation.sys, "executable", r"C:\sgfx\.venv\Scripts\python.exe"):
+                        with mock.patch.object(generation.shutil, "which", side_effect=fake_which):
+                            payload = generation.resolve_delivery_workbook_generation_command(
+                                profile_id="G70",
+                                bmw_root=bmw_root,
+                            )
 
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["command"][0], r"C:\Windows\py.exe")
@@ -412,6 +414,71 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["command"][0], str(python_path.resolve()))
         self.assertEqual(payload["command"][-2:], ["export", "G70_EVO"])
+
+    def test_generation_command_prefers_bmw_ci_venv_before_path_probe_when_frozen(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bmw_root = Path(temp_dir) / "digital-3d-car-models"
+            script = bmw_root / "ci" / "scripts" / "car_manager.py"
+            venv_python = bmw_root / ".venv_bmw_ci" / ("Scripts" if os.name == "nt" else "bin")
+            venv_python = venv_python / ("python.exe" if os.name == "nt" else "python")
+            write_text(script, "print('fixture')\n")
+            write_text(venv_python, "python\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
+
+            def fake_which(executable_name: str) -> str:
+                return r"C:\Windows\py.exe" if executable_name == "py.exe" else ""
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(generation.sys, "frozen", True, create=True):
+                    with mock.patch.object(generation.sys, "executable", r"C:\bundle\sgfx-preflight.exe"):
+                        with mock.patch.object(generation.shutil, "which", side_effect=fake_which):
+                            payload = generation.resolve_delivery_workbook_generation_command(
+                                profile_id="G70",
+                                bmw_root=bmw_root,
+                            )
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["command"][0], str(venv_python.resolve()))
+        self.assertNotEqual(payload["command"][0], r"C:\Windows\py.exe")
+        self.assertEqual(payload["command"][-2:], ["export", "G70_EVO"])
+
+    def test_generation_command_keeps_sg_bmw_python_env_override_highest_priority(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            script = bmw_root / "ci" / "scripts" / "car_manager.py"
+            env_python = root / "tools" / "env-python.exe"
+            registered_python = root / "tools" / "registered-python.exe"
+            venv_python = bmw_root / ".venv_bmw_ci" / ("Scripts" if os.name == "nt" else "bin")
+            venv_python = venv_python / ("python.exe" if os.name == "nt" else "python")
+            write_text(script, "print('fixture')\n")
+            write_text(env_python, "python\n")
+            write_text(registered_python, "python\n")
+            write_text(venv_python, "python\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
+            write_text(
+                root / "operator_state" / "dependency_onboarding.json",
+                json.dumps({"registered_paths": {"bmw_pipeline_python": str(registered_python)}}),
+            )
+
+            with mock.patch.dict(os.environ, {"SG_BMW_PYTHON_EXE": str(env_python)}, clear=True):
+                with mock.patch.object(generation.shutil, "which", return_value=r"C:\Windows\py.exe"):
+                    payload = generation.resolve_delivery_workbook_generation_command(
+                        profile_id="G70",
+                        bmw_root=bmw_root,
+                        workspace=root,
+                    )
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["command"][0], str(env_python.resolve()))
+        self.assertNotEqual(payload["command"][0], str(registered_python.resolve()))
+        self.assertNotEqual(payload["command"][0], str(venv_python.resolve()))
 
     @unittest.skipUnless(
         os.environ.get("SGFX_REAL_BMW_PIPELINE_AVAILABLE") == "1",
