@@ -557,16 +557,26 @@ def _notify_completion_safe(
             elapsed = 0
         if elapsed < minimum_elapsed_seconds:
             return
+    from nicegui import background_tasks, run as nicegui_run
+
+    notification_task = nicegui_run.io_bound(
+        notify_desktop_completion,
+        title=title,
+        message=message,
+        workspace=workspace,
+        action_id=action_id,
+        profile_id=profile_id,
+        evidence_path=evidence_path,
+    )
     try:
-        notify_desktop_completion(
-            title=title,
-            message=message,
-            workspace=workspace,
-            action_id=action_id,
-            profile_id=profile_id,
-            evidence_path=evidence_path,
+        background_tasks.create(
+            notification_task,
+            name=f"sgfx-desktop-notification-{action_id or 'completion'}",
         )
     except Exception:
+        close = getattr(notification_task, "close", None)
+        if callable(close):
+            close()
         return
 
 
@@ -1997,17 +2007,20 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                     else:
                         ui.label("No file changes recorded yet.").classes("sgfx-muted")
 
-            def _cancel_build() -> None:
+            async def _cancel_build() -> None:
+                from nicegui import run as nicegui_run
+
                 job = job_state.get("job")
                 if job is None:
                     return
-                result = cancel_dashboard_review_package_build(job)
+                cancel_button.disable()
+                status_label.text = "Stopping build review package..."
+                result = await nicegui_run.io_bound(cancel_dashboard_review_package_build, job)
                 progress.visible = False
                 _show_build_progress()
                 _update_build_progress(result)
                 status_label.text = str(result.get("summary", "Build review package canceled."))
                 _stop_build_poll_timer()
-                cancel_button.disable()
                 ui.notify("Build review package canceled.")
 
             cancel_button = _attach_tooltip(
@@ -3514,7 +3527,7 @@ def _render_full_qa_pass_panel(
 
             job_state["launch_timer"] = _start_io_bound_poll_timer(0.1, _launch_job_io, _apply_launch_job)
 
-        def _cancel_subprocess_action(
+        async def _cancel_subprocess_action(
             action: dict[str, Any],
             *,
             status_label: Any,
@@ -3557,10 +3570,14 @@ def _render_full_qa_pass_panel(
                 cancel_button.visible = False
                 return
             try:
+                from nicegui import run as nicegui_run
+
+                cancel_button.disable()
+                completion_label.text = "Stopping local subprocess..."
                 if action_id == GENERATE_WORKBOOK_ACTION_ID:
-                    result = cancel_delivery_workbook_generation(job_state["job"])
+                    result = await nicegui_run.io_bound(cancel_delivery_workbook_generation, job_state["job"])
                 elif action_id == SCREENSHOT_CAPTURE_ACTION_ID:
-                    result = cancel_screenshot_capture(job_state["job"])
+                    result = await nicegui_run.io_bound(cancel_screenshot_capture, job_state["job"])
                 else:
                     raise ValueError(f"Unsupported Full QA Pass action: {action_id}")
                 _cancel_background_poll_timer(job_state.get("timer"))
@@ -3598,7 +3615,7 @@ def _render_full_qa_pass_panel(
                     set_running_controls(False)
                 _append_activity(action=action_id, outcome="error", note=str(exc))
 
-        def _invoke_operator_action(
+        async def _invoke_operator_action(
             action: dict[str, Any],
             *,
             status_label: Any,
@@ -3613,7 +3630,10 @@ def _render_full_qa_pass_panel(
                     status_label.text = "passed"
                     completion_label.text = "Risk signals were marked reviewed for this local pass."
                 elif action_id == "manual-review-recorded":
-                    assist = build_manual_review_assist(profile_id, workspace=workspace)
+                    from nicegui import run as nicegui_run
+
+                    completion_label.text = "Checking manual-review evidence..."
+                    assist = await nicegui_run.io_bound(build_manual_review_assist, profile_id, workspace=workspace)
                     focus_count = len(assist.get("operator_focus_steps", []))
                     status_label.text = "passed" if focus_count == 0 else "incomplete"
                     completion_label.text = (
@@ -4405,9 +4425,12 @@ def _render_full_qa_pass_panel(
             visual_label.visible = False
             visual_host = ui.row().classes("full-width sgfx-live-visuals")
             visual_host.visible = False
-            cancel_button = ui.button(
-                "Cancel running action",
-                on_click=lambda _event=None, current=action: _cancel_subprocess_action(
+
+            async def _cancel_current_action(
+                _event: Any = None,
+                current: dict[str, Any] = action,
+            ) -> None:
+                await _cancel_subprocess_action(
                     current,
                     status_label=status_label,
                     eta_label=eta_label,
@@ -4419,7 +4442,11 @@ def _render_full_qa_pass_panel(
                     completion_label=completion_label,
                     cancel_button=cancel_button,
                     set_running_controls=set_running_controls,
-                ),
+                )
+
+            cancel_button = ui.button(
+                "Cancel running action",
+                on_click=_cancel_current_action,
             )
             cancel_button.visible = False
             kind = str(action.get("kind", ""))
@@ -4442,8 +4469,8 @@ def _render_full_qa_pass_panel(
                 def _show_form() -> None:
                     form_host.visible = True
 
-                def _save_handoff() -> None:
-                    _invoke_operator_action(
+                async def _save_handoff() -> None:
+                    await _invoke_operator_action(
                         action,
                         status_label=status_label,
                         completion_label=completion_label,
@@ -4466,8 +4493,8 @@ def _render_full_qa_pass_panel(
                     ui.button("Save stopping point", on_click=_save_handoff).props("color=primary")
                 return
             if kind in {"operator_ack", "verify_manual_review"}:
-                def _run_operator_action(current: dict[str, Any] = action) -> None:
-                    _invoke_operator_action(
+                async def _run_operator_action(_event: Any = None, current: dict[str, Any] = action) -> None:
+                    await _invoke_operator_action(
                         current,
                         status_label=status_label,
                         completion_label=completion_label,
@@ -4477,7 +4504,7 @@ def _render_full_qa_pass_panel(
 
                 _attach_tooltip(
                     ui,
-                    ui.button(label, on_click=lambda _event=None, current=action: _run_operator_action(current)),
+                    ui.button(label, on_click=_run_operator_action),
                     str(action.get("summary", "")),
                 )
                 return

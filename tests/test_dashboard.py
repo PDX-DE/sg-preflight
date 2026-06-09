@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
@@ -719,6 +720,130 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn('"job": start_screenshot_capture(', workflow_source)
         self.assertIn('job_state["launch_timer"] = _start_io_bound_poll_timer(0.1, _launch_job_io, _apply_launch_job)', workflow_source)
 
+    def test_dashboard_source_enumerates_remaining_blocking_primitives(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        sources = {
+            "sg_preflight/dashboard/main.py": (root / "dashboard" / "main.py").read_text(encoding="utf-8"),
+            "sg_preflight/dashboard_pages_workflows.py": (
+                root / "dashboard_pages_workflows.py"
+            ).read_text(encoding="utf-8"),
+        }
+        blocking_primitives = {
+            "start_delivery_workbook_generation",
+            "start_screenshot_capture",
+            "start_dashboard_review_package_build",
+            "start_dashboard_batch_full_qa_pass",
+            "start_dependency_setup_action",
+            "cancel_delivery_workbook_generation",
+            "cancel_screenshot_capture",
+            "cancel_dashboard_review_package_build",
+            "notify_desktop_completion",
+            "_notify_completion_safe",
+            "run_grafiks_mode",
+            "_resolve_grafiks_shell_exe",
+            "build_manual_review_assist",
+            "search_jira_profile_tickets",
+            "search_my_unresolved_tickets",
+            "_materialize_screenshot_review_viewer_for_dashboard",
+            "_execute_diagnostic_chain",
+            "build_dashboard_snapshot",
+            "build_full_qa_pass",
+            "build_dashboard_quality_hero_report",
+            "_screenshot_review_visual_rows",
+            "_build_my_tickets_payload",
+        }
+
+        workflow_source = sources["sg_preflight/dashboard_pages_workflows.py"]
+        notify_start = workflow_source.find("def _notify_completion_safe(")
+        notify_end = workflow_source.find("\n\ndef _full_qa_completion_notification", notify_start)
+        self.assertNotEqual(notify_start, -1)
+        self.assertNotEqual(notify_end, -1)
+        notify_source = workflow_source[notify_start:notify_end]
+        self.assertIn("background_tasks.create(", notify_source)
+        self.assertIn("nicegui_run.io_bound(", notify_source)
+        self.assertIn("notify_desktop_completion", notify_source)
+
+        def _call_name(node: ast.Call) -> str:
+            if isinstance(node.func, ast.Name):
+                return node.func.id
+            if isinstance(node.func, ast.Attribute):
+                return node.func.attr
+            return ""
+
+        def _function_name(node: ast.AST) -> str:
+            if isinstance(node, ast.Name):
+                return node.id
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                return node.func.id
+            return ""
+
+        parsed_sources: dict[str, tuple[ast.Module, dict[ast.AST, ast.AST]]] = {}
+        offloaded_functions: set[str] = set()
+        for relative_path, source in sources.items():
+            tree = ast.parse(source)
+            parents: dict[ast.AST, ast.AST] = {}
+            for parent in ast.walk(tree):
+                for child in ast.iter_child_nodes(parent):
+                    parents[child] = parent
+            parsed_sources[relative_path] = (tree, parents)
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                call_name = _call_name(node)
+                if call_name in {"_io_bound", "io_bound"} and node.args:
+                    target = _function_name(node.args[0])
+                    if target:
+                        offloaded_functions.add(target)
+                if call_name == "_start_io_bound_poll_timer" and len(node.args) >= 2:
+                    target = _function_name(node.args[1])
+                    if target:
+                        offloaded_functions.add(target)
+                if call_name == "Thread":
+                    for keyword in node.keywords:
+                        if keyword.arg == "target":
+                            target = _function_name(keyword.value)
+                            if target:
+                                offloaded_functions.add(target)
+
+        violations: list[str] = []
+        for relative_path, (tree, parents) in parsed_sources.items():
+            def _enclosing_functions(node: ast.AST) -> list[str]:
+                names: list[str] = []
+                current = node
+                while current in parents:
+                    current = parents[current]
+                    if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        names.append(current.name)
+                return list(reversed(names))
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                call_name = _call_name(node)
+                if call_name not in blocking_primitives:
+                    continue
+                scopes = _enclosing_functions(node)
+                if call_name == "_notify_completion_safe":
+                    continue
+                if any(scope in offloaded_functions for scope in scopes):
+                    continue
+                if (
+                    relative_path == "sg_preflight/dashboard/main.py"
+                    and call_name == "run_grafiks_mode"
+                    and scopes == ["run_grafiks_mode"]
+                ):
+                    continue
+                if (
+                    relative_path == "sg_preflight/dashboard/main.py"
+                    and call_name == "build_dashboard_snapshot"
+                    and scopes == ["_render_dashboard"]
+                ):
+                    continue
+                violations.append(f"{relative_path}:{node.lineno}:{call_name} in {'/'.join(scopes) or '<module>'}")
+
+        self.assertEqual([], violations)
+
     def test_jira_inline_tickets_render_as_copy_only_buttons(self) -> None:
         """Clicking a Jira ticket in the inline panel copies the URL only and
         shows a visible toast. It must not auto-open a browser."""
@@ -1059,7 +1184,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            with mock.patch("sg_preflight.dashboard.main.notify_desktop_completion") as notify:
+            scheduled = object()
+            with (
+                mock.patch("nicegui.run.io_bound", new=mock.Mock(return_value=scheduled)) as io_bound,
+                mock.patch("nicegui.background_tasks.create") as create_task,
+            ):
                 main._notify_completion_safe(
                     title="Done",
                     message="Complete.",
@@ -1069,7 +1198,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                     elapsed_seconds=12,
                     minimum_elapsed_seconds=30,
                 )
-                notify.assert_not_called()
+                io_bound.assert_not_called()
+                create_task.assert_not_called()
 
                 main._notify_completion_safe(
                     title="Done",
@@ -1080,10 +1210,20 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                     elapsed_seconds=31,
                     minimum_elapsed_seconds=30,
                 )
-                notify.assert_called_once()
+                io_bound.assert_called_once()
+                self.assertIs(io_bound.call_args.args[0], main.notify_desktop_completion)
+                self.assertEqual(io_bound.call_args.kwargs["title"], "Done")
+                self.assertEqual(io_bound.call_args.kwargs["action_id"], "long-action")
+                create_task.assert_called_once_with(
+                    scheduled,
+                    name="sgfx-desktop-notification-long-action",
+                )
 
             main._write_dashboard_notifications_preference(workspace, False)
-            with mock.patch("sg_preflight.dashboard.main.notify_desktop_completion") as notify:
+            with (
+                mock.patch("nicegui.run.io_bound", new=mock.Mock(return_value=object())) as io_bound,
+                mock.patch("nicegui.background_tasks.create") as create_task,
+            ):
                 main._notify_completion_safe(
                     title="Done",
                     message="Complete.",
@@ -1093,7 +1233,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                     elapsed_seconds=90,
                     minimum_elapsed_seconds=30,
                 )
-                notify.assert_not_called()
+                io_bound.assert_not_called()
+                create_task.assert_not_called()
 
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

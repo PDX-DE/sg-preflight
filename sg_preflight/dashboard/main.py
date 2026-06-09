@@ -1780,11 +1780,15 @@ def _render_delivery_checklist_panel(
                     else:
                         ui.label("No file changes recorded yet.").classes("sgfx-muted")
 
-            def _cancel() -> None:
+            async def _cancel() -> None:
+                from nicegui import run as nicegui_run
+
                 job = job_state.get("job")
                 if job is None:
                     return
-                result = cancel_delivery_workbook_generation(job)
+                cancel_button.disable()
+                status_label.text = "Stopping delivery workbook generation..."
+                result = await nicegui_run.io_bound(cancel_delivery_workbook_generation, job)
                 progress.visible = False
                 _show_live_progress()
                 _update_live_progress(result)
@@ -2119,11 +2123,15 @@ def _render_screenshot_test_state_panel(
                     else:
                         ui.label("No file changes recorded yet.").classes("sgfx-muted")
 
-            def _cancel() -> None:
+            async def _cancel() -> None:
+                from nicegui import run as nicegui_run
+
                 job = job_state.get("job")
                 if job is None:
                     return
-                result = cancel_screenshot_capture(job)
+                cancel_button.disable()
+                status_label.text = "Stopping screenshot capture..."
+                result = await nicegui_run.io_bound(cancel_screenshot_capture, job)
                 progress.visible = False
                 _show_live_progress()
                 _update_live_progress(result)
@@ -3091,15 +3099,16 @@ def _render_dashboard(
             _set_mode_button_state("clean")
             grafiks_confirm_dialog.close()
 
-        def _confirm_grafiks_launch() -> None:
-            shell_path = _resolve_grafiks_shell_exe(workspace)
+        async def _confirm_grafiks_launch() -> None:
+            shell_path = await _io_bound(_resolve_grafiks_shell_exe, workspace)
             if shell_path is None:
                 _set_mode_button_state("clean")
                 _show_grafiks_confirm_dialog(_grafiks_not_installed_message(workspace), allow_continue=False)
                 return
             _set_mode_button_state("grafiks")
             grafiks_confirm_dialog.close()
-            exit_code = run_grafiks_mode(
+            exit_code = await _io_bound(
+                run_grafiks_mode,
                 profile_id=str(state["snapshot"].get("profile_id", "")),
                 workspace=workspace,
                 bmw_root=bmw_root,
@@ -3110,8 +3119,8 @@ def _render_dashboard(
                     allow_continue=True,
                 )
 
-        def _select_grafiks_mode() -> None:
-            shell_path = _resolve_grafiks_shell_exe(workspace)
+        async def _select_grafiks_mode() -> None:
+            shell_path = await _io_bound(_resolve_grafiks_shell_exe, workspace)
             if shell_path is None:
                 _set_mode_button_state("clean")
                 _show_grafiks_confirm_dialog(_grafiks_not_installed_message(workspace), allow_continue=False)
