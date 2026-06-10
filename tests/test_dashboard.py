@@ -708,7 +708,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         offloaded_handlers = [
             "start_dependency_setup_action",
             "start_delivery_workbook_generation",
-            "start_screenshot_capture",
+            "start_screenshot_capture_with_export_check",
             "start_dashboard_review_package_build",
             "start_dashboard_batch_full_qa_pass",
             "_materialize_screenshot_review_viewer_for_dashboard",
@@ -717,7 +717,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             self.assertRegex(combined, rf"await\s+nicegui_run\.io_bound\(\s*{handler}\b")
         self.assertRegex(workflow_source, r"await\s+nicegui_run\.io_bound\(_execute_diagnostic_chain\)")
         self.assertIn('"job": start_delivery_workbook_generation(', workflow_source)
-        self.assertIn('"job": start_screenshot_capture(', workflow_source)
+        self.assertIn('"job": start_screenshot_capture_with_export_check(', workflow_source)
         self.assertIn('job_state["launch_timer"] = _start_io_bound_poll_timer(0.1, _launch_job_io, _apply_launch_job)', workflow_source)
 
     def test_dashboard_source_enumerates_remaining_blocking_primitives(self) -> None:
@@ -1828,7 +1828,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
-            snapshot = build_dashboard_snapshot("G70", tmp)
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                snapshot = build_dashboard_snapshot("G70", tmp)
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["status"], "unavailable")
@@ -1861,7 +1862,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with mock.patch(
                 "sg_preflight.dashboard.main.build_delivery_workbook_trigger",
                 return_value=fake_trigger,
-            ):
+            ), mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
                 snapshot = build_dashboard_snapshot("G70", tmp)
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")

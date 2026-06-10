@@ -68,9 +68,18 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
             "sg_preflight.delivery_workbook_generation.Path.home",
             return_value=Path(self._home_dir.name),
         )
+        self._workbook_home_patch = mock.patch(
+            "sg_preflight.workbook_generator.Path.home",
+            return_value=Path(self._home_dir.name),
+        )
+        self._workbook_svn_patch = mock.patch("sg_preflight.workbook_generator.shutil.which", return_value="")
         self._home_patch.start()
+        self._workbook_home_patch.start()
+        self._workbook_svn_patch.start()
 
     def tearDown(self) -> None:
+        self._workbook_svn_patch.stop()
+        self._workbook_home_patch.stop()
         self._home_patch.stop()
         self._home_dir.cleanup()
 
@@ -565,6 +574,48 @@ class TestDeliveryWorkbookGeneration(unittest.TestCase):
         self.assertTrue(result["recorded_by_tool"])
         self.assertIn("car_manager.py", " ".join(result["command"]))
         self.assertEqual(result["command"][-1], "G70_EVO")
+
+    def test_poll_generation_writes_official_workbook_from_export_size_stdout(self) -> None:
+        from sg_preflight import delivery_workbook_generation as generation
+
+        fake_process = _FakeProcess(returncode=0)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+            write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (bmw_root / "cars" / "BMW" / "G70_EVO").mkdir(parents=True)
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
+                with mock.patch(
+                    "sg_preflight.delivery_workbook_generation._find_executable",
+                    return_value=r"C:\tools\tool.exe",
+                ):
+                    with mock.patch.object(generation.subprocess, "Popen", return_value=fake_process):
+                        job = generation.start_delivery_workbook_generation(
+                            profile_id="G70",
+                            workspace=root,
+                            operator_confirmed=True,
+                        )
+                        write_text(
+                            job.stdout_path,
+                            "Export finished\nFile sizes: Ramses: 19258735b RLogic: 0b\n",
+                        )
+                        write_text(job.stderr_path, "")
+                        result = generation.poll_delivery_workbook_generation(job)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["checklist_status"], "available")
+        generated = result["generated_workbook"]
+        generated_path = Path(generated["path"])
+        self.assertEqual(generated_path.name, "Delivery Data - BMW.xlsx")
+        self.assertTrue(generated_path.is_file())
+        self.assertEqual(result["workbook_preview"]["ramses_size"], "19258735b")
+        self.assertEqual(result["workbook_preview"]["logic_size"], "0b")
+        self.assertIn("official-format", result["summary"])
+        copied_paths = [Path(item["path"]) for item in result["copied_evidence"]["files"]]
+        self.assertTrue(any(path.name == "Delivery Data - BMW.xlsx" for path in copied_paths))
 
     def test_poll_generation_reports_actionable_escalation_when_workbook_is_still_missing(self) -> None:
         from sg_preflight import delivery_workbook_generation as generation

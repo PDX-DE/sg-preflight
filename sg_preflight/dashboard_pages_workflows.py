@@ -125,6 +125,7 @@ _MAIN_GLOBAL_NAMES = (
     "build_visual_review_prep",
     "read_bmw_screenshot_state",
     "check_screenshot_capture_environment",
+    "check_screenshot_export_artifact",
     "record_operator_handoff",
     "start_delivery_workbook_generation",
     "poll_delivery_workbook_generation",
@@ -136,6 +137,9 @@ _MAIN_GLOBAL_NAMES = (
     "start_screenshot_capture",
     "poll_screenshot_capture",
     "cancel_screenshot_capture",
+    "start_screenshot_capture_with_export_check",
+    "poll_screenshot_capture_with_export_check",
+    "cancel_screenshot_capture_with_export_check",
     "SCREENSHOT_CAPTURE_ACTION_ID",
     "SCREENSHOT_CAPTURE_ACTION_LABEL",
     "SCREENSHOT_CAPTURE_TIMEOUT_SECONDS",
@@ -3324,7 +3328,7 @@ def _render_full_qa_pass_panel(
                 if action_id == GENERATE_WORKBOOK_ACTION_ID:
                     return "typical 1-10 min"
                 if action_id == SCREENSHOT_CAPTURE_ACTION_ID:
-                    return "typical 2-10 min"
+                    return str(action.get("typical_range", "typical 2-10 min"))
                 if action_id == DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID:
                     return _BUILD_PACKAGE_TYPICAL_RANGE_LABEL
             ranges = {
@@ -3507,13 +3511,13 @@ def _render_full_qa_pass_panel(
                         }
                     if action_id == SCREENSHOT_CAPTURE_ACTION_ID:
                         return {
-                            "job": start_screenshot_capture(
+                            "job": start_screenshot_capture_with_export_check(
                                 profile_id=profile_id,
                                 workspace=workspace,
                                 bmw_root=bmw_root,
                                 operator_confirmed=True,
                             ),
-                            "poller": poll_screenshot_capture,
+                            "poller": poll_screenshot_capture_with_export_check,
                             "label": "screenshot capture",
                         }
                     raise ValueError(f"Unsupported Full QA Pass action: {action_id}")
@@ -3584,7 +3588,7 @@ def _render_full_qa_pass_panel(
                 if action_id == GENERATE_WORKBOOK_ACTION_ID:
                     result = await nicegui_run.io_bound(cancel_delivery_workbook_generation, job_state["job"])
                 elif action_id == SCREENSHOT_CAPTURE_ACTION_ID:
-                    result = await nicegui_run.io_bound(cancel_screenshot_capture, job_state["job"])
+                    result = await nicegui_run.io_bound(cancel_screenshot_capture_with_export_check, job_state["job"])
                 else:
                     raise ValueError(f"Unsupported Full QA Pass action: {action_id}")
                 _cancel_background_poll_timer(job_state.get("timer"))

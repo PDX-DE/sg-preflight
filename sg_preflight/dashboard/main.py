@@ -115,9 +115,13 @@ from sg_preflight.screenshot_capture import (
     SCREENSHOT_CAPTURE_ACTION_LABEL,
     SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
     cancel_screenshot_capture,
+    cancel_screenshot_capture_with_export_check,
     check_screenshot_capture_environment,
+    check_screenshot_export_artifact,
     poll_screenshot_capture,
+    poll_screenshot_capture_with_export_check,
     start_screenshot_capture,
+    start_screenshot_capture_with_export_check,
 )
 from sg_preflight.services import operator_ui_root
 from sg_preflight.setup_doctor import build_setup_doctor_report
@@ -2134,7 +2138,7 @@ def _render_screenshot_test_state_panel(
                     return
                 cancel_button.disable()
                 status_label.text = "Stopping screenshot capture..."
-                result = await nicegui_run.io_bound(cancel_screenshot_capture, job)
+                result = await nicegui_run.io_bound(cancel_screenshot_capture_with_export_check, job)
                 progress.visible = False
                 _show_live_progress()
                 _update_live_progress(result)
@@ -2153,7 +2157,7 @@ def _render_screenshot_test_state_panel(
                 job = job_state.get("job")
                 if job is None:
                     return {"_sgfx_stop_poll": True}
-                return poll_screenshot_capture(job)
+                return poll_screenshot_capture_with_export_check(job)
 
             def _apply_screenshot_poll(result: dict[str, Any] | None) -> None:
                 try:
@@ -2206,7 +2210,7 @@ def _render_screenshot_test_state_panel(
 
                     try:
                         job_state["job"] = await nicegui_run.io_bound(
-                            start_screenshot_capture,
+                            start_screenshot_capture_with_export_check,
                             profile_id=str(snapshot["profile_id"]),
                             workspace=workspace,
                             bmw_root=bmw_root,

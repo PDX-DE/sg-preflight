@@ -31,6 +31,7 @@ from sg_preflight.dependency_onboarding import load_dependency_onboarding_state
 from sg_preflight.session_log import event as _session_log_event
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
+from sg_preflight.workbook_generator import generate_official_delivery_workbook_from_export_log
 
 
 BMW_PIPELINE_PYTHON_ENV = "SG_BMW_PYTHON_EXE"
@@ -1004,7 +1005,19 @@ def _copy_file_evidence(source: Path, destination: Path) -> dict[str, Any] | Non
     if not source.is_file():
         return None
     ensure_parent(destination)
-    shutil.copy2(source, destination)
+    try:
+        same_path = source.resolve() == destination.resolve()
+    except OSError:
+        same_path = False
+    if not same_path:
+        for attempt in range(4):
+            try:
+                shutil.copy2(source, destination)
+                break
+            except PermissionError:
+                if attempt >= 3:
+                    raise
+                time.sleep(0.05)
     try:
         stat = destination.stat()
     except OSError:
@@ -1102,6 +1115,8 @@ def _workbook_preview(checklist_payload: dict[str, Any]) -> dict[str, Any]:
         return {}
     variant_count_check = _check_by_key(checklist_payload, "variant_count")
     totals_check = _check_by_key(checklist_payload, "variant_totals")
+    ramses_check = _check_by_key(checklist_payload, "ramses_size")
+    logic_check = _check_by_key(checklist_payload, "logic_size")
     variant_count = str(variant_count_check.get("raw_value", "") or "").strip()
     totals_raw = str(totals_check.get("raw_value", "") or "").strip()
     totals = [item.strip() for item in totals_raw.split(",") if item.strip()]
@@ -1115,9 +1130,40 @@ def _workbook_preview(checklist_payload: dict[str, Any]) -> dict[str, Any]:
         "worksheet": str(checklist_payload.get("worksheet", "")),
         "variant_count": variant_count,
         "variant_totals": totals[:6],
+        "ramses_size": str(ramses_check.get("raw_value", "") or "").strip(),
+        "logic_size": str(logic_check.get("raw_value", "") or "").strip(),
         "modified_at": str(metadata.get("modified_at", "")),
         "file_size": int(metadata.get("file_size", 0) or 0),
         "summary": str(checklist_payload.get("summary", "")),
+    }
+
+
+def _read_export_stdout_for_workbook(stdout_path: Path) -> str:
+    try:
+        return stdout_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _generate_official_workbook_from_export(job: DeliveryWorkbookGenerationJob) -> dict[str, Any]:
+    stdout = _read_export_stdout_for_workbook(job.stdout_path)
+    if not stdout:
+        return {}
+    candidate = generate_official_delivery_workbook_from_export_log(
+        job.profile_id,
+        stdout,
+        workspace=job.workspace,
+        bmw_root=job.bmw_root,
+    )
+    if candidate is None:
+        return {}
+    return {
+        "path": str(candidate.path),
+        "source_key": candidate.source_key,
+        "source_classification": candidate.source_classification,
+        "workbook_format": candidate.workbook_format,
+        "size_bytes": candidate.size_bytes,
+        "mtime_iso": candidate.mtime_iso,
     }
 
 
@@ -1170,14 +1216,24 @@ def _generation_result(
 ) -> dict[str, Any]:
     checklist_payload: dict[str, Any] = {}
     escalation: dict[str, str] = {}
+    generated_workbook: dict[str, Any] = {}
     if exit_code == 0 and not timed_out and not canceled:
+        generated_workbook = _generate_official_workbook_from_export(job)
+        generated_path = str(generated_workbook.get("path", "")).strip()
         try:
-            checklist_payload = read_delivery_checklist(profile_id=job.profile_id, workspace=job.workspace)
+            checklist_payload = read_delivery_checklist(
+                profile_id=job.profile_id,
+                workspace=job.workspace,
+                bmw_root=job.bmw_root,
+                workbook_path=generated_path or None,
+            )
         except Exception as exc:  # noqa: BLE001
             checklist_payload = {"status": "failed", "summary": f"delivery checklist could not be re-read: {exc}"}
         if checklist_payload.get("status") == "available":
             status = "available"
             summary = str(checklist_payload.get("summary", "Delivery workbook generated and available."))
+            if generated_workbook:
+                summary = f"Local official-format delivery workbook generated. {summary}"
         elif status == "available":
             status = "unavailable"
             checklist_summary = str(checklist_payload.get("summary", "")).strip()
@@ -1229,6 +1285,7 @@ def _generation_result(
         "stderr_path": str(job.stderr_path),
         "file_activity": _file_activity(job.workspace, job.started_wall_time),
         "workbook_preview": _workbook_preview(checklist_payload),
+        "generated_workbook": generated_workbook,
         "copied_evidence": copied_evidence,
         "sgfx_output_root": copied_evidence["output_root"],
         "native_output_path": str(_delivery_workbook_output_dir(job.workspace)),

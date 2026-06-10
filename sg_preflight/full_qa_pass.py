@@ -18,6 +18,7 @@ from sg_preflight.screenshot_capture import (
     SCREENSHOT_CAPTURE_ACTION_LABEL,
     SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
     check_screenshot_capture_environment,
+    check_screenshot_export_artifact,
 )
 from sg_preflight.team_digest_board import build_team_daily_digest_board
 
@@ -171,21 +172,34 @@ def _screenshot_capture_action(
 ) -> dict[str, Any] | None:
     preflight = check_screenshot_capture_environment(profile_id=profile_id, workspace=workspace, bmw_root=bmw_root)
     can_run = bool(preflight.get("can_run", False))
+    export_artifact = (
+        check_screenshot_export_artifact(profile_id=profile_id, workspace=workspace, bmw_root=bmw_root)
+        if can_run
+        else {}
+    )
+    export_required = bool(export_artifact.get("export_required", False))
+    export_message = (
+        f" exported.ramses is missing at {export_artifact.get('exported_ramses_path', '')}; "
+        "SGFX will run the BMW export first, then capture screenshots."
+        if export_required
+        else ""
+    )
     return {
         "id": SCREENSHOT_CAPTURE_ACTION_ID,
         "step_id": "screenshot-test-state",
         "kind": "subprocess",
-        "label": SCREENSHOT_CAPTURE_ACTION_LABEL,
+        "label": "Export then capture screenshots" if export_required else SCREENSHOT_CAPTURE_ACTION_LABEL,
         "requires_confirmation": not trusted_tool_mode and can_run,
         "auto_confirm_allowed": can_run,
         "trusted_auto_confirm": bool(trusted_tool_mode and can_run),
         "hard_gate": "none",
         "timeout_seconds": SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
-        "typical_range": "typical 2-10 min",
+        "typical_range": "typical 3-20 min" if export_required else "typical 2-10 min",
         "confirmation_message": _action_prompt(
             "Capture screenshots",
             (
                 str(preflight.get("confirmation_message", "Run the BMW screenshot capture helper for this profile."))
+                + export_message
                 + " The BMW Ramses renderer may show a black offscreen-rendering window while screenshots are captured; "
                 "SGFX streams the pipeline output here."
             ),
@@ -197,6 +211,8 @@ def _screenshot_capture_action(
         "enabled": can_run,
         "disabled_reason": str(preflight.get("disabled_reason", "")),
         "preflight": preflight,
+        "export_precheck": export_artifact,
+        "requires_export_first": export_required,
         "manual_review_required": True,
         "is_approval": False,
     }

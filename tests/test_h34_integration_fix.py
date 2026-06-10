@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 class DeliveryChecklistResolverWiresBmwRootTests(unittest.TestCase):
@@ -32,12 +33,13 @@ class DeliveryChecklistResolverWiresBmwRootTests(unittest.TestCase):
             sheet.append(["BEV-Basis", 100, 200, 300, 400, 1000, 880])
             book.save(wb_path)
 
-            payload = read_delivery_checklist(
-                profile_id="G70",
-                workspace=ws,
-                bmw_root=br,
-                enable_auto_generate=False,
-            )
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                payload = read_delivery_checklist(
+                    profile_id="G70",
+                    workspace=ws,
+                    bmw_root=br,
+                    enable_auto_generate=False,
+                )
             # internal milestone: when the finder resolves a workbook the status flips off
             # `unavailable`; pre-fix the call always returned `unavailable` for
             # G70 because the BMW Git slot was never walked.
@@ -53,7 +55,8 @@ class DeliveryChecklistResolverWiresBmwRootTests(unittest.TestCase):
             ws = Path(tmp) / "workspace"
             ws.mkdir(parents=True, exist_ok=True)
             (ws / "operator_state").mkdir(parents=True, exist_ok=True)
-            payload = read_delivery_checklist(profile_id="G70", workspace=ws)
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                payload = read_delivery_checklist(profile_id="G70", workspace=ws)
             self.assertEqual(payload.get("status"), "unavailable")
             # New wording must still mention the 4 standing-guardrail phrase.
             self.assertIn("Manual review remains required", payload.get("summary", ""))
@@ -66,7 +69,8 @@ class MissingSummaryReportsFinderResults(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "workspace"
             ws.mkdir(parents=True, exist_ok=True)
-            text = delivery_workbook_missing_summary("G70", workspace=ws, bmw_root=ws / "bmw")
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                text = delivery_workbook_missing_summary("G70", workspace=ws, bmw_root=ws / "bmw")
             # The finder enumerates the 8 directive slots × 2 profile variants
             # (G70 + G70_EVO) + the operator-local auto-gen slot — well over 8.
             # Wording must reference "documented Format A / Format B locations".
@@ -90,7 +94,8 @@ class MissingSummaryReportsFinderResults(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "workspace"
             ws.mkdir(parents=True, exist_ok=True)
-            text = delivery_workbook_missing_summary("G70", workspace=ws)
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                text = delivery_workbook_missing_summary("G70", workspace=ws)
             # 4 standing guardrails preserved.
             self.assertIn("Manual review remains required.", text)
             self.assertIn("Decision: not approval — evidence only.", text)

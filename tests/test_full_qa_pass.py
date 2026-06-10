@@ -161,6 +161,71 @@ class TestFullQaPass(unittest.TestCase):
         self.assertTrue(screenshot_step["inline_actions"][1]["enabled"])
         self.assertTrue(payload["operator_confirmation_required"])
 
+    def test_screenshot_action_surfaces_export_first_when_exported_ramses_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            patches = [
+                mock.patch("sg_preflight.full_qa_pass.build_onboarding_guide", return_value=_payload("available", onboarding_status="available", operator_focus_steps=[])),
+                mock.patch("sg_preflight.full_qa_pass.read_delivery_checklist", return_value=_payload("available")),
+                mock.patch("sg_preflight.full_qa_pass.build_delivery_workbook_trigger", return_value=_payload("available", trigger_status="available", can_start=False, blockers=[])),
+                mock.patch(
+                    "sg_preflight.full_qa_pass.read_bmw_screenshot_state",
+                    return_value=_payload(
+                        "incomplete",
+                        expected_count=4,
+                        actual_count=0,
+                        diff_count=0,
+                        car_root=str(root / "cars" / "BMW" / "G70_EVO"),
+                        expected_root=str(root / "cars" / "BMW" / "G70_EVO" / "export" / "tests" / "expected"),
+                    ),
+                ),
+                mock.patch(
+                    "sg_preflight.full_qa_pass.check_screenshot_capture_environment",
+                    return_value={
+                        "can_run": True,
+                        "confirmation_message": "Run BMW screenshot capture for G70.",
+                        "target_write_path": str(root / "sgfx_outputs" / "g70" / "screenshot-capture"),
+                        "native_output_path": str(root / "cars" / "BMW" / "G70_EVO" / "export" / "tests"),
+                    },
+                ),
+                mock.patch(
+                    "sg_preflight.full_qa_pass.check_screenshot_export_artifact",
+                    return_value={
+                        "status": "missing",
+                        "export_required": True,
+                        "exported_ramses_path": str(root / "cars" / "BMW" / "G70_EVO" / "export" / "exported.ramses"),
+                    },
+                ),
+                mock.patch("sg_preflight.full_qa_pass.read_per_car_risk_score", return_value=_payload("available", signals=[])),
+                mock.patch("sg_preflight.full_qa_pass.build_cross_car_comparison", return_value=_payload("available")),
+                mock.patch("sg_preflight.full_qa_pass.build_team_daily_digest_board", return_value=_payload("available")),
+                mock.patch("sg_preflight.full_qa_pass.build_manual_review_assist", return_value=_payload("available", operator_focus_steps=[])),
+                mock.patch("sg_preflight.full_qa_pass.build_operator_handoff_snapshot", return_value=_payload("recorded")),
+            ]
+            with (
+                patches[0],
+                patches[1],
+                patches[2],
+                patches[3],
+                patches[4],
+                patches[5],
+                patches[6],
+                patches[7],
+                patches[8],
+                patches[9],
+                patches[10],
+            ):
+                payload = build_full_qa_pass("G70", workspace=root, trusted_tool_mode=False)
+
+        screenshot_step = next(step for step in payload["steps"] if step["id"] == "screenshot-test-state")
+        action = screenshot_step["inline_actions"][0]
+        self.assertEqual(action["id"], "capture-screenshots")
+        self.assertEqual(action["label"], "Export then capture screenshots")
+        self.assertTrue(action["requires_export_first"])
+        self.assertEqual(action["typical_range"], "typical 3-20 min")
+        self.assertIn("will run the BMW export first", action["confirmation_message"])
+        self.assertIn("exported.ramses", action["confirmation_message"])
+
     def test_full_pass_halts_and_skips_later_steps_on_blocking_issue(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -22,6 +22,8 @@ from sg_preflight.bmw_delivery import (
 from sg_preflight.delivery_workbook_generation import (
     DIGITAL_3D_CAR_REPO_ENV,
     DIGITAL_3D_CAR_REPO_IDC23_ENV,
+    GENERATE_WORKBOOK_TIMEOUT_SECONDS,
+    cancel_delivery_workbook_generation,
     _check,
     _clean_profile,
     _copy_file_evidence,
@@ -43,6 +45,8 @@ from sg_preflight.delivery_workbook_generation import (
     _tail_lines,
     _tail_text,
     _tool_check,
+    poll_delivery_workbook_generation,
+    start_delivery_workbook_generation,
 )
 from sg_preflight.session_log import event as _session_log_event
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
@@ -201,6 +205,8 @@ def resolve_screenshot_capture_command(
             "lane": lane,
             "source_bmw_root": str(root),
             "execution_bmw_root": str(idc23_root),
+            "car_root": str(car_root),
+            "exported_ramses_path": str(car_root / "export" / "exported.ramses"),
         }
     car_manager = root / "ci" / "scripts" / "car_manager.py"
     if lane == LANE_IDCEVO and car_manager.is_file():
@@ -232,6 +238,8 @@ def resolve_screenshot_capture_command(
             "lane": lane,
             "source_bmw_root": str(root),
             "execution_bmw_root": str(root),
+            "car_root": str(car_root),
+            "exported_ramses_path": str(car_root / "export" / "exported.ramses"),
         }
     return {
         "status": "unavailable",
@@ -244,6 +252,56 @@ def resolve_screenshot_capture_command(
         "lane": lane,
         "summary": "No supported BMW pipeline screenshot script was found for the detected lane.",
         "remediation": "IDC_EVO requires ci/scripts/car_manager.py on master; IDC_23 requires ci/scripts/test/main.py on an assets/idc23 worktree.",
+    }
+
+
+def check_screenshot_export_artifact(
+    *,
+    profile_id: str,
+    workspace: Path | str,
+    bmw_root: Path | str | None = None,
+) -> dict[str, Any]:
+    workspace_path = Path(workspace).resolve()
+    clean_profile = _clean_profile(profile_id)
+    repo_check, repo_root = _digital_repo_check(bmw_root, workspace=workspace_path)
+    if repo_root is None or repo_check["status"] != "available":
+        return {
+            "profile_id": clean_profile,
+            "status": "unavailable",
+            "export_required": False,
+            "exported_ramses_path": "",
+            "summary": "BMW Git checkout was not resolved, so exported.ramses precheck did not run.",
+        }
+    command_payload = resolve_screenshot_capture_command(
+        profile_id=clean_profile,
+        bmw_root=repo_root,
+        workspace=workspace_path,
+    )
+    if command_payload.get("status") != "available":
+        return {
+            "profile_id": clean_profile,
+            "status": "unavailable",
+            "export_required": False,
+            "exported_ramses_path": "",
+            "summary": str(command_payload.get("summary", "No supported screenshot command was resolved.")),
+            "command_status": str(command_payload.get("status", "unavailable")),
+        }
+    exported_path = Path(str(command_payload.get("exported_ramses_path", ""))).resolve()
+    exists = exported_path.is_file()
+    return {
+        "profile_id": clean_profile,
+        "status": "available" if exists else "missing",
+        "export_required": not exists,
+        "exported_ramses_path": str(exported_path),
+        "car_root": str(command_payload.get("car_root", "")),
+        "execution_bmw_root": str(command_payload.get("execution_bmw_root", "")),
+        "bmw_profile_id": str(command_payload.get("bmw_profile_id", "")),
+        "lane": str(command_payload.get("lane", "")),
+        "summary": (
+            f"exported.ramses is available at {exported_path}."
+            if exists
+            else f"exported.ramses is missing at {exported_path}; export must run before screenshot capture."
+        ),
     }
 
 
@@ -356,6 +414,19 @@ class ScreenshotCaptureJob:
     preflight: dict[str, Any]
     completed: bool = False
     session_completion_logged: bool = False
+
+
+@dataclass
+class ScreenshotCaptureWithExportJob:
+    profile_id: str
+    workspace: Path
+    bmw_root: Path
+    exported_ramses_path: Path
+    export_job: Any
+    timeout_seconds: int
+    screenshot_job: ScreenshotCaptureJob | None = None
+    export_result: dict[str, Any] | None = None
+    completed: bool = False
 
 
 def _capture_file_activity(
@@ -804,6 +875,175 @@ def start_screenshot_capture(
         started_wall_time=started_wall_time,
         timeout_seconds=timeout_seconds,
         preflight=preflight,
+    )
+
+
+def _chain_payload(
+    job: ScreenshotCaptureWithExportJob,
+    result: dict[str, Any],
+    *,
+    phase: str,
+    summary_prefix: str,
+    completed: bool | None = None,
+) -> dict[str, Any]:
+    payload = dict(result)
+    payload["phase"] = phase
+    payload["action_chain"] = ["export", "screenshot-capture"]
+    payload["exported_ramses_path"] = str(job.exported_ramses_path)
+    payload["export_result"] = dict(job.export_result or {}) if job.export_result else {}
+    payload["typical_range"] = "typical 3-20 min"
+    if completed is not None:
+        payload["completed"] = completed
+    summary = str(payload.get("summary", "")).strip()
+    payload["summary"] = f"{summary_prefix} {summary}".strip()
+    return payload
+
+
+def start_screenshot_capture_with_export_check(
+    *,
+    profile_id: str,
+    workspace: Path | str,
+    operator_confirmed: bool,
+    bmw_root: Path | str | None = None,
+    timeout_seconds: int = SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
+) -> ScreenshotCaptureJob | ScreenshotCaptureWithExportJob:
+    if not operator_confirmed:
+        raise ValueError("Operator confirmation is required before running BMW screenshot capture.")
+    workspace_path = Path(workspace).resolve()
+    clean_profile = _clean_profile(profile_id)
+    artifact = check_screenshot_export_artifact(
+        profile_id=clean_profile,
+        workspace=workspace_path,
+        bmw_root=bmw_root,
+    )
+    if not bool(artifact.get("export_required", False)):
+        return start_screenshot_capture(
+            profile_id=clean_profile,
+            workspace=workspace_path,
+            bmw_root=bmw_root,
+            operator_confirmed=True,
+            timeout_seconds=timeout_seconds,
+        )
+    export_job = start_delivery_workbook_generation(
+        profile_id=clean_profile,
+        workspace=workspace_path,
+        bmw_root=bmw_root,
+        operator_confirmed=True,
+        timeout_seconds=GENERATE_WORKBOOK_TIMEOUT_SECONDS,
+    )
+    exported_path = Path(str(artifact.get("exported_ramses_path", ""))).resolve()
+    return ScreenshotCaptureWithExportJob(
+        profile_id=clean_profile,
+        workspace=workspace_path,
+        bmw_root=Path(str(export_job.bmw_root)).resolve(),
+        exported_ramses_path=exported_path,
+        export_job=export_job,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def poll_screenshot_capture_with_export_check(
+    job: ScreenshotCaptureJob | ScreenshotCaptureWithExportJob,
+) -> dict[str, Any] | None:
+    if isinstance(job, ScreenshotCaptureJob):
+        return poll_screenshot_capture(job)
+    if job.completed:
+        return dict(job.export_result or {"completed": True, "status": "unknown", "summary": "Job already completed."})
+    if job.screenshot_job is not None:
+        result = poll_screenshot_capture(job.screenshot_job)
+        if result is None:
+            return None
+        if bool(result.get("completed", True)):
+            job.completed = True
+        return _chain_payload(
+            job,
+            result,
+            phase="screenshot_capture",
+            summary_prefix="Export complete; capturing screenshots.",
+        )
+
+    export_result = poll_delivery_workbook_generation(job.export_job)
+    if export_result is None:
+        return None
+    if not bool(export_result.get("completed", True)):
+        return _chain_payload(
+            job,
+            export_result,
+            phase="export",
+            summary_prefix="exported.ramses missing; running export before screenshots.",
+            completed=False,
+        )
+
+    job.export_result = dict(export_result)
+    try:
+        export_exit = int(export_result.get("exit_code", -1))
+    except (TypeError, ValueError):
+        export_exit = -1
+    export_exit_ok = export_exit == 0
+    exported_exists = job.exported_ramses_path.is_file()
+    if not export_exit_ok or not exported_exists:
+        job.completed = True
+        result = dict(export_result)
+        result["status"] = "failed"
+        result["data_available"] = False
+        result["summary"] = (
+            f"BMW export finished, but exported.ramses is still missing at {job.exported_ramses_path}. "
+            f"{export_result.get('summary', '')}"
+        )
+        return _chain_payload(
+            job,
+            result,
+            phase="export",
+            summary_prefix="Screenshot capture did not start.",
+            completed=True,
+        )
+
+    job.screenshot_job = start_screenshot_capture(
+        profile_id=job.profile_id,
+        workspace=job.workspace,
+        bmw_root=job.bmw_root,
+        operator_confirmed=True,
+        timeout_seconds=job.timeout_seconds,
+    )
+    result = poll_screenshot_capture(job.screenshot_job)
+    if result is None:
+        return _chain_payload(
+            job,
+            export_result,
+            phase="screenshot_capture",
+            summary_prefix="Export complete; screenshot capture starting.",
+            completed=False,
+        )
+    return _chain_payload(
+        job,
+        result,
+        phase="screenshot_capture",
+        summary_prefix="Export complete; capturing screenshots.",
+    )
+
+
+def cancel_screenshot_capture_with_export_check(
+    job: ScreenshotCaptureJob | ScreenshotCaptureWithExportJob,
+) -> dict[str, Any]:
+    if isinstance(job, ScreenshotCaptureJob):
+        return cancel_screenshot_capture(job)
+    if job.screenshot_job is not None:
+        result = cancel_screenshot_capture(job.screenshot_job)
+        job.completed = True
+        return _chain_payload(
+            job,
+            result,
+            phase="screenshot_capture",
+            summary_prefix="Export complete; screenshot capture canceled.",
+        )
+    result = cancel_delivery_workbook_generation(job.export_job)
+    job.completed = True
+    job.export_result = dict(result)
+    return _chain_payload(
+        job,
+        result,
+        phase="export",
+        summary_prefix="Export-before-screenshots canceled.",
     )
 
 

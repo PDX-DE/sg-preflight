@@ -68,9 +68,18 @@ class TestScreenshotCapture(unittest.TestCase):
             "sg_preflight.delivery_workbook_generation.Path.home",
             return_value=Path(self._home_dir.name),
         )
+        self._workbook_home_patch = mock.patch(
+            "sg_preflight.workbook_generator.Path.home",
+            return_value=Path(self._home_dir.name),
+        )
+        self._workbook_svn_patch = mock.patch("sg_preflight.workbook_generator.shutil.which", return_value="")
         self._home_patch.start()
+        self._workbook_home_patch.start()
+        self._workbook_svn_patch.start()
 
     def tearDown(self) -> None:
+        self._workbook_svn_patch.stop()
+        self._workbook_home_patch.stop()
         self._home_patch.stop()
         self._home_dir.cleanup()
 
@@ -251,6 +260,52 @@ class TestScreenshotCapture(unittest.TestCase):
                     workspace=Path(temp_dir),
                     operator_confirmed=False,
                 )
+
+    def test_export_checked_capture_runs_export_before_screenshots_when_ramses_missing(self) -> None:
+        from sg_preflight import screenshot_capture as capture
+
+        export_process = _FakeProcess(returncode=0)
+        screenshot_process = _FakeProcess(returncode=0)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            car_root = bmw_root / "cars" / "BMW" / "G70_EVO"
+            tests_root = car_root / "export" / "tests"
+            write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G70_EVO"))
+            (car_root / "export").mkdir(parents=True)
+            write_text(tests_root / "actuals" / "front.png", "fake\n")
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
+                with mock.patch(
+                    "sg_preflight.delivery_workbook_generation._find_executable",
+                    return_value=r"C:\tools\tool.exe",
+                ):
+                    with mock.patch.object(
+                        capture.subprocess,
+                        "Popen",
+                        side_effect=[export_process, screenshot_process],
+                    ) as popen:
+                        job = capture.start_screenshot_capture_with_export_check(
+                            profile_id="G70",
+                            workspace=root,
+                            operator_confirmed=True,
+                        )
+                        self.assertIsInstance(job, capture.ScreenshotCaptureWithExportJob)
+                        write_text(job.export_job.stdout_path, "File sizes: Ramses: 19258735b RLogic: 0b\n")
+                        write_text(job.export_job.stderr_path, "")
+                        write_text(car_root / "export" / "exported.ramses", "ramses\n")
+                        result = capture.poll_screenshot_capture_with_export_check(job)
+
+        self.assertEqual(len(popen.call_args_list), 2)
+        export_command = list(popen.call_args_list[0].args[0])
+        screenshot_command = list(popen.call_args_list[1].args[0])
+        self.assertEqual(export_command[-2:], ["export", "G70_EVO"])
+        self.assertEqual(screenshot_command[-3:], ["screenshots", "--diff", "G70_EVO"])
+        self.assertEqual(result["phase"], "screenshot_capture")
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["actual_count"], 1)
+        self.assertEqual(result["export_result"]["exit_code"], 0)
+        self.assertIn("Export complete", result["summary"])
 
     def test_poll_capture_marks_available_after_actual_or_diff_output_exists(self) -> None:
         from sg_preflight import screenshot_capture as capture

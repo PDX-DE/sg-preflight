@@ -78,7 +78,8 @@ class WorkbookFinderResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "workspace"
             ws.mkdir(parents=True)
-            resolution = resolve_workbook("G70", workspace=ws, bmw_root=ws / "bmw")
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                resolution = resolve_workbook("G70", workspace=ws, bmw_root=ws / "bmw")
             self.assertEqual(resolution.status, "unavailable")
             self.assertEqual(resolution.candidates, ())
             self.assertIsNone(resolution.selected)
@@ -104,7 +105,8 @@ class WorkbookFinderResolutionTests(unittest.TestCase):
             new_ts = time.time()
             os.utime(new, (new_ts, new_ts))
 
-            resolution = resolve_workbook("G70", workspace=ws, bmw_root=br)
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                resolution = resolve_workbook("G70", workspace=ws, bmw_root=br)
             self.assertEqual(resolution.status, "available")
             self.assertIsNotNone(resolution.selected)
             self.assertEqual(resolution.selected.path.name, "G70_20260101.xlsx")
@@ -133,13 +135,46 @@ class WorkbookFinderResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "workspace"
             ws.mkdir()
-            unavailable = resolve_workbook("Z99", workspace=ws, bmw_root=ws / "bmw")
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                unavailable = resolve_workbook("Z99", workspace=ws, bmw_root=ws / "bmw")
             text = render_resolution_text(unavailable)
             self.assertIn("status:       unavailable", text)
             self.assertIn("Z99", text)
 
 
 class WorkbookGeneratorTests(unittest.TestCase):
+    def test_generate_official_delivery_workbook_from_export_log_uses_delivery_columns(self) -> None:
+        from sg_preflight.workbook_generator import (
+            OFFICIAL_DELIVERY_HEADER,
+            generate_official_delivery_workbook_from_export_log,
+        )
+        from openpyxl import load_workbook
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            with mock.patch("sg_preflight.workbook_generator.Path.home", return_value=home):
+                candidate = generate_official_delivery_workbook_from_export_log(
+                    "Z99",
+                    "Export finished\nFile sizes:\nRamses=123456b\nRLogic=0b\n",
+                    workspace=Path(tmp) / "workspace",
+                    today=datetime(2026, 6, 9, tzinfo=timezone.utc),
+                )
+            self.assertIsNotNone(candidate)
+            self.assertEqual(candidate.source_classification, SOURCE_AUTO_GENERATED_LOCALLY)
+            self.assertEqual(candidate.workbook_format, WORKBOOK_FORMAT_A_DATE_STAMPED)
+            self.assertEqual(candidate.path.name, "Delivery Data - BMW.xlsx")
+            workbook = load_workbook(candidate.path, read_only=True)
+            try:
+                self.assertEqual(workbook.sheetnames, ["Z99"])
+                rows = list(workbook["Z99"].iter_rows(values_only=True))
+                self.assertEqual(tuple(rows[0]), OFFICIAL_DELIVERY_HEADER)
+                self.assertEqual(rows[1][0], "09.06.2026")
+                self.assertEqual(rows[1][3], "123456b")
+                self.assertEqual(rows[1][4], "0b")
+                self.assertIn("Not the official delivery record", rows[1][6])
+            finally:
+                workbook.close()
+
     def test_generate_from_raw_emits_format_a_overview_and_provenance_sheet(self) -> None:
         from sg_preflight.workbook_generator import (
             FORMAT_A_HEADER,

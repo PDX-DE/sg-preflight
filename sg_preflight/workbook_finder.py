@@ -160,6 +160,8 @@ def _format_hint(path: Path) -> str:
     if suffix.lower().startswith("auto"):
         # Auto-generated workbooks always use Format A shape per internal milestone spec.
         return WORKBOOK_FORMAT_A_DATE_STAMPED
+    if path.name.casefold().startswith("delivery data - "):
+        return WORKBOOK_FORMAT_A_DATE_STAMPED
     return WORKBOOK_FORMAT_UNKNOWN
 
 
@@ -231,6 +233,11 @@ def _build_search_locations(
                 "operator_local_auto_gen",
                 home / "sgfx_outputs" / profile.lower() / "delivery-workbook",
                 f"{profile}_auto_*.xlsx",
+            ))
+            locations.append((
+                "operator_local_official",
+                home / "sgfx_outputs" / profile.lower() / "delivery-workbook",
+                "Delivery Data - *.xlsx",
             ))
     return tuple(locations)
 

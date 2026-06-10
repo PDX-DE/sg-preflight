@@ -71,6 +71,7 @@ _MAIN_GLOBAL_NAMES = (
     "build_onboarding_guide",
     "read_bmw_screenshot_state",
     "check_screenshot_capture_environment",
+    "check_screenshot_export_artifact",
     "read_per_car_risk_score",
     "build_cross_car_comparison",
     "build_latest_daily_digest",
@@ -920,15 +921,29 @@ def _screenshot_test_state_page(
         workspace=workspace,
         bmw_root=bmw_root,
     )
+    export_precheck = (
+        check_screenshot_export_artifact(profile_id=profile_id, workspace=workspace, bmw_root=bmw_root)
+        if bool(preflight.get("can_run", False))
+        else {}
+    )
+    export_required = bool(export_precheck.get("export_required", False))
+    export_message = (
+        f" exported.ramses is missing at {export_precheck.get('exported_ramses_path', '')}; "
+        "SGFX will run export first, then capture screenshots."
+        if export_required
+        else ""
+    )
     page["actions"] = [
         {
             "id": SCREENSHOT_CAPTURE_ACTION_ID,
-            "label": SCREENSHOT_CAPTURE_ACTION_LABEL,
+            "label": "Export then capture screenshots" if export_required else SCREENSHOT_CAPTURE_ACTION_LABEL,
             "requires_confirmation": True,
             "timeout_seconds": SCREENSHOT_CAPTURE_TIMEOUT_SECONDS,
             "preflight": preflight,
+            "export_precheck": export_precheck,
+            "requires_export_first": export_required,
             "disabled": not bool(preflight.get("can_run", False)),
-            "confirmation_message": str(preflight.get("confirmation_message", "")),
+            "confirmation_message": str(preflight.get("confirmation_message", "")) + export_message,
             "confluence_anchor": BMW_PIPELINE_PYTHON_CONFLUENCE_ANCHOR,
         }
     ]
