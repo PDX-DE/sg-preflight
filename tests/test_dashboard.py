@@ -712,6 +712,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             "start_dashboard_review_package_build",
             "start_dashboard_batch_full_qa_pass",
             "_materialize_screenshot_review_viewer_for_dashboard",
+            "build_dashboard_qa_pass_report",
+            "export_dashboard_qa_pass_report",
         ]
         for handler in offloaded_handlers:
             self.assertRegex(combined, rf"await\s+nicegui_run\.io_bound\(\s*{handler}\b")
@@ -1372,6 +1374,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Confirm local tool action", source)
         self.assertIn("Skip current", source)
         self.assertIn("Full QA Pass summary", source)
+        self.assertIn("Open report", source)
+        self.assertIn("Export ZIP", source)
+        self.assertIn("QA Pass report ready", source)
+        self.assertIn("sgfx-qa-pass-verdict", source)
         self.assertIn("full_qa_run", source)
         self.assertIn("automatic_mode", source)
         self.assertIn("sgfx-html-action-button", source)

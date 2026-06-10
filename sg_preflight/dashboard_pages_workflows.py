@@ -16,6 +16,13 @@ import time
 from typing import Any, Callable
 from urllib.parse import quote, quote_plus
 
+from sg_preflight.qa_pass_report import (
+    build_qa_pass_report_summary,
+    default_qa_pass_report_zip_path,
+    export_qa_pass_report_zip,
+    write_qa_pass_report_html,
+)
+
 
 _MAIN_GLOBAL_NAMES = (
     "Any",
@@ -112,6 +119,10 @@ _MAIN_GLOBAL_NAMES = (
     "append_activity_entry",
     "notify_desktop_completion",
     "record_full_qa_run_history",
+    "build_qa_pass_report_summary",
+    "default_qa_pass_report_zip_path",
+    "export_qa_pass_report_zip",
+    "write_qa_pass_report_html",
     "build_full_qa_pass",
     "get_run_profile",
     "build_latest_daily_digest",
@@ -170,6 +181,10 @@ _MAIN_GLOBAL_NAMES = (
     "_snapshot_with_full_qa_payload",
     "_screenshot_review_viewer_output_root",
     "_missing_actual_diagnostics_output_root",
+    "_qa_pass_report_output_root",
+    "_qa_pass_report_url",
+    "build_dashboard_qa_pass_report",
+    "export_dashboard_qa_pass_report",
     "_screenshot_review_viewer_url",
     "_materialize_screenshot_review_viewer_for_dashboard",
     "_notify_completion_safe",
@@ -501,6 +516,65 @@ def _screenshot_review_viewer_url(profile_id: str, item_key: str = "") -> str:
     if item_key:
         url += f"#{quote(item_key, safe='')}"
     return url
+
+
+def _qa_pass_report_output_root(workspace: Path, profile_id: str) -> Path:
+    safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
+    return operator_ui_root(workspace) / "qa-pass-report" / safe_profile
+
+
+def _qa_pass_report_url(profile_id: str) -> str:
+    safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
+    return f"/sgfx-operator-ui/qa-pass-report/{safe_profile}/qa-pass-report.html"
+
+
+def build_dashboard_qa_pass_report(
+    *,
+    workspace: Path | str,
+    profile_id: str,
+    payload: dict[str, Any],
+    output_root: Path | str | None = None,
+) -> dict[str, Any]:
+    workspace_path = Path(workspace).resolve()
+    clean_profile = profile_id.strip().upper()
+    if not clean_profile:
+        raise ValueError("Profile ID required to build the QA Pass report.")
+    report_root = Path(output_root).resolve() if output_root else _qa_pass_report_output_root(workspace_path, clean_profile)
+    bundle = write_qa_pass_report_html(
+        profile_id=clean_profile,
+        payload=payload,
+        output_root=report_root,
+        mode="dashboard",
+    )
+    result = bundle.to_payload()
+    result["url"] = _qa_pass_report_url(clean_profile)
+    return result
+
+
+def export_dashboard_qa_pass_report(
+    *,
+    workspace: Path | str,
+    profile_id: str,
+    payload: dict[str, Any],
+    bmw_root: Path | str | None = None,
+    output_root: Path | str | None = None,
+) -> dict[str, Any]:
+    workspace_path = Path(workspace).resolve()
+    clean_profile = profile_id.strip().upper()
+    if not clean_profile:
+        raise ValueError("Profile ID required to export the QA Pass report.")
+    report_root = Path(output_root).resolve() if output_root else _qa_pass_report_output_root(workspace_path, clean_profile)
+    zip_path = default_qa_pass_report_zip_path(report_root, clean_profile)
+    result = export_qa_pass_report_zip(
+        profile_id=clean_profile,
+        workspace=workspace_path,
+        bmw_root=bmw_root,
+        payload=payload,
+        output_path=zip_path,
+    )
+    payload_result = result.to_payload()
+    payload_result["zip_size_bytes"] = zip_path.stat().st_size if zip_path.is_file() else 0
+    return payload_result
 
 
 def _materialize_screenshot_review_viewer_for_dashboard(
@@ -2176,6 +2250,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             report_status = ui.label("No Quality-Hero report generated in this session.").classes("sgfx-muted")
             report_path_label = ui.label("").classes("sgfx-muted")
             report_html_label = ui.label("").classes("sgfx-muted")
+            report_html_actions_host = ui.row().classes("sgfx-confirm-actions")
             attach_status = ui.label("").classes("sgfx-muted")
             jira_link_host = ui.column().classes("full-width")
             report_state: dict[str, Any] = {}
@@ -2198,6 +2273,16 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                     return None
                 path = Path(value)
                 return path if path.is_file() else None
+
+            def _report_html_url() -> str:
+                path = _report_html_path()
+                if path is None:
+                    return ""
+                try:
+                    relative = path.resolve().relative_to(operator_ui_root(workspace).resolve())
+                except ValueError:
+                    return ""
+                return "/sgfx-operator-ui/" + quote(str(relative).replace("\\", "/"), safe="/")
 
             async def _build_quality_report() -> None:
                 ticket_value = _selected_report_ticket()
@@ -2230,7 +2315,28 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                 )
                 report_path_label.text = f"Report: {markdown_path}" if markdown_path else "Report path unavailable."
                 html_path = _report_html_path()
-                report_html_label.text = f"HTML report: {html_path}" if html_path else "HTML report path unavailable."
+                report_html_label.text = "HTML report ready." if html_path else "HTML report path unavailable."
+                report_html_actions_host.clear()
+                if html_path:
+                    with report_html_actions_host:
+                        html_url = _report_html_url()
+                        if html_url:
+                            ui.button(
+                                "Copy HTML report link",
+                                on_click=lambda url=html_url: _copy_dashboard_link_to_clipboard(
+                                    ui,
+                                    url,
+                                    "Quality-Hero HTML report",
+                                ),
+                            ).props("flat dense no-caps")
+                        ui.button(
+                            "Copy HTML report path",
+                            on_click=lambda path=str(html_path): _copy_dashboard_text_to_clipboard(
+                                ui,
+                                path,
+                                "Quality-Hero HTML report path",
+                            ),
+                        ).props("flat dense no-caps")
                 attach_status.text = "Report can now be attached after confirmation." if markdown_path else ""
                 jira_link_host.clear()
                 if markdown_path:
@@ -3090,6 +3196,16 @@ def _render_full_qa_pass_panel(
                 ).classes("sgfx-muted")
                 wizard_viewer_frame_host = ui.column().classes("sgfx-viewer-frame-host")
 
+        with ui.dialog() as qa_pass_report_dialog:
+            with ui.card().classes("sgfx-viewer-dialog-card sgfx-qa-pass-report-dialog"):
+                with ui.row().classes("items-center justify-between full-width"):
+                    qa_pass_report_title = ui.label("QA Pass Report").classes("sgfx-panel-title")
+                    ui.button("Close", on_click=qa_pass_report_dialog.close).props("flat dense no-caps")
+                ui.label(
+                    "Full QA Pass evidence is rendered below. Manual review remains required."
+                ).classes("sgfx-muted")
+                qa_pass_report_frame_host = ui.column().classes("sgfx-viewer-frame-host")
+
         async def _open_wizard_screenshot_viewer(item_key: str, label: str = "") -> None:
             from nicegui import run as nicegui_run
 
@@ -3113,6 +3229,18 @@ def _render_full_qa_pass_panel(
                     sanitize=False,
                 ).classes("full-width")
             wizard_viewer_dialog.open()
+
+        def _open_qa_pass_report_dialog(url: str, title: str) -> None:
+            safe_url = html_escape(url, quote=True)
+            qa_pass_report_title.text = title or "QA Pass Report"
+            qa_pass_report_frame_host.clear()
+            with qa_pass_report_frame_host:
+                ui.html(
+                    f'<iframe data-sgfx-inline-viewer="true" class="sgfx-viewer-iframe" '
+                    f'src="{safe_url}" title="QA Pass Report"></iframe>',
+                    sanitize=False,
+                ).classes("full-width")
+            qa_pass_report_dialog.open()
 
         def _notify_ui(message: str) -> None:
             try:
@@ -4694,6 +4822,115 @@ def _render_full_qa_pass_panel(
                             f"Wizard reviewed {min(current_index, len(steps))}/{len(steps)} step(s); "
                             f"{passed_count} passed and {skipped_count} skipped locally."
                         ).classes("sgfx-muted")
+                        qa_report_summary = build_qa_pass_report_summary(payload)
+                        with ui.column().classes("sgfx-qa-pass-verdict"):
+                            ui.label(str(qa_report_summary.get("hero_text", ""))).classes("sgfx-panel-title")
+                            ui.label(
+                                "Evidence prepared locally. Manual review remains required before any delivery decision."
+                            ).classes("sgfx-muted")
+                            with ui.row().classes("sgfx-hero-stats"):
+                                ui.label(
+                                    f"{qa_report_summary.get('passed_count', 0)} passed"
+                                ).classes("sgfx-status-pill")
+                                ui.label(
+                                    f"{qa_report_summary.get('screenshot_diff_count', 0)} screenshot diffs"
+                                ).classes("sgfx-status-pill")
+                                ui.label(
+                                    f"{qa_report_summary.get('manual_review_item_count', 0)} manual items"
+                                ).classes("sgfx-status-pill")
+                                risk_score = qa_report_summary.get("risk_score")
+                                risk_level = str(qa_report_summary.get("risk_level", "unknown"))
+                                risk_text = (
+                                    f"risk {risk_score}/100 {risk_level}"
+                                    if risk_score is not None
+                                    else f"risk {risk_level}"
+                                )
+                                ui.label(risk_text).classes("sgfx-status-pill")
+                            report_status_label = ui.label("Build an interactive report or export a shareable ZIP.").classes(
+                                "sgfx-muted"
+                            )
+                            report_export_host = ui.column().classes("full-width")
+                            report_controls: dict[str, Any] = {}
+
+                            async def _open_qa_pass_report() -> None:
+                                from nicegui import run as nicegui_run
+
+                                button = report_controls.get("open")
+                                if button is not None:
+                                    button.disable()
+                                report_status_label.text = "Building interactive QA Pass report..."
+                                try:
+                                    result = await nicegui_run.io_bound(
+                                        build_dashboard_qa_pass_report,
+                                        workspace=workspace,
+                                        profile_id=profile_id,
+                                        payload=payload,
+                                    )
+                                except Exception as exc:  # noqa: BLE001
+                                    report_status_label.text = f"QA Pass report failed: {exc}"
+                                    _notify_ui("QA Pass report failed.")
+                                    return
+                                finally:
+                                    if button is not None:
+                                        button.enable()
+                                url = str(result.get("url", "") or _qa_pass_report_url(profile_id))
+                                separator = "&" if "?" in url else "?"
+                                _open_qa_pass_report_dialog(
+                                    f"{url}{separator}t={int(time.time())}",
+                                    f"QA Pass Report - {profile_id}",
+                                )
+                                report_status_label.text = f"QA Pass report ready: {result.get('html_path', '')}"
+                                _notify_ui("QA Pass report ready.")
+
+                            async def _export_qa_pass_report() -> None:
+                                from nicegui import run as nicegui_run
+
+                                button = report_controls.get("export")
+                                if button is not None:
+                                    button.disable()
+                                report_status_label.text = "Exporting QA Pass report ZIP..."
+                                try:
+                                    result = await nicegui_run.io_bound(
+                                        export_dashboard_qa_pass_report,
+                                        workspace=workspace,
+                                        profile_id=profile_id,
+                                        bmw_root=bmw_root,
+                                        payload=payload,
+                                    )
+                                except Exception as exc:  # noqa: BLE001
+                                    report_status_label.text = f"QA Pass ZIP export failed: {exc}"
+                                    _notify_ui("QA Pass ZIP export failed.")
+                                    return
+                                finally:
+                                    if button is not None:
+                                        button.enable()
+                                zip_path = str(result.get("zip_path", "") or "")
+                                zip_size = _size_label(_full_qa_int(result.get("zip_size_bytes")))
+                                report_status_label.text = f"Export ZIP saved: {zip_path} ({zip_size})."
+                                report_export_host.clear()
+                                with report_export_host:
+                                    ui.label(f"Export ZIP: {zip_path}").classes("sgfx-muted")
+                                    ui.button(
+                                        "Copy ZIP path",
+                                        on_click=lambda path=zip_path: _copy_dashboard_text_to_clipboard(
+                                            ui,
+                                            path,
+                                            "QA Pass ZIP path",
+                                        ),
+                                    ).props("flat dense no-caps")
+                                _notify_ui("QA Pass ZIP exported.")
+
+                            with ui.row().classes("sgfx-confirm-actions"):
+                                report_controls["open"] = _attach_tooltip(
+                                    ui,
+                                    ui.button("Open report", on_click=_open_qa_pass_report).props("color=primary"),
+                                    "Build the interactive Full QA Pass report off the UI event loop.",
+                                )
+                                report_controls["export"] = _attach_tooltip(
+                                    ui,
+                                    ui.button("Export ZIP", on_click=_export_qa_pass_report),
+                                    "Export a standalone report HTML plus evidence into one local ZIP.",
+                                )
                         queued_ack_steps = _bulk_ack_queued_steps(payload)
                         if queued_ack_steps:
                             _ensure_bulk_ack_drafts(payload)
@@ -4985,6 +5222,10 @@ _publish_live_state = _with_main_globals(_publish_live_state)
 _snapshot_with_full_qa_payload = _with_main_globals(_snapshot_with_full_qa_payload)
 _screenshot_review_viewer_output_root = _with_main_globals(_screenshot_review_viewer_output_root)
 _missing_actual_diagnostics_output_root = _with_main_globals(_missing_actual_diagnostics_output_root)
+_qa_pass_report_output_root = _with_main_globals(_qa_pass_report_output_root)
+_qa_pass_report_url = _with_main_globals(_qa_pass_report_url)
+build_dashboard_qa_pass_report = _with_main_globals(build_dashboard_qa_pass_report)
+export_dashboard_qa_pass_report = _with_main_globals(export_dashboard_qa_pass_report)
 _screenshot_review_viewer_url = _with_main_globals(_screenshot_review_viewer_url)
 _materialize_screenshot_review_viewer_for_dashboard = _with_main_globals(_materialize_screenshot_review_viewer_for_dashboard)
 _notify_completion_safe = _with_main_globals(_notify_completion_safe)

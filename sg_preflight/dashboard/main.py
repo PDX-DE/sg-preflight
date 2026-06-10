@@ -103,6 +103,12 @@ from sg_preflight.profiles import (
     list_run_profiles,
 )
 from sg_preflight.profile_change_detection import detect_changed_profiles_since_last_run
+from sg_preflight.qa_pass_report import (
+    build_qa_pass_report_summary,
+    default_qa_pass_report_zip_path,
+    export_qa_pass_report_zip,
+    write_qa_pass_report_html,
+)
 from sg_preflight.qa_workflows import list_workflows
 from sg_preflight.risk_scoring import read_per_car_risk_score
 from sg_preflight.screenshot_review_viewer import (
@@ -257,6 +263,10 @@ from sg_preflight.dashboard_pages_workflows import (
     _snapshot_with_full_qa_payload,
     _screenshot_review_viewer_output_root,
     _missing_actual_diagnostics_output_root,
+    _qa_pass_report_output_root,
+    _qa_pass_report_url,
+    build_dashboard_qa_pass_report,
+    export_dashboard_qa_pass_report,
     _screenshot_review_viewer_url,
     _materialize_screenshot_review_viewer_for_dashboard,
     _notify_completion_safe,
@@ -360,6 +370,8 @@ _DASHBOARD_WORKFLOW_SOURCE_GUARD = (
     "Build Quality-Hero report", "HTML report", "Attach to Jira ticket", "Ticket picker", "Post to Jira?",
     "--attach-ticket", "--auto-confirm", "sgfx-wizard-card", "sgfx-wizard-overlay",
     "Confirm local tool action", "Skip current", "Full QA Pass summary", "full_qa_run", "automatic_mode",
+    "Open report", "Export ZIP", "build_dashboard_qa_pass_report", "export_dashboard_qa_pass_report",
+    "QA Pass report ready", "sgfx-qa-pass-verdict",
     "sgfx-html-action-button", "ui.checkbox(", '"Automatic mode",',
     'value=bool(initial_payload.get("trusted_tool_mode", True))', "sgfx-automatic-mode-control",
     "Desktop notifications", "Save notification setting", "desktop_notifications_enabled", "Changed since last run",
