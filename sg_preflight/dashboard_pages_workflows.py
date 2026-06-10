@@ -4141,6 +4141,48 @@ def _render_full_qa_pass_panel(
             wizard_state["index"] = _first_focus_index(steps, start=start)
             wizard_state["done"] = wizard_state["index"] >= len(steps)
 
+        def _refresh_full_qa_after_local_action(
+            action_id: str,
+            *,
+            completed_step_ids: set[str],
+            result: dict[str, Any],
+        ) -> None:
+            async def _refresh() -> None:
+                trusted = bool(trusted_control.value)
+                notice.text = "Refreshing Full QA Pass evidence after local action..."
+                try:
+                    from nicegui import run as nicegui_run
+
+                    refreshed_payload = await nicegui_run.io_bound(
+                        build_full_qa_pass,
+                        profile_id,
+                        workspace=workspace,
+                        bmw_root=bmw_root,
+                        trusted_tool_mode=trusted,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    current_payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
+                    _persist_wizard_state(current_payload, reason=f"{action_id}_refresh_failed", status="in_progress")
+                    notice.text = f"Full QA Pass refresh failed after local action: {exc}"
+                    _notify_ui("Full QA Pass refresh failed after local action.")
+                    return
+                wizard_state["completed"].update(step_id for step_id in completed_step_ids if step_id)
+                notice.text = str(
+                    refreshed_payload.get(
+                        "summary",
+                        result.get("summary", "Full QA Pass evidence refreshed after local action."),
+                    )
+                )
+                _persist_wizard_state(refreshed_payload, reason=f"{action_id}_refresh", status="in_progress")
+                _render_payload(refreshed_payload)
+
+            try:
+                from nicegui import background_tasks
+
+                background_tasks.create(_refresh(), name="sgfx-full-qa-refresh-after-action")
+            except RuntimeError:
+                asyncio.create_task(_refresh())
+
         def _replace_step_payload(step_id: str, result: dict[str, Any]) -> None:
             payload = wizard_state["payload"] if isinstance(wizard_state.get("payload"), dict) else {}
             steps = _payload_steps(payload)
@@ -4161,10 +4203,19 @@ def _render_full_qa_pass_panel(
             step_payload = step.get("payload", {}) if isinstance(step.get("payload"), dict) else {}
             return _safe_int(step_payload.get("diff_count")) > 0 or bool(step_payload.get("screenshot_review_rows"))
 
-        def _handle_action_completed(step_id: str, result: dict[str, Any]) -> None:
+        def _handle_action_completed(step_id: str, result: dict[str, Any], *, action_id: str = "") -> None:
             if step_id:
                 wizard_state["action_results"][step_id] = result
                 _replace_step_payload(step_id, result)
+            if action_id == GENERATE_WORKBOOK_ACTION_ID:
+                completed_step_ids = {step_id, "delivery-checklist", "delivery-workbook-trigger"}
+                wizard_state["completed"].update(item for item in completed_step_ids if item)
+                _refresh_full_qa_after_local_action(
+                    action_id,
+                    completed_step_ids=completed_step_ids,
+                    result=result,
+                )
+                return
             trusted = bool((wizard_state.get("payload") or {}).get("trusted_tool_mode", False))
             diff_found = _safe_int(result.get("diff_count")) > 0 or bool(result.get("screenshot_review_rows"))
             if trusted or not diff_found:
@@ -4518,6 +4569,7 @@ def _render_full_qa_pass_panel(
                     on_complete=lambda result, step_id=str(current.get("step_id", "")): _handle_action_completed(
                         step_id,
                         result,
+                        action_id=str(current.get("id", "")),
                     ),
                 )
 
@@ -4533,10 +4585,10 @@ def _render_full_qa_pass_panel(
                         for path in paths:
                             ui.label(path).classes("sgfx-muted")
                     with ui.row().classes("sgfx-wizard-modal-actions"):
-                        ui.button("Yes", on_click=lambda _event=None, current=action: _confirm_start(current)).props(
+                        ui.button("Run", on_click=lambda _event=None, current=action: _confirm_start(current)).props(
                             "color=primary"
                         )
-                        ui.button("Cancel", on_click=lambda: _hide_prompt_overlay(prompt_overlay))
+                        ui.button("Skip", on_click=lambda: _hide_prompt_overlay(prompt_overlay))
 
         def _render_action(
             action: dict[str, Any],
@@ -4708,6 +4760,7 @@ def _render_full_qa_pass_panel(
                             on_complete=lambda result, step_id=str(current.get("step_id", "")): _handle_action_completed(
                                 step_id,
                                 result,
+                                action_id=str(current.get("id", "")),
                             ),
                         )
 

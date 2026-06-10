@@ -8,7 +8,11 @@ from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.bmw_pipeline_auto_fix import MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID
 from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.delivery_checklist import read_delivery_checklist
-from sg_preflight.delivery_workbook_generation import GENERATION_TYPICAL_RANGE_LABEL, build_delivery_workbook_trigger
+from sg_preflight.delivery_workbook_generation import (
+    GENERATE_WORKBOOK_ACTION_ID,
+    GENERATION_TYPICAL_RANGE_LABEL,
+    build_delivery_workbook_trigger,
+)
 from sg_preflight.manual_review import build_manual_review_assist
 from sg_preflight.onboarding_assistant import build_onboarding_guide
 from sg_preflight.operator_handoff import build_operator_handoff_snapshot
@@ -134,15 +138,25 @@ def _step_confluence_anchors(step_id: str) -> list[str]:
     return [anchor for anchor in anchors if str(anchor).strip()]
 
 
-def _delivery_workbook_action(payload: dict[str, Any], *, trusted_tool_mode: bool) -> dict[str, Any] | None:
+def _delivery_workbook_action(
+    payload: dict[str, Any],
+    *,
+    trusted_tool_mode: bool,
+    step_id: str = "delivery-workbook-trigger",
+) -> dict[str, Any] | None:
     if not bool(payload.get("can_start", False)):
         return None
+    resolves_step_ids = [step_id]
+    if step_id == "delivery-checklist":
+        resolves_step_ids.append("delivery-workbook-trigger")
     confirmation_message = str(payload.get("confirmation_message", "") or payload.get("next_action", ""))
     return {
-        "id": str(payload.get("action_id", "generate-delivery-workbook")),
-        "step_id": "delivery-workbook-trigger",
+        "id": str(payload.get("action_id", GENERATE_WORKBOOK_ACTION_ID)),
+        "step_id": step_id,
+        "resolves_step_ids": resolves_step_ids,
         "kind": "subprocess",
         "label": str(payload.get("label", "Generate delivery workbook")),
+        "summary": str(payload.get("summary", "Run the local BMW pipeline export helper.")),
         "requires_confirmation": not trusted_tool_mode,
         "auto_confirm_allowed": True,
         "trusted_auto_confirm": bool(trusted_tool_mode),
@@ -370,6 +384,17 @@ def _int_value(payload: dict[str, Any], key: str) -> int:
         return 0
 
 
+def _has_resolvable_local_action(step: dict[str, Any]) -> bool:
+    for action in step.get("inline_actions", []):
+        if not isinstance(action, dict):
+            continue
+        if not bool(action.get("enabled", True)):
+            continue
+        if str(action.get("id", "")) == GENERATE_WORKBOOK_ACTION_ID:
+            return True
+    return False
+
+
 def _step(
     *,
     step_id: str,
@@ -593,6 +618,19 @@ def build_full_qa_pass(
     halt_reason = ""
     steps: list[dict[str, Any]] = []
     confirmations: list[dict[str, Any]] = []
+    workbook_trigger_payload: dict[str, Any] | None = None
+    workbook_generation_claimed_by_checklist = False
+
+    def _read_workbook_trigger() -> dict[str, Any]:
+        nonlocal workbook_trigger_payload
+        if workbook_trigger_payload is None:
+            workbook_trigger_payload = build_delivery_workbook_trigger(
+                profile_id=profile,
+                workspace=root,
+                bmw_root=bmw_root,
+                trusted_tool_mode=trusted_tool_mode,
+            )
+        return dict(workbook_trigger_payload)
 
     for step_id, label, reader, critical, focus_count, blocker_count, delicate in _step_defs(
         profile,
@@ -605,13 +643,26 @@ def build_full_qa_pass(
             steps.append(_skipped_step(step_id, label, halted_step))
             continue
         try:
-            payload = reader()
+            payload = _read_workbook_trigger() if step_id == "delivery-workbook-trigger" else reader()
         except Exception as exc:  # noqa: BLE001
             step = _failed_step(step_id, label, exc)
         else:
             source_status = _status(payload.get("trigger_status", payload.get("status", "unknown")))
             focus = focus_count(payload)
             blockers = blocker_count(payload)
+            checklist_generation_action: dict[str, Any] | None = None
+            if step_id == "delivery-checklist" and source_status in _BLOCKING_SOURCE_STATUSES | _INCOMPLETE_SOURCE_STATUSES:
+                try:
+                    trigger_payload = _read_workbook_trigger()
+                except Exception:
+                    trigger_payload = {}
+                checklist_generation_action = _delivery_workbook_action(
+                    trigger_payload,
+                    trusted_tool_mode=trusted_tool_mode,
+                    step_id="delivery-checklist",
+                )
+                if checklist_generation_action is not None:
+                    workbook_generation_claimed_by_checklist = True
             inline_actions = _step_inline_actions(
                 step_id=step_id,
                 payload=payload,
@@ -621,6 +672,18 @@ def build_full_qa_pass(
                 trusted_tool_mode=trusted_tool_mode,
                 operator_focus_count=focus,
             )
+            if checklist_generation_action is not None:
+                inline_actions = [checklist_generation_action, *inline_actions]
+            if step_id == "delivery-workbook-trigger" and workbook_generation_claimed_by_checklist:
+                payload = {
+                    **payload,
+                    "summary": "Delivery workbook generation is queued from the missing checklist step.",
+                    "operator_confirmation_required": False,
+                }
+                inline_actions = []
+                source_status = "available"
+                focus = 0
+                blockers = 0
             step = _step(
                 step_id=step_id,
                 label=label,
@@ -640,6 +703,7 @@ def build_full_qa_pass(
             and not halted
             and bool(step.get("critical", False))
             and str(step.get("status", "")) in {"failed", "unavailable", "incomplete"}
+            and not _has_resolvable_local_action(step)
         ):
             halted = True
             halted_step = str(step.get("label", label))
