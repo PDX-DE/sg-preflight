@@ -95,6 +95,15 @@ class _ImageRef:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class _ScreenshotReviewSummary:
+    diff_count: int
+    row_count: int
+    not_rendered_count: int
+    not_rendered_reason: str
+    detail_text: str
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -172,9 +181,129 @@ def _payloads_with_evidence(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return payloads
 
 
+def _screenshot_key_candidates(relative_path: Path) -> list[str]:
+    normalized = relative_path.as_posix().casefold()
+    candidates = [normalized]
+    stem = relative_path.stem
+    suffix = relative_path.suffix
+    suffixes = ("_diff", "-diff", "_color", "-color", "_rgb", "-rgb", "_delta", "-delta", "_mask", "-mask")
+    for marker in suffixes:
+        if stem.casefold().endswith(marker):
+            candidates.append(relative_path.with_name(stem[: -len(marker)] + suffix).as_posix().casefold())
+    parts = stem.split("_")
+    while len(parts) > 1:
+        parts = parts[:-1]
+        candidates.append(relative_path.with_name("_".join(parts) + suffix).as_posix().casefold())
+    return list(dict.fromkeys(candidates))
+
+
+def _screenshot_path_lookup(root: Path) -> dict[str, Path]:
+    if not root.is_dir():
+        return {}
+    lookup: dict[str, Path] = {}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            relative = path.relative_to(root).as_posix().casefold()
+        except ValueError:
+            relative = path.name.casefold()
+        lookup[relative] = path
+    return lookup
+
+
+def _matching_screenshot_path(relative_path: Path, lookup: dict[str, Path]) -> Path | None:
+    for key in _screenshot_key_candidates(relative_path):
+        path = lookup.get(key)
+        if path is not None:
+            return path
+    return None
+
+
+def _review_row_key(relative_path: Path) -> str:
+    for marker in ("_diff", "-diff", "_color", "-color", "_rgb", "-rgb", "_delta", "-delta", "_mask", "-mask"):
+        if relative_path.stem.casefold().endswith(marker):
+            return relative_path.with_name(relative_path.stem[: -len(marker)] + relative_path.suffix).as_posix()
+    return relative_path.as_posix()
+
+
+def _screenshot_rows_from_output_root(output_root: Path) -> list[dict[str, str]]:
+    diff_root = output_root / "diff"
+    if not diff_root.is_dir():
+        return []
+    expected_root = output_root / "expected"
+    actuals_root = output_root / "actuals"
+    expected_lookup = _screenshot_path_lookup(expected_root)
+    actual_lookup = _screenshot_path_lookup(actuals_root)
+    rows: list[dict[str, str]] = []
+    for diff_path in sorted(diff_root.rglob("*")):
+        if not diff_path.is_file():
+            continue
+        try:
+            diff_relative = diff_path.relative_to(diff_root)
+        except ValueError:
+            diff_relative = Path(diff_path.name)
+        expected_path = _matching_screenshot_path(diff_relative, expected_lookup)
+        actual_path = _matching_screenshot_path(diff_relative, actual_lookup)
+        expected_relative = ""
+        actual_relative = ""
+        if expected_path is not None:
+            try:
+                expected_relative = str(Path("expected") / expected_path.relative_to(expected_root)).replace("\\", "/")
+            except ValueError:
+                expected_relative = str(Path("expected") / expected_path.name).replace("\\", "/")
+        if actual_path is not None:
+            try:
+                actual_relative = str(Path("actuals") / actual_path.relative_to(actuals_root)).replace("\\", "/")
+            except ValueError:
+                actual_relative = str(Path("actuals") / actual_path.name).replace("\\", "/")
+        diff_relative_path = str(Path("diff") / diff_relative).replace("\\", "/")
+        key = _review_row_key(diff_relative)
+        rows.append(
+            {
+                "key": key,
+                "label": key,
+                "expected_path": str(expected_path or ""),
+                "actual_path": str(actual_path or ""),
+                "diff_path": str(diff_path),
+                "expected_relative_path": expected_relative,
+                "actual_relative_path": actual_relative,
+                "diff_relative_path": diff_relative_path,
+            }
+        )
+    return rows
+
+
 def collect_screenshot_review_rows(payload: dict[str, Any]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     seen: set[tuple[str, str, str, str]] = set()
+
+    def append_row(row: dict[str, Any]) -> None:
+        normalized = {
+            "key": _clean_text(row.get("key") or row.get("label") or ""),
+            "label": _clean_text(row.get("label") or row.get("key") or ""),
+            "expected_path": str(row.get("expected_path", "") or "").strip(),
+            "actual_path": str(row.get("actual_path", "") or "").strip(),
+            "diff_path": str(row.get("diff_path", "") or "").strip(),
+            "expected_relative_path": _clean_text(row.get("expected_relative_path", "")),
+            "actual_relative_path": _clean_text(row.get("actual_relative_path", "")),
+            "diff_relative_path": _clean_text(row.get("diff_relative_path", "")),
+        }
+        key = (
+            normalized["key"],
+            normalized["expected_path"],
+            normalized["actual_path"],
+            normalized["diff_path"],
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        if not normalized["label"]:
+            normalized["label"] = normalized["key"] or Path(normalized["diff_path"]).stem or "screenshot diff"
+        if not normalized["key"]:
+            normalized["key"] = normalized["label"]
+        rows.append(normalized)
+
     for candidate in _payloads_with_evidence(payload):
         raw_rows = candidate.get("screenshot_review_rows", [])
         if not isinstance(raw_rows, list):
@@ -182,41 +311,84 @@ def collect_screenshot_review_rows(payload: dict[str, Any]) -> list[dict[str, st
         for row in raw_rows:
             if not isinstance(row, dict):
                 continue
-            normalized = {
-                "key": _clean_text(row.get("key") or row.get("label") or ""),
-                "label": _clean_text(row.get("label") or row.get("key") or ""),
-                "expected_path": str(row.get("expected_path", "") or "").strip(),
-                "actual_path": str(row.get("actual_path", "") or "").strip(),
-                "diff_path": str(row.get("diff_path", "") or "").strip(),
-                "expected_relative_path": _clean_text(row.get("expected_relative_path", "")),
-                "actual_relative_path": _clean_text(row.get("actual_relative_path", "")),
-                "diff_relative_path": _clean_text(row.get("diff_relative_path", "")),
-            }
-            key = (
-                normalized["key"],
-                normalized["expected_path"],
-                normalized["actual_path"],
-                normalized["diff_path"],
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            if not normalized["label"]:
-                normalized["label"] = normalized["key"] or Path(normalized["diff_path"]).stem or "screenshot diff"
-            if not normalized["key"]:
-                normalized["key"] = normalized["label"]
-            rows.append(normalized)
+            append_row(row)
+    target_count = _authoritative_screenshot_diff_count(payload)
+    if target_count <= len(rows):
+        return rows
+    scanned_roots: set[Path] = set()
+    for candidate in _payloads_with_evidence(payload):
+        root_value = str(candidate.get("sgfx_output_root") or candidate.get("output_root") or "").strip()
+        if not root_value:
+            continue
+        output_root = Path(root_value)
+        try:
+            resolved_root = output_root.resolve()
+        except OSError:
+            resolved_root = output_root
+        if resolved_root in scanned_roots:
+            continue
+        scanned_roots.add(resolved_root)
+        for row in _screenshot_rows_from_output_root(output_root):
+            append_row(row)
+            if len(rows) >= target_count:
+                break
+        if len(rows) >= target_count:
+            break
     return rows
 
 
-def _screenshot_diff_count(payload: dict[str, Any], rows: list[dict[str, str]]) -> int:
-    if rows:
-        return len(rows)
+def _authoritative_screenshot_diff_count(payload: dict[str, Any]) -> int:
     for candidate in _payloads_with_evidence(payload):
         diff_count = _int_value(candidate.get("diff_count"))
         if diff_count:
             return diff_count
     return 0
+
+
+def _screenshot_diff_count(payload: dict[str, Any], rows: list[dict[str, str]]) -> int:
+    return _authoritative_screenshot_diff_count(payload) or len(rows)
+
+
+def _screenshot_gap_reason(payload: dict[str, Any]) -> str:
+    for candidate in _payloads_with_evidence(payload):
+        reason = _clean_text(
+            candidate.get("screenshot_review_rows_omitted_reason")
+            or candidate.get("screenshot_review_rows_gap_reason")
+            or candidate.get("not_rendered_reason")
+            or ""
+        )
+        if reason:
+            return reason
+        omitted = _int_value(candidate.get("screenshot_review_rows_omitted"))
+        limit = _int_value(candidate.get("screenshot_review_row_limit"))
+        if omitted:
+            if limit:
+                return f"the screenshot row collector attached only the first {limit} rows"
+            return "the screenshot row collector omitted rows from the payload"
+    return "the report payload contained fewer screenshot review rows than the authoritative diff count"
+
+
+def _screenshot_review_summary(payload: dict[str, Any], rows: list[dict[str, str]]) -> _ScreenshotReviewSummary:
+    diff_count = _screenshot_diff_count(payload, rows)
+    row_count = len(rows)
+    not_rendered = max(0, diff_count - row_count)
+    reason = _screenshot_gap_reason(payload) if not_rendered else ""
+    if not_rendered:
+        detail = (
+            f"{diff_count} differences - {row_count} shown side-by-side - "
+            f"{not_rendered} not rendered ({reason})"
+        )
+    elif diff_count:
+        detail = f"{diff_count} differences - {row_count} shown side-by-side"
+    else:
+        detail = "No screenshot differences were attached"
+    return _ScreenshotReviewSummary(
+        diff_count=diff_count,
+        row_count=row_count,
+        not_rendered_count=not_rendered,
+        not_rendered_reason=reason,
+        detail_text=detail,
+    )
 
 
 def _risk_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -268,20 +440,23 @@ def build_qa_pass_report_summary(payload: dict[str, Any]) -> dict[str, Any]:
         passed_count = sum(1 for step in steps if str(step.get("status", "")).strip() == "passed")
     total_steps = len(steps) or _int_value((payload.get("progress") or {}).get("total_steps") if isinstance(payload.get("progress"), dict) else 0)
     rows = collect_screenshot_review_rows(payload)
-    screenshot_count = _screenshot_diff_count(payload, rows)
+    screenshot_summary = _screenshot_review_summary(payload, rows)
     manual_count = _manual_review_item_count(payload)
     risk_score, risk_level = _risk_score_and_level(payload)
     hero_text = (
         f"{profile} - {passed_count} checks passed - "
-        f"{screenshot_count} screenshot diffs + {manual_count} manual items need your review"
+        f"{screenshot_summary.detail_text} + {manual_count} manual items need your review"
     )
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
         "profile_id": profile,
         "passed_count": passed_count,
         "total_steps": total_steps,
-        "screenshot_diff_count": screenshot_count,
-        "screenshot_row_count": len(rows),
+        "screenshot_diff_count": screenshot_summary.diff_count,
+        "screenshot_row_count": screenshot_summary.row_count,
+        "screenshot_not_rendered_count": screenshot_summary.not_rendered_count,
+        "screenshot_not_rendered_reason": screenshot_summary.not_rendered_reason,
+        "screenshot_review_detail": screenshot_summary.detail_text,
         "manual_review_item_count": manual_count,
         "risk_score": risk_score,
         "risk_level": risk_level,
@@ -632,7 +807,21 @@ def _image_slot_html(label: str, src: str) -> str:
     )
 
 
-def _screenshot_section(rows: list[dict[str, Any]], dropped_notes: tuple[str, ...]) -> str:
+def _screenshot_gap_note_html(summary: dict[str, Any]) -> str:
+    not_rendered = _int_value(summary.get("screenshot_not_rendered_count"))
+    if not not_rendered:
+        return ""
+    return (
+        '<div class="sgfx-visible-note" data-sgfx-diff-gap="true">'
+        "<strong>Screenshot row gap</strong>"
+        f"<p>{_h(summary.get('screenshot_review_detail'))}</p>"
+        "</div>"
+    )
+
+
+def _screenshot_section(rows: list[dict[str, Any]], dropped_notes: tuple[str, ...], summary: dict[str, Any]) -> str:
+    detail = _clean_text(summary.get("screenshot_review_detail")) or "No screenshot differences were attached"
+    gap_note = _screenshot_gap_note_html(summary)
     notes = ""
     if dropped_notes:
         items = "".join(f"<li>{_h(note)}</li>" for note in dropped_notes[:30])
@@ -644,8 +833,8 @@ def _screenshot_section(rows: list[dict[str, Any]], dropped_notes: tuple[str, ..
         return (
             '<section class="sgfx-section sgfx-screenshot-review" id="screenshots">'
             "<h2>Screenshot review</h2>"
-            '<p class="sgfx-muted">No screenshot diff rows were attached to this Full QA Pass result.</p>'
-            f"{notes}</section>"
+            f'<p class="sgfx-muted">{_h(detail)}</p>'
+            f"{gap_note}{notes}</section>"
         )
     cards: list[str] = []
     for row in rows:
@@ -674,11 +863,11 @@ def _screenshot_section(rows: list[dict[str, Any]], dropped_notes: tuple[str, ..
     return (
         '<section class="sgfx-section sgfx-screenshot-review" id="screenshots">'
         '<div class="sgfx-section-head"><div><h2>Screenshot review</h2>'
-        f'<p>{len(rows)} diff row(s), every row shown side by side.</p></div>'
+        f"<p>{_h(detail)}</p></div>"
         '<label class="sgfx-zoom-control" for="sgfx-zoom">Zoom '
         '<input id="sgfx-zoom" type="range" min="25" max="400" value="100" step="5">'
         '<span id="sgfx-zoom-value">100%</span></label></div>'
-        f"{notes}{''.join(cards)}</section>"
+        f"{gap_note}{notes}{''.join(cards)}</section>"
     )
 
 
@@ -911,7 +1100,7 @@ def render_qa_pass_report_html(
         "</div>"
         f"<div>{_risk_gauge_svg(risk_score, risk_level)}</div>"
         "</section>"
-        f"{_screenshot_section(rows, dropped_notes)}"
+        f"{_screenshot_section(rows, dropped_notes, summary)}"
         f"{step_table}{delivery_table}{jira_table}{risk_table}{disabled_table}{manual_table}"
         '<footer class="sgfx-footer">'
         f"<p>Generated {html_escape(generated_at)}. Evidence only - manual review remains required. This report is not an approval record.</p>"

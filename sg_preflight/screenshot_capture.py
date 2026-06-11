@@ -632,7 +632,11 @@ def _copy_screenshot_capture_evidence(job: ScreenshotCaptureJob) -> dict[str, An
         "output_root": str(output_root),
         "files": copied_files[:SCREENSHOT_CAPTURE_COPIED_EVIDENCE_LIMIT],
         "file_count": len(copied_files),
-        "screenshot_review_rows": review_rows[:SCREENSHOT_CAPTURE_FILE_ACTIVITY_LIMIT],
+        "screenshot_review_rows": review_rows,
+        "screenshot_review_row_count": len(review_rows),
+        "screenshot_review_rows_shown": len(review_rows),
+        "screenshot_review_rows_omitted": 0,
+        "screenshot_review_rows_omitted_reason": "",
     }
 
 

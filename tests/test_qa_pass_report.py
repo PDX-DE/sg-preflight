@@ -166,8 +166,67 @@ class QaPassReportRenderTests(unittest.TestCase):
         self.assertEqual(summary["profile_id"], "NA5")
         self.assertEqual(summary["passed_count"], 5)
         self.assertEqual(summary["screenshot_diff_count"], 2)
+        self.assertEqual(summary["screenshot_row_count"], 2)
+        self.assertEqual(summary["screenshot_not_rendered_count"], 0)
         self.assertEqual(summary["manual_review_item_count"], 1)
         self.assertEqual(summary["risk_score"], 64)
+
+    def test_authoritative_diff_count_gap_is_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = _fixture_payload(Path(tmp))
+            screenshot_payload = payload["steps"][0]["payload"]
+            screenshot_payload["diff_count"] = 3
+            summary = build_qa_pass_report_summary(payload)
+            html = render_qa_pass_report_html(payload, mode="export")
+        self.assertEqual(summary["screenshot_diff_count"], 3)
+        self.assertEqual(summary["screenshot_row_count"], 2)
+        self.assertEqual(summary["screenshot_not_rendered_count"], 1)
+        self.assertIn("3 differences", summary["hero_text"])
+        self.assertEqual(html.count('data-sgfx-diff-row="true"'), 2)
+        self.assertIn("3 differences - 2 shown side-by-side - 1 not rendered", html)
+        self.assertIn('data-sgfx-diff-gap="true"', html)
+
+    def test_report_recovers_rows_from_sgfx_output_root_before_gap_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_root = root / "screenshot-capture"
+            rows = []
+            for index in range(3):
+                key = f"camera_{index}"
+                expected = output_root / "expected" / f"{key}.bmp"
+                actual = output_root / "actuals" / f"{key}.bmp"
+                diff = output_root / "diff" / f"{key}_color.bmp"
+                expected.parent.mkdir(parents=True, exist_ok=True)
+                actual.parent.mkdir(parents=True, exist_ok=True)
+                diff.parent.mkdir(parents=True, exist_ok=True)
+                _write_bmp(expected, value=10 + index)
+                _write_bmp(actual, value=20 + index)
+                _write_bmp(diff, value=30 + index)
+                if index < 2:
+                    rows.append(
+                        {
+                            "key": f"{key}.bmp",
+                            "label": f"{key}.bmp",
+                            "expected_path": str(expected),
+                            "actual_path": str(actual),
+                            "diff_path": str(diff),
+                        }
+                    )
+            payload = _fixture_payload(root)
+            screenshot_payload = payload["steps"][0]["payload"]
+            screenshot_payload["diff_count"] = 3
+            screenshot_payload["screenshot_review_rows"] = rows
+            screenshot_payload["copied_evidence"] = {
+                "output_root": str(output_root),
+                "screenshot_review_rows": rows,
+            }
+            summary = build_qa_pass_report_summary(payload)
+            html = render_qa_pass_report_html(payload, mode="export")
+        self.assertEqual(summary["screenshot_diff_count"], 3)
+        self.assertEqual(summary["screenshot_row_count"], 3)
+        self.assertEqual(summary["screenshot_not_rendered_count"], 0)
+        self.assertEqual(html.count('data-sgfx-diff-row="true"'), 3)
+        self.assertNotIn('data-sgfx-diff-gap="true"', html)
 
     def test_dashboard_mode_writes_referenced_assets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

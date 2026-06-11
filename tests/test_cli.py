@@ -356,6 +356,16 @@ class TestCLI(unittest.TestCase):
         with mock.patch.object(module.sys, "frozen", True, create=True):
             module._emit_console(render, args)
 
+    def test_frozen_cli_discards_detached_stdout_broken_pipe(self) -> None:
+        module = importlib.import_module("sg_preflight.cli")
+        args = mock.Mock(output_path="")
+
+        def render() -> None:
+            raise OSError(32, "Broken pipe")
+
+        with mock.patch.object(module.sys, "frozen", True, create=True):
+            module._emit_console(render, args)
+
     def test_source_cli_does_not_hide_stdout_errors(self) -> None:
         module = importlib.import_module("sg_preflight.cli")
         args = mock.Mock(output_path="")

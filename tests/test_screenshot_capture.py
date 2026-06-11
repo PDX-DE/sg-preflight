@@ -400,6 +400,40 @@ class TestScreenshotCapture(unittest.TestCase):
         self.assertEqual(result["screenshot_review_rows"][0]["diff_relative_path"], "diff/front_color.png")
         self.assertNotIn("approval", result["summary"].lower())
 
+    def test_poll_capture_keeps_all_review_rows_beyond_activity_preview_limit(self) -> None:
+        from sg_preflight import screenshot_capture as capture
+
+        fake_process = _FakeProcess(returncode=1)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bmw_root = root / "digital-3d-car-models"
+            tests_root = bmw_root / "cars" / "BMW" / "G65_EVO" / "export" / "tests"
+            write_text(bmw_root / "ci" / "scripts" / "car_manager.py", "print('fixture')\n")
+            _write_model_config(bmw_root, _idcevo_config("G65_EVO"))
+            for index in range(26):
+                key = f"camera_{index:02d}"
+                write_text(tests_root / "expected" / f"{key}.png", "expected\n")
+                write_text(tests_root / "actuals" / f"{key}.png", "actual\n")
+                write_text(tests_root / "diff" / f"{key}_color.png", "diff\n")
+            with mock.patch.dict(os.environ, {"Digital-3D-Car-Repo": str(bmw_root)}):
+                with mock.patch(
+                    "sg_preflight.delivery_workbook_generation._find_executable",
+                    return_value=r"C:\tools\tool.exe",
+                ):
+                    with mock.patch.object(capture.subprocess, "Popen", return_value=fake_process):
+                        job = capture.start_screenshot_capture(
+                            profile_id="G65",
+                            workspace=root,
+                            operator_confirmed=True,
+                        )
+                        result = capture.poll_screenshot_capture(job)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["diff_count"], 26)
+        self.assertEqual(len(result["screenshot_review_rows"]), 26)
+        self.assertEqual(result["copied_evidence"]["screenshot_review_row_count"], 26)
+        self.assertEqual(result["copied_evidence"]["screenshot_review_rows_omitted"], 0)
+
     def test_poll_capture_reports_live_stdout_tail_and_file_activity(self) -> None:
         from sg_preflight import screenshot_capture as capture
 

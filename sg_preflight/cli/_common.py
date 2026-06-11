@@ -365,7 +365,7 @@ def _emit_console(render: Callable[[], None], args: argparse.Namespace) -> None:
 
 
 def _is_detached_frozen_stdout_error(exc: OSError) -> bool:
-    return bool(_is_frozen_exe() and getattr(exc, "errno", None) == 22)
+    return bool(_is_frozen_exe() and getattr(exc, "errno", None) in {22, 32})
 
 
 def _console_report(report: object) -> None:
