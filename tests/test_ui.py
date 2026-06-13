@@ -20,6 +20,7 @@ from sg_preflight.qa_actions import (
     ACTION_PROGRESS_PLANS,
     build_action_record,
     get_operator_action,
+    load_action_record,
     save_action_record as save_action_task_record,
 )
 from sg_preflight.review_tracking import add_external_finding
@@ -28,9 +29,10 @@ from sg_preflight.services import (
     RunRequest,
     build_progress_payload,
     build_run_record,
+    load_run_record,
     save_run_record,
 )
-from sg_preflight.ui import create_app
+from sg_preflight.ui import create_app, _run_action_background, _run_profile_background
 from tests.operator_helpers import create_review_package_fixture, create_temp_g65_profile, write_text
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +58,9 @@ def _checker_fixture(name: str) -> str:
 
 class TestOperatorUI(unittest.TestCase):
     def test_web_ui_serves_sgfx_favicon_and_header_logo(self) -> None:
+        if not (ROOT / "sgfx_icon.png").is_file():
+            self.skipTest("curated source-review bundle excludes root branding assets")
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
@@ -855,6 +860,8 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("new URLSearchParams(window.location.search)", js)
         self.assertIn("sg-ui-mode", js)
         self.assertIn("theme=clean", js)
+        self.assertIn("Reconnecting to local status", js)
+        self.assertIn("pollStatus(url, options, nextDelay)", js)
         base = (ROOT / "sg_preflight" / "templates" / "base.html").read_text(encoding="utf-8")
         self.assertIn("dataset.uiMode", base)
         self.assertIn("ui-mode-toggle", base)
@@ -862,6 +869,43 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("loading-native-screen", base)
         self.assertIn("Show exactly what the tool is doing", base)
         self.assertIn("20260417l", base)
+
+    def test_background_run_failure_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            request = RunRequest(profile_id="G65")
+            record = build_run_record(profile, request, root)
+            request.run_id = record.run_id
+            save_run_record(record)
+
+            with self.assertLogs("sg_preflight.ui", level="ERROR") as logs:
+                with mock.patch("sg_preflight.ui.execute_profile_run", side_effect=RuntimeError("fixture run failure")):
+                    _run_profile_background(profile, request, root)
+
+            saved = load_run_record(record.run_id, root)
+            self.assertEqual(saved.status, "failed")
+            self.assertEqual(saved.exit_code, 1)
+            self.assertIn("fixture run failure", saved.error_message)
+            self.assertTrue(any("Background profile run failed for G65" in line for line in logs.output))
+
+    def test_background_action_failure_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            action = get_operator_action("daily_live_matrix", root, profiles=[profile])
+            record = build_action_record(action, root)
+            save_action_task_record(record)
+
+            with self.assertLogs("sg_preflight.ui", level="ERROR") as logs:
+                with mock.patch("sg_preflight.ui.execute_operator_action", side_effect=RuntimeError("fixture action failure")):
+                    _run_action_background(action.action_id, record.run_id, root)
+
+            saved = load_action_record(record.run_id, root)
+            self.assertEqual(saved.status, "failed")
+            self.assertEqual(saved.exit_code, 1)
+            self.assertIn("fixture action failure", saved.error_message)
+            self.assertTrue(any("Background action failed for daily_live_matrix" in line for line in logs.output))
 
     def test_deep_audit_route_persists_and_renders_playground_note(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +10,7 @@ from sg_preflight.export_size_analysis import (
     export_size_analysis_digest_items,
     read_export_size_analyses_for_profiles,
 )
+from sg_preflight.io_utils import read_json
 from sg_preflight.review_messages import build_digest_json, build_morning_digest, build_review_owner_update
 from sg_preflight.review_tracking import (
     REVIEW_DECISION_STATUS_OPTIONS,
@@ -43,7 +43,7 @@ def _out_root(workspace: Path | str | None = None) -> Path:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = read_json(path)
     if not isinstance(payload, dict):
         raise ValueError(f"Expected JSON object in {path}")
     return payload

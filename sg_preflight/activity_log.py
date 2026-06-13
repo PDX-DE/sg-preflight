@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.io_utils import read_jsonl as _read_jsonl
+from sg_preflight.time_utils import utc_now_ms as _utc_now
+
 
 ACTIVITY_LOG_BANNER = (
     "Activity log is operator-local. SGFX does not post activity entries to Jira, SVN, or BMW Git."
@@ -18,7 +21,7 @@ VALID_VERBS = {
     "refreshed",
     "switched-profile",
     "switched-mode",
-    # H-26 lifecycle event verbs (granular observability per [[feedback-real-bmw-pipeline-must-be-run]]).
+    # internal milestone lifecycle event verbs (granular observability per [[feedback-real-bmw-pipeline-must-be-run]]).
     # Each pairs with a surface like `subprocess:start` / `modal:open` / `wizard:step-enter`
     # / `button:click` and operator-readable payload context.
     "started",
@@ -113,22 +116,6 @@ def render_activity_log_text(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _read_jsonl(path: Path) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    entries: list[dict[str, str]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(raw, dict):
-            entries.append({str(key): str(value) for key, value in raw.items()})
-    return entries
-
-
 def _validate_verb(value: str) -> str:
     safe = str(value or "").strip().lower()
     if safe in FORBIDDEN_VERBS or safe not in VALID_VERBS:
@@ -146,21 +133,6 @@ def _validate_outcome(value: str) -> str:
 def _clean_token(value: str, *, default: str) -> str:
     text = str(value or "").strip()
     return text or default
-
-
-def _utc_now(value: datetime | None = None) -> str:
-    """Return an ISO-8601 UTC timestamp with millisecond precision (Z suffix).
-
-    H-26 upgrade: pre-H-26 entries used second precision; the reader continues to
-    parse both forms (see `_parse_ts`). New entries are written at ms precision so
-    operators and tooling can correlate activity log + live_state.json updates
-    without ambiguity when events land within the same second.
-    """
-    current = value or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-    iso = current.astimezone(timezone.utc).isoformat(timespec="milliseconds")
-    return iso.replace("+00:00", "Z")
 
 
 def _parse_ts(value: str) -> datetime:
@@ -194,7 +166,7 @@ def _cutoff_for_since(since: str, now: datetime) -> datetime | None:
     if normalized in {"this-week", "week"}:
         start = current.replace(hour=0, minute=0, second=0, microsecond=0)
         return start - timedelta(days=start.weekday())
-    # H-26: free-form duration strings such as "5m", "5 min ago", "30s", "1h", "2 hours".
+    # internal milestone: free-form duration strings such as "5m", "5 min ago", "30s", "1h", "2 hours".
     match = _DURATION_PATTERN.match(normalized)
     if match:
         amount = int(match.group(1))

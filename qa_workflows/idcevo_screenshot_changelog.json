@@ -1,0 +1,74 @@
+{
+  "schema": "sgfx_qa_workflow",
+  "version": 1,
+  "id": "idcevo_screenshot_changelog",
+  "name": "IDCevo Screenshot + Changelog Pass",
+  "description": "Capture per-profile screenshots from the live IDCevo slice, build the corresponding ticket-review payload, and roll the changelog comment forward. Mirrors the existing operator workflow that previously lived as a sequence of hand-typed CLI calls.",
+
+  "scope_kinds": ["profile"],
+  "profiles": ["G65", "G70", "G45", "G60"],
+
+  "dod_items": [
+    "Screenshot triage bundle exists for the selected profile",
+    "Ticket-review JSON payload includes the profile's evidence rollup",
+    "Changelog entry recorded under <output_root>/changelog/"
+  ],
+
+  "checks": [
+    {
+      "id": "screenshot_triage",
+      "kind": "preflight_cli",
+      "subcommand": "screenshot-triage",
+      "args": ["--profile", "{profile}", "--json"],
+      "required": true,
+      "description": "Run sg-preflight screenshot-triage on the selected profile and capture the bundle JSON."
+    },
+    {
+      "id": "ticket_review",
+      "kind": "preflight_cli",
+      "subcommand": "ticket-review",
+      "args": ["{ticket_id}", "--json"],
+      "required": false,
+      "skip_when_missing_input": ["ticket_id"],
+      "description": "Generate the ticket-review payload for the workflow's ticket, when one is supplied."
+    },
+    {
+      "id": "workflow_status",
+      "kind": "preflight_cli",
+      "subcommand": "workflow-status",
+      "args": ["--json"],
+      "required": false,
+      "description": "Capture the high-level workflow coverage table so the changelog entry has context."
+    }
+  ],
+
+  "required_artifacts": [
+    {
+      "id": "screenshots",
+      "kind": "directory",
+      "produced_by_check": "screenshot_triage",
+      "path_template": "{output_root}/screenshot_triage/{profile}/"
+    },
+    {
+      "id": "changelog_md",
+      "kind": "file",
+      "path_template": "{output_root}/changelog/{profile}_{date}.md",
+      "auto_generate_if_missing": true
+    }
+  ],
+
+  "status_mapping": {
+    "all_required_pass": "ready_for_review",
+    "any_required_fail": "blocked",
+    "no_checks_run":     "not_started"
+  },
+
+  "outputs": [
+    {
+      "id": "summary_json",
+      "kind": "json",
+      "path_template": "{output_root}/{id}/run.json",
+      "fields": ["id", "name", "profile", "status", "checks", "artifacts", "started_at_utc", "finished_at_utc"]
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Setup / Doctor - SG Preflight Operator UI{% endblock %}
+{% block page_shell_class %}page-shell--wide{% endblock %}
+{% block shell_route %}
+<li>
+  <a class="shell-route-link" href="#setup-summary">
+    <span class="shell-route-title">Read the readiness line</span>
+    <span class="shell-route-detail">See whether anything required is blocking launch.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#setup-checklist">
+    <span class="shell-route-title">Fix required rows first</span>
+    <span class="shell-route-detail">Each row shows the path and the next manual fix.</span>
+  </a>
+</li>
+<li>
+  <a class="shell-route-link" href="#setup-json">
+    <span class="shell-route-title">Use the machine JSON</span>
+    <span class="shell-route-detail">Open the API payload when another shell needs the same truth.</span>
+  </a>
+</li>
+{% endblock %}
+{% block content %}
+<section class="hero-panel hero-panel--compact" id="setup-summary">
+  <div class="hero-copy">
+    <p class="eyebrow">Setup / Doctor</p>
+    <h2>{{ report.headline }}</h2>
+    <p class="hero-text">
+      This page checks the local prerequisites that make SGFX launch cleanly on a teammate machine. It only detects and explains. It does not install anything or read secrets.
+    </p>
+    <div class="summary-inline">
+      <span><strong>{{ report.found_count }}</strong> found</span>
+      <span><strong>{{ report.required_missing_count }}</strong> required missing</span>
+      <span><strong>{{ report.optional_missing_count }}</strong> optional missing</span>
+      <span><strong>{{ report.mode }}</strong> mode</span>
+    </div>
+    <div class="note-block {% if report.next_action.blocking %}note-block--warn{% endif %}">
+      <strong>{{ report.next_action.label }}</strong>
+      <div>{{ report.next_action.detail }}</div>
+    </div>
+    <div class="action-row action-row--wrap">
+      <a class="button" href="/ui/api/setup-doctor">Open JSON</a>
+      <a class="button subtle" href="/ui">Back home</a>
+    </div>
+  </div>
+</section>
+
+<section class="panel" id="setup-steps">
+  <div class="panel-head">
+    <div>
+      <h3>Setup wizard path</h3>
+      <p>Follow the blocked step first. When all required rows are found, the remaining optional rows can wait.</p>
+    </div>
+  </div>
+  <div class="workflow-grid">
+    {% for step in report.wizard_steps %}
+    <article class="workflow-card">
+      <div class="status-row">
+        <div>
+          <p class="eyebrow">Wizard step</p>
+          <strong>{{ loop.index }}. {{ step.label }}</strong>
+        </div>
+        <span class="badge {% if step.status == 'found' %}ok{% elif step.status == 'missing' %}warn{% else %}info{% endif %}">
+          {{ step.status }}
+        </span>
+      </div>
+      <p class="workflow-summary">{{ step.summary }}</p>
+      <div class="summary-inline">
+        <span><strong>{{ step.found_count }}</strong> found</span>
+        <span><strong>{{ step.required_missing_count }}</strong> required missing</span>
+        <span><strong>{{ step.optional_missing_count }}</strong> optional missing</span>
+      </div>
+      <div class="muted">{{ step.detail }}</div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+{% if report.blocking_items %}
+<section class="panel panel--priority">
+  <div class="panel-head">
+    <div>
+      <h3>Fix these before calling this machine ready</h3>
+      <p>These are required rows that are missing or not usable.</p>
+    </div>
+  </div>
+  <div class="stack tight">
+    {% for item in report.blocking_items %}
+    <article class="status-item">
+      <div class="min-w-0">
+        <strong>{{ item.label }}</strong>
+        <div class="muted">{{ item.detail }}</div>
+        <div class="path-text">{{ item.path }}</div>
+        <div>{{ item.fix }}</div>
+      </div>
+      <span class="badge warn">missing</span>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="panel" id="setup-checklist">
+  <div class="panel-head">
+    <div>
+      <h3>Machine checklist</h3>
+      <p>Required rows gate launch readiness. Optional rows only affect connected extras such as Jira cards.</p>
+    </div>
+  </div>
+  <div class="workflow-grid">
+    {% for item in report["items"] %}
+    <article class="workflow-card" id="setup-item-{{ item.key }}">
+      <div class="status-row">
+        <div>
+          <p class="eyebrow">{{ item.category }}</p>
+          <strong>{{ item.label }}</strong>
+        </div>
+        <span class="badge {% if item.status == 'found' %}ok{% elif item.required %}warn{% else %}info{% endif %}">
+          {% if item.status == 'found' %}found{% elif item.required %}missing{% else %}optional{% endif %}
+        </span>
+      </div>
+      {% if item.version %}
+      <p class="workflow-summary">{{ item.version }}</p>
+      {% endif %}
+      <p class="workflow-summary">{{ item.detail }}</p>
+      {% if item.path %}
+      <div class="muted path-text">{{ item.path }}</div>
+      {% endif %}
+      {% if item.status != 'found' and item.fix %}
+      <div class="note-block note-block--warn">{{ item.fix }}</div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel" id="setup-json">
+  <div class="panel-head">
+    <div>
+      <h3>Shared machine signal</h3>
+      <p>The CLI and other shells use the same doctor payload.</p>
+    </div>
+  </div>
+  <div class="summary-code">python -m sg_preflight doctor --json</div>
+  <div class="action-row action-row--wrap">
+    <a class="button subtle" href="/ui/api/setup-doctor">Open setup-doctor API</a>
+  </div>
+</section>
+{% endblock %}

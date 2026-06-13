@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ast
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -43,6 +46,9 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
     def test_runtime_asset_helper_finds_sgfx_branding_files(self) -> None:
         from sg_preflight.assets import runtime_asset_dir, runtime_asset_path
 
+        if not runtime_asset_path("sgfx_icon.png").is_file():
+            self.skipTest("curated source-review bundle excludes root branding assets")
+
         for asset_name in (
             "sgfx_icon.png",
             "framework_sgfx_logo.png",
@@ -63,6 +69,58 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIsInstance(THEME_CHOICES, list)
         self.assertEqual(THEME_CHOICES, ["clean"])
         self.assertIsInstance(MANUAL_REVIEW_STATUSES, list)
+
+    def test_dashboard_header_exposes_grafiks_launch_toggle_and_warning(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('data-sgfx-mode-toggle="true"', source)
+        self.assertIn("data-sgfx-mode-toggle=grafiks", source)
+        self.assertIn('data-sgfx-grafiks-dialog="true"', source)
+        self.assertIn("GRAFIKS_MODE_WARNING_TITLE", source)
+        self.assertIn("GRAFIKS_MODE_WARNING_BODY", source)
+        self.assertIn("DASHBOARD_DEBUG_ICON_ASSET", source)
+        self.assertIn("Continue to Grafiks", source)
+        self.assertIn("Cancel", source)
+        self.assertIn("_confirm_grafiks_launch", source)
+        self.assertIn("run_grafiks_mode(", source)
+        self.assertIn("grafiks_confirm_dialog.open()", source)
+        self.assertNotIn("sgfx-mode-warning-slot", source)
+
+    def test_dashboard_uses_demo_safe_reconnect_timeout(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('"reconnect_timeout": 30.0', source)
+        self.assertIn("slow page handlers / jitter don't trigger reconnect storms", source)
+        self.assertNotIn('"reconnect_timeout": 1.0', source)
+
+    def test_clipboard_copy_uses_fallback_and_only_client_reports_success(self) -> None:
+        from sg_preflight.dashboard.main import _copy_dashboard_link_to_clipboard
+
+        class FakeUi:
+            def __init__(self) -> None:
+                self.javascript: list[str] = []
+                self.notifications: list[str] = []
+
+            def run_javascript(self, code: str) -> None:
+                self.javascript.append(code)
+
+            def notify(self, message: str, **_: object) -> None:
+                self.notifications.append(message)
+
+        ui = FakeUi()
+        _copy_dashboard_link_to_clipboard(ui, "http://127.0.0.1/example", "local link")
+
+        self.assertEqual(ui.notifications, [])
+        self.assertEqual(len(ui.javascript), 1)
+        script = ui.javascript[0]
+        self.assertIn("navigator.clipboard.writeText", script)
+        self.assertIn("document.execCommand('copy')", script)
+        self.assertIn("Copied to clipboard:", script)
+        self.assertIn("Couldn't copy automatically. Link:", script)
 
     def test_full_qa_bulk_ack_drafts_classify_high_risk_missing_candidate(self) -> None:
         from sg_preflight.dashboard.main import _full_qa_bulk_ack_drafts
@@ -157,7 +215,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_eleven_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_twenty_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -169,8 +227,17 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             [
                 "full-qa-pass",
                 "batch-full-qa-pass",
+                "my-tickets",
                 "delivery-checklist",
+                "delivery-readiness",
+                "disabled-tests",
+                "api-version-coverage",
+                "country-variant-coverage",
+                "export-size-trend",
                 "onboarding-guide",
+                "setup-doctor",
+                "qa-workflows",
+                "bmw-process",
                 "screenshot-test-state",
                 "risk-score",
                 "cross-car-comparison",
@@ -194,8 +261,17 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             [
                 {"id": "full-qa-pass", "label": "Full QA Pass"},
                 {"id": "batch-full-qa-pass", "label": "Batch Full QA Pass"},
+                {"id": "my-tickets", "label": "My Tickets"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
+                {"id": "delivery-readiness", "label": "Delivery Readiness"},
+                {"id": "disabled-tests", "label": "Disabled Tests"},
+                {"id": "api-version-coverage", "label": "API Version"},
+                {"id": "country-variant-coverage", "label": "Country Variants"},
+                {"id": "export-size-trend", "label": "Size Trend"},
                 {"id": "onboarding-guide", "label": "Onboarding Guide"},
+                {"id": "setup-doctor", "label": "Setup Doctor"},
+                {"id": "qa-workflows", "label": "QA Workflows"},
+                {"id": "bmw-process", "label": "BMW Process"},
                 {"id": "screenshot-test-state", "label": "Screenshot Test State"},
                 {"id": "risk-score", "label": "Risk Score"},
                 {"id": "cross-car-comparison", "label": "Cross-Car Comparison"},
@@ -218,28 +294,58 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             snapshot["pages"][1]["tagline"],
             "Run selected profiles sequentially; one profile finishes before the next starts.",
         )
-        self.assertEqual(snapshot["pages"][2]["tagline"], "Workbook evidence per delivery profile (read-only).")
+        pages_by_id = {page["id"]: page for page in snapshot["pages"]}
+        self.assertEqual(pages_by_id["delivery-checklist"]["tagline"], "Workbook evidence per delivery profile (read-only).")
         self.assertEqual(
-            snapshot["pages"][3]["tagline"],
+            pages_by_id["delivery-readiness"]["tagline"],
+            "Per-car CHANGELOG delivery status from local SVN and BMW catalog evidence.",
+        )
+        self.assertEqual(
+            pages_by_id["disabled-tests"]["tagline"],
+            "Per-car disabled-test inventory from local test_config.lua files.",
+        )
+        self.assertEqual(
+            pages_by_id["api-version-coverage"]["tagline"],
+            "Shared MainInterfaces API reference with cautious impact hints.",
+        )
+        self.assertEqual(
+            pages_by_id["country-variant-coverage"]["tagline"],
+            "Country-coding test matrix with expected, actual, and diff evidence slots.",
+        )
+        self.assertEqual(
+            pages_by_id["export-size-trend"]["tagline"],
+            "Export-size workbook trends from local size_analysis evidence.",
+        )
+        self.assertEqual(
+            pages_by_id["onboarding-guide"]["tagline"],
             "New-operator path through setup, evidence pages, manual review, and handoff.",
         )
-        self.assertEqual(snapshot["pages"][4]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
+        self.assertEqual(pages_by_id["setup-doctor"]["tagline"], "Detect-only setup status for local SGFX dependencies.")
         self.assertEqual(
-            snapshot["pages"][5]["tagline"],
+            pages_by_id["qa-workflows"]["tagline"],
+            "Local JSON workflow catalog with manual-attestation gates preserved.",
+        )
+        self.assertEqual(
+            pages_by_id["bmw-process"]["tagline"],
+            "Read-only workflow contracts for BMW interface, triage, and visual review paths.",
+        )
+        self.assertEqual(pages_by_id["screenshot-test-state"]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
+        self.assertEqual(
+            pages_by_id["risk-score"]["tagline"],
             "Per-car review focus signal with delta since latest local manual review.",
         )
-        self.assertEqual(snapshot["pages"][6]["tagline"], "G70 vs G65 risk-score widget side by side.")
-        self.assertEqual(snapshot["pages"][7]["tagline"], "Morning status snapshot for the SG Daily standup.")
+        self.assertEqual(pages_by_id["cross-car-comparison"]["tagline"], "G70 vs G65 risk-score widget side by side.")
+        self.assertEqual(pages_by_id["daily-digest"]["tagline"], "Morning status snapshot for the SG Daily standup.")
         self.assertEqual(
-            snapshot["pages"][8]["tagline"],
+            pages_by_id["team-digest-board"]["tagline"],
             "Local snapshot for standup review across selected car profiles.",
         )
         self.assertEqual(
-            snapshot["pages"][9]["tagline"],
+            pages_by_id["operator-handoff"]["tagline"],
             "Record the stopping point before a shift handoff.",
         )
         self.assertEqual(
-            snapshot["pages"][10]["tagline"],
+            pages_by_id["manual-review"]["tagline"],
             "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
         )
         self.assertIn("Manual review remains required.", snapshot["guardrails"])
@@ -416,7 +522,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 11)
+                self.assertEqual(len(snapshot["pages"]), 20)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -505,33 +611,402 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("defer_team_digest_board=True", source)
         self.assertIn('page_id in {"daily-digest", "team-digest-board"}', source)
 
-    def test_jira_inline_tickets_render_as_target_blank_external_link(self) -> None:
-        """H-29 + H-35 Part A: clicking a Jira ticket in the inline panel must
-        open the Jira URL in the operator's default EXTERNAL browser (not the
-        NiceGUI embedded webview) and also copy the URL to the clipboard as a
-        belt+suspenders fallback. H-29 originally used a raw `<a target="_blank">`
-        anchor; H-35 replaces it with a NiceGUI button calling Python-side
-        `webbrowser.open(url, new=2)` so the operator's existing SSO session
-        in their daily browser handles auth without prompting for re-login."""
+    def test_dashboard_source_offloads_blocking_handlers(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+
+        self.assertIn("from nicegui import background_tasks, run as nicegui_run", source)
+        self.assertIn('async def _index(profile: str = "", full_qa_run: str = "", automatic_mode: str = "1")', source)
+        self.assertIn("await _io_bound(", source)
+        self.assertIn("Refreshing dashboard data off the UI event loop.", source)
+        self.assertIn("await nicegui_run.io_bound(", workflow_source)
+        self.assertIn('background_tasks.create(_run_full_pass_async(), name="sgfx-full-qa-pass")', workflow_source)
+
+    def test_dashboard_source_offloads_render_path_blockers(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+
+        jira_card = source[
+            source.find("def _render_jira_profile_tickets_card"):
+            source.find("\n\ndef _render_selected_page", source.find("def _render_jira_profile_tickets_card"))
+        ]
+        self.assertNotIn("search_jira_profile_tickets(", jira_card)
+        self.assertIn("jira_profile_tickets_loader=_load_jira_profile_tickets_payload", source)
+        self.assertIn("background_tasks.create(_load_jira_profile_tickets_card()", workflow_source)
+
+        my_tickets_panel = workflow_source[
+            workflow_source.find("def _render_my_tickets_panel"):
+            workflow_source.find("\n\ndef _render_full_qa_pass_panel", workflow_source.find("def _render_my_tickets_panel"))
+        ]
+        self.assertNotIn("search_my_unresolved_tickets(", my_tickets_panel)
+        self.assertNotIn("build_latest_daily_digest(", my_tickets_panel)
+        self.assertIn("await _io_bound(_build_my_tickets_payload, workspace)", source)
+        self.assertIn('page_id == "my-tickets"', source)
+
+        visual_renderer = workflow_source[
+            workflow_source.find("def _render_action_visuals"):
+            workflow_source.find("\n\ndef _render_screenshot_test_state_panel", workflow_source.find("def _render_action_visuals"))
+        ]
+        self.assertNotIn("_screenshot_review_visual_rows(", visual_renderer)
+        self.assertIn("await nicegui_run.io_bound(_build_action_visual_payload, result)", workflow_source)
+        self.assertIn("_schedule_action_visual_render(", workflow_source)
+        self.assertIn("_schedule_action_visual_payload(step_payload", workflow_source)
+
+        source_reader = source[
+            source.find("def _render_source_root_reader_panel"):
+            source.find("\n\ndef _render_page_panel", source.find("def _render_source_root_reader_panel"))
+        ]
+        self.assertIn("async def _reload()", source_reader)
+        self.assertIn("await nicegui_run.io_bound(", source_reader)
+        self.assertNotIn("next_payload = payload_builder(", source_reader)
+
+    def test_dashboard_source_offloads_subprocess_lifecycle_timers(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+        combined = source + "\n" + workflow_source
+
+        helper_start = source.find("def _start_io_bound_poll_timer(")
+        helper_end = source.find("\n\ndef _cancel_background_poll_timer", helper_start)
+        self.assertNotEqual(helper_start, -1)
+        self.assertNotEqual(helper_end, -1)
+        helper_source = source[helper_start:helper_end]
+        self.assertIn("async def _tick()", helper_source)
+        self.assertIn("await nicegui_run.io_bound(poll_fn)", helper_source)
+        self.assertIn("apply_fn(result)", helper_source)
+        self.assertIn("Timer(interval, _tick", helper_source)
+
+        direct_background_timer_calls: list[str] = []
+        for path, text in {
+            "dashboard/main.py": source,
+            "dashboard_pages_workflows.py": workflow_source,
+        }.items():
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if "_start_background_poll_timer(" not in line:
+                    continue
+                if line.lstrip().startswith("def _start_background_poll_timer("):
+                    continue
+                direct_background_timer_calls.append(f"{path}:{line_number}:{line.strip()}")
+        self.assertEqual([], direct_background_timer_calls)
+
+        expected_timer_routes = [
+            "_start_io_bound_poll_timer(1.0, _poll_setup_io, _apply_setup_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_delivery_io, _apply_delivery_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_screenshot_io, _apply_screenshot_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_build_io, _apply_build_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_batch_io, _apply_batch_poll)",
+            "_start_io_bound_poll_timer(1.0, _poll_action_io, _apply_action_poll)",
+            "_start_io_bound_poll_timer(0.1, _launch_job_io, _apply_launch_job)",
+            "_start_io_bound_poll_timer(2.0, _notification_tick_io, _send_notification)",
+            "_start_io_bound_poll_timer(0.5, _poll_worker_io, _apply_poll_worker)",
+        ]
+        for route in expected_timer_routes:
+            self.assertIn(route, combined)
+
+        offloaded_handlers = [
+            "start_dependency_setup_action",
+            "start_delivery_workbook_generation",
+            "start_screenshot_capture_with_export_check",
+            "start_dashboard_review_package_build",
+            "start_dashboard_batch_full_qa_pass",
+            "_materialize_screenshot_review_viewer_for_dashboard",
+            "build_dashboard_qa_pass_report",
+            "export_dashboard_qa_pass_report",
+        ]
+        for handler in offloaded_handlers:
+            self.assertRegex(combined, rf"await\s+nicegui_run\.io_bound\(\s*{handler}\b")
+        self.assertRegex(workflow_source, r"await\s+nicegui_run\.io_bound\(_execute_diagnostic_chain\)")
+        self.assertIn('"job": start_delivery_workbook_generation(', workflow_source)
+        self.assertIn('"job": start_screenshot_capture_with_export_check(', workflow_source)
+        self.assertIn('job_state["launch_timer"] = _start_io_bound_poll_timer(0.1, _launch_job_io, _apply_launch_job)', workflow_source)
+
+    def test_dashboard_source_enumerates_remaining_blocking_primitives(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source_paths = {
+            "sg_preflight/dashboard_pages_workflows.py": root / "dashboard_pages_workflows.py",
+            "sg_preflight/dashboard_preferences.py": root / "dashboard_preferences.py",
+            "sg_preflight/dashboard_pages_config.py": root / "dashboard_pages_config.py",
+        }
+        for path in sorted((root / "dashboard").glob("*.py")):
+            source_paths[f"sg_preflight/dashboard/{path.name}"] = path
+        sources = {relative_path: path.read_text(encoding="utf-8") for relative_path, path in source_paths.items()}
+
+        workflow_source = sources["sg_preflight/dashboard_pages_workflows.py"]
+        notify_start = workflow_source.find("def _notify_completion_safe(")
+        notify_end = workflow_source.find("\n\ndef _full_qa_completion_notification", notify_start)
+        self.assertNotEqual(notify_start, -1)
+        self.assertNotEqual(notify_end, -1)
+        notify_source = workflow_source[notify_start:notify_end]
+        self.assertIn("background_tasks.create(", notify_source)
+        self.assertIn("nicegui_run.io_bound(", notify_source)
+        self.assertIn("notify_desktop_completion", notify_source)
+
+        def _find_dashboard_blocking_violations(checked_sources: dict[str, str]) -> list[str]:
+            blocking_primitives = {
+                "start_delivery_workbook_generation",
+                "start_screenshot_capture",
+                "start_dashboard_review_package_build",
+                "start_dashboard_batch_full_qa_pass",
+                "start_dependency_setup_action",
+                "cancel_delivery_workbook_generation",
+                "cancel_screenshot_capture",
+                "cancel_dashboard_review_package_build",
+                "cancel_dependency_setup_action",
+                "notify_desktop_completion",
+                "_notify_completion_safe",
+                "run_grafiks_mode",
+                "_resolve_grafiks_shell_exe",
+                "build_manual_review_assist",
+                "search_jira_profile_tickets",
+                "search_my_unresolved_tickets",
+                "_materialize_screenshot_review_viewer_for_dashboard",
+                "_execute_diagnostic_chain",
+                "build_dashboard_snapshot",
+                "build_full_qa_pass",
+                "build_dashboard_quality_hero_report",
+                "_screenshot_review_visual_rows",
+                "_build_my_tickets_payload",
+                "_dashboard_feedback_context",
+                "_dashboard_exe_sha256",
+                "_dashboard_build_sha",
+                "_dashboard_active_ticket_id",
+                "_dashboard_ticket_from_git_branch",
+                "_ensure_manual_review_dashboard_session",
+                "record_manual_review_dashboard_step",
+            }
+
+            def _call_name(node: ast.Call) -> str:
+                if isinstance(node.func, ast.Name):
+                    return node.func.id
+                if isinstance(node.func, ast.Attribute):
+                    return node.func.attr
+                return ""
+
+            def _attribute_path(node: ast.AST) -> str:
+                if isinstance(node, ast.Name):
+                    return node.id
+                if isinstance(node, ast.Attribute):
+                    prefix = _attribute_path(node.value)
+                    return f"{prefix}.{node.attr}" if prefix else node.attr
+                return ""
+
+            def _function_name(node: ast.AST) -> str:
+                if isinstance(node, ast.Name):
+                    return node.id
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    return node.func.id
+                return ""
+
+            def _contains_file_read(node: ast.AST) -> bool:
+                for child in ast.walk(node):
+                    if (
+                        isinstance(child, ast.Call)
+                        and isinstance(child.func, ast.Attribute)
+                        and child.func.attr in {"read", "read_bytes", "read_text"}
+                    ):
+                        return True
+                return False
+
+            def _raw_blocking_call(node: ast.Call) -> str:
+                func_path = _attribute_path(node.func)
+                call_name = _call_name(node)
+                if func_path in {"subprocess.run", "subprocess.Popen"} or call_name == "Popen":
+                    return func_path or call_name
+                if call_name in {"wait", "communicate"}:
+                    return call_name
+                if func_path.startswith("requests."):
+                    return func_path
+                if func_path.startswith("urllib.") and not func_path.startswith("urllib.parse."):
+                    return func_path
+                if func_path in {"openpyxl.load_workbook", "Image.open", "PIL.Image.open"}:
+                    return func_path
+                if func_path == "os.walk":
+                    return func_path
+                if call_name in {"rglob", "glob", "read_bytes", "read_text"}:
+                    return call_name
+                if func_path.startswith("hashlib.") and any(_contains_file_read(arg) for arg in node.args):
+                    return func_path
+                return ""
+
+            parsed_sources: dict[str, tuple[ast.Module, dict[ast.AST, ast.AST]]] = {}
+            offloaded_functions: set[str] = set()
+            callback_functions: set[str] = set()
+            apply_functions: set[str] = set()
+            for relative_path, source in checked_sources.items():
+                tree = ast.parse(source)
+                parents: dict[ast.AST, ast.AST] = {}
+                for parent in ast.walk(tree):
+                    for child in ast.iter_child_nodes(parent):
+                        parents[child] = parent
+                parsed_sources[relative_path] = (tree, parents)
+
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    call_name = _call_name(node)
+                    if call_name in {"_io_bound", "io_bound"} and node.args:
+                        target = _function_name(node.args[0])
+                        if target:
+                            offloaded_functions.add(target)
+                    if call_name == "_start_io_bound_poll_timer":
+                        if len(node.args) >= 2:
+                            target = _function_name(node.args[1])
+                            if target:
+                                offloaded_functions.add(target)
+                        if len(node.args) >= 3:
+                            target = _function_name(node.args[2])
+                            if target:
+                                apply_functions.add(target)
+                    if call_name == "Thread":
+                        for keyword in node.keywords:
+                            if keyword.arg == "target":
+                                target = _function_name(keyword.value)
+                                if target:
+                                    offloaded_functions.add(target)
+                    for keyword in node.keywords:
+                        if keyword.arg in {"on_click", "on_change"}:
+                            target = _function_name(keyword.value)
+                            if target:
+                                callback_functions.add(target)
+
+            violations: list[str] = []
+            for relative_path, (tree, parents) in parsed_sources.items():
+                def _enclosing_functions(node: ast.AST) -> list[str]:
+                    names: list[str] = []
+                    current = node
+                    while current in parents:
+                        current = parents[current]
+                        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            names.append(current.name)
+                    return list(reversed(names))
+
+                def _ui_sensitive(scopes: list[str]) -> bool:
+                    return any(
+                        scope.startswith("_render_")
+                        or scope in callback_functions
+                        or scope in apply_functions
+                        for scope in scopes
+                    )
+
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    call_name = _call_name(node)
+                    raw_blocker = _raw_blocking_call(node)
+                    if call_name not in blocking_primitives and not raw_blocker:
+                        continue
+                    scopes = _enclosing_functions(node)
+                    if not _ui_sensitive(scopes):
+                        continue
+                    if call_name == "_notify_completion_safe":
+                        continue
+                    if any(scope in offloaded_functions for scope in scopes):
+                        continue
+                    if (
+                        relative_path == "sg_preflight/dashboard/main.py"
+                        and call_name == "run_grafiks_mode"
+                        and scopes == ["run_grafiks_mode"]
+                    ):
+                        continue
+                    if (
+                        relative_path == "sg_preflight/dashboard/main.py"
+                        and call_name == "build_dashboard_snapshot"
+                        and scopes == ["_render_dashboard"]
+                    ):
+                        continue
+                    blocker = raw_blocker or call_name
+                    violations.append(f"{relative_path}:{node.lineno}:{blocker} in {'/'.join(scopes) or '<module>'}")
+            return violations
+
+        planted = {
+            "planted.py": (
+                "import subprocess\n"
+                "def _render_bad(ui):\n"
+                "    def _handler():\n"
+                "        subprocess.run(['git', 'status'])\n"
+                "    ui.button('Bad', on_click=_handler)\n"
+            )
+        }
+        planted_violations = _find_dashboard_blocking_violations(planted)
+        self.assertTrue(any("subprocess.run" in violation for violation in planted_violations), planted_violations)
+
+        violations = _find_dashboard_blocking_violations(sources)
+        self.assertEqual([], violations)
+
+    def test_jira_inline_tickets_render_as_copy_only_buttons(self) -> None:
+        """Clicking a Jira ticket in the inline panel copies the URL only and
+        shows a visible toast. It must not auto-open a browser."""
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"
         )
         # Locate the Jira ticket renderer.
         render_marker = "if tickets:"
         idx = source.find(render_marker, source.find("_render_jira_profile_tickets_card"))
-        self.assertNotEqual(idx, -1, "H-29 / H-35: Jira ticket renderer 'if tickets:' block not found")
+        self.assertNotEqual(idx, -1, "internal milestone / internal milestone: Jira ticket renderer 'if tickets:' block not found")
         block = source[idx:idx + 1500]
-        # H-35 Part A: button path that calls the external-browser handoff.
-        self.assertIn("ui.button(", block, "H-35 fix: Jira ticket must render as a button (not anchor)")
-        self.assertIn("_open_jira_ticket_in_browser(ui, url, key)", block, "H-35 fix: button must call _open_jira_ticket_in_browser")
-        self.assertIn("sgfx-jira-ticket-key", block, "H-29 styling class must remain")
-        # The helper must use webbrowser.open + JS clipboard.writeText.
-        self.assertIn("def _open_jira_ticket_in_browser", source)
-        helper_idx = source.find("def _open_jira_ticket_in_browser")
-        helper_block = source[helper_idx:helper_idx + 1500]
-        self.assertIn("webbrowser.open(url, new=2", helper_block, "H-35 fix: helper must call webbrowser.open(url, new=2)")
-        self.assertIn("navigator.clipboard.writeText", helper_block, "H-35 fix: helper must copy URL to clipboard as fallback")
-        self.assertIn("URL copied to clipboard", helper_block, "H-35 fix: notify wording must mention clipboard fallback")
+        self.assertIn("ui.button(", block, "Jira ticket must render as a button (not anchor)")
+        self.assertIn(
+            "_copy_dashboard_link_to_clipboard(ui, url, key)",
+            block,
+            "Jira ticket button must copy only",
+        )
+        self.assertIn("sgfx-jira-ticket-key", block, "internal milestone styling class must remain")
+        self.assertIn("def _copy_dashboard_link_to_clipboard", source)
+        helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
+        helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", helper_idx)
+        self.assertNotEqual(helper_end, -1, "Jira helper end marker not found")
+        helper_block = source[helper_idx:helper_end]
+        self.assertNotIn("webbrowser.open", helper_block, "Jira helper must not auto-open a browser")
+        self.assertIn("navigator.clipboard.writeText", helper_block, "Jira helper must copy URL to clipboard")
+        self.assertIn("Copied to clipboard:", helper_block, "notify wording must mention clipboard")
+
+    def test_my_tickets_page_is_read_only_with_editable_copy_drafts(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('("my-tickets", "My Tickets")', source)
+        self.assertIn("_my_tickets_page", source)
+        self.assertIn("_render_my_tickets_panel", source)
+        self.assertIn("search_my_unresolved_tickets", source)
+        from sg_preflight.jira_client import build_my_unresolved_ticket_jql
+
+        self.assertEqual(
+            build_my_unresolved_ticket_jql(),
+            "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
+        )
+        self.assertIn('data-sgfx-my-tickets-page="true"', source)
+        self.assertIn("Editable status draft", source)
+        self.assertIn("Copy status draft", source)
+        self.assertIn("No Jira post is sent", source)
+        self.assertNotIn("auto_confirm=True", source[source.find("def _render_my_tickets_panel"):source.find("def _render_batch_full_qa_pass_panel")])
+
+    def test_dashboard_snapshot_contains_my_tickets_page_without_jira_query(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
+
+        navigation = [item["id"] for item in snapshot["navigation"]]
+        self.assertIn("my-tickets", navigation)
+        pages = {page["id"]: page for page in snapshot["pages"]}
+        self.assertIn("my-tickets", pages)
+        self.assertEqual(pages["my-tickets"]["status"], "read_only")
+        self.assertIn("operator-local credentials", pages["my-tickets"]["summary"])
+
+    def test_dashboard_doc_links_are_copy_only(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("new_tab=True", source)
+        anchor_idx = source.find("def _render_confluence_anchor")
+        self.assertNotEqual(anchor_idx, -1, "Confluence anchor renderer not found")
+        anchor_block = source[anchor_idx:anchor_idx + 900]
+        self.assertIn("Copy doc link", anchor_block)
+        self.assertIn("_copy_dashboard_link_to_clipboard(ui, url, anchor)", anchor_block)
 
     def test_dashboard_strips_full_qa_run_trigger_after_first_fire(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -539,20 +1014,20 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
 
         branch_start = source.find("if _is_truthy_trigger(full_qa_run):")
-        self.assertNotEqual(branch_start, -1, "H-25: _index must gate the trigger via _is_truthy_trigger")
+        self.assertNotEqual(branch_start, -1, "internal milestone: _index must gate the trigger via _is_truthy_trigger")
         end_marker = "snapshot = _snapshot_with_full_qa_payload(snapshot, payload)"
         branch_close = source.find(end_marker, branch_start) + len(end_marker)
-        self.assertGreater(branch_close, branch_start, "H-25: snapshot merge missing from trigger branch")
+        self.assertGreater(branch_close, branch_start, "internal milestone: snapshot merge missing from trigger branch")
         tail = source[branch_close:branch_close + 800]
-        self.assertIn("ui.navigate.to(f\"/?profile=", tail, "H-25 fix: trigger branch must redirect to a URL without full_qa_run")
-        self.assertIn("quote_plus(profile_for_redirect)", tail, "H-25 fix: redirect profile must be URL-escaped via quote_plus")
-        self.assertIn("return", tail, "H-25 fix: trigger branch must return early so the same render does not re-fire")
+        self.assertIn("ui.navigate.to(f\"/?profile=", tail, "internal milestone fix: trigger branch must redirect to a URL without full_qa_run")
+        self.assertIn("quote_plus(profile_for_redirect)", tail, "internal milestone fix: redirect profile must be URL-escaped via quote_plus")
+        self.assertIn("return", tail, "internal milestone fix: trigger branch must return early so the same render does not re-fire")
 
     def test_dashboard_truthy_trigger_helper_is_idempotent_against_loop(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main
 
         is_truthy = getattr(dashboard_main, "_is_truthy_trigger")
-        # Same URL re-hit after the H-25 redirect strips full_qa_run is the regression case.
+        # Same URL re-hit after the internal milestone redirect strips full_qa_run is the regression case.
         # _index's branch fires only when _is_truthy_trigger returns True for the empty value.
         self.assertTrue(is_truthy("1"))
         self.assertTrue(is_truthy("true"))
@@ -563,7 +1038,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertFalse(is_truthy("false"))
 
     def test_full_qa_pass_dedup_token_blocks_reconnect_storm(self) -> None:
-        """H-28: a NiceGUI WebSocket reconnect storm re-hits the page handler with
+        """internal milestone: a NiceGUI WebSocket reconnect storm re-hits the page handler with
         the cached ?full_qa_run=1 URL faster than ui.navigate.to can land. The
         process-local dedup token must block all but the first fire."""
         from sg_preflight.dashboard import main as dashboard_main
@@ -586,7 +1061,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(
             results,
             [True, False, False, False, False],
-            f"H-28 regression: reconnect storm produced {sum(results)} fires (expected 1). Got: {results}",
+            f"internal milestone regression: reconnect storm produced {sum(results)} fires (expected 1). Got: {results}",
         )
 
         # Different profile must NOT be blocked by G70's dedup.
@@ -603,7 +1078,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(token, "full-qa-pass:G70:1716950000")
 
     def test_full_qa_pass_run_writes_exactly_one_activity_entry_per_click(self) -> None:
-        """H-25 regression: a single Run-click must produce exactly one full-qa-pass:run entry,
+        """internal milestone regression: a single Run-click must produce exactly one full-qa-pass:run entry,
         even if the page handler is re-entered without the trigger after the URL strip."""
         from sg_preflight.activity_log import (
             activity_log_path,
@@ -634,7 +1109,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
             # First render carries the trigger (operator clicked Run).
             self.assertTrue(simulate_render("1"))
-            # H-25 fix redirects to /?profile=F70 so the trigger param is gone.
+            # internal milestone fix redirects to /?profile=F70 so the trigger param is gone.
             # NiceGUI re-renders / reconnects / poll-syncs hit the cleaned URL.
             self.assertFalse(simulate_render(""))
             self.assertFalse(simulate_render(""))
@@ -648,7 +1123,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             self.assertEqual(
                 len(run_entries),
                 1,
-                f"H-25 regression: one click must produce exactly one entry, got {len(run_entries)}: {run_entries}",
+                f"internal milestone regression: one click must produce exactly one entry, got {len(run_entries)}: {run_entries}",
             )
 
     def test_dashboard_tooltips_are_enabled_by_default_with_env_opt_out(self) -> None:
@@ -800,7 +1275,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            with mock.patch("sg_preflight.dashboard.main.notify_desktop_completion") as notify:
+            scheduled = object()
+            with (
+                mock.patch("nicegui.run.io_bound", new=mock.Mock(return_value=scheduled)) as io_bound,
+                mock.patch("nicegui.background_tasks.create") as create_task,
+            ):
                 main._notify_completion_safe(
                     title="Done",
                     message="Complete.",
@@ -810,7 +1289,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                     elapsed_seconds=12,
                     minimum_elapsed_seconds=30,
                 )
-                notify.assert_not_called()
+                io_bound.assert_not_called()
+                create_task.assert_not_called()
 
                 main._notify_completion_safe(
                     title="Done",
@@ -821,10 +1301,20 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                     elapsed_seconds=31,
                     minimum_elapsed_seconds=30,
                 )
-                notify.assert_called_once()
+                io_bound.assert_called_once()
+                self.assertIs(io_bound.call_args.args[0], main.notify_desktop_completion)
+                self.assertEqual(io_bound.call_args.kwargs["title"], "Done")
+                self.assertEqual(io_bound.call_args.kwargs["action_id"], "long-action")
+                create_task.assert_called_once_with(
+                    scheduled,
+                    name="sgfx-desktop-notification-long-action",
+                )
 
             main._write_dashboard_notifications_preference(workspace, False)
-            with mock.patch("sg_preflight.dashboard.main.notify_desktop_completion") as notify:
+            with (
+                mock.patch("nicegui.run.io_bound", new=mock.Mock(return_value=object())) as io_bound,
+                mock.patch("nicegui.background_tasks.create") as create_task,
+            ):
                 main._notify_completion_safe(
                     title="Done",
                     message="Complete.",
@@ -834,7 +1324,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                     elapsed_seconds=90,
                     minimum_elapsed_seconds=30,
                 )
-                notify.assert_not_called()
+                io_bound.assert_not_called()
+                create_task.assert_not_called()
 
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -883,6 +1374,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Confirm local tool action", source)
         self.assertIn("Skip current", source)
         self.assertIn("Full QA Pass summary", source)
+        self.assertIn("Open report", source)
+        self.assertIn("Export ZIP", source)
+        self.assertIn("QA Pass report ready", source)
+        self.assertIn("sgfx-qa-pass-verdict", source)
         self.assertIn("full_qa_run", source)
         self.assertIn("automatic_mode", source)
         self.assertIn("sgfx-html-action-button", source)
@@ -1074,7 +1569,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp)
 
         self.assertTrue(snapshot["welcome"]["show"])
-        self.assertEqual(snapshot["welcome"]["setup_page_id"], "delivery-checklist")
+        self.assertEqual(snapshot["welcome"]["setup_page_id"], "setup-doctor")
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["setup_status"], fake_setup)
         self.assertEqual(delivery["setup_status"]["actions"][0]["label"], "Set up RaCo")
@@ -1087,7 +1582,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 11)
+        self.assertEqual(len(snapshot["pages"]), 20)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -1101,7 +1596,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 11)
+        self.assertEqual(len(snapshot["pages"]), 20)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")
@@ -1339,11 +1834,12 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
-            snapshot = build_dashboard_snapshot("G70", tmp)
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                snapshot = build_dashboard_snapshot("G70", tmp)
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["status"], "unavailable")
-        # H-34 Part A tightened the missing-workbook wording: it no longer
+        # internal milestone Part A tightened the missing-workbook wording: it no longer
         # echoes the full operator workspace path (better privacy posture per
         # `[[feedback-secrets-never-in-chat]]`). The finder reports a search-
         # count signal + raw-data status instead. Verify the full path is
@@ -1372,7 +1868,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with mock.patch(
                 "sg_preflight.dashboard.main.build_delivery_workbook_trigger",
                 return_value=fake_trigger,
-            ):
+            ), mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
                 snapshot = build_dashboard_snapshot("G70", tmp)
 
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
@@ -1399,10 +1895,17 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "checks": [{"key": "bmw_screenshot_script", "status": "missing"}],
                 "confirmation_message": "This will run BMW pipeline screenshot capture for G70.",
             }
+            fake_state = {
+                "status": "available",
+                "data_available": True,
+                "summary": "0 expected / 0 actual / 0 diff screenshot file(s)",
+                "actual_count": 0,
+                "diff_count": 0,
+            }
             with mock.patch(
                 "sg_preflight.dashboard.main.check_screenshot_capture_environment",
                 return_value=fake_preflight,
-            ):
+            ), mock.patch("sg_preflight.dashboard.main.read_bmw_screenshot_state", return_value=fake_state):
                 snapshot = build_dashboard_snapshot("G70", tmp)
 
         screenshot_page = next(page for page in snapshot["pages"] if page["id"] == "screenshot-test-state")
@@ -1589,12 +2092,12 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
 
 class DashboardDualModeLaunchTests(unittest.TestCase):
-    def test_dashboard_grafiks_mode_dispatches_to_pyside_shell(self) -> None:
+    def test_dashboard_grafiks_mode_dispatches_to_cinematic_shell_launcher(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.cli import main
 
             with mock.patch("sg_preflight.dashboard.main.run_dashboard", return_value=11) as clean_runner:
-                with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=9) as grafiks_runner:
+                with mock.patch("sg_preflight.dashboard.main.run_grafiks_mode", return_value=9) as grafiks_runner:
                     result = main(
                         [
                             "dashboard",
@@ -1611,31 +2114,99 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
 
         self.assertEqual(result, 9)
         clean_runner.assert_not_called()
-        grafiks_runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="NA8", initial_mode="grafiks")
+        grafiks_runner.assert_called_once_with(profile_id="NA8", workspace=Path(tmp), bmw_root=None)
+
+    def test_grafiks_mode_launches_cinematic_shell_when_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard import main as dashboard_main
+
+            root = Path(tmp)
+            exe = root / "Release" / "sgfx_cine_cinematic_shell.exe"
+            exe.parent.mkdir(parents=True)
+            exe.write_text("fixture\n", encoding="utf-8")
+            bmw_root = root / "digital-3d-car-models"
+            (bmw_root / "cars" / "BMW").mkdir(parents=True)
+
+            process = mock.Mock()
+            process.wait.side_effect = subprocess.TimeoutExpired(str(exe), 2)
+            with mock.patch.dict(
+                os.environ,
+                {"SGFX_GRAFIKS_SHELL_EXE": str(exe)},
+                clear=False,
+            ):
+                with mock.patch("sg_preflight.dashboard.main.subprocess.Popen", return_value=process) as popen:
+                    result = dashboard_main.run_grafiks_mode(profile_id="G70", workspace=root, bmw_root=bmw_root)
+
+        self.assertEqual(result, 0)
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], str(exe.resolve()))
+        self.assertIn("--interactive", command)
+        self.assertIn("--hub-planet", command)
+        self.assertIn("--hub-nodes", command)
+        self.assertIn("--fusion-cars-root", command)
+        self.assertIn(str((bmw_root / "cars" / "BMW").resolve()), command)
+        self.assertIn("--fusion-profile-id", command)
+        self.assertIn("G70", command)
+        self.assertEqual(popen.call_args.kwargs["cwd"], exe.resolve().parent)
+
+    def test_grafiks_mode_missing_shell_degrades_with_wip_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard import main as dashboard_main
+
+            stdout = io.StringIO()
+            with mock.patch("sg_preflight.dashboard.main._resolve_grafiks_shell_exe", return_value=None):
+                with mock.patch("sg_preflight.dashboard.main.subprocess.Popen") as popen:
+                    with redirect_stdout(stdout):
+                        result = dashboard_main.run_grafiks_mode(profile_id="G70", workspace=tmp)
+
+        self.assertEqual(result, 0)
+        popen.assert_not_called()
+        self.assertIn("WIP - use Clean for now", stdout.getvalue())
+        self.assertIn("C++ shell not installed", stdout.getvalue())
 
     def test_frozen_clean_dashboard_dispatches_to_desktop_shell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             import sg_preflight.cli as cli
 
             with mock.patch.object(cli.sys, "frozen", True, create=True):
-                with mock.patch("sg_preflight.dashboard.main.run_dashboard", return_value=11) as clean_runner:
-                    with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=9) as desktop_runner:
-                        result = cli.main(
-                            [
-                                "dashboard",
-                                "run",
-                                "--profile",
-                                "NA8",
-                                "--workspace",
-                                tmp,
-                                "--ui-mode",
-                                "clean",
-                            ]
-                        )
+                with mock.patch.dict(os.environ, {"QTWEBENGINE_CHROMIUM_FLAGS": "--existing-flag"}, clear=False):
+                    with mock.patch("sg_preflight.dashboard.main.run_dashboard", return_value=11) as clean_runner:
+                        with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=9) as desktop_runner:
+                            result = cli.main(
+                                [
+                                    "dashboard",
+                                    "run",
+                                    "--profile",
+                                    "NA8",
+                                    "--workspace",
+                                    tmp,
+                                    "--ui-mode",
+                                    "clean",
+                                ]
+                            )
+                            chromium_flags = os.environ["QTWEBENGINE_CHROMIUM_FLAGS"]
 
         self.assertEqual(result, 9)
+        self.assertIn("--existing-flag", chromium_flags)
+        self.assertIn("--disable-background-timer-throttling", chromium_flags)
+        self.assertIn("--disable-backgrounding-occluded-windows", chromium_flags)
+        self.assertIn("--disable-renderer-backgrounding", chromium_flags)
         clean_runner.assert_not_called()
         desktop_runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="NA8", initial_mode="clean")
+
+    def test_frozen_desktop_shell_sets_chromium_flags_before_qt_import(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "sg_preflight" / "cli" / "dashboard.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("QTWEBENGINE_CHROMIUM_FLAGS", source)
+        self.assertIn("--disable-background-timer-throttling", source)
+        self.assertIn("--disable-backgrounding-occluded-windows", source)
+        self.assertIn("--disable-renderer-backgrounding", source)
+        self.assertLess(
+            source.index('os.environ["QTWEBENGINE_CHROMIUM_FLAGS"]'),
+            source.index("from sg_preflight.desktop.app import run_desktop_app"),
+        )
 
     def test_frozen_clean_dashboard_no_native_keeps_server_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1662,15 +2233,16 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
         desktop_runner.assert_not_called()
         clean_runner.assert_called_once()
 
-    def test_desktop_alias_accepts_workspace_and_profile(self) -> None:
+    def test_desktop_alias_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.cli import main
 
             with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=5) as runner:
-                result = main(["desktop", "--profile", "G70", "--workspace", tmp])
+                with self.assertRaises(SystemExit) as exc:
+                    main(["desktop", "--profile", "G70", "--workspace", tmp])
 
-        self.assertEqual(result, 5)
-        runner.assert_called_once_with(workspace=Path(tmp), initial_profile_id="G70", initial_mode="clean")
+        self.assertEqual(exc.exception.code, 2)
+        runner.assert_not_called()
 
 
 # Phase B-3 + B-4 — Daily Digest action + partial-artifact surfacing + Screenshot Test State ownership note.

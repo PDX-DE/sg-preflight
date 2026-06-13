@@ -17,6 +17,12 @@ from sg_preflight.adapters.materialize import (
     resolve_materialize_inputs,
 )
 from sg_preflight.bmw_delivery import discover_bmw_models_repo
+from sg_preflight.bmw_process import (
+    bmw_interface_smoke_commands,
+    country_variant_lightfx_expectations,
+    jira_field_link_templates,
+    workflow_contracts,
+)
 from sg_preflight.bundle import load_bundle
 from sg_preflight.checker_catalog import list_checker_catalog
 from sg_preflight.config_loader import load_config, load_json
@@ -919,6 +925,7 @@ def qa_workflow_status(
     profiles: list[RunProfile] | None = None,
 ) -> list[dict[str, Any]]:
     root = workspace_root(repo_root)
+    mirror_root = mirror_repo_root(root)
     readiness = {item["key"]: item for item in prerequisite_status(root)}
     live_profiles = profiles if profiles is not None else list_run_profiles(root)
     checker_map = {
@@ -940,6 +947,11 @@ def qa_workflow_status(
     bmw_test_main_ready = readiness.get("bmw_test_main_script", {}).get("status") == "available"
     adb_ready = readiness.get("adb", {}).get("status") == "available"
     bmw_targets_ready = any(profile.bmw_smoke_target.strip() for profile in live_profiles)
+    bmw_target_preview = next((profile.bmw_smoke_target.strip() for profile in live_profiles if profile.bmw_smoke_target.strip()), "<target>")
+    bmw_contracts = {item["key"]: item for item in workflow_contracts()}
+    jira_templates = jira_field_link_templates()
+    carpaint_helper_ready = readiness.get("carpaint_helper", {}).get("status") == "available"
+    resources_size_report = mirror_root / ".pdx" / "raco" / "scripts" / "testing" / "resources_size_report.py"
     delivery_checklist_ready = all(
         readiness.get(key, {}).get("status") == "available"
         for key in (
@@ -1006,6 +1018,21 @@ def qa_workflow_status(
             ],
         },
         {
+            "key": "manual_visual_review",
+            "label": "Manual visual review companion",
+            "state": "partial",
+            "summary": (
+                "The Confluence visual-review checklist is represented as a local evidence lane, but the human Blender/RaCo/rack judgement is still manual."
+            ),
+            "sg_preflight_role": (
+                "Keep manual review coverage, screenshots, findings, and open items attached to the same run/handoff evidence without claiming automated approval."
+            ),
+            "workflow": bmw_contracts["manual_visual_review"],
+            "blockers": [
+                "Requires an actual human visual pass in Blender, RaCo, rack, or emulator before a car can be called visually checked."
+            ],
+        },
+        {
             "key": "delivery_checklist",
             "label": "BMW delivery checklist bridge",
             "state": "partial" if delivery_state != "blocked" else "blocked",
@@ -1049,6 +1076,10 @@ def qa_workflow_status(
             "sg_preflight_role": (
                 "SG Preflight should reduce avoidable failures before this stage, and it now surfaces the BMW smoke stage as an explicit action instead of a hidden external dependency."
             ),
+            "adapter": {
+                "commands": bmw_interface_smoke_commands(bmw_target_preview),
+                "expected_evidence": bmw_contracts["bmw_interface_screenshot_smoke"]["evidence"],
+            },
             "blockers": [
                 blocker
                 for blocker in (
@@ -1064,6 +1095,124 @@ def qa_workflow_status(
                 )
                 if blocker
             ],
+        },
+        {
+            "key": "bmw_interface_screenshot_smoke",
+            "label": "BMW interface / screenshot smoke adapter",
+            "state": (
+                "partial"
+                if bmw_models_ready and bmw_scripts_ready and (bmw_car_manager_ready or bmw_test_main_ready) and bmw_targets_ready
+                else "blocked"
+            ),
+            "summary": (
+                "The BMW smoke adapter now models interface, export, and screenshot-diff evidence as one lane."
+                if bmw_models_ready and bmw_scripts_ready and bmw_targets_ready
+                else "The BMW smoke adapter contract is known, but it is not runnable until BMW repo access, scripts, and target mapping are available."
+            ),
+            "sg_preflight_role": (
+                "Keep this as an explicit BMW-side handoff adapter: capture commands, exit codes, logs, and screenshot counts without duplicating BMW QA logic in SG code."
+            ),
+            "adapter": {
+                "source": bmw_contracts["bmw_interface_screenshot_smoke"]["source"],
+                "steps": bmw_contracts["bmw_interface_screenshot_smoke"]["steps"],
+                "commands": bmw_interface_smoke_commands(bmw_target_preview),
+                "expected_evidence": bmw_contracts["bmw_interface_screenshot_smoke"]["evidence"],
+            },
+            "blockers": [
+                blocker
+                for blocker in (
+                    None
+                    if bmw_models_ready
+                    else "Blocked on BMW Git access or a local `digital-3d-car-models` clone.",
+                    None
+                    if bmw_scripts_ready
+                    else "The BMW screenshot-script README under `ci/scripts` is not available locally.",
+                    None
+                    if bmw_car_manager_ready or bmw_test_main_ready
+                    else "The BMW-side `ci/scripts/car_manager.py` or `ci/scripts/test/main.py` helpers are not available locally.",
+                    None
+                    if bmw_targets_ready
+                    else "BMW smoke target mapping for the current live profiles is not configured yet.",
+                )
+                if blocker
+            ],
+        },
+        {
+            "key": "defect_triage",
+            "label": "Defect triage workflow",
+            "state": "partial",
+            "summary": "The triage lane is represented as a local evidence contract; Jira writeback and BMW links still stay external until access is confirmed.",
+            "sg_preflight_role": (
+                "Turn incoming SG/BMW findings into consistent affected-scope, expected-vs-actual, owner, blocker, and retest evidence before a ticket comment is posted."
+            ),
+            "workflow": bmw_contracts["defect_triage"],
+            "blockers": ["Direct BMW Jira writeback and PR observation remain outside the local tool until access/process are confirmed."],
+        },
+        {
+            "key": "carpaint_lackcode_dlt",
+            "label": "Carpaint Lackcode / DLT workflow",
+            "state": "partial" if carpaint_helper_ready else "blocked",
+            "summary": (
+                "The carpaint lane now captures Lackcode normalization and the CheckIn/DLT lookup flow alongside the existing carpaint catalog checks."
+                if carpaint_helper_ready
+                else "The Lackcode/DLT workflow contract is known, but the local carpaint helper is not available in this workspace."
+            ),
+            "sg_preflight_role": (
+                "Normalize CheckIn or DLT color values before Car Paints lookup and keep the result as evidence; visual/rack approval remains manual."
+            ),
+            "workflow": bmw_contracts["carpaint_lackcode_dlt"],
+            "normalization": {
+                "rule": "strip whitespace, uppercase, and remove leading zeroes before lookup",
+                "example": {"raw": "0C5A", "lookup": "C5A"},
+            },
+            "blockers": []
+            if carpaint_helper_ready
+            else ["The SG `.pdx/raco/scripts/testing/read_json_carpaints.py` helper is not available locally."],
+        },
+        {
+            "key": "country_variant_lightfx",
+            "label": "Country-variant LightFX check",
+            "state": "partial",
+            "summary": (
+                "The lane captures country-variant LightFX expectations such as the current G50 selective-yellow ECE/US check."
+            ),
+            "sg_preflight_role": (
+                "Make country-variant mismatches visible as delivery evidence and defect-triage input instead of burying them in generic visual notes."
+            ),
+            "workflow": bmw_contracts["country_variant_lightfx"],
+            "expectations": {"G50": country_variant_lightfx_expectations("G50")},
+            "blockers": [
+                "Still needs source/config proof plus a visual or screenshot note for the affected car before posting a final finding."
+            ],
+        },
+        {
+            "key": "performance_kpi",
+            "label": "Performance / KPI lane",
+            "state": "partial" if resources_size_report.exists() else "blocked",
+            "summary": (
+                "Performance/KPI evidence is tracked as a separate lane so visual QA and performance proof do not get mixed."
+                if resources_size_report.exists()
+                else "Performance/KPI expectations are known from the BMW docs, but no local performance runner is wired in this workspace."
+            ),
+            "sg_preflight_role": (
+                "Collect links and artifacts for CPU, Perfetto, macrobenchmark, KPI, or resource-size evidence without claiming a pass from SG preflight alone."
+            ),
+            "workflow": bmw_contracts["performance_kpi"],
+            "blockers": []
+            if resources_size_report.exists()
+            else ["No local performance/KPI runner is wired; use BMW/Android-side artifacts when available."],
+        },
+        {
+            "key": "jira_field_link_templates",
+            "label": "Jira field and link templates",
+            "state": "partial",
+            "summary": "Copy-ready Jira field/link templates are available locally, but direct Jira writeback remains intentionally blocked.",
+            "sg_preflight_role": (
+                "Keep SG defects and Wombat asset-integration handoffs consistent: fields, labels, blocked-by links, retest notes, and evidence requirements are explicit."
+            ),
+            "workflow": bmw_contracts["jira_field_link_templates"],
+            "templates": jira_templates,
+            "blockers": ["Direct Jira writeback is not connected; use these templates for manual comments/ticket setup."],
         },
         {
             "key": "rack_review",

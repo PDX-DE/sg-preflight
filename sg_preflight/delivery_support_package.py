@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import zipfile
 
+from sg_preflight.io_utils import write_text as _write_text
 from sg_preflight.ticket_review import TicketReviewBundleResult, materialize_ticket_review_bundle
 
 
@@ -64,11 +65,6 @@ def _fresh_output_root(output_root: Path) -> Path:
         return output_root
     stamp = datetime.now().strftime("%H%M%S")
     return output_root.with_name(f"{output_root.name}-rerun-{stamp}")
-
-
-def _write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def _make_zip(package_root: Path) -> Path:
@@ -193,7 +189,7 @@ def _brief_markdown(
             "- ready-to-send coordinator update: `02_message_to_coordinator.md`",
             "- ready-to-send review-owner handover: `03_message_to_review_owners.md`",
             "- immediate next steps and automation direction: `04_next_steps.md`",
-            "- new-chat continuation brief: `05_continuation_brief.md`",
+            "- delivery continuation brief: `05_delivery_continuation_brief.md`",
             f"- full grounded ticket package: `{_relative(grounded.package_root, package_root)}`",
             f"- full scope-first ticket package: `{_relative(scope_first.package_root, package_root)}`",
             "",
@@ -423,7 +419,7 @@ def _continuation_markdown(
     scope_first: TicketReviewBundleResult,
 ) -> str:
     lines = [
-        "# Continuation Brief",
+        "# Delivery Continuation Brief",
         "",
         "Use this package as the starting point in a new chat.",
         "",
@@ -506,7 +502,7 @@ def materialize_delivery_support_package(
     coordinator_update_path = package_root / "02_message_to_coordinator.md"
     review_owners_update_path = package_root / "03_message_to_review_owners.md"
     next_steps_path = package_root / "04_next_steps.md"
-    continuation_path = package_root / "05_continuation_brief.md"
+    continuation_path = package_root / "05_delivery_continuation_brief.md"
 
     _write_text(
         brief_path,

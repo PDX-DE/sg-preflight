@@ -20,6 +20,54 @@ from sg_preflight.bmw_delivery import (
     resolve_svn_profile_id,
 )
 
+from sg_preflight.daily_snapshot_lua import (
+    _BATTERY_SCENARIO_SELECTORS,
+    _LOCAL_BATTERY_TEST_OVERRIDES,
+    _LOCAL_DIRECT_SCREENSHOT_LUA_BY_TEST,
+    _LOCAL_PROXY_SCREENSHOT_LUA_BY_TEST,
+    _LUA_SCREENSHOT_STATUS_SENTINEL,
+    _LUA_TEST_STATUS_SENTINEL,
+    _render_local_battery_override_lua,
+    _render_local_call_screenshot_override_lua,
+    _render_local_direct_screenshot_templates,
+    _render_local_proxy_screenshot_templates,
+    _resolve_battery_selected_tests,
+    _sanitize_filter_slug,
+)
+from sg_preflight.daily_snapshot_scoring import (
+    _IMAGE_SUFFIXES,
+    _KNOWN_RISK_KEYWORDS,
+    _REVIEW_PRIORITY_ORDER,
+    _battery_baseline_gap_payload,
+    _battery_gap_recommendation,
+    _battery_verdict,
+    _beam_family_diagnostics,
+    _daily_delta_payload,
+    _extract_missing_expected_baseline,
+    _group_battery_results_by_profile,
+    _ranked_review_priority_key,
+    _review_priority_attention_category,
+    _review_priority_has_dimension_mismatch,
+    _review_priority_level,
+    _review_priority_payload,
+    _review_priority_reason,
+    _review_priority_risk_labels,
+    _review_priority_score,
+    _review_priority_signals,
+    _review_priority_text_blob,
+    _scenario_image_names,
+    _snapshot_diff_keys,
+    _snapshot_failure_keys,
+    _snapshot_status_counts,
+)
+from sg_preflight.daily_snapshot_rendering import (
+    _render_battery_baseline_gaps_markdown,
+    _render_candidate_review_gallery,
+    _render_daily_delta_markdown,
+    _render_review_priority_markdown,
+    _render_snapshot_markdown,
+)
+
 
 _DEFAULT_SCOPE = ("NA8", "G78", "G50")
 _DEFAULT_BATTERY_FILTERS = (
@@ -34,22 +82,6 @@ _DEFAULT_BATTERY_FILTERS = (
     "highlighting_Doors",
 )
 _BEAM_FAMILY_FILTERS = ("lights_drl_front", "lights_LowBeam", "lights_HighBeam", "lights_OnlyCones")
-_BATTERY_SCENARIO_SELECTORS: dict[str, tuple[str, ...]] = {
-    "default": ("default_rear", "default"),
-    "openAllDoors_": ("openAllDoors_rightView", "openAllDoors_leftView"),
-    "lights_drl_front": ("lights_drl_front",),
-    "lights_LowBeam": ("lights_LowBeam",),
-    "lights_HighBeam": ("lights_HighBeam",),
-    "lights_OnlyCones": ("lights_OnlyCones",),
-    "welcome_animation_": ("welcome_animation_casual", "welcome_animation_stealth"),
-    "automatic_Doors_": (
-        "automatic_Doors_Full_Angles",
-        "automatic_Doors_Colors",
-        "automatic_Doors_Opacities",
-        "automatic_Doors_Unavailable_Angles",
-    ),
-    "highlighting_Doors": ("highlighting_Doors",),
-}
 _BMW_SUPPORT_FILES = (
     "CarPaint.json",
     "perspectives_CID_2to1.json",
@@ -60,99 +92,6 @@ _BMW_SUPPORT_FILES = (
 _SMOKE_SENTINEL = "SGPREFLIGHT_SMOKE_RESULT="
 _BATTERY_SENTINEL = "SGPREFLIGHT_BATTERY_RESULT="
 _CONFIG_SENTINEL = "SGPREFLIGHT_CONFIG_RESULT="
-_LUA_TEST_STATUS_SENTINEL = "SGPREFLIGHT_LUA_TEST_STATUS="
-_LUA_SCREENSHOT_STATUS_SENTINEL = "SGPREFLIGHT_LUA_SCREENSHOT_STATUS="
-_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-_REVIEW_PRIORITY_ORDER = {"P0": 3, "P1": 2, "P2": 1, "P3": 0}
-_KNOWN_RISK_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("LightFX", ("lightfx", "lights_", "light_")),
-    ("WelcomeFX", ("welcomefx", "welcome_animation", "welcome animation")),
-    ("Iconic Glow", ("iconicglow", "iconic_glow", "iconic glow")),
-    ("Selective Yellow", ("selectiveyellow", "selective_yellow", "selective yellow")),
-    ("mirrors", ("mirror", "mirrors")),
-    ("rims", ("rim", "rims", "wheel")),
-    ("logos", ("logo", "logos")),
-    ("flaps", ("flap", "flaps")),
-    ("doors", ("door", "doors")),
-    ("hood", ("hood",)),
-    ("tailgate", ("tailgate",)),
-    ("trimline", ("trimline", "trim_line")),
-    ("country variant", ("countryvariant", "country_variant", "country variant")),
-)
-_LOCAL_BATTERY_TEST_OVERRIDES = {
-    "lights_LowBeam": (
-        'if testViews["lights_LowBeam"] ~= nil then\n'
-        '    testViews["lights_LowBeam"].enabled = true\n'
-        '    testViews["lights_LowBeam"].update = function(time_ms)\n'
-        '        reset(); forceUpdateScreen(); cameraView(7.0, 0.0, -75.0); '
-        'lights_beam(false, true); waitOnRendering(1000)\n'
-        "    end\n"
-        "end"
-    ),
-    "lights_HighBeam": (
-        'if testViews["lights_HighBeam"] ~= nil then\n'
-        '    testViews["lights_HighBeam"].enabled = true\n'
-        '    testViews["lights_HighBeam"].update = function(time_ms)\n'
-        '        reset(); forceUpdateScreen(); cameraView(7.0, 0.0, -75.0); '
-        'lights_beam(true, false); waitOnRendering(1000)\n'
-        "    end\n"
-        "end"
-    ),
-    "lights_OnlyCones": (
-        'if testViews["lights_OnlyCones"] ~= nil then\n'
-        '    testViews["lights_OnlyCones"].enabled = true\n'
-        '    testViews["lights_OnlyCones"].update = function(time_ms)\n'
-        '        reset(); forceUpdateScreen(); cameraView(7.0, 0.0, 45.0); '
-        'lights_beam(false, false); road(true, 9.0, 12.0, 3.2, {1.0, 1.0, 1.0, 0.1}, true, {0.0, 0.0, 0.0, 0.5}, true); waitOnRendering(1000)\n'
-        "    end\n"
-        "end"
-    ),
-}
-_LOCAL_DIRECT_SCREENSHOT_LUA_BY_TEST = {
-    "lights_LowBeam": (
-        "reset(); forceUpdateScreen(); cameraView(7.0, 0.0, -75.0); "
-        'R.logic().interfaces["Interface_Lights"]["IN"]["HighBeam_isActive"].value = false; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LowBeam_isActive"].value = true; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LightCones_isVisible"].value = true; '
-        "waitOnRendering(1000); "
-        'R.screenshot("__SGPREFLIGHT_SCREENSHOT_PATH__")'
-    ),
-    "lights_HighBeam": (
-        "reset(); forceUpdateScreen(); cameraView(7.0, 0.0, -75.0); "
-        'R.logic().interfaces["Interface_Lights"]["IN"]["HighBeam_isActive"].value = true; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LowBeam_isActive"].value = false; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LightCones_isVisible"].value = true; '
-        "waitOnRendering(1000); "
-        'R.screenshot("__SGPREFLIGHT_SCREENSHOT_PATH__")'
-    ),
-    "lights_OnlyCones": (
-        "reset(); forceUpdateScreen(); cameraView(7.0, 0.0, 45.0); "
-        'R.logic().interfaces["Interface_Lights"]["IN"]["HighBeam_isActive"].value = false; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LowBeam_isActive"].value = false; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LightCones_isVisible"].value = true; '
-        'road(true, 9.0, 12.0, 3.2, {1.0, 1.0, 1.0, 0.1}, true, {0.0, 0.0, 0.0, 0.5}, true); '
-        "waitOnRendering(1000); "
-        'R.screenshot("__SGPREFLIGHT_SCREENSHOT_PATH__")'
-    ),
-}
-_LOCAL_PROXY_SCREENSHOT_LUA_BY_TEST = {
-    "lights_LowBeam": (
-        "reset(); forceUpdateScreen(); cameraView(7.0, 0.0, -75.0); "
-        'R.logic().interfaces["Interface_Lights"]["IN"]["HighBeam_isActive"].value = false; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LowBeam_isActive"].value = true; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LightCones_isVisible"].value = false; '
-        "waitOnRendering(1000); "
-        'R.screenshot("__SGPREFLIGHT_SCREENSHOT_PATH__")'
-    ),
-    "lights_HighBeam": (
-        "reset(); forceUpdateScreen(); cameraView(7.0, 0.0, -75.0); "
-        'R.logic().interfaces["Interface_Lights"]["IN"]["HighBeam_isActive"].value = true; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LowBeam_isActive"].value = false; '
-        'R.logic().interfaces["Interface_Lights"]["IN"]["LightCones_isVisible"].value = false; '
-        "waitOnRendering(1000); "
-        'R.screenshot("__SGPREFLIGHT_SCREENSHOT_PATH__")'
-    ),
-}
 
 
 def _workspace_root(explicit_root: Path | None = None) -> Path:
@@ -512,706 +451,62 @@ def find_latest_daily_qa_snapshot(
     return candidates[0]
 
 
-def _battery_verdict(
-    *,
-    expected_count: int,
-    actual_count: int,
-    diff_count: int,
-    compare_ok: bool,
-    status: str,
-    missing_expected_baseline: str = "",
-    target_output_present: bool = False,
-    error: str = "",
-    proxy_files: tuple[str, ...] | list[str] = (),
-) -> str:
-    if status == "blocked":
-        return "blocked"
-    if status == "proxy_completed" and proxy_files:
-        return "proxy_candidate_ready"
-    lowered_error = error.lower()
-    if "viewer exited with code" in lowered_error:
-        return "runtime_crash"
-    if actual_count == 0 and diff_count == 0:
-        return "blocked"
-    if missing_expected_baseline:
-        if actual_count > 0 and target_output_present:
-            return "baseline_candidate_ready"
-        if actual_count > 0 and not target_output_present:
-            return "scenario_output_missing"
-        return "baseline_missing"
-    if "no such file or directory" in lowered_error and "expected" in lowered_error:
-        return "baseline_missing"
-    if expected_count == 0 and actual_count > 0:
-        return "baseline_missing"
-    if diff_count > 0:
-        return "needs_manual_review"
-    if compare_ok and expected_count > 0 and actual_count > 0:
-        return "likely_ok"
-    return "inconclusive"
-
-
-def _sanitize_filter_slug(filter_name: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9]+", "_", filter_name.strip().lower())
-    return cleaned.strip("_") or "all_tests"
-
-
-def _resolve_battery_selected_tests(filter_name: str, all_tests: list[str] | tuple[str, ...]) -> list[str]:
-    exact = _BATTERY_SCENARIO_SELECTORS.get(filter_name)
-    if exact:
-        available = set(all_tests)
-        return [name for name in exact if name in available]
-    return [test for test in all_tests if filter_name in test]
-
-
-def _render_local_battery_override_lua(selected_tests: tuple[str, ...] | list[str]) -> str:
-    lines: list[str] = []
-    for test_name in selected_tests:
-        override = _LOCAL_BATTERY_TEST_OVERRIDES.get(test_name)
-        if override:
-            if lines:
-                lines.append("")
-            lines.append("-- Local SG preflight override: wait for beam-light resources before screenshot.")
-            lines.append(override)
-    return "\n".join(lines).strip()
-
-
-def _render_local_call_screenshot_override_lua(selected_tests: tuple[str, ...] | list[str]) -> str:
-    if not selected_tests:
-        return ""
-    return "\n".join(
-        [
-            "-- Local SG preflight override: instrument per-test screenshot execution.",
-            "function callSingleScreenshotTest(name, path)",
-            "    local test = testViews[name]",
-            "    if test == nil then",
-            f'        print("{_LUA_TEST_STATUS_SENTINEL}" .. tostring(name) .. "|false|missing_test")',
-            "        return",
-            "    end",
-            "    if not test.enabled then",
-            f'        print("{_LUA_TEST_STATUS_SENTINEL}" .. tostring(name) .. "|false|disabled_test")',
-            "        return",
-            "    end",
-            "    local ok, err = pcall(function() test.update(0) end)",
-            f'    print("{_LUA_TEST_STATUS_SENTINEL}" .. tostring(name) .. "|" .. tostring(ok) .. "|" .. tostring(err))',
-            "    if ok then",
-            "        waitOnRendering(1000)",
-            '        local screenshotPath = path .. "/" .. tostring(name) .. ".png"',
-            "        local shotOk, shotErr = pcall(function() R.screenshot(screenshotPath) end)",
-            f'        print("{_LUA_SCREENSHOT_STATUS_SENTINEL}" .. tostring(name) .. "|" .. tostring(shotOk) .. "|" .. tostring(shotErr))',
-            "    end",
-            "end",
-            "",
-            "function callScreenshotTests(path)",
-            "    for name, test in pairs(testViews) do",
-            "        if test.enabled then",
-            "            callSingleScreenshotTest(name, path)",
-            "        end",
-            "    end",
-            "end",
-        ]
-    ).strip()
-
-
-def _render_local_direct_screenshot_templates(selected_tests: tuple[str, ...] | list[str]) -> dict[str, str]:
-    return {
-        test_name: template
-        for test_name in selected_tests
-        if (template := _LOCAL_DIRECT_SCREENSHOT_LUA_BY_TEST.get(test_name))
-    }
-
-
-def _render_local_proxy_screenshot_templates(selected_tests: tuple[str, ...] | list[str]) -> dict[str, str]:
-    return {
-        test_name: template
-        for test_name in selected_tests
-        if (template := _LOCAL_PROXY_SCREENSHOT_LUA_BY_TEST.get(test_name))
-    }
-
-
-def _extract_missing_expected_baseline(error: str) -> str:
-    if not error:
-        return ""
-    match = re.search(r"No such file or directory:\s*'([^']+)'", error, flags=re.IGNORECASE)
-    if not match:
-        match = re.search(r"Expected screenshot missing:\s*([^\r\n]+)", error, flags=re.IGNORECASE)
-    if not match:
-        return ""
-    missing_path = match.group(1).replace("\\\\", "\\")
-    try:
-        return Path(missing_path).name
-    except OSError:
-        return missing_path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
-
-
-def _scenario_image_names(root: Path) -> tuple[str, ...]:
-    if not root.exists() or not root.is_dir():
-        return ()
-    names = sorted(
-        path.name
-        for path in root.rglob("*")
-        if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES
-    )
-    return tuple(names)
-
-
-def _battery_gap_recommendation(item: BmwBatteryResult) -> str:
-    if item.verdict == "runtime_crash":
-        return "Treat as a technical blocker before manual screenshot review."
-    if item.verdict == "scenario_output_missing":
-        return "Treat as config/output mismatch before human visual review."
-    if item.verdict == "needs_manual_review":
-        return "Open the diff payload and record a human pass/fail decision."
-    if item.verdict == "baseline_candidate_ready":
-        return "Candidate output exists; manual baseline review can start."
-    if item.verdict == "proxy_candidate_ready":
-        return "Proxy output exists; it validates local lamp-state rendering but not the exact beam-cone effect."
-    if item.verdict == "likely_ok":
-        return "Keep as low-priority evidence; no automatic verdict is implied."
-    if item.verdict == "blocked":
-        return "Unblock or rerun the screenshot check before visual comparison."
-    return "Generate or locate the expected baseline before visual comparison."
-
-
-def _review_priority_text_blob(item: BmwBatteryResult) -> str:
-    parts = [
-        item.filter_name,
-        item.verdict,
-        item.status,
-        item.error,
-        item.missing_expected_baseline,
-        *item.actual_files,
-        *item.expected_files,
-        *item.diff_files,
-        *item.proxy_files,
-        *item.notes,
-    ]
-    compacted = " ".join(str(part) for part in parts if str(part).strip())
-    spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", compacted)
-    return f"{compacted} {spaced}".casefold()
-
-
-def _review_priority_risk_labels(item: BmwBatteryResult) -> tuple[str, ...]:
-    blob = _review_priority_text_blob(item)
-    labels: list[str] = []
-    for label, needles in _KNOWN_RISK_KEYWORDS:
-        if any(needle.casefold() in blob for needle in needles):
-            labels.append(label)
-    return tuple(dict.fromkeys(labels))
-
-
-def _review_priority_has_dimension_mismatch(item: BmwBatteryResult) -> bool:
-    blob = _review_priority_text_blob(item)
-    return "dimension mismatch" in blob or "size mismatch" in blob
-
-
-def _review_priority_reason(item: BmwBatteryResult) -> str:
-    if _review_priority_has_dimension_mismatch(item):
-        reason = "Screenshot dimensions differ and need blocker-level triage before visual review."
-    elif item.verdict == "needs_manual_review":
-        reason = "Diff payload exists and needs a human pass/fail decision."
-    elif item.verdict == "baseline_candidate_ready":
-        reason = "Exact candidate output exists, but the baseline still needs a human review decision."
-    elif item.verdict == "proxy_candidate_ready":
-        reason = "Proxy output exists, but the exact requested screenshot still needs review."
-    elif item.verdict == "likely_ok":
-        reason = "Exact compare completed locally with no visible diff; keep as low-priority review evidence."
-    elif item.verdict == "runtime_crash":
-        reason = "Local BMW viewer/runtime crashed during this scenario."
-    elif item.verdict == "scenario_output_missing":
-        reason = "Requested screenshot candidate is missing or emitted under an unexpected name."
-    elif item.verdict == "baseline_missing":
-        reason = "Critical expected baseline is missing, so a reviewer cannot make a direct comparison yet."
-    elif item.verdict == "blocked":
-        reason = "Screenshot check is blocked before a candidate can be reviewed."
-    else:
-        reason = "Needs investigation before this screenshot can be treated as reviewed."
-    risk_labels = _review_priority_risk_labels(item)
-    if risk_labels:
-        reason += f" Known-risk area: {', '.join(risk_labels)}."
-    return reason
-
-
-def _review_priority_score(item: BmwBatteryResult) -> int:
-    base = 0
-    if _review_priority_has_dimension_mismatch(item):
-        base = 98
-    elif item.verdict == "runtime_crash":
-        base = 100
-    elif item.verdict == "needs_manual_review":
-        base = 88
-    elif item.verdict in {"scenario_output_missing", "baseline_missing"}:
-        base = 92
-    elif item.verdict == "blocked":
-        base = 94
-    elif item.verdict == "proxy_candidate_ready":
-        base = 72
-    elif item.verdict == "baseline_candidate_ready":
-        base = 55
-    elif item.verdict == "likely_ok":
-        base = 18
-
-    family = item.filter_name.casefold()
-    family_bonus = 0
-    if family == "lights_onlycones":
-        family_bonus = 16
-    elif family in {"lights_highbeam", "lights_lowbeam"}:
-        family_bonus = 10
-    elif family.startswith("lights_"):
-        family_bonus = 7
-    elif family.startswith("openalldoors_"):
-        family_bonus = 4
-    elif family.startswith("welcome_animation_"):
-        family_bonus = 2
-    risk_bonus = 20 if _review_priority_risk_labels(item) else 0
-
-    diff_bonus = min(max(item.diff_count, 0), 3) * 3
-    actual_bonus = 4 if item.actual_count > 0 else 0
-    target_bonus = 5 if item.target_output_present else 0
-    proxy_bonus = 4 if item.proxy_files else 0
-    return base + family_bonus + risk_bonus + diff_bonus + actual_bonus + target_bonus + proxy_bonus
-
-
-def _review_priority_signals(item: BmwBatteryResult) -> tuple[str, ...]:
-    signals: list[str] = []
-    if _review_priority_has_dimension_mismatch(item):
-        signals.append("dimension mismatch")
-    if item.verdict == "runtime_crash":
-        signals.append("runtime crash")
-    if item.verdict == "needs_manual_review":
-        signals.append("diff review needed")
-    if item.verdict == "scenario_output_missing":
-        signals.append("missing candidate")
-    if item.verdict == "baseline_missing" or item.missing_expected_baseline:
-        signals.append("missing baseline")
-    if item.verdict == "proxy_candidate_ready":
-        signals.append("proxy-only output")
-    if item.verdict == "baseline_candidate_ready":
-        signals.append("exact unresolved state")
-    if item.verdict == "likely_ok":
-        signals.append("unchanged exact compare")
-    if item.verdict == "blocked":
-        signals.append("blocked screenshot check")
-
-    family = item.filter_name.casefold()
-    if family == "lights_onlycones":
-        signals.append("cone family")
-    elif family in {"lights_highbeam", "lights_lowbeam"}:
-        signals.append("beam family")
-    elif family.startswith("lights_"):
-        signals.append("lightfx family")
-
-    if item.diff_count > 0:
-        signals.append("diff present")
-        signals.append(f"{item.diff_count} diff payload")
-    if item.actual_count == 0:
-        signals.append("no actual output")
-    elif item.actual_count > 1:
-        signals.append(f"{item.actual_count} actual outputs")
-    if item.target_output_present:
-        signals.append("target output present")
-    if item.proxy_files:
-        signals.append("proxy files present")
-    signals.extend(f"known risk: {label}" for label in _review_priority_risk_labels(item))
-    return tuple(dict.fromkeys(signals))
-
-
-def _review_priority_level(item: BmwBatteryResult) -> str:
-    if _review_priority_has_dimension_mismatch(item):
-        return "P0"
-    if item.verdict in {"runtime_crash", "scenario_output_missing", "baseline_missing", "blocked"}:
-        return "P0"
-    if item.verdict in {"needs_manual_review", "proxy_candidate_ready"}:
-        return "P1"
-    if item.verdict == "baseline_candidate_ready":
-        return "P1" if _review_priority_risk_labels(item) else "P2"
-    if item.verdict == "likely_ok":
-        return "P2" if _review_priority_risk_labels(item) else "P3"
-    return "P3"
-
-
-def _review_priority_attention_category(level: str) -> str:
-    if level == "P0":
-        return "must inspect"
-    if level == "P1":
-        return "inspect before delivery"
-    if level == "P2":
-        return "normal review"
-    return "low-priority / unchanged"
-
-
-def _ranked_review_priority_key(item: BmwBatteryResult) -> tuple[int, int, int, int, str, str]:
-    level = _review_priority_level(item)
-    return (
-        _REVIEW_PRIORITY_ORDER.get(level, 0),
-        _review_priority_score(item),
-        item.diff_count,
-        item.actual_count,
-        item.profile_id.upper(),
-        item.filter_name.lower(),
-    )
-
-
-def _review_priority_payload(snapshot: DailyQaSnapshot) -> dict[str, Any]:
-    items = sorted(
-        snapshot.battery_results,
-        key=_ranked_review_priority_key,
-        reverse=True,
-    )
-    ranked = [
-        {
-            "profile_id": item.profile_id,
-            "filter_name": item.filter_name,
-            "verdict": item.verdict,
-            "priority_level": _review_priority_level(item),
-            "priority_score": _review_priority_score(item),
-            "attention_category": _review_priority_attention_category(_review_priority_level(item)),
-            "signals": list(_review_priority_signals(item)),
-            "reason": _review_priority_reason(item),
-            "recommendation": _battery_gap_recommendation(item),
-            "expected_count": item.expected_count,
-            "actual_count": item.actual_count,
-            "diff_count": item.diff_count,
-            "target_output_present": item.target_output_present,
-            "proxy_files": list(item.proxy_files),
-            "actual_files": list(item.actual_files),
-            "log_path": item.log_path,
-        }
-        for item in items
-        if item.filter_name.strip()
-    ]
-    return {
-        "created_at": snapshot.created_at,
-        "scope_profiles": list(snapshot.scope_profiles),
-        "ranked_items": ranked,
-        "top_five": ranked[:5],
-    }
-
-
-def _render_review_priority_markdown(snapshot: DailyQaSnapshot) -> str:
-    payload = _review_priority_payload(snapshot)
-    lines = [
-        "# Screenshot Review Priority Ranking",
-        "",
-        f"- Generated: `{snapshot.created_at}`",
-        f"- Scope: `{', '.join(snapshot.scope_profiles)}`",
-        "- This is deterministic operator ranking, not final visual signoff.",
-        "",
-        "| Priority | Profile | Scenario | Verdict | Reason | Recommendation |",
-        "| ---: | --- | --- | --- | --- | --- |",
-    ]
-    for item in payload["ranked_items"]:
-        lines.append(
-            f"| {item['priority_level']} ({item['priority_score']}) | {item['profile_id']} | `{item['filter_name']}` | "
-            f"`{item['verdict']}` | {item['reason']} | {item['recommendation']} |"
-        )
-    if not payload["ranked_items"]:
-        lines.append("| 0 | - | - | - | No ranked screenshot items in this snapshot. | - |")
-    lines.extend(["", "## Top 5 To Review", ""])
-    for item in payload["top_five"]:
-        lines.append(
-            f"- {item['profile_id']}: `{item['filter_name']}` -> `{item['verdict']}` "
-            f"({item['priority_level']} / {item['priority_score']})"
-        )
-    if not payload["top_five"]:
-        lines.append("- No screenshot items require ranking in this snapshot.")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _snapshot_failure_keys(snapshot: DailyQaSnapshot) -> set[str]:
-    failure_keys: set[str] = set()
-    for item in snapshot.smoke_results:
-        if item.status != "completed" or item.diff_count > 0:
-            failure_keys.add(f"smoke:{item.profile_id}:{item.smoke_test}")
-    for item in snapshot.battery_results:
-        if item.verdict in {"runtime_crash", "scenario_output_missing", "blocked", "baseline_missing", "needs_manual_review"}:
-            failure_keys.add(f"battery:{item.profile_id}:{item.filter_name}")
-    return failure_keys
-
-
-def _snapshot_diff_keys(snapshot: DailyQaSnapshot) -> set[str]:
-    diff_keys: set[str] = set()
-    for item in snapshot.smoke_results:
-        if item.diff_count > 0:
-            diff_keys.add(f"smoke:{item.profile_id}:{item.smoke_test}")
-    for item in snapshot.battery_results:
-        if item.verdict == "needs_manual_review":
-            diff_keys.add(f"battery:{item.profile_id}:{item.filter_name}")
-    return diff_keys
-
-
-def _snapshot_status_counts(snapshot: DailyQaSnapshot) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for item in snapshot.battery_results:
-        counts[item.verdict] = counts.get(item.verdict, 0) + 1
-    for item in snapshot.smoke_results:
-        key = f"smoke_{item.status}"
-        counts[key] = counts.get(key, 0) + 1
-    return counts
-
-
-def _daily_delta_payload(
-    current: DailyQaSnapshot,
-    previous: DailyQaSnapshot | None,
-    *,
-    current_output_root: Path,
-    previous_output_root: Path | None = None,
-) -> dict[str, Any]:
-    if previous is None:
-        return {
-            "current_created_at": current.created_at,
-            "previous_created_at": "",
-            "current_output_root": str(current_output_root),
-            "previous_output_root": "",
-            "scope_profiles": list(current.scope_profiles),
-            "new_failures": [],
-            "resolved_failures": [],
-            "new_screenshot_diffs": [],
-            "unchanged_blockers": list(current.blocked_steps),
-            "changed_counts": {"current": _snapshot_status_counts(current), "previous": {}},
-            "top_five_to_review": list(current.top_review_items[:5]),
-        }
-
-    current_failures = _snapshot_failure_keys(current)
-    previous_failures = _snapshot_failure_keys(previous)
-    current_diffs = _snapshot_diff_keys(current)
-    previous_diffs = _snapshot_diff_keys(previous)
-    return {
-        "current_created_at": current.created_at,
-        "previous_created_at": previous.created_at,
-        "current_output_root": str(current_output_root),
-        "previous_output_root": str(previous_output_root) if previous_output_root is not None else "",
-        "scope_profiles": list(current.scope_profiles),
-        "new_failures": sorted(current_failures - previous_failures),
-        "resolved_failures": sorted(previous_failures - current_failures),
-        "new_screenshot_diffs": sorted(current_diffs - previous_diffs),
-        "unchanged_blockers": sorted(set(current.blocked_steps).intersection(previous.blocked_steps)),
-        "changed_counts": {
-            "current": _snapshot_status_counts(current),
-            "previous": _snapshot_status_counts(previous),
-        },
-        "top_five_to_review": list(current.top_review_items[:5]),
-    }
-
-
-def _render_daily_delta_markdown(payload: dict[str, Any]) -> str:
-    lines = [
-        "# Daily QA Delta Summary",
-        "",
-        f"- Current run: `{payload.get('current_created_at', '')}`",
-        f"- Previous run: `{payload.get('previous_created_at', '') or 'none'}`",
-        f"- Current output root: `{payload.get('current_output_root', '')}`",
-    ]
-    previous_output_root = str(payload.get("previous_output_root", "")).strip()
-    if previous_output_root:
-        lines.append(f"- Previous output root: `{previous_output_root}`")
-    lines.extend(
-        [
-            "",
-            "## New Failures",
-        ]
-    )
-    new_failures = payload.get("new_failures", [])
-    if new_failures:
-        lines.extend(f"- `{item}`" for item in new_failures)
-    else:
-        lines.append("- None")
-    lines.extend(["", "## Resolved Failures"])
-    resolved_failures = payload.get("resolved_failures", [])
-    if resolved_failures:
-        lines.extend(f"- `{item}`" for item in resolved_failures)
-    else:
-        lines.append("- None")
-    lines.extend(["", "## New Screenshot Diffs"])
-    new_diffs = payload.get("new_screenshot_diffs", [])
-    if new_diffs:
-        lines.extend(f"- `{item}`" for item in new_diffs)
-    else:
-        lines.append("- None")
-    lines.extend(["", "## Unchanged Blockers"])
-    unchanged = payload.get("unchanged_blockers", [])
-    if unchanged:
-        lines.extend(f"- {item}" for item in unchanged)
-    else:
-        lines.append("- None")
-    lines.extend(["", "## Changed Counts", "", "```json", json.dumps(payload.get("changed_counts", {}), indent=2, ensure_ascii=False), "```", "", "## Top 5 To Review"])
-    top = payload.get("top_five_to_review", [])
-    if top:
-        lines.extend(f"- {item}" for item in top)
-    else:
-        lines.append("- None")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _render_candidate_review_gallery(snapshot: DailyQaSnapshot, *, html_root: Path | None = None) -> str:
-    sections: list[str] = [
-        "<!doctype html>",
-        "<html lang=\"en\">",
-        "<head>",
-        "<meta charset=\"utf-8\">",
-        "<title>Candidate Review Gallery</title>",
-        "<style>",
-        "body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; background: #111827; color: #f3f4f6; }",
-        "h1, h2, h3 { margin-bottom: 0.4rem; }",
-        ".note { color: #cbd5e1; max-width: 70rem; }",
-        ".card { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 16px; margin: 16px 0; }",
-        ".meta { color: #d1d5db; margin-bottom: 12px; }",
-        ".gallery { display: flex; flex-wrap: wrap; gap: 16px; }",
-        ".shot { background: #0f172a; border-radius: 8px; padding: 12px; width: min(31rem, 100%); }",
-        ".shot img { max-width: 100%; height: auto; display: block; background: #000; border-radius: 6px; }",
-        ".tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #2563eb; color: #eff6ff; font-size: 12px; margin-right: 8px; }",
-        ".tag.warn { background: #b45309; color: #fffbeb; }",
-        ".tag.ok { background: #166534; color: #ecfdf5; }",
-        ".tag.proxy { background: #7c3aed; color: #f5f3ff; }",
-        ".summary { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 24px; }",
-        ".summary .item { background: #0f172a; border: 1px solid #374151; border-radius: 10px; padding: 10px 12px; min-width: 14rem; }",
-        ".recommendation { color: #cbd5e1; margin: 10px 0 0; }",
-        "code { color: #bfdbfe; }",
-        "</style>",
-        "</head>",
-        "<body>",
-        "<h1>Candidate Review Gallery</h1>",
-        "<p class=\"note\">This gallery flattens the broader screenshot battery into a quick visual pass. It is intended to reduce manual navigation overhead, not to replace final signoff.</p>",
-    ]
-
-    items = [
-        item
-        for item in snapshot.battery_results
-        if item.verdict in {"baseline_candidate_ready", "proxy_candidate_ready", "needs_manual_review", "likely_ok"}
-    ]
-    items.sort(
-        key=lambda item: (
-            _review_priority_score(item),
-            item.profile_id.upper(),
-            item.filter_name.lower(),
-        ),
-        reverse=True,
-    )
-    if not items:
-        sections.extend(
-            [
-                "<p>No candidate-ready or reviewable screenshot outputs were found in this snapshot.</p>",
-                "</body>",
-                "</html>",
-            ]
-        )
-        return "\n".join(sections)
-
-    verdict_counts: dict[str, int] = {}
-    for item in items:
-        verdict_counts[item.verdict] = verdict_counts.get(item.verdict, 0) + 1
-    sections.extend(
-        [
-            "<div class=\"summary\">",
-            f"<div class=\"item\"><strong>Total reviewable items</strong><br>{len(items)}</div>",
-            f"<div class=\"item\"><strong>Needs manual diff review</strong><br>{verdict_counts.get('needs_manual_review', 0)}</div>",
-            f"<div class=\"item\"><strong>Exact baseline candidates</strong><br>{verdict_counts.get('baseline_candidate_ready', 0)}</div>",
-            f"<div class=\"item\"><strong>Proxy candidates</strong><br>{verdict_counts.get('proxy_candidate_ready', 0)}</div>",
-            f"<div class=\"item\"><strong>Likely OK exact compares</strong><br>{verdict_counts.get('likely_ok', 0)}</div>",
-            "</div>",
-        ]
-    )
-
-    for item in items:
-        priority_score = _review_priority_score(item)
-        recommendation = (
-            "Review the diff payload and decide pass/fail."
-            if item.verdict == "needs_manual_review"
-            else _battery_gap_recommendation(item)
-        )
-        verdict_tag_class = "ok" if item.verdict == "likely_ok" else "proxy" if item.verdict == "proxy_candidate_ready" else "warn" if item.verdict == "needs_manual_review" else ""
-        sections.extend(
-            [
-                "<div class=\"card\">",
-                f"<h2>{escape(item.profile_id)} / <code>{escape(item.filter_name)}</code></h2>",
-                "<div class=\"meta\">",
-                f"<span class=\"tag {verdict_tag_class}\">{escape(item.verdict)}</span>",
-                f"<span class=\"tag\">priority {priority_score}</span>",
-                f"<span>Expected {item.expected_count} | Actual {item.actual_count} | Diff {item.diff_count}</span>",
-                "</div>",
-                "<div class=\"gallery\">",
-            ]
-        )
-        actual_root = Path(item.results_root) / "tests" / "actuals"
-        proxy_root = Path(item.results_root) / "tests" / "proxy_actuals"
-        shot_names = item.actual_files
-        shot_root = actual_root
-        shot_label = "actual"
-        if item.verdict == "proxy_candidate_ready" and item.proxy_files:
-            shot_names = item.proxy_files
-            shot_root = proxy_root
-            shot_label = "proxy"
-        for name in shot_names:
-            image_path = (shot_root / name).resolve()
-            if not image_path.exists():
-                continue
-            image_src = image_path.as_uri()
-            image_display_path = str(image_path)
-            if html_root is not None:
-                image_src = Path(os.path.relpath(image_path, html_root.parent)).as_posix()
-                image_display_path = image_src
-            sections.extend(
-                [
-                    "<div class=\"shot\">",
-                    f"<h3>{escape(name)} <span class=\"tag {'proxy' if shot_label == 'proxy' else 'warn'}\">{escape(shot_label)}</span></h3>",
-                    f"<img src=\"{escape(image_src)}\" alt=\"{escape(name)}\">",
-                    f"<p><code>{escape(image_display_path)}</code></p>",
-                    "</div>",
-                ]
-            )
-        sections.extend(
-            [
-                "</div>",
-                f"<p class=\"recommendation\"><strong>Suggested next action:</strong> {escape(recommendation)}</p>",
-                "</div>",
-            ]
-        )
-
-    sections.extend(["</body>", "</html>"])
-    return "\n".join(sections)
-
-
-def _group_battery_results_by_profile(battery_results: tuple[BmwBatteryResult, ...] | list[BmwBatteryResult]) -> dict[str, list[BmwBatteryResult]]:
-    grouped: dict[str, list[BmwBatteryResult]] = {}
-    for item in battery_results:
-        grouped.setdefault(item.profile_id.strip().upper(), []).append(item)
-    return grouped
-
-
-def _beam_family_diagnostics(
-    battery_results: tuple[BmwBatteryResult, ...] | list[BmwBatteryResult],
-) -> tuple[str, ...]:
-    diagnostics: list[str] = []
-    for profile_id, items in sorted(_group_battery_results_by_profile(battery_results).items()):
-        by_filter = {item.filter_name: item for item in items}
-        control = by_filter.get("lights_drl_front")
-        if control is None or control.actual_count <= 0:
-            continue
-        unresolved_filters = [
-            name
-            for name in ("lights_LowBeam", "lights_HighBeam", "lights_OnlyCones")
-            if (item := by_filter.get(name)) is not None
-            and item.actual_count <= 0
-            and not item.proxy_files
-        ]
-        proxy_filters = [
-            name
-            for name in ("lights_LowBeam", "lights_HighBeam", "lights_OnlyCones")
-            if (item := by_filter.get(name)) is not None and item.proxy_files
-        ]
-        if unresolved_filters:
-            unresolved_text = ", ".join(f"`{name}`" for name in unresolved_filters)
-            diagnostics.append(
-                f"{profile_id}: control `lights_drl_front` generated screenshot payload, but {unresolved_text} still emitted no exact PNG output. "
-                "Treat this as a beam-family runtime/content failure, not as a wider battery harness failure."
-            )
-        if proxy_filters:
-            proxy_text = ", ".join(f"`{name}`" for name in proxy_filters)
-            diagnostics.append(
-                f"{profile_id}: exact beam-cone rendering still fails locally for {proxy_text}, but proxy lamp-state screenshots were generated with `LightCones_isVisible = false`."
-            )
-    return tuple(diagnostics)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _parse_named_bool_statuses(output: str, sentinel: str) -> dict[str, tuple[bool, str]]:
@@ -1230,201 +525,10 @@ def _parse_named_bool_statuses(output: str, sentinel: str) -> dict[str, tuple[bo
     return parsed
 
 
-def _battery_baseline_gap_payload(snapshot: DailyQaSnapshot) -> dict[str, Any]:
-    grouped: dict[str, list[dict[str, str]]] = {}
-    for item in snapshot.battery_results:
-        if item.verdict not in {"baseline_missing", "baseline_candidate_ready", "scenario_output_missing"}:
-            continue
-        missing_baseline = item.missing_expected_baseline or _extract_missing_expected_baseline(item.error)
-        grouped.setdefault(item.profile_id, []).append(
-            {
-                "filter_name": item.filter_name,
-                "verdict": item.verdict,
-                "missing_expected_baseline": missing_baseline or "unknown expected file",
-                "target_output_present": "yes" if item.target_output_present else "no",
-                "actual_files": ", ".join(item.actual_files) if item.actual_files else "(none)",
-                "recommendation": _battery_gap_recommendation(item),
-                "error": item.error,
-                "log_path": item.log_path,
-            }
-        )
-
-    return {
-        "created_at": snapshot.created_at,
-        "scope_profiles": list(snapshot.scope_profiles),
-        "profiles": [
-            {
-                "profile_id": profile_id,
-                "gaps": gaps,
-            }
-            for profile_id, gaps in sorted(grouped.items())
-        ],
-    }
 
 
-def _render_battery_baseline_gaps_markdown(snapshot: DailyQaSnapshot) -> str:
-    payload = _battery_baseline_gap_payload(snapshot)
-    lines = [
-        "# Broader Screenshot Battery - Baseline And Output Gaps",
-        "",
-    ]
-
-    profiles = payload.get("profiles", [])
-    if not profiles:
-        lines.append("No missing expected baselines were inferred from the current broader battery run.")
-        lines.append("")
-        return "\n".join(lines)
-
-    for profile in profiles:
-        profile_id = str(profile.get("profile_id", "")).strip() or "unknown"
-        lines.extend(
-            [
-                f"## {profile_id}",
-                "",
-            ]
-        )
-        for gap in profile.get("gaps", []):
-            filter_name = str(gap.get("filter_name", "")).strip() or "unknown"
-            verdict = str(gap.get("verdict", "")).strip() or "unknown"
-            missing_baseline = str(gap.get("missing_expected_baseline", "")).strip() or "unknown expected file"
-            target_output_present = str(gap.get("target_output_present", "")).strip() or "no"
-            actual_files = str(gap.get("actual_files", "")).strip() or "(none)"
-            recommendation = str(gap.get("recommendation", "")).strip()
-            lines.append(
-                f"- `{filter_name}` -> verdict `{verdict}`; missing expected baseline `{missing_baseline}`; "
-                f"target output present `{target_output_present}`; actual files `{actual_files}`"
-            )
-            if recommendation:
-                lines.append(f"  Recommendation: {recommendation}")
-        lines.append("")
-
-    return "\n".join(lines)
 
 
-def _render_snapshot_markdown(snapshot: DailyQaSnapshot) -> str:
-    lines = [
-        f"# Daily 3D Car QA Summary",
-        "",
-        f"- Generated: `{snapshot.created_at}`",
-        f"- Scope: `{', '.join(snapshot.scope_profiles)}`",
-        f"- BMW repo root: `{snapshot.bmw_repo_root or 'not found'}`",
-        "",
-        "## Config Check",
-        "",
-        f"- Status: `{snapshot.config_check.status}`",
-        f"- Python: `{snapshot.config_check.python_exe}`",
-        f"- Log: `{snapshot.config_check.log_path}`",
-    ]
-    if snapshot.config_check.error:
-        lines.append(f"- Error: `{snapshot.config_check.error}`")
-    if snapshot.config_check.output_excerpt:
-        lines.extend(
-            [
-                "",
-                "```text",
-                snapshot.config_check.output_excerpt.rstrip(),
-                "```",
-            ]
-        )
-
-    lines.extend(
-        [
-            "",
-            "## Smoke Results",
-            "",
-            "| Profile | Status | Smoke Test | Ramses Bytes | Expected | Actual | Diff | Compare |",
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
-        ]
-    )
-    for item in snapshot.smoke_results:
-        lines.append(
-            f"| {item.profile_id} | {item.status} | `{item.smoke_test}` | "
-            f"{item.exported_ramses_size} | {item.expected_count} | {item.actual_count} | {item.diff_count} | "
-            f"{'passed' if item.compare_ok else 'not-passed'} |"
-        )
-    for item in snapshot.smoke_results:
-        lines.extend(
-            [
-                "",
-                f"### {item.profile_id}",
-                "",
-                f"- BMW profile: `{item.bmw_profile_id}`",
-                f"- SG project root: `{item.sg_project_root}`",
-                f"- Test config: `{item.bmw_test_config_path or 'not found'}`",
-                f"- Log: `{item.log_path}`",
-            ]
-        )
-        if item.error:
-            lines.append(f"- Error: `{item.error}`")
-        if item.notes:
-            lines.append("- Notes:")
-            for note in item.notes:
-                lines.append(f"  - {note}")
-
-    if snapshot.battery_results:
-        lines.extend(
-            [
-                "",
-                "## Broader Screenshot Battery",
-                "",
-                "| Profile | Filter | Verdict | Expected | Actual | Diff | Log |",
-                "| --- | --- | --- | ---: | ---: | ---: | --- |",
-            ]
-        )
-        for item in snapshot.battery_results:
-            lines.append(
-                f"| {item.profile_id} | `{item.filter_name}` | {item.verdict} | "
-                f"{item.expected_count} | {item.actual_count} | {item.diff_count} | `{item.log_path}` |"
-            )
-
-    lines.extend(
-        [
-            "",
-            "## Diagnostics",
-            "",
-        ]
-    )
-    if snapshot.diagnostics:
-        lines.extend(f"- {item}" for item in snapshot.diagnostics)
-    else:
-        lines.append("- No grouped cross-scenario diagnosis was inferred from the current battery run.")
-
-    lines.extend(
-        [
-            "",
-            "## Top Review Items",
-            "",
-        ]
-    )
-    if snapshot.top_review_items:
-        lines.extend(f"- {item}" for item in snapshot.top_review_items)
-    else:
-        lines.append("- No immediate review items were inferred from the current smoke pass.")
-
-    lines.extend(
-        [
-            "",
-            "## Blocked Steps",
-            "",
-        ]
-    )
-    if snapshot.blocked_steps:
-        lines.extend(f"- {item}" for item in snapshot.blocked_steps)
-    else:
-        lines.append("- No blockers were detected in this local snapshot.")
-
-    if snapshot.notes:
-        lines.extend(
-            [
-                "",
-                "## Notes",
-                "",
-            ]
-        )
-        lines.extend(f"- {item}" for item in snapshot.notes)
-
-    lines.append("")
-    return "\n".join(lines)
 
 
 def _run_bmw_configuration_check(

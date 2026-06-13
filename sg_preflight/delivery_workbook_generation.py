@@ -28,8 +28,10 @@ from sg_preflight.delivery_checklist import (
     read_delivery_checklist,
 )
 from sg_preflight.dependency_onboarding import load_dependency_onboarding_state
+from sg_preflight.session_log import event as _session_log_event
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
 from sg_preflight.utils import ensure_parent
+from sg_preflight.workbook_generator import generate_official_delivery_workbook_from_export_log
 
 
 BMW_PIPELINE_PYTHON_ENV = "SG_BMW_PYTHON_EXE"
@@ -158,6 +160,48 @@ def _registered_dir(workspace: Path | str | None, keys: tuple[str, ...]) -> Path
         if candidate.is_dir():
             return candidate.resolve()
     return None
+
+
+def _env_path(key: str) -> Path | None:
+    raw = os.environ.get(key, "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
+def _bmw_ci_venv_python(repo_root: Path) -> Path:
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    executable = "python.exe" if os.name == "nt" else "python"
+    return repo_root / ".venv_bmw_ci" / scripts_dir / executable
+
+
+def _bmw_ci_venv_python_candidates(
+    *,
+    workspace: Path | str | None,
+    bmw_root: Path | str | None,
+) -> list[Path]:
+    roots: list[Path] = []
+    if bmw_root is not None:
+        roots.append(Path(bmw_root).expanduser())
+    for candidate in (
+        _env_path(DIGITAL_3D_CAR_REPO_ENV),
+        _env_path(DIGITAL_3D_CAR_REPO_IDC23_ENV),
+        _registered_dir(workspace, _DIGITAL_REPO_REGISTRATION_KEYS),
+        _registered_dir(workspace, _DIGITAL_REPO_IDC23_REGISTRATION_KEYS),
+    ):
+        if candidate is not None:
+            roots.append(candidate)
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            resolved = root
+        normalized = os.path.normcase(str(resolved))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        candidates.append(_bmw_ci_venv_python(resolved))
+    return candidates
 
 
 def _digital_repo_check(
@@ -315,15 +359,11 @@ def _tool_check(executable_name: str, label: str, *, workspace: Path | str | Non
     )
 
 
-def _python_command_payload(workspace: Path | str | None = None) -> dict[str, Any]:
-    registered = _registered_file(workspace, _PYTHON_REGISTRATION_KEYS)
-    if registered is not None:
-        return {
-            "status": "available",
-            "command": [str(registered)],
-            "path": str(registered),
-            "detail": "BMW pipeline Python is available from dependency setup registration.",
-        }
+def _python_command_payload(
+    workspace: Path | str | None = None,
+    *,
+    bmw_root: Path | str | None = None,
+) -> dict[str, Any]:
     override = os.environ.get(BMW_PIPELINE_PYTHON_ENV, "").strip()
     if override:
         override_path = Path(override).expanduser()
@@ -340,6 +380,25 @@ def _python_command_payload(workspace: Path | str | None = None) -> dict[str, An
             "path": str(override_path),
             "detail": f"{BMW_PIPELINE_PYTHON_ENV} is set, but the file does not exist.",
         }
+
+    registered = _registered_file(workspace, _PYTHON_REGISTRATION_KEYS)
+    if registered is not None:
+        return {
+            "status": "available",
+            "command": [str(registered)],
+            "path": str(registered),
+            "detail": "BMW pipeline Python is available from dependency setup registration.",
+        }
+
+    for candidate in _bmw_ci_venv_python_candidates(workspace=workspace, bmw_root=bmw_root):
+        if candidate.is_file():
+            resolved = candidate.resolve()
+            return {
+                "status": "available",
+                "command": [str(resolved)],
+                "path": str(resolved),
+                "detail": "BMW-CI .venv_bmw_ci Python is available for BMW pipeline script invocation.",
+            }
 
     candidates: list[str] = []
     for executable_name in ("py.exe", "python.exe", "python3.exe", "py", "python", "python3"):
@@ -368,8 +427,12 @@ def _python_command_payload(workspace: Path | str | None = None) -> dict[str, An
     }
 
 
-def _python_check(workspace: Path | str | None = None) -> dict[str, str]:
-    payload = _python_command_payload(workspace)
+def _python_check(
+    workspace: Path | str | None = None,
+    *,
+    bmw_root: Path | str | None = None,
+) -> dict[str, str]:
+    payload = _python_command_payload(workspace, bmw_root=bmw_root)
     if payload["status"] == "available":
         return _check(
             key="bmw_pipeline_python",
@@ -505,7 +568,7 @@ def check_delivery_workbook_generation_environment(
     lane = detect_lane(clean_profile, bmw_root=repo_root) if repo_root is not None else LANE_UNKNOWN
     checks = [
         repo_check,
-        _python_check(workspace_path),
+        _python_check(workspace_path, bmw_root=repo_root),
         _tool_check("raco.exe", "RaCo", workspace=workspace_path),
         _tool_check("RaCoHeadless.exe", "RaCoHeadless", workspace=workspace_path),
         _tool_check("blender.exe", "Blender", workspace=workspace_path),
@@ -686,7 +749,7 @@ def resolve_delivery_workbook_generation_command(
     root = Path(bmw_root).resolve()
     clean_profile = _clean_profile(profile_id)
     lane = detect_lane(clean_profile, bmw_root=root)
-    python_payload = _python_command_payload(workspace)
+    python_payload = _python_command_payload(workspace, bmw_root=root)
     if python_payload["status"] != "available":
         return {
             "status": "unavailable",
@@ -816,6 +879,7 @@ class DeliveryWorkbookGenerationJob:
     timeout_seconds: int
     preflight: dict[str, Any]
     completed: bool = False
+    session_completion_logged: bool = False
 
 
 def _elapsed_label(elapsed_seconds: float) -> str:
@@ -941,7 +1005,19 @@ def _copy_file_evidence(source: Path, destination: Path) -> dict[str, Any] | Non
     if not source.is_file():
         return None
     ensure_parent(destination)
-    shutil.copy2(source, destination)
+    try:
+        same_path = source.resolve() == destination.resolve()
+    except OSError:
+        same_path = False
+    if not same_path:
+        for attempt in range(4):
+            try:
+                shutil.copy2(source, destination)
+                break
+            except PermissionError:
+                if attempt >= 3:
+                    raise
+                time.sleep(0.05)
     try:
         stat = destination.stat()
     except OSError:
@@ -1039,6 +1115,8 @@ def _workbook_preview(checklist_payload: dict[str, Any]) -> dict[str, Any]:
         return {}
     variant_count_check = _check_by_key(checklist_payload, "variant_count")
     totals_check = _check_by_key(checklist_payload, "variant_totals")
+    ramses_check = _check_by_key(checklist_payload, "ramses_size")
+    logic_check = _check_by_key(checklist_payload, "logic_size")
     variant_count = str(variant_count_check.get("raw_value", "") or "").strip()
     totals_raw = str(totals_check.get("raw_value", "") or "").strip()
     totals = [item.strip() for item in totals_raw.split(",") if item.strip()]
@@ -1052,9 +1130,40 @@ def _workbook_preview(checklist_payload: dict[str, Any]) -> dict[str, Any]:
         "worksheet": str(checklist_payload.get("worksheet", "")),
         "variant_count": variant_count,
         "variant_totals": totals[:6],
+        "ramses_size": str(ramses_check.get("raw_value", "") or "").strip(),
+        "logic_size": str(logic_check.get("raw_value", "") or "").strip(),
         "modified_at": str(metadata.get("modified_at", "")),
         "file_size": int(metadata.get("file_size", 0) or 0),
         "summary": str(checklist_payload.get("summary", "")),
+    }
+
+
+def _read_export_stdout_for_workbook(stdout_path: Path) -> str:
+    try:
+        return stdout_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _generate_official_workbook_from_export(job: DeliveryWorkbookGenerationJob) -> dict[str, Any]:
+    stdout = _read_export_stdout_for_workbook(job.stdout_path)
+    if not stdout:
+        return {}
+    candidate = generate_official_delivery_workbook_from_export_log(
+        job.profile_id,
+        stdout,
+        workspace=job.workspace,
+        bmw_root=job.bmw_root,
+    )
+    if candidate is None:
+        return {}
+    return {
+        "path": str(candidate.path),
+        "source_key": candidate.source_key,
+        "source_classification": candidate.source_classification,
+        "workbook_format": candidate.workbook_format,
+        "size_bytes": candidate.size_bytes,
+        "mtime_iso": candidate.mtime_iso,
     }
 
 
@@ -1107,14 +1216,24 @@ def _generation_result(
 ) -> dict[str, Any]:
     checklist_payload: dict[str, Any] = {}
     escalation: dict[str, str] = {}
+    generated_workbook: dict[str, Any] = {}
     if exit_code == 0 and not timed_out and not canceled:
+        generated_workbook = _generate_official_workbook_from_export(job)
+        generated_path = str(generated_workbook.get("path", "")).strip()
         try:
-            checklist_payload = read_delivery_checklist(profile_id=job.profile_id, workspace=job.workspace)
+            checklist_payload = read_delivery_checklist(
+                profile_id=job.profile_id,
+                workspace=job.workspace,
+                bmw_root=job.bmw_root,
+                workbook_path=generated_path or None,
+            )
         except Exception as exc:  # noqa: BLE001
             checklist_payload = {"status": "failed", "summary": f"delivery checklist could not be re-read: {exc}"}
         if checklist_payload.get("status") == "available":
             status = "available"
             summary = str(checklist_payload.get("summary", "Delivery workbook generated and available."))
+            if generated_workbook:
+                summary = f"Local official-format delivery workbook generated. {summary}"
         elif status == "available":
             status = "unavailable"
             checklist_summary = str(checklist_payload.get("summary", "")).strip()
@@ -1131,6 +1250,15 @@ def _generation_result(
         stdout_path=job.stdout_path,
         stderr_path=job.stderr_path,
         summary="BMW pipeline export raised a technical traceback - see technical details and workbook/log evidence below.",
+    )
+    _log_delivery_workbook_generation_completion(
+        job,
+        exit_code=exit_code,
+        status=status,
+        summary=summary,
+        elapsed_seconds=elapsed_seconds,
+        timed_out=timed_out,
+        canceled=canceled,
     )
     return {
         "profile_id": job.profile_id,
@@ -1157,6 +1285,7 @@ def _generation_result(
         "stderr_path": str(job.stderr_path),
         "file_activity": _file_activity(job.workspace, job.started_wall_time),
         "workbook_preview": _workbook_preview(checklist_payload),
+        "generated_workbook": generated_workbook,
         "copied_evidence": copied_evidence,
         "sgfx_output_root": copied_evidence["output_root"],
         "native_output_path": str(_delivery_workbook_output_dir(job.workspace)),
@@ -1220,6 +1349,15 @@ def start_delivery_workbook_generation(
             env=env,
             **hidden_subprocess_kwargs(),
         )
+    _log_delivery_workbook_generation_spawn(
+        profile_id=clean_profile,
+        workspace=workspace_path,
+        command=list(command_payload["command"]),
+        cwd=Path(str(command_payload["cwd"])).resolve(),
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        process=process,
+    )
     return DeliveryWorkbookGenerationJob(
         profile_id=clean_profile,
         workspace=workspace_path,
@@ -1233,6 +1371,66 @@ def start_delivery_workbook_generation(
         started_wall_time=started_wall_time,
         timeout_seconds=timeout_seconds,
         preflight=preflight,
+    )
+
+
+def _log_delivery_workbook_generation_spawn(
+    *,
+    profile_id: str,
+    workspace: Path,
+    command: list[str],
+    cwd: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+    process: subprocess.Popen[bytes],
+) -> None:
+    _session_log_event(
+        source="subprocess",
+        surface="delivery_workbook_generation",
+        profile=profile_id,
+        message="BMW pipeline export spawned",
+        detail={
+            "command": list(command),
+            "cwd": str(cwd),
+            "workspace": str(workspace),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "pid": getattr(process, "pid", None),
+        },
+    )
+
+
+def _log_delivery_workbook_generation_completion(
+    job: DeliveryWorkbookGenerationJob,
+    *,
+    exit_code: int,
+    status: str,
+    summary: str,
+    elapsed_seconds: float,
+    timed_out: bool,
+    canceled: bool,
+) -> None:
+    if job.session_completion_logged:
+        return
+    job.session_completion_logged = True
+    _session_log_event(
+        source="subprocess",
+        surface="delivery_workbook_generation",
+        profile=job.profile_id,
+        message="BMW pipeline export completed",
+        level="info" if exit_code == 0 and status in {"available", "unavailable"} else "error",
+        detail={
+            "command": list(job.command),
+            "exit_code": exit_code,
+            "status": status,
+            "summary": summary,
+            "elapsed_seconds": int(max(0, elapsed_seconds)),
+            "timed_out": timed_out,
+            "canceled": canceled,
+            "stdout_path": str(job.stdout_path),
+            "stderr_path": str(job.stderr_path),
+            "stderr_tail": _tail_text(job.stderr_path),
+        },
     )
 
 

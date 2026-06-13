@@ -680,7 +680,7 @@ std::string FormatLoadedChromeStatus(ShellLanguage language) {
     case German: return "Die Oberflaechenressourcen des Shells wurden geladen.";
     case Romanian: return "Au fost incarcate resursele vizuale ale shell-ului.";
     }
-    return "Loaded the shell interface assets.";
+    return "Loaded the shell interface resources.";
 }
 
 std::string FormatFallbackChromeStatus(ShellLanguage language, std::string_view error) {

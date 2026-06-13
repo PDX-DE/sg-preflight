@@ -10,6 +10,10 @@ NATIVE_SRC = ROOT / "desktop_native" / "src"
 SHELL_SRC = NATIVE_SRC / "sgfx_shell"
 
 
+@unittest.skipUnless(
+    (ROOT / "desktop_native").exists(),
+    "curated source-review bundle excludes native R&D sources",
+)
 class TestNativeShellReplacement(unittest.TestCase):
     def test_native_entrypoint_is_thin_and_uses_replacement_shell(self) -> None:
         main_source = (NATIVE_SRC / "main.cpp").read_text(encoding="utf-8")
@@ -112,30 +116,30 @@ class TestNativeShellReplacement(unittest.TestCase):
         self.assertLess(run_body.index("create_window(show_command)"), run_body.index("diagnostic_.refresh"))
         self.assertIn("InvalidateRect(window_, nullptr, TRUE);", run_body)
 
-    def test_phase2a_assets_are_available_to_the_replacement_shell(self) -> None:
+    def test_retired_adapted_assets_are_not_required_by_the_replacement_shell(self) -> None:
         assets = ROOT / "desktop_native" / "assets"
-        expected_files = [
-            "images/common/raw/general_window.png",
-            "images/common/raw/select.png",
-            "images/common/raw/light.png",
-            "images/common/raw/options_static.png",
-            "images/common/raw/options_static_flash.png",
-            "sounds/ui_cursor.wav",
-            "sounds/ui_confirm.wav",
-            "sounds/ui_cancel.wav",
-            "sounds/ui_panel_open.wav",
-            "sounds/ui_panel_close.wav",
-            "sounds/ui_page.wav",
+        retired_paths = [
+            "desktop_native/" + "assets",
+            "images\\common\\raw\\general_" + "window.png",
+            "images\\common\\raw\\select.png",
+            "images\\common\\raw\\light.png",
+            "images\\common\\raw\\options_" + "static.png",
+            "images\\common\\raw\\options_" + "static_flash.png",
+            "sounds\\ui_" + "cursor.wav",
+            "sounds\\ui_confirm.wav",
+            "sounds\\ui_cancel.wav",
+            "sounds\\ui_panel_open.wav",
+            "sounds\\ui_panel_close.wav",
+            "sounds\\ui_page.wav",
         ]
 
-        for relative_path in expected_files:
-            with self.subTest(relative_path=relative_path):
-                self.assertTrue((assets / relative_path).exists())
-
+        self.assertFalse(assets.exists())
         shared_resources = (SHELL_SRC / "sgfx_shared_resources.cpp").read_text(encoding="utf-8")
-        for relative_path in expected_files:
-            with self.subTest(source_reference=relative_path):
-                self.assertIn(relative_path.replace("/", "\\\\"), shared_resources)
+        package_script = (ROOT / "scripts" / "package_native_shell_bundle.ps1").read_text(encoding="utf-8")
+        for retired_path in retired_paths:
+            with self.subTest(retired_path=retired_path):
+                self.assertNotIn(retired_path, shared_resources)
+                self.assertNotIn(retired_path, package_script)
 
     def test_replacement_shell_source_has_no_parked_or_upstream_brand_tokens(self) -> None:
         production_files = [

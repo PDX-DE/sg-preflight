@@ -243,13 +243,9 @@ if (Test-Path $genericReferenceResources) {
     $resourceCandidates += $genericReferenceResources
 }
 $resourceRoot = $null
-$sgfxAssetRoot = Join-Path $repoRoot "desktop_native\assets"
-if (Test-Path (Join-Path $sgfxAssetRoot "images\common\raw\general_window.png")) {
-    Copy-Tree -Source $sgfxAssetRoot -Destination $resourcesDir
-}
 if ($IncludeReferenceResources) {
     foreach ($candidate in $resourceCandidates) {
-        if ((Test-Path $candidate) -and (Test-Path (Join-Path $candidate "images\common\raw\general_window.png")) -and (Test-Path (Join-Path $candidate "images\common\raw\options_static.png"))) {
+        if (Test-Path $candidate) {
             $resourceRoot = $candidate
             break
         }

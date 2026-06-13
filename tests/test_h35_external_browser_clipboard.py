@@ -1,20 +1,15 @@
-"""H-35 source guards + light behavioural tests for the Jira external-browser
-handoff and the Teams clipboard fallback."""
+"""internal milestone source guards + light behavioural tests for dashboard clipboard flows."""
 from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from unittest import mock
 
 
-class JiraExternalBrowserHandoffTests(unittest.TestCase):
-    def test_helper_invokes_webbrowser_open_with_new_external_window(self) -> None:
-        """`_open_jira_ticket_in_browser` must call `webbrowser.open(url, new=2,
-        autoraise=True)` so the operator's default external browser handles the
-        Jira redirect via their existing SSO session (no in-app re-login)."""
+class JiraClipboardOnlyTests(unittest.TestCase):
+    def test_helper_copies_ticket_url_without_browser_open(self) -> None:
+        """Jira ticket clicks are copy-only; the browser reports copy success."""
         from sg_preflight.dashboard import main as dashboard_main
 
-        opens: list[tuple[str, int, bool]] = []
         notifies: list[str] = []
         js_calls: list[str] = []
 
@@ -25,33 +20,22 @@ class JiraExternalBrowserHandoffTests(unittest.TestCase):
             def run_javascript(self, payload: str) -> None:
                 js_calls.append(payload)
 
-        def fake_open(url: str, new: int = 0, autoraise: bool = True) -> bool:
-            opens.append((url, new, autoraise))
-            return True
+        dashboard_main._copy_dashboard_link_to_clipboard(
+            FakeUi(),
+            "https://jira.cc.bmwgroup.net/browse/IDCEVODEV-1009244",
+            "IDCEVODEV-1009244",
+        )
 
-        with mock.patch.object(dashboard_main.webbrowser, "open", side_effect=fake_open):
-            dashboard_main._open_jira_ticket_in_browser(
-                FakeUi(),
-                "https://jira.cc.bmwgroup.net/browse/IDCEVODEV-1009244",
-                "IDCEVODEV-1009244",
-            )
-
-        self.assertEqual(len(opens), 1, opens)
-        url, new, _autoraise = opens[0]
-        self.assertEqual(url, "https://jira.cc.bmwgroup.net/browse/IDCEVODEV-1009244")
-        self.assertEqual(new, 2, "webbrowser.open must use new=2 so a new browser window opens")
-        # Clipboard fallback fired.
         self.assertEqual(len(js_calls), 1)
         self.assertIn("navigator.clipboard.writeText", js_calls[0])
+        self.assertIn("document.execCommand('copy')", js_calls[0])
+        self.assertIn("https://jira.cc.bmwgroup.net/browse/IDCEVODEV-1009244", js_calls[0])
         self.assertIn("IDCEVODEV-1009244", js_calls[0])
-        # Notify shown with the success wording.
-        self.assertEqual(len(notifies), 1)
-        self.assertIn("Opened IDCEVODEV-1009244", notifies[0])
-        self.assertIn("URL copied to clipboard", notifies[0])
+        self.assertIn("Copied to clipboard: ${label}", js_calls[0])
+        self.assertIn("Couldn't copy automatically. Link:", js_calls[0])
+        self.assertEqual(notifies, [])
 
-    def test_helper_falls_back_gracefully_when_webbrowser_open_fails(self) -> None:
-        """If `webbrowser.open` raises or returns False, the notify must say
-        the operator can paste from the clipboard manually."""
+    def test_helper_still_notifies_if_clipboard_javascript_fails(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main
 
         notifies: list[str] = []
@@ -61,26 +45,32 @@ class JiraExternalBrowserHandoffTests(unittest.TestCase):
                 notifies.append(str(message))
 
             def run_javascript(self, payload: str) -> None:
-                pass
+                raise RuntimeError("clipboard unavailable")
 
-        # Case 1: open() returns False.
-        with mock.patch.object(dashboard_main.webbrowser, "open", return_value=False):
-            dashboard_main._open_jira_ticket_in_browser(FakeUi(), "https://example/browse/X-1", "X-1")
+        dashboard_main._copy_dashboard_link_to_clipboard(FakeUi(), "https://example/browse/X-1", "X-1")
         self.assertEqual(len(notifies), 1)
-        self.assertIn("Could not launch a browser", notifies[0])
-        self.assertIn("URL copied to clipboard", notifies[0])
+        self.assertEqual(notifies[0], "Couldn't start clipboard copy. Link: https://example/browse/X-1")
 
-        # Case 2: open() raises.
-        notifies.clear()
-        with mock.patch.object(dashboard_main.webbrowser, "open", side_effect=RuntimeError("boom")):
-            dashboard_main._open_jira_ticket_in_browser(FakeUi(), "https://example/browse/X-2", "X-2")
-        self.assertEqual(len(notifies), 1)
-        self.assertIn("Could not launch a browser", notifies[0])
+    def test_dashboard_source_has_no_jira_webbrowser_open_path(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("import webbrowser", source)
+        jira_helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
+        self.assertNotEqual(jira_helper_idx, -1, "clipboard helper not found")
+        helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", jira_helper_idx)
+        self.assertNotEqual(helper_end, -1, "clipboard helper end marker not found")
+        helper_body = source[jira_helper_idx:helper_end]
+        self.assertNotIn("webbrowser.open", helper_body)
+        self.assertIn("navigator.clipboard.writeText", helper_body)
+        self.assertIn("document.execCommand('copy')", helper_body)
+        self.assertIn("Copied to clipboard:", helper_body)
+        self.assertIn("Couldn't copy automatically. Link:", helper_body)
 
 
 class TeamsClipboardFallbackTests(unittest.TestCase):
     def test_teams_open_handler_also_copies_message_to_clipboard(self) -> None:
-        """H-35 Part B source guard: the `sgfxOpenFeedbackTeams` JS handler must
+        """internal milestone Part B source guard: the `sgfxOpenFeedbackTeams` JS handler must
         ALSO write the prefilled message to the clipboard so the action is never
         lost if Teams doesn't open."""
         source = (
@@ -89,11 +79,11 @@ class TeamsClipboardFallbackTests(unittest.TestCase):
         idx = source.find("window.sgfxOpenFeedbackTeams")
         self.assertNotEqual(idx, -1, "sgfxOpenFeedbackTeams handler not found")
         block = source[idx:idx + 2500]
-        # msteams:// deep-link still fires (H-33 behaviour preserved).
+        # msteams:// deep-link still fires (internal milestone behaviour preserved).
         self.assertIn("window.sgfxBuildFeedbackTeams()", block)
         self.assertIn("document.createElement('a')", block)
         self.assertIn("link.click()", block)
-        # H-35 Part B: clipboard fallback.
+        # internal milestone Part B: clipboard fallback.
         self.assertIn("navigator.clipboard.writeText(fullMessage)", block)
         # Inline toast notifying the operator the message was also copied.
         self.assertIn("Teams should open; message also copied to clipboard.", block)

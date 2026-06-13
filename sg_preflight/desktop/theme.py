@@ -12,17 +12,6 @@ QWidget {
 QMainWindow {
   background: #091014;
 }
-QLabel#grafiksWipNotice {
-  color: #ffd57a;
-  background: rgba(50, 32, 8, 200);
-  border: 1px solid rgba(255, 191, 84, 130);
-  border-radius: 5px;
-  padding: 8px 12px;
-  font-family: "Bahnschrift SemiBold", "Segoe UI", sans-serif;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  margin: 2px 0;
-}
 QLabel#modeLabel,
 QLabel#panelHint,
 QLabel#progressInfo,
@@ -164,11 +153,6 @@ QLabel[sgfxMode="clean"]#runTitle {
   font-family: "Segoe UI Semibold", "Segoe UI", sans-serif;
   font-size: 15px;
   letter-spacing: 0;
-}
-QLabel[sgfxMode="clean"]#grafiksWipNotice {
-  color: #e8c07d;
-  background: rgba(58, 47, 24, 220);
-  border: 1px solid rgba(107, 80, 36, 200);
 }
 QPlainTextEdit[sgfxMode="clean"],
 QListWidget[sgfxMode="clean"] {

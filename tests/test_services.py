@@ -76,6 +76,27 @@ class TestServices(unittest.TestCase):
             "BMW Git access or a local `digital-3d-car-models` clone",
             " ".join(step_map["delivery_checklist"]["blockers"]),
         )
+        self.assertIn("bmw_interface_screenshot_smoke", step_map)
+        self.assertIn("manual_visual_review", step_map)
+        self.assertIn("defect_triage", step_map)
+        self.assertIn("carpaint_lackcode_dlt", step_map)
+        self.assertIn("country_variant_lightfx", step_map)
+        self.assertIn("performance_kpi", step_map)
+        self.assertIn("jira_field_link_templates", step_map)
+        self.assertEqual(step_map["manual_visual_review"]["state"], "partial")
+        self.assertIn("logos", " ".join(step_map["manual_visual_review"]["workflow"]["evidence"]).lower())
+        self.assertIn("G50", step_map["country_variant_lightfx"]["expectations"]["G50"]["car"])
+        self.assertIn(
+            "ECE",
+            step_map["country_variant_lightfx"]["expectations"]["G50"]["expected_selective_yellow_country_variants"],
+        )
+        self.assertEqual(step_map["bmw_interface_screenshot_smoke"]["state"], "blocked")
+        self.assertIn(
+            "test -c <target> -ns",
+            " ".join(step_map["bmw_interface_screenshot_smoke"]["adapter"]["commands"]),
+        )
+        self.assertEqual(step_map["jira_field_link_templates"]["state"], "partial")
+        self.assertIn("APINEXT: Wombat", step_map["jira_field_link_templates"]["templates"]["asset_update_ready"]["team"])
 
 
 if __name__ == "__main__":

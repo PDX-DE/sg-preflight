@@ -33,7 +33,12 @@ RACO_SETUP_TYPICAL_RANGE_LABEL = "typical ~30 sec"
 BLENDER_SETUP_TYPICAL_RANGE_LABEL = "typical ~2 min"
 BMW_GIT_SETUP_TYPICAL_RANGE_LABEL = "typical ~2-10 min"
 BMW_GIT_IDC23_SETUP_TYPICAL_RANGE_LABEL = "typical ~1-5 min"
+BMW_CI_SETUP_TYPICAL_RANGE_LABEL = "typical 1-3 min"
 ENV_SETUP_TYPICAL_RANGE_LABEL = "typical <30 sec"
+BMW_PIPELINE_PYTHON_ENV = "SG_BMW_PYTHON_EXE"
+BMW_CI_VENV_DIRNAME = ".venv_bmw_ci"
+BMW_CI_REQUIREMENTS_RELATIVE_PATH = Path("ci") / "scripts" / "requirements.txt"
+BMW_CI_IMPORT_PROBE = "import yaml, PIL"
 
 RACO_CONFLUENCE_ANCHOR = "003_Onboarding/005_How-to-set-up-your-Laptop:190-204"
 BLENDER_CONFLUENCE_ANCHOR = (
@@ -62,11 +67,13 @@ _DEPENDENCY_ORDER = (
     "blender",
     "digital_3d_car_repo",
     "digital_3d_car_repo_idc23",
+    "bmw_ci_requirements",
 )
 _KNOWN_REGISTERED_PATHS = {
     "raco_gui",
     "raco_headless",
     "blender",
+    "bmw_pipeline_python",
     "digital_3d_car_repo",
     "digital_3d_car_repo_idc23",
     "digital_3d_car_repo_assets_idc23",
@@ -80,6 +87,7 @@ _SETUP_ACTION_TYPICAL_RANGES = {
     "clone-digital-3d-car-repo": BMW_GIT_SETUP_TYPICAL_RANGE_LABEL,
     "setup-digital-3d-car-repo": ENV_SETUP_TYPICAL_RANGE_LABEL,
     "setup-digital-3d-car-repo-idc23": BMW_GIT_IDC23_SETUP_TYPICAL_RANGE_LABEL,
+    "setup-bmw-ci-requirements": BMW_CI_SETUP_TYPICAL_RANGE_LABEL,
 }
 
 
@@ -643,6 +651,171 @@ def _record_idc23_repo_path(*, workspace: Path | str, path: Path | str) -> None:
     record_dependency_path(workspace=workspace, key="digital_3d_car_repo_assets_idc23", path=path)
 
 
+def _bmw_ci_venv_python(repo_root: Path) -> Path:
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    executable = "python.exe" if os.name == "nt" else "python"
+    return repo_root / BMW_CI_VENV_DIRNAME / scripts_dir / executable
+
+
+def _unique_existing_bmw_repo_roots(
+    *,
+    workspace: Path,
+    state: dict[str, Any],
+    bmw_root: Path | str | None,
+) -> list[Path]:
+    candidates: list[Path | None] = [
+        _existing_dir(_candidate_bmw_repo_paths(workspace, state, bmw_root)),
+        _existing_dir(_candidate_idc23_repo_paths(workspace, state, bmw_root)),
+    ]
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        normalized = os.path.normcase(str(candidate.resolve()))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        roots.append(candidate.resolve())
+    return roots
+
+
+def _resolve_bmw_ci_python(
+    state: dict[str, Any],
+    *,
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+) -> tuple[Path | None, str, str]:
+    override = os.environ.get(BMW_PIPELINE_PYTHON_ENV, "").strip()
+    if override:
+        override_path = Path(override).expanduser()
+        if override_path.is_file():
+            return override_path.resolve(), "env", f"{BMW_PIPELINE_PYTHON_ENV} points to a Python executable."
+        return (
+            None,
+            "env_missing",
+            f"{BMW_PIPELINE_PYTHON_ENV} is set, but the file does not exist: {override_path}",
+        )
+    registered = _registered_path(state, "bmw_pipeline_python")
+    if registered is not None and registered.is_file():
+        return registered.resolve(), "registered", "BMW pipeline Python is registered in dependency onboarding."
+    for repo_root in _unique_existing_bmw_repo_roots(workspace=workspace, state=state, bmw_root=bmw_root):
+        candidate = _bmw_ci_venv_python(repo_root)
+        if candidate.is_file():
+            return candidate.resolve(), "venv", f"BMW-CI venv Python was found at {candidate}."
+    return (
+        None,
+        "missing",
+        f"No BMW-CI Python was found. Set {BMW_PIPELINE_PYTHON_ENV}, register bmw_pipeline_python, or run setup.",
+    )
+
+
+def _probe_bmw_ci_python(python_path: Path) -> tuple[bool, str]:
+    try:
+        completed = subprocess.run(
+            [str(python_path), "-c", BMW_CI_IMPORT_PROBE],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+            **hidden_subprocess_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+    output = (completed.stderr or completed.stdout or "").strip()
+    if completed.returncode == 0:
+        return True, output
+    return False, output or f"Import probe exited with {completed.returncode}."
+
+
+def _bmw_ci_requirements_paths(repo_roots: list[Path]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for root in repo_roots:
+        path = root / BMW_CI_REQUIREMENTS_RELATIVE_PATH
+        normalized = os.path.normcase(str(path))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if path.is_file():
+            paths.append(path)
+    return paths
+
+
+def _bmw_ci_requirements_status(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    repo_roots = _unique_existing_bmw_repo_roots(workspace=workspace, state=state, bmw_root=None)
+    requirements_paths = _bmw_ci_requirements_paths(repo_roots)
+    target_repo = repo_roots[0] if repo_roots else workspace
+    target_venv_python = _bmw_ci_venv_python(target_repo)
+    command_lines = [
+        f'"<base-python>" -m venv --clear "{target_venv_python.parent.parent}"',
+        *[
+            f'"{target_venv_python}" -m pip install -r "{path}"'
+            for path in requirements_paths
+        ],
+    ]
+    action = _setup_action(
+        action_id="setup-bmw-ci-requirements",
+        label="Install BMW pipeline requirements",
+        dependency_key="bmw_ci_requirements",
+        status="available" if repo_roots else "incomplete",
+        confirmation_message=(
+            "Create an isolated .venv_bmw_ci, install BMW CI requirements into it, "
+            "and register it as the BMW pipeline Python."
+        ),
+        effects=[
+            "Creates or refreshes an isolated .venv_bmw_ci folder under the local BMW Git worktree.",
+            "Installs ci/scripts/requirements.txt into that venv for each available BMW worktree.",
+            "Records the venv python.exe in operator_state/dependency_onboarding.json.",
+        ],
+        confluence_anchor=BMW_ENV_CONFLUENCE_ANCHOR,
+        can_run_now=bool(repo_roots),
+        command_preview="\n".join(command_lines),
+        target_path=target_repo,
+        operator_inputs=[
+            "Confirm before installing Python packages into the isolated BMW-CI venv.",
+            "Optional: set SG_BMW_PYTHON_EXE to an existing BMW pipeline Python instead.",
+        ],
+    )
+    python_path, source, detail = _resolve_bmw_ci_python(state, workspace=workspace)
+    if python_path is None:
+        if not repo_roots:
+            detail += " No BMW Git worktree was found for the venv target."
+        return _status_item(
+            key="bmw_ci_requirements",
+            label="BMW CI Python requirements",
+            status="missing",
+            detail=detail,
+            path=target_venv_python,
+            confluence_anchor=BMW_ENV_CONFLUENCE_ANCHOR,
+            setup_action=action,
+        )
+    imports_ok, probe_detail = _probe_bmw_ci_python(python_path)
+    if not imports_ok:
+        return _status_item(
+            key="bmw_ci_requirements",
+            label="BMW CI Python requirements",
+            status="incomplete",
+            detail=f"{python_path} cannot import yaml and PIL yet. {probe_detail}",
+            path=python_path,
+            confluence_anchor=BMW_ENV_CONFLUENCE_ANCHOR,
+            setup_action=action,
+        )
+    if source == "venv":
+        _auto_register_dependency_path(state, workspace=workspace, key="bmw_pipeline_python", path=python_path)
+    return _status_item(
+        key="bmw_ci_requirements",
+        label="BMW CI Python requirements",
+        status="available",
+        detail=f"{python_path} can import yaml and PIL.",
+        path=python_path,
+        confluence_anchor=BMW_ENV_CONFLUENCE_ANCHOR,
+        setup_action={},
+    )
+
+
 def _bmw_repo_status(state: dict[str, Any], workspace: Path, bmw_root: Path | str | None) -> dict[str, Any]:
     explicit_env = os.environ.get(DIGITAL_3D_CAR_REPO_ENV, "").strip()
     candidate = _existing_dir(_candidate_bmw_repo_paths(workspace, state, bmw_root))
@@ -805,6 +978,7 @@ def build_dependency_onboarding_status(
         "blender": _blender_status(state, root),
         "digital_3d_car_repo": _bmw_repo_status(state, root, bmw_root),
         "digital_3d_car_repo_idc23": _idc23_repo_status(state, root, bmw_root),
+        "bmw_ci_requirements": _bmw_ci_requirements_status(state, root),
     }
     items = [dependencies[key] for key in _DEPENDENCY_ORDER]
     actions = []
@@ -1531,12 +1705,231 @@ def _run_bmw_idc23_setup(
     return result
 
 
+def _base_python_for_bmw_ci_venv() -> Path | None:
+    if not getattr(sys, "frozen", False):
+        candidate = Path(sys.executable).expanduser()
+        if candidate.is_file():
+            return candidate.resolve()
+    override = os.environ.get(BMW_PIPELINE_PYTHON_ENV, "").strip()
+    if override:
+        candidate = Path(override).expanduser()
+        if candidate.is_file():
+            return candidate.resolve()
+    for launcher_name in ("py.exe", "py"):
+        launcher = _find_executable(launcher_name)
+        if launcher is None or not launcher.is_file():
+            continue
+        try:
+            completed = subprocess.run(
+                [str(launcher), "-3.13", "-c", "import sys; print(sys.executable)"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30,
+                check=False,
+                **hidden_subprocess_kwargs(),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if completed.returncode != 0:
+            continue
+        output_lines = (completed.stdout or "").strip().splitlines()
+        if not output_lines:
+            continue
+        candidate = Path(output_lines[-1]).expanduser()
+        if candidate.is_file():
+            return candidate.resolve()
+    for executable_name in ("python.exe", "python", "py.exe", "py", "python3.exe", "python3"):
+        candidate = _find_executable(executable_name)
+        if candidate is not None and candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _run_dependency_setup_command(
+    command: list[str],
+    *,
+    cwd: Path,
+    stream_output: bool,
+    timeout_seconds: int = DEPENDENCY_SETUP_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess[str]:
+    if stream_output:
+        print(f"Running {' '.join(command)}", flush=True)
+        return subprocess.run(
+            command,
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+            **hidden_subprocess_kwargs(),
+        )
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+        **hidden_subprocess_kwargs(),
+    )
+
+
+def _command_output_tail(completed: subprocess.CompletedProcess[str], limit: int = 1600) -> str:
+    output = "\n".join(part for part in (completed.stderr, completed.stdout) if part)
+    output = output.strip()
+    return output[-limit:] if len(output) > limit else output
+
+
+def _run_bmw_ci_requirements_setup(
+    *,
+    action_id: str,
+    workspace: Path,
+    action: dict[str, Any],
+    target_path: Path | str | None,
+    source_path: Path | str | None,
+    stream_output: bool,
+) -> dict[str, Any]:
+    del source_path
+    base_python = _base_python_for_bmw_ci_venv()
+    if base_python is None:
+        return _setup_result(
+            status="missing",
+            action_id=action_id,
+            summary=(
+                "No real Python found to build the BMW CI venv; "
+                f"set {BMW_PIPELINE_PYTHON_ENV} or install Python."
+            ),
+        )
+    state = load_dependency_onboarding_state(workspace)
+    selected_target = Path(str(target_path or action.get("target_path", ""))).expanduser().resolve() if (
+        target_path or action.get("target_path")
+    ) else None
+    repo_roots = _unique_existing_bmw_repo_roots(workspace=workspace, state=state, bmw_root=selected_target)
+    if selected_target is not None and selected_target.is_dir():
+        normalized = {os.path.normcase(str(root)) for root in repo_roots}
+        if os.path.normcase(str(selected_target)) not in normalized:
+            repo_roots.insert(0, selected_target)
+    if not repo_roots:
+        return _setup_result(
+            status="missing",
+            action_id=action_id,
+            summary="No BMW Git worktree was found for BMW CI requirements setup.",
+        )
+    requirements_paths = _bmw_ci_requirements_paths(repo_roots)
+    missing_requirements = [
+        str(root / BMW_CI_REQUIREMENTS_RELATIVE_PATH)
+        for root in repo_roots
+        if not (root / BMW_CI_REQUIREMENTS_RELATIVE_PATH).is_file()
+    ]
+    if not requirements_paths:
+        return _setup_result(
+            status="incomplete",
+            action_id=action_id,
+            summary="No ci/scripts/requirements.txt file was found in the available BMW worktrees.",
+            path=repo_roots[0],
+            missing_requirements=missing_requirements,
+        )
+    target_repo = requirements_paths[0].parents[2]
+    venv_root = target_repo / BMW_CI_VENV_DIRNAME
+    venv_python = _bmw_ci_venv_python(target_repo)
+    try:
+        venv_root.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return _setup_result(
+            status="failed",
+            action_id=action_id,
+            summary=f"Could not create BMW CI venv parent folder: {exc}",
+            path=venv_root,
+        )
+    venv_command = [str(base_python), "-m", "venv", "--clear", str(venv_root)]
+    try:
+        venv_result = _run_dependency_setup_command(venv_command, cwd=target_repo, stream_output=stream_output)
+    except subprocess.TimeoutExpired:
+        return _setup_result(
+            status="failed",
+            action_id=action_id,
+            summary="Creating the BMW CI venv timed out.",
+            path=venv_root,
+        )
+    if venv_result.returncode != 0:
+        return _setup_result(
+            status="failed",
+            action_id=action_id,
+            summary=_command_output_tail(venv_result) or f"venv creation failed with exit code {venv_result.returncode}.",
+            path=venv_root,
+            exit_code=venv_result.returncode,
+        )
+    if not venv_python.is_file():
+        return _setup_result(
+            status="incomplete",
+            action_id=action_id,
+            summary="BMW CI venv creation completed, but the venv Python was not found.",
+            path=venv_python,
+            missing_requirements=missing_requirements,
+        )
+    installed_requirements: list[str] = []
+    for requirements_path in requirements_paths:
+        pip_command = [str(venv_python), "-m", "pip", "install", "-r", str(requirements_path)]
+        try:
+            pip_result = _run_dependency_setup_command(
+                pip_command,
+                cwd=requirements_path.parent,
+                stream_output=stream_output,
+            )
+        except subprocess.TimeoutExpired:
+            return _setup_result(
+                status="failed",
+                action_id=action_id,
+                summary=f"pip install timed out for {requirements_path}.",
+                path=venv_python,
+                installed_requirements=installed_requirements,
+                missing_requirements=missing_requirements,
+            )
+        if pip_result.returncode != 0:
+            return _setup_result(
+                status="failed",
+                action_id=action_id,
+                summary=_command_output_tail(pip_result) or f"pip install failed for {requirements_path}.",
+                path=venv_python,
+                exit_code=pip_result.returncode,
+                failed_requirements=str(requirements_path),
+                installed_requirements=installed_requirements,
+                missing_requirements=missing_requirements,
+            )
+        installed_requirements.append(str(requirements_path))
+    imports_ok, probe_detail = _probe_bmw_ci_python(venv_python)
+    if not imports_ok:
+        return _setup_result(
+            status="incomplete",
+            action_id=action_id,
+            summary=f"Installed BMW CI requirements, but yaml/PIL import probe still fails. {probe_detail}",
+            path=venv_python,
+            installed_requirements=installed_requirements,
+            missing_requirements=missing_requirements,
+        )
+    record_dependency_path(workspace=workspace, key="bmw_pipeline_python", path=venv_python)
+    missing_note = f" Missing requirements files were skipped: {len(missing_requirements)}." if missing_requirements else ""
+    return _setup_result(
+        status="recorded",
+        action_id=action_id,
+        summary=f"Recorded BMW CI Python with yaml/PIL available.{missing_note}",
+        path=venv_python,
+        installed_requirements=installed_requirements,
+        missing_requirements=missing_requirements,
+    )
+
+
 _SETUP_ACTION_HANDLERS = {
     "setup-raco-from-shared-tools": _run_raco_setup,
     "setup-blender-411": _run_blender_setup,
     "clone-digital-3d-car-repo": _run_bmw_clone_setup,
     "setup-digital-3d-car-repo": _run_bmw_env_setup,
     "setup-digital-3d-car-repo-idc23": _run_bmw_idc23_setup,
+    "setup-bmw-ci-requirements": _run_bmw_ci_requirements_setup,
 }
 
 

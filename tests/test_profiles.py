@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
-from sg_preflight.profiles import PROFILE_SCOPE_DEFAULT, list_run_profiles
+from sg_preflight.profiles import PROFILE_SCOPE_DEFAULT, list_run_profiles, resolve_source_repo_root
 from tests.operator_helpers import write_text
 
 
@@ -79,6 +81,23 @@ class TestDynamicProfiles(unittest.TestCase):
         self.assertNotIn("G58", default_ids)
         self.assertIn("MINI_U25", default_ids)
         self.assertTrue(all(profile.active_build for profile in default_profiles))
+
+
+class TestProfileSourceOverrides(unittest.TestCase):
+    def test_environment_source_root_override_accepts_repository_root(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_temp:
+            repo_root = Path(raw_temp) / "repositories-qa-idcevo"
+            trunk_root = repo_root / "trunk"
+            (trunk_root / "Cars_IDCevo" / "BMW" / "G70").mkdir(parents=True)
+
+            with mock.patch.dict(os.environ, {"SG_SOURCE_REPO_ROOT": str(repo_root)}):
+                self.assertEqual(resolve_source_repo_root(ROOT), trunk_root.resolve())
+                profile = next(profile for profile in list_run_profiles(ROOT) if profile.profile_id == "G70")
+                self.assertEqual(profile.reference_repo_root, trunk_root.resolve())
+                self.assertEqual(
+                    profile.source_project_root(),
+                    (trunk_root / "Cars_IDCevo" / "BMW" / "G70").resolve(),
+                )
 
 
 if __name__ == "__main__":

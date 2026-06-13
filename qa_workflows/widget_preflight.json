@@ -1,0 +1,65 @@
+{
+  "schema": "sgfx_qa_workflow",
+  "version": 1,
+  "id": "widget_preflight",
+  "name": "Widget Preflight (HUD / Pause / Notification)",
+  "description": "Preflight pass over the in-game widget catalog: HUD digits, pause-menu rows, save/load notifications. Combines a deterministic preflight call with a manual visual sanity step inside the SGFX shell. The shell's QA panel surfaces the workflow id so the operator can attest from inside the running runtime.",
+
+  "scope_kinds": ["profile", "workspace"],
+  "profiles": ["G65", "G70"],
+
+  "dod_items": [
+    "HUD digit widgets render correctly under the SGFX text overrides",
+    "Pause menu rows survive the title-text scoped rules",
+    "Notification widgets (save complete, achievement unlock) render readable text",
+    "Widget atlas dimensions match retail (no override that resizes a CSD atlas)"
+  ],
+
+  "checks": [
+    {
+      "id": "deterministic_preflight",
+      "kind": "preflight_cli",
+      "subcommand": "run-profile",
+      "args": ["{profile}", "--fail-on", "warning", "--json"],
+      "required": true,
+      "skip_when_missing_input": ["profile"],
+      "description": "Run the standard preflight pack against the selected profile. Acts as the deterministic gate: anchors / constants / carpaints / project_sanity must all pass before the manual widget pass starts."
+    },
+    {
+      "id": "widget_visual_attestation",
+      "kind": "manual_attestation",
+      "required": true,
+      "prompts": [
+        "HUD digits OK in title shell?",
+        "Pause menu rows OK?",
+        "Save/load notification OK?"
+      ],
+      "description": "Eyes-on the SGFX shell title + a stage stub. The runner emits a single attestation record; partial completion maps to in_progress."
+    }
+  ],
+
+  "required_artifacts": [
+    {
+      "id": "preflight_bundle",
+      "kind": "directory",
+      "produced_by_check": "deterministic_preflight",
+      "path_template": "{output_root}/run-profile/{profile}/"
+    }
+  ],
+
+  "status_mapping": {
+    "all_required_pass": "ready_for_review",
+    "any_required_fail": "blocked",
+    "no_checks_run":     "not_started",
+    "partial":           "in_progress"
+  },
+
+  "outputs": [
+    {
+      "id": "summary_json",
+      "kind": "json",
+      "path_template": "{output_root}/{id}/{profile}/run.json",
+      "fields": ["id", "name", "profile", "status", "checks", "artifacts", "started_at_utc", "finished_at_utc"]
+    }
+  ]
+}

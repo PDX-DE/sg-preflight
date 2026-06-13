@@ -1,4 +1,4 @@
-"""H-32 tests for the export-all-as-zip surface."""
+"""internal milestone tests for the export-all-as-zip surface."""
 from __future__ import annotations
 
 import json

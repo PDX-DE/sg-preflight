@@ -39,6 +39,7 @@ class TestDeliverySupportPackage(unittest.TestCase):
             self.assertTrue(result.review_owners_update_path.exists())
             self.assertTrue(result.next_steps_path.exists())
             self.assertTrue(result.continuation_path.exists())
+            self.assertEqual(result.continuation_path.name, "05_delivery_continuation_brief.md")
             self.assertTrue(result.grounded_bundle.package_root.exists())
             self.assertTrue(result.scope_bundle.package_root.exists())
             self.assertFalse((result.grounded_bundle.package_root / "artifacts" / "actions").exists())
@@ -59,6 +60,8 @@ class TestDeliverySupportPackage(unittest.TestCase):
             self.assertIn("Suggested Teams update", coordinator_text)
             self.assertIn("BMW status right now", coordinator_text)
             self.assertIn("exact screenshot-test reading flow", review_owner_text)
+            self.assertIn("Delivery Continuation Brief", continuation_text)
             self.assertIn("keep improving `sg-preflight`", continuation_text)
-            self.assertEqual("05_continuation_brief.md", result.continuation_path.name)
-            self.assertNotIn("Co" + "dex", continuation_text)
+            internal_agent_name = "Code" + "x"
+            self.assertNotIn(internal_agent_name, brief_text)
+            self.assertNotIn(internal_agent_name, continuation_text)

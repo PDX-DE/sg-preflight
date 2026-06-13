@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from sg_preflight.mirror_audit import (
     save_cached_audit,
 )
 from sg_preflight.models import Finding, Report
+from sg_preflight.delivery_readiness import build_delivery_readiness_board
 from sg_preflight.profiles import RunProfile, list_run_profiles
 from sg_preflight.qa_actions import (
     build_action_record,
@@ -54,8 +56,12 @@ from sg_preflight.services import (
     run_notes,
     save_run_record,
     sg_checker_catalog,
+    utc_now,
     workspace_root,
 )
+from sg_preflight.setup_doctor import build_setup_doctor_report
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _templates() -> Jinja2Templates:
@@ -1797,8 +1803,9 @@ def _coerce_run_payload(payload: dict[str, Any]) -> tuple[str, RunRequest]:
 def _run_profile_background(profile: RunProfile, request: RunRequest, root: Path) -> None:
     try:
         execute_profile_run(profile, request, root)
-    except Exception:
-        return
+    except Exception as exc:
+        LOGGER.exception("Background profile run failed for %s", profile.profile_id)
+        _persist_background_run_failure(request.run_id or "", root, exc)
 
 
 def _run_action_background(action_id: str, run_id: str, root: Path) -> None:
@@ -1806,8 +1813,43 @@ def _run_action_background(action_id: str, run_id: str, root: Path) -> None:
         action = get_operator_action(action_id, root)
         record = load_action_record(run_id, root)
         execute_operator_action(action, root, record=record)
-    except Exception:
+    except Exception as exc:
+        LOGGER.exception("Background action failed for %s", action_id)
+        _persist_background_action_failure(run_id, root, exc)
+
+
+def _persist_background_run_failure(run_id: str, root: Path, exc: Exception) -> None:
+    if not run_id:
         return
+    try:
+        record = load_run_record(run_id, root)
+    except Exception:
+        LOGGER.exception("Could not load failed background run record %s", run_id)
+        return
+    if record.status in {"completed", "failed", "blocked"}:
+        return
+    record.status = "failed"
+    record.exit_code = 1
+    record.completed_at_utc = utc_now()
+    record.error_message = str(exc) or exc.__class__.__name__
+    save_run_record(record)
+
+
+def _persist_background_action_failure(run_id: str, root: Path, exc: Exception) -> None:
+    if not run_id:
+        return
+    try:
+        record = load_action_record(run_id, root)
+    except Exception:
+        LOGGER.exception("Could not load failed background action record %s", run_id)
+        return
+    if record.status in {"completed", "failed", "blocked"}:
+        return
+    record.status = "failed"
+    record.exit_code = 1
+    record.completed_at_utc = utc_now()
+    record.error_message = str(exc) or exc.__class__.__name__
+    save_action_task_record(record)
 
 
 def _finding_rows(report: Report, record: Any, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2412,6 +2454,7 @@ def create_app(
         fast_audit = _load_or_create_fast_audit(app)
         deep_audit = _load_cached_deep_audit(app)
         primary_prereqs, secondary_prereqs = _primary_prerequisites(app.state.workspace_root)
+        setup_report = build_setup_doctor_report(app.state.workspace_root).to_dict()
         ordered_profiles = list(app.state.profiles.values())
         return app.state.templates.TemplateResponse(
             request,
@@ -2433,6 +2476,7 @@ def create_app(
                 "recent_actions": list_recent_action_records(app.state.workspace_root),
                 "primary_prerequisites": primary_prereqs,
                 "secondary_prerequisites": secondary_prereqs,
+                "setup_report": setup_report,
                 "fast_audit": _audit_view_model(fast_audit),
                 "deep_audit": _audit_view_model(deep_audit),
                 "matrix_summary": _summary_file_link(app.state.workspace_root),
@@ -2487,6 +2531,26 @@ def create_app(
             {
                 "review_board": state,
                 "file_cards": [item for item in file_cards if item["path"]],
+            },
+        )
+
+    @app.get("/ui/delivery-readiness")
+    async def delivery_readiness_view(request: Request) -> Any:
+        return app.state.templates.TemplateResponse(
+            request,
+            "delivery_readiness.html",
+            {
+                "board": build_delivery_readiness_board(workspace_root=app.state.workspace_root).to_dict(),
+            },
+        )
+
+    @app.get("/ui/setup")
+    async def setup_doctor_view(request: Request) -> Any:
+        return app.state.templates.TemplateResponse(
+            request,
+            "setup.html",
+            {
+                "report": build_setup_doctor_report(app.state.workspace_root).to_dict(),
             },
         )
 
@@ -2802,6 +2866,14 @@ def create_app(
             return JSONResponse(build_review_board_state(ticket_id or None, app.state.workspace_root))
         except FileNotFoundError as exc:
             return JSONResponse(review_board_unavailable_state(ticket_id or None, str(exc)))
+
+    @app.get("/ui/api/delivery-readiness")
+    async def delivery_readiness_api() -> JSONResponse:
+        return JSONResponse(build_delivery_readiness_board(workspace_root=app.state.workspace_root).to_dict())
+
+    @app.get("/ui/api/setup-doctor")
+    async def setup_doctor_api() -> JSONResponse:
+        return JSONResponse(build_setup_doctor_report(app.state.workspace_root).to_dict())
 
     @app.post("/ui/api/review-decisions")
     async def review_decisions_set_api(request: Request) -> JSONResponse:

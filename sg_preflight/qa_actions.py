@@ -12,8 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import openpyxl
-
+from sg_preflight.bmw_process import bmw_interface_smoke_commands
 from sg_preflight.checker_evidence import (
     merge_checker_evidence,
     parse_delivery_checklist_log,
@@ -21,7 +20,9 @@ from sg_preflight.checker_evidence import (
     parse_scene_check_output,
     parse_unused_resources_output,
 )
+from sg_preflight.io_utils import write_text as _write_text
 from sg_preflight.profiles import RunProfile, list_run_profiles, resolve_source_repo_root
+import sg_preflight.qa_operator_actions as _qa_operator_actions
 from sg_preflight.services import (
     RunRequest,
     build_progress_payload,
@@ -33,106 +34,50 @@ from sg_preflight.services import (
     write_json_file,
 )
 from sg_preflight.visual_review import materialize_visual_review_prep
+from sg_preflight.qa_action_persistence import (
+    ACTION_PROGRESS_PLANS,
+    ActionRecord,
+    _artifact,
+    _default_action_run_id,
+    _manual_evidence_default_label,
+    _manual_evidence_default_note,
+    _manual_evidence_index_path,
+    _manual_evidence_root,
+    _manual_evidence_slug,
+    _manual_evidence_target_path,
+    _merged_progress_events,
+    _progress_event,
+    _set_action_progress,
+    _write_manual_evidence_index,
+    attach_manual_evidence,
+    build_action_record,
+    list_recent_action_records,
+    load_action_record,
+    save_action_record,
+)
+from sg_preflight.qa_operator_actions import (
+    OperatorAction,
+    _bmw_smoke_blocker_message,
+    _bmw_smoke_script_path,
+    _delivery_checklist_command_preview,
+    _delivery_checklist_paths,
+    _path_from_status,
+    _repo_checker_command_preview,
+    _repo_checker_paths,
+    _scene_runtime_blocker_message,
+    _status_detail,
+    _status_map,
+    _status_value,
+    _unused_resources_command_preview,
+    _unused_resources_inputs,
+    _unused_resources_script_path,
+    get_operator_action,
+    list_operator_actions,
+    operator_ui_actions_root,
+)
 
 
-ACTION_PROGRESS_PLANS: dict[str, tuple[tuple[str, str], ...]] = {
-    "daily_live_matrix": (
-        ("queued", "Queued"),
-        ("profiles", "Run live profiles"),
-        ("finalize", "Finalize shared summary"),
-    ),
-    "profile_stack": (
-        ("queued", "Queued"),
-        ("preflight", "Run standard preflight"),
-        ("repo_checker", "Run repo checker"),
-        ("unused_resources", "Run unused resource scan"),
-        ("scene_check", "Run scene check"),
-        ("delivery_checklist", "Check delivery checklist readiness"),
-        ("bmw_smoke", "Check BMW smoke readiness"),
-        ("finalize", "Finalize action record"),
-    ),
-    "repo_checker": (
-        ("queued", "Queued"),
-        ("style", "Run style checker"),
-        ("execute", "Run checker"),
-        ("parse", "Parse checker output"),
-        ("finalize", "Finalize action record"),
-    ),
-    "bmw_screenshot_smoke": (
-        ("queued", "Queued"),
-        ("export", "Run BMW export"),
-        ("screenshots", "Run BMW screenshots"),
-        ("finalize", "Finalize action record"),
-    ),
-    "scene_check": (
-        ("queued", "Queued"),
-        ("discover", "Discover scenes"),
-        ("execute", "Run scene checks"),
-        ("finalize", "Finalize action record"),
-    ),
-    "unused_resources": (
-        ("queued", "Queued"),
-        ("execute", "Run scan"),
-        ("parse", "Parse scan output"),
-        ("finalize", "Finalize action record"),
-    ),
-    "delivery_checklist": (
-        ("queued", "Queued"),
-        ("inspect", "Inspect checklist bridge"),
-        ("summarize", "Summarize readiness"),
-        ("finalize", "Finalize action record"),
-    ),
-}
-
-
-def operator_ui_actions_root(explicit_root: Path | None = None) -> Path:
-    return workspace_root(explicit_root) / "out" / "operator-ui" / "actions"
-
-
-def _repo_checker_paths(mirror_root: Path) -> tuple[Path, Path]:
-    checkers_root = mirror_root / ".pdx" / "checkers"
-    return (
-        checkers_root / "code_style_checker" / "check_all_styles.py",
-        checkers_root / "executeChecks.py",
-    )
-
-
-def _repo_checker_command_preview(style_script: Path, checker_script: Path, target: Path) -> str:
-    return (
-        f"{sys.executable} {style_script} {target} && "
-        f"{sys.executable} {checker_script} {target}"
-    )
-
-
-def _unused_resources_script_path(mirror_root: Path) -> Path:
-    return mirror_root / ".pdx" / "checkers" / "printNotUsedResources.py"
-
-
-def _unused_resources_inputs(project_root: Path) -> tuple[Path, Path]:
-    return project_root / "resources", project_root
-
-
-def _unused_resources_command_preview(script: Path, project_root: Path) -> str:
-    resources_root, rca_root = _unused_resources_inputs(project_root)
-    return f"{sys.executable} {script} --res {resources_root} --rca {rca_root}"
-
-
-def _delivery_checklist_paths(mirror_root: Path) -> dict[str, Path]:
-    checklist_root = mirror_root / ".pdx" / "checkers" / "deliveryChecklist"
-    return {
-        "root": checklist_root,
-        "tool": checklist_root / "deliveryChecklist.exe",
-        "helper": checklist_root / "deliveryChecklist.py",
-        "readme": checklist_root / "README.md",
-        "camera_crane": checklist_root / "cameraCrane.lua",
-    }
-
-
-def _delivery_checklist_command_preview(profile: RunProfile) -> str:
-    return (
-        "internal: inspect mirrored deliveryChecklist assets and BMW-side prerequisites "
-        f"for {profile.profile_id}"
-    )
+BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS = 300
 
 
 def _repo_checker_target(record: ActionRecord, mirror_root: Path) -> Path:
@@ -145,162 +90,13 @@ def _repo_checker_target(record: ActionRecord, mirror_root: Path) -> Path:
     return mirror_root / "Cars"
 
 
-@dataclass(frozen=True)
-class OperatorAction:
-    action_id: str
-    label: str
-    description: str
-    kind: str
-    scope: str
-    ready: bool
-    blocker_message: str = ""
-    profile_id: str = ""
-    project_root: str = ""
-    command_preview: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "action_id": self.action_id,
-            "label": self.label,
-            "description": self.description,
-            "kind": self.kind,
-            "scope": self.scope,
-            "ready": self.ready,
-            "blocker_message": self.blocker_message,
-            "profile_id": self.profile_id,
-            "project_root": self.project_root,
-            "command_preview": self.command_preview,
-        }
-
-
-@dataclass
-class ActionRecord:
-    run_id: str
-    action_id: str
-    label: str
-    kind: str
-    scope: str
-    status: str
-    created_at_utc: str
-    started_at_utc: str | None
-    completed_at_utc: str | None
-    workspace_root: str
-    profile_id: str = ""
-    project_root: str = ""
-    command_preview: str = ""
-    blocker_message: str = ""
-    error_message: str = ""
-    exit_code: int | None = None
-    paths: dict[str, str] = field(default_factory=dict)
-    artifacts: list[dict[str, str]] = field(default_factory=list)
-    manual_evidence: list[dict[str, str]] = field(default_factory=list)
-    summary: dict[str, Any] | None = None
-    notes: list[str] = field(default_factory=list)
-    progress: dict[str, Any] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": 1,
-            "run_id": self.run_id,
-            "action_id": self.action_id,
-            "label": self.label,
-            "kind": self.kind,
-            "scope": self.scope,
-            "status": self.status,
-            "created_at_utc": self.created_at_utc,
-            "started_at_utc": self.started_at_utc,
-            "completed_at_utc": self.completed_at_utc,
-            "workspace_root": self.workspace_root,
-            "profile_id": self.profile_id,
-            "project_root": self.project_root,
-            "command_preview": self.command_preview,
-            "blocker_message": self.blocker_message,
-            "error_message": self.error_message,
-            "exit_code": self.exit_code,
-            "paths": dict(self.paths),
-            "artifacts": [dict(item) for item in self.artifacts],
-            "manual_evidence": [dict(item) for item in self.manual_evidence],
-            "summary": self.summary,
-            "notes": list(self.notes),
-            "progress": dict(self.progress) if isinstance(self.progress, dict) else None,
-        }
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "ActionRecord":
-        artifacts = payload.get("artifacts", [])
-        return cls(
-            run_id=str(payload.get("run_id", "")),
-            action_id=str(payload.get("action_id", "")),
-            label=str(payload.get("label", "")),
-            kind=str(payload.get("kind", "")),
-            scope=str(payload.get("scope", "")),
-            status=str(payload.get("status", "")),
-            created_at_utc=str(payload.get("created_at_utc", "")),
-            started_at_utc=payload.get("started_at_utc"),
-            completed_at_utc=payload.get("completed_at_utc"),
-            workspace_root=str(payload.get("workspace_root", "")),
-            profile_id=str(payload.get("profile_id", "")),
-            project_root=str(payload.get("project_root", "")),
-            command_preview=str(payload.get("command_preview", "")),
-            blocker_message=str(payload.get("blocker_message", "")),
-            error_message=str(payload.get("error_message", "")),
-            exit_code=payload.get("exit_code"),
-            paths=dict(payload.get("paths", {}))
-            if isinstance(payload.get("paths"), dict)
-            else {},
-            artifacts=[dict(item) for item in artifacts if isinstance(item, dict)],
-            manual_evidence=[dict(item) for item in payload.get("manual_evidence", []) if isinstance(item, dict)],
-            summary=payload.get("summary") if isinstance(payload.get("summary"), dict) else None,
-            notes=[str(item) for item in payload.get("notes", []) if item],
-            progress=dict(payload.get("progress", {}))
-            if isinstance(payload.get("progress"), dict)
-            else None,
-        )
+def _sync_operator_action_patch_points() -> None:
+    _qa_operator_actions.prerequisite_status = prerequisite_status
 
 
 def _status_map(root: Path) -> dict[str, dict[str, str]]:
-    return {item["key"]: item for item in prerequisite_status(root)}
-
-
-def _path_from_status(status_map: dict[str, dict[str, str]], key: str) -> Path:
-    raw = status_map.get(key, {}).get("path", "")
-    return Path(raw) if raw else Path()
-
-
-def _status_value(status_map: dict[str, dict[str, str]], key: str) -> str:
-    return str(status_map.get(key, {}).get("status", "")).strip().lower()
-
-
-def _status_detail(status_map: dict[str, dict[str, str]], key: str) -> str:
-    return str(status_map.get(key, {}).get("detail", "")).strip()
-
-
-def _scene_runtime_blocker_message(status_map: dict[str, dict[str, str]]) -> str:
-    raco_status = _status_value(status_map, "raco_headless")
-    raco_detail = _status_detail(status_map, "raco_headless")
-    if raco_status == "incompatible":
-        detail = f" {raco_detail}" if raco_detail else ""
-        return "Scene check is blocked because the configured `RaCoHeadless.exe` cannot open the representative SG scene." + detail
-    return "Scene check needs both the mirrored `check_scenes.py` helper and a locally compatible `RaCoHeadless.exe`."
-
-
-def _bmw_smoke_script_path(status_map: dict[str, dict[str, str]], profile: RunProfile) -> Path:
-    bmw_repo = _path_from_status(status_map, "bmw_models_repo")
-    if not bmw_repo:
-        return Path()
-    return bmw_repo / "ci" / "scripts" / (profile.bmw_smoke_runner or "car_manager.py")
-
-
-def _bmw_smoke_blocker_message(status_map: dict[str, dict[str, str]], profile: RunProfile) -> str:
-    bmw_repo = _path_from_status(status_map, "bmw_models_repo")
-    script_path = _bmw_smoke_script_path(status_map, profile)
-    if not bmw_repo.exists():
-        return "BMW screenshot smoke needs a local `digital-3d-car-models` clone from BMW Git."
-    if not script_path.exists():
-        return "BMW screenshot smoke needs the `ci/scripts/car_manager.py` helper in the BMW models repo."
-    if not profile.bmw_smoke_target.strip():
-        return f"No BMW screenshot-smoke target mapping is configured for {profile.profile_id} yet."
-    return ""
+    _sync_operator_action_patch_points()
+    return _qa_operator_actions._status_map(root)
 
 
 def list_operator_actions(
@@ -308,250 +104,8 @@ def list_operator_actions(
     *,
     profiles: list[RunProfile] | None = None,
 ) -> list[OperatorAction]:
-    root = workspace_root(workspace)
-    live_profiles = profiles or list_run_profiles(root)
-    status_map = _status_map(root)
-    source_root = resolve_source_repo_root(root)
-    mirror_root = root / "repositories" / "trunk"
-    style_script, checker_script = _repo_checker_paths(mirror_root)
-    unused_resources_script = _unused_resources_script_path(mirror_root)
-    delivery_checklist_paths = _delivery_checklist_paths(mirror_root)
-    scene_checker = mirror_root / "check_scenes.py"
-    raco_headless = _path_from_status(status_map, "raco_headless")
-    checker_ready = style_script.exists() and checker_script.exists()
-    scene_ready = scene_checker.exists() and raco_headless.exists() and _status_value(status_map, "raco_headless") == "available"
-
-    actions = [
-        OperatorAction(
-            action_id="repo_checker_all",
-            label="Run full repo checkers",
-            description="Run the SG checker stack over the live SG repo root, matching `checkall.bat` scope without calling the batch wrapper directly.",
-            kind="repo_checker",
-            scope="workspace",
-            ready=checker_ready and source_root.exists(),
-            blocker_message=(
-                ""
-                if checker_ready and source_root.exists()
-                else "The SG checker stack (`check_all_styles.py` + `executeChecks.py`) or live source repo root is missing."
-            ),
-            command_preview=_repo_checker_command_preview(
-                style_script,
-                checker_script,
-                source_root,
-            ),
-        ),
-        OperatorAction(
-            action_id="daily_live_matrix",
-            label="Run daily SG check",
-            description="Run the recommended SG QA stack across the ready live SG slices and write one shared summary.",
-            kind="daily_live_matrix",
-            scope="workspace",
-            ready=any(profile.source_project_root().exists() and profile.config_path.exists() for profile in live_profiles),
-            blocker_message=(
-                ""
-                if any(profile.source_project_root().exists() and profile.config_path.exists() for profile in live_profiles)
-                else "No ready live SG profiles are configured on this machine."
-            ),
-            command_preview="internal: run the recommended QA stack across all ready live profiles",
-        ),
-        OperatorAction(
-            action_id="repo_checker_idcevo",
-            label="Run IDCevo repo checkers",
-            description="Run the SG checker stack over the mirrored `Cars_IDCevo` tree.",
-            kind="repo_checker",
-            scope="workspace",
-            ready=checker_ready and (source_root / "Cars_IDCevo").exists(),
-            blocker_message=(
-                ""
-                if checker_ready and (source_root / "Cars_IDCevo").exists()
-                else "The SG checker stack (`check_all_styles.py` + `executeChecks.py`) or live `Cars_IDCevo` tree is missing."
-            ),
-            command_preview=_repo_checker_command_preview(
-                style_script,
-                checker_script,
-                source_root / "Cars_IDCevo",
-            ),
-        ),
-        OperatorAction(
-            action_id="repo_checker_classic",
-            label="Run classic repo checkers",
-            description="Run the SG checker stack over the mirrored `Cars` tree.",
-            kind="repo_checker",
-            scope="workspace",
-            ready=checker_ready and (source_root / "Cars").exists(),
-            blocker_message=(
-                ""
-                if checker_ready and (source_root / "Cars").exists()
-                else "The SG checker stack (`check_all_styles.py` + `executeChecks.py`) or live `Cars` tree is missing."
-            ),
-            command_preview=_repo_checker_command_preview(
-                style_script,
-                checker_script,
-                source_root / "Cars",
-            ),
-        ),
-    ]
-
-    for profile in live_profiles:
-        source_project_root = profile.source_project_root()
-        actions.append(
-            OperatorAction(
-                action_id=f"qa_stack__{profile.profile_id.lower()}",
-                label=f"Run recommended QA stack for {profile.profile_id}",
-                description=(
-                    f"Run the default preflight first, then every additional SG-side QA step that is available on this machine for {profile.profile_id}."
-                ),
-                kind="profile_stack",
-                scope="profile",
-                ready=source_project_root.exists() and profile.config_path.exists(),
-                blocker_message=(
-                    ""
-                    if source_project_root.exists() and profile.config_path.exists()
-                    else f"The project root or config for {profile.profile_id} is missing, so the recommended stack cannot start."
-                ),
-                profile_id=profile.profile_id,
-                project_root=str(source_project_root),
-                command_preview=(
-                    "internal: standard preflight + repo checker + unused resource scan + scene check + delivery checklist readiness + BMW smoke readiness summary"
-                ),
-            )
-        )
-        actions.append(
-            OperatorAction(
-                action_id=f"repo_checker_profile__{profile.profile_id.lower()}",
-                label=f"Run repo check for {profile.profile_id}",
-                description=f"Run the SG checker stack only for the {profile.profile_id} project tree.",
-                kind="repo_checker",
-                scope="profile",
-                ready=checker_ready and source_project_root.exists(),
-                blocker_message=(
-                    ""
-                    if checker_ready and source_project_root.exists()
-                    else (
-                        f"The SG checker stack (`check_all_styles.py` + `executeChecks.py`) "
-                        f"or project root for {profile.profile_id} is missing."
-                    )
-                ),
-                profile_id=profile.profile_id,
-                project_root=str(source_project_root),
-                command_preview=_repo_checker_command_preview(
-                    style_script,
-                    checker_script,
-                    source_project_root,
-                ),
-            )
-        )
-        actions.append(
-            OperatorAction(
-                action_id=f"unused_resources__{profile.profile_id.lower()}",
-                label=f"Run unused resource scan for {profile.profile_id}",
-                description=(
-                    f"Run the SG unused-resource checker for the {profile.profile_id} project so leftover resource files can be reviewed before handoff."
-                ),
-                kind="unused_resources",
-                scope="profile",
-                ready=(
-                    unused_resources_script.exists()
-                    and source_project_root.exists()
-                    and _unused_resources_inputs(source_project_root)[0].exists()
-                    and any(source_project_root.rglob("*.rca"))
-                ),
-                blocker_message=(
-                    ""
-                    if (
-                        unused_resources_script.exists()
-                        and source_project_root.exists()
-                        and _unused_resources_inputs(source_project_root)[0].exists()
-                        and any(source_project_root.rglob("*.rca"))
-                    )
-                    else (
-                        "Unused resource scan needs `printNotUsedResources.py`, a local `resources` tree, and at least one `.rca` scene under the project root."
-                    )
-                ),
-                profile_id=profile.profile_id,
-                project_root=str(source_project_root),
-                command_preview=_unused_resources_command_preview(
-                    unused_resources_script,
-                    source_project_root,
-                ),
-            )
-        )
-        delivery_checklist_ready = source_project_root.exists() and all(
-            path.exists()
-            for key, path in delivery_checklist_paths.items()
-            if key != "root"
-        )
-        actions.append(
-            OperatorAction(
-                action_id=f"delivery_checklist__{profile.profile_id.lower()}",
-                label=f"Check delivery checklist readiness for {profile.profile_id}",
-                description=(
-                    f"Inspect the SG delivery-checklist bridge assets plus BMW-side prerequisites for {profile.profile_id} without pretending the external BMW flow runs here."
-                ),
-                kind="delivery_checklist",
-                scope="profile",
-                ready=delivery_checklist_ready,
-                blocker_message=(
-                    ""
-                    if delivery_checklist_ready
-                    else (
-                        "Delivery checklist readiness needs the mirrored `.pdx/checkers/deliveryChecklist` assets "
-                        "(`deliveryChecklist.exe`, `deliveryChecklist.py`, `README.md`, and `cameraCrane.lua`)."
-                    )
-                ),
-                profile_id=profile.profile_id,
-                project_root=str(source_project_root),
-                command_preview=_delivery_checklist_command_preview(profile),
-            )
-        )
-        actions.append(
-            OperatorAction(
-                action_id=f"scene_check__{profile.profile_id.lower()}",
-                label=f"Run scene check for {profile.profile_id}",
-                description=f"Run SG scene checking over every `.rca` under the {profile.profile_id} project tree.",
-                kind="scene_check",
-                scope="profile",
-                ready=scene_ready and source_project_root.exists(),
-                blocker_message=(
-                    ""
-                    if scene_ready and source_project_root.exists()
-                    else (
-                        "The mirrored `check_scenes.py` helper is missing."
-                        if not scene_checker.exists()
-                        else _scene_runtime_blocker_message(status_map)
-                    )
-                ),
-                profile_id=profile.profile_id,
-                project_root=str(source_project_root),
-                command_preview=f"{sys.executable} {scene_checker} --raco {raco_headless} --dir {source_project_root}",
-            )
-        )
-        bmw_smoke_blocker = _bmw_smoke_blocker_message(status_map, profile)
-        bmw_script = _bmw_smoke_script_path(status_map, profile)
-        target = profile.bmw_smoke_target.strip()
-        actions.append(
-            OperatorAction(
-                action_id=f"bmw_screenshot_smoke__{profile.profile_id.lower()}",
-                label=f"Run BMW screenshot smoke for {profile.profile_id}",
-                description=(
-                    f"Run BMW-side export and screenshot smoke for {profile.profile_id} when the BMW models repo and car mapping are available."
-                ),
-                kind="bmw_screenshot_smoke",
-                scope="profile",
-                ready=not bmw_smoke_blocker,
-                blocker_message=bmw_smoke_blocker,
-                profile_id=profile.profile_id,
-                project_root=str(source_project_root),
-                command_preview=(
-                    f"{sys.executable} {bmw_script} export {target} && "
-                    f"{sys.executable} {bmw_script} screenshots --diff {target}"
-                    if target
-                    else "BMW screenshot smoke target mapping is not configured yet."
-                ),
-            )
-        )
-
-    return actions
+    _sync_operator_action_patch_points()
+    return _qa_operator_actions.list_operator_actions(workspace, profiles=profiles)
 
 
 def get_operator_action(
@@ -560,306 +114,8 @@ def get_operator_action(
     *,
     profiles: list[RunProfile] | None = None,
 ) -> OperatorAction:
-    normalized = action_id.strip().lower()
-    for action in list_operator_actions(workspace, profiles=profiles):
-        if action.action_id.lower() == normalized:
-            return action
-    supported = ", ".join(action.action_id for action in list_operator_actions(workspace, profiles=profiles))
-    raise KeyError(f"Unsupported action {action_id!r}. Supported actions: {supported}")
-
-
-def _default_action_run_id(action_id: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"{stamp}-{action_id.lower()}-{uuid.uuid4().hex[:6]}"
-
-
-def build_action_record(action: OperatorAction, workspace: Path | None = None) -> ActionRecord:
-    root = workspace_root(workspace)
-    run_id = _default_action_run_id(action.action_id)
-    output_root = operator_ui_actions_root(root) / run_id
-    return ActionRecord(
-        run_id=run_id,
-        action_id=action.action_id,
-        label=action.label,
-        kind=action.kind,
-        scope=action.scope,
-        status="queued",
-        created_at_utc=utc_now(),
-        started_at_utc=None,
-        completed_at_utc=None,
-        workspace_root=str(root),
-        profile_id=action.profile_id,
-        project_root=action.project_root,
-        command_preview=action.command_preview,
-        blocker_message=action.blocker_message,
-        paths={
-            "output_root": str(output_root),
-            "run_record": str(output_root / "action.json"),
-            "action_record": str(output_root / "action.json"),
-            "log": str(output_root / "action.log"),
-            "summary_json": str(output_root / "summary.json"),
-            "summary_md": str(output_root / "summary.md"),
-            "xlsx_report": str(output_root / "scene-check.xlsx"),
-            "manual_evidence_root": str(output_root / "manual-evidence"),
-            "manual_evidence_index": str(output_root / "manual-evidence" / "attachments.json"),
-        },
-    )
-
-
-def save_action_record(record: ActionRecord) -> None:
-    write_json_file(Path(record.paths["run_record"]), record.to_dict())
-
-
-def _manual_evidence_root(record: ActionRecord) -> Path:
-    configured = str(record.paths.get("manual_evidence_root", "")).strip()
-    if configured:
-        return Path(configured)
-    return Path(record.paths["output_root"]) / "manual-evidence"
-
-
-def _manual_evidence_index_path(record: ActionRecord) -> Path:
-    configured = str(record.paths.get("manual_evidence_index", "")).strip()
-    if configured:
-        return Path(configured)
-    return _manual_evidence_root(record) / "attachments.json"
-
-
-def _manual_evidence_slug(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9._-]+", "-", value.strip().lower())
-    slug = slug.strip("-._")
-    return slug or "manual-evidence"
-
-
-def _manual_evidence_default_label(kind: str, source_path: Path | None = None) -> str:
-    if kind == "screenshot":
-        return "Local manual screenshot evidence"
-    if kind == "blender_note":
-        return "Blender review note"
-    if kind == "raco_note":
-        return "RaCo review note"
-    if kind == "visual_review_checklist":
-        return "Visual review checklist"
-    if kind == "verification_note":
-        return "Manual verification note"
-    if kind == "external_file" and source_path is not None:
-        return source_path.name
-    return "Manual evidence"
-
-
-def _manual_evidence_default_note(kind: str, label: str) -> str:
-    templates = {
-        "blender_note": (
-            f"{label}\n\n"
-            "- Area checked:\n"
-            "- What matched in Blender:\n"
-            "- What still needs SG / RaCo follow-up:\n"
-        ),
-        "raco_note": (
-            f"{label}\n\n"
-            "- Scene checked:\n"
-            "- What matched in RaCo:\n"
-            "- What still needs SG follow-up:\n"
-        ),
-        "visual_review_checklist": (
-            f"{label}\n\n"
-            "- Project changelog reviewed: [ ]\n"
-            "- Screenshot baseline set reviewed: [ ]\n"
-            "- Blender scene opened: [ ]\n"
-            "- RaCo scene opened: [ ]\n"
-            "- Blender vs RaCo compared: [ ]\n"
-            "- Key camera / perspective checked: [ ]\n"
-            "- Screenshot captured: [ ]\n"
-            "- Constants / README notes checked: [ ]\n"
-            "- Finding documented: [ ]\n"
-            "- Notes:\n"
-        ),
-        "verification_note": (
-            f"{label}\n\n"
-            "- What was verified:\n"
-            "- Result:\n"
-            "- Remaining blocker or follow-up:\n"
-        ),
-    }
-    return templates.get(kind, f"{label}\n")
-
-
-def _manual_evidence_target_path(record: ActionRecord, kind: str, label: str, source_path: Path | None = None) -> Path:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    suffix = source_path.suffix if source_path is not None and source_path.suffix else ".md"
-    basename = f"{stamp}-{_manual_evidence_slug(kind)}-{_manual_evidence_slug(label)}-{uuid.uuid4().hex[:6]}{suffix}"
-    return _manual_evidence_root(record) / basename
-
-
-def _write_manual_evidence_index(record: ActionRecord) -> None:
-    write_json_file(
-        _manual_evidence_index_path(record),
-        {
-            "schema_version": 1,
-            "run_id": record.run_id,
-            "items": [dict(item) for item in record.manual_evidence],
-        },
-    )
-
-
-def attach_manual_evidence(
-    run_id_or_path: str | Path,
-    workspace: Path | None = None,
-    *,
-    kind: str,
-    label: str = "",
-    source_path: str = "",
-    note: str = "",
-) -> dict[str, str]:
-    root = workspace_root(workspace)
-    record = load_action_record(run_id_or_path, root)
-    source = Path(source_path).expanduser() if source_path.strip() else None
-    if source is not None and not source.exists():
-        raise FileNotFoundError(f"Manual evidence source was not found: {source}")
-
-    manual_root = _manual_evidence_root(record)
-    manual_root.mkdir(parents=True, exist_ok=True)
-
-    resolved_label = label.strip() or _manual_evidence_default_label(kind, source)
-    resolved_note = note.strip()
-    target_path = _manual_evidence_target_path(record, kind, resolved_label, source)
-
-    if kind in {"blender_note", "raco_note", "visual_review_checklist", "verification_note"}:
-        text = resolved_note or _manual_evidence_default_note(kind, resolved_label)
-        target_path.write_text(text.strip() + "\n", encoding="utf-8")
-        resolved_note = text.strip()
-    elif source is not None:
-        source_resolved = source.resolve()
-        target_resolved = target_path.resolve()
-        if source_resolved != target_resolved:
-            shutil.copy2(source_resolved, target_resolved)
-        else:
-            target_path = source_resolved
-    else:
-        raise ValueError("Manual evidence attachment requires a source file or a note-based kind.")
-
-    entry = {
-        "id": uuid.uuid4().hex,
-        "kind": kind.strip(),
-        "label": resolved_label,
-        "path": str(target_path),
-        "note": resolved_note,
-        "source_path": str(source.resolve()) if source is not None else "",
-        "created_at_utc": utc_now(),
-    }
-    record.manual_evidence.append(entry)
-    record.artifacts.append(_artifact(resolved_label, target_path))
-    _write_manual_evidence_index(record)
-    save_action_record(record)
-    return entry
-
-
-def _progress_event(
-    step_key: str,
-    label: str,
-    detail: str = "",
-    meta: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "timestamp_utc": utc_now(),
-        "step_key": step_key,
-        "label": label,
-        "detail": detail,
-    }
-    if meta:
-        payload["meta"] = dict(meta)
-    return payload
-
-
-def _merged_progress_events(
-    existing: dict[str, Any] | None,
-    *,
-    step_key: str,
-    label: str,
-    detail: str = "",
-    meta: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    raw_events = existing.get("events", []) if isinstance(existing, dict) else []
-    events = [dict(item) for item in raw_events if isinstance(item, dict)]
-    if (
-        not events
-        or events[-1].get("step_key") != step_key
-        or events[-1].get("label") != label
-        or events[-1].get("detail") != detail
-        or (
-            isinstance(meta, dict)
-            and dict(events[-1].get("meta", {})) != dict(meta)
-        )
-    ):
-        events.append(_progress_event(step_key, label, detail, meta))
-    return events[-60:]
-
-
-def _set_action_progress(
-    record: ActionRecord,
-    *,
-    step_key: str,
-    percent: int,
-    label: str,
-    detail: str = "",
-    meta: dict[str, Any] | None = None,
-) -> None:
-    plan = ACTION_PROGRESS_PLANS.get(record.kind, (("queued", "Queued"), ("finalize", "Finalize action record")))
-    events = _merged_progress_events(
-        record.progress,
-        step_key=step_key,
-        label=label,
-        detail=detail,
-        meta=meta,
-    )
-    record.progress = build_progress_payload(
-        plan,
-        step_key=step_key,
-        percent=percent,
-        label=label,
-        detail=detail,
-        events=events,
-    )
-    save_action_record(record)
-
-
-def load_action_record(path_or_run_id: str | Path, workspace: Path | None = None) -> ActionRecord:
-    candidate = Path(path_or_run_id)
-    if candidate.exists():
-        record_path = candidate if candidate.is_file() else candidate / "action.json"
-    else:
-        record_path = operator_ui_actions_root(workspace) / str(path_or_run_id) / "action.json"
-    payload = json.loads(record_path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"Action record must contain a JSON object: {record_path}")
-    return ActionRecord.from_dict(payload)
-
-
-def list_recent_action_records(workspace: Path | None = None, limit: int = 12) -> list[ActionRecord]:
-    records: list[ActionRecord] = []
-    actions_root = operator_ui_actions_root(workspace)
-    if not actions_root.exists():
-        return records
-
-    for path in actions_root.iterdir():
-        record_path = path / "action.json"
-        if not record_path.exists():
-            continue
-        try:
-            records.append(load_action_record(record_path, workspace))
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
-
-    records.sort(key=lambda item: item.created_at_utc, reverse=True)
-    return records[:limit]
-
-
-def _write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-def _artifact(label: str, path: Path) -> dict[str, str]:
-    return {"label": label, "path": str(path)}
+    _sync_operator_action_patch_points()
+    return _qa_operator_actions.get_operator_action(action_id, workspace, profiles=profiles)
 
 
 def _visual_review_prep_entries(record: ActionRecord, root: Path) -> tuple[list[dict[str, str]], list[str]]:
@@ -1897,8 +1153,23 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
 
     _set_action_progress(
         record,
+        step_key="interface",
+        percent=16,
+        label="Running BMW interface smoke",
+        detail=f"Launching BMW interface smoke for target {target}.",
+        meta={
+            "target": target,
+            "command": f"{sys.executable} {script_path} test -c {target} -ns",
+        },
+    )
+    interface_process = _run_bmw_smoke_step(
+        [sys.executable, str(script_path), "test", "-c", target, "-ns"],
+        scripts_root,
+    )
+    _set_action_progress(
+        record,
         step_key="export",
-        percent=28,
+        percent=42,
         label="Running BMW export",
         detail=f"Launching BMW export for target {target}.",
         meta={
@@ -1906,17 +1177,14 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
             "command": f"{sys.executable} {script_path} export {target}",
         },
     )
-    export_process = subprocess.run(
+    export_process = _run_bmw_smoke_step(
         [sys.executable, str(script_path), "export", target],
-        cwd=scripts_root,
-        capture_output=True,
-        text=True,
-        check=False,
+        scripts_root,
     )
     _set_action_progress(
         record,
         step_key="screenshots",
-        percent=68,
+        percent=72,
         label="Running BMW screenshots",
         detail=f"Capturing screenshot diff output for target {target}.",
         meta={
@@ -1924,15 +1192,15 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
             "command": f"{sys.executable} {script_path} screenshots --diff {target}",
         },
     )
-    screenshots_process = subprocess.run(
+    screenshots_process = _run_bmw_smoke_step(
         [sys.executable, str(script_path), "screenshots", "--diff", target],
-        cwd=scripts_root,
-        capture_output=True,
-        text=True,
-        check=False,
+        scripts_root,
     )
     combined_log = "\n\n".join(
         [
+            "=== interface smoke ===",
+            (interface_process.stdout or "").strip(),
+            (interface_process.stderr or "").strip(),
             "=== export ===",
             (export_process.stdout or "").strip(),
             (export_process.stderr or "").strip(),
@@ -1947,10 +1215,12 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
         "title": "BMW screenshot smoke result",
         "lines": [
             f"Target: {target}",
+            f"Interface smoke exit code: {interface_process.returncode}",
             f"Export exit code: {export_process.returncode}",
             f"Screenshot exit code: {screenshots_process.returncode}",
         ],
         "target": target,
+        "interface_exit_code": interface_process.returncode,
         "export_exit_code": export_process.returncode,
         "screenshots_exit_code": screenshots_process.returncode,
     }
@@ -1958,7 +1228,26 @@ def _execute_bmw_screenshot_smoke(record: ActionRecord, root: Path) -> tuple[dic
     return summary, artifacts, []
 
 
+def _run_bmw_smoke_step(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        command = " ".join(str(item) for item in args)
+        raise RuntimeError(
+            f"BMW screenshot smoke timed out after {BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS} seconds: {command}"
+        ) from exc
+
+
 def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
+    import openpyxl
+
     status_map = _status_map(root)
     raco_exe = _path_from_status(status_map, "raco_headless")
     scene_checker = root / "repositories" / "trunk" / "check_scenes.py"

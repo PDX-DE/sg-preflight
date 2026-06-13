@@ -12,6 +12,7 @@ from typing import Any
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.export_size_analysis import read_export_size_analysis
+from sg_preflight.io_utils import read_json
 from sg_preflight.manual_review import render_manual_review_markdown
 from sg_preflight.profiles import get_run_profile
 from sg_preflight.screenshot_review_viewer import build_screenshot_review_viewer
@@ -40,7 +41,7 @@ def _safe_status(payload: dict[str, Any]) -> str:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = read_json(path)
     if not isinstance(payload, dict):
         raise ValueError(f"JSON payload is not an object: {path}")
     return payload

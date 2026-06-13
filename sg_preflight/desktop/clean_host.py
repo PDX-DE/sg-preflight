@@ -4,17 +4,20 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+from time import monotonic
 import urllib.error
 import urllib.request
 
-from PySide6.QtCore import QTimer, QUrl, Signal
+from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QVBoxLayout, QWidget
 
 from sg_preflight.assets import runtime_asset_path
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs, sgfx_cli_command
 
 CLEAN_WINDOW_TITLE = "Seriengrafik: Project Quality-Hero"
+DASHBOARD_POLL_INTERVAL_MS = 150
+DASHBOARD_STARTUP_TIMEOUT_SECONDS = 120
 
 
 def _find_open_dashboard_port(start_port: int = 8000, end_port: int = 8999) -> int:
@@ -29,8 +32,6 @@ def _find_open_dashboard_port(start_port: int = 8000, end_port: int = 8999) -> i
 
 
 class CleanDashboardWindow(QMainWindow):
-    switch_requested = Signal(str)
-
     def __init__(self, *, workspace: Path, initial_profile_id: str = "") -> None:
         super().__init__()
         self.workspace = workspace
@@ -39,59 +40,56 @@ class CleanDashboardWindow(QMainWindow):
         self._server: subprocess.Popen[bytes] | None = None
         self._poll_count = 0
         self._ready = False
-
-        try:
-            from PySide6.QtWebEngineWidgets import QWebEngineView
-        except ImportError as exc:
-            raise RuntimeError("Clean mode requires the PySide6 QtWebEngineWidgets runtime.") from exc
-
-        icon_path = runtime_asset_path("desktop_native/resources/exe_ico.ico")
-        if icon_path.is_file():
-            self.setWindowIcon(QIcon(str(icon_path)))
-        self.setWindowTitle(CLEAN_WINDOW_TITLE)
-        self.resize(1440, 900)
-
-        central = QWidget(self)
-        central.setProperty("sgfxMode", "clean")
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(12, 10, 12, 12)
-        layout.setSpacing(8)
-
-        bar = QWidget(central)
-        bar.setProperty("sgfxMode", "clean")
-        bar_layout = QHBoxLayout(bar)
-        bar_layout.setContentsMargins(0, 0, 0, 0)
-        bar_layout.setSpacing(6)
-
-        self.clean_button = QPushButton("Clean", bar)
-        self.grafiks_button = QPushButton("Grafiks", bar)
-        for button in (self.clean_button, self.grafiks_button):
-            button.setObjectName("presentationToggle")
-            button.setProperty("sgfxMode", "clean")
-            button.setCheckable(True)
-            button.setMinimumHeight(30)
-            button.setMinimumWidth(96)
-        self.clean_button.setChecked(True)
-        self.grafiks_button.clicked.connect(lambda: self.switch_requested.emit("grafiks"))
-        bar_layout.addWidget(self.clean_button)
-        bar_layout.addWidget(self.grafiks_button)
-
-        self.status_label = QLabel("Starting embedded dashboard...", bar)
-        self.status_label.setObjectName("panelHint")
-        self.status_label.setProperty("sgfxMode", "clean")
-        bar_layout.addWidget(self.status_label, stretch=1)
-        layout.addWidget(bar)
-
-        self.web_view = QWebEngineView(central)
-        self.web_view.setProperty("sgfxMode", "clean")
-        layout.addWidget(self.web_view, stretch=1)
-        self.setCentralWidget(central)
+        self._started_at = monotonic()
 
         self._start_server()
-        self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(150)
-        self._poll_timer.timeout.connect(self._poll_server)
-        self._poll_timer.start()
+
+        try:
+            try:
+                from PySide6.QtWebEngineCore import QWebEngineSettings
+                from PySide6.QtWebEngineWidgets import QWebEngineView
+            except ImportError as exc:
+                raise RuntimeError("Clean mode requires the PySide6 QtWebEngineWidgets runtime.") from exc
+
+            icon_path = runtime_asset_path("desktop_native/resources/exe_ico.ico")
+            if icon_path.is_file():
+                self.setWindowIcon(QIcon(str(icon_path)))
+            self.setWindowTitle(CLEAN_WINDOW_TITLE)
+            self.resize(1440, 900)
+
+            central = QWidget(self)
+            central.setProperty("sgfxMode", "clean")
+            layout = QVBoxLayout(central)
+            layout.setContentsMargins(12, 10, 12, 12)
+            layout.setSpacing(8)
+
+            bar = QWidget(central)
+            bar.setProperty("sgfxMode", "clean")
+            bar_layout = QHBoxLayout(bar)
+            bar_layout.setContentsMargins(0, 0, 0, 0)
+            bar_layout.setSpacing(6)
+
+            self.status_label = QLabel("Starting embedded dashboard... first launch can take up to a minute.", bar)
+            self.status_label.setObjectName("panelHint")
+            self.status_label.setProperty("sgfxMode", "clean")
+            bar_layout.addWidget(self.status_label, stretch=1)
+            layout.addWidget(bar)
+
+            self.web_view = QWebEngineView(central)
+            self.web_view.setProperty("sgfxMode", "clean")
+            web_settings = self.web_view.settings()
+            web_settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+            web_settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanPaste, True)
+            layout.addWidget(self.web_view, stretch=1)
+            self.setCentralWidget(central)
+
+            self._poll_timer = QTimer(self)
+            self._poll_timer.setInterval(DASHBOARD_POLL_INTERVAL_MS)
+            self._poll_timer.timeout.connect(self._poll_server)
+            self._poll_timer.start()
+        except Exception:
+            self._stop_server()
+            raise
 
     def _server_command(self) -> list[str]:
         command = sgfx_cli_command("dashboard", "run")
@@ -139,20 +137,28 @@ class CleanDashboardWindow(QMainWindow):
                 if response.status != 200:
                     raise urllib.error.URLError(f"HTTP {response.status}")
         except Exception:
-            if self._poll_count > 200:
+            elapsed = monotonic() - self._started_at
+            polls_per_second = max(1, int(1000 / DASHBOARD_POLL_INTERVAL_MS))
+            if self._poll_count % polls_per_second == 0:
+                self.status_label.setText(f"Starting embedded dashboard... {elapsed:.0f}s elapsed")
+            if elapsed > DASHBOARD_STARTUP_TIMEOUT_SECONDS:
                 self._poll_timer.stop()
                 self.status_label.setText("Embedded dashboard did not become ready.")
             return
         self._ready = True
         self._poll_timer.stop()
-        self.status_label.setText("Dashboard ready")
+        self.status_label.setText("")
+        self.status_label.hide()
         self.web_view.setUrl(QUrl(url))
 
-    def closeEvent(self, event) -> None:  # noqa: N802
+    def _stop_server(self) -> None:
         if self._server is not None and self._server.poll() is None:
             self._server.terminate()
             try:
                 self._server.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self._server.kill()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._stop_server()
         super().closeEvent(event)

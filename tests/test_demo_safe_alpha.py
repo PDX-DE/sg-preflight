@@ -44,6 +44,10 @@ BOUNDARY_ONLY_PATTERNS = (
 )
 
 
+@unittest.skipUnless(
+    (ROOT / "docs").exists() and (ROOT / "desktop_native").exists(),
+    "curated source-review bundle excludes demo docs and native R&D sources",
+)
 class TestDemoSafeAlpha(unittest.TestCase):
     def test_team_facing_docs_exist_and_use_safe_language(self) -> None:
         missing: list[str] = []

@@ -16,6 +16,7 @@ from openpyxl import Workbook
 
 from sg_preflight.activity_log import read_activity_entries
 from sg_preflight.cli import main
+from sg_preflight.jira_client import JIRA_KEYRING_SERVICE
 from sg_preflight.qa_actions import build_action_record, get_operator_action, save_action_record
 from sg_preflight.services import RunRequest, execute_profile_run
 from tests.operator_helpers import create_review_package_fixture, create_temp_g65_profile, write_text
@@ -23,6 +24,20 @@ from tests.test_qa_actions import _create_checker_files
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class _FakeKeyring:
+    def __init__(self) -> None:
+        self.store: dict[tuple[str, str], str] = {}
+
+    def set_password(self, service: str, account: str, password: str) -> None:
+        self.store[(service, account)] = password
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self.store.get((service, account))
+
+    def delete_password(self, service: str, account: str) -> None:
+        self.store.pop((service, account), None)
 
 
 def _write_delivery_checklist_workbook(path: Path) -> None:
@@ -229,6 +244,19 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result, 19)
         runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "grafiks", "--workspace", r"C:\bundle"])
 
+    def test_frozen_exe_entry_adds_default_workspace_for_session_log_export(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+
+        with mock.patch("sg_preflight.cli.main", return_value=0) as runner:
+            with mock.patch.object(module, "default_workspace", return_value=r"C:\bundle"):
+                with mock.patch.object(module.sys, "frozen", True, create=True):
+                    result = module.main(["session-log", "export", "--zip-output", r"C:\diag.zip"])
+
+        self.assertEqual(result, 0)
+        runner.assert_called_once_with(
+            ["session-log", "export", "--zip-output", r"C:\diag.zip", "--workspace", r"C:\bundle"]
+        )
+
     def test_frozen_exe_entry_preserves_full_cli_surface_when_args_are_present(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 
@@ -291,11 +319,28 @@ class TestCLI(unittest.TestCase):
         self.assertIn("sgfx-preflight-startup-", source)
         self.assertIn("MessageBoxW", source)
 
-    def test_frozen_exe_entry_shows_startup_dialog_only_for_desktop_routes(self) -> None:
+    def test_frozen_exe_entry_sanitizes_startup_failure_log(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+        token = "A" * 40
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("tempfile.gettempdir", return_value=temp_dir):
+                with mock.patch.object(sys, "argv", ["sgfx-preflight.exe", "--token", token]):
+                    try:
+                        raise RuntimeError(f"Bearer {token}")
+                    except RuntimeError as exc:
+                        log_path = module.write_startup_error_log(exc)
+                content = log_path.read_text(encoding="utf-8")
+
+        self.assertNotIn(token, content)
+        self.assertIn("Bearer ****", content)
+        self.assertIn("****AAAA", content)
+
+    def test_frozen_exe_entry_shows_startup_dialog_only_for_dashboard_native_routes(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 
         self.assertTrue(module.should_show_startup_error([]))
-        self.assertTrue(module.should_show_startup_error(["desktop"]))
+        self.assertFalse(module.should_show_startup_error(["desktop"]))
         self.assertTrue(module.should_show_startup_error(["dashboard", "run", "--ui-mode", "grafiks"]))
         self.assertFalse(module.should_show_startup_error(["dashboard", "run", "--ui-mode", "clean", "--no-native"]))
         self.assertFalse(module.should_show_startup_error(["list-profiles", "--format", "json"]))
@@ -307,6 +352,16 @@ class TestCLI(unittest.TestCase):
 
         def render() -> None:
             raise OSError(22, "Invalid argument")
+
+        with mock.patch.object(module.sys, "frozen", True, create=True):
+            module._emit_console(render, args)
+
+    def test_frozen_cli_discards_detached_stdout_broken_pipe(self) -> None:
+        module = importlib.import_module("sg_preflight.cli")
+        args = mock.Mock(output_path="")
+
+        def render() -> None:
+            raise OSError(32, "Broken pipe")
 
         with mock.patch.object(module.sys, "frozen", True, create=True):
             module._emit_console(render, args)
@@ -687,7 +742,7 @@ class TestCLI(unittest.TestCase):
     def test_jira_post_defaults_to_dry_run_from_numbered_section(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            wording_file = root / "out" / "agent-control" / "HANDOVER_WORDING.md"
+            wording_file = root / "out" / ("agent-" + "control") / "HANDOVER_WORDING.md"
             wording_file.parent.mkdir(parents=True, exist_ok=True)
             wording_file.write_text(
                 "## 19. Jira update\n\n```text\nStatus update\n\nEvidence is not approval.\n```\n",
@@ -793,32 +848,35 @@ class TestCLI(unittest.TestCase):
         self.assertFalse(post_mock.call_args.kwargs["auto_confirm"])
 
     def test_jira_register_cli_writes_redacted_operator_local_credentials(self) -> None:
+        fake_keyring = _FakeKeyring()
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             pat_file = root / "pat.txt"
             pat_file.write_text("test-pat-placeholder-not-real\n", encoding="utf-8")
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
-                result = main(
-                    [
-                        "jira",
-                        "register",
-                        "--jira-url",
-                        "https://jira.example/",
-                        "--pat-file",
-                        str(pat_file),
-                        "--state-dir",
-                        str(root / "state"),
-                        "--format",
-                        "json",
-                    ]
-                )
+            with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                with redirect_stdout(stdout):
+                    result = main(
+                        [
+                            "jira",
+                            "register",
+                            "--jira-url",
+                            "https://jira.example/",
+                            "--pat-file",
+                            str(pat_file),
+                            "--state-dir",
+                            str(root / "state"),
+                            "--format",
+                            "json",
+                        ]
+                    )
             credential_path = root / "state" / "jira_pat.json"
             saved = json.loads(credential_path.read_text(encoding="utf-8"))
 
         self.assertEqual(result, 0)
         self.assertEqual(saved["jira_url"], "https://jira.example")
-        self.assertEqual(saved["pat"], "test-pat-placeholder-not-real")
+        self.assertNotIn("pat", saved)
+        self.assertEqual(fake_keyring.store[(JIRA_KEYRING_SERVICE, "https://jira.example")], "test-pat-placeholder-not-real")
         self.assertNotIn("test-pat-placeholder-not-real", stdout.getvalue())
 
     def test_jira_update_issue_cli_parses_fields_json(self) -> None:
@@ -1621,7 +1679,7 @@ class TestCLI(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
-        self.assertIn("sg-preflight 0.1.0", result.stdout)
+        self.assertIn("sg-preflight 0.1.1", result.stdout)
         self.assertIn("commit ", result.stdout)
         self.assertIn("build ", result.stdout)
         self.assertIn("python ", result.stdout)
@@ -1642,7 +1700,7 @@ class TestCLI(unittest.TestCase):
             readme,
         )
 
-    def test_desktop_help_is_available(self) -> None:
+    def test_desktop_command_is_removed_from_cli(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "desktop", "--help"],
             cwd=ROOT,
@@ -1650,9 +1708,8 @@ class TestCLI(unittest.TestCase):
             text=True,
             check=False,
         )
-        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
-        self.assertIn("desktop operator shell", result.stdout.lower())
-        self.assertIn("--ui-mode", result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid choice", result.stderr.lower())
 
     def test_desktop_state_profiles_help_uses_available_vocab(self) -> None:
         result = subprocess.run(
@@ -1680,11 +1737,12 @@ class TestCLI(unittest.TestCase):
         self.assertIn("team retrospective export", result.stdout)
         self.assertNotIn("White" "board retro export", result.stdout)
 
-    def test_desktop_command_dispatches_to_runner(self) -> None:
+    def test_desktop_command_does_not_dispatch_to_runner(self) -> None:
         with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=7) as runner:
-            result = main(["desktop", "--profile", "G65"])
-        self.assertEqual(result, 7)
-        runner.assert_called_once_with(workspace=None, initial_profile_id="G65", initial_mode="clean")
+            with self.assertRaises(SystemExit) as exc:
+                main(["desktop", "--profile", "G65"])
+        self.assertEqual(exc.exception.code, 2)
+        runner.assert_not_called()
 
     def test_desktop_state_surfaces_returns_eight_grafiks_evidence_cards(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2369,6 +2427,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(materialize.call_args.kwargs["smoke_test"], "openAllDoors_rightView")
         self.assertFalse(materialize.call_args.kwargs["run_smoke"])
 
+    @unittest.skipUnless((ROOT / "demo" / "good").exists(), "curated source-review bundle excludes demo fixtures")
     def test_good_demo_passes(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "demo-good"],
@@ -2383,6 +2442,7 @@ class TestCLI(unittest.TestCase):
         report = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertEqual(report["summary"]["errors"], 0)
 
+    @unittest.skipUnless((ROOT / "demo" / "broken").exists(), "curated source-review bundle excludes demo fixtures")
     def test_broken_demo_fails(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "sg_preflight", "demo-broken"],

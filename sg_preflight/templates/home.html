@@ -48,6 +48,7 @@
     </div>
     <div class="action-row action-row--wrap">
       <a class="button" href="/ui/review-board">Open SGFX QA Status Board</a>
+      <a class="button subtle" href="/ui/delivery-readiness">Open Delivery Readiness</a>
       <span class="muted">Current alpha review package: IDCEVODEV-960073 / NA8 / G78 / G50.</span>
     </div>
   </div>
@@ -277,6 +278,21 @@
       </details>
     </div>
 
+    {% if setup_report is defined %}
+    <div class="note-block {% if not setup_report.ready %}note-block--warn{% endif %}">
+      <strong>Setup doctor: {{ setup_report.headline }}</strong>
+      <div>
+        {{ setup_report.found_count }} found · {{ setup_report.required_missing_count }} required missing · {{ setup_report.optional_missing_count }} optional missing.
+        <a href="/ui/setup">Open Setup / Doctor</a>
+      </div>
+      {% if setup_report.next_action is defined %}
+      <div>
+        Next: {{ setup_report.next_action.label }}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <details class="foldout">
       <summary>Show machine setup</summary>
       <div class="stack tight">
@@ -334,6 +350,22 @@
             <span class="badge {% if step.state == 'covered' %}ok{% elif step.state == 'partial' %}info{% else %}warn{% endif %}">{{ step.state }}</span>
           </div>
           <p class="workflow-summary">{{ step.summary }}</p>
+          {% if step.expectations %}
+          <ul class="clean-list">
+            {% for key, expectation in step.expectations.items() %}
+            <li>
+              <strong>{{ key }}</strong>
+              {% if expectation.feature %} - {{ expectation.feature }}{% endif %}
+              {% if expectation.expected_selective_yellow_country_variants %}
+              <span class="muted">expected: {{ expectation.expected_selective_yellow_country_variants|join(', ') }}</span>
+              {% endif %}
+              {% if expectation.known_bad_signal %}
+              <span class="muted">{{ expectation.known_bad_signal }}</span>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
           {% if step.blockers %}
           <ul class="clean-list">
             {% for blocker in step.blockers %}

@@ -23,9 +23,9 @@ It is the deterministic front end of that workflow:
 See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflow fit, manual stages, and BMW-side blockers.
 See [sg-checker-coverage-matrix.md](sg-checker-coverage-matrix.md) for the real SG checker inventory and current integration coverage.
 
-The browser UI is the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos.
-An experimental desktop operator shell now exists for the same workflow when local file opening, blocker visibility, or checker-evidence triage is easier outside the browser.
-It still wraps the same Python core, actions, reports, and evidence model rather than introducing a second engine.
+The Clean dashboard is the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos.
+Grafiks is now the experimental C++ cinematic shell launched through `dashboard run --ui-mode grafiks`; the old PySide6 desktop console is no longer a user-facing command.
+Both surfaces still wrap the same Python core, actions, reports, and evidence model rather than introducing a second engine.
 Future desktop-shell notes belong under `docs/research/` so the main workflow docs stay focused on SG QA reality, `.pdx/checkers`, evidence, readiness, and BMW blocker visibility.
 
 ## Start
@@ -36,11 +36,10 @@ From the repository root:
 python -m sg_preflight ui --reload
 ```
 
-Experimental desktop shell:
+Grafiks cinematic shell:
 
 ```bash
-python -m pip install -e .[desktop]
-python -m sg_preflight desktop --profile G65
+python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
 ```
 
 PowerShell launcher:
@@ -55,8 +54,8 @@ Default address:
 http://127.0.0.1:8765/ui
 ```
 
-The desktop shell does not replace this browser flow.
-It is a local wrapper over the same action/run records for cases where `Open file`, `Reveal in Explorer`, and blocker-heavy QA triage are better outside `localhost`.
+The Grafiks shell does not replace the Clean dashboard flow.
+It is a cinematic wrapper over the same action/run records for cases where the planet overview is useful.
 A second experimental native shell scaffold now exists under `desktop_native/`; it uses the same `launch-action` and `desktop-state` backend contract over the Python core.
 
 Shared shell:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sg-preflight"
-version = "0.1.0"
+version = "0.1.1"
 description = "Deterministic 3D Car QA preflight checks"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +16,8 @@ dependencies = [
   "openpyxl>=3.1,<4",
   "openhtf==1.6.1",
   "nicegui[native]==3.11.1",
+  "keyring>=25,<26",
+  "pywin32-ctypes>=0.2.2,<1; platform_system == 'Windows'",
 ]
 license = {text = "Proprietary - Paradox Cat GmbH internal use only"}
 authors = [

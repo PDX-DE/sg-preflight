@@ -332,8 +332,8 @@ def render_risk_score_text(payload: dict[str, Any]) -> str:
         f"Manual-review steps: {latest.get('recorded_steps', 0)} recorded / {latest.get('pending_steps', 0)} not_run",
         f"Delta since latest review: {delta.get('changed_file_count', 0)} changed screenshot file(s)",
     ]
-    # H-34 Part C wiring: surface the H-31 ASCII sparkline + honest <3-run
-    # fallback so the risk-score CLI text path matches the H-30 HTML signal.
+    # internal milestone Part C wiring: surface the internal milestone ASCII sparkline + honest <3-run
+    # fallback so the risk-score CLI text path matches the internal milestone HTML signal.
     sparkline_line = _risk_score_sparkline_line(payload)
     if sparkline_line:
         lines.append(sparkline_line)

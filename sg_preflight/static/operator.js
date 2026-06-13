@@ -959,31 +959,48 @@
     });
   });
 
-  const pollStatus = async function (url, options) {
-    const response = await fetch(url);
-    if (!response.ok) {
-      return;
-    }
-    const payload = await response.json();
-    const pill = document.querySelector(options.pillSelector);
-    if (pill) {
-      pill.textContent = payload.status;
-    }
+  const pollStatus = async function (url, options, retryDelay) {
+    const delay = retryDelay || 1500;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error("Status poll failed");
+      }
+      const payload = await response.json();
+      const pill = document.querySelector(options.pillSelector);
+      if (pill) {
+        pill.textContent = payload.status;
+      }
 
-    if (payload.status === "running" || payload.status === "queued") {
-      showLoadingOverlay(payload);
-      updateStatusMessage(options.messageSelector, payload.progress && payload.progress.label ? payload.progress.label : payload.status, payload.progress && payload.progress.detail ? payload.progress.detail : "");
-    }
+      if (payload.status === "running" || payload.status === "queued") {
+        showLoadingOverlay(payload);
+        updateStatusMessage(options.messageSelector, payload.progress && payload.progress.label ? payload.progress.label : payload.status, payload.progress && payload.progress.detail ? payload.progress.detail : "");
+      }
 
-    if (payload.status === "completed" || payload.status === "failed" || payload.status === "blocked") {
-      hideLoadingOverlay();
-      window.location.reload();
-      return;
-    }
+      if (payload.status === "completed" || payload.status === "failed" || payload.status === "blocked") {
+        hideLoadingOverlay();
+        window.location.reload();
+        return;
+      }
 
-    window.setTimeout(function () {
-      pollStatus(url, options);
-    }, 1500);
+      window.setTimeout(function () {
+        pollStatus(url, options, 1500);
+      }, 1500);
+    } catch (_error) {
+      const nextDelay = Math.min(delay * 2, 6000);
+      const pill = document.querySelector(options.pillSelector);
+      if (pill) {
+        pill.textContent = "Reconnecting...";
+      }
+      updateStatusMessage(
+        options.messageSelector,
+        "Reconnecting to local status",
+        "The browser will retry automatically."
+      );
+      window.setTimeout(function () {
+        pollStatus(url, options, nextDelay);
+      }, nextDelay);
+    }
   };
 
   const runStatus = document.body.getAttribute("data-run-status");

@@ -1,0 +1,70 @@
+{
+  "schema": "sgfx_qa_workflow",
+  "version": 1,
+  "id": "ambient_layer_preflight",
+  "name": "Ambient Layer Preflight (lighting + reflection)",
+  "description": "Preflight pass for the ambient lighting + environment-reflection layer of the BMW IDCevo slice. Confirms the deterministic constants (reflection.car_height_m / hood_length_m / etc.) match the retail catalog AND that the visual ambient shader is not regressed inside the SGFX shell.",
+
+  "scope_kinds": ["profile"],
+  "profiles": ["G65", "G70", "G45"],
+
+  "dod_items": [
+    "Reflection numeric constants within tolerance vs sg_rules_live.<profile>.json",
+    "Carpaint clearcoat values render in the SGFX shell title preview",
+    "Time-of-day variants documented in the ambient log"
+  ],
+
+  "checks": [
+    {
+      "id": "constants_check",
+      "kind": "preflight_cli",
+      "subcommand": "run-profile",
+      "args": ["{profile}", "--packs", "constants", "--fail-on", "error", "--json"],
+      "required": true,
+      "skip_when_missing_input": ["profile"],
+      "description": "Run only the constants pack from the deterministic preflight."
+    },
+    {
+      "id": "carpaints_check",
+      "kind": "preflight_cli",
+      "subcommand": "run-profile",
+      "args": ["{profile}", "--packs", "carpaints", "--fail-on", "error", "--json"],
+      "required": true,
+      "skip_when_missing_input": ["profile"]
+    },
+    {
+      "id": "ambient_shader_visual",
+      "kind": "manual_attestation",
+      "required": false,
+      "prompts": [
+        "Ambient layer renders in SGFX shell preview?",
+        "No clearcoat banding observed?"
+      ]
+    }
+  ],
+
+  "required_artifacts": [
+    {
+      "id": "constants_report",
+      "kind": "file",
+      "produced_by_check": "constants_check",
+      "path_template": "{output_root}/run-profile/{profile}/report.json"
+    }
+  ],
+
+  "status_mapping": {
+    "all_required_pass": "ready_for_review",
+    "any_required_fail": "blocked",
+    "no_checks_run":     "not_started",
+    "partial":           "in_progress"
+  },
+
+  "outputs": [
+    {
+      "id": "summary_json",
+      "kind": "json",
+      "path_template": "{output_root}/{id}/{profile}/run.json",
+      "fields": ["id", "name", "profile", "status", "checks", "artifacts", "started_at_utc", "finished_at_utc"]
+    }
+  ]
+}

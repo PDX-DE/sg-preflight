@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from sg_preflight.bmw_delivery import (
 
 
 DEFAULT_REFERENCE_REPO_ROOT = Path(r"C:\repositories\trunk")
+REFERENCE_REPO_ROOT_ENV_KEYS = ("SG_SOURCE_REPO_ROOT", "SG_REPO", "SG-Repo", "SP_REPO")
 PROFILE_SCOPE_ALL = "all"
 PROFILE_SCOPE_DEFAULT = "default"
 PROFILE_REGISTRY_DYNAMIC_SOURCE = "models_build_config.yaml"
@@ -32,6 +34,19 @@ _BRAND_FOLDER_BY_NAME = {
 _BRAND_SORT_ORDER = {"BMW": 0, "MINI": 1, "Alpina": 2, "MGmbH": 3, "RollsRoyce": 4}
 _LANE_SORT_ORDER = {LANE_IDC23: 0, LANE_IDCEVO: 1, LANE_UNKNOWN: 2}
 _TYPE_SORT_ORDER = {"build": 0, "retarget": 1}
+
+
+def configured_reference_repo_root() -> Path:
+    for key in REFERENCE_REPO_ROOT_ENV_KEYS:
+        raw = os.environ.get(key, "").strip()
+        if not raw:
+            continue
+        candidate = Path(raw)
+        trunk_candidate = candidate / "trunk"
+        if candidate.name.lower() != "trunk" and trunk_candidate.exists():
+            return trunk_candidate
+        return candidate
+    return DEFAULT_REFERENCE_REPO_ROOT
 
 
 @dataclass(frozen=True)
@@ -52,7 +67,7 @@ class RunProfile:
     friendly_summary: str = ""
     focus_points: tuple[str, ...] = ()
     mirror_audit_targets: tuple[str, ...] = ()
-    reference_repo_root: Path = DEFAULT_REFERENCE_REPO_ROOT
+    reference_repo_root: Path = field(default_factory=configured_reference_repo_root)
     bmw_profile_id: str = ""
     lane: str = LANE_UNKNOWN
     brand: str = "BMW"
@@ -125,7 +140,7 @@ def resolve_source_repo_root(
     *,
     reference_repo_root: Path | None = None,
 ) -> Path:
-    reference_root = (reference_repo_root or DEFAULT_REFERENCE_REPO_ROOT).resolve()
+    reference_root = (reference_repo_root or configured_reference_repo_root()).resolve()
     if reference_root.exists():
         return reference_root
     return mirror_repo_root(workspace_root)
@@ -457,7 +472,7 @@ def list_run_profiles(
 ) -> list[RunProfile]:
     root = _workspace_root(workspace_root)
     repo_root = mirror_repo_root(root)
-    reference_root = (reference_repo_root or DEFAULT_REFERENCE_REPO_ROOT).resolve()
+    reference_root = (reference_repo_root or configured_reference_repo_root()).resolve()
 
     profiles = _load_dynamic_profiles(root=root, repo_root=repo_root, reference_root=reference_root, bmw_root=bmw_root)
     if profile_scope == PROFILE_SCOPE_DEFAULT and profiles:

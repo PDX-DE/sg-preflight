@@ -1,4 +1,4 @@
-"""H-26 live observability surface.
+"""internal milestone live observability surface.
 
 Writes a single JSON file at `<workspace>/operator_state/live_state.json`
 that reflects the current dashboard state. Writes are debounced (default 250ms)
@@ -28,7 +28,6 @@ The shape is versioned via the `schema_version` field for future extensibility.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -36,20 +35,14 @@ import threading
 import time
 from typing import Any
 
+from sg_preflight.time_utils import utc_now_ms as _utc_now_ms
+
 LIVE_STATE_SCHEMA_VERSION = 1
 DEFAULT_DEBOUNCE_MS = 250
 
 
 def live_state_path(workspace: Path | str) -> Path:
     return Path(workspace).resolve() / "operator_state" / "live_state.json"
-
-
-def _utc_now_ms(value: datetime | None = None) -> str:
-    current = value or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-    iso = current.astimezone(timezone.utc).isoformat(timespec="milliseconds")
-    return iso.replace("+00:00", "Z")
 
 
 # Sanitization patterns — strip PAT-shaped strings + bearer tokens.

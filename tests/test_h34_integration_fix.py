@@ -1,18 +1,19 @@
-"""H-34 Part A — regression tests for the delivery_checklist → H-27 wiring."""
+"""internal milestone Part A — regression tests for the delivery_checklist → internal milestone wiring."""
 from __future__ import annotations
 
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 class DeliveryChecklistResolverWiresBmwRootTests(unittest.TestCase):
     def test_read_delivery_checklist_passes_bmw_root_through_to_finder(self) -> None:
-        """Pre-H-34 regression repro: a workbook lives only in the BMW Git slot
+        """Pre-internal milestone regression repro: a workbook lives only in the BMW Git slot
         (`<bmw_root>/cars/BMW/G70_EVO/export/size_analysis/`) which the legacy
-        single-path lookup never visited. With H-34 wiring + bmw_root passed
-        through, read_delivery_checklist must resolve it via the H-27 finder."""
+        single-path lookup never visited. With internal milestone wiring + bmw_root passed
+        through, read_delivery_checklist must resolve it via the internal milestone finder."""
         from sg_preflight.delivery_checklist import read_delivery_checklist
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -32,13 +33,14 @@ class DeliveryChecklistResolverWiresBmwRootTests(unittest.TestCase):
             sheet.append(["BEV-Basis", 100, 200, 300, 400, 1000, 880])
             book.save(wb_path)
 
-            payload = read_delivery_checklist(
-                profile_id="G70",
-                workspace=ws,
-                bmw_root=br,
-                enable_auto_generate=False,
-            )
-            # H-34: when the finder resolves a workbook the status flips off
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                payload = read_delivery_checklist(
+                    profile_id="G70",
+                    workspace=ws,
+                    bmw_root=br,
+                    enable_auto_generate=False,
+                )
+            # internal milestone: when the finder resolves a workbook the status flips off
             # `unavailable`; pre-fix the call always returned `unavailable` for
             # G70 because the BMW Git slot was never walked.
             self.assertNotEqual(payload.get("status"), "unavailable")
@@ -53,7 +55,8 @@ class DeliveryChecklistResolverWiresBmwRootTests(unittest.TestCase):
             ws = Path(tmp) / "workspace"
             ws.mkdir(parents=True, exist_ok=True)
             (ws / "operator_state").mkdir(parents=True, exist_ok=True)
-            payload = read_delivery_checklist(profile_id="G70", workspace=ws)
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                payload = read_delivery_checklist(profile_id="G70", workspace=ws)
             self.assertEqual(payload.get("status"), "unavailable")
             # New wording must still mention the 4 standing-guardrail phrase.
             self.assertIn("Manual review remains required", payload.get("summary", ""))
@@ -66,7 +69,8 @@ class MissingSummaryReportsFinderResults(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "workspace"
             ws.mkdir(parents=True, exist_ok=True)
-            text = delivery_workbook_missing_summary("G70", workspace=ws, bmw_root=ws / "bmw")
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                text = delivery_workbook_missing_summary("G70", workspace=ws, bmw_root=ws / "bmw")
             # The finder enumerates the 8 directive slots × 2 profile variants
             # (G70 + G70_EVO) + the operator-local auto-gen slot — well over 8.
             # Wording must reference "documented Format A / Format B locations".
@@ -90,19 +94,20 @@ class MissingSummaryReportsFinderResults(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "workspace"
             ws.mkdir(parents=True, exist_ok=True)
-            text = delivery_workbook_missing_summary("G70", workspace=ws)
+            with mock.patch("sg_preflight.workbook_finder.Path.home", return_value=Path(tmp) / "home"):
+                text = delivery_workbook_missing_summary("G70", workspace=ws)
             # 4 standing guardrails preserved.
             self.assertIn("Manual review remains required.", text)
             self.assertIn("Decision: not approval — evidence only.", text)
 
 
 class DedupWidenTests(unittest.TestCase):
-    """H-34 Part B — dedup widening (token bucket + JSON API gate)."""
+    """internal milestone Part B — dedup widening (token bucket + JSON API gate)."""
 
     def test_audit_token_uses_5_second_bucket_so_storm_collapses_to_one_token(self) -> None:
         """An observed reconnect produced three fires within 1.1s at seconds 14-15. With the
         original ts_floor_seconds the audit log carries 2 distinct tokens
-        (second 14, second 15); H-34 Part B widens to 5-second buckets so the
+        (second 14, second 15); internal milestone Part B widens to 5-second buckets so the
         three entries collapse to ONE token in the log."""
         from sg_preflight.dashboard import main as dashboard_main
 
@@ -141,9 +146,9 @@ class DedupWidenTests(unittest.TestCase):
         self.assertFalse(should_fire("G70", now=1.1))
 
     def test_full_qa_pass_api_route_now_gates_on_dedup(self) -> None:
-        """H-34 Part B fix: the JSON API at `/sgfx-dashboard-api/full-qa-pass`
+        """internal milestone Part B fix: the JSON API at `/sgfx-dashboard-api/full-qa-pass`
         was an unguarded second entry point that NiceGUI's WebSocket reconnect
-        could hit, bypassing the H-28 dashboard gate. Source guard asserts the
+        could hit, bypassing the internal milestone dashboard gate. Source guard asserts the
         gate now lives in the API handler."""
         source = (
             Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py"
@@ -158,7 +163,7 @@ class DedupWidenTests(unittest.TestCase):
 
 class DashboardAndFullQaPassPassThroughTests(unittest.TestCase):
     """Source guards: the dashboard + full_qa_pass callers must pass bmw_root +
-    enable_auto_generate so the H-27 finder + auto-gen fire in operator-flow."""
+    enable_auto_generate so the internal milestone finder + auto-gen fire in operator-flow."""
 
     def test_dashboard_delivery_checklist_reader_threads_bmw_root(self) -> None:
         source = (
@@ -169,7 +174,7 @@ class DashboardAndFullQaPassPassThroughTests(unittest.TestCase):
             # Older builds inline the lambda; just grep the source for the call.
             block_start = 0
         snippet = source[block_start:block_start + 3000]
-        # H-34: the reader lambda must pass bmw_root + enable_auto_generate.
+        # internal milestone: the reader lambda must pass bmw_root + enable_auto_generate.
         self.assertIn("read_delivery_checklist(", snippet)
         self.assertIn("bmw_root=bmw_root", snippet)
         self.assertIn("enable_auto_generate=True", snippet)
@@ -188,30 +193,29 @@ class DashboardAndFullQaPassPassThroughTests(unittest.TestCase):
 
 
 class IntegrationCoverageAuditTests(unittest.TestCase):
-    """H-34 Part C — verify shipped packs actually activate at the operator-
+    """internal milestone Part C — verify shipped packs actually activate at the operator-
     visible surfaces, not just behind the CLI subparsers."""
 
-    def test_h29_jira_inline_render_opens_external_browser_with_clipboard_fallback(self) -> None:
-        """H-29 origin + H-35 evolution: the Jira inline ticket render now opens
-        the URL in the operator's external browser via `webbrowser.open` AND
-        copies the URL to clipboard as a belt+suspenders fallback. The old raw
-        `<a target="_blank">` anchor was replaced with a button so the operator's
-        existing SSO browser session handles Jira auth without re-login."""
+    def test_h29_jira_inline_render_copies_link_without_browser_handoff(self) -> None:
+        """The Jira inline ticket render is copy-only: no raw anchor and no
+        automatic browser handoff."""
         source = (
             Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py"
         ).read_text(encoding="utf-8")
-        # Render block must use the button + helper.
         idx = source.find("sgfx-jira-ticket-key")
         self.assertNotEqual(idx, -1, "Jira ticket render block not found")
         block = source[max(idx - 800, 0):idx + 1200]
         self.assertIn("ui.button(", block)
-        self.assertIn("_open_jira_ticket_in_browser(ui, url, key)", block)
-        # Helper must do webbrowser.open + clipboard.writeText.
-        self.assertIn("def _open_jira_ticket_in_browser", source)
-        helper_idx = source.find("def _open_jira_ticket_in_browser")
-        helper_body = source[helper_idx:helper_idx + 1500]
-        self.assertIn("webbrowser.open(url, new=2", helper_body)
+        self.assertIn("_copy_dashboard_link_to_clipboard(ui, url, key)", block)
+        self.assertIn("def _copy_dashboard_link_to_clipboard", source)
+        helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
+        helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", helper_idx)
+        self.assertNotEqual(helper_end, -1, "clipboard helper end marker not found")
+        helper_body = source[helper_idx:helper_end]
+        self.assertNotIn("webbrowser.open", helper_body)
         self.assertIn("navigator.clipboard.writeText", helper_body)
+        self.assertIn("document.execCommand('copy')", helper_body)
+        self.assertIn("Copied to clipboard:", helper_body)
 
     def test_h31_sparkline_renders_in_dashboard_risk_score_page(self) -> None:
         source = (
@@ -260,7 +264,7 @@ class IntegrationCoverageAuditTests(unittest.TestCase):
 
     def test_h30_and_h32_promoted_to_daily_use_action_map(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1] / "sg_preflight" / "cli.py"
+            Path(__file__).resolve().parents[1] / "sg_preflight" / "cli" / "_common.py"
         ).read_text(encoding="utf-8")
         action_map_idx = source.find("_MAIN_ACTION_MAP")
         self.assertNotEqual(action_map_idx, -1)
@@ -270,7 +274,7 @@ class IntegrationCoverageAuditTests(unittest.TestCase):
         self.assertIn("profile-summary build --profile G70", action_map_block)
 
     def test_h27_workbook_finder_invokable_from_top_level_help(self) -> None:
-        """Ensure the H-27 `delivery-workbook find` subcommand still parses."""
+        """Ensure the internal milestone `delivery-workbook find` subcommand still parses."""
         from sg_preflight.cli import build_parser
 
         parser = build_parser()
