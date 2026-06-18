@@ -178,6 +178,61 @@ class TestCrossDomainDelivery(unittest.TestCase):
         self.assertEqual(drift["raco_headless_drift_count"], 1)
         self.assertEqual(drift["items"][0]["relative_path"], "Widgets/BMW/ClockWidget")
 
+    def test_version_metadata_falls_back_to_newest_section_with_a_block(self) -> None:
+        changelog = "\n".join(
+            (
+                "# [BMW] Ambient Layer Default - CHANGELOG",
+                "",
+                "## [9.0.1] - NOT YET DELIVERED",
+                "",
+                "### Fixed",
+                "",
+                "* Updated Scene ID Numbers in Export Scenes",
+                "",
+                "## [9.0.0] - 2026-04-29",
+                "",
+                "### Changed",
+                "",
+                "* Upgraded the project to RaCo 2.9.0 and Feature Level 4",
+                "",
+                "> _Ramses Composer / Headless: 2.9.0_  ",
+                "> _Ramses: 28.15.1_  ",
+                "> _Ramses Logic: 28.15.1_  ",
+                ">",
+                "> _Feature Level: 4_  ",
+                "",
+                "---",
+                "## [8.0.0] - 2026-01-16",
+                "",
+                "> _Ramses Composer / Headless: 2.8.0_  ",
+                "> _Ramses: 28.14.0_  ",
+                "",
+            )
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repositories" / "trunk"
+            _write_text(repo / "AmbientLayer" / "BMW_Default" / "CHANGELOG.md", changelog)
+            board = build_cross_domain_delivery_board(
+                repo,
+                workspace_root=root,
+                domains=("ambient",),
+                now=datetime(2026, 6, 18, 20, 45, tzinfo=timezone.utc),
+            )
+
+        payload = board.to_dict()
+        ambient = {entry["relative_path"]: entry for entry in payload["entries"]}["AmbientLayer/BMW_Default"]
+        # latest [9.0.1] hotfix has no version block; metadata must come from the newest
+        # section that carries one ([9.0.0]) - not [8.0.0], and the blank `>` line must not truncate it.
+        self.assertEqual(ambient["delivery_status"], STATUS_NOT_DELIVERED_YET)
+        self.assertEqual(ambient["ramses"], "28.15.1")
+        self.assertEqual(ambient["raco_headless"], "2.9.0")
+        self.assertEqual(ambient["ramses_logic"], "28.15.1")
+        self.assertEqual(ambient["feature_level"], "4")
+        # recovered version must feed the drift evidence, not be silently excluded from scope max
+        self.assertEqual(payload["counts"]["version_drift"]["max_ramses"], "28.15.1")
+        self.assertEqual(payload["counts"]["version_drift"]["max_raco_headless"], "2.9.0")
+
     def test_missing_repo_root_returns_empty_read_only_board(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

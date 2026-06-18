@@ -193,15 +193,18 @@ def _ignored_dir(path: Path) -> bool:
     return name.startswith("_") or name in _IGNORED_DIR_NAMES
 
 
-def _latest_changelog_section(text: str) -> str:
-    match = _HEADER_RE.search(text)
-    if match is None:
-        return text
-    next_match = _HEADER_RE.search(text, match.end())
-    return text[match.start() : next_match.start() if next_match is not None else len(text)]
+def _changelog_sections(text: str) -> list[str]:
+    headers = list(_HEADER_RE.finditer(text))
+    if not headers:
+        return [text]
+    sections: list[str] = []
+    for index, header in enumerate(headers):
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+        sections.append(text[header.start() : end])
+    return sections
 
 
-def _parse_version_metadata(changelog_text: str) -> dict[str, str | None]:
+def _metadata_from_section(section: str) -> dict[str, str | None]:
     metadata: dict[str, str | None] = {
         "ramses": None,
         "raco_headless": None,
@@ -209,7 +212,6 @@ def _parse_version_metadata(changelog_text: str) -> dict[str, str | None]:
         "feature_level": None,
         "api_version": None,
     }
-    section = _latest_changelog_section(changelog_text)
     for match in _METADATA_RE.finditer(section):
         label = re.sub(r"[^a-z0-9]+", " ", match.group("label").strip().casefold()).strip()
         value = match.group("value").strip()
@@ -224,6 +226,16 @@ def _parse_version_metadata(changelog_text: str) -> dict[str, str | None]:
         elif label == "api version":
             metadata["api_version"] = value
     return metadata
+
+
+def _parse_version_metadata(changelog_text: str) -> dict[str, str | None]:
+    # CHANGELOGs are newest-first and the latest entry can be a metadata-less hotfix,
+    # so fall back to the newest section that actually carries a version block.
+    for section in _changelog_sections(changelog_text):
+        metadata = _metadata_from_section(section)
+        if any(value is not None for value in metadata.values()):
+            return metadata
+    return _metadata_from_section("")
 
 
 def _interfaces_summary(readme_path: Path) -> str | None:
