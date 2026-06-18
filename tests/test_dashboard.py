@@ -215,7 +215,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_twenty_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_twenty_one_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -228,6 +228,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "full-qa-pass",
                 "batch-full-qa-pass",
                 "my-tickets",
+                "weekly-ticket-draft",
                 "delivery-checklist",
                 "delivery-readiness",
                 "disabled-tests",
@@ -262,6 +263,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "full-qa-pass", "label": "Full QA Pass"},
                 {"id": "batch-full-qa-pass", "label": "Batch Full QA Pass"},
                 {"id": "my-tickets", "label": "My Tickets"},
+                {"id": "weekly-ticket-draft", "label": "Weekly Ticket Draft"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
                 {"id": "delivery-readiness", "label": "Delivery Readiness"},
                 {"id": "disabled-tests", "label": "Disabled Tests"},
@@ -295,6 +297,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             "Run selected profiles sequentially; one profile finishes before the next starts.",
         )
         pages_by_id = {page["id"]: page for page in snapshot["pages"]}
+        self.assertEqual(
+            pages_by_id["weekly-ticket-draft"]["tagline"],
+            "Draft your end-of-week ticket list from Jira updates and local SGFX activity.",
+        )
         self.assertEqual(pages_by_id["delivery-checklist"]["tagline"], "Workbook evidence per delivery profile (read-only).")
         self.assertEqual(
             pages_by_id["delivery-readiness"]["tagline"],
@@ -379,6 +385,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertEqual(team_page["payload"]["share_decision"]["selected_model"], "local_snapshot")
         self.assertFalse(team_page["payload"]["is_approval"])
+        weekly_page = next(page for page in snapshot["pages"] if page["id"] == "weekly-ticket-draft")
+        self.assertTrue(weekly_page["deferred"])
+        self.assertEqual(weekly_page["status"], "read_only")
+        self.assertTrue(weekly_page["payload"]["read_only"])
+        self.assertFalse(weekly_page["payload"]["is_approval"])
         handoff_page = next(page for page in snapshot["pages"] if page["id"] == "operator-handoff")
         self.assertEqual(handoff_page["payload"]["status"], "not_run")
         self.assertFalse(handoff_page["payload"]["is_approval"])
@@ -522,7 +533,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 20)
+                self.assertEqual(len(snapshot["pages"]), 21)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -645,6 +656,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("await _io_bound(_build_my_tickets_payload, workspace)", source)
         self.assertIn('page_id == "my-tickets"', source)
 
+        weekly_ticket_panel = workflow_source[
+            workflow_source.find("def _render_weekly_ticket_draft_panel"):
+            workflow_source.find("\n\ndef _render_full_qa_pass_panel", workflow_source.find("def _render_weekly_ticket_draft_panel"))
+        ]
+        self.assertNotIn("build_weekly_ticket_draft(", weekly_ticket_panel)
+        self.assertIn("await _io_bound(_build_weekly_ticket_draft_payload, workspace)", source)
+        self.assertIn('page_id == "weekly-ticket-draft"', source)
+
         visual_renderer = workflow_source[
             workflow_source.find("def _render_action_visuals"):
             workflow_source.find("\n\ndef _render_screenshot_test_state_panel", workflow_source.find("def _render_action_visuals"))
@@ -761,6 +780,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "build_manual_review_assist",
                 "search_jira_profile_tickets",
                 "search_my_unresolved_tickets",
+                "build_weekly_ticket_draft",
                 "_materialize_screenshot_review_viewer_for_dashboard",
                 "_execute_diagnostic_chain",
                 "build_dashboard_snapshot",
@@ -768,6 +788,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "build_dashboard_quality_hero_report",
                 "_screenshot_review_visual_rows",
                 "_build_my_tickets_payload",
+                "_build_weekly_ticket_draft_payload",
                 "_dashboard_feedback_context",
                 "_dashboard_exe_sha256",
                 "_dashboard_build_sha",
@@ -995,6 +1016,44 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("my-tickets", pages)
         self.assertEqual(pages["my-tickets"]["status"], "read_only")
         self.assertIn("operator-local credentials", pages["my-tickets"]["summary"])
+
+    def test_weekly_ticket_draft_page_is_read_only_with_editable_copy_draft(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+
+        self.assertIn('("weekly-ticket-draft", "Weekly Ticket Draft")', source)
+        self.assertIn("_weekly_ticket_draft_page", source)
+        self.assertIn("_render_weekly_ticket_draft_panel", source)
+        self.assertIn("_build_weekly_ticket_draft_payload", source)
+        self.assertIn("render_weekly_ticket_draft_text", workflow_source)
+        self.assertIn('data-sgfx-weekly-ticket-draft-page="true"', workflow_source)
+        self.assertIn("Editable weekly ticket draft", workflow_source)
+        self.assertIn("Copy draft", workflow_source)
+        self.assertIn("Draft only - review and edit before sending", workflow_source)
+        panel = workflow_source[
+            workflow_source.find("def _render_weekly_ticket_draft_panel"):
+            workflow_source.find("\n\ndef _render_full_qa_pass_panel", workflow_source.find("def _render_weekly_ticket_draft_panel"))
+        ]
+        self.assertNotIn("auto_confirm=True", panel)
+        self.assertNotIn("post_jira", panel)
+
+    def test_dashboard_snapshot_contains_weekly_ticket_draft_page_without_jira_query(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
+
+        navigation = [item["id"] for item in snapshot["navigation"]]
+        self.assertIn("weekly-ticket-draft", navigation)
+        pages = {page["id"]: page for page in snapshot["pages"]}
+        self.assertIn("weekly-ticket-draft", pages)
+        page = pages["weekly-ticket-draft"]
+        self.assertEqual(page["status"], "read_only")
+        self.assertTrue(page["deferred"])
+        self.assertTrue(page["payload"]["read_only"])
+        self.assertFalse(page["payload"]["is_approval"])
+        self.assertIn("review and send", page["summary"])
 
     def test_dashboard_doc_links_are_copy_only(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1582,7 +1641,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 20)
+        self.assertEqual(len(snapshot["pages"]), 21)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -1596,7 +1655,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 20)
+        self.assertEqual(len(snapshot["pages"]), 21)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")

@@ -250,6 +250,7 @@ from sg_preflight.dashboard_pages_workflows import (
     _full_qa_pass_page,
     _batch_full_qa_pass_page,
     _my_tickets_page,
+    _weekly_ticket_draft_page,
     _is_truthy_trigger,
     FULL_QA_PASS_DEDUP_WINDOW_SECONDS,
     _full_qa_pass_dedup_lock,
@@ -343,7 +344,9 @@ from sg_preflight.dashboard_pages_workflows import (
     _render_manual_review_panel,
     _my_ticket_status_draft,
     _build_my_tickets_payload,
+    _build_weekly_ticket_draft_payload,
     _render_my_tickets_panel,
+    _render_weekly_ticket_draft_panel,
     _render_batch_full_qa_pass_panel,
     _render_full_qa_pass_panel,
 )
@@ -440,6 +443,7 @@ DASHBOARD_NAVIGATION = (
     ("full-qa-pass", "Full QA Pass"),
     ("batch-full-qa-pass", "Batch Full QA Pass"),
     ("my-tickets", "My Tickets"),
+    ("weekly-ticket-draft", "Weekly Ticket Draft"),
     ("delivery-checklist", "Delivery Checklist"),
     ("delivery-readiness", "Delivery Readiness"),
     ("disabled-tests", "Disabled Tests"),
@@ -800,6 +804,7 @@ def build_dashboard_snapshot(
             _full_qa_pass_page(resolved_profile_id, root, bmw_root=bmw_root),
             _batch_full_qa_pass_page(resolved_profile_id, root),
             _my_tickets_page(resolved_profile_id, root),
+            _weekly_ticket_draft_page(resolved_profile_id, root),
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _delivery_readiness_page(root, bmw_root=bmw_root),
             _disabled_tests_page(root, bmw_root=bmw_root),
@@ -2679,6 +2684,8 @@ def _render_selected_page(
             _render_delivery_checklist_panel(ui, snapshot, workspace)
         elif page_id == "my-tickets":
             _render_my_tickets_panel(ui, snapshot, workspace)
+        elif page_id == "weekly-ticket-draft":
+            _render_weekly_ticket_draft_panel(ui, snapshot, workspace)
         elif page_id == "delivery-readiness":
             _render_source_root_reader_panel(
                 ui,
@@ -3073,6 +3080,7 @@ def _render_dashboard(
             "dashboard_mode": "clean",
             "jira_profile_ticket_payloads": {},
             "my_tickets_loading": False,
+            "weekly_ticket_draft_loading": False,
         }
         content_holder: dict[str, Any] = {}
         controls: dict[str, Any] = {}
@@ -3265,6 +3273,16 @@ def _render_dashboard(
                 "is_approval": False,
             }
 
+        def _weekly_ticket_draft_loading_payload() -> dict[str, Any]:
+            return {
+                "status": "loading",
+                "jira_status": "loading",
+                "summary": "Loading weekly ticket draft from operator-local sources...",
+                "text": "",
+                "read_only": True,
+                "is_approval": False,
+            }
+
         async def _load_jira_profile_tickets_payload(profile_id: str) -> dict[str, Any]:
             cache_key = str(profile_id or "").strip().upper()
             try:
@@ -3334,6 +3352,33 @@ def _render_dashboard(
             state["my_tickets_loading"] = True
             state["snapshot"]["my_tickets_payload"] = _my_tickets_loading_payload()
             _schedule_background(_finish_my_tickets_refresh(), name="sgfx-dashboard-my-tickets")
+
+        async def _finish_weekly_ticket_draft_refresh() -> None:
+            try:
+                payload = await _io_bound(_build_weekly_ticket_draft_payload, workspace)
+            except Exception as exc:  # noqa: BLE001
+                payload = {
+                    "status": "failed",
+                    "jira_status": "failed",
+                    "summary": f"Weekly Ticket Draft unavailable: {exc}",
+                    "text": "",
+                    "read_only": True,
+                    "is_approval": False,
+                }
+            state["snapshot"]["weekly_ticket_draft_payload"] = payload
+            state["weekly_ticket_draft_loading"] = False
+            if str(state.get("active_page_id", "")) == "weekly-ticket-draft":
+                _render_current_page()
+
+        def _start_weekly_ticket_draft_refresh(*, force: bool = False) -> None:
+            if bool(state.get("weekly_ticket_draft_loading", False)):
+                return
+            current_payload = state["snapshot"].get("weekly_ticket_draft_payload")
+            if isinstance(current_payload, dict) and current_payload.get("status") != "loading" and not force:
+                return
+            state["weekly_ticket_draft_loading"] = True
+            state["snapshot"]["weekly_ticket_draft_payload"] = _weekly_ticket_draft_loading_payload()
+            _schedule_background(_finish_weekly_ticket_draft_refresh(), name="sgfx-dashboard-weekly-ticket-draft")
 
         def _render_current_page() -> None:
             content = content_holder.get("content")
@@ -3439,6 +3484,9 @@ def _render_dashboard(
                 elif active_page_id == "my-tickets":
                     _start_my_tickets_refresh()
                     _render_my_tickets_panel(ui, state["snapshot"], workspace)
+                elif active_page_id == "weekly-ticket-draft":
+                    _start_weekly_ticket_draft_refresh()
+                    _render_weekly_ticket_draft_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
                 elif active_page_id == "risk-score":
@@ -3488,6 +3536,8 @@ def _render_dashboard(
             state["loading_message"] = ""
             if active_page_id == "my-tickets":
                 _start_my_tickets_refresh(force=True)
+            if active_page_id == "weekly-ticket-draft":
+                _start_weekly_ticket_draft_refresh(force=True)
             _refresh_labels()
             if str(state.get("active_page_id", "")) == active_page_id:
                 _render_current_page()
@@ -3541,6 +3591,15 @@ def _render_dashboard(
             if page_id == "my-tickets" and _pages_by_id().get(page_id, {}).get("deferred"):
                 state["loading_message"] = ""
                 _start_my_tickets_refresh(force=True)
+                _render_current_page()
+                _run_javascript_if_client_alive(
+                    ui,
+                    f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
+                )
+                return
+            if page_id == "weekly-ticket-draft" and _pages_by_id().get(page_id, {}).get("deferred"):
+                state["loading_message"] = ""
+                _start_weekly_ticket_draft_refresh(force=True)
                 _render_current_page()
                 _run_javascript_if_client_alive(
                     ui,

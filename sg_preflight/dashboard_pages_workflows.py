@@ -22,6 +22,7 @@ from sg_preflight.qa_pass_report import (
     export_qa_pass_report_zip,
     write_qa_pass_report_html,
 )
+from sg_preflight.weekly_ticket_draft import build_weekly_ticket_draft, render_weekly_ticket_draft_text
 
 
 _MAIN_GLOBAL_NAMES = (
@@ -169,9 +170,12 @@ _MAIN_GLOBAL_NAMES = (
     "build_manual_review_assist_from_auto_checks",
     "apply_manual_review_suggestions",
     "run_manual_review_auto_checks",
+    "build_weekly_ticket_draft",
+    "render_weekly_ticket_draft_text",
     "_full_qa_pass_page",
     "_batch_full_qa_pass_page",
     "_my_tickets_page",
+    "_weekly_ticket_draft_page",
     "_is_truthy_trigger",
     "_full_qa_pass_token",
     "_full_qa_pass_dedup_key",
@@ -235,7 +239,9 @@ _MAIN_GLOBAL_NAMES = (
     "_render_manual_review_panel",
     "_my_ticket_status_draft",
     "_build_my_tickets_payload",
+    "_build_weekly_ticket_draft_payload",
     "_render_my_tickets_panel",
+    "_render_weekly_ticket_draft_panel",
     "_render_batch_full_qa_pass_panel",
     "_render_full_qa_pass_panel",
 )
@@ -349,6 +355,29 @@ def _my_tickets_page(profile_id: str, workspace: Path) -> dict[str, Any]:
         "id": "my-tickets",
         "title": "My Tickets",
         "tagline": "Read your assigned unresolved Jira tickets and prepare review-only status drafts.",
+        "status": "read_only",
+        "data_available": False,
+        "summary": str(payload["summary"]),
+        "items": [],
+        "payload": payload,
+        "deferred": True,
+    }
+
+
+def _weekly_ticket_draft_page(profile_id: str, workspace: Path) -> dict[str, Any]:
+    payload = {
+        "schema_version": 1,
+        "profile_id": profile_id,
+        "workspace": str(workspace),
+        "status": "read_only",
+        "summary": "Open this page to draft your weekly ticket list, ready to review and send.",
+        "read_only": True,
+        "is_approval": False,
+    }
+    return {
+        "id": "weekly-ticket-draft",
+        "title": "Weekly Ticket Draft",
+        "tagline": "Draft your end-of-week ticket list from Jira updates and local SGFX activity.",
         "status": "read_only",
         "data_available": False,
         "summary": str(payload["summary"]),
@@ -2766,6 +2795,33 @@ def _build_my_tickets_payload(workspace: Path) -> dict[str, Any]:
     return payload
 
 
+def _build_weekly_ticket_draft_payload(workspace: Path) -> dict[str, Any]:
+    try:
+        payload = build_weekly_ticket_draft(workspace=workspace)
+    except Exception as exc:  # noqa: BLE001
+        payload = {
+            "status": "failed",
+            "jira_status": "failed",
+            "summary": f"Weekly Ticket Draft unavailable: {exc}",
+            "text": "",
+            "read_only": True,
+            "is_approval": False,
+        }
+    if not isinstance(payload, dict):
+        payload = {
+            "status": "failed",
+            "jira_status": "failed",
+            "summary": "Weekly Ticket Draft unavailable: unexpected response.",
+            "text": "",
+            "read_only": True,
+            "is_approval": False,
+        }
+    payload.setdefault("read_only", True)
+    payload.setdefault("is_approval", False)
+    payload["text"] = render_weekly_ticket_draft_text(payload)
+    return payload
+
+
 def _render_my_tickets_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "my-tickets")
     payload = snapshot.get("my_tickets_payload", {}) if isinstance(snapshot.get("my_tickets_payload"), dict) else {}
@@ -2850,6 +2906,52 @@ def _render_my_tickets_panel(ui: Any, snapshot: dict[str, Any], workspace: Path)
                             ).props("flat dense no-caps"),
                             "Copy the Jira ticket link only.",
                         )
+
+
+def _render_weekly_ticket_draft_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "weekly-ticket-draft")
+    payload = (
+        snapshot.get("weekly_ticket_draft_payload", {})
+        if isinstance(snapshot.get("weekly_ticket_draft_payload"), dict)
+        else {}
+    )
+    if not payload:
+        payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    status = str(payload.get("status", payload.get("jira_status", "unknown")) or "unknown")
+    draft_text = str(payload.get("text", "") or "").strip()
+    if not draft_text:
+        draft_text = render_weekly_ticket_draft_text(payload)
+    with ui.column().classes("sgfx-page-panel").props('data-sgfx-weekly-ticket-draft-page="true"'):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, status)
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        ui.label(str(payload.get("summary", page.get("summary", "Weekly Ticket Draft unavailable.")))).classes(
+            "sgfx-summary"
+        )
+        ui.label("Draft only - review and edit before sending. SGFX doesn't send anything.").classes("sgfx-muted")
+        if status == "loading":
+            ui.linear_progress(value=0).props("indeterminate").classes("full-width")
+            ui.label("Loading the weekly ticket draft off the UI event loop.").classes("sgfx-muted")
+            return
+        draft_input = (
+            ui.textarea(label="Editable weekly ticket draft", value=draft_text)
+            .props("outlined")
+            .classes("full-width sgfx-weekly-ticket-draft")
+        )
+        with ui.row().classes("sgfx-confirm-actions"):
+            _attach_tooltip(
+                ui,
+                ui.button(
+                    "Copy draft",
+                    on_click=lambda draft_input=draft_input: _copy_dashboard_text_to_clipboard(
+                        ui,
+                        str(draft_input.value or ""),
+                        "weekly ticket draft",
+                    ),
+                ).props("color=primary no-caps"),
+                "Copy the edited weekly draft. SGFX does not send it.",
+            )
 
 
 def _render_batch_full_qa_pass_panel(
@@ -5266,6 +5368,7 @@ def _render_full_qa_pass_panel(
 _full_qa_pass_page = _with_main_globals(_full_qa_pass_page)
 _batch_full_qa_pass_page = _with_main_globals(_batch_full_qa_pass_page)
 _my_tickets_page = _with_main_globals(_my_tickets_page)
+_weekly_ticket_draft_page = _with_main_globals(_weekly_ticket_draft_page)
 _is_truthy_trigger = _with_main_globals(_is_truthy_trigger)
 _full_qa_pass_token = _with_main_globals(_full_qa_pass_token)
 _full_qa_pass_dedup_key = _with_main_globals(_full_qa_pass_dedup_key)
@@ -5338,6 +5441,8 @@ _render_operator_handoff_panel = _with_main_globals(_render_operator_handoff_pan
 _render_manual_review_panel = _with_main_globals(_render_manual_review_panel)
 _my_ticket_status_draft = _with_main_globals(_my_ticket_status_draft)
 _build_my_tickets_payload = _with_main_globals(_build_my_tickets_payload)
+_build_weekly_ticket_draft_payload = _with_main_globals(_build_weekly_ticket_draft_payload)
 _render_my_tickets_panel = _with_main_globals(_render_my_tickets_panel)
+_render_weekly_ticket_draft_panel = _with_main_globals(_render_weekly_ticket_draft_panel)
 _render_batch_full_qa_pass_panel = _with_main_globals(_render_batch_full_qa_pass_panel)
 _render_full_qa_pass_panel = _with_main_globals(_render_full_qa_pass_panel)
