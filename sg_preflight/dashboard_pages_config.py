@@ -61,6 +61,7 @@ _MAIN_GLOBAL_NAMES = (
     "build_delivery_workbook_trigger",
     "build_dependency_onboarding_status",
     "build_delivery_readiness_board",
+    "build_cross_domain_delivery_board",
     "build_disabled_tests_board",
     "build_api_version_coverage_board",
     "build_country_variant_coverage_board",
@@ -280,6 +281,130 @@ def _delivery_readiness_page(workspace: Path, *, bmw_root: Path | str | None = N
         ownership_note="Evidence only - delivery approval remains manual: SG peer, Wombat merge, and BMW CCB.",
     )
     page["confluence_anchors"] = [DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR]
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["source_selector"] = {
+        "selected_source_root": str(payload.get("selected_source_root", "")),
+        "source_root_candidates": list(payload.get("source_root_candidates", [])),
+    }
+    return page
+
+def _cross_domain_delivery_payload(
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+    *,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    selected_repo_root = _source_repo_root_from_value(repo_root) or _preferred_source_repo_root(workspace)
+    board = build_cross_domain_delivery_board(
+        selected_repo_root,
+        workspace_root=workspace,
+        bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
+    ).to_dict()
+    counts = board.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    by_domain = counts.get("by_domain", {})
+    if not isinstance(by_domain, dict):
+        by_domain = {}
+    drift = counts.get("version_drift", {})
+    if not isinstance(drift, dict):
+        drift = {}
+    source_state = str(board.get("source_state", "unknown"))
+    ready = source_state == "ready"
+    total = int(counts.get("total", 0) or 0)
+    delivered = int(counts.get(STATUS_DELIVERED, 0) or 0)
+    not_delivered = int(counts.get(STATUS_NOT_DELIVERED_YET, 0) or 0)
+    unknown = int(counts.get(STATUS_UNKNOWN, 0) or 0)
+
+    def _domain_total(domain_id: str) -> int:
+        value = by_domain.get(domain_id, {})
+        return int(value.get("total", 0) or 0) if isinstance(value, dict) else 0
+
+    rows: list[dict[str, str]] = [
+        {
+            "label": "Reading from",
+            "status": source_state,
+            "detail": str(board.get("repo_root", "")),
+        },
+        {
+            "label": "Scope",
+            "status": str(total),
+            "detail": (
+                f"{_domain_total('cars')} Cars; "
+                f"{_domain_total('widgets')} Widgets; "
+                f"{_domain_total('ambient')} Ambient."
+            ),
+        },
+        {
+            "label": "Delivery status",
+            "status": str(delivered),
+            "detail": f"{not_delivered} not delivered yet; {unknown} unknown/no changelog.",
+        },
+        {
+            "label": "Version drift",
+            "status": str(len(drift.get("items", [])) if isinstance(drift.get("items", []), list) else 0),
+            "detail": (
+                f"Ramses max {drift.get('max_ramses') or 'not found'}; "
+                f"RaCo Headless max {drift.get('max_raco_headless') or 'not found'}."
+            ),
+        },
+    ]
+    entries = [entry for entry in board.get("entries", []) if isinstance(entry, dict)]
+    domain_labels = {"cars": "Cars", "widgets": "Widgets", "ambient": "Ambient"}
+    for entry in entries[:18]:
+        domain_id = str(entry.get("domain", ""))
+        domain_label = domain_labels.get(domain_id, domain_id.title() or "Domain")
+        version = str(entry.get("version", "")).strip() or "version unknown"
+        brand = str(entry.get("brand", "")).strip()
+        detail_parts = [
+            str(entry.get("relative_path", "")).strip(),
+            f"status {entry.get('delivery_status_label', '')}",
+            version,
+            f"Ramses {entry.get('ramses') or 'unknown'}",
+            f"RaCo {entry.get('raco_headless') or 'unknown'}",
+            f"{entry.get('rca_total_bytes', 0)} byte(s) RCA",
+        ]
+        if brand:
+            detail_parts.insert(1, brand)
+        rows.append(
+            {
+                "label": f"{domain_label} / {entry.get('item_id', '')}".strip(),
+                "status": str(entry.get("delivery_status_label", entry.get("delivery_status", "unknown"))),
+                "detail": "; ".join(part for part in detail_parts if part),
+            }
+        )
+    if len(entries) > 18:
+        rows.append(
+            {
+                "label": "Additional cross-domain rows",
+                "status": str(len(entries) - 18),
+                "detail": "Open the CLI JSON or evidence export for all Cars, Widgets, and Ambient rows.",
+            }
+        )
+    board["status"] = "available" if ready else "missing"
+    board["data_available"] = ready
+    board["selected_source_root"] = str(board.get("repo_root", ""))
+    board["source_root_candidates"] = _source_repo_root_candidates(workspace)
+    board["summary"] = (
+        f"{total} item(s) across Cars, Widgets, and Ambient: {delivered} delivered, "
+        f"{not_delivered} not delivered yet, {unknown} unknown/no changelog; "
+        f"version drift evidence: {len(drift.get('items', [])) if isinstance(drift.get('items', []), list) else 0} row(s). "
+        f"Reading from {board.get('repo_root', '')}. Source: {source_state}."
+    )
+    board["board_rows"] = rows
+    return board
+
+def _cross_domain_delivery_page(workspace: Path, *, bmw_root: Path | str | None = None) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="cross-domain-delivery",
+        title="Cross-Domain Delivery",
+        tagline="Cars, Widgets, and Ambient delivery/version evidence from local SVN.",
+        reader=lambda: _cross_domain_delivery_payload(workspace, bmw_root),
+        workspace=workspace,
+        ownership_note=(
+            "Evidence only - version drift is shown as review evidence, not an automated delivery verdict."
+        ),
+    )
     payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
     page["source_selector"] = {
         "selected_source_root": str(payload.get("selected_source_root", "")),
@@ -1116,6 +1241,7 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "delta_since_last_review",
         "signals",
         "confluence_anchors",
+        "read_only",
         "manual_review_required",
         "is_approval",
         "note",
@@ -1395,6 +1521,8 @@ for _name in (
     "_delivery_checklist_page",
     "_delivery_readiness_payload",
     "_delivery_readiness_page",
+    "_cross_domain_delivery_payload",
+    "_cross_domain_delivery_page",
     "_disabled_tests_payload",
     "_disabled_tests_page",
     "_api_version_coverage_payload",

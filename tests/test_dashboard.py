@@ -215,7 +215,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_twenty_one_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_twenty_two_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -231,6 +231,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "weekly-ticket-draft",
                 "delivery-checklist",
                 "delivery-readiness",
+                "cross-domain-delivery",
                 "disabled-tests",
                 "api-version-coverage",
                 "country-variant-coverage",
@@ -266,6 +267,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "weekly-ticket-draft", "label": "Weekly Ticket Draft"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
                 {"id": "delivery-readiness", "label": "Delivery Readiness"},
+                {"id": "cross-domain-delivery", "label": "Cross-Domain Delivery"},
                 {"id": "disabled-tests", "label": "Disabled Tests"},
                 {"id": "api-version-coverage", "label": "API Version"},
                 {"id": "country-variant-coverage", "label": "Country Variants"},
@@ -305,6 +307,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(
             pages_by_id["delivery-readiness"]["tagline"],
             "Per-car CHANGELOG delivery status from local SVN and BMW catalog evidence.",
+        )
+        self.assertEqual(
+            pages_by_id["cross-domain-delivery"]["tagline"],
+            "Cars, Widgets, and Ambient delivery/version evidence from local SVN.",
         )
         self.assertEqual(
             pages_by_id["disabled-tests"]["tagline"],
@@ -390,6 +396,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(weekly_page["status"], "read_only")
         self.assertTrue(weekly_page["payload"]["read_only"])
         self.assertFalse(weekly_page["payload"]["is_approval"])
+        cross_domain_page = next(page for page in snapshot["pages"] if page["id"] == "cross-domain-delivery")
+        self.assertIn(cross_domain_page["status"], {"available", "unavailable"})
+        self.assertTrue(cross_domain_page["payload"]["read_only"])
+        self.assertFalse(cross_domain_page["payload"]["is_approval"])
         handoff_page = next(page for page in snapshot["pages"] if page["id"] == "operator-handoff")
         self.assertEqual(handoff_page["payload"]["status"], "not_run")
         self.assertFalse(handoff_page["payload"]["is_approval"])
@@ -533,7 +543,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 21)
+                self.assertEqual(len(snapshot["pages"]), 22)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1054,6 +1064,94 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertTrue(page["payload"]["read_only"])
         self.assertFalse(page["payload"]["is_approval"])
         self.assertIn("review and send", page["summary"])
+
+    def test_cross_domain_delivery_page_is_read_only_source_root_board(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        config_source = (root / "dashboard_pages_config.py").read_text(encoding="utf-8")
+
+        self.assertIn('("cross-domain-delivery", "Cross-Domain Delivery")', source)
+        self.assertIn("_cross_domain_delivery_page", source)
+        self.assertIn("_cross_domain_delivery_payload", source)
+        self.assertIn("build_cross_domain_delivery_board", source)
+        self.assertIn("build_cross_domain_delivery_board", config_source)
+        self.assertIn('page_id == "cross-domain-delivery"', source)
+        self.assertIn("payload_builder=_cross_domain_delivery_payload", source)
+        self.assertIn("Cars, Widgets, and Ambient delivery/version evidence", config_source)
+        self.assertIn("Version drift", config_source)
+
+    def test_dashboard_snapshot_contains_cross_domain_delivery_page_from_local_fixture(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repositories" / "trunk"
+            write_text(
+                repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md",
+                "\n".join(
+                    (
+                        "## [3.4.0] - 2026-06-01",
+                        "",
+                        "> _Ramses Composer / Headless: 2.9.0_",
+                        "> _Ramses: 28.0.0_",
+                        "> _Ramses Logic: 1.18.0_",
+                        "> _Feature Level: 2026.2_",
+                        "> _API version: 14_",
+                        "",
+                    )
+                ),
+            )
+            write_text(
+                repo / "Widgets" / "BMW" / "ClockWidget" / "Main" / "CHANGELOG.md",
+                "\n".join(
+                    (
+                        "## [1.5.0] - To be delivered",
+                        "",
+                        "> _Ramses Composer / Headless: 2.8.0_",
+                        "> _Ramses: 27.0.0_",
+                        "",
+                    )
+                ),
+            )
+            write_text(
+                repo / "AmbientLayer" / "BMW_Default" / "CHANGELOG.md",
+                "\n".join(
+                    (
+                        "## [4.0.0] - NOT YET DELIVERED",
+                        "",
+                        "> _Ramses Composer / Headless: 2.9.0_",
+                        "> _Ramses: 28.0.0_",
+                        "",
+                    )
+                ),
+            )
+            (repo / "Cars" / "BMW" / "F70" / "export").mkdir(parents=True, exist_ok=True)
+            (repo / "Cars" / "BMW" / "F70" / "export" / "Export_F70.rca").write_bytes(b"car")
+            (repo / "Widgets" / "BMW" / "ClockWidget" / "Main").mkdir(parents=True, exist_ok=True)
+            (repo / "Widgets" / "BMW" / "ClockWidget" / "Main" / "ClockWidget.rca").write_bytes(b"widget")
+            (repo / "AmbientLayer" / "BMW_Default" / "export_ECE").mkdir(parents=True, exist_ok=True)
+            (repo / "AmbientLayer" / "BMW_Default" / "export_ECE" / "ambient.rca").write_bytes(b"ambient")
+
+            with mock.patch("sg_preflight.dashboard_preferences.CANONICAL_SOURCE_REPO_ROOT", root / "missing-canonical"), mock.patch.dict(
+                os.environ,
+                {"SG_SOURCE_REPO_ROOT": str(repo), "SG_REPO": ""},
+                clear=False,
+            ):
+                snapshot = build_dashboard_snapshot("G70", root, defer_daily_digest=True, defer_team_digest_board=True)
+
+        navigation = [item["id"] for item in snapshot["navigation"]]
+        self.assertIn("cross-domain-delivery", navigation)
+        page = next(page for page in snapshot["pages"] if page["id"] == "cross-domain-delivery")
+        self.assertEqual(page["status"], "available")
+        self.assertTrue(page["payload"]["read_only"])
+        self.assertFalse(page["payload"]["is_approval"])
+        self.assertEqual(page["payload"]["counts"]["total"], 3)
+        self.assertEqual(page["payload"]["counts"]["version_drift"]["ramses_drift_count"], 1)
+        self.assertIn("version drift", page["summary"].casefold())
+        labels = [item["label"] for item in page["items"]]
+        self.assertIn("Cars / F70", labels)
+        self.assertIn("Widgets / ClockWidget", labels)
+        self.assertIn("Ambient / BMW_Default", labels)
 
     def test_dashboard_doc_links_are_copy_only(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1641,7 +1739,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 21)
+        self.assertEqual(len(snapshot["pages"]), 22)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -1655,7 +1753,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 21)
+        self.assertEqual(len(snapshot["pages"]), 22)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")
