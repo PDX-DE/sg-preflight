@@ -7,12 +7,14 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from urllib import error as urllib_error
 
 from sg_preflight.jira_client import (
     ConfigError,
     JIRA_KEYRING_SERVICE,
     JIRA_POSTING_BANNER,
     JiraPostError,
+    build_my_weekly_ticket_jql,
     attach_jira_file_action,
     build_my_unresolved_ticket_jql,
     build_profile_ticket_jql,
@@ -24,6 +26,7 @@ from sg_preflight.jira_client import (
     post_jira_comment,
     post_jira_comment_action,
     search_jira_profile_tickets,
+    search_my_weekly_tickets,
     search_my_unresolved_tickets,
     update_jira_issue_action,
     write_jira_credentials,
@@ -446,6 +449,18 @@ Other text
             "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
         )
 
+    def test_my_weekly_ticket_jql_includes_resolved_this_week_scope(self) -> None:
+        self.assertEqual(
+            build_my_weekly_ticket_jql(),
+            "assignee = currentUser() AND updated >= startOfWeek() ORDER BY updated DESC",
+        )
+        self.assertEqual(
+            build_my_weekly_ticket_jql("-7d"),
+            "assignee = currentUser() AND updated >= -7d ORDER BY updated DESC",
+        )
+        with self.assertRaises(ValueError):
+            build_my_weekly_ticket_jql("project = IDCEVODEV")
+
     def test_my_unresolved_ticket_search_is_read_only_and_redacts_pat(self) -> None:
         clear_jira_my_tickets_cache()
         calls: list[tuple[str, str]] = []
@@ -494,6 +509,85 @@ Other text
         self.assertIn("assignee+%3D+currentUser%28%29", calls[0][1])
         self.assertIn("resolution+%3D+Unresolved", calls[0][1])
         self.assertIn("fields=summary%2Cstatus%2Cpriority%2Cupdated%2Cproject%2Cassignee", calls[0][1])
+        self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
+
+    def test_my_weekly_ticket_search_is_read_only_and_allows_done_items(self) -> None:
+        clear_jira_my_tickets_cache()
+        calls: list[tuple[str, str]] = []
+        fake_keyring = _FakeKeyring()
+
+        def transport(request, timeout=30):
+            calls.append((request.get_method(), request.full_url))
+            return _FakeResponse(
+                200,
+                json.dumps(
+                    {
+                        "issues": [
+                            {
+                                "key": "IDCEVODEV-1000003",
+                                "fields": {
+                                    "summary": "G65 weekly ticket draft",
+                                    "status": {"name": "Done", "statusCategory": {"name": "Done"}},
+                                    "priority": {"name": "Medium"},
+                                    "project": {"key": "IDCEVODEV"},
+                                    "assignee": {"displayName": "Operator"},
+                                    "updated": "2026-06-17T10:00:00.000+0200",
+                                },
+                            }
+                        ]
+                    }
+                ).encode("utf-8"),
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            _write_keychain_credentials(state_dir, fake_keyring)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    result = search_my_weekly_tickets(since="-7d", max_results=50, transport=transport)
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["ticket_count"], 1)
+        self.assertTrue(result["read_only"])
+        self.assertFalse(result["is_approval"])
+        self.assertEqual(result["tickets"][0]["key"], "IDCEVODEV-1000003")
+        self.assertEqual(result["tickets"][0]["status"], "Done")
+        self.assertEqual(result["tickets"][0]["status_category"], "Done")
+        self.assertEqual(calls[0][0], "GET")
+        self.assertIn("assignee+%3D+currentUser%28%29", calls[0][1])
+        self.assertIn("updated+%3E%3D+-7d", calls[0][1])
+        self.assertNotIn("resolution+%3D+Unresolved", calls[0][1])
+        self.assertIn("fields=summary%2Cstatus%2Cpriority%2Cupdated%2Cproject%2Cassignee", calls[0][1])
+        self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
+
+    def test_my_weekly_ticket_search_reports_missing_credentials_without_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(Path(temp_dir) / "missing")}):
+                with mock.patch("pathlib.Path.home", return_value=Path(temp_dir) / "home"):
+                    with mock.patch("pathlib.Path.cwd", return_value=Path(temp_dir) / "cwd"):
+                        result = search_my_weekly_tickets()
+
+        self.assertEqual(result["status"], "missing")
+        self.assertEqual(result["ticket_count"], 0)
+        self.assertTrue(result["read_only"])
+        self.assertIn("Weekly Tickets unavailable", result["summary"])
+
+    def test_my_weekly_ticket_search_reports_failed_transport_without_raising(self) -> None:
+        fake_keyring = _FakeKeyring()
+
+        def transport(request, timeout=30):
+            raise urllib_error.URLError("offline")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            _write_keychain_credentials(state_dir, fake_keyring)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    result = search_my_weekly_tickets(transport=transport)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["ticket_count"], 0)
+        self.assertIn("Weekly Tickets unavailable", result["summary"])
         self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
 
     def test_post_comment_action_previews_with_gets_before_auto_confirm_posts(self) -> None:

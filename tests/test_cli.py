@@ -40,6 +40,21 @@ class _FakeKeyring:
         self.store.pop((service, account), None)
 
 
+class _FakeResponse:
+    def __init__(self, status: int = 200, body: bytes = b'{"issues":[]}') -> None:
+        self.status = status
+        self._body = body
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
 def _write_delivery_checklist_workbook(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     workbook = Workbook()
@@ -1223,6 +1238,88 @@ class TestCLI(unittest.TestCase):
             self.assertIn("No review package found", markdown)
             self.assertIn("Manual review remains required", markdown)
             self.assertNotIn("approved", markdown.lower())
+
+    def test_digest_weekly_tickets_cli_returns_json_and_markdown(self) -> None:
+        fake_keyring = _FakeKeyring()
+        issues = [
+            {
+                "key": "IDCEVODEV-1000004",
+                "fields": {
+                    "summary": "Prepare weekly status draft",
+                    "status": {"name": "In Review", "statusCategory": {"name": "In Progress"}},
+                    "priority": {"name": "Medium"},
+                    "project": {"key": "IDCEVODEV"},
+                    "assignee": {"displayName": "Operator"},
+                    "updated": "2026-06-18T08:00:00.000+0200",
+                },
+            }
+        ]
+
+        def transport(request, timeout=30):
+            return _FakeResponse(200, json.dumps({"issues": issues}).encode("utf-8"))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "jira_pat.json").write_text(
+                json.dumps({"jira_url": "https://jira.example"}),
+                encoding="utf-8",
+            )
+            fake_keyring.store[(JIRA_KEYRING_SERVICE, "https://jira.example")] = "test-pat-placeholder-not-real"
+
+            stdout = io.StringIO()
+            with mock.patch.dict("os.environ", {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    with mock.patch("sg_preflight.jira_client.urllib_request.urlopen", side_effect=transport):
+                        with redirect_stdout(stdout):
+                            result = main(
+                                [
+                                    "digest",
+                                    "weekly-tickets",
+                                    "--workspace",
+                                    str(root),
+                                    "--since",
+                                    "-7d",
+                                    "--json",
+                                ]
+                            )
+
+                        markdown_stdout = io.StringIO()
+                        with redirect_stdout(markdown_stdout):
+                            markdown_result = main(
+                                [
+                                    "digest",
+                                    "weekly-tickets",
+                                    "--workspace",
+                                    str(root),
+                                    "--since",
+                                    "-7d",
+                                    "--markdown",
+                                ]
+                            )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["jira_status"], "available")
+        self.assertEqual(payload["part_a"]["tickets"][0]["key"], "IDCEVODEV-1000004")
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(markdown_result, 0)
+        markdown = markdown_stdout.getvalue()
+        self.assertIn("# Tickets I worked on", markdown)
+        self.assertIn("IDCEVODEV-1000004", markdown)
+        self.assertIn("Draft only", markdown)
+        self.assertNotIn("Clockodo", markdown)
+
+    def test_digest_weekly_tickets_rejects_bad_since_cleanly(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            result = main(["digest", "weekly-tickets", "--since", "project = IDCEVODEV"])
+
+        self.assertEqual(result, 1)
+        self.assertIn("weekly-tickets failed", stderr.getvalue())
+        self.assertIn("--since", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_format_rejects_conflicting_legacy_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

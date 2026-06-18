@@ -4,6 +4,7 @@ import argparse
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 import json
+import re
 import subprocess
 import sys
 import time
@@ -208,6 +209,11 @@ from sg_preflight.team_digest_board import (
     build_team_daily_digest_board,
     render_team_digest_board_markdown,
     render_team_digest_board_text,
+)
+from sg_preflight.weekly_ticket_draft import (
+    build_weekly_ticket_draft,
+    render_weekly_ticket_draft_markdown,
+    render_weekly_ticket_draft_text,
 )
 from sg_preflight.ticket_review import (
     default_ticket_review_output_root,
@@ -968,6 +974,7 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
     ("screenshot-triage", "Run deterministic screenshot triage.", r"sgfx-preflight.exe screenshot-triage --profile F70 --workspace C:\repositories\trunk --json"),
     ("materialize", "Create a normalized validation bundle from SG-shaped inputs.", r"sgfx-preflight.exe materialize --output-bundle out\bundle --repo-root C:\repositories\trunk"),
     ("probe", "Discover SG-style repository roots and likely inputs.", r"sgfx-preflight.exe probe --search-root C:\repositories\trunk"),
+    ("digest", "Build copy-ready local digest drafts.", r"sgfx-preflight.exe digest weekly-tickets --workspace C:\repositories\trunk --format markdown"),
     # internal milestone: `demo-good`, `demo-broken`, `ui`, `retro-extract` subcommands stay
     # registered for backward compat but are hidden from the operator-facing
     # action map. They're dev / legacy entries that don't belong in the daily-
@@ -980,6 +987,10 @@ _COMMAND_EXAMPLES: dict[str, tuple[str, ...]] = {
     "full-qa-pass run": (_MAIN_ACTION_MAP[0][2],),
     "delivery-workbook": (_MAIN_ACTION_MAP[4][2],),
     "delivery-workbook trigger": (_MAIN_ACTION_MAP[4][2],),
+    "digest": (r"sgfx-preflight.exe digest weekly-tickets --workspace C:\repositories\trunk --format markdown",),
+    "digest weekly-tickets": (
+        r"sgfx-preflight.exe digest weekly-tickets --workspace C:\repositories\trunk --format markdown",
+    ),
     "jira": (
         "sgfx-preflight.exe jira status --ticket IDCEVODEV-1009244 --format json",
         _MAIN_ACTION_MAP[8][2],
@@ -2229,6 +2240,19 @@ def build_parser() -> argparse.ArgumentParser:
     daily_digest_latest.add_argument("--markdown", action="store_true", help="Print daily digest as Markdown")
     _add_render_options(daily_digest_latest)
 
+    digest = sub.add_parser("digest", help="Build copy-ready local digest drafts")
+    digest_sub = digest.add_subparsers(dest="digest_command", required=True)
+    weekly_tickets = digest_sub.add_parser("weekly-tickets", help="Draft the weekly ticket status list")
+    weekly_tickets.add_argument("--workspace", help="Workspace root override")
+    weekly_tickets.add_argument(
+        "--since",
+        default="startOfWeek",
+        help="Jira updated window: startOfWeek or a relative day window like -7d",
+    )
+    weekly_tickets.add_argument("--json", action="store_true", help="Print weekly ticket draft payload as JSON")
+    weekly_tickets.add_argument("--markdown", action="store_true", help="Print weekly ticket draft as Markdown")
+    _add_render_options(weekly_tickets)
+
     team_digest_board = sub.add_parser(
         "team-digest-board",
         help="Build a local Team Daily Digest board snapshot",
@@ -2696,9 +2720,29 @@ def main(argv: list[str] | None = None) -> int:
         _record_cli_activity(raw_args, exit_code)
 
 
+def _normalize_weekly_ticket_since_argv(argv: list[str] | None) -> list[str] | None:
+    if not argv or len(argv) < 4 or argv[0:2] != ["digest", "weekly-tickets"]:
+        return argv
+    normalized: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if (
+            token == "--since"
+            and index + 1 < len(argv)
+            and re.fullmatch(r"-[1-9][0-9]*[dD]", str(argv[index + 1]))
+        ):
+            normalized.append(f"--since={argv[index + 1]}")
+            index += 2
+            continue
+        normalized.append(token)
+        index += 1
+    return normalized
+
+
 def _main_impl(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(_normalize_weekly_ticket_since_argv(argv))
 
     if args.command == "run":
         from sg_preflight.cli.dev import handle_dev_command
@@ -2854,7 +2898,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
 
         return handle_reviews_command(args, parser)
 
-    if args.command in {"daily-digest", "team-digest-board"}:
+    if args.command in {"daily-digest", "team-digest-board", "digest"}:
         from sg_preflight.cli.digest import handle_digest_command
 
         return handle_digest_command(args, parser)
