@@ -580,11 +580,15 @@ def search_my_weekly_tickets(
             "is_approval": False,
         }
     else:
-        tickets = _my_ticket_rows(response.get("response"), credentials["jira_url"])
+        body = response.get("response")
+        tickets = _my_ticket_rows(body, credentials["jira_url"])
+        total_available = _jira_total_available(body)
         payload = {
             "status": "available",
             "jql": jql,
             "ticket_count": len(tickets),
+            "total_available": total_available,
+            "result_limit": result_limit,
             "tickets": tickets,
             "summary": (
                 f"{len(tickets)} assigned Jira ticket(s) updated in the selected week loaded."
@@ -603,6 +607,19 @@ def search_my_weekly_tickets(
         _JIRA_MY_WEEKLY_TICKETS_CACHE[cache_key] = (expires_at, _copy_profile_ticket_payload(payload))
         payload["cache_expires_in_seconds"] = int(cache_seconds)
     return payload
+
+
+def _jira_total_available(response: Any) -> int | None:
+    if not isinstance(response, dict):
+        return None
+    value = response.get("total")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
 
 
 def verify_jira_access(

@@ -522,6 +522,7 @@ Other text
                 200,
                 json.dumps(
                     {
+                        "total": 74,
                         "issues": [
                             {
                                 "key": "IDCEVODEV-1000003",
@@ -548,6 +549,7 @@ Other text
 
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["ticket_count"], 1)
+        self.assertEqual(result["total_available"], 74)
         self.assertTrue(result["read_only"])
         self.assertFalse(result["is_approval"])
         self.assertEqual(result["tickets"][0]["key"], "IDCEVODEV-1000003")

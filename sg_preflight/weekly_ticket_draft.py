@@ -24,6 +24,7 @@ JIRA_UNAVAILABLE_BANNER = (
     "Couldn't reach Jira just now - use the activity below as a starting point and try again once you're back online."
 )
 _GROUP_ORDER = ("In progress", "In review", "Completed this week", "To do", "Other")
+_PART_B_EXCLUDED_SURFACES = frozenset({"digest weekly-tickets"})
 
 
 def _part_a_banner(jira_status: str) -> str:
@@ -46,6 +47,9 @@ def build_weekly_ticket_draft(
     root = Path(workspace).resolve() if workspace is not None else Path.cwd().resolve()
     jira_payload = search_my_weekly_tickets(since=since, max_results=50, transport=transport)
     tickets = [dict(item) for item in jira_payload.get("tickets", []) if isinstance(item, dict)]
+    total_available = _total_available(jira_payload.get("total_available"))
+    truncated = _is_truncated(ticket_count=len(tickets), total_available=total_available)
+    truncation_note = _truncation_note(ticket_count=len(tickets), total_available=total_available) if truncated else ""
     activity_payload = read_activity_entries(root, since="this-week", now=current, limit=200)
     payload = {
         "title": WEEKLY_TICKET_DRAFT_TITLE,
@@ -57,8 +61,11 @@ def build_weekly_ticket_draft(
         "jira_status": str(jira_payload.get("status", "unknown")),
         "jira_summary": str(jira_payload.get("summary", "")),
         "jira_jql": str(jira_payload.get("jql", "")),
+        "total_available": total_available,
+        "truncated": truncated,
+        "truncation_note": truncation_note,
         "credential": jira_payload.get("credential", {}),
-        "part_a": _part_a(tickets),
+        "part_a": _part_a(tickets, truncation_note=truncation_note),
         "part_b": _part_b(activity_payload),
         "guardrails": [DRAFT_FOOTER, JIRA_CAVEAT, PART_B_NOTE],
         "read_only": True,
@@ -84,6 +91,9 @@ def render_weekly_ticket_draft_text(payload: dict[str, Any]) -> str:
     banner = _part_a_banner(jira_status)
     if banner:
         lines.append(banner)
+    truncation_note = str(payload.get("truncation_note", "") or part_a.get("truncation_note", "")).strip()
+    if truncation_note:
+        lines.append(truncation_note)
     groups = part_a.get("groups", []) if isinstance(part_a, dict) else []
     if isinstance(groups, list) and groups:
         for group in groups:
@@ -133,6 +143,10 @@ def render_weekly_ticket_draft_markdown(payload: dict[str, Any]) -> str:
     banner = _part_a_banner(jira_status)
     if banner:
         lines.append(f"> {banner}")
+        lines.append("")
+    truncation_note = str(payload.get("truncation_note", "") or part_a.get("truncation_note", "")).strip()
+    if truncation_note:
+        lines.append(f"> {truncation_note}")
         lines.append("")
     groups = part_a.get("groups", []) if isinstance(part_a, dict) else []
     if isinstance(groups, list) and groups:
@@ -199,7 +213,7 @@ def _operator_from_tickets(tickets: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _part_a(tickets: list[dict[str, Any]]) -> dict[str, Any]:
+def _part_a(tickets: list[dict[str, Any]], *, truncation_note: str = "") -> dict[str, Any]:
     buckets: dict[str, list[dict[str, Any]]] = {heading: [] for heading in _GROUP_ORDER}
     for ticket in tickets:
         buckets[_ticket_group(ticket)].append(ticket)
@@ -213,6 +227,8 @@ def _part_a(tickets: list[dict[str, Any]]) -> dict[str, Any]:
         "tickets": tickets,
         "ticket_count": len(tickets),
         "groups": groups,
+        "truncated": bool(truncation_note),
+        "truncation_note": truncation_note,
         "empty_message": "No tickets updated this week.",
         "source": "jira",
     }
@@ -249,6 +265,8 @@ def _part_b(activity_payload: dict[str, Any]) -> dict[str, Any]:
         profile = str(entry.get("profile", "") or "").strip().upper() or "General"
         verb = str(entry.get("verb", "") or "read").strip().lower() or "read"
         surface = str(entry.get("surface", "") or "sgfx").strip()
+        if surface.casefold() in _PART_B_EXCLUDED_SURFACES:
+            continue
         counters[profile][(verb, surface)] += 1
     groups = []
     for profile in sorted(counters):
@@ -265,3 +283,31 @@ def _part_b(activity_payload: dict[str, Any]) -> dict[str, Any]:
         "empty_message": "No SGFX activity entries recorded this week.",
         "source": "activity_log",
     }
+
+
+def _total_available(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _is_truncated(*, ticket_count: int, total_available: int | None) -> bool:
+    if total_available is not None:
+        return total_available > ticket_count
+    return ticket_count >= 50
+
+
+def _truncation_note(*, ticket_count: int, total_available: int | None) -> str:
+    if total_available is not None:
+        return (
+            f"Showing the {ticket_count} most recently updated - {total_available} tickets matched this week. "
+            "Narrow the window with --since to see the rest."
+        )
+    return (
+        f"Showing the {ticket_count} most recently updated; there may be more - "
+        "narrow the window with --since."
+    )

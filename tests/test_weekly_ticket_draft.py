@@ -55,11 +55,28 @@ def _write_keychain_credentials(state_dir: Path, fake_keyring: _FakeKeyring) -> 
     fake_keyring.store[(JIRA_KEYRING_SERVICE, "https://jira.example")] = "test-pat-placeholder-not-real"
 
 
-def _transport_with_issues(issues: list[dict[str, object]]):
+def _transport_with_issues(issues: list[dict[str, object]], *, total: int | None = None):
     def transport(request, timeout=30):
-        return _FakeResponse(200, json.dumps({"issues": issues}).encode("utf-8"))
+        payload: dict[str, object] = {"issues": issues}
+        if total is not None:
+            payload["total"] = total
+        return _FakeResponse(200, json.dumps(payload).encode("utf-8"))
 
     return transport
+
+
+def _weekly_issue(index: int) -> dict[str, object]:
+    return {
+        "key": f"IDCEVODEV-{1000000 + index}",
+        "fields": {
+            "summary": f"Weekly ticket {index}",
+            "status": {"name": "In Progress", "statusCategory": {"name": "In Progress"}},
+            "priority": {"name": "Medium"},
+            "project": {"key": "IDCEVODEV"},
+            "assignee": {"displayName": "Operator"},
+            "updated": "2026-06-17T10:00:00.000+0200",
+        },
+    }
 
 
 class TestWeeklyTicketDraft(unittest.TestCase):
@@ -129,6 +146,85 @@ class TestWeeklyTicketDraft(unittest.TestCase):
         self.assertIn("NA0", activity_profiles)
         self.assertEqual(activity_profiles["G65"]["items"][0]["count"], 2)
         self.assertIn("for your reference", payload["part_b"]["note"].lower())
+
+    def test_weekly_ticket_draft_filters_only_its_own_activity_surface(self) -> None:
+        fixed_now = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
+        fake_keyring = _FakeKeyring()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / "state"
+            _write_keychain_credentials(state_dir, fake_keyring)
+            append_activity_entry(root, verb="read", surface="digest weekly-tickets", profile="G65", now=fixed_now)
+            append_activity_entry(root, verb="read", surface="daily-digest latest", profile="G65", now=fixed_now)
+            append_activity_entry(root, verb="ran", surface="screenshot capture", profile="G65", now=fixed_now)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    payload = build_weekly_ticket_draft(
+                        workspace=root,
+                        transport=_transport_with_issues([]),
+                        now=fixed_now,
+                    )
+
+        text = render_weekly_ticket_draft_text(payload)
+
+        self.assertNotIn("digest weekly-tickets", text)
+        self.assertIn("daily-digest latest", text)
+        self.assertIn("screenshot capture", text)
+
+    def test_weekly_ticket_draft_shows_known_total_truncation_marker(self) -> None:
+        fixed_now = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
+        fake_keyring = _FakeKeyring()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / "state"
+            _write_keychain_credentials(state_dir, fake_keyring)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    payload = build_weekly_ticket_draft(
+                        workspace=root,
+                        transport=_transport_with_issues([_weekly_issue(index) for index in range(50)], total=74),
+                        now=fixed_now,
+                    )
+
+        text = render_weekly_ticket_draft_text(payload)
+        markdown = render_weekly_ticket_draft_markdown(payload)
+
+        self.assertTrue(payload["truncated"])
+        self.assertEqual(payload["total_available"], 74)
+        self.assertIn("Showing the 50 most recently updated - 74 tickets matched this week.", text)
+        self.assertIn("Narrow the window with --since", markdown)
+
+    def test_weekly_ticket_draft_shows_possible_truncation_when_total_is_unknown(self) -> None:
+        fixed_now = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
+        fake_keyring = _FakeKeyring()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / "state"
+            _write_keychain_credentials(state_dir, fake_keyring)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    capped_payload = build_weekly_ticket_draft(
+                        workspace=root,
+                        transport=_transport_with_issues([_weekly_issue(index) for index in range(50)]),
+                        now=fixed_now,
+                    )
+                    uncapped_payload = build_weekly_ticket_draft(
+                        workspace=root,
+                        transport=_transport_with_issues([_weekly_issue(1)]),
+                        now=fixed_now,
+                    )
+
+        text = render_weekly_ticket_draft_text(capped_payload)
+        uncapped_text = render_weekly_ticket_draft_text(uncapped_payload)
+
+        self.assertTrue(capped_payload["truncated"])
+        self.assertIsNone(capped_payload["total_available"])
+        self.assertIn("Showing the 50 most recently updated; there may be more", text)
+        self.assertFalse(uncapped_payload["truncated"])
+        self.assertNotIn("Showing the 50 most recently updated", uncapped_text)
 
     def test_weekly_ticket_draft_degrades_when_jira_is_not_connected(self) -> None:
         fixed_now = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
