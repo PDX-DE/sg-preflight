@@ -20,7 +20,19 @@ JIRA_CAVEAT = (
     "Add tickets you worked on but are not currently assigned, and remove any that were only touched by someone else."
 )
 OFFLINE_BANNER = "Jira not connected - run `jira register` to auto-pull tickets; meanwhile use the SGFX activity below."
+JIRA_UNAVAILABLE_BANNER = (
+    "Couldn't reach Jira just now - use the activity below as a starting point and try again once you're back online."
+)
 _GROUP_ORDER = ("In progress", "In review", "Completed this week", "To do", "Other")
+
+
+def _part_a_banner(jira_status: str) -> str:
+    status = str(jira_status or "").strip().lower()
+    if status == "missing":
+        return OFFLINE_BANNER
+    if status not in {"available", ""}:
+        return JIRA_UNAVAILABLE_BANNER
+    return ""
 
 
 def build_weekly_ticket_draft(
@@ -64,13 +76,14 @@ def render_weekly_ticket_draft_text(payload: dict[str, Any]) -> str:
     ]
     operator = str(payload.get("operator", "")).strip()
     if operator:
-        lines.insert(1, f"Operator: {operator}")
+        lines.insert(1, f"From: {operator}")
 
     part_a = payload.get("part_a", {}) if isinstance(payload.get("part_a"), dict) else {}
     lines.extend(["", f"Part A - {PART_A_HEADING}"])
     jira_status = str(payload.get("jira_status", ""))
-    if jira_status == "missing":
-        lines.append(OFFLINE_BANNER)
+    banner = _part_a_banner(jira_status)
+    if banner:
+        lines.append(banner)
     groups = part_a.get("groups", []) if isinstance(part_a, dict) else []
     if isinstance(groups, list) and groups:
         for group in groups:
@@ -80,9 +93,7 @@ def render_weekly_ticket_draft_text(payload: dict[str, Any]) -> str:
             for ticket in group.get("tickets", []):
                 if isinstance(ticket, dict):
                     lines.append(f"- {_ticket_line(ticket)}")
-    elif jira_status not in {"available", ""}:
-        lines.append(str(payload.get("jira_summary", "Jira tickets unavailable for this draft.")))
-    else:
+    elif jira_status in {"available", ""}:
         lines.append(str(part_a.get("empty_message", "No tickets updated this week.")))
 
     part_b = payload.get("part_b", {}) if isinstance(payload.get("part_b"), dict) else {}
@@ -119,8 +130,9 @@ def render_weekly_ticket_draft_markdown(payload: dict[str, Any]) -> str:
     part_a = payload.get("part_a", {}) if isinstance(payload.get("part_a"), dict) else {}
     lines.append(f"## Part A - {PART_A_HEADING}")
     jira_status = str(payload.get("jira_status", ""))
-    if jira_status == "missing":
-        lines.append(f"> {OFFLINE_BANNER}")
+    banner = _part_a_banner(jira_status)
+    if banner:
+        lines.append(f"> {banner}")
         lines.append("")
     groups = part_a.get("groups", []) if isinstance(part_a, dict) else []
     if isinstance(groups, list) and groups:
@@ -132,10 +144,7 @@ def render_weekly_ticket_draft_markdown(payload: dict[str, Any]) -> str:
                 if isinstance(ticket, dict):
                     lines.append(f"- {_ticket_line(ticket)}")
             lines.append("")
-    elif jira_status not in {"available", ""}:
-        lines.append(f"- {payload.get('jira_summary', 'Jira tickets unavailable for this draft.')}")
-        lines.append("")
-    else:
+    elif jira_status in {"available", ""}:
         lines.append(f"- {part_a.get('empty_message', 'No tickets updated this week.')}")
         lines.append("")
 

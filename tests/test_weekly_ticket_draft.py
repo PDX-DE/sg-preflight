@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import io
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from urllib import error as urllib_error
 
 from sg_preflight.activity_log import append_activity_entry
 from sg_preflight.jira_client import JIRA_KEYRING_SERVICE, clear_jira_my_tickets_cache
@@ -143,8 +145,49 @@ class TestWeeklyTicketDraft(unittest.TestCase):
         self.assertEqual(payload["jira_status"], "missing")
         self.assertIn("Jira not connected", text)
         self.assertNotIn("No tickets updated this week", text)
+        self.assertNotIn("Weekly Tickets unavailable", text)
         self.assertIn("delivery board", text)
         self.assertIn("Draft only", text)
+
+    def test_weekly_ticket_draft_failed_jira_keeps_raw_error_out_of_draft(self) -> None:
+        fixed_now = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
+        fake_keyring = _FakeKeyring()
+        leak_body = (
+            b'{"errorMessages":["Endpoint https://jira.cc.bmwgroup.net/rest/api/2/search'
+            b'?jql=assignee+%3D+currentUser() rejected by proxy 10.20.30.40"]}'
+        )
+
+        def transport(request, timeout=30):
+            raise urllib_error.HTTPError(
+                "https://jira.cc.bmwgroup.net/rest/api/2/search",
+                400,
+                "Bad Request",
+                {},
+                io.BytesIO(leak_body),
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / "state"
+            _write_keychain_credentials(state_dir, fake_keyring)
+            append_activity_entry(root, verb="ran", surface="screenshot capture", profile="G65", now=fixed_now)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    payload = build_weekly_ticket_draft(workspace=root, transport=transport, now=fixed_now)
+
+        text = render_weekly_ticket_draft_text(payload)
+        markdown = render_weekly_ticket_draft_markdown(payload)
+
+        self.assertEqual(payload["jira_status"], "failed")
+        for rendered in (text, markdown):
+            self.assertIn("Couldn't reach Jira", rendered)
+            self.assertIn("screenshot capture", rendered)
+            self.assertNotIn("jira.cc.bmwgroup.net", rendered)
+            self.assertNotIn("10.20.30.40", rendered)
+            self.assertNotIn("HTTP 400", rendered)
+            self.assertNotIn("errorMessages", rendered)
+            self.assertNotIn("GET failed", rendered)
+            self.assertNotIn("No tickets updated this week", rendered)
 
     def test_weekly_ticket_draft_renders_empty_week_without_claims(self) -> None:
         fixed_now = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
