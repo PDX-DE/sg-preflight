@@ -179,6 +179,31 @@ class TestCrossDomainDelivery(unittest.TestCase):
         self.assertEqual(drift["raco_headless_drift_count"], 1)
         self.assertEqual(drift["items"][0]["relative_path"], "Widgets/BMW/ClockWidget")
 
+    def test_widget_with_differently_named_rca_is_kept_as_no_changelog_item(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repositories" / "trunk"
+            rca_data = b"preview-widget"
+            _write_bytes(repo / "Widgets" / "BMW" / "IPA" / "Main" / "IPA_Preview.rca", rca_data)
+            board = build_cross_domain_delivery_board(
+                repo,
+                workspace_root=root,
+                domains=("widgets",),
+                now=datetime(2026, 6, 18, 20, 45, tzinfo=timezone.utc),
+            )
+
+        payload = board.to_dict()
+        entries = {entry["relative_path"]: entry for entry in payload["entries"]}
+        self.assertIn("Widgets/BMW/IPA", entries)
+        widget = entries["Widgets/BMW/IPA"]
+        self.assertFalse(widget["has_changelog"])
+        self.assertEqual(widget["delivery_status"], STATUS_UNKNOWN)
+        self.assertEqual(widget["delivery_status_label"], "No changelog")
+        self.assertEqual(widget["rca_paths"], ["Widgets/BMW/IPA/Main/IPA_Preview.rca"])
+        self.assertEqual(widget["rca_total_bytes"], len(rca_data))
+        self.assertEqual(payload["counts"]["by_domain"]["widgets"]["total"], 1)
+        self.assertEqual(payload["counts"]["by_domain"]["widgets"]["no_changelog"], 1)
+
     def test_version_metadata_falls_back_to_newest_section_with_a_block(self) -> None:
         changelog = "\n".join(
             (

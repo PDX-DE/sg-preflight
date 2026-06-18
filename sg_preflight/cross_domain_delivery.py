@@ -58,7 +58,7 @@ DOMAIN_SPECS: dict[str, DomainSpec] = {
         root_dirs=("Cars", "Cars_IDCevo"),
         brand_level=True,
         changelog_relative=Path("CHANGELOG.md"),
-        rca_glob="export/Export_{item_id}.rca",
+        rca_glob="export/*.rca",
         readme_relative=Path("README.md"),
     ),
     "widgets": DomainSpec(
@@ -67,7 +67,7 @@ DOMAIN_SPECS: dict[str, DomainSpec] = {
         root_dirs=("Widgets", "Widgets_IDCevo"),
         brand_level=True,
         changelog_relative=Path("Main") / "CHANGELOG.md",
-        rca_glob="Main/{item_id}.rca",
+        rca_glob="Main/*.rca",
         readme_relative=Path("Main") / "README.md",
     ),
     "ambient": DomainSpec(
@@ -297,9 +297,8 @@ def _read_changelog(changelog_path: Path) -> tuple[ChangelogClassification, dict
     return classify_changelog_text(text), _parse_version_metadata(text), ()
 
 
-def _rca_paths(item_dir: Path, repo_root: Path, spec: DomainSpec, item_id: str) -> tuple[tuple[str, ...], int]:
-    pattern = spec.rca_glob.format(item_id=item_id)
-    paths = tuple(sorted(path for path in item_dir.glob(pattern) if path.is_file()))
+def _rca_paths(item_dir: Path, repo_root: Path, spec: DomainSpec) -> tuple[tuple[str, ...], int]:
+    paths = tuple(sorted(path for path in item_dir.glob(spec.rca_glob) if path.is_file()))
     total = 0
     relative_paths: list[str] = []
     for path in paths:
@@ -316,9 +315,8 @@ def _has_item_marker(item_dir: Path, spec: DomainSpec) -> bool:
         return True
     if (item_dir / spec.readme_relative).is_file():
         return True
-    pattern = spec.rca_glob.format(item_id=item_dir.name)
     try:
-        return any(path.is_file() for path in item_dir.glob(pattern))
+        return any(path.is_file() for path in item_dir.glob(spec.rca_glob))
     except OSError:
         return False
 
@@ -362,7 +360,7 @@ def _item_dirs(repo_root: Path, spec: DomainSpec) -> Iterable[tuple[str, Path]]:
 def _entry_from_item(repo_root: Path, spec: DomainSpec, brand: str, item_dir: Path) -> CrossDomainItem:
     changelog_path = item_dir / spec.changelog_relative
     classification, metadata, notes = _read_changelog(changelog_path)
-    rca_paths, rca_total = _rca_paths(item_dir, repo_root, spec, item_dir.name)
+    rca_paths, rca_total = _rca_paths(item_dir, repo_root, spec)
     return CrossDomainItem(
         domain=spec.domain_id,
         brand=brand,
