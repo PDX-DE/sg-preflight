@@ -48,7 +48,8 @@ def build_weekly_ticket_draft(
     jira_payload = search_my_weekly_tickets(since=since, max_results=50, transport=transport)
     tickets = [dict(item) for item in jira_payload.get("tickets", []) if isinstance(item, dict)]
     total_available = _total_available(jira_payload.get("total_available"))
-    truncated = _is_truncated(ticket_count=len(tickets), total_available=total_available)
+    result_limit = _total_available(jira_payload.get("result_limit")) or 50
+    truncated = _is_truncated(ticket_count=len(tickets), total_available=total_available, result_limit=result_limit)
     truncation_note = _truncation_note(ticket_count=len(tickets), total_available=total_available) if truncated else ""
     activity_payload = read_activity_entries(root, since="this-week", now=current, limit=200)
     payload = {
@@ -295,10 +296,10 @@ def _total_available(value: Any) -> int | None:
     return None
 
 
-def _is_truncated(*, ticket_count: int, total_available: int | None) -> bool:
+def _is_truncated(*, ticket_count: int, total_available: int | None, result_limit: int = 50) -> bool:
     if total_available is not None:
         return total_available > ticket_count
-    return ticket_count >= 50
+    return ticket_count >= result_limit
 
 
 def _truncation_note(*, ticket_count: int, total_available: int | None) -> str:
