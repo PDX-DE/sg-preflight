@@ -215,6 +215,8 @@ def _metadata_from_section(section: str) -> dict[str, str | None]:
     for match in _METADATA_RE.finditer(section):
         label = re.sub(r"[^a-z0-9]+", " ", match.group("label").strip().casefold()).strip()
         value = match.group("value").strip()
+        if not value:
+            continue
         if label in {"ramses composer headless", "ramses composer", "raco headless", "raco"}:
             metadata["raco_headless"] = value
         elif label == "ramses":
@@ -309,21 +311,29 @@ def _rca_paths(item_dir: Path, repo_root: Path, spec: DomainSpec, item_id: str) 
     return tuple(relative_paths), total
 
 
+def _child_dirs(path: Path) -> list[Path]:
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        return []
+    return sorted((child for child in children if child.is_dir()), key=lambda child: child.name.lower())
+
+
 def _item_dirs(repo_root: Path, spec: DomainSpec) -> Iterable[tuple[str, Path]]:
     for root_name in spec.root_dirs:
         source_root = repo_root / root_name
         if not source_root.is_dir():
             continue
         if spec.brand_level:
-            for brand_dir in sorted((path for path in source_root.iterdir() if path.is_dir()), key=lambda path: path.name.lower()):
+            for brand_dir in _child_dirs(source_root):
                 if _ignored_dir(brand_dir):
                     continue
-                for item_dir in sorted((path for path in brand_dir.iterdir() if path.is_dir()), key=lambda path: path.name.lower()):
+                for item_dir in _child_dirs(brand_dir):
                     if _ignored_dir(item_dir):
                         continue
                     yield brand_dir.name, item_dir
         else:
-            for item_dir in sorted((path for path in source_root.iterdir() if path.is_dir()), key=lambda path: path.name.lower()):
+            for item_dir in _child_dirs(source_root):
                 if _ignored_dir(item_dir):
                     continue
                 yield "", item_dir
@@ -372,11 +382,17 @@ def _max_version(values: Iterable[str | None]) -> str:
 def _version_drift_summary(entries: tuple[CrossDomainItem, ...]) -> dict[str, Any]:
     max_ramses = _max_version(entry.ramses for entry in entries)
     max_raco = _max_version(entry.raco_headless for entry in entries)
+    max_ramses_key = _version_key(max_ramses) if max_ramses else None
+    max_raco_key = _version_key(max_raco) if max_raco else None
     ramses_drift = [
-        entry for entry in entries if max_ramses and entry.ramses and entry.ramses != max_ramses
+        entry
+        for entry in entries
+        if max_ramses_key is not None and entry.ramses and _version_key(entry.ramses) != max_ramses_key
     ]
     raco_drift = [
-        entry for entry in entries if max_raco and entry.raco_headless and entry.raco_headless != max_raco
+        entry
+        for entry in entries
+        if max_raco_key is not None and entry.raco_headless and _version_key(entry.raco_headless) != max_raco_key
     ]
     drift_entries = tuple(
         sorted(

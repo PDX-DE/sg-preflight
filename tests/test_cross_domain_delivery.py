@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from sg_preflight.cross_domain_delivery import (
     build_cross_domain_delivery_board,
@@ -232,6 +233,87 @@ class TestCrossDomainDelivery(unittest.TestCase):
         # recovered version must feed the drift evidence, not be silently excluded from scope max
         self.assertEqual(payload["counts"]["version_drift"]["max_ramses"], "28.15.1")
         self.assertEqual(payload["counts"]["version_drift"]["max_raco_headless"], "2.9.0")
+
+    def test_empty_value_metadata_line_does_not_block_the_version_fallback(self) -> None:
+        changelog = "\n".join(
+            (
+                "## [9.0.1] - NOT YET DELIVERED",
+                "",
+                "> _Ramses:_",
+                "",
+                "## [9.0.0] - 2026-04-29",
+                "",
+                "> _Ramses Composer / Headless: 2.9.0_",
+                "> _Ramses: 28.15.1_",
+                "",
+            )
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repositories" / "trunk"
+            _write_text(repo / "AmbientLayer" / "BMW_Default" / "CHANGELOG.md", changelog)
+            board = build_cross_domain_delivery_board(
+                repo,
+                workspace_root=root,
+                domains=("ambient",),
+                now=datetime(2026, 6, 18, 20, 45, tzinfo=timezone.utc),
+            )
+
+        payload = board.to_dict()
+        ambient = {entry["relative_path"]: entry for entry in payload["entries"]}["AmbientLayer/BMW_Default"]
+        # the empty `> _Ramses:_` placeholder must not count as a version; fall through to the real block
+        self.assertEqual(ambient["ramses"], "28.15.1")
+        self.assertEqual(ambient["raco_headless"], "2.9.0")
+        self.assertEqual(payload["counts"]["version_drift"]["max_ramses"], "28.15.1")
+
+    def test_cosmetic_version_string_variance_is_not_flagged_as_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repositories" / "trunk"
+            _write_text(
+                repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md",
+                _changelog("## [1.0.0] - 2026-01-01", ramses="28.0.0", raco="2.9.0"),
+            )
+            _write_text(
+                repo / "Cars" / "BMW" / "F80" / "CHANGELOG.md",
+                _changelog("## [1.0.0] - 2026-01-01", ramses="28.00.0", raco="2.9.0"),
+            )
+            board = build_cross_domain_delivery_board(
+                repo,
+                workspace_root=root,
+                domains=("cars",),
+                now=datetime(2026, 6, 18, 20, 45, tzinfo=timezone.utc),
+            )
+
+        drift = board.to_dict()["counts"]["version_drift"]
+        # 28.0.0 and 28.00.0 are the same version; neither item should be flagged against the max
+        self.assertEqual(drift["ramses_drift_count"], 0)
+        self.assertEqual(drift["raco_headless_drift_count"], 0)
+
+    def test_board_survives_an_unreadable_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = _cross_domain_fixture(root)
+            real_iterdir = Path.iterdir
+
+            def guarded_iterdir(self):  # type: ignore[no-untyped-def]
+                if self.name == "MINI":
+                    raise PermissionError("access denied")
+                return real_iterdir(self)
+
+            with mock.patch.object(Path, "iterdir", guarded_iterdir):
+                board = build_cross_domain_delivery_board(
+                    repo,
+                    workspace_root=root,
+                    now=datetime(2026, 6, 18, 20, 45, tzinfo=timezone.utc),
+                )
+
+        payload = board.to_dict()
+        # the unreadable MINI dir is skipped, the rest of the board still builds
+        self.assertEqual(payload["source_state"], "ready")
+        relative_paths = {entry["relative_path"] for entry in payload["entries"]}
+        self.assertIn("Cars/BMW/F70", relative_paths)
+        self.assertNotIn("Widgets/MINI/NoLogWidget", relative_paths)
 
     def test_missing_repo_root_returns_empty_read_only_board(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
