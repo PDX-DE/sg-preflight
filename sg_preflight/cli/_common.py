@@ -149,6 +149,10 @@ from sg_preflight.country_variant_coverage import (
     build_country_variant_coverage_board,
     write_country_variant_coverage_board,
 )
+from sg_preflight.cross_domain_delivery import (
+    build_cross_domain_delivery_board,
+    write_cross_domain_delivery_board,
+)
 from sg_preflight.disabled_tests import (
     CAUTIOUS_BASELINE_LABEL,
     build_disabled_tests_board,
@@ -1305,6 +1309,58 @@ def _console_country_variant_coverage(payload: dict[str, object]) -> None:
             )
 
 
+def _console_cross_domain_delivery(payload: dict[str, object]) -> None:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    drift = counts.get("version_drift", {})
+    if not isinstance(drift, dict):
+        drift = {}
+    print("Cross-Domain Delivery")
+    print(f"Source: {payload.get('repo_root', '')}")
+    print(f"State: {payload.get('source_state', '')}")
+    print(
+        "Summary -> "
+        f"items: {counts.get('total', 0)} | "
+        f"delivered: {counts.get('delivered', 0)} | "
+        f"not delivered yet: {counts.get('not_delivered_yet', 0)} | "
+        f"unknown/no changelog: {counts.get('unknown', 0)}"
+    )
+    print(
+        "Version drift -> "
+        f"Ramses max {drift.get('max_ramses') or 'not found'} "
+        f"({drift.get('ramses_drift_count', 0)} row(s)); "
+        f"RaCo Headless max {drift.get('max_raco_headless') or 'not found'} "
+        f"({drift.get('raco_headless_drift_count', 0)} row(s))"
+    )
+    print(str(payload.get("manual_review_banner", "")))
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        if artifacts.get("json_path"):
+            print(f"JSON: {artifacts['json_path']}")
+        if artifacts.get("markdown_path"):
+            print(f"Markdown: {artifacts['markdown_path']}")
+    print("-" * 80)
+    entries = payload.get("entries", [])
+    if not isinstance(entries, list) or not entries:
+        print("No cross-domain delivery rows found.")
+        return
+    for entry in entries[:18]:
+        if not isinstance(entry, dict):
+            continue
+        print(
+            _console_safe(
+                f"- {entry.get('relative_path', '')}: {entry.get('delivery_status_label', '')}; "
+                f"version {entry.get('version') or 'unknown'}; "
+                f"Ramses {entry.get('ramses') or 'unknown'}; "
+                f"RaCo {entry.get('raco_headless') or 'unknown'}; "
+                f"{entry.get('rca_total_bytes', 0)} byte(s)"
+            )
+        )
+    if len(entries) > 18:
+        print(f"... {len(entries) - 18} more row(s)")
+
+
 def _console_export_size_trend(payload: dict[str, object]) -> None:
     counts = payload.get("counts", {})
     if not isinstance(counts, dict):
@@ -1694,6 +1750,16 @@ def build_parser() -> argparse.ArgumentParser:
     country_variant_coverage.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     country_variant_coverage.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     country_variant_coverage.add_argument("--json", action="store_true", help="Print country-variant coverage payload as JSON")
+
+    cross_domain_delivery = sub.add_parser(
+        "cross-domain-delivery",
+        help="Build the read-only Cars, Widgets, and Ambient delivery/version board",
+    )
+    cross_domain_delivery.add_argument("--workspace", help="Workspace root override")
+    cross_domain_delivery.add_argument("--repo-root", help="SVN trunk root override")
+    cross_domain_delivery.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    cross_domain_delivery.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    cross_domain_delivery.add_argument("--json", action="store_true", help="Print cross-domain delivery payload as JSON")
 
     export_size_trend = sub.add_parser(
         "export-size-trend",
@@ -2842,6 +2908,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         "disabled-tests",
         "api-version-coverage",
         "country-variant-coverage",
+        "cross-domain-delivery",
         "export-size-trend",
     }:
         from sg_preflight.cli.boards import handle_board_command

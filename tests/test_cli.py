@@ -88,6 +88,45 @@ def _write_export_size_analysis_workbook(path: Path) -> None:
     workbook.save(path)
 
 
+def _write_cross_domain_changelog(path: Path, header: str, *, ramses: str = "28.0.0") -> None:
+    write_text(
+        path,
+        "\n".join(
+            (
+                header,
+                "",
+                "> _Ramses Composer / Headless: 2.9.0_",
+                f"> _Ramses: {ramses}_",
+                "> _Ramses Logic: 1.18.0_",
+                "> _Feature Level: 2026.2_",
+                "> _API version: 14_",
+                "",
+            )
+        ),
+    )
+
+
+def _write_cross_domain_cli_fixture(root: Path) -> Path:
+    repo = root / "repositories" / "trunk"
+    _write_cross_domain_changelog(repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md", "## [3.4.0] - 2026-06-01")
+    _write_cross_domain_changelog(
+        repo / "Widgets" / "BMW" / "ClockWidget" / "Main" / "CHANGELOG.md",
+        "## [1.5.0] - To be delivered",
+        ramses="27.0.0",
+    )
+    _write_cross_domain_changelog(
+        repo / "AmbientLayer" / "BMW_Default" / "CHANGELOG.md",
+        "## [4.0.0] - NOT YET DELIVERED",
+    )
+    (repo / "Cars" / "BMW" / "F70" / "export").mkdir(parents=True, exist_ok=True)
+    (repo / "Cars" / "BMW" / "F70" / "export" / "Export_F70.rca").write_bytes(b"car")
+    (repo / "Widgets" / "BMW" / "ClockWidget" / "Main").mkdir(parents=True, exist_ok=True)
+    (repo / "Widgets" / "BMW" / "ClockWidget" / "Main" / "ClockWidget.rca").write_bytes(b"widget")
+    (repo / "AmbientLayer" / "BMW_Default" / "export_ECE").mkdir(parents=True, exist_ok=True)
+    (repo / "AmbientLayer" / "BMW_Default" / "export_ECE" / "ambient.rca").write_bytes(b"ambient")
+    return repo
+
+
 def _write_screenshot_test_state(root: Path) -> None:
     tests_root = root / "digital-3d-car-models" / "cars" / "BMW" / "G65_EVO" / "export" / "tests"
     write_text(root / "digital-3d-car-models" / "ci" / "scripts" / "README.md", "fixture\n")
@@ -1006,6 +1045,35 @@ class TestCLI(unittest.TestCase):
         self.assertIn("checkall_bat", checker_keys)
         self.assertIn("delivery_checklist", checker_keys)
         self.assertIn("bmw_smoke", checker_keys)
+
+    def test_cross_domain_delivery_cli_returns_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = _write_cross_domain_cli_fixture(root)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "cross-domain-delivery",
+                        "--workspace",
+                        str(root),
+                        "--repo-root",
+                        str(repo),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["source_state"], "ready")
+        self.assertEqual(payload["domains"], ["cars", "widgets", "ambient"])
+        self.assertEqual(payload["counts"]["total"], 3)
+        self.assertEqual(payload["counts"]["by_domain"]["cars"]["total"], 1)
+        self.assertEqual(payload["counts"]["by_domain"]["widgets"]["total"], 1)
+        self.assertEqual(payload["counts"]["by_domain"]["ambient"]["total"], 1)
+        self.assertEqual(payload["counts"]["version_drift"]["ramses_drift_count"], 1)
+        self.assertFalse(payload["is_approval"])
 
     def test_delivery_checklist_read_cli_returns_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
