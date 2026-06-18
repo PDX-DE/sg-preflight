@@ -315,6 +315,56 @@ class TestCrossDomainDelivery(unittest.TestCase):
         self.assertIn("Cars/BMW/F70", relative_paths)
         self.assertNotIn("Widgets/MINI/NoLogWidget", relative_paths)
 
+    def test_non_item_infrastructure_dirs_are_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repositories" / "trunk"
+            _write_text(repo / "AmbientLayer" / "BMW_Default" / "CHANGELOG.md", "## [9.0.1] - NOT YET DELIVERED\n")
+            _write_text(repo / "AmbientLayer" / "licenses" / "oss.d" / "NOTICE.txt", "license fixture\n")
+            board = build_cross_domain_delivery_board(
+                repo,
+                workspace_root=root,
+                domains=("ambient",),
+                now=datetime(2026, 6, 18, 20, 45, tzinfo=timezone.utc),
+            )
+
+        payload = board.to_dict()
+        relative_paths = {entry["relative_path"] for entry in payload["entries"]}
+        self.assertIn("AmbientLayer/BMW_Default", relative_paths)
+        self.assertNotIn("AmbientLayer/licenses", relative_paths)
+        self.assertNotIn("AmbientLayer/licenses/oss.d", relative_paths)
+        self.assertEqual(payload["counts"]["by_domain"]["ambient"]["total"], 1)
+
+    def test_ambient_container_descends_one_level_into_variant_items(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repositories" / "trunk"
+            rr_root = repo / "AmbientLayer" / "RR"
+            _write_text(rr_root / "EternalBeauty" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
+            _write_text(rr_root / "Parallax" / "CHANGELOG.md", "## [1.1.0] - To be delivered\n")
+            _write_text(rr_root / "Prismatic" / "README.md", "## Interfaces Overview\n- PrismaticIn\n")
+            _write_text(rr_root / "notes" / "ignored.txt", "not a deliverable\n")
+            board = build_cross_domain_delivery_board(
+                repo,
+                workspace_root=root,
+                domains=("ambient",),
+                now=datetime(2026, 6, 18, 20, 45, tzinfo=timezone.utc),
+            )
+
+        payload = board.to_dict()
+        entries = {entry["relative_path"]: entry for entry in payload["entries"]}
+        self.assertNotIn("AmbientLayer/RR", entries)
+        self.assertNotIn("AmbientLayer/RR/notes", entries)
+        self.assertEqual(set(entries), {
+            "AmbientLayer/RR/EternalBeauty",
+            "AmbientLayer/RR/Parallax",
+            "AmbientLayer/RR/Prismatic",
+        })
+        self.assertTrue(all(entry["brand"] == "RR" for entry in entries.values()))
+        self.assertEqual(entries["AmbientLayer/RR/EternalBeauty"]["delivery_status"], STATUS_DELIVERED)
+        self.assertEqual(entries["AmbientLayer/RR/Parallax"]["delivery_status"], STATUS_NOT_DELIVERED_YET)
+        self.assertEqual(entries["AmbientLayer/RR/Prismatic"]["delivery_status_label"], "No changelog")
+
     def test_missing_repo_root_returns_empty_read_only_board(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

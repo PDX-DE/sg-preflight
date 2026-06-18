@@ -311,6 +311,18 @@ def _rca_paths(item_dir: Path, repo_root: Path, spec: DomainSpec, item_id: str) 
     return tuple(relative_paths), total
 
 
+def _has_item_marker(item_dir: Path, spec: DomainSpec) -> bool:
+    if (item_dir / spec.changelog_relative).is_file():
+        return True
+    if (item_dir / spec.readme_relative).is_file():
+        return True
+    pattern = spec.rca_glob.format(item_id=item_dir.name)
+    try:
+        return any(path.is_file() for path in item_dir.glob(pattern))
+    except OSError:
+        return False
+
+
 def _child_dirs(path: Path) -> list[Path]:
     try:
         children = list(path.iterdir())
@@ -331,12 +343,20 @@ def _item_dirs(repo_root: Path, spec: DomainSpec) -> Iterable[tuple[str, Path]]:
                 for item_dir in _child_dirs(brand_dir):
                     if _ignored_dir(item_dir):
                         continue
-                    yield brand_dir.name, item_dir
+                    if _has_item_marker(item_dir, spec):
+                        yield brand_dir.name, item_dir
         else:
             for item_dir in _child_dirs(source_root):
                 if _ignored_dir(item_dir):
                     continue
-                yield "", item_dir
+                if _has_item_marker(item_dir, spec):
+                    yield "", item_dir
+                    continue
+                for child_dir in _child_dirs(item_dir):
+                    if _ignored_dir(child_dir):
+                        continue
+                    if _has_item_marker(child_dir, spec):
+                        yield item_dir.name, child_dir
 
 
 def _entry_from_item(repo_root: Path, spec: DomainSpec, brand: str, item_dir: Path) -> CrossDomainItem:
