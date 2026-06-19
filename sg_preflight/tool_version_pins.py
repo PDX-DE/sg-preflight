@@ -152,7 +152,7 @@ def python_requirement() -> tuple[str, str]:
     return specifier, "installed package metadata requires-python"
 
 
-def _satisfies_specifier(version: str, specifier: str) -> bool:
+def _satisfies_specifier(version: str, specifier: str) -> bool | None:
     if SpecifierSet is not None and Version is not None:
         try:
             return Version(version) in SpecifierSet(specifier)
@@ -161,7 +161,7 @@ def _satisfies_specifier(version: str, specifier: str) -> bool:
     match = re.match(r"^>=\s*(\d+(?:\.\d+)*)$", specifier.strip())
     if match:
         return _version_key(version) >= _version_key(match.group(1))
-    return False
+    return None
 
 
 def compare_python_requirement(installed: str, specifier: str) -> tuple[str, str]:
@@ -170,6 +170,13 @@ def compare_python_requirement(installed: str, specifier: str) -> tuple[str, str
     installed_version = _extract_version(installed)
     if not installed_version:
         return "unknown", "Installed Python version could not parse from the detected runtime."
-    if _satisfies_specifier(installed_version, specifier):
+    satisfied = _satisfies_specifier(installed_version, specifier)
+    if satisfied is None:
+        return (
+            "unknown",
+            f"Installed Python {installed_version} could not be checked against requires-python "
+            f"{specifier} on this machine; detected only.",
+        )
+    if satisfied:
         return "ok", f"Installed Python {installed_version} satisfies {specifier}."
     return "drift", f"Installed Python {installed_version} is outside pyproject requires-python {specifier}."

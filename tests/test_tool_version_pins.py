@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
+import sg_preflight.tool_version_pins as tool_version_pins
 from sg_preflight.tool_version_pins import (
     RAMSES_PIPELINE_PIN,
     compare_python_requirement,
@@ -84,6 +86,18 @@ class TestToolVersionPins(unittest.TestCase):
         self.assertEqual(compare_python_requirement("Python 3.9.18", specifier)[0], "drift")
         self.assertEqual(compare_python_requirement("Python preview", specifier)[0], "unknown")
         self.assertEqual(RAMSES_PIPELINE_PIN, "28.16")
+
+    def test_python_requirement_unknown_when_specifier_needs_packaging(self) -> None:
+        # Without the packaging library, a compound specifier cannot be evaluated;
+        # report an honest "unknown" rather than a false "drift".
+        with mock.patch.object(tool_version_pins, "SpecifierSet", None):
+            with mock.patch.object(tool_version_pins, "Version", None):
+                simple = compare_python_requirement("Python 3.13.13", ">=3.10")
+                compound = compare_python_requirement("Python 3.13.13", ">=3.10,<4.0")
+
+        self.assertEqual(simple[0], "ok")
+        self.assertEqual(compound[0], "unknown")
+        self.assertNotIn("drift", compound[1].casefold())
 
 
 if __name__ == "__main__":
