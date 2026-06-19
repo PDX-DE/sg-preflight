@@ -524,6 +524,15 @@ def _console_setup_doctor(report: object, *, as_json: bool) -> None:
         f"required missing: {payload['required_missing_count']} | "
         f"optional missing: {payload['optional_missing_count']}"
     )
+    validation = payload.get("version_validation", {})
+    if isinstance(validation, dict):
+        print(
+            "Version validation -> "
+            f"ok: {validation.get('ok', 0)} | "
+            f"drift: {validation.get('drift', 0)} | "
+            f"unknown: {validation.get('unknown', 0)} | "
+            f"not_pinned: {validation.get('not_pinned', 0)}"
+        )
     print(f"Mode: {payload['mode']}")
     next_action = payload.get("next_action", {})
     if isinstance(next_action, dict):
@@ -546,6 +555,12 @@ def _console_setup_doctor(report: object, *, as_json: bool) -> None:
         print(f"[{marker}] {item['label']} ({item['category']})")
         if item["version"]:
             print(f"  version: {item['version']}")
+        if item.get("recommended_version"):
+            print(f"  recommended: {item['recommended_version']}")
+        if item.get("version_status"):
+            print(f"  validation: {item['version_status']}")
+        if item.get("version_check_detail"):
+            print(f"  version detail: {item['version_check_detail']}")
         if item["path"]:
             print(f"  path: {item['path']}")
         if item["detail"]:

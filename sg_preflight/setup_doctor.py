@@ -20,6 +20,15 @@ from sg_preflight.dependency_onboarding import (
 )
 from sg_preflight.profiles import mirror_repo_root, resolve_source_repo_root
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs
+from sg_preflight.tool_version_pins import (
+    RAMSES_PIPELINE_PIN,
+    RAMSES_PIPELINE_PIN_SOURCE,
+    compare_python_requirement,
+    compare_version,
+    load_raco_pins,
+    python_requirement,
+    recommended_versions_text,
+)
 
 
 DOCTOR_SCHEMA_VERSION = 1
@@ -168,6 +177,9 @@ class SetupDoctorItem:
     status: str
     path: str = ""
     version: str = ""
+    recommended_version: str = ""
+    version_status: str = ""
+    version_check_detail: str = ""
     detail: str = ""
     fix: str = ""
 
@@ -180,6 +192,9 @@ class SetupDoctorItem:
             "status": self.status,
             "path": self.path,
             "version": self.version,
+            "recommended_version": self.recommended_version,
+            "version_status": self.version_status,
+            "version_check_detail": self.version_check_detail,
             "detail": self.detail,
             "fix": self.fix,
             "blocking": self.required and self.status != "found",
@@ -206,16 +221,18 @@ class SetupDoctorReport:
             blockers=blockers,
             optional_missing=optional_missing,
         )
+        version_validation = _version_validation_summary(item_payloads)
         return {
             "schema_version": DOCTOR_SCHEMA_VERSION,
             "status": "ready" if self.ready else "blocked",
-            "mode": "detect_only",
+            "mode": "detect_and_validate",
             "workspace_root": self.workspace_root,
             "generated_at_utc": self.generated_at_utc,
             "ready": self.ready,
             "required_missing_count": self.required_missing_count,
             "optional_missing_count": self.optional_missing_count,
             "found_count": self.found_count,
+            "version_validation": version_validation,
             "headline": headline,
             "blocking_items": blockers,
             "optional_missing_items": optional_missing,
@@ -230,6 +247,15 @@ class SetupDoctorReport:
             ),
             "items": item_payloads,
         }
+
+
+def _version_validation_summary(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"ok": 0, "drift": 0, "unknown": 0, "not_pinned": 0}
+    for item in items:
+        status = str(item.get("version_status", "")).strip()
+        if status in counts:
+            counts[status] += 1
+    return counts
 
 
 def _utc_now() -> str:
@@ -289,6 +315,9 @@ def _found_item(
     required: bool,
     path: Path,
     version: str = "",
+    recommended_version: str = "",
+    version_status: str = "",
+    version_check_detail: str = "",
     detail: str = "",
     fix: str = "",
 ) -> SetupDoctorItem:
@@ -300,6 +329,9 @@ def _found_item(
         status="found",
         path=str(path),
         version=version,
+        recommended_version=recommended_version,
+        version_status=version_status,
+        version_check_detail=version_check_detail,
         detail=detail,
         fix=fix,
     )
@@ -314,6 +346,10 @@ def _missing_item(
     path: Path | str = "",
     detail: str,
     fix: str,
+    version: str = "",
+    recommended_version: str = "",
+    version_status: str = "",
+    version_check_detail: str = "",
 ) -> SetupDoctorItem:
     return SetupDoctorItem(
         key=key,
@@ -322,6 +358,10 @@ def _missing_item(
         required=required,
         status="missing",
         path=str(path),
+        version=version,
+        recommended_version=recommended_version,
+        version_status=version_status,
+        version_check_detail=version_check_detail,
         detail=detail,
         fix=fix,
     )
@@ -335,6 +375,10 @@ def _optional_missing_item(
     path: Path | str = "",
     detail: str,
     fix: str,
+    version: str = "",
+    recommended_version: str = "",
+    version_status: str = "",
+    version_check_detail: str = "",
 ) -> SetupDoctorItem:
     return SetupDoctorItem(
         key=key,
@@ -343,6 +387,10 @@ def _optional_missing_item(
         required=False,
         status="optional_missing",
         path=str(path),
+        version=version,
+        recommended_version=recommended_version,
+        version_status=version_status,
+        version_check_detail=version_check_detail,
         detail=detail,
         fix=fix,
     )
@@ -404,6 +452,8 @@ def _blender_candidates(root: Path) -> list[Path]:
 
 
 def _check_raco_headless(root: Path, source_root: Path, mirror_root: Path) -> SetupDoctorItem:
+    raco_pins = load_raco_pins(discover_bmw_models_repo(root))
+    recommended = recommended_versions_text(raco_pins)
     candidate = _which_or_candidate("RaCoHeadless.exe", _raco_headless_candidates(root, source_root, mirror_root))
     if not candidate.exists():
         return _missing_item(
@@ -414,8 +464,15 @@ def _check_raco_headless(root: Path, source_root: Path, mirror_root: Path) -> Se
             path=candidate,
             detail="The scene-check and export pipeline cannot run without RaCoHeadless.",
             fix="Point SG_RACO_HEADLESS at RaCoHeadless.exe or install the designated Ramses Composer package from the team share.",
+            recommended_version=recommended,
+            version_status="unknown",
+            version_check_detail=(
+                f"RaCo guidance source: {raco_pins['source']}. Installed version was not detected because "
+                "RaCoHeadless was not found."
+            ),
         )
     version = _version_from_command([str(candidate), "--version"])
+    version_status, version_detail = compare_version(version, raco_pins)
     return _found_item(
         key="raco_headless",
         label="RaCoHeadless",
@@ -423,6 +480,9 @@ def _check_raco_headless(root: Path, source_root: Path, mirror_root: Path) -> Se
         required=True,
         path=candidate,
         version=version,
+        recommended_version=recommended,
+        version_status=version_status,
+        version_check_detail=f"{version_detail} Source: {raco_pins['source']}.",
         detail="Headless RaCo is present for scene checks and export verification.",
         fix="Keep this pinned to the project-designated RaCo version.",
     )
@@ -461,6 +521,8 @@ def _check_blender(root: Path) -> SetupDoctorItem:
             path=candidate,
             detail="Blender is needed for the manual visual-review and pipeline helper path.",
             fix="Install the pinned Blender build or point SG_BLENDER_EXE at blender.exe.",
+            version_status="not_pinned",
+            version_check_detail="No pinned Blender version documented; detected only.",
         )
     version = _version_from_command([str(candidate), "--version"])
     return _found_item(
@@ -470,6 +532,8 @@ def _check_blender(root: Path) -> SetupDoctorItem:
         required=True,
         path=candidate,
         version=version,
+        version_status="not_pinned",
+        version_check_detail="No pinned Blender version documented; detected only.",
         detail="Blender is present for manual review and bpy-backed pipeline steps.",
     )
 
@@ -697,6 +761,12 @@ def _check_ramses_sdk(root: Path) -> SetupDoctorItem:
                 category="Runtime",
                 required=True,
                 path=candidate,
+                recommended_version=RAMSES_PIPELINE_PIN,
+                version_status="ok",
+                version_check_detail=(
+                    f"Pipeline reference {RAMSES_PIPELINE_PIN} from {RAMSES_PIPELINE_PIN_SOURCE}; "
+                    "presence check found the expected runtime files."
+                ),
                 detail=detail,
             )
     candidate = candidates[0]
@@ -708,12 +778,20 @@ def _check_ramses_sdk(root: Path) -> SetupDoctorItem:
         path=candidate,
         detail="The Ramses SDK/runtime path was not found.",
         fix="Install Ramses 28.16.0 or build the C++ shell so the runtime DLLs are copied beside the executable.",
+        recommended_version=RAMSES_PIPELINE_PIN,
+        version_status="unknown",
+        version_check_detail=(
+            f"Pipeline reference {RAMSES_PIPELINE_PIN} from {RAMSES_PIPELINE_PIN_SOURCE}; "
+            "presence check did not find the runtime files."
+        ),
     )
 
 
 def _check_python_runtime() -> SetupDoctorItem:
     version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     path = Path(sys.executable)
+    specifier, source = python_requirement()
+    version_status, version_detail = compare_python_requirement(f"Python {version}", specifier)
     if sys.version_info < (3, 10):
         return _missing_item(
             key="python_runtime",
@@ -723,6 +801,10 @@ def _check_python_runtime() -> SetupDoctorItem:
             path=path,
             detail=f"Current Python is {version}; sg-preflight requires Python 3.10 or newer.",
             fix="Install Python 3.13 or run the tool from the bundled environment.",
+            version=f"Python {version}",
+            recommended_version=specifier,
+            version_status=version_status,
+            version_check_detail=f"{version_detail} Source: {source}.",
         )
 
     py_launcher = shutil.which("py")
@@ -741,6 +823,9 @@ def _check_python_runtime() -> SetupDoctorItem:
         required=True,
         path=path,
         version=f"Python {version}",
+        recommended_version=specifier,
+        version_status=version_status,
+        version_check_detail=f"{version_detail} Source: {source}.",
         detail=detail,
     )
 
