@@ -49,6 +49,7 @@ from sg_preflight.country_variant_coverage import (
     build_country_variant_coverage_board,
 )
 from sg_preflight.cross_domain_delivery import build_cross_domain_delivery_board
+from sg_preflight.perspectives_inventory import build_perspectives_inventory_board
 from sg_preflight.export_size_trend import (
     SIGNIFICANT_CHANGE_LABEL,
     UNREADABLE_LAYOUT_LABEL,
@@ -220,6 +221,8 @@ from sg_preflight.dashboard_pages_config import (
     _delivery_readiness_page,
     _cross_domain_delivery_payload,
     _cross_domain_delivery_page,
+    _perspectives_inventory_payload,
+    _perspectives_inventory_page,
     _disabled_tests_payload,
     _disabled_tests_page,
     _api_version_coverage_payload,
@@ -450,6 +453,7 @@ DASHBOARD_NAVIGATION = (
     ("delivery-checklist", "Delivery Checklist"),
     ("delivery-readiness", "Delivery Readiness"),
     ("cross-domain-delivery", "Cross-Domain Delivery"),
+    ("perspectives-inventory", "Perspectives"),
     ("disabled-tests", "Disabled Tests"),
     ("api-version-coverage", "API Version"),
     ("country-variant-coverage", "Country Variants"),
@@ -812,6 +816,7 @@ def build_dashboard_snapshot(
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _delivery_readiness_page(root, bmw_root=bmw_root),
             _cross_domain_delivery_page(root, bmw_root=bmw_root),
+            _perspectives_inventory_page(root, bmw_root=bmw_root),
             _disabled_tests_page(root, bmw_root=bmw_root),
             _api_version_coverage_page(root, bmw_root=bmw_root),
             _country_variant_coverage_page(root, bmw_root=bmw_root),
@@ -2705,6 +2710,13 @@ def _render_selected_page(
                 workspace,
                 payload_builder=_cross_domain_delivery_payload,
             )
+        elif page_id == "perspectives-inventory":
+            _render_source_root_reader_panel(
+                ui,
+                pages_by_id[page_id],
+                workspace,
+                payload_builder=_perspectives_inventory_payload,
+            )
         elif page_id == "disabled-tests":
             _render_source_root_reader_panel(
                 ui,
@@ -3447,6 +3459,14 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         payload_builder=_cross_domain_delivery_payload,
+                    )
+                elif active_page_id == "perspectives-inventory":
+                    _render_source_root_reader_panel(
+                        ui,
+                        _pages_by_id()[active_page_id],
+                        workspace,
+                        bmw_root=bmw_root,
+                        payload_builder=_perspectives_inventory_payload,
                     )
                 elif active_page_id == "disabled-tests":
                     _render_source_root_reader_panel(

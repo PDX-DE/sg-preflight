@@ -62,6 +62,7 @@ _MAIN_GLOBAL_NAMES = (
     "build_dependency_onboarding_status",
     "build_delivery_readiness_board",
     "build_cross_domain_delivery_board",
+    "build_perspectives_inventory_board",
     "build_disabled_tests_board",
     "build_api_version_coverage_board",
     "build_country_variant_coverage_board",
@@ -403,6 +404,122 @@ def _cross_domain_delivery_page(workspace: Path, *, bmw_root: Path | str | None 
         workspace=workspace,
         ownership_note=(
             "Evidence only - version drift is shown as review evidence, not an automated delivery verdict."
+        ),
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["source_selector"] = {
+        "selected_source_root": str(payload.get("selected_source_root", "")),
+        "source_root_candidates": list(payload.get("source_root_candidates", [])),
+    }
+    return page
+
+def _perspectives_inventory_payload(
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+    *,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    _ = bmw_root
+    selected_repo_root = _source_repo_root_from_value(repo_root) or _preferred_source_repo_root(workspace)
+    board = build_perspectives_inventory_board(
+        selected_repo_root,
+        workspace_root=workspace,
+    ).to_dict()
+    counts = board.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    source_state = str(board.get("source_state", "unknown"))
+    ready = source_state == "ready"
+    car_total = _int_payload_value(counts, "car_total")
+    file_total = _int_payload_value(counts, "file_total")
+    display_group_count = _int_payload_value(counts, "display_type_group_count")
+    peer_outlier_count = _int_payload_value(counts, "peer_outlier_count")
+    structural_issue_count = _int_payload_value(counts, "structural_issue_count")
+    malformed_count = _int_payload_value(counts, "malformed_file_count")
+    no_perspectives_count = _int_payload_value(counts, "no_perspectives_count")
+    rows: list[dict[str, str]] = [
+        {
+            "label": "Reading from",
+            "status": source_state,
+            "detail": str(board.get("repo_root", "")),
+        },
+        {
+            "label": "Scope",
+            "status": str(file_total),
+            "detail": f"{car_total} car(s); {display_group_count} display-type group(s).",
+        },
+        {
+            "label": "Peer evidence",
+            "status": str(peer_outlier_count),
+            "detail": "Common scenes are inferred from same-display-type peers at a 60% threshold.",
+        },
+        {
+            "label": "Structural checks",
+            "status": str(structural_issue_count),
+            "detail": f"{malformed_count} malformed file(s); {no_perspectives_count} car(s) with no perspectives files.",
+        },
+    ]
+    entries = [entry for entry in board.get("entries", []) if isinstance(entry, dict)]
+    for entry in entries[:18]:
+        flags = entry.get("peer_flags", [])
+        if isinstance(flags, list) and flags:
+            peer_detail = "; ".join(str(flag) for flag in flags)
+        else:
+            peer_detail = str(entry.get("comparison_note", ""))
+        structural_count = _int_payload_value(entry, "structural_issue_scene_count")
+        detail_parts = [
+            str(entry.get("relative_path", "")),
+            f"{entry.get('scene_count', 0)} scene(s)",
+            f"{structural_count} structural issue scene(s)",
+            peer_detail,
+        ]
+        rows.append(
+            {
+                "label": f"{entry.get('display_type', '')} / {entry.get('model_id', '')}".strip(),
+                "status": str(entry.get("scene_count", 0)),
+                "detail": "; ".join(part for part in detail_parts if part),
+            }
+        )
+    if len(entries) > 18:
+        rows.append(
+            {
+                "label": "Additional perspectives rows",
+                "status": str(len(entries) - 18),
+                "detail": "Open the CLI JSON or evidence export for all perspectives inventory rows.",
+            }
+        )
+    no_perspectives = [entry for entry in board.get("no_perspectives_entries", []) if isinstance(entry, dict)]
+    if no_perspectives:
+        rows.append(
+            {
+                "label": "Cars with no perspectives files",
+                "status": str(len(no_perspectives)),
+                "detail": "; ".join(str(entry.get("relative_path", "")) for entry in no_perspectives[:6]),
+            }
+        )
+    board["status"] = "available" if ready else "missing"
+    board["data_available"] = ready
+    board["selected_source_root"] = str(board.get("repo_root", ""))
+    board["source_root_candidates"] = _source_repo_root_candidates(workspace)
+    board["summary"] = (
+        f"{file_total} perspective file(s) across {car_total} car(s) and "
+        f"{display_group_count} display-type group(s); peer evidence: {peer_outlier_count} row(s); "
+        f"structural issue rows: {structural_issue_count}; malformed files: {malformed_count}. "
+        f"Reading from {board.get('repo_root', '')}. Source: {source_state}."
+    )
+    board["board_rows"] = rows
+    return board
+
+def _perspectives_inventory_page(workspace: Path, *, bmw_root: Path | str | None = None) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="perspectives-inventory",
+        title="Perspectives Inventory",
+        tagline="Perspectives scene inventory and same-display-type peer evidence from local SVN.",
+        reader=lambda: _perspectives_inventory_payload(workspace, bmw_root),
+        workspace=workspace,
+        ownership_note=(
+            "Evidence only - peer outliers describe same-display-type differences, "
+            "not automated delivery verdicts."
         ),
     )
     payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
@@ -1266,6 +1383,8 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "profiles",
         "version_validation",
         "board_rows",
+        "display_type_groups",
+        "no_perspectives_entries",
         "selected_source_root",
         "source_root_candidates",
         "counts",
@@ -1539,6 +1658,8 @@ for _name in (
     "_delivery_readiness_page",
     "_cross_domain_delivery_payload",
     "_cross_domain_delivery_page",
+    "_perspectives_inventory_payload",
+    "_perspectives_inventory_page",
     "_disabled_tests_payload",
     "_disabled_tests_page",
     "_api_version_coverage_payload",
