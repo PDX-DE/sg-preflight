@@ -432,6 +432,7 @@ def _perspectives_inventory_payload(
     ready = source_state == "ready"
     car_total = _int_payload_value(counts, "car_total")
     file_total = _int_payload_value(counts, "file_total")
+    brand_reference_count = _int_payload_value(counts, "brand_reference_count")
     display_group_count = _int_payload_value(counts, "display_type_group_count")
     peer_outlier_count = _int_payload_value(counts, "peer_outlier_count")
     structural_issue_count = _int_payload_value(counts, "structural_issue_count")
@@ -446,7 +447,12 @@ def _perspectives_inventory_payload(
         {
             "label": "Scope",
             "status": str(file_total),
-            "detail": f"{car_total} car(s); {display_group_count} display-type group(s).",
+            "detail": f"{car_total} car(s); {display_group_count} display-type group(s); {brand_reference_count} brand reference file(s).",
+        },
+        {
+            "label": "Brand references",
+            "status": str(brand_reference_count),
+            "detail": "Brand-level perspectives files are shown as references and excluded from car peer groups.",
         },
         {
             "label": "Peer evidence",
@@ -488,6 +494,23 @@ def _perspectives_inventory_payload(
                 "detail": "Open the CLI JSON or evidence export for all perspectives inventory rows.",
             }
         )
+    brand_references = [entry for entry in board.get("brand_reference_entries", []) if isinstance(entry, dict)]
+    for entry in brand_references[:6]:
+        rows.append(
+            {
+                "label": f"Brand reference / {entry.get('brand', '')} {entry.get('display_type', '')}".strip(),
+                "status": str(entry.get("scene_count", 0)),
+                "detail": f"{entry.get('relative_path', '')}; {entry.get('scene_count', 0)} scene(s).",
+            }
+        )
+    if len(brand_references) > 6:
+        rows.append(
+            {
+                "label": "Additional brand references",
+                "status": str(len(brand_references) - 6),
+                "detail": "Open the CLI JSON or evidence export for all brand-level perspectives references.",
+            }
+        )
     no_perspectives = [entry for entry in board.get("no_perspectives_entries", []) if isinstance(entry, dict)]
     if no_perspectives:
         rows.append(
@@ -503,7 +526,8 @@ def _perspectives_inventory_payload(
     board["source_root_candidates"] = _source_repo_root_candidates(workspace)
     board["summary"] = (
         f"{file_total} perspective file(s) across {car_total} car(s) and "
-        f"{display_group_count} display-type group(s); peer evidence: {peer_outlier_count} row(s); "
+        f"{display_group_count} display-type group(s); {brand_reference_count} brand reference file(s); "
+        f"peer evidence: {peer_outlier_count} row(s); "
         f"structural issue rows: {structural_issue_count}; malformed files: {malformed_count}. "
         f"Reading from {board.get('repo_root', '')}. Source: {source_state}."
     )
@@ -1385,6 +1409,7 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "board_rows",
         "display_type_groups",
         "no_perspectives_entries",
+        "brand_reference_entries",
         "selected_source_root",
         "source_root_candidates",
         "counts",

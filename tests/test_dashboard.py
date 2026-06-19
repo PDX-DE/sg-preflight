@@ -1188,6 +1188,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo = root / "repositories" / "trunk"
+            write_text(
+                repo / "Cars" / "BMW" / "perspectives_CID_2to1.json",
+                json.dumps({"Home": scene, "BrandOnly": scene}),
+            )
             write_text(repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
             write_text(
                 repo / "Cars" / "BMW" / "F70" / "perspectives_CID_2to1.json",
@@ -1219,12 +1223,18 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertFalse(page["payload"]["is_approval"])
         self.assertEqual(page["payload"]["counts"]["car_total"], 3)
         self.assertEqual(page["payload"]["counts"]["file_total"], 3)
+        self.assertEqual(page["payload"]["counts"]["brand_reference_count"], 1)
+        self.assertEqual(page["payload"]["brand_reference_entries"][0]["relative_path"], "Cars/BMW")
         self.assertEqual(page["payload"]["display_type_groups"]["CID_2to1"]["common_scenes"], ["Home", "Service"])
+        self.assertEqual(page["payload"]["display_type_groups"]["CID_2to1"]["car_count"], 3)
         self.assertEqual(page["payload"]["counts"]["peer_outlier_count"], 1)
+        self.assertNotIn("BMW", {entry["model_id"] for entry in page["payload"].get("entries", [])})
         self.assertIn("peer evidence", page["summary"].casefold())
+        self.assertIn("brand reference", page["summary"].casefold())
         labels = [item["label"] for item in page["items"]]
         self.assertIn("CID_2to1 / F70", labels)
         self.assertIn("CID_2to1 / F71", labels)
+        self.assertIn("Brand reference / BMW CID_2to1", labels)
 
     def test_dashboard_doc_links_are_copy_only(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

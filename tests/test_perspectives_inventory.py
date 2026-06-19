@@ -160,12 +160,36 @@ class TestPerspectivesInventory(unittest.TestCase):
         self.assertEqual(payload["counts"]["car_total"], 0)
         self.assertIn("Evidence only", payload["manual_review_banner"])
 
-    def test_brand_level_perspectives_files_are_counted_as_inventory_rows(self) -> None:
+    def test_brand_level_perspectives_files_are_references_not_peer_cars(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             repo = root / "repositories" / "trunk"
             _write_json(
                 repo / "Cars" / "BMW" / "perspectives_CID_2to1.json",
+                {
+                    "Home": _scene(),
+                    "BrandOnly": _scene(),
+                },
+            )
+            _write_text(repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
+            _write_json(
+                repo / "Cars" / "BMW" / "F70" / "perspectives_CID_2to1.json",
+                {
+                    "Home": _scene(),
+                    "Charge": _scene(),
+                },
+            )
+            _write_text(repo / "Cars" / "BMW" / "F71" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
+            _write_json(
+                repo / "Cars" / "BMW" / "F71" / "perspectives_CID_2to1.json",
+                {
+                    "Home": _scene(),
+                    "Charge": _scene(),
+                },
+            )
+            _write_text(repo / "Cars" / "BMW" / "F72" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
+            _write_json(
+                repo / "Cars" / "BMW" / "F72" / "perspectives_CID_2to1.json",
                 {
                     "Home": _scene(),
                 },
@@ -177,14 +201,26 @@ class TestPerspectivesInventory(unittest.TestCase):
             )
 
         payload = board.to_dict()
-        self.assertEqual(payload["counts"]["car_total"], 1)
-        self.assertEqual(payload["counts"]["file_total"], 1)
+        self.assertEqual(payload["counts"]["car_total"], 3)
+        self.assertEqual(payload["counts"]["file_total"], 3)
+        self.assertEqual(payload["counts"]["brand_reference_count"], 1)
         self.assertEqual(payload["counts"]["no_perspectives_count"], 0)
-        entry = payload["entries"][0]
-        self.assertEqual(entry["relative_path"], "Cars/BMW")
-        self.assertEqual(entry["brand"], "BMW")
-        self.assertEqual(entry["model_id"], "BMW")
-        self.assertEqual(entry["display_type"], "CID_2to1")
+        self.assertNotIn(("BMW", "CID_2to1"), {
+            (entry["model_id"], entry["display_type"]) for entry in payload["entries"]
+        })
+        cid_group = payload["display_type_groups"]["CID_2to1"]
+        self.assertEqual(cid_group["car_count"], 3)
+        self.assertEqual(cid_group["common_scene_threshold"], 2)
+        self.assertEqual(cid_group["common_scenes"], ["Charge", "Home"])
+        f72 = next(entry for entry in payload["entries"] if entry["model_id"] == "F72")
+        self.assertIn("Charge (present in 2/3 CID_2to1 cars)", f72["peer_flags"])
+
+        reference = payload["brand_reference_entries"][0]
+        self.assertEqual(reference["relative_path"], "Cars/BMW")
+        self.assertEqual(reference["brand"], "BMW")
+        self.assertEqual(reference["display_type"], "CID_2to1")
+        self.assertEqual(reference["scene_count"], 2)
+        self.assertEqual(reference["scenes"], ["BrandOnly", "Home"])
 
     def test_writes_json_and_markdown_with_peer_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

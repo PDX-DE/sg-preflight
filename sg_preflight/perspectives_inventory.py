@@ -108,6 +108,41 @@ class NoPerspectivesEntry:
 
 
 @dataclass(frozen=True)
+class BrandReferenceEntry:
+    source_root: str
+    brand: str
+    relative_path: str
+    display_type: str
+    perspective_path: str
+    scene_count: int
+    valid_scene_count: int
+    structural_issue_scene_count: int
+    scenes: tuple[str, ...]
+    scenes_missing_core_fields: tuple[SceneStructuralIssue, ...]
+    malformed_json: bool = False
+    malformed_detail: str = ""
+    notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_root": self.source_root,
+            "brand": self.brand,
+            "relative_path": self.relative_path,
+            "display_type": self.display_type,
+            "perspective_path": self.perspective_path,
+            "file_present": True,
+            "scene_count": self.scene_count,
+            "valid_scene_count": self.valid_scene_count,
+            "structural_issue_scene_count": self.structural_issue_scene_count,
+            "scenes": list(self.scenes),
+            "scenes_missing_core_fields": [issue.to_dict() for issue in self.scenes_missing_core_fields],
+            "malformed_json": self.malformed_json,
+            "malformed_detail": self.malformed_detail,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
 class DisplayTypeGroup:
     display_type: str
     car_count: int
@@ -138,6 +173,7 @@ class PerspectivesInventoryBoard:
     generated_at_utc: str
     entries: tuple[PerspectivesEntry, ...]
     no_perspectives_entries: tuple[NoPerspectivesEntry, ...]
+    brand_reference_entries: tuple[BrandReferenceEntry, ...]
     display_type_groups: dict[str, DisplayTypeGroup]
     manual_review_banner: str = EVIDENCE_ONLY_BANNER
 
@@ -159,6 +195,8 @@ class PerspectivesInventoryBoard:
                 }
             ),
             "file_total": len(self.entries),
+            "brand_reference_count": len(self.brand_reference_entries),
+            "total_perspectives_file_count": len(self.entries) + len(self.brand_reference_entries),
             "display_type_group_count": len(self.display_type_groups),
             "compared_display_type_group_count": sum(
                 1 for group in self.display_type_groups.values() if group.comparison_status == "compared"
@@ -188,6 +226,7 @@ class PerspectivesInventoryBoard:
             },
             "entries": [entry.to_dict() for entry in self.entries],
             "no_perspectives_entries": [entry.to_dict() for entry in self.no_perspectives_entries],
+            "brand_reference_entries": [entry.to_dict() for entry in self.brand_reference_entries],
         }
 
 
@@ -245,15 +284,6 @@ def _car_dirs(repo_root: Path) -> tuple[_CarDir, ...]:
         for brand_dir in _child_dirs(root):
             if _ignored_dir(brand_dir):
                 continue
-            if _perspective_files(brand_dir):
-                cars.append(
-                    _CarDir(
-                        source_root=source_root,
-                        brand=brand_dir.name,
-                        model_id=brand_dir.name,
-                        path=brand_dir,
-                    )
-                )
             for model_dir in _child_dirs(brand_dir):
                 if _ignored_dir(model_dir):
                     continue
@@ -288,7 +318,9 @@ def _read_perspectives_json(path: Path) -> tuple[dict[str, Any], bool, str]:
     return parsed, False, ""
 
 
-def _entry_from_file(repo_root: Path, car: _CarDir, path: Path) -> PerspectivesEntry:
+def _perspective_scene_data(
+    path: Path,
+) -> tuple[tuple[str, ...], tuple[SceneStructuralIssue, ...], bool, str, tuple[str, ...]]:
     parsed, malformed, malformed_detail = _read_perspectives_json(path)
     scene_ids: list[str] = []
     structural_issues: list[SceneStructuralIssue] = []
@@ -305,6 +337,11 @@ def _entry_from_file(repo_root: Path, car: _CarDir, path: Path) -> PerspectivesE
                 missing = CORE_CAMERA_FIELDS
             if missing:
                 structural_issues.append(SceneStructuralIssue(scene_id=scene_name, missing_fields=missing))
+    return tuple(scene_ids), tuple(structural_issues), malformed, malformed_detail, tuple(notes)
+
+
+def _entry_from_file(repo_root: Path, car: _CarDir, path: Path) -> PerspectivesEntry:
+    scene_ids, structural_issues, malformed, malformed_detail, notes = _perspective_scene_data(path)
     return PerspectivesEntry(
         source_root=car.source_root,
         brand=car.brand,
@@ -315,12 +352,52 @@ def _entry_from_file(repo_root: Path, car: _CarDir, path: Path) -> PerspectivesE
         scene_count=len(scene_ids),
         valid_scene_count=len(scene_ids) - len(structural_issues),
         structural_issue_scene_count=len(structural_issues),
-        scenes=tuple(scene_ids),
-        scenes_missing_core_fields=tuple(structural_issues),
+        scenes=scene_ids,
+        scenes_missing_core_fields=structural_issues,
         malformed_json=malformed,
         malformed_detail=malformed_detail,
-        notes=tuple(notes),
+        notes=notes,
     )
+
+
+def _brand_reference_entry_from_file(
+    repo_root: Path,
+    source_root: str,
+    brand_dir: Path,
+    path: Path,
+) -> BrandReferenceEntry:
+    scene_ids, structural_issues, malformed, malformed_detail, notes = _perspective_scene_data(path)
+    return BrandReferenceEntry(
+        source_root=source_root,
+        brand=brand_dir.name,
+        relative_path=_relative_path(brand_dir, repo_root),
+        display_type=_display_type(path),
+        perspective_path=_relative_path(path, repo_root),
+        scene_count=len(scene_ids),
+        valid_scene_count=len(scene_ids) - len(structural_issues),
+        structural_issue_scene_count=len(structural_issues),
+        scenes=scene_ids,
+        scenes_missing_core_fields=structural_issues,
+        malformed_json=malformed,
+        malformed_detail=malformed_detail,
+        notes=notes,
+    )
+
+
+def _brand_reference_entries(repo_root: Path) -> tuple[BrandReferenceEntry, ...]:
+    entries: list[BrandReferenceEntry] = []
+    for source_root in CAR_ROOTS:
+        root = repo_root / source_root
+        if not root.is_dir():
+            continue
+        for brand_dir in _child_dirs(root):
+            if _ignored_dir(brand_dir):
+                continue
+            entries.extend(
+                _brand_reference_entry_from_file(repo_root, source_root, brand_dir, path)
+                for path in _perspective_files(brand_dir)
+            )
+    return tuple(sorted(entries, key=lambda entry: (entry.source_root, entry.brand.lower(), entry.display_type.lower())))
 
 
 def _no_perspectives_entry(repo_root: Path, car: _CarDir) -> NoPerspectivesEntry:
@@ -433,10 +510,12 @@ def build_perspectives_inventory_board(
             generated_at_utc=generated_at,
             entries=(),
             no_perspectives_entries=(),
+            brand_reference_entries=(),
             display_type_groups={},
         )
     entries: list[PerspectivesEntry] = []
     no_perspectives: list[NoPerspectivesEntry] = []
+    brand_references = _brand_reference_entries(source_root)
     for car in _car_dirs(source_root):
         files = _perspective_files(car.path)
         if not files:
@@ -454,6 +533,7 @@ def build_perspectives_inventory_board(
         no_perspectives_entries=tuple(
             sorted(no_perspectives, key=lambda entry: (entry.source_root, entry.brand.lower(), entry.model_id.lower()))
         ),
+        brand_reference_entries=brand_references,
         display_type_groups=display_groups,
     )
 
@@ -474,6 +554,7 @@ def perspectives_inventory_markdown(board: PerspectivesInventoryBoard) -> str:
         f"- generated: `{payload['generated_at_utc']}`",
         f"- cars: {counts['car_total']}",
         f"- perspective files: {counts['file_total']}",
+        f"- brand reference files: {counts['brand_reference_count']}",
         f"- display-type groups: {counts['display_type_group_count']}",
         f"- peer outlier rows: {counts['peer_outlier_count']}",
         f"- malformed files: {counts['malformed_file_count']}",
@@ -526,6 +607,17 @@ def perspectives_inventory_markdown(board: PerspectivesInventoryBoard) -> str:
         lines.extend(("", "## Cars With No Perspectives Files", ""))
         for entry in board.no_perspectives_entries:
             lines.append(f"- {entry.relative_path}")
+    if board.brand_reference_entries:
+        lines.extend(("", "## Brand-Level Perspective References", ""))
+        for entry in board.brand_reference_entries:
+            structural = "; ".join(
+                f"{issue.scene_id} missing {', '.join(issue.missing_fields)}"
+                for issue in entry.scenes_missing_core_fields
+            )
+            detail = f"{entry.scene_count} scene(s)"
+            if structural:
+                detail += f"; {structural}"
+            lines.append(f"- {entry.relative_path} {entry.display_type}: {detail}")
     return "\n".join(lines).rstrip() + "\n"
 
 
