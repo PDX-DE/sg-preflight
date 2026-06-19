@@ -332,7 +332,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             pages_by_id["onboarding-guide"]["tagline"],
             "New-operator path through setup, evidence pages, manual review, and handoff.",
         )
-        self.assertEqual(pages_by_id["setup-doctor"]["tagline"], "Detect-only setup status for local SGFX dependencies.")
+        self.assertEqual(
+            pages_by_id["setup-doctor"]["tagline"],
+            "Detect local SGFX dependencies and show version guidance from documented pins.",
+        )
         self.assertEqual(
             pages_by_id["qa-workflows"]["tagline"],
             "Local JSON workflow catalog with manual-attestation gates preserved.",
@@ -1730,6 +1733,76 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["setup_status"], fake_setup)
         self.assertEqual(delivery["setup_status"]["actions"][0]["label"], "Set up RaCo")
+
+    def test_setup_doctor_page_surfaces_tool_version_validation_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            fake_report = {
+                "schema_version": 1,
+                "status": "ready",
+                "mode": "detect_and_validate",
+                "workspace_root": tmp,
+                "generated_at_utc": "2026-06-19T01:00:00+00:00",
+                "ready": True,
+                "required_missing_count": 0,
+                "optional_missing_count": 0,
+                "found_count": 2,
+                "headline": "You're ready.",
+                "blocking_items": [],
+                "optional_missing_items": [],
+                "next_action": {"status": "ready", "label": "Start normal SGFX checks", "detail": ""},
+                "wizard_steps": [],
+                "shell_signal": {"ready": True},
+                "version_validation": {"ok": 1, "drift": 1, "unknown": 0, "not_pinned": 1},
+                "items": [
+                    {
+                        "key": "raco_headless",
+                        "label": "RaCoHeadless",
+                        "category": "Pipeline",
+                        "required": True,
+                        "status": "found",
+                        "path": r"C:\tools\RaCoHeadless.exe",
+                        "version": "RaCo Headless 2.5.0",
+                        "recommended_version": "2.3.0, 2.9.0",
+                        "version_status": "drift",
+                        "version_check_detail": "Installed 2.5.0 is outside the documented guidance set.",
+                        "detail": "Headless RaCo is present.",
+                    },
+                    {
+                        "key": "blender",
+                        "label": "Blender",
+                        "category": "Pipeline",
+                        "required": True,
+                        "status": "found",
+                        "path": r"C:\tools\blender.exe",
+                        "version": "Blender 4.5.8",
+                        "recommended_version": "",
+                        "version_status": "not_pinned",
+                        "version_check_detail": "No pinned Blender version documented; detected only.",
+                        "detail": "Blender is present.",
+                    },
+                ],
+            }
+
+            class FakeReport:
+                def to_dict(self) -> dict[str, object]:
+                    return dict(fake_report)
+
+            with mock.patch("sg_preflight.dashboard.main.build_setup_doctor_report", return_value=FakeReport()):
+                snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True, defer_team_digest_board=True)
+
+        page = next(page for page in snapshot["pages"] if page["id"] == "setup-doctor")
+        self.assertIn("documented pins", page["tagline"])
+        self.assertIn("guidance", page["ownership_note"].casefold())
+        self.assertIn("Version validation: 1 ok, 1 drift, 0 unknown, 1 not pinned.", page["summary"])
+        self.assertEqual(page["payload"]["version_validation"]["drift"], 1)
+        rows = {item["label"]: item for item in page["items"]}
+        self.assertIn("validation drift", rows["RaCoHeadless"]["detail"])
+        self.assertIn("recommended 2.3.0, 2.9.0", rows["RaCoHeadless"]["detail"])
+        self.assertIn("not_pinned", rows["Blender"]["detail"])
+        self.assertNotIn("wrong", rows["RaCoHeadless"]["detail"].casefold())
+        self.assertNotIn("invalid", rows["RaCoHeadless"]["detail"].casefold())
 
     def test_dashboard_snapshot_can_defer_team_digest_board_for_fast_profile_switch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

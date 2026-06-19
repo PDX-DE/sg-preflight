@@ -895,6 +895,9 @@ def _setup_doctor_payload(workspace: Path) -> dict[str, Any]:
             str(item.get("category", "")).strip(),
             "required" if item.get("required") else "optional",
             str(item.get("version", "")).strip(),
+            f"recommended {item.get('recommended_version')}" if item.get("recommended_version") else "",
+            f"validation {item.get('version_status')}" if item.get("version_status") else "",
+            str(item.get("version_check_detail", "")).strip(),
             str(item.get("detail", "") or item.get("fix", "")).strip(),
         ]
         rows.append(
@@ -906,11 +909,21 @@ def _setup_doctor_payload(workspace: Path) -> dict[str, Any]:
         )
     report["status"] = "available" if bool(report.get("ready")) else "blocked"
     report["data_available"] = True
+    version_validation = report.get("version_validation", {})
+    validation_text = ""
+    if isinstance(version_validation, dict):
+        validation_text = (
+            f" Version validation: {version_validation.get('ok', 0)} ok, "
+            f"{version_validation.get('drift', 0)} drift, "
+            f"{version_validation.get('unknown', 0)} unknown, "
+            f"{version_validation.get('not_pinned', 0)} not pinned."
+        )
     report["summary"] = (
         f"{report.get('headline', 'Setup status generated.')} "
         f"{report.get('found_count', 0)} found; "
         f"{report.get('required_missing_count', 0)} required missing; "
         f"{report.get('optional_missing_count', 0)} optional missing."
+        f"{validation_text}"
     )
     report["board_rows"] = rows
     return report
@@ -919,10 +932,12 @@ def _setup_doctor_page(workspace: Path) -> dict[str, Any]:
     return _reader_page(
         page_id="setup-doctor",
         title="Setup Doctor",
-        tagline="Detect-only setup status for local SGFX dependencies.",
+        tagline="Detect local SGFX dependencies and show version guidance from documented pins.",
         reader=lambda: _setup_doctor_payload(workspace),
         workspace=workspace,
-        ownership_note="Detect-only. No installer or file copy runs without operator confirmation.",
+        ownership_note=(
+            "Guidance only. Version drift is review evidence; no installer or file copy runs without operator confirmation."
+        ),
     )
 
 def _qa_workflows_payload(workspace: Path) -> dict[str, Any]:
@@ -1249,6 +1264,7 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "share_decision",
         "sections",
         "profiles",
+        "version_validation",
         "board_rows",
         "selected_source_root",
         "source_root_candidates",
