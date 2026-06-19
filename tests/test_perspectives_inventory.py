@@ -160,6 +160,32 @@ class TestPerspectivesInventory(unittest.TestCase):
         self.assertEqual(payload["counts"]["car_total"], 0)
         self.assertIn("Evidence only", payload["manual_review_banner"])
 
+    def test_brand_level_perspectives_files_are_counted_as_inventory_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repositories" / "trunk"
+            _write_json(
+                repo / "Cars" / "BMW" / "perspectives_CID_2to1.json",
+                {
+                    "Home": _scene(),
+                },
+            )
+            board = build_perspectives_inventory_board(
+                repo,
+                workspace_root=root,
+                now=datetime(2026, 6, 19, 3, 30, tzinfo=timezone.utc),
+            )
+
+        payload = board.to_dict()
+        self.assertEqual(payload["counts"]["car_total"], 1)
+        self.assertEqual(payload["counts"]["file_total"], 1)
+        self.assertEqual(payload["counts"]["no_perspectives_count"], 0)
+        entry = payload["entries"][0]
+        self.assertEqual(entry["relative_path"], "Cars/BMW")
+        self.assertEqual(entry["brand"], "BMW")
+        self.assertEqual(entry["model_id"], "BMW")
+        self.assertEqual(entry["display_type"], "CID_2to1")
+
     def test_writes_json_and_markdown_with_peer_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

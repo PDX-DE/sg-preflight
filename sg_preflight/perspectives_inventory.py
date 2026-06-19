@@ -245,6 +245,15 @@ def _car_dirs(repo_root: Path) -> tuple[_CarDir, ...]:
         for brand_dir in _child_dirs(root):
             if _ignored_dir(brand_dir):
                 continue
+            if _perspective_files(brand_dir):
+                cars.append(
+                    _CarDir(
+                        source_root=source_root,
+                        brand=brand_dir.name,
+                        model_id=brand_dir.name,
+                        path=brand_dir,
+                    )
+                )
             for model_dir in _child_dirs(brand_dir):
                 if _ignored_dir(model_dir):
                     continue
