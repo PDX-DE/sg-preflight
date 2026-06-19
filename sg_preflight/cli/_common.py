@@ -153,6 +153,10 @@ from sg_preflight.cross_domain_delivery import (
     build_cross_domain_delivery_board,
     write_cross_domain_delivery_board,
 )
+from sg_preflight.perspectives_inventory import (
+    build_perspectives_inventory_board,
+    write_perspectives_inventory_board,
+)
 from sg_preflight.disabled_tests import (
     CAUTIOUS_BASELINE_LABEL,
     build_disabled_tests_board,
@@ -1376,6 +1380,51 @@ def _console_cross_domain_delivery(payload: dict[str, object]) -> None:
         print(f"... {len(entries) - 18} more row(s)")
 
 
+def _console_perspectives_inventory(payload: dict[str, object]) -> None:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    print("Perspectives Inventory")
+    print(f"Source: {payload.get('repo_root', '')}")
+    print(f"State: {payload.get('source_state', '')}")
+    print(
+        "Summary -> "
+        f"cars: {counts.get('car_total', 0)} | "
+        f"files: {counts.get('file_total', 0)} | "
+        f"display groups: {counts.get('display_type_group_count', 0)} | "
+        f"peer outlier rows: {counts.get('peer_outlier_count', 0)} | "
+        f"structural issue rows: {counts.get('structural_issue_count', 0)}"
+    )
+    print(str(payload.get("manual_review_banner", "")))
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        if artifacts.get("json_path"):
+            print(f"JSON: {artifacts['json_path']}")
+        if artifacts.get("markdown_path"):
+            print(f"Markdown: {artifacts['markdown_path']}")
+    print("-" * 80)
+    entries = payload.get("entries", [])
+    if not isinstance(entries, list) or not entries:
+        print("No perspectives inventory rows found.")
+        return
+    for entry in entries[:18]:
+        if not isinstance(entry, dict):
+            continue
+        flags = entry.get("peer_flags", [])
+        if isinstance(flags, list) and flags:
+            evidence = "; ".join(str(flag) for flag in flags)
+        else:
+            evidence = str(entry.get("comparison_note", ""))
+        print(
+            _console_safe(
+                f"- {entry.get('relative_path', '')} {entry.get('display_type', '')}: "
+                f"{entry.get('scene_count', 0)} scene(s); {evidence}"
+            )
+        )
+    if len(entries) > 18:
+        print(f"... {len(entries) - 18} more row(s)")
+
+
 def _console_export_size_trend(payload: dict[str, object]) -> None:
     counts = payload.get("counts", {})
     if not isinstance(counts, dict):
@@ -1775,6 +1824,15 @@ def build_parser() -> argparse.ArgumentParser:
     cross_domain_delivery.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
     cross_domain_delivery.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     cross_domain_delivery.add_argument("--json", action="store_true", help="Print cross-domain delivery payload as JSON")
+
+    perspectives_inventory = sub.add_parser(
+        "perspectives-inventory",
+        help="Build the read-only perspectives inventory and same-display-type consistency board",
+    )
+    perspectives_inventory.add_argument("--workspace", help="Workspace root override")
+    perspectives_inventory.add_argument("--repo-root", help="SVN trunk root override")
+    perspectives_inventory.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    perspectives_inventory.add_argument("--json", action="store_true", help="Print perspectives inventory payload as JSON")
 
     export_size_trend = sub.add_parser(
         "export-size-trend",
@@ -2924,6 +2982,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         "api-version-coverage",
         "country-variant-coverage",
         "cross-domain-delivery",
+        "perspectives-inventory",
         "export-size-trend",
     }:
         from sg_preflight.cli.boards import handle_board_command

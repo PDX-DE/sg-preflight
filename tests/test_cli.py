@@ -127,6 +127,27 @@ def _write_cross_domain_cli_fixture(root: Path) -> Path:
     return repo
 
 
+def _write_perspectives_cli_fixture(root: Path) -> Path:
+    repo = root / "repositories" / "trunk"
+    scene = {"CraneGimbal": {}, "Frustum": {}, "Viewport": {}}
+    write_text(repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
+    write_text(
+        repo / "Cars" / "BMW" / "F70" / "perspectives_CID_2to1.json",
+        json.dumps({"Home": scene, "Service": scene}),
+    )
+    write_text(repo / "Cars" / "BMW" / "F71" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
+    write_text(
+        repo / "Cars" / "BMW" / "F71" / "perspectives_CID_2to1.json",
+        json.dumps({"Home": scene}),
+    )
+    write_text(repo / "Cars" / "BMW" / "F72" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
+    write_text(
+        repo / "Cars" / "BMW" / "F72" / "perspectives_CID_2to1.json",
+        json.dumps({"Home": scene, "Service": scene}),
+    )
+    return repo
+
+
 def _write_screenshot_test_state(root: Path) -> None:
     tests_root = root / "digital-3d-car-models" / "cars" / "BMW" / "G65_EVO" / "export" / "tests"
     write_text(root / "digital-3d-car-models" / "ci" / "scripts" / "README.md", "fixture\n")
@@ -1073,6 +1094,39 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(payload["counts"]["by_domain"]["widgets"]["total"], 1)
         self.assertEqual(payload["counts"]["by_domain"]["ambient"]["total"], 1)
         self.assertEqual(payload["counts"]["version_drift"]["ramses_drift_count"], 1)
+        self.assertFalse(payload["is_approval"])
+
+    def test_perspectives_inventory_cli_writes_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = _write_perspectives_cli_fixture(root)
+            output_root = root / "out" / "perspectives"
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "perspectives-inventory",
+                        "--workspace",
+                        str(root),
+                        "--repo-root",
+                        str(repo),
+                        "--output-root",
+                        str(output_root),
+                        "--json",
+                    ]
+                )
+            json_exists = (output_root / "perspectives-inventory.json").exists()
+            markdown_exists = (output_root / "perspectives-inventory.md").exists()
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["source_state"], "ready")
+        self.assertEqual(payload["counts"]["car_total"], 3)
+        self.assertEqual(payload["counts"]["file_total"], 3)
+        self.assertEqual(payload["display_type_groups"]["CID_2to1"]["common_scenes"], ["Home", "Service"])
+        self.assertTrue(json_exists)
+        self.assertTrue(markdown_exists)
         self.assertFalse(payload["is_approval"])
 
     def test_delivery_checklist_read_cli_returns_json(self) -> None:
