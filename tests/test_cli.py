@@ -148,6 +148,23 @@ def _write_perspectives_cli_fixture(root: Path) -> Path:
     return repo
 
 
+def _write_rack_readiness_cli_fixture(root: Path) -> Path:
+    repo = root / "repositories" / "trunk"
+    _write_cross_domain_changelog(
+        repo / "Cars_IDCevo" / "BMW" / "G70" / "CHANGELOG.md",
+        "## [3.4.0] - 2026-06-01",
+        ramses="28.16",
+    )
+    (repo / "Cars_IDCevo" / "BMW" / "G70" / "export").mkdir(parents=True, exist_ok=True)
+    (repo / "Cars_IDCevo" / "BMW" / "G70" / "export" / "G70.rca").write_bytes(b"asset")
+    _write_cross_domain_changelog(
+        repo / "Cars_IDCevo" / "BMW" / "G71" / "CHANGELOG.md",
+        "## [3.4.0] - 2026-06-01",
+        ramses="28.16",
+    )
+    return repo
+
+
 def _write_screenshot_test_state(root: Path) -> None:
     tests_root = root / "digital-3d-car-models" / "cars" / "BMW" / "G65_EVO" / "export" / "tests"
     write_text(root / "digital-3d-car-models" / "ci" / "scripts" / "README.md", "fixture\n")
@@ -1125,6 +1142,44 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(payload["counts"]["car_total"], 3)
         self.assertEqual(payload["counts"]["file_total"], 3)
         self.assertEqual(payload["display_type_groups"]["CID_2to1"]["common_scenes"], ["Home", "Service"])
+        self.assertTrue(json_exists)
+        self.assertTrue(markdown_exists)
+        self.assertFalse(payload["is_approval"])
+
+    def test_rack_readiness_cli_writes_json_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = _write_rack_readiness_cli_fixture(root)
+            output_root = root / "out" / "rack"
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "rack-readiness",
+                        "--workspace",
+                        str(root),
+                        "--repo-root",
+                        str(repo),
+                        "--bmw-repo-root",
+                        str(root / "missing-bmw-repo"),
+                        "--output-root",
+                        str(output_root),
+                        "--json",
+                    ]
+                )
+            json_exists = (output_root / "rack-readiness.json").exists()
+            markdown_exists = (output_root / "rack-readiness.md").exists()
+
+        self.assertEqual(result, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["source_state"], "ready")
+        self.assertEqual(payload["counts"]["entry_total"], 2)
+        self.assertEqual(payload["counts"]["asset_ready_count"], 1)
+        self.assertEqual(payload["entries"][0]["expected_svt_filename"], "SVT_IDCEVO-WITHOUT_SWITCH_G70_EVO.xml")
+        self.assertTrue(payload["operator_checklist"])
+        self.assertTrue(all(item["operator_confirmed"] for item in payload["operator_checklist"]))
+        self.assertFalse(any(item["auto_checked"] for item in payload["operator_checklist"]))
         self.assertTrue(json_exists)
         self.assertTrue(markdown_exists)
         self.assertFalse(payload["is_approval"])

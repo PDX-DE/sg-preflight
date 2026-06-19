@@ -10,6 +10,7 @@ from sg_preflight.cli._common import (
     _console_disabled_tests,
     _console_export_size_trend,
     _console_perspectives_inventory,
+    _console_rack_readiness,
     _emit_json,
     _resolve_workspace,
     build_api_version_coverage_board,
@@ -18,12 +19,14 @@ from sg_preflight.cli._common import (
     build_disabled_tests_board,
     build_export_size_trend_board,
     build_perspectives_inventory_board,
+    build_rack_readiness_board,
     write_api_version_coverage_board,
     write_country_variant_coverage_board,
     write_cross_domain_delivery_board,
     write_disabled_tests_board,
     write_export_size_trend_board,
     write_perspectives_inventory_board,
+    write_rack_readiness_board,
 )
 
 
@@ -33,6 +36,7 @@ BOARD_COMMANDS = {
     "country-variant-coverage",
     "cross-domain-delivery",
     "perspectives-inventory",
+    "rack-readiness",
     "export-size-trend",
 }
 
@@ -116,6 +120,24 @@ def handle_board_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             _emit_json(payload, args)
         else:
             _console_perspectives_inventory(payload)
+        return 0
+
+    if args.command == "rack-readiness":
+        board_root = _resolve_workspace(args)
+        repo_root = Path(args.repo_root).resolve() if args.repo_root else None
+        bmw_repo_root = Path(args.bmw_repo_root).resolve() if args.bmw_repo_root else None
+        board = build_rack_readiness_board(
+            repo_root,
+            workspace_root=board_root,
+            bmw_repo_root=bmw_repo_root,
+        )
+        payload = board.to_dict()
+        if args.output_root:
+            payload["artifacts"] = write_rack_readiness_board(board, Path(args.output_root).resolve())
+        if args.json:
+            _emit_json(payload, args)
+        else:
+            _console_rack_readiness(payload)
         return 0
 
     if args.command == "export-size-trend":

@@ -157,6 +157,10 @@ from sg_preflight.perspectives_inventory import (
     build_perspectives_inventory_board,
     write_perspectives_inventory_board,
 )
+from sg_preflight.rack_readiness import (
+    build_rack_readiness_board,
+    write_rack_readiness_board,
+)
 from sg_preflight.disabled_tests import (
     CAUTIOUS_BASELINE_LABEL,
     build_disabled_tests_board,
@@ -1425,6 +1429,51 @@ def _console_perspectives_inventory(payload: dict[str, object]) -> None:
         print(f"... {len(entries) - 18} more row(s)")
 
 
+def _console_rack_readiness(payload: dict[str, object]) -> None:
+    counts = payload.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    print("Rack Pre-Flash Readiness")
+    print(f"Source: {payload.get('repo_root', '')}")
+    print(f"State: {payload.get('source_state', '')}")
+    print(
+        "Summary -> "
+        f"IDCevo rows: {counts.get('entry_total', 0)} | "
+        f"asset ready: {counts.get('asset_ready_count', 0)} | "
+        f"asset blocked: {counts.get('asset_blocked_count', 0)} | "
+        f"exported: {counts.get('exported_count', 0)} | "
+        f"delivered: {counts.get('delivered_count', 0)}"
+    )
+    print(str(payload.get("manual_review_banner", "")))
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, dict):
+        if artifacts.get("json_path"):
+            print(f"JSON: {artifacts['json_path']}")
+        if artifacts.get("markdown_path"):
+            print(f"Markdown: {artifacts['markdown_path']}")
+    print("-" * 80)
+    entries = payload.get("entries", [])
+    if not isinstance(entries, list) or not entries:
+        print("No rack readiness rows found.")
+        return
+    for entry in entries[:18]:
+        if not isinstance(entry, dict):
+            continue
+        blockers = entry.get("blockers", [])
+        if isinstance(blockers, list) and blockers:
+            evidence = "; ".join(str(blocker) for blocker in blockers[:3])
+        else:
+            evidence = "asset-side checks passed"
+        print(
+            _console_safe(
+                f"- {entry.get('relative_path', '')}: {entry.get('asset_status', '')}; "
+                f"SVT {entry.get('expected_svt_filename', '')}; {evidence}"
+            )
+        )
+    if len(entries) > 18:
+        print(f"... {len(entries) - 18} more row(s)")
+
+
 def _console_export_size_trend(payload: dict[str, object]) -> None:
     counts = payload.get("counts", {})
     if not isinstance(counts, dict):
@@ -1833,6 +1882,16 @@ def build_parser() -> argparse.ArgumentParser:
     perspectives_inventory.add_argument("--repo-root", help="SVN trunk root override")
     perspectives_inventory.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     perspectives_inventory.add_argument("--json", action="store_true", help="Print perspectives inventory payload as JSON")
+
+    rack_readiness = sub.add_parser(
+        "rack-readiness",
+        help="Build the read-only Rack Pre-Flash Readiness board for IDCevo car assets",
+    )
+    rack_readiness.add_argument("--workspace", help="Workspace root override")
+    rack_readiness.add_argument("--repo-root", help="SVN trunk root override")
+    rack_readiness.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    rack_readiness.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    rack_readiness.add_argument("--json", action="store_true", help="Print rack readiness payload as JSON")
 
     export_size_trend = sub.add_parser(
         "export-size-trend",
@@ -2983,6 +3042,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         "country-variant-coverage",
         "cross-domain-delivery",
         "perspectives-inventory",
+        "rack-readiness",
         "export-size-trend",
     }:
         from sg_preflight.cli.boards import handle_board_command
