@@ -424,16 +424,24 @@ def _looks_like_real_car(model_dir: Path) -> bool:
     return all((model_dir / name).is_dir() for name in _REAL_CAR_DIR_NAMES)
 
 
+def _child_dirs(path: Path) -> tuple[Path, ...]:
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        return ()
+    return tuple(sorted((child for child in children if child.is_dir()), key=lambda child: child.name.lower()))
+
+
 def _candidate_model_dirs(repo_root: Path, catalog_targets: tuple[CatalogTarget, ...]) -> tuple[_ModelCandidate, ...]:
     candidates: list[_ModelCandidate] = []
     for source_name in ("Cars", "Cars_IDCevo"):
         source_root = repo_root / source_name
         if not source_root.is_dir():
             continue
-        for brand_dir in sorted(path for path in source_root.iterdir() if path.is_dir()):
+        for brand_dir in _child_dirs(source_root):
             if _has_excluded_segment(brand_dir.relative_to(source_root)):
                 continue
-            for model_dir in sorted(path for path in brand_dir.iterdir() if path.is_dir()):
+            for model_dir in _child_dirs(brand_dir):
                 relative_model = model_dir.relative_to(source_root)
                 if _has_excluded_segment(relative_model):
                     continue
@@ -456,12 +464,19 @@ def _candidate_model_dirs(repo_root: Path, catalog_targets: tuple[CatalogTarget,
     return tuple(candidates)
 
 
+def _changelogs_under(source_root: Path) -> tuple[Path, ...]:
+    try:
+        return tuple(path for path in source_root.rglob("CHANGELOG.md") if path.is_file())
+    except OSError:
+        return ()
+
+
 def _all_delivery_changelogs(repo_root: Path) -> tuple[Path, ...]:
     changelogs: list[Path] = []
     for source_name in ("Cars", "Cars_IDCevo"):
         source_root = repo_root / source_name
         if source_root.is_dir():
-            changelogs.extend(path for path in source_root.rglob("CHANGELOG.md") if path.is_file())
+            changelogs.extend(_changelogs_under(source_root))
     return tuple(changelogs)
 
 

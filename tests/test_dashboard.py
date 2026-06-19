@@ -1282,7 +1282,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             (repo / "Cars_IDCevo" / "BMW" / "G70" / "export").mkdir(parents=True, exist_ok=True)
             (repo / "Cars_IDCevo" / "BMW" / "G70" / "export" / "G70.rca").write_bytes(b"asset")
             write_text(
-                repo / "Cars_IDCevo" / "BMW" / "G71" / "CHANGELOG.md",
+                repo / "Cars_IDCevo" / "BMW" / "G58" / "CHANGELOG.md",
                 "\n".join(
                     (
                         "## [3.4.0] - 2026-06-01",
@@ -1310,14 +1310,15 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(page["payload"]["counts"]["entry_total"], 2)
         self.assertEqual(page["payload"]["counts"]["asset_ready_count"], 1)
         self.assertEqual(page["payload"]["counts"]["asset_blocked_count"], 1)
-        self.assertEqual(page["payload"]["rack_readiness_entries"][0]["expected_svt_filename"], "SVT_IDCEVO-WITHOUT_SWITCH_G70_EVO.xml")
+        rack_entries = {entry["model_id"]: entry for entry in page["payload"]["rack_readiness_entries"]}
+        self.assertEqual(rack_entries["G70"]["expected_svt_filename"], "SVT_IDCEVO-WITHOUT_SWITCH_G70_EVO.xml")
         self.assertTrue(page["payload"]["operator_checklist"])
         self.assertFalse(any(item["auto_checked"] for item in page["payload"]["operator_checklist"]))
         self.assertIn("asset-ready", page["summary"].casefold())
         self.assertIn("operator-confirmed", page["summary"].casefold())
         labels = [item["label"] for item in page["items"]]
         self.assertIn("Rack asset / G70", labels)
-        self.assertIn("Rack asset / G71", labels)
+        self.assertIn("Rack asset / G58", labels)
         self.assertIn("Operator checklist", labels)
 
     def test_dashboard_doc_links_are_copy_only(self) -> None:

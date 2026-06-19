@@ -1443,9 +1443,13 @@ def _console_rack_readiness(payload: dict[str, object]) -> None:
         f"asset blocked: {counts.get('asset_blocked_count', 0)} | "
         f"exported: {counts.get('exported_count', 0)} | "
         f"version metadata: {counts.get('version_ok_count', 0)} | "
-        f"delivery context delivered: {counts.get('delivered_count', 0)}"
+        f"delivery context delivered: {counts.get('delivered_count', 0)} | "
+        f"out of scope: {counts.get('out_of_scope_idcevo_dir_count', 0)} | "
+        f"missing targets: {counts.get('missing_rack_target_dir_count', 0)}"
     )
     print(str(payload.get("manual_review_banner", "")))
+    if payload.get("target_scope_note"):
+        print(str(payload.get("target_scope_note", "")))
     artifacts = payload.get("artifacts")
     if isinstance(artifacts, dict):
         if artifacts.get("json_path"):
@@ -1454,30 +1458,51 @@ def _console_rack_readiness(payload: dict[str, object]) -> None:
             print(f"Markdown: {artifacts['markdown_path']}")
     print("-" * 80)
     entries = payload.get("entries", [])
-    if not isinstance(entries, list) or not entries:
+    out_of_scope = payload.get("out_of_scope_idcevo_dirs", [])
+    if not isinstance(out_of_scope, list):
+        out_of_scope = []
+    missing_targets = payload.get("missing_rack_target_dirs", [])
+    if not isinstance(missing_targets, list):
+        missing_targets = []
+    if (not isinstance(entries, list) or not entries) and not out_of_scope and not missing_targets:
         print("No rack readiness rows found.")
         return
-    for entry in entries[:18]:
-        if not isinstance(entry, dict):
-            continue
-        blockers = entry.get("blockers", [])
-        if isinstance(blockers, list) and blockers:
-            evidence = "; ".join(str(blocker) for blocker in blockers[:3])
-        else:
-            evidence = "asset-side checks passed"
-        context_notes = entry.get("context_notes", [])
-        context_note = ""
-        if isinstance(context_notes, list) and context_notes:
-            context_note = str(context_notes[0]).strip()
-        print(
-            _console_safe(
-                f"- {entry.get('relative_path', '')}: {entry.get('asset_status', '')}; "
-                f"SVT {entry.get('expected_svt_filename', '')}; {evidence}"
-                f"{'; ' + context_note if context_note else ''}"
+    if isinstance(entries, list) and entries:
+        for entry in entries[:18]:
+            if not isinstance(entry, dict):
+                continue
+            blockers = entry.get("blockers", [])
+            if isinstance(blockers, list) and blockers:
+                evidence = "; ".join(str(blocker) for blocker in blockers[:3])
+            else:
+                evidence = "asset-side checks passed"
+            context_notes = entry.get("context_notes", [])
+            context_note = ""
+            if isinstance(context_notes, list) and context_notes:
+                context_note = str(context_notes[0]).strip()
+            print(
+                _console_safe(
+                    f"- {entry.get('relative_path', '')}: {entry.get('asset_status', '')}; "
+                    f"SVT {entry.get('expected_svt_filename', '')} ({entry.get('expected_svt_detail', '')}); {evidence}"
+                    f"{'; ' + context_note if context_note else ''}"
+                )
             )
-        )
-    if len(entries) > 18:
-        print(f"... {len(entries) - 18} more row(s)")
+        if len(entries) > 18:
+            print(f"... {len(entries) - 18} more row(s)")
+    if out_of_scope:
+        print("IDCevo dirs outside current rack scope:")
+        for entry in out_of_scope[:18]:
+            if isinstance(entry, dict):
+                print(_console_safe(f"- {entry.get('relative_path', '')}: {entry.get('reason', '')}"))
+        if len(out_of_scope) > 18:
+            print(f"... {len(out_of_scope) - 18} more out-of-scope row(s)")
+    if missing_targets:
+        print("Documented rack targets with no delivery row:")
+        for entry in missing_targets[:18]:
+            if isinstance(entry, dict):
+                print(_console_safe(f"- {entry.get('relative_path', '')}: {entry.get('reason', '')}"))
+        if len(missing_targets) > 18:
+            print(f"... {len(missing_targets) - 18} more missing target row(s)")
 
 
 def _console_export_size_trend(payload: dict[str, object]) -> None:

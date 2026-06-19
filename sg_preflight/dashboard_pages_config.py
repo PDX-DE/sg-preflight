@@ -577,13 +577,22 @@ def _rack_readiness_payload(
     exported = _int_payload_value(counts, "exported_count")
     delivered = _int_payload_value(counts, "delivered_count")
     version_ok = _int_payload_value(counts, "version_ok_count")
+    out_of_scope_count = _int_payload_value(counts, "out_of_scope_idcevo_dir_count")
+    missing_target_count = _int_payload_value(counts, "missing_rack_target_dir_count")
     checklist = [item for item in board.get("operator_checklist", []) if isinstance(item, dict)]
     entries = [entry for entry in board.get("entries", []) if isinstance(entry, dict)]
+    out_of_scope = [entry for entry in board.get("out_of_scope_idcevo_dirs", []) if isinstance(entry, dict)]
+    missing_targets = [entry for entry in board.get("missing_rack_target_dirs", []) if isinstance(entry, dict)]
     rows: list[dict[str, str]] = [
         {
             "label": "Reading from",
             "status": source_state,
             "detail": str(board.get("repo_root", "")),
+        },
+        {
+            "label": "Rack target scope",
+            "status": str(entry_total),
+            "detail": str(board.get("target_scope_note", "")),
         },
         {
             "label": "Asset-side auto checks",
@@ -615,7 +624,8 @@ def _rack_readiness_payload(
                 "status": str(entry.get("asset_status", "unknown")),
                 "detail": (
                     f"{entry.get('relative_path', '')}; "
-                    f"expected SVT {entry.get('expected_svt_filename', '')}; {evidence}"
+                    f"expected SVT {entry.get('expected_svt_filename', '')} ({entry.get('expected_svt_detail', '')}); "
+                    f"{evidence}"
                     f"{'; ' + context_note if context_note else ''}"
                 ),
             }
@@ -628,13 +638,49 @@ def _rack_readiness_payload(
                 "detail": "Open the CLI JSON or evidence export for all Rack Readiness rows.",
             }
         )
+    for entry in out_of_scope[:8]:
+        rows.append(
+            {
+                "label": f"Outside rack scope / {entry.get('model_id', '')}".strip(),
+                "status": "out_of_scope",
+                "detail": f"{entry.get('relative_path', '')}; {entry.get('reason', '')}",
+            }
+        )
+    if len(out_of_scope) > 8:
+        rows.append(
+            {
+                "label": "Additional out-of-scope IDCevo dirs",
+                "status": str(len(out_of_scope) - 8),
+                "detail": "Open the CLI JSON or evidence export for all out-of-scope IDCevo dirs.",
+            }
+        )
+    for entry in missing_targets[:8]:
+        rows.append(
+            {
+                "label": f"Missing rack target / {entry.get('model_id', '')}".strip(),
+                "status": "missing_delivery_row",
+                "detail": f"{entry.get('relative_path', '')}; {entry.get('reason', '')}",
+            }
+        )
+    if len(missing_targets) > 8:
+        rows.append(
+            {
+                "label": "Additional missing rack targets",
+                "status": str(len(missing_targets) - 8),
+                "detail": "Open the CLI JSON or evidence export for all documented rack targets with no delivery row.",
+            }
+        )
     board["status"] = "available" if ready else "missing"
     board["data_available"] = ready
     board["selected_source_root"] = str(board.get("repo_root", ""))
     board["source_root_candidates"] = _source_repo_root_candidates(workspace)
     board["rack_readiness_entries"] = entries
+    board["rack_out_of_scope_idcevo_dirs"] = out_of_scope
+    board["rack_missing_target_dirs"] = missing_targets
     board["summary"] = (
         f"{entry_total} IDCevo rack target row(s): {asset_ready} asset-ready, {asset_blocked} asset-blocked. "
+        f"{out_of_scope_count} IDCevo dir(s) outside the documented rack-target scope. "
+        f"{missing_target_count} documented rack target(s) without a delivery row. "
         f"Delivery context: {delivered} delivered. "
         f"Operator-confirmed checklist item(s): {len(checklist)}. "
         f"Reading from {board.get('repo_root', '')}. Source: {source_state}."

@@ -16,19 +16,29 @@ from sg_preflight.delivery_readiness import (
     DeliveryReadinessEntry,
     build_delivery_readiness_board,
 )
-from sg_preflight.profiles import resolve_source_repo_root
+from sg_preflight.bmw_delivery import LANE_IDCEVO
+from sg_preflight.profiles import PROFILE_SCOPE_ALL, list_run_profiles, resolve_source_repo_root
 from sg_preflight.tool_version_pins import compare_version, load_raco_pins, recommended_versions_text
 
 
+_STATIC_PROFILE_SCOPE_BMW_ROOT = Path("__sgfx_static_profile_scope__")
+RACK_TARGET_SCOPE_NOTE = (
+    "IDCevo flash targets are taken from the documented profile list; IDCevo dirs outside that list "
+    "are reported separately."
+)
+SVT_REFERENCE_NOTE = (
+    "Reference only - operator stages this SVT from TALgen/Artifactory; SGFX does not verify the staged file."
+)
 MANUAL_REVIEW_BANNER = (
-    "Evidence only - SGFX auto-checks the asset side: exported RCA and version metadata. "
+    "Evidence only - SGFX auto-checks the asset side for IDCevo flash targets from the documented profile list: "
+    "exported RCA and version metadata. "
     "Delivery status is shown as planning context. Rack hardware, SVT staging, environment setup, "
     "flash outcome, and performance "
     "remain operator-confirmed/manual."
 )
 
 _IDCEVO_SOURCE_ROOT = "Cars_IDCevo"
-_TARGET_MODEL_RE = re.compile(r"^(?:G|NA)", re.IGNORECASE)
+_KNOWN_DELIVERY_STATUSES = {STATUS_DELIVERED, STATUS_NOT_DELIVERED_YET, STATUS_UNKNOWN}
 
 
 @dataclass(frozen=True)
@@ -88,6 +98,42 @@ class DeliveryContext:
             "delivered_date": self.delivered_date,
             "note": self.note,
             "blocking": self.blocking,
+        }
+
+
+@dataclass(frozen=True)
+class OutOfScopeIdcevoDir:
+    source_root: str
+    brand: str
+    model_id: str
+    relative_path: str
+    reason: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "source_root": self.source_root,
+            "brand": self.brand,
+            "model_id": self.model_id,
+            "relative_path": self.relative_path,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class MissingRackTargetDir:
+    source_root: str
+    brand: str
+    model_id: str
+    relative_path: str
+    reason: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "source_root": self.source_root,
+            "brand": self.brand,
+            "model_id": self.model_id,
+            "relative_path": self.relative_path,
+            "reason": self.reason,
         }
 
 
@@ -201,7 +247,10 @@ class RackReadinessBoard:
     source_state: str
     generated_at_utc: str
     entries: tuple[RackReadinessEntry, ...]
+    out_of_scope_idcevo_dirs: tuple[OutOfScopeIdcevoDir, ...] = ()
+    missing_rack_target_dirs: tuple[MissingRackTargetDir, ...] = ()
     operator_checklist: tuple[OperatorChecklistItem, ...] = OPERATOR_CHECKLIST
+    target_scope_note: str = RACK_TARGET_SCOPE_NOTE
     manual_review_banner: str = MANUAL_REVIEW_BANNER
 
     @property
@@ -216,6 +265,8 @@ class RackReadinessBoard:
             "version_ok_count": sum(1 for entry in self.entries if any(check.key == "version_metadata" and check.passed for check in entry.asset_checks)),
             "operator_checklist_count": len(self.operator_checklist),
             "expected_svt_count": len(self.entries),
+            "out_of_scope_idcevo_dir_count": len(self.out_of_scope_idcevo_dirs),
+            "missing_rack_target_dir_count": len(self.missing_rack_target_dirs),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -225,12 +276,15 @@ class RackReadinessBoard:
             "source_state": self.source_state,
             "generated_at_utc": self.generated_at_utc,
             "manual_review_banner": self.manual_review_banner,
+            "target_scope_note": self.target_scope_note,
             "read_only": True,
             "manual_review_required": True,
             "is_approval": False,
             "counts": self.counts,
             "operator_checklist": [item.to_dict() for item in self.operator_checklist],
             "entries": [entry.to_dict() for entry in self.entries],
+            "out_of_scope_idcevo_dirs": [entry.to_dict() for entry in self.out_of_scope_idcevo_dirs],
+            "missing_rack_target_dirs": [entry.to_dict() for entry in self.missing_rack_target_dirs],
         }
 
 
@@ -252,8 +306,54 @@ def expected_svt_filename(model_id: str) -> str:
     return f"SVT_IDCEVO-WITHOUT_SWITCH_{_target_model_token(model_id)}_EVO.xml"
 
 
-def _is_rack_target(entry: DeliveryReadinessEntry) -> bool:
-    return entry.source_root == _IDCEVO_SOURCE_ROOT and bool(_TARGET_MODEL_RE.match(entry.model_id.strip()))
+def _relative_path_key(value: str | Path) -> str:
+    return str(value).replace("\\", "/").strip("/").casefold()
+
+
+def _rack_target_profile_dirs(
+    *,
+    workspace_root: Path | None,
+    source_root: Path,
+    bmw_root: Path | None = None,
+) -> dict[str, MissingRackTargetDir]:
+    _ = bmw_root
+    profiles = list_run_profiles(
+        workspace_root,
+        reference_repo_root=source_root,
+        bmw_root=_STATIC_PROFILE_SCOPE_BMW_ROOT,
+        profile_scope=PROFILE_SCOPE_ALL,
+    )
+    targets: dict[str, MissingRackTargetDir] = {}
+    for profile in profiles:
+        if profile.lane != LANE_IDCEVO:
+            continue
+        parts = profile.project_relative.parts
+        if len(parts) >= 3 and parts[0] == _IDCEVO_SOURCE_ROOT:
+            relative_path = str(profile.project_relative).replace("\\", "/")
+            targets[_relative_path_key(relative_path)] = MissingRackTargetDir(
+                source_root=parts[0],
+                brand=parts[1],
+                model_id=parts[2],
+                relative_path=relative_path,
+                reason="Documented rack-target profile has no delivery-readiness row in this checkout.",
+            )
+    return targets
+
+
+def _is_rack_target(entry: DeliveryReadinessEntry, rack_target_paths: frozenset[str]) -> bool:
+    return entry.source_root == _IDCEVO_SOURCE_ROOT and _relative_path_key(entry.relative_path) in rack_target_paths
+
+
+def _out_of_scope_dir(entry: DeliveryReadinessEntry, rack_target_paths: frozenset[str]) -> OutOfScopeIdcevoDir | None:
+    if entry.source_root != _IDCEVO_SOURCE_ROOT or _relative_path_key(entry.relative_path) in rack_target_paths:
+        return None
+    return OutOfScopeIdcevoDir(
+        source_root=entry.source_root,
+        brand=entry.brand,
+        model_id=entry.model_id,
+        relative_path=entry.relative_path,
+        reason="IDCevo dir is not in the documented rack-target profile list; no SVT reference is fabricated.",
+    )
 
 
 def _cross_entry_map(entries: tuple[CrossDomainItem, ...]) -> dict[str, CrossDomainItem]:
@@ -288,22 +388,23 @@ def _delivery_context(delivery_entry: DeliveryReadinessEntry, cross_entry: Cross
     status_label = cross_entry.delivery_status_label if cross_entry is not None else delivery_entry.status_label
     version = cross_entry.version if cross_entry is not None else delivery_entry.version
     delivered_date = cross_entry.delivered_date if cross_entry is not None else delivery_entry.delivered_date
+    if status not in _KNOWN_DELIVERY_STATUSES:
+        status = STATUS_UNKNOWN
+        status_label = "Unknown"
     if status == STATUS_DELIVERED:
-        note = f"Latest CHANGELOG entry is delivered{f' on {delivered_date}' if delivered_date else ''}."
+        note = (
+            f"Latest CHANGELOG entry is delivered{f' on {delivered_date}' if delivered_date else ''}. "
+            "Delivery status is planning context and does not gate the asset-side checks."
+        )
     elif status == STATUS_NOT_DELIVERED_YET:
         note = (
-            "Latest CHANGELOG entry is not delivered; flash readiness uses the integrated build, "
-            "so delivery remains planning context."
-        )
-    elif status == STATUS_UNKNOWN:
-        note = (
-            "Latest CHANGELOG delivery status is unknown; flash readiness uses the integrated build, "
-            "so delivery remains planning context."
+            "Latest CHANGELOG entry is not delivered. Delivery status is planning context and does not gate "
+            "the asset-side checks."
         )
     else:
         note = (
-            f"Latest CHANGELOG delivery status is {status_label or status}; flash readiness uses the integrated build, "
-            "so delivery remains planning context."
+            "Latest CHANGELOG delivery status is unknown. Delivery status is planning context and does not gate "
+            "the asset-side checks."
         )
     return DeliveryContext(
         status=status,
@@ -375,7 +476,7 @@ def _entry_from_delivery(
         delivery_context=delivery_context,
         expected_svt_filename=expected_svt_filename(delivery_entry.model_id),
         expected_svt_status="operator_staged_required",
-        expected_svt_detail="Operator must download and stage this SVT XML from Artifactory; SGFX does not verify the staged file.",
+        expected_svt_detail=SVT_REFERENCE_NOTE,
         expected_svt_auto_checked=False,
         delivery_status=cross_entry.delivery_status if cross_entry is not None else delivery_entry.status,
         delivery_status_label=cross_entry.delivery_status_label if cross_entry is not None else delivery_entry.status_label,
@@ -409,39 +510,73 @@ def build_rack_readiness_board(
         )
 
     bmw_root = Path(bmw_repo_root).resolve() if bmw_repo_root is not None else None
-    delivery_board = build_delivery_readiness_board(
-        source_root,
-        workspace_root=workspace,
-        bmw_repo_root=bmw_root,
-    )
-    cross_board = build_cross_domain_delivery_board(
-        source_root,
-        workspace_root=workspace,
-        bmw_repo_root=bmw_root,
-        domains=("cars",),
-        now=now,
-    )
-    cross_entries = _cross_entry_map(cross_board.entries)
-    raco_pins = load_raco_pins(bmw_root)
-    entries = tuple(
-        sorted(
-            (
-                _entry_from_delivery(
-                    delivery_entry,
-                    cross_entries.get(delivery_entry.relative_path),
-                    raco_pins=raco_pins,
-                )
-                for delivery_entry in delivery_board.entries
-                if _is_rack_target(delivery_entry)
-            ),
-            key=lambda entry: (entry.brand.lower(), entry.model_id.lower(), entry.relative_path.lower()),
+    try:
+        delivery_board = build_delivery_readiness_board(
+            source_root,
+            workspace_root=workspace,
+            bmw_repo_root=bmw_root,
         )
-    )
+        cross_board = build_cross_domain_delivery_board(
+            source_root,
+            workspace_root=workspace,
+            bmw_repo_root=bmw_root,
+            domains=("cars",),
+            now=now,
+        )
+        rack_target_profiles = _rack_target_profile_dirs(workspace_root=workspace, source_root=source_root, bmw_root=bmw_root)
+        rack_target_paths = frozenset(rack_target_profiles)
+        cross_entries = _cross_entry_map(cross_board.entries)
+        raco_pins = load_raco_pins(bmw_root)
+        delivery_entry_paths = {
+            _relative_path_key(delivery_entry.relative_path)
+            for delivery_entry in delivery_board.entries
+            if delivery_entry.source_root == _IDCEVO_SOURCE_ROOT
+        }
+        entries = tuple(
+            sorted(
+                (
+                    _entry_from_delivery(
+                        delivery_entry,
+                        cross_entries.get(delivery_entry.relative_path),
+                        raco_pins=raco_pins,
+                    )
+                    for delivery_entry in delivery_board.entries
+                    if _is_rack_target(delivery_entry, rack_target_paths)
+                ),
+                key=lambda entry: (entry.brand.lower(), entry.model_id.lower(), entry.relative_path.lower()),
+            )
+        )
+        out_of_scope = tuple(
+            sorted(
+                (
+                    scope_entry
+                    for delivery_entry in delivery_board.entries
+                    for scope_entry in (_out_of_scope_dir(delivery_entry, rack_target_paths),)
+                    if scope_entry is not None
+                ),
+                key=lambda entry: (entry.brand.lower(), entry.model_id.lower(), entry.relative_path.lower()),
+            )
+        )
+        missing_targets = tuple(
+            sorted(
+                (target for key, target in rack_target_profiles.items() if key not in delivery_entry_paths),
+                key=lambda entry: (entry.brand.lower(), entry.model_id.lower(), entry.relative_path.lower()),
+            )
+        )
+    except Exception:
+        return RackReadinessBoard(
+            repo_root=source_root,
+            source_state="error",
+            generated_at_utc=generated_at,
+            entries=(),
+        )
     return RackReadinessBoard(
         repo_root=source_root,
         source_state="ready",
         generated_at_utc=generated_at,
         entries=entries,
+        out_of_scope_idcevo_dirs=out_of_scope,
+        missing_rack_target_dirs=missing_targets,
     )
 
 
@@ -457,6 +592,8 @@ def rack_readiness_markdown(board: RackReadinessBoard) -> str:
         "",
         str(payload["manual_review_banner"]),
         "",
+        str(payload["target_scope_note"]),
+        "",
         f"- source: `{payload['repo_root']}`",
         f"- generated: `{payload['generated_at_utc']}`",
         f"- IDCevo rack target rows: {counts['entry_total']}",
@@ -465,6 +602,8 @@ def rack_readiness_markdown(board: RackReadinessBoard) -> str:
         f"- exported rows: {counts['exported_count']}",
         f"- delivered rows: {counts['delivered_count']}",
         f"- version metadata rows: {counts['version_ok_count']}",
+        f"- IDCevo dirs outside current rack scope: {counts['out_of_scope_idcevo_dir_count']}",
+        f"- documented rack targets with no delivery row: {counts['missing_rack_target_dir_count']}",
         "",
         "## Asset-Side Auto Checks",
         "",
@@ -482,7 +621,7 @@ def rack_readiness_markdown(board: RackReadinessBoard) -> str:
                     _markdown_cell(entry.asset_status),
                     _markdown_cell(checks["exported"].status),
                     _markdown_cell(checks["version_metadata"].status),
-                    _markdown_cell(entry.expected_svt_filename),
+                    _markdown_cell(f"{entry.expected_svt_filename} ({entry.expected_svt_detail})"),
                     _markdown_cell(entry.relative_path),
                 )
             )
@@ -490,6 +629,54 @@ def rack_readiness_markdown(board: RackReadinessBoard) -> str:
         )
     if not board.entries:
         lines.append("|  |  | no rows |  |  |  |  |")
+    lines.extend(
+        (
+            "",
+            "## IDCevo Dirs Outside Current Rack Scope",
+            "",
+            "| Brand | Model | Path | Reason |",
+            "| --- | --- | --- | --- |",
+        )
+    )
+    for entry in board.out_of_scope_idcevo_dirs:
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    _markdown_cell(entry.brand),
+                    _markdown_cell(entry.model_id),
+                    _markdown_cell(entry.relative_path),
+                    _markdown_cell(entry.reason),
+                )
+            )
+            + " |"
+        )
+    if not board.out_of_scope_idcevo_dirs:
+        lines.append("|  |  | no rows |  |")
+    lines.extend(
+        (
+            "",
+            "## Documented Rack Targets With No Delivery Row",
+            "",
+            "| Brand | Model | Path | Reason |",
+            "| --- | --- | --- | --- |",
+        )
+    )
+    for entry in board.missing_rack_target_dirs:
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    _markdown_cell(entry.brand),
+                    _markdown_cell(entry.model_id),
+                    _markdown_cell(entry.relative_path),
+                    _markdown_cell(entry.reason),
+                )
+            )
+            + " |"
+        )
+    if not board.missing_rack_target_dirs:
+        lines.append("|  |  | no rows |  |")
     lines.extend(
         (
             "",

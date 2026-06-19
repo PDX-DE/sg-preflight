@@ -136,6 +136,50 @@ class TestDeliveryReadiness(unittest.TestCase):
         self.assertEqual(payload["catalog"]["catalog_targets_missing_dir_count"], 1)
         self.assertEqual(payload["catalog"]["dirs_without_catalog_count"], 3)
 
+    def test_board_skips_model_branch_when_directory_listing_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repositories" / "trunk"
+            _write_changelog(repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md", "## [3.4.0] - 2026-05-29")
+            _write_changelog(repo / "Cars_IDCevo" / "BMW" / "G70" / "CHANGELOG.md", "## [3.4.0] - 2026-05-29")
+            original_iterdir = Path.iterdir
+            locked_branch = (repo / "Cars_IDCevo" / "BMW").resolve()
+
+            def flaky_iterdir(path: Path):
+                if path.resolve() == locked_branch:
+                    raise PermissionError("locked working copy")
+                return original_iterdir(path)
+
+            with mock.patch.object(Path, "iterdir", flaky_iterdir):
+                board = build_delivery_readiness_board(repo, bmw_repo_root=root / "missing-bmw-repo")
+
+        payload = board.to_dict()
+        rows = {(item["source_root"], item["brand"], item["model_id"]) for item in payload["entries"]}
+        self.assertEqual(payload["source_state"], "ready")
+        self.assertIn(("Cars", "BMW", "F70"), rows)
+        self.assertNotIn(("Cars_IDCevo", "BMW", "G70"), rows)
+
+    def test_board_tolerates_changelog_scan_os_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = root / "repositories" / "trunk"
+            _write_changelog(repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md", "## [3.4.0] - 2026-05-29")
+            original_rglob = Path.rglob
+            locked_source = (repo / "Cars").resolve()
+
+            def flaky_rglob(path: Path, pattern: str):
+                if path.resolve() == locked_source and pattern == "CHANGELOG.md":
+                    raise PermissionError("flaky network path")
+                return original_rglob(path, pattern)
+
+            with mock.patch.object(Path, "rglob", flaky_rglob):
+                board = build_delivery_readiness_board(repo, bmw_repo_root=root / "missing-bmw-repo")
+
+        payload = board.to_dict()
+        self.assertEqual(payload["source_state"], "ready")
+        self.assertEqual(payload["counts"]["total"], 1)
+        self.assertEqual(payload["skipped_count"], 0)
+
     def test_cli_writes_json_and_markdown_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

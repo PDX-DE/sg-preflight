@@ -158,7 +158,7 @@ def _write_rack_readiness_cli_fixture(root: Path) -> Path:
     (repo / "Cars_IDCevo" / "BMW" / "G70" / "export").mkdir(parents=True, exist_ok=True)
     (repo / "Cars_IDCevo" / "BMW" / "G70" / "export" / "G70.rca").write_bytes(b"asset")
     _write_cross_domain_changelog(
-        repo / "Cars_IDCevo" / "BMW" / "G71" / "CHANGELOG.md",
+        repo / "Cars_IDCevo" / "BMW" / "G58" / "CHANGELOG.md",
         "## [3.4.0] - 2026-06-01",
         ramses="28.16",
     )
@@ -1176,13 +1176,39 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(payload["source_state"], "ready")
         self.assertEqual(payload["counts"]["entry_total"], 2)
         self.assertEqual(payload["counts"]["asset_ready_count"], 1)
-        self.assertEqual(payload["entries"][0]["expected_svt_filename"], "SVT_IDCEVO-WITHOUT_SWITCH_G70_EVO.xml")
+        entries = {entry["model_id"]: entry for entry in payload["entries"]}
+        self.assertEqual(entries["G70"]["expected_svt_filename"], "SVT_IDCEVO-WITHOUT_SWITCH_G70_EVO.xml")
         self.assertTrue(payload["operator_checklist"])
         self.assertTrue(all(item["operator_confirmed"] for item in payload["operator_checklist"]))
         self.assertFalse(any(item["auto_checked"] for item in payload["operator_checklist"]))
         self.assertTrue(json_exists)
         self.assertTrue(markdown_exists)
         self.assertFalse(payload["is_approval"])
+
+    def test_rack_readiness_cli_text_marks_svt_as_reference_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = _write_rack_readiness_cli_fixture(root)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "rack-readiness",
+                        "--workspace",
+                        str(root),
+                        "--repo-root",
+                        str(repo),
+                        "--bmw-repo-root",
+                        str(root / "missing-bmw-repo"),
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        output = stdout.getvalue().casefold()
+        self.assertIn("svt_idcevo-without_switch_g70_evo.xml", output)
+        self.assertIn("reference only", output)
+        self.assertIn("sgfx does not verify", output)
 
     def test_delivery_checklist_read_cli_returns_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
