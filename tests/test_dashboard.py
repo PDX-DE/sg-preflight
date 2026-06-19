@@ -215,7 +215,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_twenty_three_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_twenty_four_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -233,6 +233,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "delivery-readiness",
                 "cross-domain-delivery",
                 "perspectives-inventory",
+                "rack-readiness",
                 "disabled-tests",
                 "api-version-coverage",
                 "country-variant-coverage",
@@ -270,6 +271,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "delivery-readiness", "label": "Delivery Readiness"},
                 {"id": "cross-domain-delivery", "label": "Cross-Domain Delivery"},
                 {"id": "perspectives-inventory", "label": "Perspectives"},
+                {"id": "rack-readiness", "label": "Rack Readiness"},
                 {"id": "disabled-tests", "label": "Disabled Tests"},
                 {"id": "api-version-coverage", "label": "API Version"},
                 {"id": "country-variant-coverage", "label": "Country Variants"},
@@ -317,6 +319,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(
             pages_by_id["perspectives-inventory"]["tagline"],
             "Perspectives scene inventory and same-display-type peer evidence from local SVN.",
+        )
+        self.assertEqual(
+            pages_by_id["rack-readiness"]["tagline"],
+            "IDCevo pre-flash asset readiness and operator-confirmed rack checklist.",
         )
         self.assertEqual(
             pages_by_id["disabled-tests"]["tagline"],
@@ -413,6 +419,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn(perspectives_page["status"], {"available", "unavailable"})
         self.assertTrue(perspectives_page["payload"]["read_only"])
         self.assertFalse(perspectives_page["payload"]["is_approval"])
+        rack_page = next(page for page in snapshot["pages"] if page["id"] == "rack-readiness")
+        self.assertIn(rack_page["status"], {"available", "unavailable"})
+        self.assertTrue(rack_page["payload"]["read_only"])
+        self.assertFalse(rack_page["payload"]["is_approval"])
         handoff_page = next(page for page in snapshot["pages"] if page["id"] == "operator-handoff")
         self.assertEqual(handoff_page["payload"]["status"], "not_run")
         self.assertFalse(handoff_page["payload"]["is_approval"])
@@ -556,7 +566,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 23)
+                self.assertEqual(len(snapshot["pages"]), 24)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1108,6 +1118,21 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("Perspectives scene inventory", config_source)
         self.assertIn("Peer evidence", config_source)
 
+    def test_rack_readiness_page_is_read_only_source_root_board(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        config_source = (root / "dashboard_pages_config.py").read_text(encoding="utf-8")
+
+        self.assertIn('("rack-readiness", "Rack Readiness")', source)
+        self.assertIn("_rack_readiness_page", source)
+        self.assertIn("_rack_readiness_payload", source)
+        self.assertIn("build_rack_readiness_board", source)
+        self.assertIn("build_rack_readiness_board", config_source)
+        self.assertIn('page_id == "rack-readiness"', source)
+        self.assertIn("payload_builder=_rack_readiness_payload", source)
+        self.assertIn("IDCevo pre-flash asset readiness", config_source)
+        self.assertIn("Operator checklist", config_source)
+
     def test_dashboard_snapshot_contains_cross_domain_delivery_page_from_local_fixture(self) -> None:
         from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -1235,6 +1260,65 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("CID_2to1 / F70", labels)
         self.assertIn("CID_2to1 / F71", labels)
         self.assertIn("Brand reference / BMW CID_2to1", labels)
+
+    def test_dashboard_snapshot_contains_rack_readiness_page_from_local_fixture(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repositories" / "trunk"
+            write_text(
+                repo / "Cars_IDCevo" / "BMW" / "G70" / "CHANGELOG.md",
+                "\n".join(
+                    (
+                        "## [3.4.0] - 2026-06-01",
+                        "",
+                        "> _Ramses Composer / Headless: 2.9.0_",
+                        "> _Ramses: 28.16_",
+                        "",
+                    )
+                ),
+            )
+            (repo / "Cars_IDCevo" / "BMW" / "G70" / "export").mkdir(parents=True, exist_ok=True)
+            (repo / "Cars_IDCevo" / "BMW" / "G70" / "export" / "G70.rca").write_bytes(b"asset")
+            write_text(
+                repo / "Cars_IDCevo" / "BMW" / "G71" / "CHANGELOG.md",
+                "\n".join(
+                    (
+                        "## [3.4.0] - 2026-06-01",
+                        "",
+                        "> _Ramses Composer / Headless: 2.9.0_",
+                        "> _Ramses: 28.16_",
+                        "",
+                    )
+                ),
+            )
+
+            with mock.patch("sg_preflight.dashboard_preferences.CANONICAL_SOURCE_REPO_ROOT", root / "missing-canonical"), mock.patch.dict(
+                os.environ,
+                {"SG_SOURCE_REPO_ROOT": str(repo), "SG_REPO": ""},
+                clear=False,
+            ):
+                snapshot = build_dashboard_snapshot("G70", root, bmw_root=root / "missing-bmw-repo", defer_daily_digest=True, defer_team_digest_board=True)
+
+        navigation = [item["id"] for item in snapshot["navigation"]]
+        self.assertIn("rack-readiness", navigation)
+        page = next(page for page in snapshot["pages"] if page["id"] == "rack-readiness")
+        self.assertEqual(page["status"], "available")
+        self.assertTrue(page["payload"]["read_only"])
+        self.assertFalse(page["payload"]["is_approval"])
+        self.assertEqual(page["payload"]["counts"]["entry_total"], 2)
+        self.assertEqual(page["payload"]["counts"]["asset_ready_count"], 1)
+        self.assertEqual(page["payload"]["counts"]["asset_blocked_count"], 1)
+        self.assertEqual(page["payload"]["rack_readiness_entries"][0]["expected_svt_filename"], "SVT_IDCEVO-WITHOUT_SWITCH_G70_EVO.xml")
+        self.assertTrue(page["payload"]["operator_checklist"])
+        self.assertFalse(any(item["auto_checked"] for item in page["payload"]["operator_checklist"]))
+        self.assertIn("asset-ready", page["summary"].casefold())
+        self.assertIn("operator-confirmed", page["summary"].casefold())
+        labels = [item["label"] for item in page["items"]]
+        self.assertIn("Rack asset / G70", labels)
+        self.assertIn("Rack asset / G71", labels)
+        self.assertIn("Operator checklist", labels)
 
     def test_dashboard_doc_links_are_copy_only(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1892,7 +1976,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 23)
+        self.assertEqual(len(snapshot["pages"]), 24)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -1906,7 +1990,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 23)
+        self.assertEqual(len(snapshot["pages"]), 24)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")

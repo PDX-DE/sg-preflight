@@ -63,6 +63,7 @@ _MAIN_GLOBAL_NAMES = (
     "build_delivery_readiness_board",
     "build_cross_domain_delivery_board",
     "build_perspectives_inventory_board",
+    "build_rack_readiness_board",
     "build_disabled_tests_board",
     "build_api_version_coverage_board",
     "build_country_variant_coverage_board",
@@ -551,6 +552,112 @@ def _perspectives_inventory_page(workspace: Path, *, bmw_root: Path | str | None
         "selected_source_root": str(payload.get("selected_source_root", "")),
         "source_root_candidates": list(payload.get("source_root_candidates", [])),
     }
+    return page
+
+def _rack_readiness_payload(
+    workspace: Path,
+    bmw_root: Path | str | None = None,
+    *,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    selected_repo_root = _source_repo_root_from_value(repo_root) or _preferred_source_repo_root(workspace)
+    board = build_rack_readiness_board(
+        selected_repo_root,
+        workspace_root=workspace,
+        bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
+    ).to_dict()
+    counts = board.get("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    source_state = str(board.get("source_state", "unknown"))
+    ready = source_state == "ready"
+    entry_total = _int_payload_value(counts, "entry_total")
+    asset_ready = _int_payload_value(counts, "asset_ready_count")
+    asset_blocked = _int_payload_value(counts, "asset_blocked_count")
+    exported = _int_payload_value(counts, "exported_count")
+    delivered = _int_payload_value(counts, "delivered_count")
+    version_ok = _int_payload_value(counts, "version_ok_count")
+    checklist = [item for item in board.get("operator_checklist", []) if isinstance(item, dict)]
+    entries = [entry for entry in board.get("entries", []) if isinstance(entry, dict)]
+    rows: list[dict[str, str]] = [
+        {
+            "label": "Reading from",
+            "status": source_state,
+            "detail": str(board.get("repo_root", "")),
+        },
+        {
+            "label": "Asset-side auto checks",
+            "status": str(asset_ready),
+            "detail": (
+                f"{asset_blocked} blocked; {exported} exported; {delivered} delivered; "
+                f"{version_ok} with version metadata."
+            ),
+        },
+        {
+            "label": "Operator checklist",
+            "status": str(len(checklist)),
+            "detail": "Operator-confirmed rack/environment items; SGFX does not auto-check or auto-pass them.",
+        },
+    ]
+    for entry in entries[:18]:
+        blockers = entry.get("blockers", [])
+        if isinstance(blockers, list) and blockers:
+            evidence = "; ".join(str(blocker) for blocker in blockers[:3])
+        else:
+            evidence = "asset-side checks passed"
+        rows.append(
+            {
+                "label": f"Rack asset / {entry.get('model_id', '')}".strip(),
+                "status": str(entry.get("asset_status", "unknown")),
+                "detail": (
+                    f"{entry.get('relative_path', '')}; "
+                    f"expected SVT {entry.get('expected_svt_filename', '')}; {evidence}"
+                ),
+            }
+        )
+    if len(entries) > 18:
+        rows.append(
+            {
+                "label": "Additional rack rows",
+                "status": str(len(entries) - 18),
+                "detail": "Open the CLI JSON or evidence export for all Rack Readiness rows.",
+            }
+        )
+    board["status"] = "available" if ready else "missing"
+    board["data_available"] = ready
+    board["selected_source_root"] = str(board.get("repo_root", ""))
+    board["source_root_candidates"] = _source_repo_root_candidates(workspace)
+    board["rack_readiness_entries"] = entries
+    board["summary"] = (
+        f"{entry_total} IDCevo rack target row(s): {asset_ready} asset-ready, {asset_blocked} asset-blocked. "
+        f"Operator-confirmed checklist item(s): {len(checklist)}. "
+        f"Reading from {board.get('repo_root', '')}. Source: {source_state}."
+    )
+    board["board_rows"] = rows
+    return board
+
+def _rack_readiness_page(workspace: Path, *, bmw_root: Path | str | None = None) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="rack-readiness",
+        title="Rack Readiness",
+        tagline="IDCevo pre-flash asset readiness and operator-confirmed rack checklist.",
+        reader=lambda: _rack_readiness_payload(workspace, bmw_root),
+        workspace=workspace,
+        ownership_note=(
+            "Evidence only - asset readiness covers exported, delivered, and version metadata; "
+            "rack environment checks remain operator-confirmed."
+        ),
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    page["source_selector"] = {
+        "selected_source_root": str(payload.get("selected_source_root", "")),
+        "source_root_candidates": list(payload.get("source_root_candidates", [])),
+    }
+    page["confluence_anchors"] = [
+        str(item.get("confluence_anchor", ""))
+        for item in payload.get("operator_checklist", [])
+        if isinstance(item, dict) and str(item.get("confluence_anchor", "")).strip()
+    ]
     return page
 
 def _disabled_tests_payload(
@@ -1410,6 +1517,8 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "display_type_groups",
         "no_perspectives_entries",
         "brand_reference_entries",
+        "rack_readiness_entries",
+        "operator_checklist",
         "selected_source_root",
         "source_root_candidates",
         "counts",
@@ -1685,6 +1794,8 @@ for _name in (
     "_cross_domain_delivery_page",
     "_perspectives_inventory_payload",
     "_perspectives_inventory_page",
+    "_rack_readiness_payload",
+    "_rack_readiness_page",
     "_disabled_tests_payload",
     "_disabled_tests_page",
     "_api_version_coverage_payload",
