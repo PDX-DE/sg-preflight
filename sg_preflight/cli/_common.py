@@ -1442,7 +1442,8 @@ def _console_rack_readiness(payload: dict[str, object]) -> None:
         f"asset ready: {counts.get('asset_ready_count', 0)} | "
         f"asset blocked: {counts.get('asset_blocked_count', 0)} | "
         f"exported: {counts.get('exported_count', 0)} | "
-        f"delivered: {counts.get('delivered_count', 0)}"
+        f"version metadata: {counts.get('version_ok_count', 0)} | "
+        f"delivery context delivered: {counts.get('delivered_count', 0)}"
     )
     print(str(payload.get("manual_review_banner", "")))
     artifacts = payload.get("artifacts")
@@ -1464,10 +1465,15 @@ def _console_rack_readiness(payload: dict[str, object]) -> None:
             evidence = "; ".join(str(blocker) for blocker in blockers[:3])
         else:
             evidence = "asset-side checks passed"
+        context_notes = entry.get("context_notes", [])
+        context_note = ""
+        if isinstance(context_notes, list) and context_notes:
+            context_note = str(context_notes[0]).strip()
         print(
             _console_safe(
                 f"- {entry.get('relative_path', '')}: {entry.get('asset_status', '')}; "
                 f"SVT {entry.get('expected_svt_filename', '')}; {evidence}"
+                f"{'; ' + context_note if context_note else ''}"
             )
         )
     if len(entries) > 18:

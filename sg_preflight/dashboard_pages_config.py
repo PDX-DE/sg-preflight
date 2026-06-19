@@ -589,8 +589,8 @@ def _rack_readiness_payload(
             "label": "Asset-side auto checks",
             "status": str(asset_ready),
             "detail": (
-                f"{asset_blocked} blocked; {exported} exported; {delivered} delivered; "
-                f"{version_ok} with version metadata."
+                f"{asset_blocked} blocked; {exported} exported; {version_ok} with version metadata. "
+                f"Delivery context: {delivered} delivered."
             ),
         },
         {
@@ -605,6 +605,10 @@ def _rack_readiness_payload(
             evidence = "; ".join(str(blocker) for blocker in blockers[:3])
         else:
             evidence = "asset-side checks passed"
+        context_notes = entry.get("context_notes", [])
+        context_note = ""
+        if isinstance(context_notes, list) and context_notes:
+            context_note = str(context_notes[0]).strip()
         rows.append(
             {
                 "label": f"Rack asset / {entry.get('model_id', '')}".strip(),
@@ -612,6 +616,7 @@ def _rack_readiness_payload(
                 "detail": (
                     f"{entry.get('relative_path', '')}; "
                     f"expected SVT {entry.get('expected_svt_filename', '')}; {evidence}"
+                    f"{'; ' + context_note if context_note else ''}"
                 ),
             }
         )
@@ -630,6 +635,7 @@ def _rack_readiness_payload(
     board["rack_readiness_entries"] = entries
     board["summary"] = (
         f"{entry_total} IDCevo rack target row(s): {asset_ready} asset-ready, {asset_blocked} asset-blocked. "
+        f"Delivery context: {delivered} delivered. "
         f"Operator-confirmed checklist item(s): {len(checklist)}. "
         f"Reading from {board.get('repo_root', '')}. Source: {source_state}."
     )
@@ -644,7 +650,7 @@ def _rack_readiness_page(workspace: Path, *, bmw_root: Path | str | None = None)
         reader=lambda: _rack_readiness_payload(workspace, bmw_root),
         workspace=workspace,
         ownership_note=(
-            "Evidence only - asset readiness covers exported, delivered, and version metadata; "
+            "Evidence only - asset readiness covers exported RCA and version metadata; delivery is context; "
             "rack environment checks remain operator-confirmed."
         ),
     )

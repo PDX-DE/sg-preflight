@@ -85,8 +85,8 @@ class TestRackReadiness(unittest.TestCase):
 
         self.assertEqual(set(entries), {"G70", "G71", "G72"})
         self.assertEqual(payload["counts"]["entry_total"], 3)
-        self.assertEqual(payload["counts"]["asset_ready_count"], 1)
-        self.assertEqual(payload["counts"]["asset_blocked_count"], 2)
+        self.assertEqual(payload["counts"]["asset_ready_count"], 2)
+        self.assertEqual(payload["counts"]["asset_blocked_count"], 1)
         self.assertEqual(payload["counts"]["exported_count"], 2)
         self.assertEqual(payload["counts"]["delivered_count"], 2)
         self.assertEqual(payload["counts"]["version_ok_count"], 3)
@@ -108,8 +108,13 @@ class TestRackReadiness(unittest.TestCase):
         self.assertIn("No RCA export found for this IDCevo car.", no_export["blockers"])
 
         not_delivered = entries["G72"]
-        self.assertFalse(not_delivered["asset_ready"])
-        self.assertIn("Latest CHANGELOG entry is not delivered.", not_delivered["blockers"])
+        self.assertTrue(not_delivered["asset_ready"])
+        self.assertEqual(not_delivered["asset_status"], "asset_ready")
+        self.assertEqual(not_delivered["blockers"], [])
+        self.assertFalse(not_delivered["delivery_context"]["blocking"])
+        self.assertEqual(not_delivered["delivery_context"]["status"], "not_delivered_yet")
+        self.assertIn("Latest CHANGELOG entry is not delivered", not_delivered["context_notes"][0])
+        self.assertNotIn("Latest CHANGELOG entry is not delivered.", not_delivered["blockers"])
 
     def test_missing_repo_root_returns_empty_read_only_board(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -148,6 +153,7 @@ class TestRackReadiness(unittest.TestCase):
         self.assertEqual(markdown, rack_readiness_markdown(board))
         self.assertIn("# Rack Pre-Flash Readiness", markdown)
         self.assertIn("SVT_IDCEVO-WITHOUT_SWITCH_G70_EVO.xml", markdown)
+        self.assertIn("Delivery Context", markdown)
         self.assertIn("operator-confirmed", markdown)
         self.assertNotIn("flash success", markdown.casefold())
 
