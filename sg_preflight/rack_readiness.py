@@ -36,6 +36,16 @@ MANUAL_REVIEW_BANNER = (
     "flash outcome, and performance "
     "remain operator-confirmed/manual."
 )
+RACK_TARGET_INVENTORY_PROVENANCE = (
+    "Reference - not live; documented in Confluence (PDX 400 Hardware-overview-IDC23-IDCEVO; "
+    "PDX 010 Outlook Calendar), captured 2026-06-20; values may drift; "
+    "SGFX does not measure or verify these."
+)
+KPI_EXPECTATION_PROVENANCE = (
+    "Reference - not live; documented in Confluence (BMW 3D Car Performance Reports Summary; "
+    "PDX 405 How-to-Profile), captured 2026-06-20; values may drift; "
+    "SGFX does not measure or verify these."
+)
 
 _IDCEVO_SOURCE_ROOT = "Cars_IDCevo"
 _KNOWN_DELIVERY_STATUSES = {STATUS_DELIVERED, STATUS_NOT_DELIVERED_YET, STATUS_UNKNOWN}
@@ -57,6 +67,213 @@ class AssetCheck:
             "status": self.status,
             "detail": self.detail,
         }
+
+
+@dataclass(frozen=True)
+class RackBookingResource:
+    label: str
+    email: str
+    resource_type: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "label": self.label,
+            "email": self.email,
+            "resource_type": self.resource_type,
+        }
+
+    @property
+    def display_text(self) -> str:
+        return f"{self.label} ({self.email})"
+
+
+@dataclass(frozen=True)
+class RackInventoryItem:
+    id: str
+    type: str
+    ip: str
+    software: str
+    location: str
+    connection: str
+    notes: str
+    booking_resource: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "id": self.id,
+            "type": self.type,
+            "ip": self.ip,
+            "software": self.software,
+            "location": self.location,
+            "connection": self.connection,
+            "notes": self.notes,
+            "booking_resource": self.booking_resource,
+        }
+
+
+@dataclass(frozen=True)
+class RackInventoryReference:
+    title: str
+    anchor: str
+    provenance_note: str
+    racks: tuple[RackInventoryItem, ...]
+    booking_resources: tuple[RackBookingResource, ...]
+    reference_only: bool = True
+    live: bool = False
+    verified_by_sgfx: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "anchor": self.anchor,
+            "provenance_note": self.provenance_note,
+            "reference_only": self.reference_only,
+            "live": self.live,
+            "verified_by_sgfx": self.verified_by_sgfx,
+            "racks": [rack.to_dict() for rack in self.racks],
+            "booking_resources": [resource.to_dict() for resource in self.booking_resources],
+        }
+
+
+@dataclass(frozen=True)
+class KpiReferenceMetric:
+    name: str
+    unit: str
+    source_tool: str
+    measurement: str
+    report_fields: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "unit": self.unit,
+            "source_tool": self.source_tool,
+            "measurement": self.measurement,
+            "report_fields": list(self.report_fields),
+        }
+
+
+@dataclass(frozen=True)
+class KpiExpectationReference:
+    title: str
+    anchor: str
+    provenance_note: str
+    metrics: tuple[KpiReferenceMetric, ...]
+    reference_only: bool = True
+    live: bool = False
+    measured_by_sgfx: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "anchor": self.anchor,
+            "provenance_note": self.provenance_note,
+            "reference_only": self.reference_only,
+            "live": self.live,
+            "measured_by_sgfx": self.measured_by_sgfx,
+            "metrics": [metric.to_dict() for metric in self.metrics],
+        }
+
+
+RACK_BOOKING_RESOURCES: tuple[RackBookingResource, ...] = (
+    RackBookingResource(
+        label="Seriengrafik Rack BMW ITAI-1645",
+        email="itai-1645@paradoxcat.com",
+        resource_type="Equipment",
+    ),
+    RackBookingResource(
+        label="Seriengrafik Rack Mini ITAI-1646",
+        email="itai-1646@paradoxcat.com",
+        resource_type="Equipment",
+    ),
+    RackBookingResource(
+        label="Testrack Krusty ITAI-1647",
+        email="itai-1647@paradoxcat.com",
+        resource_type="Equipment",
+    ),
+)
+
+RACK_TARGET_INVENTORY = RackInventoryReference(
+    title="Rack Target Inventory Reference",
+    anchor="PDX 400 Hardware-overview-IDC23-IDCEVO; PDX 010 Outlook Calendar",
+    provenance_note=RACK_TARGET_INVENTORY_PROVENANCE,
+    racks=(
+        RackInventoryItem(
+            id="ITAI-1906",
+            type="IDCEVO",
+            ip="169.254.166.99",
+            software="26w13.2-2",
+            location="MUC",
+            connection="adb - USB or Ethernet",
+            notes="Parking View not Operational",
+            booking_resource=RACK_BOOKING_RESOURCES[0].display_text,
+        ),
+        RackInventoryItem(
+            id="IDC23 Rack",
+            type="IDC23",
+            ip="169.254.8.177",
+            software="",
+            location="MUC",
+            connection="adb - Ethernet",
+            notes="",
+            booking_resource=RACK_BOOKING_RESOURCES[0].display_text,
+        ),
+        RackInventoryItem(
+            id="IDC23 Mini",
+            type="Mini",
+            ip="169.254.8.177",
+            software="",
+            location="MUC",
+            connection="adb - Ethernet",
+            notes="",
+            booking_resource=RACK_BOOKING_RESOURCES[1].display_text,
+        ),
+    ),
+    booking_resources=RACK_BOOKING_RESOURCES,
+)
+
+KPI_EXPECTATION_REFERENCE = KpiExpectationReference(
+    title="KPI Expectation Reference",
+    anchor="BMW 3D Car Performance Reports Summary; PDX 405 How-to-Profile",
+    provenance_note=KPI_EXPECTATION_PROVENANCE,
+    metrics=(
+        KpiReferenceMetric(
+            name="Carlib render time",
+            unit="ms",
+            source_tool="benchmark_carlib_perf.py / BMW Carlib Report",
+            measurement="live-on-rack expectation (not captured by SGFX; not measured by SGFX)",
+            report_fields=("Build Type", "Build ID", "Carlib Version", "Avg Time", "Min", "Max", "Runs"),
+        ),
+        KpiReferenceMetric(
+            name="Test-app Compose->Rendered",
+            unit="ms",
+            source_tool="benchmark_testapp_perf.py / BMW Test-app Report",
+            measurement="live-on-rack expectation (not captured by SGFX; not measured by SGFX)",
+            report_fields=("Build Type", "Build ID", "Carlib Version", "Compose->Rendered", "Runs"),
+        ),
+        KpiReferenceMetric(
+            name="Test-app Launch->Rendered",
+            unit="ms",
+            source_tool="benchmark_testapp_perf.py / BMW Test-app Report",
+            measurement="live-on-rack expectation (not captured by SGFX; not measured by SGFX)",
+            report_fields=("Build Type", "Build ID", "Carlib Version", "Launch->Rendered", "Runs"),
+        ),
+        KpiReferenceMetric(
+            name="Profiling VRAM usage",
+            unit="logcat value",
+            source_tool='PDX 405 Asset Viewer / logcat "Total VRAM usage"',
+            measurement="baseline delta on live rack (not captured by SGFX; not measured by SGFX)",
+            report_fields=("Baseline", "Min Asset Load", "Max Asset Load"),
+        ),
+        KpiReferenceMetric(
+            name="Profiling frame delta",
+            unit="ms",
+            source_tool='PDX 405 Asset Viewer / logcat "Avg frame delta"',
+            measurement="baseline delta on live rack (not captured by SGFX; not measured by SGFX)",
+            report_fields=("Baseline", "Min Asset Load", "Max Asset Load"),
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -252,6 +469,8 @@ class RackReadinessBoard:
     operator_checklist: tuple[OperatorChecklistItem, ...] = OPERATOR_CHECKLIST
     target_scope_note: str = RACK_TARGET_SCOPE_NOTE
     manual_review_banner: str = MANUAL_REVIEW_BANNER
+    rack_inventory: RackInventoryReference = RACK_TARGET_INVENTORY
+    kpi_reference: KpiExpectationReference = KPI_EXPECTATION_REFERENCE
 
     @property
     def counts(self) -> dict[str, Any]:
@@ -277,6 +496,8 @@ class RackReadinessBoard:
             "generated_at_utc": self.generated_at_utc,
             "manual_review_banner": self.manual_review_banner,
             "target_scope_note": self.target_scope_note,
+            "rack_inventory": self.rack_inventory.to_dict(),
+            "kpi_reference": self.kpi_reference.to_dict(),
             "read_only": True,
             "manual_review_required": True,
             "is_approval": False,
@@ -605,11 +826,79 @@ def rack_readiness_markdown(board: RackReadinessBoard) -> str:
         f"- IDCevo dirs outside current rack scope: {counts['out_of_scope_idcevo_dir_count']}",
         f"- documented rack targets with no delivery row: {counts['missing_rack_target_dir_count']}",
         "",
-        "## Asset-Side Auto Checks",
+        "## Rack Target Inventory Reference",
         "",
-        "| Brand | Model | Asset status | Export | Version metadata | Expected SVT | Path |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        str(payload["rack_inventory"]["provenance_note"]),
+        "",
+        "| ID | Type | IP | Software | Location | Connection | Notes | Booking resource |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
+    for rack in payload["rack_inventory"]["racks"]:
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    _markdown_cell(rack.get("id", "")),
+                    _markdown_cell(rack.get("type", "")),
+                    _markdown_cell(rack.get("ip", "")),
+                    _markdown_cell(rack.get("software", "")),
+                    _markdown_cell(rack.get("location", "")),
+                    _markdown_cell(rack.get("connection", "")),
+                    _markdown_cell(rack.get("notes", "")),
+                    _markdown_cell(rack.get("booking_resource", "")),
+                )
+            )
+            + " |"
+        )
+    lines.extend(
+        (
+            "",
+            "Booking resources documented in Outlook:",
+        )
+    )
+    for resource in payload["rack_inventory"]["booking_resources"]:
+        lines.append(
+            f"- {_markdown_cell(resource.get('label', ''))} "
+            f"({_markdown_cell(resource.get('email', ''))}; {_markdown_cell(resource.get('resource_type', ''))})"
+        )
+    lines.extend(
+        (
+            "",
+            "## KPI Expectation Reference",
+            "",
+            str(payload["kpi_reference"]["provenance_note"]),
+            "",
+            "These metrics are measured live on the rack and are not measured by SGFX.",
+            "",
+            "| Metric | Unit | Source/tool | Measurement | Report fields |",
+            "| --- | --- | --- | --- | --- |",
+        )
+    )
+    for metric in payload["kpi_reference"]["metrics"]:
+        report_fields = metric.get("report_fields", [])
+        fields_text = ", ".join(str(field) for field in report_fields) if isinstance(report_fields, list) else ""
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    _markdown_cell(metric.get("name", "")),
+                    _markdown_cell(metric.get("unit", "")),
+                    _markdown_cell(metric.get("source_tool", "")),
+                    _markdown_cell(metric.get("measurement", "")),
+                    _markdown_cell(fields_text),
+                )
+            )
+            + " |"
+        )
+    lines.extend(
+        (
+            "",
+            "## Asset-Side Auto Checks",
+            "",
+            "| Brand | Model | Asset status | Export | Version metadata | Expected SVT | Path |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        )
+    )
     for entry in board.entries:
         checks = {check.key: check for check in entry.asset_checks}
         lines.append(

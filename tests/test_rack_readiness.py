@@ -135,6 +135,46 @@ class TestRackReadiness(unittest.TestCase):
         self.assertTrue(payload["operator_checklist"])
         self.assertFalse(payload["is_approval"])
 
+    def test_reference_panels_are_present_without_changing_asset_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = _rack_fixture(root)
+            board = build_rack_readiness_board(
+                repo,
+                workspace_root=root,
+                bmw_repo_root=root / "missing-bmw-repo",
+                now=datetime(2026, 6, 19, 11, 0, tzinfo=timezone.utc),
+            )
+
+        payload = board.to_dict()
+        inventory = payload["rack_inventory"]
+        kpi_reference = payload["kpi_reference"]
+
+        self.assertEqual(payload["counts"]["entry_total"], 3)
+        self.assertEqual(payload["counts"]["asset_ready_count"], 2)
+        self.assertTrue(inventory["reference_only"])
+        self.assertFalse(inventory["live"])
+        self.assertFalse(inventory["verified_by_sgfx"])
+        self.assertEqual(len(inventory["racks"]), 3)
+        self.assertEqual(inventory["racks"][0]["id"], "ITAI-1906")
+        self.assertEqual(inventory["racks"][0]["ip"], "169.254.166.99")
+        self.assertIn("itai-1645@paradoxcat.com", json.dumps(inventory))
+
+        self.assertTrue(kpi_reference["reference_only"])
+        self.assertFalse(kpi_reference["live"])
+        self.assertFalse(kpi_reference["measured_by_sgfx"])
+        metric_names = {metric["name"] for metric in kpi_reference["metrics"]}
+        self.assertIn("Carlib render time", metric_names)
+        self.assertIn("Test-app Compose->Rendered", metric_names)
+        self.assertIn("Profiling VRAM usage", metric_names)
+
+        for panel in (inventory, kpi_reference):
+            note = panel["provenance_note"].casefold()
+            self.assertIn("reference", note)
+            self.assertIn("captured 2026-06-20", note)
+            self.assertIn("not live", note)
+            self.assertIn("sgfx does not measure or verify", note)
+
     def test_writes_json_and_markdown_with_expected_svt_and_operator_checklist(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -160,6 +200,13 @@ class TestRackReadiness(unittest.TestCase):
         self.assertIn("Delivery Context", markdown)
         self.assertIn("operator-confirmed", markdown)
         self.assertNotIn("flash success", markdown.casefold())
+        self.assertIn("## Rack Target Inventory Reference", markdown)
+        self.assertIn("## KPI Expectation Reference", markdown)
+        self.assertIn("Reference - not live", markdown)
+        self.assertIn("SGFX does not measure or verify these", markdown)
+        self.assertIn("ITAI-1906", markdown)
+        self.assertIn("Compose->Rendered", markdown)
+        self.assertIn("not measured by SGFX", markdown)
 
     def test_authoritative_idcevo_profiles_are_targets_and_decoys_are_visible_out_of_scope(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1457,6 +1457,56 @@ def _console_rack_readiness(payload: dict[str, object]) -> None:
         if artifacts.get("markdown_path"):
             print(f"Markdown: {artifacts['markdown_path']}")
     print("-" * 80)
+    rack_inventory = payload.get("rack_inventory")
+    if isinstance(rack_inventory, dict):
+        print("Rack Target Inventory Reference")
+        print(_console_safe(str(rack_inventory.get("provenance_note", ""))))
+        racks = rack_inventory.get("racks", [])
+        if isinstance(racks, list):
+            for rack in racks:
+                if not isinstance(rack, dict):
+                    continue
+                print(
+                    _console_safe(
+                        f"- {rack.get('id', '')} ({rack.get('type', '')}): "
+                        f"ip {rack.get('ip', '')}; sw {rack.get('software', '') or 'not listed'}; "
+                        f"{rack.get('location', '')}; {rack.get('connection', '')}; "
+                        f"booking {rack.get('booking_resource', '')}"
+                        f"{'; ' + str(rack.get('notes', '')) if rack.get('notes') else ''}"
+                    )
+                )
+        resources = rack_inventory.get("booking_resources", [])
+        if isinstance(resources, list) and resources:
+            print("Booking resources:")
+            for resource in resources:
+                if isinstance(resource, dict):
+                    print(
+                        _console_safe(
+                            f"- {resource.get('label', '')} ({resource.get('email', '')}; "
+                            f"{resource.get('resource_type', '')})"
+                        )
+                    )
+        print("-" * 80)
+    kpi_reference = payload.get("kpi_reference")
+    if isinstance(kpi_reference, dict):
+        print("KPI Expectation Reference")
+        print(_console_safe(str(kpi_reference.get("provenance_note", ""))))
+        print("These metrics are measured live on the rack and are not measured by SGFX.")
+        metrics = kpi_reference.get("metrics", [])
+        if isinstance(metrics, list):
+            for metric in metrics:
+                if not isinstance(metric, dict):
+                    continue
+                fields = metric.get("report_fields", [])
+                fields_text = ", ".join(str(field) for field in fields) if isinstance(fields, list) else ""
+                print(
+                    _console_safe(
+                        f"- {metric.get('name', '')} [{metric.get('unit', '')}]: "
+                        f"{metric.get('source_tool', '')}; {metric.get('measurement', '')}; "
+                        f"fields {fields_text}"
+                    )
+                )
+        print("-" * 80)
     entries = payload.get("entries", [])
     out_of_scope = payload.get("out_of_scope_idcevo_dirs", [])
     if not isinstance(out_of_scope, list):
