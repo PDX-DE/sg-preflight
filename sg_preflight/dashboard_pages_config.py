@@ -583,6 +583,13 @@ def _rack_readiness_payload(
     entries = [entry for entry in board.get("entries", []) if isinstance(entry, dict)]
     out_of_scope = [entry for entry in board.get("out_of_scope_idcevo_dirs", []) if isinstance(entry, dict)]
     missing_targets = [entry for entry in board.get("missing_rack_target_dirs", []) if isinstance(entry, dict)]
+    rack_inventory = board.get("rack_inventory", {})
+    if not isinstance(rack_inventory, dict):
+        rack_inventory = {}
+    kpi_reference = board.get("kpi_reference", {})
+    if not isinstance(kpi_reference, dict):
+        kpi_reference = {}
+    rack_reference_panels: list[dict[str, Any]] = []
     rows: list[dict[str, str]] = [
         {
             "label": "Reading from",
@@ -608,6 +615,51 @@ def _rack_readiness_payload(
             "detail": "Operator-confirmed rack/environment items; SGFX does not auto-check or auto-pass them.",
         },
     ]
+    if rack_inventory:
+        racks = rack_inventory.get("racks", [])
+        rack_count = len(racks) if isinstance(racks, list) else 0
+        note = str(rack_inventory.get("provenance_note", ""))
+        rows.append(
+            {
+                "label": "Reference / Rack target inventory",
+                "status": "Reference - not live",
+                "detail": f"{note} {rack_count} documented rack target(s); SGFX does not verify rack state.",
+            }
+        )
+        rack_reference_panels.append(
+            {
+                "label": "Rack target inventory",
+                "status": "Reference - not live",
+                "detail": note,
+                "payload_key": "rack_inventory",
+                "collapsible": True,
+                "secondary": True,
+            }
+        )
+    if kpi_reference:
+        metrics = kpi_reference.get("metrics", [])
+        metric_count = len(metrics) if isinstance(metrics, list) else 0
+        note = str(kpi_reference.get("provenance_note", ""))
+        rows.append(
+            {
+                "label": "Reference / KPI expectation",
+                "status": "Reference - not live",
+                "detail": (
+                    f"{note} {metric_count} metric(s); measured live on the rack, "
+                    "not measured by SGFX."
+                ),
+            }
+        )
+        rack_reference_panels.append(
+            {
+                "label": "KPI expectation",
+                "status": "Reference - not live",
+                "detail": note,
+                "payload_key": "kpi_reference",
+                "collapsible": True,
+                "secondary": True,
+            }
+        )
     for entry in entries[:18]:
         blockers = entry.get("blockers", [])
         if isinstance(blockers, list) and blockers:
@@ -677,6 +729,9 @@ def _rack_readiness_payload(
     board["rack_readiness_entries"] = entries
     board["rack_out_of_scope_idcevo_dirs"] = out_of_scope
     board["rack_missing_target_dirs"] = missing_targets
+    board["rack_inventory"] = rack_inventory
+    board["kpi_reference"] = kpi_reference
+    board["rack_reference_panels"] = rack_reference_panels
     board["summary"] = (
         f"{entry_total} IDCevo rack target row(s): {asset_ready} asset-ready, {asset_blocked} asset-blocked. "
         f"{out_of_scope_count} IDCevo dir(s) outside the documented rack-target scope. "
@@ -1570,6 +1625,9 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "no_perspectives_entries",
         "brand_reference_entries",
         "rack_readiness_entries",
+        "rack_inventory",
+        "kpi_reference",
+        "rack_reference_panels",
         "operator_checklist",
         "selected_source_root",
         "source_root_candidates",

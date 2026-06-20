@@ -1314,12 +1314,27 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(rack_entries["G70"]["expected_svt_filename"], "SVT_IDCEVO-WITHOUT_SWITCH_G70_EVO.xml")
         self.assertTrue(page["payload"]["operator_checklist"])
         self.assertFalse(any(item["auto_checked"] for item in page["payload"]["operator_checklist"]))
+        self.assertFalse(page["payload"]["rack_inventory"]["live"])
+        self.assertFalse(page["payload"]["rack_inventory"]["verified_by_sgfx"])
+        self.assertIn("not live", page["payload"]["rack_inventory"]["provenance_note"].casefold())
+        self.assertIn("sgfx does not measure or verify", page["payload"]["rack_inventory"]["provenance_note"].casefold())
+        self.assertFalse(page["payload"]["kpi_reference"]["live"])
+        self.assertFalse(page["payload"]["kpi_reference"]["measured_by_sgfx"])
+        self.assertIn("not live", page["payload"]["kpi_reference"]["provenance_note"].casefold())
+        self.assertIn("sgfx does not measure or verify", page["payload"]["kpi_reference"]["provenance_note"].casefold())
+        self.assertTrue(all(panel["collapsible"] for panel in page["payload"]["rack_reference_panels"]))
+        self.assertTrue(all(panel["secondary"] for panel in page["payload"]["rack_reference_panels"]))
         self.assertIn("asset-ready", page["summary"].casefold())
         self.assertIn("operator-confirmed", page["summary"].casefold())
         labels = [item["label"] for item in page["items"]]
+        items_by_label = {item["label"]: item for item in page["items"]}
         self.assertIn("Rack asset / G70", labels)
         self.assertIn("Rack asset / G58", labels)
         self.assertIn("Operator checklist", labels)
+        self.assertIn("Reference / Rack target inventory", labels)
+        self.assertIn("Reference / KPI expectation", labels)
+        self.assertIn("not live", items_by_label["Reference / Rack target inventory"]["detail"].casefold())
+        self.assertIn("not measured by sgfx", items_by_label["Reference / KPI expectation"]["detail"].casefold())
 
     def test_dashboard_doc_links_are_copy_only(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
