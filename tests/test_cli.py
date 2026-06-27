@@ -1530,6 +1530,54 @@ class TestCLI(unittest.TestCase):
         self.assertIn("Draft only", markdown)
         self.assertNotIn("Clockodo", markdown)
 
+    def test_whats_new_cli_returns_json_text_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_text(
+                root / "CHANGELOG.md",
+                "\ufeff# Changelog\n\n"
+                "## [2.0.0] - 2026-06-27\n\n"
+                "### Added\n"
+                "- What's new page\n"
+                "- Welcome card link\n\n"
+                "### Fixed\n"
+                "- Empty-state wording\n",
+            )
+
+            json_stdout = io.StringIO()
+            with redirect_stdout(json_stdout):
+                json_result = main(["whats-new", "--workspace", str(root), "--format", "json"])
+
+            text_stdout = io.StringIO()
+            with redirect_stdout(text_stdout):
+                text_result = main(["whats-new", "--workspace", str(root)])
+
+            markdown_stdout = io.StringIO()
+            with redirect_stdout(markdown_stdout):
+                markdown_result = main(["whats-new", "--workspace", str(root), "--markdown"])
+
+        self.assertEqual(json_result, 0)
+        payload = json.loads(json_stdout.getvalue())
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual(payload["current_section"]["title"], "2.0.0 - 2026-06-27")
+        self.assertEqual(payload["counts"]["current_item_count"], 3)
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["is_approval"])
+
+        self.assertEqual(text_result, 0)
+        text = text_stdout.getvalue()
+        self.assertIn("What's new in this build", text)
+        self.assertIn("2.0.0 - 2026-06-27", text)
+        self.assertIn("- What's new page", text)
+        self.assertNotIn("since last version", text.lower())
+
+        self.assertEqual(markdown_result, 0)
+        markdown = markdown_stdout.getvalue()
+        self.assertIn("# What's new in this build", markdown)
+        self.assertIn("## 2.0.0 - 2026-06-27", markdown)
+        self.assertIn("- Welcome card link", markdown)
+        self.assertNotIn("approved", markdown.lower())
+
     def test_digest_weekly_tickets_rejects_bad_since_cleanly(self) -> None:
         stderr = io.StringIO()
         with redirect_stderr(stderr):

@@ -35,6 +35,11 @@ from sg_preflight.bmw_pipeline_auto_fix import (
     render_missing_actual_diagnostic_text,
     run_missing_actual_diagnostic_chain,
 )
+from sg_preflight.changelog_whats_new import (
+    build_changelog_whats_new,
+    render_changelog_whats_new_markdown,
+    render_changelog_whats_new_text,
+)
 from sg_preflight.cross_car_comparison import (
     build_cross_car_comparison,
     render_cross_car_comparison_markdown,
@@ -2532,6 +2537,15 @@ def build_parser() -> argparse.ArgumentParser:
     weekly_tickets.add_argument("--markdown", action="store_true", help="Print weekly ticket draft as Markdown")
     _add_render_options(weekly_tickets)
 
+    whats_new = sub.add_parser(
+        "whats-new",
+        help="Read the shipped changelog notes for this build",
+    )
+    whats_new.add_argument("--workspace", help="Workspace or bundle root override")
+    whats_new.add_argument("--json", action="store_true", help="Print what's-new payload as JSON")
+    whats_new.add_argument("--markdown", action="store_true", help="Print what's-new notes as Markdown")
+    _add_render_options(whats_new)
+
     team_digest_board = sub.add_parser(
         "team-digest-board",
         help="Build a local Team Daily Digest board snapshot",
@@ -3180,7 +3194,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
 
         return handle_reviews_command(args, parser)
 
-    if args.command in {"daily-digest", "team-digest-board", "digest"}:
+    if args.command in {"daily-digest", "team-digest-board", "digest", "whats-new"}:
         from sg_preflight.cli.digest import handle_digest_command
 
         return handle_digest_command(args, parser)

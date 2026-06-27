@@ -80,6 +80,7 @@ _MAIN_GLOBAL_NAMES = (
     "build_latest_daily_digest",
     "build_team_daily_digest_board",
     "build_operator_handoff_snapshot",
+    "build_changelog_whats_new",
 )
 
 
@@ -1512,6 +1513,69 @@ def _cross_car_comparison_page(
         page["empty_state_note"] = CROSS_CAR_COMPARISON_EMPTY_NOTE
     return page
 
+def _whats_new_payload(workspace: Path) -> dict[str, Any]:
+    payload = build_changelog_whats_new(workspace)
+    if not bool(payload.get("data_available", False)):
+        payload["board_rows"] = []
+        return payload
+
+    current_section = payload.get("current_section", {})
+    if not isinstance(current_section, dict):
+        current_section = {}
+    rows: list[dict[str, str]] = [
+        {
+            "label": "Build notes",
+            "status": str(current_section.get("title", "")),
+            "detail": (
+                f"{current_section.get('item_count', 0)} item(s) from "
+                f"{Path(str(payload.get('source_path', ''))).name or 'CHANGELOG.md'}."
+            ),
+        }
+    ]
+    subsections = current_section.get("subsections", [])
+    if isinstance(subsections, list):
+        for subsection in subsections:
+            if not isinstance(subsection, dict):
+                continue
+            items = [str(item).strip() for item in subsection.get("items", []) if str(item).strip()]
+            detail = "; ".join(items[:4])
+            if len(items) > 4:
+                detail = f"{detail}; {len(items) - 4} more item(s)"
+            rows.append(
+                {
+                    "label": str(subsection.get("title", "Notes") or "Notes"),
+                    "status": f"{len(items)} item(s)",
+                    "detail": detail or "No bullet items listed.",
+                }
+            )
+    earlier_sections = payload.get("earlier_sections", [])
+    if isinstance(earlier_sections, list) and earlier_sections:
+        earlier_item_count = int(payload.get("counts", {}).get("earlier_item_count", 0) or 0)
+        rows.append(
+            {
+                "label": "Earlier entries",
+                "status": str(len(earlier_sections)),
+                "detail": f"{earlier_item_count} earlier item(s) are kept in the payload for reference.",
+            }
+        )
+    payload["board_rows"] = rows
+    return payload
+
+def _whats_new_page(workspace: Path) -> dict[str, Any]:
+    page = _reader_page(
+        page_id="whats-new",
+        title="What's New",
+        tagline="Current build notes from bundled CHANGELOG.md.",
+        reader=lambda: _whats_new_payload(workspace),
+        workspace=workspace,
+        ownership_note="Read-only changelog view; no approval, posting, or source changes.",
+    )
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    empty_note = str(payload.get("empty_state_note", "")).strip()
+    if empty_note:
+        page["empty_state_note"] = empty_note
+    return page
+
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
     handoff_items = payload.get("handoff_items", [])
     if isinstance(handoff_items, list) and handoff_items:
@@ -1592,7 +1656,11 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "status",
         "data_available",
         "summary",
+        "title",
         "workbook_path",
+        "source_path",
+        "generated_at_utc",
+        "empty_state_note",
         "expected_count",
         "actual_count",
         "diff_count",
@@ -1618,6 +1686,8 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "guidance",
         "share_decision",
         "sections",
+        "current_section",
+        "earlier_sections",
         "profiles",
         "version_validation",
         "board_rows",
@@ -1924,6 +1994,8 @@ for _name in (
     "_screenshot_test_state_page",
     "_risk_score_page",
     "_cross_car_comparison_page",
+    "_whats_new_payload",
+    "_whats_new_page",
     "_payload_items",
     "_sanitized_payload",
     "_section_count",

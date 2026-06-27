@@ -215,7 +215,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_twenty_four_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_twenty_five_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -229,6 +229,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "batch-full-qa-pass",
                 "my-tickets",
                 "weekly-ticket-draft",
+                "whats-new",
                 "delivery-checklist",
                 "delivery-readiness",
                 "cross-domain-delivery",
@@ -267,6 +268,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "batch-full-qa-pass", "label": "Batch Full QA Pass"},
                 {"id": "my-tickets", "label": "My Tickets"},
                 {"id": "weekly-ticket-draft", "label": "Weekly Ticket Draft"},
+                {"id": "whats-new", "label": "What's New"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
                 {"id": "delivery-readiness", "label": "Delivery Readiness"},
                 {"id": "cross-domain-delivery", "label": "Cross-Domain Delivery"},
@@ -307,6 +309,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             pages_by_id["weekly-ticket-draft"]["tagline"],
             "Draft your end-of-week ticket list from Jira updates and local SGFX activity.",
         )
+        self.assertEqual(pages_by_id["whats-new"]["tagline"], "Current build notes from bundled CHANGELOG.md.")
         self.assertEqual(pages_by_id["delivery-checklist"]["tagline"], "Workbook evidence per delivery profile (read-only).")
         self.assertEqual(
             pages_by_id["delivery-readiness"]["tagline"],
@@ -566,7 +569,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 24)
+                self.assertEqual(len(snapshot["pages"]), 25)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1087,6 +1090,70 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertTrue(page["payload"]["read_only"])
         self.assertFalse(page["payload"]["is_approval"])
         self.assertIn("review and send", page["summary"])
+
+    def test_whats_new_page_is_read_only_changelog_surface(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        config_source = (root / "dashboard_pages_config.py").read_text(encoding="utf-8")
+
+        self.assertIn('("whats-new", "What\'s New")', source)
+        self.assertIn("_whats_new_page", source)
+        self.assertIn("_whats_new_payload", config_source)
+        self.assertIn("build_changelog_whats_new", source)
+        self.assertIn("whats_new_page_id", source)
+        self.assertIn("open_whats_new", source)
+        self.assertIn("What's new", source)
+        self.assertNotIn("what changed since last version", source.lower())
+
+    def test_dashboard_snapshot_contains_whats_new_page_from_local_changelog(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_text(
+                root / "CHANGELOG.md",
+                "\ufeff# Changelog\n\n"
+                "## [2.0.0] - 2026-06-27\n\n"
+                "### Added\n"
+                "- What's new page\n"
+                "- Welcome card link\n\n"
+                "### Fixed\n"
+                "- Empty-state wording\n",
+            )
+
+            snapshot = build_dashboard_snapshot("G70", root, defer_daily_digest=True, defer_team_digest_board=True)
+
+        navigation = [item["id"] for item in snapshot["navigation"]]
+        self.assertIn("whats-new", navigation)
+        pages = {page["id"]: page for page in snapshot["pages"]}
+        page = pages["whats-new"]
+        self.assertEqual(page["status"], "available")
+        self.assertEqual(page["title"], "What's New")
+        self.assertTrue(page["payload"]["read_only"])
+        self.assertFalse(page["payload"]["is_approval"])
+        self.assertEqual(page["payload"]["current_section"]["title"], "2.0.0 - 2026-06-27")
+        self.assertEqual(page["payload"]["counts"]["current_item_count"], 3)
+        self.assertIn("What's new in this build", page["summary"])
+        item_details = "\n".join(item["detail"] for item in page["items"])
+        self.assertIn("What's new page", item_details)
+        self.assertIn("Empty-state wording", item_details)
+        combined_text = json.dumps(page, ensure_ascii=False).lower()
+        self.assertNotIn("since last version", combined_text)
+        self.assertNotIn("approved", combined_text)
+
+    def test_dashboard_snapshot_whats_new_empty_state_when_changelog_missing(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
+
+        page = {page["id"]: page for page in snapshot["pages"]}["whats-new"]
+        self.assertEqual(page["status"], "unavailable")
+        self.assertFalse(page["data_available"])
+        self.assertEqual(page["items"], [])
+        self.assertIn("CHANGELOG.md was not found", page["summary"])
+        self.assertIn("No changelog found", page["empty_state_note"])
+        self.assertTrue(page["payload"]["read_only"])
 
     def test_cross_domain_delivery_page_is_read_only_source_root_board(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight"
@@ -1910,6 +1977,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         self.assertTrue(snapshot["welcome"]["show"])
         self.assertEqual(snapshot["welcome"]["setup_page_id"], "setup-doctor")
+        self.assertEqual(snapshot["welcome"]["whats_new_page_id"], "whats-new")
+        self.assertEqual(snapshot["welcome"]["whats_new_label"], "What's new")
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["setup_status"], fake_setup)
         self.assertEqual(delivery["setup_status"]["actions"][0]["label"], "Set up RaCo")
@@ -1992,7 +2061,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 24)
+        self.assertEqual(len(snapshot["pages"]), 25)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -2006,7 +2075,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 24)
+        self.assertEqual(len(snapshot["pages"]), 25)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")

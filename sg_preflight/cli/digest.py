@@ -22,6 +22,22 @@ _BATTERY_DEFAULT_FILTERS = (
 
 
 def handle_digest_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.command == "whats-new":
+        changelog_root = common._resolve_workspace(args)
+        try:
+            payload = common.build_changelog_whats_new(changelog_root)
+        except Exception as exc:
+            print(common._console_safe(f"whats-new failed: {exc}"), file=sys.stderr)
+            return 1
+        output_format = common._resolve_render_format(args, parser)
+        if output_format == "json":
+            common._emit_json(payload, args)
+        elif output_format == "markdown":
+            common._emit_text(common.render_changelog_whats_new_markdown(payload), args)
+        else:
+            common._emit_text(common.render_changelog_whats_new_text(payload), args)
+        return 0
+
     if args.command == "daily-qa-snapshot":
         snapshot_root = common._resolve_workspace(args)
         output_root = Path(args.output_root).resolve() if args.output_root else None

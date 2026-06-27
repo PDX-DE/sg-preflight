@@ -31,6 +31,7 @@ from sg_preflight.bmw_pipeline_auto_fix import (
     render_missing_actual_diagnostic_text,
     run_missing_actual_diagnostic_chain,
 )
+from sg_preflight.changelog_whats_new import build_changelog_whats_new
 from sg_preflight.bmw_process import workflow_contracts
 from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.daily_digest import build_latest_daily_digest, render_daily_digest_text
@@ -244,6 +245,7 @@ from sg_preflight.dashboard_pages_config import (
     _screenshot_test_state_page,
     _risk_score_page,
     _cross_car_comparison_page,
+    _whats_new_page,
     _payload_items,
     _sanitized_payload,
     _section_count,
@@ -453,6 +455,7 @@ DASHBOARD_NAVIGATION = (
     ("batch-full-qa-pass", "Batch Full QA Pass"),
     ("my-tickets", "My Tickets"),
     ("weekly-ticket-draft", "Weekly Ticket Draft"),
+    ("whats-new", "What's New"),
     ("delivery-checklist", "Delivery Checklist"),
     ("delivery-readiness", "Delivery Readiness"),
     ("cross-domain-delivery", "Cross-Domain Delivery"),
@@ -805,6 +808,8 @@ def build_dashboard_snapshot(
                 "Choose the car profile first, then start Full QA Pass from the visible entry point."
             ),
             "setup_page_id": "setup-doctor",
+            "whats_new_page_id": "whats-new",
+            "whats_new_label": "What's new",
             "setup_action_count": len(
                 [action for action in setup_status.get("actions", []) if isinstance(action, dict)]
             ),
@@ -817,6 +822,7 @@ def build_dashboard_snapshot(
             _batch_full_qa_pass_page(resolved_profile_id, root),
             _my_tickets_page(resolved_profile_id, root),
             _weekly_ticket_draft_page(resolved_profile_id, root),
+            _whats_new_page(root),
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _delivery_readiness_page(root, bmw_root=bmw_root),
             _cross_domain_delivery_page(root, bmw_root=bmw_root),
@@ -1274,6 +1280,7 @@ def _render_first_run_welcome(
     snapshot: dict[str, Any],
     open_setup: Callable[[], None] | None = None,
     open_full_qa: Callable[[], None] | None = None,
+    open_whats_new: Callable[[], None] | None = None,
 ) -> None:
     welcome = snapshot.get("welcome", {})
     if not isinstance(welcome, dict) or not welcome.get("show"):
@@ -1297,6 +1304,13 @@ def _render_first_run_welcome(
                     ui,
                     ui.button("Full QA Pass", on_click=open_full_qa).props("color=primary no-caps dense"),
                     "Open the one-pass wizard for the selected profile.",
+                )
+            whats_new_label = str(welcome.get("whats_new_label", "What's new") or "What's new")
+            if open_whats_new is not None and str(welcome.get("whats_new_page_id", "")).strip():
+                _attach_tooltip(
+                    ui,
+                    ui.button(whats_new_label, on_click=open_whats_new).props("flat no-caps dense"),
+                    "Open the current build notes.",
                 )
             setup_action_count = int(welcome.get("setup_action_count", 0) or 0)
             if open_setup is not None and setup_action_count > 0:
@@ -3443,6 +3457,7 @@ def _render_dashboard(
                     state["snapshot"],
                     open_setup=lambda: _open_page("setup-doctor"),
                     open_full_qa=lambda: _open_page("full-qa-pass"),
+                    open_whats_new=lambda: _open_page("whats-new"),
                 )
                 _render_changed_profiles_card(
                     ui,
