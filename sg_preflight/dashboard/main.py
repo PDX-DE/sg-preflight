@@ -246,6 +246,7 @@ from sg_preflight.dashboard_pages_config import (
     _risk_score_page,
     _cross_car_comparison_page,
     _whats_new_page,
+    _keyboard_shortcuts_page,
     _payload_items,
     _sanitized_payload,
     _section_count,
@@ -456,6 +457,7 @@ DASHBOARD_NAVIGATION = (
     ("my-tickets", "My Tickets"),
     ("weekly-ticket-draft", "Weekly Ticket Draft"),
     ("whats-new", "What's New"),
+    ("keyboard-shortcuts", "Keyboard Shortcuts"),
     ("delivery-checklist", "Delivery Checklist"),
     ("delivery-readiness", "Delivery Readiness"),
     ("cross-domain-delivery", "Cross-Domain Delivery"),
@@ -769,6 +771,8 @@ def build_dashboard_snapshot(
         str(root),
         str(Path(bmw_root).resolve()) if bmw_root is not None else "",
     )
+    shortcuts = list(DASHBOARD_SHORTCUTS)
+    shortcut_actions = [{"key": key, "message": message} for key, message in DASHBOARD_SHORTCUT_ACTIONS]
     return {
         "title": DASHBOARD_TITLE,
         "profile_id": resolved_profile_id,
@@ -797,8 +801,8 @@ def build_dashboard_snapshot(
         "output_root_label": _path_label(output_root),
         "theme": theme,
         "navigation": [{"id": page_id, "label": label} for page_id, label in DASHBOARD_NAVIGATION],
-        "shortcuts": list(DASHBOARD_SHORTCUTS),
-        "shortcut_actions": [{"key": key, "message": message} for key, message in DASHBOARD_SHORTCUT_ACTIONS],
+        "shortcuts": shortcuts,
+        "shortcut_actions": shortcut_actions,
         "guardrails": list(DASHBOARD_GUARDRAILS),
         "welcome": {
             "show": bool(setup_status.get("first_run")),
@@ -823,6 +827,10 @@ def build_dashboard_snapshot(
             _my_tickets_page(resolved_profile_id, root),
             _weekly_ticket_draft_page(resolved_profile_id, root),
             _whats_new_page(root),
+            _keyboard_shortcuts_page(
+                shortcut_actions=shortcut_actions,
+                shortcuts=shortcuts,
+            ),
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _delivery_readiness_page(root, bmw_root=bmw_root),
             _cross_domain_delivery_page(root, bmw_root=bmw_root),

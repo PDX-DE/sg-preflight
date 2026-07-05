@@ -215,7 +215,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_twenty_five_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_twenty_six_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -230,6 +230,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "my-tickets",
                 "weekly-ticket-draft",
                 "whats-new",
+                "keyboard-shortcuts",
                 "delivery-checklist",
                 "delivery-readiness",
                 "cross-domain-delivery",
@@ -269,6 +270,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "my-tickets", "label": "My Tickets"},
                 {"id": "weekly-ticket-draft", "label": "Weekly Ticket Draft"},
                 {"id": "whats-new", "label": "What's New"},
+                {"id": "keyboard-shortcuts", "label": "Keyboard Shortcuts"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
                 {"id": "delivery-readiness", "label": "Delivery Readiness"},
                 {"id": "cross-domain-delivery", "label": "Cross-Domain Delivery"},
@@ -310,6 +312,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             "Draft your end-of-week ticket list from Jira updates and local SGFX activity.",
         )
         self.assertEqual(pages_by_id["whats-new"]["tagline"], "Current build notes from bundled CHANGELOG.md.")
+        self.assertEqual(
+            pages_by_id["keyboard-shortcuts"]["tagline"],
+            "Reference for the dashboard keyboard shortcuts that are already wired.",
+        )
         self.assertEqual(pages_by_id["delivery-checklist"]["tagline"], "Workbook evidence per delivery profile (read-only).")
         self.assertEqual(
             pages_by_id["delivery-readiness"]["tagline"],
@@ -569,7 +575,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 25)
+                self.assertEqual(len(snapshot["pages"]), 26)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1154,6 +1160,53 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("CHANGELOG.md was not found", page["summary"])
         self.assertIn("No changelog found", page["empty_state_note"])
         self.assertTrue(page["payload"]["read_only"])
+
+    def test_keyboard_shortcuts_page_derives_rows_from_snapshot_actions(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
+
+        navigation = [item["id"] for item in snapshot["navigation"]]
+        self.assertIn("keyboard-shortcuts", navigation)
+        page = {page["id"]: page for page in snapshot["pages"]}["keyboard-shortcuts"]
+        self.assertEqual(page["title"], "Keyboard Shortcuts")
+        self.assertEqual(page["status"], "read_only")
+        self.assertTrue(page["data_available"])
+        self.assertIn("window or browser tab has focus", page["summary"])
+        self.assertEqual(page["payload"]["shortcut_actions"], snapshot["shortcut_actions"])
+        self.assertEqual(page["payload"]["shortcuts"], snapshot["shortcuts"])
+        self.assertTrue(page["payload"]["read_only"])
+        self.assertFalse(page["payload"]["is_approval"])
+
+        self.assertEqual(
+            [item["label"] for item in page["items"]],
+            [action["key"] for action in snapshot["shortcut_actions"]],
+        )
+        for item, action in zip(page["items"], snapshot["shortcut_actions"]):
+            self.assertEqual(item["detail"], action["message"])
+        active_actions = [
+            item
+            for item in page["items"]
+            if "no action is assigned" not in item["detail"].lower()
+        ]
+        self.assertEqual([item["label"] for item in active_actions], ["F1", "F2", "F5", "F12", "Esc"])
+
+    def test_keyboard_shortcuts_page_is_read_only_human_voice_surface(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
+        config_source = (root / "dashboard_pages_config.py").read_text(encoding="utf-8")
+
+        self.assertIn('("keyboard-shortcuts", "Keyboard Shortcuts")', source)
+        self.assertIn("_keyboard_shortcuts_page", source)
+        self.assertIn("_keyboard_shortcuts_payload", config_source)
+        self.assertIn("shortcut_actions=shortcut_actions", source)
+        self.assertIn("window or browser tab has focus", config_source)
+        combined = f"{source}\n{config_source}".lower()
+        self.assertNotIn("codename", combined)
+        self.assertNotIn("ai-generated", combined)
+        self.assertNotIn("fully automated", combined)
+        self.assertNotIn("approved by sgfx", combined)
 
     def test_cross_domain_delivery_page_is_read_only_source_root_board(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight"
@@ -2061,7 +2114,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 25)
+        self.assertEqual(len(snapshot["pages"]), 26)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -2075,7 +2128,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 25)
+        self.assertEqual(len(snapshot["pages"]), 26)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")

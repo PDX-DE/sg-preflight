@@ -1576,6 +1576,64 @@ def _whats_new_page(workspace: Path) -> dict[str, Any]:
         page["empty_state_note"] = empty_note
     return page
 
+def _keyboard_shortcuts_payload(
+    *,
+    shortcut_actions: list[dict[str, str]],
+    shortcuts: list[str],
+) -> dict[str, Any]:
+    rows: list[dict[str, str]] = []
+    active_count = 0
+    for action in shortcut_actions:
+        key = str(action.get("key", "")).strip()
+        message = str(action.get("message", "")).strip()
+        if not key:
+            continue
+        is_active = "no action is assigned" not in message.lower()
+        if is_active:
+            active_count += 1
+        rows.append(
+            {
+                "label": key,
+                "status": "active" if is_active else "reference",
+                "detail": message,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "status": "read_only",
+        "data_available": True,
+        "summary": "Keyboard shortcuts apply while the dashboard window or browser tab has focus.",
+        "read_only": True,
+        "is_approval": False,
+        "shortcuts": list(shortcuts),
+        "shortcut_actions": list(shortcut_actions),
+        "active_action_count": active_count,
+        "reference_action_count": max(0, len(rows) - active_count),
+        "board_rows": rows,
+    }
+
+def _keyboard_shortcuts_page(
+    *,
+    shortcut_actions: list[dict[str, str]],
+    shortcuts: list[str],
+) -> dict[str, Any]:
+    payload = _keyboard_shortcuts_payload(
+        shortcut_actions=shortcut_actions,
+        shortcuts=shortcuts,
+    )
+    return {
+        "id": "keyboard-shortcuts",
+        "title": "Keyboard Shortcuts",
+        "tagline": "Reference for the dashboard keyboard shortcuts that are already wired.",
+        "status": "read_only",
+        "raw_status": "read_only",
+        "data_available": True,
+        "summary": str(payload.get("summary", "")),
+        "ownership_note": "Read-only reference. It documents existing shortcuts and does not add new bindings.",
+        "items": _payload_items(payload),
+        "payload": _sanitized_payload(payload),
+    }
+
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
     handoff_items = payload.get("handoff_items", [])
     if isinstance(handoff_items, list) and handoff_items:
@@ -1688,6 +1746,10 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "sections",
         "current_section",
         "earlier_sections",
+        "shortcuts",
+        "shortcut_actions",
+        "active_action_count",
+        "reference_action_count",
         "profiles",
         "version_validation",
         "board_rows",
@@ -1996,6 +2058,8 @@ for _name in (
     "_cross_car_comparison_page",
     "_whats_new_payload",
     "_whats_new_page",
+    "_keyboard_shortcuts_payload",
+    "_keyboard_shortcuts_page",
     "_payload_items",
     "_sanitized_payload",
     "_section_count",
