@@ -29,6 +29,8 @@ DEPENDENCY_SETUP_TIMEOUT_SECONDS = 900
 DEPENDENCY_SETUP_STDOUT_TAIL_LINES = 20
 DEPENDENCY_SETUP_STDOUT_TAIL_BYTES = 2000
 DEPENDENCY_SETUP_FILE_ACTIVITY_LIMIT = 20
+DEPENDENCY_STATE_REPLACE_RETRY_ATTEMPTS = 3
+DEPENDENCY_STATE_REPLACE_RETRY_SECONDS = 0.05
 RACO_SETUP_TYPICAL_RANGE_LABEL = "typical ~30 sec"
 BLENDER_SETUP_TYPICAL_RANGE_LABEL = "typical ~2 min"
 BMW_GIT_SETUP_TYPICAL_RANGE_LABEL = "typical ~2-10 min"
@@ -145,13 +147,26 @@ def load_dependency_onboarding_state(workspace: Path | str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _replace_dependency_onboarding_state(temp_path: Path, output_path: Path) -> None:
+    delay = DEPENDENCY_STATE_REPLACE_RETRY_SECONDS
+    for attempt in range(DEPENDENCY_STATE_REPLACE_RETRY_ATTEMPTS):
+        try:
+            temp_path.replace(output_path)
+            return
+        except PermissionError:
+            if attempt + 1 >= DEPENDENCY_STATE_REPLACE_RETRY_ATTEMPTS:
+                raise
+            time.sleep(delay)
+            delay *= 2
+
+
 def _write_dependency_onboarding_state(workspace: Path | str, state: dict[str, Any]) -> dict[str, Any]:
     state["updated_at_utc"] = _utc_now()
     output_path = dependency_onboarding_state_path(workspace)
     ensure_parent(output_path)
     temp_path = output_path.with_name(f".{output_path.name}.{os.getpid()}.{time.time_ns()}.tmp")
     temp_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-    temp_path.replace(output_path)
+    _replace_dependency_onboarding_state(temp_path, output_path)
     return state
 
 

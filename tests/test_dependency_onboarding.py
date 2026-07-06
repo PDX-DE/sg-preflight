@@ -97,6 +97,32 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertEqual(payload["counts"]["available"], 6)
         self.assertFalse(payload["actions"])
 
+    def test_state_write_retries_transient_replace_permission_error(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            gui = root / "tools" / "ramses" / "RamsesComposer.exe"
+            write_text(gui, "fixture\n")
+            state_path_type = type(onboarding.dependency_onboarding_state_path(root))
+            original_replace = state_path_type.replace
+            calls = {"count": 0}
+
+            def flaky_replace(self: Path, target: Path) -> Path:
+                if Path(target).name == onboarding.ONBOARDING_STATE_FILENAME and calls["count"] == 0:
+                    calls["count"] += 1
+                    raise PermissionError("target locked")
+                return original_replace(self, target)
+
+            with mock.patch.object(state_path_type, "replace", flaky_replace):
+                with mock.patch.object(onboarding.time, "sleep") as sleep:
+                    state = onboarding.record_dependency_path(workspace=root, key="raco_gui", path=gui)
+
+            self.assertEqual(calls["count"], 1)
+            sleep.assert_called_once()
+            self.assertEqual(Path(state["registered_paths"]["raco_gui"]), gui.resolve())
+            self.assertTrue(onboarding.dependency_onboarding_state_path(root).is_file())
+
     def test_fast_path_detection_auto_registers_paths_for_g70_generation_preflight(self) -> None:
         from sg_preflight import dependency_onboarding as onboarding
         from sg_preflight import delivery_workbook_generation as generation

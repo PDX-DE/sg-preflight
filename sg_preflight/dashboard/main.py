@@ -354,6 +354,8 @@ from sg_preflight.dashboard_pages_workflows import (
     _render_daily_digest_panel,
     _render_operator_handoff_panel,
     _render_manual_review_panel,
+    MY_TICKETS_UNAVAILABLE_SUMMARY,
+    WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY,
     _my_ticket_status_draft,
     _build_my_tickets_payload,
     _build_weekly_ticket_draft_payload,
@@ -497,8 +499,10 @@ DASHBOARD_SHORTCUT_ACTIONS = (
     ("Esc", "Quit: close the native window or browser tab when the local review is done."),
 )
 THEME_CHOICES = ["clean"]
+CONFLUENCE_DUMP_SPACE_KEY = "PDX_SERGFX"
+CONFLUENCE_DUMP_PREFIX = f"{CONFLUENCE_DUMP_SPACE_KEY}/"
 QUALITY_HERO_CONFLUENCE_ANCHOR = (
-    "PDX_" + "SER" + "GFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt"
+    f"{CONFLUENCE_DUMP_PREFIX}139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt"
 )
 DELIVERY_CHECKLIST_CONFLUENCE_ANCHOR = (
     "311_Delivery-process/312_3D-Car---Delivery-and-Integration/"
@@ -509,9 +513,8 @@ BMW_PIPELINE_PYTHON_CONFLUENCE_ANCHOR = (
     "249_How-to-use-the-various-python-scripts-fo:170-190"
 )
 SG_DAILY_CONFLUENCE_ANCHOR = (
-    "PDX_"
-    + "SER"
-    + "GFX/016_Project-Management/024_How-to...-Seriesgraphics/029_Regular-Meetings/030_SG-Daily/page.txt"
+    f"{CONFLUENCE_DUMP_PREFIX}"
+    "016_Project-Management/024_How-to...-Seriesgraphics/029_Regular-Meetings/030_SG-Daily/page.txt"
 )
 
 ABOUT_CONTENT: dict[str, Any] = {
@@ -954,7 +957,7 @@ def _confluence_anchor_relative_path(anchor: str) -> str:
     elif ":" in clean:
         clean = clean.split(":", 1)[0]
     clean = clean.strip().replace("\\", "/").lstrip("/")
-    prefix = "PDX_" + "SER" + "GFX/"
+    prefix = CONFLUENCE_DUMP_PREFIX
     if clean and not clean.startswith((prefix, "BMW_3DCar/")):
         clean = prefix + clean
     return clean
@@ -3390,7 +3393,8 @@ def _render_dashboard(
                     "status": "failed",
                     "ticket_count": 0,
                     "tickets": [],
-                    "summary": f"My Tickets unavailable: {exc}",
+                    "summary": MY_TICKETS_UNAVAILABLE_SUMMARY,
+                    "diagnostic_detail": f"My Tickets unavailable: {exc}",
                     "settings_hint": "Check local Jira setup before retrying.",
                     "read_only": True,
                     "is_approval": False,
@@ -3418,7 +3422,8 @@ def _render_dashboard(
                 payload = {
                     "status": "failed",
                     "jira_status": "failed",
-                    "summary": f"Weekly Ticket Draft unavailable: {exc}",
+                    "summary": WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY,
+                    "diagnostic_detail": f"Weekly Ticket Draft unavailable: {exc}",
                     "text": "",
                     "read_only": True,
                     "is_approval": False,

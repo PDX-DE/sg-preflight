@@ -1080,6 +1080,76 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn("auto_confirm=True", panel)
         self.assertNotIn("post_jira", panel)
 
+    def test_ticket_error_visible_summaries_do_not_embed_raw_exception_source(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = "\n".join(
+            (
+                (root / "dashboard" / "main.py").read_text(encoding="utf-8"),
+                (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8"),
+                (root / "jira_client.py").read_text(encoding="utf-8"),
+            )
+        )
+
+        self.assertNotIn('"summary": f"My Tickets unavailable: {exc}"', source)
+        self.assertNotIn('"summary": f"Weekly Ticket Draft unavailable: {exc}"', source)
+
+    def test_my_tickets_error_payload_hides_raw_exception_in_visible_summary(self) -> None:
+        from sg_preflight import dashboard_pages_workflows as workflows
+        from sg_preflight.dashboard import main as dashboard_main
+
+        raw_error = "raw jira auth traceback"
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                dashboard_main,
+                "search_my_unresolved_tickets",
+                side_effect=RuntimeError(raw_error),
+            ):
+                payload = workflows._build_my_tickets_payload(Path(tmp))
+
+        self.assertEqual(payload["summary"], "My Tickets unavailable. Check local Jira setup before retrying.")
+        self.assertNotIn(raw_error, payload["summary"])
+        self.assertIn(raw_error, payload["diagnostic_detail"])
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["is_approval"])
+
+        returned_error = "returned transport failure detail"
+        failed_payload = {
+            "status": "failed",
+            "ticket_count": 0,
+            "tickets": [],
+            "summary": f"My Tickets unavailable: {returned_error}",
+            "read_only": True,
+            "is_approval": False,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(dashboard_main, "search_my_unresolved_tickets", return_value=failed_payload):
+                payload = workflows._build_my_tickets_payload(Path(tmp))
+
+        self.assertEqual(payload["summary"], "My Tickets unavailable. Check local Jira setup before retrying.")
+        self.assertNotIn(returned_error, payload["summary"])
+        self.assertIn(returned_error, payload["diagnostic_detail"])
+
+    def test_weekly_ticket_error_payload_hides_raw_exception_in_visible_summary(self) -> None:
+        from sg_preflight import dashboard_pages_workflows as workflows
+
+        raw_error = "raw weekly jira traceback"
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                workflows,
+                "build_weekly_ticket_draft",
+                side_effect=RuntimeError(raw_error),
+            ):
+                payload = workflows._build_weekly_ticket_draft_payload(Path(tmp))
+
+        self.assertEqual(
+            payload["summary"],
+            "Weekly Ticket Draft unavailable. Check local Jira setup before retrying.",
+        )
+        self.assertNotIn(raw_error, payload["summary"])
+        self.assertIn(raw_error, payload["diagnostic_detail"])
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["is_approval"])
+
     def test_dashboard_snapshot_contains_weekly_ticket_draft_page_without_jira_query(self) -> None:
         from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -1467,6 +1537,25 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         anchor_block = source[anchor_idx:anchor_idx + 900]
         self.assertIn("Copy doc link", anchor_block)
         self.assertIn("_copy_dashboard_link_to_clipboard(ui, url, anchor)", anchor_block)
+
+    def test_dashboard_confluence_dump_anchor_uses_sergfx_key(self) -> None:
+        from sg_preflight.dashboard import main as dashboard_main
+
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('CONFLUENCE_DUMP_SPACE_KEY = "PDX_SERGFX"', source)
+        self.assertNotIn('"PDX_" + "SER" + "GFX"', source)
+        for anchor in (
+            dashboard_main.QUALITY_HERO_CONFLUENCE_ANCHOR,
+            dashboard_main.SG_DAILY_CONFLUENCE_ANCHOR,
+            "139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt",
+        ):
+            with self.subTest(anchor=anchor):
+                relative = dashboard_main._confluence_anchor_relative_path(anchor)
+                self.assertTrue(relative.startswith("PDX_SERGFX/"), relative)
+                self.assertNotIn("PDX_SGFX", relative)
 
     def test_dashboard_strips_full_qa_run_trigger_after_first_fire(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(

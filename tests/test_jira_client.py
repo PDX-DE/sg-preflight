@@ -511,6 +511,26 @@ Other text
         self.assertIn("fields=summary%2Cstatus%2Cpriority%2Cupdated%2Cproject%2Cassignee", calls[0][1])
         self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
 
+    def test_my_unresolved_ticket_search_failed_transport_hides_raw_error_from_summary(self) -> None:
+        clear_jira_my_tickets_cache()
+        fake_keyring = _FakeKeyring()
+
+        def transport(request, timeout=30):
+            raise urllib_error.URLError("offline raw detail")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            _write_keychain_credentials(state_dir, fake_keyring)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    result = search_my_unresolved_tickets(transport=transport)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["summary"], "My Tickets unavailable. Check local Jira setup before retrying.")
+        self.assertNotIn("offline raw detail", result["summary"])
+        self.assertIn("offline raw detail", result["diagnostic_detail"])
+        self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
+
     def test_my_weekly_ticket_search_is_read_only_and_allows_done_items(self) -> None:
         clear_jira_my_tickets_cache()
         calls: list[tuple[str, str]] = []

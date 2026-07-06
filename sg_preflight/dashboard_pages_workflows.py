@@ -25,6 +25,10 @@ from sg_preflight.qa_pass_report import (
 from sg_preflight.weekly_ticket_draft import build_weekly_ticket_draft, render_weekly_ticket_draft_text
 
 
+MY_TICKETS_UNAVAILABLE_SUMMARY = "My Tickets unavailable. Check local Jira setup before retrying."
+WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY = "Weekly Ticket Draft unavailable. Check local Jira setup before retrying."
+
+
 _MAIN_GLOBAL_NAMES = (
     "Any",
     "Callable",
@@ -2756,6 +2760,13 @@ def _my_ticket_status_draft(ticket: dict[str, Any], workspace: Path) -> str:
     )
 
 
+def _genericize_failed_summary(payload: dict[str, Any], *, raw_prefix: str, generic_summary: str) -> None:
+    summary = str(payload.get("summary", "") or "").strip()
+    if summary.startswith(f"{raw_prefix}:"):
+        payload.setdefault("diagnostic_detail", summary)
+        payload["summary"] = generic_summary
+
+
 def _build_my_tickets_payload(workspace: Path) -> dict[str, Any]:
     try:
         payload = search_my_unresolved_tickets(max_results=12, timeout_seconds=8)
@@ -2764,7 +2775,8 @@ def _build_my_tickets_payload(workspace: Path) -> dict[str, Any]:
             "status": "failed",
             "ticket_count": 0,
             "tickets": [],
-            "summary": f"My Tickets unavailable: {exc}",
+            "summary": MY_TICKETS_UNAVAILABLE_SUMMARY,
+            "diagnostic_detail": f"My Tickets unavailable: {exc}",
             "settings_hint": "Check local Jira setup before retrying.",
             "read_only": True,
             "is_approval": False,
@@ -2781,6 +2793,11 @@ def _build_my_tickets_payload(workspace: Path) -> dict[str, Any]:
             "is_approval": False,
             "jql": build_my_unresolved_ticket_jql(),
         }
+    _genericize_failed_summary(
+        payload,
+        raw_prefix="My Tickets unavailable",
+        generic_summary=MY_TICKETS_UNAVAILABLE_SUMMARY,
+    )
     tickets = [ticket for ticket in payload.get("tickets", []) if isinstance(ticket, dict)]
     enriched_tickets: list[dict[str, Any]] = []
     for ticket in tickets:
@@ -2802,7 +2819,8 @@ def _build_weekly_ticket_draft_payload(workspace: Path) -> dict[str, Any]:
         payload = {
             "status": "failed",
             "jira_status": "failed",
-            "summary": f"Weekly Ticket Draft unavailable: {exc}",
+            "summary": WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY,
+            "diagnostic_detail": f"Weekly Ticket Draft unavailable: {exc}",
             "text": "",
             "read_only": True,
             "is_approval": False,
@@ -2816,6 +2834,11 @@ def _build_weekly_ticket_draft_payload(workspace: Path) -> dict[str, Any]:
             "read_only": True,
             "is_approval": False,
         }
+    _genericize_failed_summary(
+        payload,
+        raw_prefix="Weekly Ticket Draft unavailable",
+        generic_summary=WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY,
+    )
     payload.setdefault("read_only", True)
     payload.setdefault("is_approval", False)
     payload["text"] = render_weekly_ticket_draft_text(payload)
