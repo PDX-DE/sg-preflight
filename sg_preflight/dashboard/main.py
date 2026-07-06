@@ -482,7 +482,7 @@ DASHBOARD_NAVIGATION = (
     ("manual-review", "Manual Review Companion"),
     ("about", "About"),
 )
-DASHBOARD_SHORTCUTS = ("F1-F12 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit")
+DASHBOARD_SHORTCUTS = ("F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Close sidebar")
 DASHBOARD_SHORTCUT_ACTIONS = (
     ("F1", "Help: use the sidebar pages to inspect read-only SGFX evidence."),
     ("F2", "Profile switch: use the Profile selector in the header."),
@@ -496,7 +496,7 @@ DASHBOARD_SHORTCUT_ACTIONS = (
     ("F10", "Reference: no action is assigned to F10 in this release."),
     ("F11", "Reference: no action is assigned to F11 in this release."),
     ("F12", "Diagnostic: profile, workspace, and current page are shown in the header."),
-    ("Esc", "Quit: close the native window or browser tab when the local review is done."),
+    ("Esc", "Close sidebar: hides the sidebar. To exit, close the native window or browser tab when your review is done."),
 )
 THEME_CHOICES = ["clean"]
 CONFLUENCE_DUMP_SPACE_KEY = "PDX_SERGFX"
@@ -3958,7 +3958,7 @@ def _render_dashboard(
             <div class="sgfx-floating-shortcuts" aria-label="Keyboard shortcuts">
               <span>F1 Help</span>
               <span>F12 Diagnostic</span>
-              <span>Esc Quit</span>
+              <span>Esc Close sidebar</span>
             </div>
             """,
             sanitize=False,
@@ -4001,7 +4001,7 @@ def _render_dashboard(
                             controls["profile_label"] = ui.label(_header_text()).classes("sgfx-subtitle")
                             ui.html(
                                 '<div id="sgfx-shortcut-feedback" class="sgfx-shortcut-feedback">'
-                                "Shortcuts available: F1 help, F2 profile, F5 refresh, F12 diagnostic, Esc quit guidance."
+                                "Shortcuts available: F1 help, F2 profile, F5 refresh, F12 diagnostic, Esc closes sidebar."
                                 "</div>"
                             )
                             registry = state["snapshot"].get("profile_registry", {})
@@ -4011,7 +4011,7 @@ def _render_dashboard(
                     with ui.row().classes("items-center"):
                         ui.label("F1 Help").classes("sgfx-shortcut")
                         ui.label("F12 Diagnostic").classes("sgfx-shortcut")
-                        ui.label("Esc Quit").classes("sgfx-shortcut")
+                        ui.label("Esc Close sidebar").classes("sgfx-shortcut")
                         controls["profile_show_all"] = ui.switch(
                             "Show all profiles",
                             value=bool(state["snapshot"].get("profile_show_all", False)),

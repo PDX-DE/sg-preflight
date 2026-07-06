@@ -296,7 +296,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
         self.assertEqual(
             snapshot["shortcuts"],
-            ["F1-F12 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Quit"],
+            ["F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Close sidebar"],
         )
         self.assertEqual(
             snapshot["pages"][0]["tagline"],
@@ -2450,6 +2450,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("F12", actions)
         self.assertIn("Esc", actions)
         self.assertIn("Profile", actions["F2"])
+        self.assertIn("Close sidebar", actions["Esc"])
+        self.assertNotIn("Quit", actions["Esc"])
 
     def test_dashboard_snapshot_abbreviates_visible_workspace_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
