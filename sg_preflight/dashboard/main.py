@@ -165,9 +165,11 @@ from sg_preflight.dashboard_preferences import (
     _dashboard_exe_sha256,
     _dashboard_feedback_context,
     _dashboard_feedback_recipient,
+    _dashboard_default_ticket_id,
     _dashboard_notifications_enabled,
     _dashboard_preferred_profile_id,
     _dashboard_profile_known,
+    _dashboard_run_mode,
     _dashboard_status,
     _dashboard_ticket_from_git_branch,
     _dashboard_ticket_from_operator_state,
@@ -194,7 +196,9 @@ from sg_preflight.dashboard_preferences import (
     _write_dashboard_profile_preference,
     _write_full_qa_wizard_state,
     dashboard_profile_options,
+    load_dashboard_settings,
     load_dashboard_preference,
+    save_dashboard_settings,
     save_dashboard_preference,
 )
 from sg_preflight.dashboard_grafiks import (
@@ -247,6 +251,8 @@ from sg_preflight.dashboard_pages_config import (
     _cross_car_comparison_page,
     _whats_new_page,
     _keyboard_shortcuts_page,
+    _settings_page,
+    _settings_payload,
     _payload_items,
     _sanitized_payload,
     _section_count,
@@ -460,6 +466,7 @@ DASHBOARD_NAVIGATION = (
     ("weekly-ticket-draft", "Weekly Ticket Draft"),
     ("whats-new", "What's New"),
     ("keyboard-shortcuts", "Keyboard Shortcuts"),
+    ("settings", "Settings"),
     ("delivery-checklist", "Delivery Checklist"),
     ("delivery-readiness", "Delivery Readiness"),
     ("cross-domain-delivery", "Cross-Domain Delivery"),
@@ -697,7 +704,7 @@ def run_grafiks_mode(
 def _daily_digest_ticket_context(workspace: Path | str) -> dict[str, Any]:
     return _daily_digest_ticket_context_impl(
         workspace,
-        ticket_id_placeholder=DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
+        ticket_id_placeholder=_dashboard_default_ticket_id(workspace),
         ticket_from_operator_state=_dashboard_ticket_from_operator_state,
         ticket_from_git_branch=_dashboard_ticket_from_git_branch,
     )
@@ -706,7 +713,7 @@ def _daily_digest_ticket_context(workspace: Path | str) -> dict[str, Any]:
 def _dashboard_active_ticket_id(workspace: Path | str) -> str:
     return _dashboard_active_ticket_id_impl(
         workspace,
-        fallback_ticket_id=_DASHBOARD_TICKET_FALLBACK,
+        fallback_ticket_id=_dashboard_default_ticket_id(workspace),
         ticket_from_operator_state=_dashboard_ticket_from_operator_state,
         ticket_from_git_branch=_dashboard_ticket_from_git_branch,
     )
@@ -825,7 +832,12 @@ def build_dashboard_snapshot(
         },
         "changed_profiles": changed_profiles,
         "pages": [
-            _full_qa_pass_page(resolved_profile_id, root, bmw_root=bmw_root),
+            _full_qa_pass_page(
+                resolved_profile_id,
+                root,
+                bmw_root=bmw_root,
+                trusted_tool_mode=_dashboard_run_mode(root) == "automatic",
+            ),
             _batch_full_qa_pass_page(resolved_profile_id, root),
             _my_tickets_page(resolved_profile_id, root),
             _weekly_ticket_draft_page(resolved_profile_id, root),
@@ -833,6 +845,11 @@ def build_dashboard_snapshot(
             _keyboard_shortcuts_page(
                 shortcut_actions=shortcut_actions,
                 shortcuts=shortcuts,
+            ),
+            _settings_page(
+                root,
+                profile_options=profile_options_all,
+                current_profile_id=resolved_profile_id,
             ),
             _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
             _delivery_readiness_page(root, bmw_root=bmw_root),
@@ -2708,6 +2725,84 @@ def _render_jira_profile_tickets_card(
             ui.label("No open profile-matched Jira tickets were returned.").classes("sgfx-muted")
 
 
+def _render_settings_panel(
+    ui: Any,
+    snapshot: dict[str, Any],
+    workspace: Path,
+) -> None:
+    page = next(page for page in snapshot["pages"] if page["id"] == "settings")
+    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
+    settings = payload.get("settings", {}) if isinstance(payload.get("settings"), dict) else {}
+    profile_options = [
+        option for option in payload.get("profile_options", []) if isinstance(option, dict)
+    ]
+    profile_labels = {
+        str(option.get("select_label", option.get("id", ""))): str(option.get("id", ""))
+        for option in profile_options
+        if str(option.get("id", "")).strip()
+    }
+    current_profile_id = str(settings.get("profile_id", snapshot.get("profile_id", "")) or "")
+    current_profile_label = next(
+        (label for label, profile_id in profile_labels.items() if profile_id == current_profile_id),
+        current_profile_id,
+    )
+
+    def _event_value(event: Any) -> str:
+        return str(getattr(event, "value", "") or "").strip()
+
+    def _save_setting(**updates: Any) -> None:
+        save_dashboard_settings(workspace, **updates)
+        ui.notify("Settings saved locally.")
+
+    with ui.column().classes("sgfx-page-panel").props('data-sgfx-settings-page="true"'):
+        with ui.row().classes("items-center justify-between full-width"):
+            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            _render_status_chip(ui, str(page.get("status", "available")))
+        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
+        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        ui.label("Local preferences only. No Jira, SVN, or BMW source update is sent.").classes("sgfx-muted")
+        with ui.column().classes("full-width"):
+            profile_select = ui.select(
+                options=list(profile_labels.keys()),
+                value=current_profile_label if current_profile_label in profile_labels else None,
+                label="Default profile",
+                on_change=lambda event: _save_setting(profile_id=profile_labels.get(_event_value(event), "")),
+            ).props("outlined dense")
+            profile_select.classes("full-width")
+            ui.select(
+                options=["automatic", "manual"],
+                value=str(settings.get("run_mode", "automatic")),
+                label="Run mode",
+                on_change=lambda event: _save_setting(run_mode=_event_value(event)),
+            ).props("outlined dense").classes("full-width")
+            ui.checkbox(
+                "Desktop notifications",
+                value=bool(settings.get("desktop_notifications_enabled", True)),
+                on_change=lambda event: _save_setting(
+                    desktop_notifications_enabled=bool(getattr(event, "value", False))
+                ),
+            )
+            ui.input(
+                "Feedback email",
+                value=str(settings.get("feedback_email", "")),
+                on_change=lambda event: _save_setting(feedback_email=_event_value(event)),
+            ).props("outlined dense clearable").classes("full-width")
+            ui.input(
+                "Default ticket",
+                value=str(settings.get("default_ticket_id", _DASHBOARD_TICKET_FALLBACK)),
+                on_change=lambda event: _save_setting(default_ticket_id=_event_value(event)),
+            ).props("outlined dense").classes("full-width")
+            ui.input(
+                "Grafiks shell exe",
+                value=str(settings.get("grafiks_shell_exe", "")),
+                on_change=lambda event: _save_setting(grafiks_shell_exe=_event_value(event)),
+            ).props("outlined dense clearable").classes("full-width")
+            ui.label("Theme: Dark IDE style - the default and only theme.").classes("sgfx-muted")
+
+        rows = [item for item in page.get("items", []) if isinstance(item, dict)]
+        _render_reader_rows(ui, rows)
+
+
 def _render_selected_page(
     ui: Any,
     container: Any,
@@ -2796,6 +2891,8 @@ def _render_selected_page(
             _render_team_digest_board_panel(ui, snapshot)
         elif page_id == "operator-handoff":
             _render_operator_handoff_panel(ui, snapshot, workspace)
+        elif page_id == "settings":
+            _render_settings_panel(ui, snapshot, workspace)
         elif page_id == "about":
             _render_about_panel(ui, ABOUT_CONTENT)
         else:
@@ -3589,6 +3686,8 @@ def _render_dashboard(
                     _render_operator_handoff_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "manual-review":
                     _render_manual_review_panel(ui, state["snapshot"], workspace)
+                elif active_page_id == "settings":
+                    _render_settings_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "about":
                     _render_about_panel(ui, ABOUT_CONTENT)
                 else:

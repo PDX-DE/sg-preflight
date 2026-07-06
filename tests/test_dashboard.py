@@ -215,7 +215,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(drafts["risk-score"]["level"], "medium")
         self.assertIn("screenshot capture output needs operator review", drafts["risk-score"]["reason"])
 
-    def test_dashboard_snapshot_contains_twenty_six_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_contains_twenty_seven_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -231,6 +231,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "weekly-ticket-draft",
                 "whats-new",
                 "keyboard-shortcuts",
+                "settings",
                 "delivery-checklist",
                 "delivery-readiness",
                 "cross-domain-delivery",
@@ -271,6 +272,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "weekly-ticket-draft", "label": "Weekly Ticket Draft"},
                 {"id": "whats-new", "label": "What's New"},
                 {"id": "keyboard-shortcuts", "label": "Keyboard Shortcuts"},
+                {"id": "settings", "label": "Settings"},
                 {"id": "delivery-checklist", "label": "Delivery Checklist"},
                 {"id": "delivery-readiness", "label": "Delivery Readiness"},
                 {"id": "cross-domain-delivery", "label": "Cross-Domain Delivery"},
@@ -315,6 +317,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(
             pages_by_id["keyboard-shortcuts"]["tagline"],
             "Reference for the dashboard keyboard shortcuts that are already wired.",
+        )
+        self.assertEqual(
+            pages_by_id["settings"]["tagline"],
+            "Operator-local dashboard preferences for this machine.",
         )
         self.assertEqual(pages_by_id["delivery-checklist"]["tagline"], "Workbook evidence per delivery profile (read-only).")
         self.assertEqual(
@@ -575,7 +581,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 26)
+                self.assertEqual(len(snapshot["pages"]), 27)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -1277,6 +1283,113 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn("ai-generated", combined)
         self.assertNotIn("fully automated", combined)
         self.assertNotIn("approved by sgfx", combined)
+
+    def test_settings_preferences_round_trip_to_operator_local_json(self) -> None:
+        from sg_preflight import dashboard_preferences as preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            grafiks_exe = workspace / "tools" / "sgfx_cine_cinematic_shell.exe"
+            write_text(grafiks_exe, "fixture\n")
+
+            saved = preferences.save_dashboard_settings(
+                workspace,
+                profile_id="G70",
+                run_mode="manual",
+                desktop_notifications_enabled=False,
+                feedback_email="operator.feedback@example.com",
+                default_ticket_id="idcevodev-1005738",
+                grafiks_shell_exe=grafiks_exe,
+            )
+            loaded = preferences.load_dashboard_settings(workspace)
+            path = workspace / "operator_state" / "dashboard_preferences.json"
+            raw = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["profile_id"], "G70")
+        self.assertEqual(loaded["profile_id"], "G70")
+        self.assertEqual(loaded["run_mode"], "manual")
+        self.assertFalse(loaded["desktop_notifications_enabled"])
+        self.assertEqual(loaded["feedback_email"], "operator.feedback@example.com")
+        self.assertEqual(loaded["default_ticket_id"], "IDCEVODEV-1005738")
+        self.assertEqual(Path(loaded["grafiks_shell_exe"]), grafiks_exe)
+        self.assertEqual(path.parent.name, "operator_state")
+        self.assertFalse((workspace / "dashboard_preferences.json").exists())
+        self.assertEqual(raw["default_ticket_id"], "IDCEVODEV-1005738")
+        self.assertNotIn("pat", json.dumps(raw).lower())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            preferences.save_dashboard_settings(workspace, default_ticket_id="not-a-ticket")
+            self.assertEqual(preferences.load_dashboard_settings(workspace)["default_ticket_id"], "IDCEVODEV-977874")
+
+    def test_grafiks_shell_exe_preference_precedes_env_and_invalid_path_falls_back(self) -> None:
+        from sg_preflight import dashboard_grafiks, dashboard_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            preferred = workspace / "preferred" / dashboard_grafiks.GRAFIKS_SHELL_EXE_NAME
+            env_exe = workspace / "env" / dashboard_grafiks.GRAFIKS_SHELL_EXE_NAME
+            write_text(preferred, "preferred\n")
+            write_text(env_exe, "env\n")
+            dashboard_preferences.save_dashboard_settings(workspace, grafiks_shell_exe=preferred)
+
+            with mock.patch.dict(os.environ, {"SGFX_GRAFIKS_SHELL_EXE": str(env_exe)}, clear=False):
+                candidates = dashboard_grafiks._grafiks_shell_exe_candidates(workspace)
+                self.assertEqual(candidates[0], preferred.resolve())
+                self.assertEqual(dashboard_grafiks._resolve_grafiks_shell_exe(workspace), preferred.resolve())
+
+                preferred.unlink()
+                self.assertEqual(dashboard_grafiks._resolve_grafiks_shell_exe(workspace), env_exe.resolve())
+
+    def test_dashboard_snapshot_contains_settings_page_with_local_only_copy(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
+
+        navigation = [item["id"] for item in snapshot["navigation"]]
+        self.assertIn("settings", navigation)
+        page = {page["id"]: page for page in snapshot["pages"]}["settings"]
+        self.assertEqual(page["title"], "Settings")
+        self.assertEqual(page["status"], "available")
+        self.assertFalse(page["payload"]["read_only"])
+        self.assertTrue(page["payload"]["writes_operator_state"])
+        self.assertTrue(page["payload"]["local_only"])
+        self.assertFalse(page["payload"]["is_approval"])
+        self.assertIn("stored locally on this machine and never leave it", page["summary"])
+        labels = [item["label"] for item in page["items"]]
+        for label in (
+            "Default profile",
+            "Run mode",
+            "Desktop notifications",
+            "Feedback email",
+            "Default ticket",
+            "Grafiks shell exe",
+            "Theme",
+            "Local storage",
+        ):
+            self.assertIn(label, labels)
+        self.assertEqual(page["payload"]["settings"]["theme"], "clean")
+        self.assertEqual(page["payload"]["settings"]["run_mode"], "automatic")
+
+    def test_settings_page_is_human_voice_without_codename_or_hype(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        source = "\n".join(
+            (
+                (root / "dashboard" / "main.py").read_text(encoding="utf-8"),
+                (root / "dashboard_pages_config.py").read_text(encoding="utf-8"),
+                (root / "dashboard_preferences.py").read_text(encoding="utf-8"),
+            )
+        ).lower()
+
+        self.assertIn('("settings", "settings")', source)
+        self.assertIn("_settings_page", source)
+        self.assertIn("operator-local dashboard preferences", source)
+        self.assertIn("dark ide style", source)
+        self.assertNotIn("codename", source)
+        self.assertNotIn("ai-generated", source)
+        self.assertNotIn("fully automated", source)
+        self.assertNotIn("approved by sgfx", source)
 
     def test_cross_domain_delivery_page_is_read_only_source_root_board(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight"
@@ -2203,7 +2316,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 26)
+        self.assertEqual(len(snapshot["pages"]), 27)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -2217,7 +2330,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 26)
+        self.assertEqual(len(snapshot["pages"]), 27)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")

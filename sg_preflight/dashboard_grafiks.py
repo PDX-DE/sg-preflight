@@ -6,6 +6,7 @@ import subprocess
 import sys
 from typing import Callable
 
+from sg_preflight.dashboard_preferences import _dashboard_grafiks_shell_exe_preference
 from sg_preflight.dashboard_webserver import append_startup_log
 
 
@@ -39,6 +40,11 @@ def _unique_existing_order(paths: list[Path]) -> list[Path]:
 
 def _grafiks_shell_exe_candidates(workspace: Path | str | None = None) -> list[Path]:
     candidates: list[Path] = []
+    configured_preference = _dashboard_grafiks_shell_exe_preference(workspace)
+    if configured_preference:
+        preferred = Path(configured_preference)
+        candidates.append(preferred / GRAFIKS_SHELL_EXE_NAME if preferred.is_dir() else preferred)
+
     for key in GRAFIKS_SHELL_EXE_ENV_KEYS:
         raw = os.environ.get(key, "").strip()
         if not raw:

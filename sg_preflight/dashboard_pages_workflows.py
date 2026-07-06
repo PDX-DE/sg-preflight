@@ -275,7 +275,7 @@ def _full_qa_pass_page(
     bmw_root: Path | str | None = None,
     trusted_tool_mode: bool = False,
 ) -> dict[str, Any]:
-    del bmw_root, trusted_tool_mode
+    del bmw_root
     payload = {
         "schema_version": 1,
         "profile_id": profile_id,
@@ -287,6 +287,7 @@ def _full_qa_pass_page(
         "steps": [],
         "confirmation_items": [],
         "operator_confirmation_required": False,
+        "trusted_tool_mode": bool(trusted_tool_mode),
         "manual_review_required": True,
         "records_operator_verdict": False,
         "is_approval": False,

@@ -19,6 +19,9 @@ from sg_preflight.utils import ensure_parent
 
 
 CANONICAL_SOURCE_REPO_ROOT = Path(r"C:\repositories\trunk")
+DASHBOARD_PREFERENCES_FILENAME = "dashboard_preferences.json"
+DEFAULT_DASHBOARD_RUN_MODE = "automatic"
+DASHBOARD_RUN_MODE_CHOICES = ("automatic", "manual")
 THEME_CHOICES = ["clean"]
 FEEDBACK_EMAIL_ENV = "SGFX_FEEDBACK_EMAIL"
 DEFAULT_FEEDBACK_EMAIL = "david-erik.garcia-arenas@paradoxcat.com"
@@ -183,6 +186,10 @@ def _operator_state_path(workspace: Path | str, filename: str) -> Path:
     return _workspace(workspace) / "operator_state" / filename
 
 
+def _dashboard_preferences_path(workspace: Path | str) -> Path:
+    return _operator_state_path(workspace, DASHBOARD_PREFERENCES_FILENAME)
+
+
 def _read_operator_state_json(workspace: Path | str, filename: str) -> dict[str, Any]:
     path = _operator_state_path(workspace, filename)
     if not path.is_file():
@@ -194,13 +201,136 @@ def _read_operator_state_json(workspace: Path | str, filename: str) -> dict[str,
     return payload if isinstance(payload, dict) else {}
 
 
+def _write_operator_state_json(workspace: Path | str, filename: str, payload: dict[str, Any]) -> Path:
+    path = _operator_state_path(workspace, filename)
+    ensure_parent(path)
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    temp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_path.replace(path)
+    return path
+
+
+def _clean_dashboard_run_mode(value: Any) -> str:
+    text = str(value or DEFAULT_DASHBOARD_RUN_MODE).strip().casefold()
+    if text in {"manual", "0", "false", "off", "disabled"}:
+        return "manual"
+    return "automatic"
+
+
+def _clean_feedback_email(value: Any) -> str:
+    configured = str(value or "").strip()
+    return configured if configured and re.fullmatch(r"[A-Za-z0-9._%+\-@,;]+", configured) else ""
+
+
+def _clean_default_ticket_id(value: Any) -> str:
+    ticket_id = str(value or "").strip().upper()
+    return ticket_id if _TICKET_ID_PATTERN.fullmatch(ticket_id) else _DASHBOARD_TICKET_FALLBACK
+
+
+def _clean_grafiks_shell_exe(value: Any) -> str:
+    raw = str(value or "").strip().strip('"')
+    return str(Path(raw).expanduser()) if raw else ""
+
+
+def _dashboard_default_ticket_id(workspace: Path | str) -> str:
+    payload = _read_operator_state_json(workspace, DASHBOARD_PREFERENCES_FILENAME)
+    return _clean_default_ticket_id(payload.get("default_ticket_id") or payload.get("active_ticket_id"))
+
+
+def _dashboard_run_mode(workspace: Path | str) -> str:
+    payload = _read_operator_state_json(workspace, DASHBOARD_PREFERENCES_FILENAME)
+    return _clean_dashboard_run_mode(payload.get("run_mode"))
+
+
+def _dashboard_grafiks_shell_exe_preference(workspace: Path | str | None) -> str:
+    if workspace is None:
+        return ""
+    payload = _read_operator_state_json(workspace, DASHBOARD_PREFERENCES_FILENAME)
+    return _clean_grafiks_shell_exe(payload.get("grafiks_shell_exe"))
+
+
+def _profile_id_from_preferences(payload: dict[str, Any], options: list[dict[str, Any]] | None) -> str:
+    profile_id = str(payload.get("profile_id") or payload.get("last_profile_id") or "").strip()
+    if not profile_id:
+        return ""
+    if options is None:
+        return profile_id
+    option_ids = {str(option.get("id", "")).casefold(): str(option.get("id", "")) for option in options}
+    return option_ids.get(profile_id.casefold(), "")
+
+
+def load_dashboard_settings(
+    workspace: Path | str,
+    *,
+    profile_options: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    payload = _read_operator_state_json(workspace, DASHBOARD_PREFERENCES_FILENAME)
+    default_ticket_id = _clean_default_ticket_id(payload.get("default_ticket_id") or payload.get("active_ticket_id"))
+    grafiks_shell_exe = _clean_grafiks_shell_exe(payload.get("grafiks_shell_exe"))
+    return {
+        "schema_version": int(payload.get("schema_version", 1) or 1),
+        "theme": _clean_theme(str(payload.get("theme", "clean"))),
+        "profile_id": _profile_id_from_preferences(payload, profile_options),
+        "run_mode": _clean_dashboard_run_mode(payload.get("run_mode")),
+        "desktop_notifications_enabled": _dashboard_notifications_enabled(workspace),
+        "feedback_email": _dashboard_feedback_recipient(workspace),
+        "default_ticket_id": default_ticket_id,
+        "grafiks_shell_exe": grafiks_shell_exe,
+        "settings_path": str(_dashboard_preferences_path(workspace)),
+        "local_storage_note": "Settings are stored locally on this machine and never leave it.",
+    }
+
+
+def save_dashboard_settings(
+    workspace: Path | str,
+    *,
+    profile_id: str | None = None,
+    run_mode: str | None = None,
+    desktop_notifications_enabled: bool | None = None,
+    feedback_email: str | None = None,
+    default_ticket_id: str | None = None,
+    grafiks_shell_exe: Path | str | None = None,
+    theme: str | None = None,
+) -> dict[str, Any]:
+    payload = _read_operator_state_json(workspace, DASHBOARD_PREFERENCES_FILENAME)
+    payload["schema_version"] = 1
+    if profile_id is not None:
+        clean_profile = str(profile_id or "").strip()
+        if clean_profile:
+            payload["profile_id"] = clean_profile
+            payload["last_profile_id"] = clean_profile
+    if run_mode is not None:
+        payload["run_mode"] = _clean_dashboard_run_mode(run_mode)
+    if desktop_notifications_enabled is not None:
+        payload["desktop_notifications_enabled"] = bool(desktop_notifications_enabled)
+    if feedback_email is not None:
+        clean_email = _clean_feedback_email(feedback_email)
+        if clean_email:
+            payload["feedback_email"] = clean_email
+        else:
+            payload.pop("feedback_email", None)
+    if default_ticket_id is not None:
+        payload["default_ticket_id"] = _clean_default_ticket_id(default_ticket_id)
+    if grafiks_shell_exe is not None:
+        clean_path = _clean_grafiks_shell_exe(grafiks_shell_exe)
+        if clean_path:
+            payload["grafiks_shell_exe"] = clean_path
+        else:
+            payload.pop("grafiks_shell_exe", None)
+    if theme is not None:
+        payload["theme"] = _clean_theme(theme)
+    payload["updated_at_utc"] = _utc_now()
+    _write_operator_state_json(workspace, DASHBOARD_PREFERENCES_FILENAME, payload)
+    return payload
+
+
 def _dashboard_feedback_recipient(workspace: Path | str) -> str:
     from sg_preflight.feedback_routing import load_feedback_routing
 
     routing = load_feedback_routing()
     if routing.config_loaded and routing.email_recipient:
         return routing.email_recipient
-    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
+    payload = _read_operator_state_json(workspace, DASHBOARD_PREFERENCES_FILENAME)
     for raw in (payload.get("feedback_email"), os.environ.get(FEEDBACK_EMAIL_ENV, ""), routing.email_recipient):
         configured = str(raw or "").strip()
         if configured and re.fullmatch(r"[A-Za-z0-9._%+\-@,;]+", configured):
@@ -298,7 +428,7 @@ def _dashboard_preferred_profile_id(workspace: Path | str | None, options: list[
     if workspace is None:
         return ""
     option_ids = {str(option["id"]).casefold(): str(option["id"]) for option in options}
-    for filename in ("dashboard_preferences.json", "dashboard_context.json", "operator_context.json"):
+    for filename in (DASHBOARD_PREFERENCES_FILENAME, "dashboard_context.json", "operator_context.json"):
         payload = _read_operator_state_json(workspace, filename)
         for key in ("profile_id", "active_profile_id", "selected_profile_id", "last_profile_id"):
             raw = str(payload.get(key, "")).strip()
@@ -308,15 +438,7 @@ def _dashboard_preferred_profile_id(workspace: Path | str | None, options: list[
 
 
 def _write_dashboard_profile_preference(workspace: Path | str, profile_id: str) -> dict[str, Any]:
-    clean_profile = profile_id.strip()
-    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
-    payload["profile_id"] = clean_profile
-    payload["last_profile_id"] = clean_profile
-    payload["updated_at_utc"] = _utc_now()
-    path = _operator_state_path(workspace, "dashboard_preferences.json")
-    ensure_parent(path)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return payload
+    return save_dashboard_settings(workspace, profile_id=profile_id)
 
 
 def _bool_preference(value: Any, *, default: bool = True) -> bool:
@@ -336,18 +458,12 @@ def _dashboard_notifications_enabled(workspace: Path | str) -> bool:
     env_value = os.environ.get(DESKTOP_NOTIFICATIONS_ENV)
     if env_value is not None:
         return _bool_preference(env_value, default=True)
-    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
+    payload = _read_operator_state_json(workspace, DASHBOARD_PREFERENCES_FILENAME)
     return _bool_preference(payload.get("desktop_notifications_enabled"), default=True)
 
 
 def _write_dashboard_notifications_preference(workspace: Path | str, enabled: bool) -> dict[str, Any]:
-    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
-    payload["desktop_notifications_enabled"] = bool(enabled)
-    payload["updated_at_utc"] = _utc_now()
-    path = _operator_state_path(workspace, "dashboard_preferences.json")
-    ensure_parent(path)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return payload
+    return save_dashboard_settings(workspace, desktop_notifications_enabled=enabled)
 
 
 def _full_qa_profile_output_token(profile_id: str) -> str:
@@ -533,19 +649,13 @@ def _dashboard_active_ticket_id(
     branch_ticket = git_branch(workspace)
     if branch_ticket:
         return branch_ticket
-    return fallback_ticket_id
+    return _dashboard_default_ticket_id(workspace) if fallback_ticket_id == _DASHBOARD_TICKET_FALLBACK else fallback_ticket_id
 
 
 def load_dashboard_preference(workspace: Path | str) -> str:
-    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
+    payload = _read_operator_state_json(workspace, DASHBOARD_PREFERENCES_FILENAME)
     return _clean_theme(str(payload.get("theme", "clean")))
 
 
 def save_dashboard_preference(workspace: Path | str, theme: str) -> dict[str, Any]:
-    payload = _read_operator_state_json(workspace, "dashboard_preferences.json")
-    payload["theme"] = _clean_theme(theme)
-    payload["updated_at_utc"] = _utc_now()
-    path = _operator_state_path(workspace, "dashboard_preferences.json")
-    ensure_parent(path)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return payload
+    return save_dashboard_settings(workspace, theme=theme)

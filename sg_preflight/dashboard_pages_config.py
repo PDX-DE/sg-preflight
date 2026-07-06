@@ -4,6 +4,8 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
 
+from sg_preflight.dashboard_preferences import DASHBOARD_RUN_MODE_CHOICES, load_dashboard_settings
+
 
 _MAIN_GLOBAL_NAMES = (
     "Any",
@@ -1634,6 +1636,102 @@ def _keyboard_shortcuts_page(
         "payload": _sanitized_payload(payload),
     }
 
+def _settings_payload(
+    workspace: Path,
+    *,
+    profile_options: list[dict[str, Any]],
+    current_profile_id: str,
+) -> dict[str, Any]:
+    settings = load_dashboard_settings(workspace, profile_options=profile_options)
+    if not str(settings.get("profile_id", "")).strip():
+        settings["profile_id"] = current_profile_id
+    profile_label = str(settings.get("profile_id", "") or current_profile_id or "Not set")
+    run_mode = str(settings.get("run_mode", "automatic"))
+    notifications = "On" if bool(settings.get("desktop_notifications_enabled", True)) else "Off"
+    feedback_email = str(settings.get("feedback_email", "") or "Default feedback address")
+    grafiks_exe = str(settings.get("grafiks_shell_exe", "") or "Not set")
+    rows = [
+        {
+            "label": "Default profile",
+            "status": profile_label,
+            "detail": "Used when the dashboard opens without a profile in the URL.",
+        },
+        {
+            "label": "Run mode",
+            "status": "Automatic" if run_mode == "automatic" else "Manual",
+            "detail": "Controls the default Full QA Pass run mode.",
+        },
+        {
+            "label": "Desktop notifications",
+            "status": notifications,
+            "detail": "Controls local completion notifications for long-running dashboard jobs.",
+        },
+        {
+            "label": "Feedback email",
+            "status": feedback_email,
+            "detail": "Used by the local feedback draft; it is not sent automatically.",
+        },
+        {
+            "label": "Default ticket",
+            "status": str(settings.get("default_ticket_id", "")),
+            "detail": "Prefills ticket fields when no active ticket is found.",
+        },
+        {
+            "label": "Grafiks shell exe",
+            "status": grafiks_exe,
+            "detail": "Preferred local executable path for the Grafiks cinematic shell.",
+        },
+        {
+            "label": "Theme",
+            "status": "Dark IDE style",
+            "detail": "The default and only theme in this build.",
+        },
+        {
+            "label": "Local storage",
+            "status": "operator_state/dashboard_preferences.json",
+            "detail": "Settings are stored locally on this machine and never leave it.",
+        },
+    ]
+    return {
+        "schema_version": 1,
+        "status": "available",
+        "data_available": True,
+        "summary": "Settings are stored locally on this machine and never leave it.",
+        "read_only": False,
+        "is_approval": False,
+        "writes_operator_state": True,
+        "local_only": True,
+        "settings": settings,
+        "profile_options": list(profile_options),
+        "run_mode_choices": list(DASHBOARD_RUN_MODE_CHOICES),
+        "setting_rows": rows,
+        "board_rows": rows,
+    }
+
+def _settings_page(
+    workspace: Path,
+    *,
+    profile_options: list[dict[str, Any]],
+    current_profile_id: str,
+) -> dict[str, Any]:
+    payload = _settings_payload(
+        workspace,
+        profile_options=profile_options,
+        current_profile_id=current_profile_id,
+    )
+    return {
+        "id": "settings",
+        "title": "Settings",
+        "tagline": "Operator-local dashboard preferences for this machine.",
+        "status": "available",
+        "raw_status": "available",
+        "data_available": True,
+        "summary": str(payload.get("summary", "")),
+        "ownership_note": "Local preferences only. No Jira, SVN, or BMW source update is sent.",
+        "items": _payload_items(payload),
+        "payload": _sanitized_payload(payload),
+    }
+
 def _payload_items(payload: dict[str, Any]) -> list[dict[str, str]]:
     handoff_items = payload.get("handoff_items", [])
     if isinstance(handoff_items, list) and handoff_items:
@@ -1750,6 +1848,12 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "shortcut_actions",
         "active_action_count",
         "reference_action_count",
+        "settings",
+        "setting_rows",
+        "profile_options",
+        "run_mode_choices",
+        "writes_operator_state",
+        "local_only",
         "profiles",
         "version_validation",
         "board_rows",
@@ -2060,6 +2164,8 @@ for _name in (
     "_whats_new_page",
     "_keyboard_shortcuts_payload",
     "_keyboard_shortcuts_page",
+    "_settings_payload",
+    "_settings_page",
     "_payload_items",
     "_sanitized_payload",
     "_section_count",
