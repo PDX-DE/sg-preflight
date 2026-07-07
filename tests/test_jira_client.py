@@ -13,6 +13,7 @@ from sg_preflight.jira_client import (
     ConfigError,
     JIRA_KEYRING_SERVICE,
     JIRA_POSTING_BANNER,
+    JIRA_TICKETS_UNAVAILABLE_SUMMARY,
     JiraPostError,
     build_my_weekly_ticket_jql,
     attach_jira_file_action,
@@ -410,6 +411,25 @@ Other text
         self.assertEqual(result["ticket_count"], 0)
         self.assertTrue(result["read_only"])
         self.assertIn("Jira tickets unavailable", result["summary"])
+
+    def test_profile_ticket_search_failure_hides_raw_exception_in_visible_summary(self) -> None:
+        clear_jira_profile_ticket_cache()
+        fake_keyring = _FakeKeyring()
+
+        def transport(request, timeout=30):
+            raise JiraPostError("forced transport failure with local detail")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            _write_keychain_credentials(state_dir, fake_keyring)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    result = search_jira_profile_tickets("G65", transport=transport)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["summary"], JIRA_TICKETS_UNAVAILABLE_SUMMARY)
+        self.assertNotIn("forced transport failure", result["summary"])
+        self.assertIn("forced transport failure", result["diagnostic_detail"])
 
     def test_profile_ticket_search_uses_sixty_second_cache_for_real_transport(self) -> None:
         clear_jira_profile_ticket_cache()

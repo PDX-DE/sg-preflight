@@ -27,6 +27,10 @@ from sg_preflight.weekly_ticket_draft import build_weekly_ticket_draft, render_w
 
 MY_TICKETS_UNAVAILABLE_SUMMARY = "My Tickets unavailable. Check local Jira setup before retrying."
 WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY = "Weekly Ticket Draft unavailable. Check local Jira setup before retrying."
+JIRA_TICKETS_UNAVAILABLE_SUMMARY = "Jira tickets unavailable. Check local Jira setup before retrying."
+MISSING_ACTUAL_CHAIN_UNAVAILABLE_SUMMARY = (
+    "Missing-actual diagnostic could not run. Check the BMW pipeline setup before retrying."
+)
 
 
 _MAIN_GLOBAL_NAMES = (
@@ -3274,7 +3278,8 @@ def _render_full_qa_pass_panel(
                         "status": "failed",
                         "ticket_count": 0,
                         "tickets": [],
-                        "summary": f"Jira tickets unavailable: {exc}",
+                        "summary": JIRA_TICKETS_UNAVAILABLE_SUMMARY,
+                        "diagnostic_detail": f"Jira tickets unavailable: {exc}",
                         "settings_hint": "Check local Jira setup before retrying.",
                         "read_only": True,
                         "is_approval": False,
@@ -4457,7 +4462,8 @@ def _render_full_qa_pass_panel(
                         "action_id": MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID,
                         "profile_id": profile_id,
                         "status": "failed",
-                        "summary": f"Missing-actual diagnostic chain failed: {exc}",
+                        "summary": MISSING_ACTUAL_CHAIN_UNAVAILABLE_SUMMARY,
+                        "diagnostic_detail": f"Missing-actual diagnostic chain failed: {exc}",
                         "manual_review_required": True,
                         "is_approval": False,
                         "steps": [],

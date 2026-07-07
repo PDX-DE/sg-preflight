@@ -1099,6 +1099,21 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn('"summary": f"My Tickets unavailable: {exc}"', source)
         self.assertNotIn('"summary": f"Weekly Ticket Draft unavailable: {exc}"', source)
 
+    def test_jira_card_and_diagnostic_chain_error_paths_hide_raw_exception(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight"
+        for relative in ("dashboard/main.py", "dashboard_pages_workflows.py", "jira_client.py"):
+            source = (root / relative).read_text(encoding="utf-8")
+            self.assertNotIn('"summary": f"Jira tickets unavailable: {exc}"', source, relative)
+            self.assertNotIn(
+                '"summary": f"Missing-actual diagnostic chain failed: {exc}"', source, relative
+            )
+        workflows_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+        self.assertIn("MISSING_ACTUAL_CHAIN_UNAVAILABLE_SUMMARY", workflows_source)
+        self.assertIn(
+            '"diagnostic_detail": f"Missing-actual diagnostic chain failed: {exc}"', workflows_source
+        )
+        self.assertIn('"diagnostic_detail": f"Jira tickets unavailable: {exc}"', workflows_source)
+
     def test_my_tickets_error_payload_hides_raw_exception_in_visible_summary(self) -> None:
         from sg_preflight import dashboard_pages_workflows as workflows
         from sg_preflight.dashboard import main as dashboard_main

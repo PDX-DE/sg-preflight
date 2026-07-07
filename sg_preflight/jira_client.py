@@ -33,6 +33,7 @@ JIRA_MY_TICKETS_CACHE_SECONDS = 60.0
 JIRA_MY_TICKETS_MAX_RESULTS = 12
 JIRA_MY_WEEKLY_TICKETS_MAX_RESULTS = 50
 MY_TICKETS_UNAVAILABLE_SUMMARY = "My Tickets unavailable. Check local Jira setup before retrying."
+JIRA_TICKETS_UNAVAILABLE_SUMMARY = "Jira tickets unavailable. Check local Jira setup before retrying."
 _JIRA_PROFILE_TICKET_CACHE: dict[tuple[str, str, str, int], tuple[float, dict[str, Any]]] = {}
 _JIRA_MY_TICKETS_CACHE: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
 _JIRA_MY_WEEKLY_TICKETS_CACHE: dict[tuple[str, str, str, int], tuple[float, dict[str, Any]]] = {}
@@ -388,7 +389,8 @@ def search_jira_profile_tickets(
             "jql": jql,
             "ticket_count": 0,
             "tickets": [],
-            "summary": f"Jira tickets unavailable: {exc}",
+            "summary": JIRA_TICKETS_UNAVAILABLE_SUMMARY,
+            "diagnostic_detail": f"Jira tickets unavailable: {exc}",
             "credential": redact_jira_credentials(credentials),
             "settings_hint": "Check Jira connection from the local setup page or run sgfx-preflight.exe jira status.",
             "cache_status": "miss",
