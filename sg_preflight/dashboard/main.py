@@ -951,8 +951,34 @@ def record_manual_review_dashboard_step(
     )
 
 
+_STATUS_TONE_BAD_TOKENS = (
+    "fail", "error", "blocked", "missing", "unavailable", "unreadable", "not_found", "violation",
+)
+_STATUS_TONE_WARN_TOKENS = (
+    "warn", "attention", "review", "incomplete", "pending", "stale", "drift", "outlier", "partial",
+    "mismatch",
+)
+_STATUS_TONE_GOOD_TOKENS = (
+    "available", "ready", "ok", "pass", "aligned", "clean", "done", "delivered", "success",
+)
+
+
+def _status_tone(status: str) -> str:
+    value = str(status or "").strip().casefold()
+    if not value:
+        return "neutral"
+    if any(token in value for token in _STATUS_TONE_BAD_TOKENS):
+        return "bad"
+    if any(token in value for token in _STATUS_TONE_WARN_TOKENS):
+        return "warn"
+    if any(token in value for token in _STATUS_TONE_GOOD_TOKENS):
+        return "good"
+    return "neutral"
+
+
 def _render_status_chip(ui: Any, status: str) -> None:
-    ui.badge(status or "unknown").classes("sgfx-status")
+    label = status or "unknown"
+    ui.badge(label).classes(f"sgfx-status sgfx-tone-{_status_tone(label)}")
 
 
 def _page_confluence_anchors(page: dict[str, Any]) -> list[str]:
@@ -1138,19 +1164,25 @@ def _attach_tooltip(ui: Any, element: Any, text: str) -> Any:
 
 def _render_reader_rows(ui: Any, rows: list[dict[str, str]]) -> None:
     if rows:
-        _attach_tooltip(
-            ui,
-            ui.table(
-                columns=[
-                    {"name": "label", "label": "Item", "field": "label", "align": "left"},
-                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                    {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
-                ],
-                rows=rows,
-                row_key="label",
-            ).classes("sgfx-table"),
-            "Evidence rows are read from local files only.",
+        toned_rows = [
+            {**row, "status_tone": _status_tone(str(row.get("status", "")))} for row in rows
+        ]
+        table = ui.table(
+            columns=[
+                {"name": "label", "label": "Item", "field": "label", "align": "left"},
+                {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                {"name": "detail", "label": "Detail", "field": "detail", "align": "left"},
+            ],
+            rows=toned_rows,
+            row_key="label",
+        ).classes("sgfx-table")
+        table.add_slot(
+            "body-cell-status",
+            '<q-td key="status" :props="props">'
+            "<span :class=\"'sgfx-status-cell sgfx-tone-' + (props.row.status_tone || 'neutral')\">"
+            "{{ props.value }}</span></q-td>",
         )
+        _attach_tooltip(ui, table, "Evidence rows are read from local files only.")
     else:
         ui.label("No rows loaded for this page.").classes("sgfx-muted")
 
@@ -3139,6 +3171,15 @@ def _render_dashboard(
             .sgfx-shortcut-feedback { min-height: 22px; color: var(--sgfx-fg-muted); font-size: 13px; padding: 2px 0; }
             .sgfx-profile-select { min-width: 144px; }
             .sgfx-status { text-transform: none; }
+            .sgfx-status.sgfx-tone-bad { background: rgba(241, 76, 76, 0.18); color: #f14c4c; }
+            .sgfx-status.sgfx-tone-warn { background: rgba(204, 167, 0, 0.16); color: #cca700; }
+            .sgfx-status.sgfx-tone-good { background: rgba(137, 209, 133, 0.15); color: #89d185; }
+            .sgfx-status.sgfx-tone-neutral { background: rgba(128, 128, 128, 0.15); color: var(--sgfx-fg-muted); }
+            .sgfx-status-cell { font-weight: 600; }
+            .sgfx-status-cell.sgfx-tone-bad { color: #f14c4c; }
+            .sgfx-status-cell.sgfx-tone-warn { color: #cca700; }
+            .sgfx-status-cell.sgfx-tone-good { color: #89d185; }
+            .sgfx-status-cell.sgfx-tone-neutral { color: var(--sgfx-fg-muted); font-weight: 400; }
             .sgfx-table { width: 100%; color: var(--sgfx-fg); }
             .sgfx-full-qa-controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0 14px 0; }
             .sgfx-html-action-button { min-height: 36px; border: 0; border-radius: 6px; padding: 0 16px; background: var(--sgfx-accent); color: #071d18; font-weight: 600; cursor: pointer; }

@@ -1099,6 +1099,30 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn('"summary": f"My Tickets unavailable: {exc}"', source)
         self.assertNotIn('"summary": f"Weekly Ticket Draft unavailable: {exc}"', source)
 
+    def test_status_tone_classifier_separates_fail_warn_pass(self) -> None:
+        from sg_preflight.dashboard.main import _status_tone
+
+        self.assertEqual(_status_tone("failed"), "bad")
+        self.assertEqual(_status_tone("unavailable"), "bad")
+        self.assertEqual(_status_tone("missing_candidate"), "bad")
+        self.assertEqual(_status_tone("needs_review"), "warn")
+        self.assertEqual(_status_tone("structural_likely_review"), "warn")
+        self.assertEqual(_status_tone("dimension_mismatch"), "warn")
+        self.assertEqual(_status_tone("available"), "good")
+        self.assertEqual(_status_tone("cosmetic_likely_pass"), "good")
+        self.assertEqual(_status_tone("not_run"), "neutral")
+        self.assertEqual(_status_tone("read_only"), "neutral")
+        self.assertEqual(_status_tone(""), "neutral")
+
+    def test_status_surfaces_carry_semantic_tone_classes(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('sgfx-status sgfx-tone-', source)
+        self.assertIn("body-cell-status", source)
+        self.assertIn(".sgfx-status.sgfx-tone-bad", source)
+        self.assertIn(".sgfx-status-cell.sgfx-tone-good", source)
+
     def test_jira_card_and_diagnostic_chain_error_paths_hide_raw_exception(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight"
         for relative in ("dashboard/main.py", "dashboard_pages_workflows.py", "jira_client.py"):
