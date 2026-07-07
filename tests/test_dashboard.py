@@ -2507,7 +2507,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         fallback.assert_called_once()
         self.assertEqual(fallback.call_args.kwargs["fallback_port"], 8127)
 
-    def test_frozen_native_dashboard_suppresses_browser_fallback_without_native_attempt(self) -> None:
+    def test_frozen_native_dashboard_falls_back_to_browser_without_native_attempt(self) -> None:
         import sg_preflight.dashboard.main as dashboard_main
         from sg_preflight.dashboard.main import run_dashboard
 
@@ -2519,11 +2519,50 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                     with mock.patch.object(dashboard_main.sys, "frozen", True, create=True):
                         with mock.patch("sg_preflight.dashboard.main._find_open_dashboard_port", return_value=8128):
                             with mock.patch("sg_preflight.dashboard.main._launch_browser_fallback_process", return_value=0) as fallback:
-                                with self.assertRaisesRegex(RuntimeError, "embedded desktop shell"):
-                                    run_dashboard(workspace=Path(temp_dir), native=True, port=0)
+                                result = run_dashboard(workspace=Path(temp_dir), native=True, port=0)
 
+        self.assertEqual(result, 0)
         ui.run.assert_not_called()
-        fallback.assert_not_called()
+        fallback.assert_called_once()
+        self.assertEqual(fallback.call_args.kwargs["fallback_port"], 8128)
+
+    def test_frozen_desktop_shell_failure_opens_browser_fallback_with_notice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import sg_preflight.cli as cli
+
+            with mock.patch.object(cli.sys, "frozen", True, create=True):
+                with mock.patch(
+                    "sg_preflight.desktop.app.run_desktop_app",
+                    side_effect=RuntimeError("QtWebEngine runtime is unavailable"),
+                ):
+                    with mock.patch(
+                        "sg_preflight.dashboard_webserver._launch_browser_fallback_process",
+                        return_value=0,
+                    ) as fallback:
+                        with mock.patch("sg_preflight.cli.dashboard._show_native_fallback_notice") as notice:
+                            result = cli.main(
+                                [
+                                    "dashboard",
+                                    "run",
+                                    "--profile",
+                                    "G65",
+                                    "--workspace",
+                                    tmp,
+                                ]
+                            )
+
+        self.assertEqual(result, 0)
+        fallback.assert_called_once()
+        self.assertEqual(fallback.call_args.kwargs["profile_id"], "G65")
+        notice.assert_called_once()
+        self.assertFalse(notice.call_args.kwargs["icon_error"])
+
+    def test_packaged_browser_fallback_suppression_is_gone(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("browser fallback suppressed", source)
+        self.assertNotIn("_packaged_native_unavailable", source)
 
     def test_native_dashboard_falls_back_to_browser_when_webview2_is_missing(self) -> None:
         from sg_preflight.dashboard.main import run_dashboard

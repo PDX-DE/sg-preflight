@@ -8,6 +8,58 @@ import sys
 common = import_module("sg_preflight.cli")
 
 
+def _show_native_fallback_notice(message: str, *, icon_error: bool) -> None:
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            message,
+            "Seriengrafik: Project Quality-Hero",
+            0x10 if icon_error else 0x40,
+        )
+    except Exception:
+        pass
+
+
+def _frozen_browser_fallback(args: argparse.Namespace, reason: str) -> int | None:
+    try:
+        from sg_preflight.dashboard.main import _dashboard_run_port
+        from sg_preflight.dashboard_webserver import (
+            _launch_browser_fallback_process,
+            append_startup_log,
+        )
+
+        append_startup_log(
+            f"desktop shell unavailable ({reason}); opening the dashboard in the default browser"
+        )
+        fallback_port = _dashboard_run_port(native=False, port=int(getattr(args, "port", 0) or 0))
+        exit_code = _launch_browser_fallback_process(
+            profile_id=args.profile or "",
+            workspace=Path(args.workspace).resolve(),
+            bmw_root=Path(args.bmw_root).resolve() if args.bmw_root else None,
+            ui_mode="clean",
+            host=getattr(args, "host", None) or "127.0.0.1",
+            fallback_port=fallback_port,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _show_native_fallback_notice(
+            "The native SGFX window could not start, and the browser fallback also failed.\n\n"
+            f"Native detail: {reason}\nFallback detail: {exc}",
+            icon_error=True,
+        )
+        return None
+    _show_native_fallback_notice(
+        "The native SGFX window could not start on this machine.\n"
+        "The dashboard is opening in your default browser instead.\n\n"
+        f"Technical detail: {reason}",
+        icon_error=False,
+    )
+    return exit_code
+
+
 def handle_dashboard_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.command == "station":
         try:
@@ -67,6 +119,9 @@ def handle_dashboard_command(args: argparse.Namespace, parser: argparse.Argument
                 )
             except RuntimeError as exc:
                 print(common._console_safe(str(exc)), file=sys.stderr)
+                fallback_code = _frozen_browser_fallback(args, str(exc))
+                if fallback_code is not None:
+                    return fallback_code
                 return 1
         try:
             from sg_preflight.dashboard.dependency import NiceGuiUnavailable

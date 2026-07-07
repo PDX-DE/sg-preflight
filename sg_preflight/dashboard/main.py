@@ -149,7 +149,6 @@ from sg_preflight.dashboard_webserver import (
     _find_open_dashboard_port,
     _frozen_native_window_allowed,
     _launch_browser_fallback_process,
-    _packaged_native_unavailable,
     _run_nicegui,
     append_startup_log,
     startup_log_path,
@@ -4331,8 +4330,16 @@ def run_dashboard(
     if native:
         append_startup_log(f"attempting NiceGUI native mode on {host}:{run_port or 'auto'}")
         if not _frozen_native_window_allowed():
-            append_startup_log("packaged native window is disabled; browser fallback suppressed for desktop builds")
-            raise _packaged_native_unavailable()
+            append_startup_log("packaged native window is hosted by the desktop shell; opening the browser fallback")
+            fallback_port = _dashboard_run_port(native=False, port=port)
+            return _launch_browser_fallback_process(
+                profile_id=profile_id,
+                workspace=root,
+                bmw_root=bmw_root,
+                ui_mode=ui_mode,
+                host=host,
+                fallback_port=fallback_port,
+            )
         if webview2_runtime_available():
             try:
                 native_started_at = monotonic()
@@ -4352,9 +4359,6 @@ def run_dashboard(
                     f"native returned after {native_elapsed:.1f}s without a durable window; "
                     "falling back to browser mode"
                 )
-                if getattr(sys, "frozen", False):
-                    append_startup_log("browser fallback suppressed for packaged desktop build")
-                    raise _packaged_native_unavailable()
                 fallback_port = _dashboard_run_port(native=False, port=port)
                 return _launch_browser_fallback_process(
                     profile_id=profile_id,
@@ -4366,9 +4370,6 @@ def run_dashboard(
                 )
             except Exception as exc:
                 append_startup_log(f"native failed: {type(exc).__name__}: {exc!r}")
-                if getattr(sys, "frozen", False):
-                    append_startup_log("browser fallback suppressed for packaged desktop build")
-                    raise _packaged_native_unavailable() from exc
                 fallback_port = _dashboard_run_port(native=False, port=port)
                 return _launch_browser_fallback_process(
                     profile_id=profile_id,
@@ -4380,9 +4381,6 @@ def run_dashboard(
                 )
         else:
             append_startup_log("WebView2 runtime not found; falling back to browser mode")
-        if getattr(sys, "frozen", False):
-            append_startup_log("browser fallback suppressed for packaged desktop build")
-            raise _packaged_native_unavailable()
         fallback_port = _dashboard_run_port(native=False, port=port)
         append_startup_log(f"falling back to browser mode on {host}:{fallback_port}")
         _run_nicegui(
