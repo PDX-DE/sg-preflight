@@ -20,7 +20,12 @@ MANUAL_APPROVAL_BANNER = (
 )
 
 _HEADER_RE = re.compile(r"^##\s+\[(?P<version>[^\]]+)\](?P<rest>.*)$", re.MULTILINE)
-_DATE_RE = re.compile(r"\b(?P<date>\d{4}-\d{2}-\d{2}|\d{8})\b")
+_DATE_RE = re.compile(r"\b(?P<date>\d{4}-\d{2}-\d{2}|\d{2}[.-]\d{2}[.-]\d{4}|\d{8})\b")
+_NOT_DELIVERED_RE = re.compile(
+    r"\bnot\b[^\n]{0,24}\bdeliv|\bto\s+be\s+deliv|\bnot\b[^\n]{0,24}\breleas|\bunreleased\b|\bpending\b",
+    re.IGNORECASE,
+)
+_DELIVERED_MARKER_RE = re.compile(r"\bdelivered\b|\breleased\b", re.IGNORECASE)
 _PENDING_RE = re.compile(r"deliv|delv|releas", re.IGNORECASE)
 _YAML_MODEL_RE = re.compile(r"^-\s+name:\s*(?P<value>.+?)\s*$")
 _YAML_TOP_LEVEL_RE = re.compile(r"^\s{2}(?P<key>[A-Za-z_]+):\s*(?P<value>.*?)\s*$")
@@ -249,6 +254,24 @@ def classify_changelog_text(text: str) -> ChangelogClassification:
             delivered_date=date_match.group("date"),
             header=header,
             detail=f"Latest changelog entry has delivery date {date_match.group('date')}.",
+        )
+    if _NOT_DELIVERED_RE.search(rest):
+        return ChangelogClassification(
+            status=STATUS_NOT_DELIVERED_YET,
+            status_label="Not delivered yet",
+            version=version,
+            delivered_date="",
+            header=header,
+            detail="Latest changelog entry is marked as not delivered yet.",
+        )
+    if _DELIVERED_MARKER_RE.search(rest):
+        return ChangelogClassification(
+            status=STATUS_DELIVERED,
+            status_label="Delivered",
+            version=version,
+            delivered_date="",
+            header=header,
+            detail="Latest changelog entry is marked delivered; no delivery date found in the header.",
         )
     if _PENDING_RE.search(rest):
         return ChangelogClassification(

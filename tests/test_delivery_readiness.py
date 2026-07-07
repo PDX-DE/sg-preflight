@@ -97,6 +97,10 @@ class TestDeliveryReadiness(unittest.TestCase):
             ("## [3.4.0] - NOT YET RELEASED\n", STATUS_NOT_DELIVERED_YET, ""),
             ("## [3.4.0] - The be delviered\n", STATUS_NOT_DELIVERED_YET, ""),
             ("## [3.4.0] - waiting for process call\n", STATUS_UNKNOWN, ""),
+            ("## [3.4.0] - DELIVERED\n", STATUS_DELIVERED, ""),
+            ("## [3.4.0] - Released\n", STATUS_DELIVERED, ""),
+            ("## [3.4.0] - delivered 28-05-2026\n", STATUS_DELIVERED, "28-05-2026"),
+            ("## [3.4.0] - 28.05.2026\n", STATUS_DELIVERED, "28.05.2026"),
         ]
         for text, expected_status, expected_date in cases:
             with self.subTest(text=text):
