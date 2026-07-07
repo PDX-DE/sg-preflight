@@ -2885,6 +2885,71 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
         self.assertIn("G70", command)
         self.assertEqual(popen.call_args.kwargs["cwd"], exe.resolve().parent)
 
+    def test_grafiks_mode_launches_operator_console_shell_with_status_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard import main as dashboard_main
+
+            root = Path(tmp)
+            exe = root / "dist" / "sgfx_screens.exe"
+            exe.parent.mkdir(parents=True)
+            exe.write_text("fixture\n", encoding="utf-8")
+
+            process = mock.Mock()
+            process.wait.side_effect = subprocess.TimeoutExpired(str(exe), 2)
+            with mock.patch.dict(os.environ, {"SGFX_GRAFIKS_SHELL_EXE": str(exe)}, clear=False):
+                with mock.patch("sg_preflight.dashboard.main.subprocess.Popen", return_value=process) as popen:
+                    result = dashboard_main.run_grafiks_mode(profile_id="G65_EVO", workspace=root)
+
+            status_payload = json.loads((exe.parent / "sgfx_status.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result, 0)
+        command = popen.call_args.args[0]
+        self.assertEqual(command, [str(exe.resolve())])
+        self.assertEqual(popen.call_args.kwargs["cwd"], exe.resolve().parent)
+        self.assertEqual(status_payload["run"]["activeProfile"], "G65")
+
+    def test_grafiks_status_handoff_failure_still_launches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard import main as dashboard_main
+
+            root = Path(tmp)
+            exe = root / "dist" / "sgfx_screens.exe"
+            exe.parent.mkdir(parents=True)
+            exe.write_text("fixture\n", encoding="utf-8")
+
+            process = mock.Mock()
+            process.wait.side_effect = subprocess.TimeoutExpired(str(exe), 2)
+            with mock.patch.dict(os.environ, {"SGFX_GRAFIKS_SHELL_EXE": str(exe)}, clear=False):
+                with mock.patch("sg_preflight.dashboard.main.subprocess.Popen", return_value=process) as popen:
+                    with mock.patch.object(Path, "write_text", side_effect=OSError("denied")):
+                        result = dashboard_main.run_grafiks_mode(profile_id="G65", workspace=root)
+
+            status_written = (exe.parent / "sgfx_status.json").exists()
+
+        self.assertEqual(result, 0)
+        popen.assert_called_once()
+        self.assertFalse(status_written)
+
+    def test_grafiks_candidates_prefer_operator_console_name_in_configured_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight import dashboard_grafiks, dashboard_preferences
+
+            workspace = Path(tmp)
+            shell_dir = workspace / "shell"
+            shell_dir.mkdir()
+            dashboard_preferences.save_dashboard_settings(workspace, grafiks_shell_exe=shell_dir)
+            with mock.patch.dict(
+                os.environ,
+                {"SGFX_GRAFIKS_SHELL_EXE": "", "SGFX_CINEMATIC_SHELL_EXE": ""},
+                clear=False,
+            ):
+                candidates = dashboard_grafiks._grafiks_shell_exe_candidates(workspace)
+
+        self.assertEqual(
+            [candidate.name for candidate in candidates[:2]],
+            ["sgfx_screens.exe", "sgfx_cine_cinematic_shell.exe"],
+        )
+
     def test_grafiks_mode_missing_shell_degrades_with_wip_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard import main as dashboard_main
