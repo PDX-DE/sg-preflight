@@ -1358,6 +1358,72 @@ def _bmw_process_payload() -> dict[str, Any]:
         "board_rows": rows,
     }
 
+HOME_QUICK_LINKS = (
+    ("full-qa-pass", "Full QA Pass"),
+    ("screenshot-test-state", "Screenshot Test State"),
+    ("my-tickets", "My Tickets"),
+    ("daily-digest", "Daily Digest"),
+)
+
+
+def _home_payload(workspace: Path | str) -> dict[str, Any]:
+    from datetime import datetime
+
+    from sg_preflight.activity_log import read_activity_entries
+
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    try:
+        activity = read_activity_entries(workspace, limit=5)
+    except Exception:
+        activity = {}
+    raw_entries = activity.get("entries", []) if isinstance(activity, dict) else []
+    items: list[dict[str, str]] = []
+    for entry in raw_entries[:5]:
+        if not isinstance(entry, dict):
+            continue
+        detail = " ".join(
+            part
+            for part in (
+                str(entry.get("verb", "") or ""),
+                str(entry.get("surface", "") or ""),
+                str(entry.get("profile", "") or ""),
+                str(entry.get("note", "") or ""),
+            )
+            if part
+        ).strip()
+        items.append(
+            {
+                "label": str(entry.get("ts", "") or "recent"),
+                "status": str(entry.get("outcome", "") or "recorded"),
+                "detail": detail or "Local activity entry.",
+            }
+        )
+    if items:
+        summary = f"Data as of {stamp}. Your last {len(items)} local action(s) are below."
+    else:
+        summary = (
+            f"Data as of {stamp}. No local activity recorded yet - "
+            "run a check or open a board to get started."
+        )
+    return {
+        "status": "available" if items else "not_run",
+        "data_available": bool(items),
+        "summary": summary,
+        "data_as_of": stamp,
+        "board_rows": items,
+    }
+
+
+def _home_page(workspace: Path | str) -> dict[str, Any]:
+    return _reader_page(
+        page_id="home",
+        title="Home",
+        tagline="What needs your attention today: data freshness, changed profiles, and your latest local activity.",
+        reader=lambda: _home_payload(workspace),
+        ownership_note="Read-only overview. Evidence and actions live on the linked pages.",
+    )
+
+
 def _bmw_process_page() -> dict[str, Any]:
     page = _reader_page(
         page_id="bmw-process",

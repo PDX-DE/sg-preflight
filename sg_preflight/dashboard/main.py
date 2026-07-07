@@ -244,6 +244,8 @@ from sg_preflight.dashboard_pages_config import (
     _qa_workflows_page,
     _bmw_process_payload,
     _bmw_process_page,
+    _home_page,
+    HOME_QUICK_LINKS,
     _onboarding_guide_page,
     _screenshot_test_state_page,
     _risk_score_page,
@@ -460,6 +462,7 @@ DASHBOARD_GUARDRAILS = (
     "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
 )
 DASHBOARD_NAVIGATION = (
+    ("home", "Home"),
     ("full-qa-pass", "Full QA Pass"),
     ("batch-full-qa-pass", "Batch Full QA Pass"),
     ("my-tickets", "My Tickets"),
@@ -832,6 +835,7 @@ def build_dashboard_snapshot(
         },
         "changed_profiles": changed_profiles,
         "pages": [
+            _home_page(root),
             _full_qa_pass_page(
                 resolved_profile_id,
                 root,
@@ -3611,12 +3615,21 @@ def _render_dashboard(
                     open_full_qa=lambda: _open_page("full-qa-pass"),
                     open_whats_new=lambda: _open_page("whats-new"),
                 )
-                _render_changed_profiles_card(
-                    ui,
-                    state["snapshot"],
-                    open_batch=_open_changed_profiles_batch,
-                )
-                if active_page_id == "delivery-checklist":
+                if active_page_id == "home":
+                    _render_changed_profiles_card(
+                        ui,
+                        state["snapshot"],
+                        open_batch=_open_changed_profiles_batch,
+                    )
+                    home_page = _pages_by_id().get("home", {})
+                    _render_page_panel(ui, home_page)
+                    with ui.row().classes("sgfx-full-qa-controls"):
+                        for target_id, target_label in HOME_QUICK_LINKS:
+                            ui.button(
+                                target_label,
+                                on_click=lambda page_id=target_id: _open_page(page_id),
+                            ).props("outline")
+                elif active_page_id == "delivery-checklist":
                     _render_delivery_checklist_panel(
                         ui,
                         state["snapshot"],
