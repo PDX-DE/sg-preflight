@@ -95,9 +95,11 @@ class ScreenshotReviewItem:
     expected_path: str = ""
     actual_path: str = ""
     diff_path: str = ""
+    diff_alpha_path: str = ""
     expected_uri: str = ""
     actual_uri: str = ""
     diff_uri: str = ""
+    diff_alpha_uri: str = ""
     diff_delta_label: str = ""
     diff_delta_level: str = ""
     diff_delta_percent: float | None = None
@@ -130,6 +132,9 @@ class ScreenshotReviewItem:
     diagnostic_chain_steps: tuple[dict[str, str], ...] = ()
     diagnostic_pattern_ids: tuple[str, ...] = ()
     escalation_message: str = ""
+    bmw_comparator_would_pass: bool | None = None
+    bmw_comparator_summary: str = ""
+    bmw_comparator_tiers: tuple[dict[str, Any], ...] = ()
     manual_verdict: str = "not_run"
 
 
@@ -643,7 +648,7 @@ def _compute_diff_delta_badge_from_decoded(
         level = "yellow"
     else:
         level = "red"
-    label = f"max-\u0394: {percent:.1f}% (x={max_x}, y={max_y})"
+    label = f"peak-\u0394: {percent:.1f}% (x={max_x}, y={max_y})"
     return DiffDeltaBadge(
         status="available",
         label=label,
@@ -814,17 +819,22 @@ def _viewer_asset_uri(path_value: str, output_root: Path, asset_root: Path, slot
     return quote(relative, safe="/._-")
 
 
-def _diff_lookup(diff_reference_roots: tuple[Path, ...]) -> dict[str, Path]:
+def _diff_lookup(diff_reference_roots: tuple[Path, ...]) -> tuple[dict[str, Path], dict[str, Path]]:
     lookup: dict[str, Path] = {}
+    alpha_lookup: dict[str, Path] = {}
 
     def add_keys(relative: Path, path: Path) -> None:
         key_candidates = {relative.with_suffix("").as_posix().casefold(), relative.with_suffix("").name.casefold()}
+        target_lookup = lookup
         for key in tuple(key_candidates):
+            if key.endswith("_alpha"):
+                target_lookup = alpha_lookup
+                key_candidates.add(key[: -len("_alpha")])
             for suffix in ("_color", "_diff"):
                 if key.endswith(suffix):
                     key_candidates.add(key[: -len(suffix)])
         for key in key_candidates:
-            lookup.setdefault(key, path)
+            target_lookup.setdefault(key, path)
 
     for root in diff_reference_roots:
         if not root.is_dir():
@@ -836,7 +846,7 @@ def _diff_lookup(diff_reference_roots: tuple[Path, ...]) -> dict[str, Path]:
                 except ValueError:
                     relative = Path(path.name)
                 add_keys(relative, path)
-    return lookup
+    return lookup, alpha_lookup
 
 
 def build_screenshot_review_viewer(
@@ -861,7 +871,7 @@ def build_screenshot_review_viewer(
         diff_reference_roots=diff_reference_roots,
         priority_names=priority_names,
     )
-    diff_lookup = _diff_lookup(diff_reference_roots)
+    diff_lookup, alpha_diff_lookup = _diff_lookup(diff_reference_roots)
     asset_root = output_root / "assets"
     previous_metrics, previous_generated_at = _previous_diff_metrics(profile_id)
     regression_threshold = diff_regression_threshold_percent_from_env()
@@ -873,6 +883,11 @@ def build_screenshot_review_viewer(
             diff_lookup.get(pair.key.casefold())
             or diff_lookup.get(Path(pair.key).with_suffix("").name.casefold())
             or pair.diff_image_path
+            or ""
+        )
+        diff_alpha_path = str(
+            alpha_diff_lookup.get(pair.key.casefold())
+            or alpha_diff_lookup.get(Path(pair.key).with_suffix("").name.casefold())
             or ""
         )
         delta_badge, delta_histogram = _compute_diff_review_metrics(diff_path)
@@ -899,9 +914,17 @@ def build_screenshot_review_viewer(
                 expected_path=pair.baseline_path,
                 actual_path=pair.candidate_path,
                 diff_path=diff_path,
+                diff_alpha_path=diff_alpha_path,
                 expected_uri=_viewer_asset_uri(pair.baseline_path, output_root, asset_root, "expected", pair.key),
                 actual_uri=_viewer_asset_uri(pair.candidate_path, output_root, asset_root, "actual", pair.key),
                 diff_uri=_viewer_asset_uri(diff_path, output_root, asset_root, "diff", pair.key),
+                diff_alpha_uri=_viewer_asset_uri(
+                    diff_alpha_path,
+                    output_root,
+                    asset_root,
+                    "diff-alpha",
+                    pair.key,
+                ),
                 diff_delta_label=delta_badge.label,
                 diff_delta_level=delta_badge.level,
                 diff_delta_percent=delta_badge.max_delta_percent,
@@ -934,6 +957,9 @@ def build_screenshot_review_viewer(
                 diagnostic_chain_steps=pair.diagnostic_chain_steps,
                 diagnostic_pattern_ids=pair.diagnostic_pattern_ids,
                 escalation_message=pair.escalation_message,
+                bmw_comparator_would_pass=pair.bmw_comparator_would_pass,
+                bmw_comparator_summary=pair.bmw_comparator_summary,
+                bmw_comparator_tiers=tuple(asdict(tier) for tier in pair.bmw_comparator_tiers),
             )
         )
 
@@ -1086,6 +1112,18 @@ def _item_button_html(item: ScreenshotReviewItem) -> str:
         if item.diff_regression_label
         else ""
     )
+    bmw_state = (
+        "pass"
+        if item.bmw_comparator_would_pass is True
+        else "fail"
+        if item.bmw_comparator_would_pass is False
+        else "unavailable"
+    )
+    bmw = (
+        f'<em class="bmw-comparator-badge bmw-{escape(bmw_state)}">BMW comparator: {escape(bmw_state)}</em>'
+        if item.bmw_comparator_summary
+        else ""
+    )
     histogram = _histogram_html(item)
     return (
         f'<article class="review-row{level_class}" data-review-row="{escape(item.key)}">'
@@ -1094,6 +1132,7 @@ def _item_button_html(item: ScreenshotReviewItem) -> str:
         f"<span>{escape(item.classification)} / {escape(item.visual_classification)}</span>"
         f"{badge}"
         f"{regression}"
+        f"{bmw}"
         "</button>"
         f"{histogram}"
         "</article>"
@@ -1148,6 +1187,10 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
     .regression-badge.regression-improved, .regression-detail.regression-improved {{ color: var(--delta-green); border-color: rgba(87, 214, 141, 0.5); background: rgba(87, 214, 141, 0.12); }}
     .regression-badge.regression-stable, .regression-detail.regression-stable {{ color: var(--delta-yellow); border-color: rgba(232, 192, 125, 0.55); background: rgba(232, 192, 125, 0.1); }}
     .regression-badge.regression-neutral, .regression-detail.regression-neutral {{ color: var(--muted); border-color: var(--border); background: rgba(255, 255, 255, 0.035); }}
+    .bmw-comparator-badge, .bmw-detail {{ display: inline-flex; align-items: center; margin-top: 6px; padding: 2px 7px; border-radius: 999px; font-style: normal; font-size: 12px; line-height: 1.35; border: 1px solid var(--border); color: var(--muted); background: rgba(255, 255, 255, 0.035); }}
+    .bmw-comparator-badge.bmw-pass, .bmw-detail.bmw-pass {{ color: var(--delta-green); border-color: rgba(87, 214, 141, 0.5); background: rgba(87, 214, 141, 0.12); }}
+    .bmw-comparator-badge.bmw-fail, .bmw-detail.bmw-fail {{ color: var(--delta-red); border-color: rgba(240, 127, 114, 0.55); background: rgba(240, 127, 114, 0.13); }}
+    .bmw-comparator-badge.bmw-unavailable, .bmw-detail.bmw-unavailable {{ color: var(--muted); border-color: var(--border); background: rgba(255, 255, 255, 0.035); }}
     .delta-histogram {{ border: 1px solid var(--border); border-radius: 6px; background: rgba(255, 255, 255, 0.025); padding: 7px 8px; }}
     .delta-histogram summary {{ cursor: pointer; color: var(--muted); font-size: 12px; list-style: none; }}
     .delta-histogram summary::-webkit-details-marker {{ display: none; }}
@@ -1174,7 +1217,7 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
     .diagnostic-chain p {{ margin: 4px 0; font-size: 12px; overflow-wrap: anywhere; }}
     .diagnostic-chain .status {{ color: var(--warning); font-weight: 700; }}
     .diagnostic-chain .escalation {{ margin-top: 8px; white-space: pre-wrap; color: var(--text); }}
-    .panes {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; min-height: 68vh; }}
+    .panes {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; min-height: 68vh; }}
     .pane {{ border: 1px solid var(--border); border-radius: 8px; background: var(--panel); min-width: 0; display: flex; flex-direction: column; }}
     .pane header {{ display: flex; justify-content: space-between; gap: 10px; padding: 9px 10px; border-bottom: 1px solid var(--border); color: var(--fg); font-weight: 650; }}
     .pane header a {{ color: var(--accent); font-weight: 400; text-decoration: none; }}
@@ -1209,12 +1252,14 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
       <div class="diagnostic-chain" data-diagnostic-chain hidden></div>
       <p class="delta-detail" data-delta></p>
       <p class="regression-detail" data-regression></p>
+      <p class="bmw-detail" data-bmw></p>
       <p class="score" data-score></p>
     </section>
     <section class="panes">
       {_image_pane("Expected", "expected")}
       {_image_pane("Actual", "actual")}
       {_image_pane("Diff", "diff")}
+      {_image_pane("Alpha diff", "alpha")}
     </section>
   </main>
   <script id="sgfx-viewer-data" type="application/json">{payload}</script>
@@ -1230,12 +1275,13 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
       const diagnosticChain = document.querySelector('[data-diagnostic-chain]');
       const delta = document.querySelector('[data-delta]');
       const regression = document.querySelector('[data-regression]');
+      const bmw = document.querySelector('[data-bmw]');
       const score = document.querySelector('[data-score]');
       const zoomInput = document.querySelector('[data-zoom]');
       const zoomLabel = document.querySelector('[data-zoom-label]');
       const reset = document.querySelector('[data-reset]');
       const buttons = Array.from(document.querySelectorAll('button[data-key]'));
-      const panes = ['expected', 'actual', 'diff'];
+      const panes = ['expected', 'actual', 'diff', 'alpha'];
       const state = {{ scale: 1, x: 0, y: 0 }};
 
       const applyTransform = () => {{
@@ -1311,10 +1357,15 @@ def _html(viewer: ScreenshotReviewViewer) -> str:
         regression.textContent = item.diff_regression_label || '';
         regression.className = `regression-detail ${{item.diff_regression_level ? `regression-${{item.diff_regression_level}}` : ''}}`;
         regression.hidden = !item.diff_regression_label;
+        const bmwState = item.bmw_comparator_would_pass === true ? 'pass' : item.bmw_comparator_would_pass === false ? 'fail' : 'unavailable';
+        bmw.textContent = item.bmw_comparator_summary ? `BMW comparator: ${{bmwState}} - ${{item.bmw_comparator_summary}}` : '';
+        bmw.className = `bmw-detail bmw-${{bmwState}}`;
+        bmw.hidden = !item.bmw_comparator_summary;
         score.textContent = item.review_score ? `Review score: ${{item.review_score.toFixed(2)}}` : '';
         setPane('expected', item.expected_uri, item.expected_path);
         setPane('actual', item.actual_uri, item.actual_path);
         setPane('diff', item.diff_uri, item.diff_path);
+        setPane('alpha', item.diff_alpha_uri, item.diff_alpha_path);
         applyTransform();
       }};
 

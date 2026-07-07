@@ -6,7 +6,11 @@ import json
 import sys
 from pathlib import Path
 
-from sg_preflight.screenshot_triage import VisualDiffThresholds
+from sg_preflight.screenshot_triage import (
+    BMW_COMPARATOR_ENVELOPE_WARNING,
+    VisualDiffThresholds,
+    visual_thresholds_exceed_bmw_envelope,
+)
 
 common = import_module("sg_preflight.cli")
 
@@ -110,13 +114,16 @@ def handle_screenshot_command(args: argparse.Namespace, parser: argparse.Argumen
                 if args.output_root
                 else triage_root / "out" / f"{profile_id.lower()}-screenshot-triage"
             )
+            visual_thresholds = _screenshot_triage_thresholds(args)
+            if visual_thresholds_exceed_bmw_envelope(visual_thresholds):
+                print(common._console_safe(BMW_COMPARATOR_ENVELOPE_WARNING), file=sys.stderr)
             bundle = common.materialize_screenshot_triage(
                 profile_id,
                 project_root,
                 output_root,
                 candidate_roots=tuple(Path(item).resolve() for item in args.candidate_root if str(item).strip()),
                 priority_names=tuple(str(item) for item in prep.priority_screenshots),
-                visual_thresholds=_screenshot_triage_thresholds(args),
+                visual_thresholds=visual_thresholds,
                 external_classifier_requested=args.external_vision,
             )
         except Exception as exc:

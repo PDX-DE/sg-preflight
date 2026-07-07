@@ -47,9 +47,9 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             root = Path(temp_dir)
             thresholds = DiffDeltaThresholds(green_max_percent=0.5, yellow_max_percent=2.0)
             cases = (
-                ("green.bmp", 1, "green", "max-\u0394: 0.4% (x=2, y=1)"),
-                ("yellow.bmp", 3, "yellow", "max-\u0394: 1.2% (x=2, y=1)"),
-                ("red.bmp", 8, "red", "max-\u0394: 3.1% (x=2, y=1)"),
+                ("green.bmp", 1, "green", "peak-\u0394: 0.4% (x=2, y=1)"),
+                ("yellow.bmp", 3, "yellow", "peak-\u0394: 1.2% (x=2, y=1)"),
+                ("red.bmp", 8, "red", "peak-\u0394: 3.1% (x=2, y=1)"),
             )
             for name, value, level, label in cases:
                 path = root / name
@@ -104,6 +104,7 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self._write_bmp(expected_root / "front.bmp", (0, 20, 30))
             self._write_bmp(actual_root / "front.bmp", (255, 20, 30))
             self._write_bmp(diff_root / "front_color.bmp", (255, 0, 0))
+            self._write_bmp(diff_root / "front_alpha.bmp", (64, 64, 64))
 
             with mock.patch.dict(os.environ, {"SGFX_DIFF_REGRESSION_HISTORY_ROOT": str(root / "history")}):
                 bundle = build_screenshot_review_viewer(
@@ -123,13 +124,16 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertEqual(item.expected_uri, "assets/expected/front.bmp")
             self.assertEqual(item.actual_uri, "assets/actual/front.bmp")
             self.assertEqual(item.diff_delta_level, "red")
-            self.assertEqual(item.diff_delta_label, "max-\u0394: 100.0% (x=0, y=0)")
+            self.assertEqual(item.diff_delta_label, "peak-\u0394: 100.0% (x=0, y=0)")
+            self.assertFalse(item.bmw_comparator_would_pass)
+            self.assertIn("BMW comparator would fail", item.bmw_comparator_summary)
             expected_diff_uri = (
                 "assets/diff/front.png"
                 if (bundle.html_path.parent / "assets/diff/front.png").is_file()
                 else "assets/diff/front.bmp"
             )
             self.assertEqual(item.diff_uri, expected_diff_uri)
+            self.assertEqual(item.diff_alpha_uri, "assets/diff-alpha/front.bmp")
             self.assertEqual(item.diff_histogram_status, "available")
             self.assertEqual(item.diff_histogram_changed_pixel_count, 4)
             self.assertEqual(item.diff_histogram_total_pixel_count, 4)
@@ -140,6 +144,7 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertTrue((bundle.html_path.parent / item.expected_uri).is_file())
             self.assertTrue((bundle.html_path.parent / item.actual_uri).is_file())
             self.assertTrue((bundle.html_path.parent / item.diff_uri).is_file())
+            self.assertTrue((bundle.html_path.parent / item.diff_alpha_uri).is_file())
 
             html = bundle.html_path.read_text(encoding="utf-8")
             self.assertIn('data-sgfx-screenshot-viewer="true"', html)
@@ -147,10 +152,13 @@ class TestScreenshotReviewViewer(unittest.TestCase):
             self.assertIn('data-pane="expected"', html)
             self.assertIn('data-pane="actual"', html)
             self.assertIn('data-pane="diff"', html)
+            self.assertIn('data-pane="alpha"', html)
+            self.assertIn("Alpha diff", html)
             self.assertIn("pointerdown", html)
             self.assertIn("Manual review remains required.", html)
             self.assertIn("delta-badge delta-red", html)
-            self.assertIn("max-\u0394: 100.0%", html)
+            self.assertIn("peak-\u0394: 100.0%", html)
+            self.assertIn("BMW comparator: fail", html)
             self.assertIn('class="delta-histogram sgfx-delta-histogram"', html)
             self.assertIn("Show positional histogram", html)
             self.assertIn("x-axis peak: x=0", html)

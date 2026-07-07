@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 from pathlib import Path
 import unittest
@@ -119,7 +120,7 @@ class TestScreenshotTriage(unittest.TestCase):
             self._write_png(candidate_root / "changed.png", (32, 32), (30, 40, 50, 255))
             with Image.open(candidate_root / "changed.png") as image:
                 for x in range(3):
-                    image.putpixel((x, 0), (90, 40, 50, 255))
+                    image.putpixel((x, 0), (34, 40, 50, 255))
                 image.save(candidate_root / "changed.png")
 
             bundle = materialize_screenshot_triage(
@@ -142,6 +143,94 @@ class TestScreenshotTriage(unittest.TestCase):
             self.assertEqual(bundle.report.unclear_manual_review_count, 1)
             self.assertEqual(bundle.report.external_classifier_status, "unavailable")
             self.assertTrue(any("no external service call" in note for note in bundle.report.notes))
+
+    def test_materialize_screenshot_triage_emits_bmw_comparator_signal_and_blocks_cosmetic_label(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "G70"
+            expected_root = project_root / "export" / "tests" / "expected"
+            candidate_root = project_root / "export" / "tests" / "actuals"
+
+            self._write_png(expected_root / "mid_band.png", (10, 10), (0, 0, 0, 255))
+            self._write_png(candidate_root / "mid_band.png", (10, 10), (0, 0, 0, 255))
+            with Image.open(candidate_root / "mid_band.png") as image:
+                for x in range(3):
+                    image.putpixel((x, 0), (20, 0, 0, 255))
+                image.save(candidate_root / "mid_band.png")
+
+            bundle = materialize_screenshot_triage(
+                "G70",
+                project_root,
+                root / "out" / "triage",
+                visual_thresholds=VisualDiffThresholds(cosmetic_max_changed_ratio=0.05),
+            )
+
+            pair = bundle.report.pairs[0]
+            self.assertEqual(pair.key, "mid_band")
+            self.assertFalse(pair.bmw_comparator_would_pass)
+            self.assertEqual(pair.visual_classification, "structural_likely_review")
+            self.assertIn("BMW comparator would fail", pair.visual_summary)
+            tier_by_threshold = {tier.delta_threshold: tier for tier in pair.bmw_comparator_tiers}
+            self.assertEqual(tier_by_threshold[16].pixel_count, 3)
+            self.assertAlmostEqual(tier_by_threshold[16].actual_fraction, 0.03)
+            self.assertFalse(tier_by_threshold[16].passed)
+
+            payload = json.loads(bundle.json_path.read_text(encoding="utf-8"))
+            self.assertFalse(payload["pairs"][0]["bmw_comparator_would_pass"])
+            markdown = bundle.markdown_path.read_text(encoding="utf-8")
+            html = bundle.html_path.read_text(encoding="utf-8")
+            self.assertIn("BMW comparator: fail", markdown)
+            self.assertIn("ci/scripts/asset_testing/image_cmp.py", markdown)
+            self.assertIn("BLOCK_CONFIG_LIST", html)
+
+    def test_materialize_screenshot_triage_uses_bmw_delta_greater_than_one_for_taa_noise(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "G70"
+            expected_root = project_root / "export" / "tests" / "expected"
+            candidate_root = project_root / "export" / "tests" / "actuals"
+
+            self._write_png(expected_root / "taa_noise.png", (10, 10), (0, 0, 0, 255))
+            self._write_png(candidate_root / "taa_noise.png", (10, 10), (1, 0, 0, 255))
+
+            bundle = materialize_screenshot_triage(
+                "G70",
+                project_root,
+                root / "out" / "triage",
+            )
+
+            pair = bundle.report.pairs[0]
+            self.assertEqual(pair.changed_pixel_ratio, 1.0)
+            self.assertTrue(pair.bmw_comparator_would_pass)
+            tier_by_threshold = {tier.delta_threshold: tier for tier in pair.bmw_comparator_tiers}
+            self.assertEqual(tier_by_threshold[1].pixel_count, 0)
+            self.assertTrue(all(tier.passed for tier in pair.bmw_comparator_tiers))
+
+    def test_materialize_screenshot_triage_suppresses_bmw_disabled_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "G65"
+            expected_root = project_root / "export" / "tests" / "expected"
+            candidate_root = project_root / "export" / "tests" / "actuals"
+
+            self._write_png(expected_root / "enabled_case.png", (10, 10), (0, 0, 0, 255))
+            self._write_png(expected_root / "disabled_case.png", (10, 10), (0, 0, 0, 255))
+            self._write_png(candidate_root / "enabled_case.png", (10, 10), (0, 0, 0, 255))
+            write_text(project_root / "export" / "tests" / "test_config.lua", 'disableTest("disabled_case")\n')
+
+            bundle = materialize_screenshot_triage(
+                "G65",
+                project_root,
+                root / "out" / "triage",
+            )
+
+            self.assertEqual(bundle.report.pair_count, 1)
+            self.assertEqual(bundle.report.bmw_disabled_test_count, 1)
+            self.assertEqual(bundle.report.pairs[0].key, "enabled_case")
+            self.assertTrue(
+                any("Skipped 1 BMW-disabled screenshot test" in note for note in bundle.report.notes),
+                bundle.report.notes,
+            )
 
     def test_materialize_screenshot_triage_reports_missing_candidate_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

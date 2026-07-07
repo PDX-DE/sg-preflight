@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from html import escape
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from sg_preflight.bmw_pipeline_diagnostics import diagnostic_pattern_anchors
@@ -47,6 +48,18 @@ _CLASSIFICATION_PRIORITY = {
 }
 _NEAR_IDENTICAL_RATIO = 0.001
 _NEAR_IDENTICAL_MEAN = 1.0
+BMW_COMPARATOR_BLOCK_CONFIG_LIST: tuple[tuple[int, float], ...] = (
+    (1, 0.10),
+    (2, 0.05),
+    (4, 0.01),
+    (8, 0.005),
+    (16, 0.001),
+)
+BMW_COMPARATOR_SOURCE = "ci/scripts/asset_testing/image_cmp.py BLOCK_CONFIG_LIST"
+BMW_COMPARATOR_ENVELOPE_WARNING = (
+    "Warning: visual thresholds exceed the BMW comparator envelope; SGFX will still surface the "
+    "BMW-parity signal and will not label BMW-failing pairs as cosmetic."
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +72,23 @@ class VisualDiffThresholds:
 
 
 DEFAULT_VISUAL_DIFF_THRESHOLDS = VisualDiffThresholds()
+
+
+def visual_thresholds_exceed_bmw_envelope(thresholds: VisualDiffThresholds) -> bool:
+    return (
+        thresholds.cosmetic_max_changed_ratio > DEFAULT_VISUAL_DIFF_THRESHOLDS.cosmetic_max_changed_ratio
+        or thresholds.cosmetic_max_mean_abs_diff > DEFAULT_VISUAL_DIFF_THRESHOLDS.cosmetic_max_mean_abs_diff
+    )
+
+
+@dataclass(frozen=True)
+class BmwComparatorTier:
+    delta_threshold: int
+    allowed_fraction: float
+    actual_fraction: float
+    pixel_count: int
+    total_pixels: int
+    passed: bool
 
 
 @dataclass(frozen=True)
@@ -90,6 +120,9 @@ class ScreenshotPair:
     diagnostic_chain_steps: tuple[dict[str, str], ...] = ()
     diagnostic_pattern_ids: tuple[str, ...] = ()
     escalation_message: str = ""
+    bmw_comparator_would_pass: bool | None = None
+    bmw_comparator_summary: str = ""
+    bmw_comparator_tiers: tuple[BmwComparatorTier, ...] = ()
     priority: bool = False
 
 
@@ -114,6 +147,8 @@ class ScreenshotTriageReport:
     visual_thresholds: VisualDiffThresholds = field(default_factory=lambda: DEFAULT_VISUAL_DIFF_THRESHOLDS)
     external_classifier_status: str = "disabled"
     image_backend: str = "none"
+    bmw_comparator_source: str = BMW_COMPARATOR_SOURCE
+    bmw_disabled_test_count: int = 0
     priority_keys: tuple[str, ...] = ()
     pairs: tuple[ScreenshotPair, ...] = ()
     notes: tuple[str, ...] = ()
@@ -229,6 +264,42 @@ def _image_map(root: Path) -> dict[str, Path]:
     return mapping
 
 
+def _normalize_test_key(value: str) -> str:
+    return Path(str(value or "").replace("\\", "/")).with_suffix("").as_posix().casefold()
+
+
+def _test_key_aliases(key: str) -> set[str]:
+    normalized = _normalize_test_key(key)
+    aliases = {normalized}
+    name = Path(normalized).name
+    if name:
+        aliases.add(name.casefold())
+    return aliases
+
+
+def _disabled_test_names(project_root: Path) -> set[str]:
+    config_path = project_root / "export" / "tests" / "test_config.lua"
+    try:
+        text = config_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+    disabled: set[str] = set()
+    for match in re.finditer(r"\bdisableTest\s*\((.*?)\)", text, flags=re.IGNORECASE | re.DOTALL):
+        call_body = match.group(1)
+        for quote_match in re.finditer(r"['\"]([^'\"]+)['\"]", call_body):
+            name = _normalize_test_key(quote_match.group(1))
+            if name:
+                disabled.add(name)
+                disabled.add(Path(name).name.casefold())
+    return disabled
+
+
+def _is_disabled_test_key(key: str, disabled_tests: set[str]) -> bool:
+    if not disabled_tests:
+        return False
+    return bool(_test_key_aliases(key) & disabled_tests)
+
+
 def _ordered_keys(
     baseline_map: dict[str, Path],
     candidate_map: dict[str, Path],
@@ -268,6 +339,41 @@ def _nonzero_diff_mask(diff: Any) -> Any:
     for channel in channels[1:]:
         mask = ImageChops.lighter(mask, channel)
     return mask
+
+
+def _bmw_comparator_from_diff(diff_mask: Any, total_pixels: int) -> tuple[bool, str, tuple[BmwComparatorTier, ...]]:
+    if total_pixels <= 0:
+        return False, "BMW comparator would fail: image has no pixels.", ()
+    histogram = diff_mask.histogram()
+    tiers: list[BmwComparatorTier] = []
+    would_pass = True
+    for threshold, allowed_fraction in BMW_COMPARATOR_BLOCK_CONFIG_LIST:
+        pixel_count = int(sum(histogram[threshold + 1 :])) if histogram else 0
+        actual_fraction = pixel_count / total_pixels
+        tier_passed = actual_fraction <= allowed_fraction
+        would_pass = would_pass and tier_passed
+        tiers.append(
+            BmwComparatorTier(
+                delta_threshold=threshold,
+                allowed_fraction=allowed_fraction,
+                actual_fraction=actual_fraction,
+                pixel_count=pixel_count,
+                total_pixels=total_pixels,
+                passed=tier_passed,
+            )
+        )
+    if would_pass:
+        return True, "BMW comparator would pass this pair.", tuple(tiers)
+    failing = next((tier for tier in tiers if not tier.passed), tiers[-1])
+    return (
+        False,
+        (
+            "BMW comparator would fail this pair: "
+            f"{failing.pixel_count}/{failing.total_pixels} pixels exceed delta > {failing.delta_threshold} "
+            f"({failing.actual_fraction:.3%} > {failing.allowed_fraction:.3%})."
+        ),
+        tuple(tiers),
+    )
 
 
 def _auto_review_signals(
@@ -332,7 +438,13 @@ def _visual_diff_classification(
     review_score: float | None,
     anomaly_hints: tuple[str, ...],
     thresholds: VisualDiffThresholds,
+    bmw_comparator_would_pass: bool | None = None,
 ) -> tuple[str, str]:
+    if bmw_comparator_would_pass is False:
+        return (
+            "structural_likely_review",
+            "BMW comparator would fail this pair; manual review remains required.",
+        )
     if classification in {"unchanged", "near_identical"}:
         return (
             "cosmetic_likely_pass",
@@ -490,7 +602,21 @@ def _diff_metrics(
     *,
     diff_root: Path,
     key: str,
-) -> tuple[str, str, tuple[int, int], tuple[int, int], bool, float | None, float | None, float | None, tuple[str, ...], str]:
+) -> tuple[
+    str,
+    str,
+    tuple[int, int],
+    tuple[int, int],
+    bool,
+    float | None,
+    float | None,
+    float | None,
+    tuple[str, ...],
+    str,
+    bool | None,
+    str,
+    tuple[BmwComparatorTier, ...],
+]:
     if Image is None or ImageChops is None or ImageOps is None or ImageStat is None:
         exact_match = _binary_identical(baseline_path, candidate_path)
         classification = "unchanged" if exact_match else "needs_review"
@@ -510,12 +636,29 @@ def _diff_metrics(
             0.0 if exact_match else None,
             (),
             "",
+            None,
+            "BMW comparator unavailable because the image backend is not available.",
+            (),
         )
 
     baseline = _load_rgba(baseline_path)
     candidate = _load_rgba(candidate_path)
     if baseline is None or candidate is None:
-        return "needs_review", "Image backend could not load one of the files. Needs human review.", (), (), False, None, None, None, (), ""
+        return (
+            "needs_review",
+            "Image backend could not load one of the files. Needs human review.",
+            (),
+            (),
+            False,
+            None,
+            None,
+            None,
+            (),
+            "",
+            None,
+            "BMW comparator unavailable because one image could not be loaded.",
+            (),
+        )
 
     baseline_size = tuple(int(value) for value in baseline.size)
     candidate_size = tuple(int(value) for value in candidate.size)
@@ -531,15 +674,33 @@ def _diff_metrics(
             None,
             (),
             "",
+            False,
+            "BMW comparator would fail: image dimensions differ.",
+            (),
         )
 
     diff = ImageChops.difference(baseline, candidate)
     diff_mask = _nonzero_diff_mask(diff)
+    total_pixels = baseline_size[0] * baseline_size[1]
+    bmw_would_pass, bmw_summary, bmw_tiers = _bmw_comparator_from_diff(diff_mask, total_pixels)
     if diff_mask.getbbox() is None:
-        return "unchanged", "Images are pixel-identical.", baseline_size, candidate_size, True, 0.0, 0.0, 0.0, (), ""
+        return (
+            "unchanged",
+            "Images are pixel-identical.",
+            baseline_size,
+            candidate_size,
+            True,
+            0.0,
+            0.0,
+            0.0,
+            (),
+            "",
+            bmw_would_pass,
+            bmw_summary,
+            bmw_tiers,
+        )
 
     histogram = diff_mask.point(lambda value: 255 if value else 0).histogram()
-    total_pixels = baseline_size[0] * baseline_size[1]
     changed_pixels = total_pixels - int(histogram[0] if histogram else 0)
     changed_ratio = changed_pixels / total_pixels if total_pixels else 0.0
     stat = ImageStat.Stat(diff)
@@ -576,6 +737,9 @@ def _diff_metrics(
         review_score if classification == "needs_review" else 0.0,
         anomaly_hints if classification == "needs_review" else (),
         diff_path,
+        bmw_would_pass,
+        bmw_summary,
+        bmw_tiers,
     )
 
 
@@ -637,7 +801,12 @@ def build_screenshot_triage(
 
     ordered_keys = _ordered_keys(baseline_map, candidate_map, priority_names)
     normalized_priority = {Path(item).with_suffix("").name.lower() for item in priority_names}
+    disabled_tests = _disabled_test_names(resolved_project_root)
+    skipped_disabled_count = 0
     for key in ordered_keys:
+        if _is_disabled_test_key(key, disabled_tests):
+            skipped_disabled_count += 1
+            continue
         baseline_path = baseline_map.get(key)
         candidate_path = candidate_map.get(key)
         priority = Path(key).name.lower() in normalized_priority
@@ -652,6 +821,7 @@ def build_screenshot_triage(
                 review_score=None,
                 anomaly_hints=(),
                 thresholds=visual_thresholds,
+                bmw_comparator_would_pass=None,
             )
             pair = ScreenshotPair(
                 key=key,
@@ -673,6 +843,7 @@ def build_screenshot_triage(
                 review_score=None,
                 anomaly_hints=(),
                 thresholds=visual_thresholds,
+                bmw_comparator_would_pass=None,
             )
             pair = ScreenshotPair(
                 key=key,
@@ -702,6 +873,9 @@ def build_screenshot_triage(
                 review_score,
                 anomaly_hints,
                 diff_path,
+                bmw_would_pass,
+                bmw_summary,
+                bmw_tiers,
             ) = _diff_metrics(
                 baseline_path,
                 candidate_path,
@@ -715,6 +889,7 @@ def build_screenshot_triage(
                 review_score=review_score,
                 anomaly_hints=anomaly_hints,
                 thresholds=visual_thresholds,
+                bmw_comparator_would_pass=bmw_would_pass,
             )
             pair = ScreenshotPair(
                 key=key,
@@ -732,6 +907,9 @@ def build_screenshot_triage(
                 review_score=review_score,
                 anomaly_hints=anomaly_hints,
                 diff_image_path=diff_path,
+                bmw_comparator_would_pass=bmw_would_pass,
+                bmw_comparator_summary=bmw_summary,
+                bmw_comparator_tiers=bmw_tiers,
                 priority=priority,
             )
 
@@ -767,10 +945,17 @@ def build_screenshot_triage(
         )
         if not any(item.image_count > 0 for item in diff_root_items):
             notes.append("Reference diff roots are present, but they currently contain no diff image payload.")
+    if skipped_disabled_count:
+        notes.append(
+            f"Skipped {skipped_disabled_count} BMW-disabled screenshot test(s) from `export/tests/test_config.lua`."
+        )
     notes.append("Classifications are conservative. `needs_review` is not a regression verdict.")
     notes.append(
         "Visual diff labels are conservative evidence buckets. Manual review remains required."
     )
+    notes.append(f"BMW comparator parity signal follows `{BMW_COMPARATOR_SOURCE}` and is evidence, not approval.")
+    if visual_thresholds_exceed_bmw_envelope(visual_thresholds):
+        notes.append(BMW_COMPARATOR_ENVELOPE_WARNING)
     notes.append("Auto anomaly hints are heuristic triage signals, not defect verdicts.")
     external_classifier_status = "disabled"
     if external_classifier_requested:
@@ -803,6 +988,7 @@ def build_screenshot_triage(
         visual_thresholds=visual_thresholds,
         external_classifier_status=external_classifier_status,
         image_backend="pillow" if Image is not None else "none",
+        bmw_disabled_test_count=skipped_disabled_count,
         priority_keys=tuple(item for item in priority_names if item),
         pairs=tuple(pairs),
         notes=tuple(notes),
@@ -829,6 +1015,8 @@ def _markdown(report: ScreenshotTriageReport) -> str:
         f"- Visual cosmetic likely pass: {report.cosmetic_likely_pass_count}",
         f"- Visual structural likely review: {report.structural_likely_review_count}",
         f"- Visual unclear manual review: {report.unclear_manual_review_count}",
+        f"- BMW-disabled tests skipped: {report.bmw_disabled_test_count}",
+        f"- BMW comparator source: `{report.bmw_comparator_source}`",
         f"- External classifier status: `{report.external_classifier_status}`",
         (
             "- Visual thresholds: "
@@ -864,6 +1052,22 @@ def _markdown(report: ScreenshotTriageReport) -> str:
             lines.append(f"  - {pair.summary}")
             if pair.visual_summary:
                 lines.append(f"  - Visual label: `{pair.visual_classification}` - {pair.visual_summary}")
+            if pair.bmw_comparator_summary:
+                bmw_state = (
+                    "pass"
+                    if pair.bmw_comparator_would_pass is True
+                    else "fail"
+                    if pair.bmw_comparator_would_pass is False
+                    else "unavailable"
+                )
+                lines.append(f"  - BMW comparator: {bmw_state} - {pair.bmw_comparator_summary}")
+                for tier in pair.bmw_comparator_tiers:
+                    tier_state = "pass" if tier.passed else "fail"
+                    lines.append(
+                        "    - "
+                        f"> {tier.delta_threshold}: {tier.pixel_count}/{tier.total_pixels} "
+                        f"({tier.actual_fraction:.3%}) <= {tier.allowed_fraction:.3%} [{tier_state}]"
+                    )
             if pair.escalation_path:
                 lines.append(f"  - Escalation path: `{pair.escalation_path}`")
             if pair.review_score:
@@ -902,6 +1106,36 @@ def _html(report: ScreenshotTriageReport) -> str:
             if diff_uri
             else "<div class='missing'>No diff</div>"
         )
+        bmw_state = (
+            "pass"
+            if pair.bmw_comparator_would_pass is True
+            else "fail"
+            if pair.bmw_comparator_would_pass is False
+            else "unavailable"
+        )
+        bmw_rows = "".join(
+            "<tr>"
+            f"<td>&gt; {tier.delta_threshold}</td>"
+            f"<td>{tier.pixel_count}/{tier.total_pixels}</td>"
+            f"<td>{tier.actual_fraction:.3%}</td>"
+            f"<td>{tier.allowed_fraction:.3%}</td>"
+            f"<td>{'pass' if tier.passed else 'fail'}</td>"
+            "</tr>"
+            for tier in pair.bmw_comparator_tiers
+        )
+        bmw_html = ""
+        if pair.bmw_comparator_summary:
+            bmw_html = (
+                f"<p><strong>BMW comparator:</strong> {escape(bmw_state)} - "
+                f"{escape(pair.bmw_comparator_summary)}</p>"
+                + (
+                    "<table class='bmw-tiers'><thead><tr><th>Delta</th><th>Pixels</th>"
+                    "<th>Actual</th><th>Allowed</th><th>Result</th></tr></thead>"
+                    f"<tbody>{bmw_rows}</tbody></table>"
+                    if bmw_rows
+                    else ""
+                )
+            )
         rows.append(
             (
                 "<article class='pair'>"
@@ -912,6 +1146,7 @@ def _html(report: ScreenshotTriageReport) -> str:
                     if pair.visual_summary
                     else ""
                 )
+                + bmw_html
                 + (
                     f"<p><strong>Escalation path:</strong> {escape(pair.escalation_path)}</p>"
                     if pair.escalation_path
@@ -947,6 +1182,8 @@ def _html(report: ScreenshotTriageReport) -> str:
     h1,h2 {{ color:#ffd36a; }}
     .grid {{ display:grid; gap:16px; grid-template-columns:repeat(3,minmax(220px,1fr)); }}
     .pair {{ margin:24px 0; padding:16px; border:1px solid rgba(255,255,255,0.12); border-radius:12px; background:#161b22; }}
+    .bmw-tiers {{ border-collapse:collapse; margin:8px 0 12px; width:100%; color:#c9d1d9; font-size:13px; }}
+    .bmw-tiers th, .bmw-tiers td {{ border:1px solid rgba(255,255,255,0.12); padding:4px 6px; text-align:left; }}
     img {{ width:100%; height:auto; background:#000; border-radius:8px; }}
     .missing {{ padding:24px; border:1px dashed rgba(255,255,255,0.15); border-radius:8px; color:#9aa4b2; }}
     code {{ color:#8fe4a4; }}
@@ -958,6 +1195,7 @@ def _html(report: ScreenshotTriageReport) -> str:
   <p><strong>Expected root:</strong> <code>{escape(report.expected_root or "not found")}</code></p>
   <p><strong>Summary:</strong> {report.pair_count} pair(s), {report.needs_review_count} needs review, {report.missing_candidate_count} missing candidate, {report.dimension_mismatch_count} dimension mismatch.</p>
   <p><strong>Visual labels:</strong> {report.cosmetic_likely_pass_count} cosmetic likely pass, {report.structural_likely_review_count} structural likely review, {report.unclear_manual_review_count} unclear manual review. External classifier: {escape(report.external_classifier_status)}.</p>
+  <p><strong>BMW comparator source:</strong> <code>{escape(report.bmw_comparator_source)}</code></p>
   <ul>{notes}</ul>
   {''.join(rows) if rows else '<p>No screenshot pairs were generated.</p>'}
 </body>

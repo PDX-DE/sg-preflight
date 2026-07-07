@@ -2759,6 +2759,34 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(materialize.call_args.kwargs["visual_thresholds"].structural_min_review_score, 99.0)
         self.assertTrue(materialize.call_args.kwargs["external_classifier_requested"])
 
+    def test_screenshot_triage_cli_warns_when_visual_thresholds_exceed_bmw_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "G70"
+            project_root.mkdir(parents=True, exist_ok=True)
+            fake_bundle = mock.Mock()
+            fake_bundle.report = mock.Mock()
+
+            stderr = io.StringIO()
+            with mock.patch("sg_preflight.cli.build_visual_review_prep", return_value=mock.Mock(priority_screenshots=())):
+                with mock.patch("sg_preflight.cli.materialize_screenshot_triage", return_value=fake_bundle):
+                    with mock.patch("sg_preflight.cli._console_screenshot_triage"):
+                        with redirect_stderr(stderr):
+                            result = main(
+                                [
+                                    "screenshot-triage",
+                                    "--project-root",
+                                    str(project_root),
+                                    "--workspace",
+                                    str(root),
+                                    "--cosmetic-max-changed-ratio",
+                                    "0.01",
+                                ]
+                            )
+
+        self.assertEqual(result, 0)
+        self.assertIn("BMW comparator envelope", stderr.getvalue())
+
     def test_daily_qa_snapshot_cli_forwards_profiles_and_smoke_options(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
