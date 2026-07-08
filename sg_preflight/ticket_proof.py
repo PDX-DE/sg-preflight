@@ -268,6 +268,82 @@ def _delivery_sections(workspace: Path) -> list[dict[str, Any]]:
             },
         }
     )
+    if bmw_repo.exists():
+        sections.extend(_reference_integrity_sections(bmw_repo))
+    return sections
+
+
+def _reference_integrity_sections(bmw_repo: Path) -> list[dict[str, Any]]:
+    from sg_preflight.rca_reference_integrity import build_rca_reference_board
+    from sg_preflight.ramses_stamp import build_ramses_stamp_board
+
+    sections: list[dict[str, Any]] = []
+    try:
+        rca = build_rca_reference_board(bmw_repo)
+    except Exception as exc:
+        sections.append(_degraded_section("RaCo external-project references", f"{type(exc).__name__}: {exc}"))
+    else:
+        if rca.get("state") == "ok":
+            broken = rca.get("broken", [])
+            sections.append(
+                {
+                    "heading": "RaCo external-project references",
+                    "note": (
+                        "Every RaCo project's references to shared projects (a common camera, a shared "
+                        "prefab, a stage) checked against disk before export. Read-only."
+                    ),
+                    "keyvals": [
+                        ("Projects scanned", rca.get("scanned_files", 0)),
+                        ("Projects with references", rca.get("files_with_references", 0)),
+                        ("References resolved", rca.get("resolved", 0)),
+                        ("References broken", rca.get("missing", 0)),
+                    ],
+                    "table": {
+                        "columns": ["Project", "Reference", "Declared path", "Expected on disk"],
+                        "rows": [
+                            {
+                                "Project": item.get("rca", ""),
+                                "Reference": item.get("name", ""),
+                                "Declared path": item.get("path", ""),
+                                "Expected on disk": item.get("resolved_path", ""),
+                            }
+                            for item in broken
+                        ],
+                    },
+                }
+            )
+    try:
+        ramses = build_ramses_stamp_board(bmw_repo)
+    except Exception as exc:
+        sections.append(_degraded_section("RAMSES export consistency", f"{type(exc).__name__}: {exc}"))
+    else:
+        if ramses.get("state") == "ok":
+            sections.append(
+                {
+                    "heading": "RAMSES export consistency",
+                    "note": (
+                        "Engine version and feature level read from each exported .ramses binary header, "
+                        "so a version or feature-level split across the delivery is visible. Read-only."
+                    ),
+                    "keyvals": [
+                        ("Scenes scanned", ramses.get("scanned_files", 0)),
+                        ("RAMSES versions", ", ".join(ramses.get("ramses_versions", [])) or "none"),
+                        ("Feature levels", ", ".join(ramses.get("feature_levels", [])) or "none"),
+                    ],
+                    "table": {
+                        "columns": ["RAMSES", "FeatureLevel", "Scenes", "Examples"],
+                        "rows": [
+                            {
+                                "RAMSES": bucket.get("ramses_version", ""),
+                                "FeatureLevel": bucket.get("feature_level", ""),
+                                "Scenes": bucket.get("count", 0),
+                                "Examples": ", ".join(bucket.get("examples", [])),
+                            }
+                            for bucket in ramses.get("breakdown", [])
+                        ],
+                    },
+                }
+            )
     return sections
 
 
