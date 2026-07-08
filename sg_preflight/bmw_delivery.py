@@ -154,6 +154,43 @@ def discover_ui_components_lib_repo(workspace_root: Path | None = None) -> Path:
     )
 
 
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+_LFS_BINARY_SUFFIXES = (".blend", ".psd", ".png", ".bin")
+
+
+def inspect_raw_checkout_health(raw_root: Path, sample_limit: int = 40) -> dict[str, Any]:
+    cars_root = raw_root / "cars"
+    if not cars_root.exists():
+        return {"state": "not_present", "sampled": 0, "pointer_count": 0, "pointer_files": []}
+    sampled = 0
+    pointer_count = 0
+    pointer_files: list[str] = []
+    try:
+        for path in cars_root.rglob("*"):
+            if sampled >= sample_limit:
+                break
+            if not path.is_file() or path.suffix.lower() not in _LFS_BINARY_SUFFIXES:
+                continue
+            sampled += 1
+            try:
+                with path.open("rb") as handle:
+                    head = handle.read(len(_LFS_POINTER_PREFIX))
+            except OSError:
+                continue
+            if head == _LFS_POINTER_PREFIX:
+                pointer_count += 1
+                if len(pointer_files) < 5:
+                    pointer_files.append(path.relative_to(raw_root).as_posix())
+    except OSError:
+        pass
+    return {
+        "state": "lfs_pointers_detected" if pointer_count else "ok",
+        "sampled": sampled,
+        "pointer_count": pointer_count,
+        "pointer_files": pointer_files,
+    }
+
+
 def _yaml_scalar(value: str) -> str:
     cleaned = value.strip()
     if cleaned.startswith(("'", '"')) and cleaned.endswith(("'", '"')) and len(cleaned) >= 2:

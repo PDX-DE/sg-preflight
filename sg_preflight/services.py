@@ -20,6 +20,7 @@ from sg_preflight.bmw_delivery import (
     discover_bmw_models_repo,
     discover_bmw_raw_repo,
     discover_ui_components_lib_repo,
+    inspect_raw_checkout_health,
 )
 from sg_preflight.bmw_process import (
     bmw_interface_smoke_commands,
@@ -847,6 +848,16 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
                 "status": "available" if path.exists() else "missing",
             }
         )
+
+    raw_repo_record = next((item for item in payload if item["key"] == "bmw_raw_workfiles_repo"), None)
+    if raw_repo_record is not None and raw_repo_record["status"] == "available":
+        raw_health = inspect_raw_checkout_health(Path(raw_repo_record["path"]))
+        if raw_health["state"] == "lfs_pointers_detected":
+            raw_repo_record["detail"] = (
+                f"{raw_health['pointer_count']} of {raw_health['sampled']} sampled binary files are "
+                "Git LFS pointer stubs instead of real content. Run 'git lfs pull' in the checkout "
+                "before trusting raw-side comparisons."
+            )
 
     raco_probe_scene = representative_raco_scene(root)
     raco_headless_record = next((item for item in payload if item["key"] == "raco_headless"), None)

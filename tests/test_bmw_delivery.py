@@ -12,6 +12,7 @@ from sg_preflight.bmw_delivery import (
     discover_bmw_raw_repo,
     discover_ui_components_lib_repo,
     inspect_bmw_screenshot_surface,
+    inspect_raw_checkout_health,
     load_bmw_registry,
     read_bmw_screenshot_state,
     resolve_svn_profile_id,
@@ -219,6 +220,58 @@ class TestBmwDelivery(unittest.TestCase):
                 Path(payload["bmw_raw_workfiles_repo"]["path"]).resolve(), raw_root.resolve()
             )
             self.assertEqual(payload["widget_shared_lib_repo"]["status"], "missing")
+
+    def test_inspect_raw_checkout_health_flags_lfs_pointer_stubs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            raw_root = Path(temp_dir) / "digital-3d-car-raw"
+            blend_dir = raw_root / "cars" / "BMW" / "G65" / "_WorkFiles" / "blender"
+            blend_dir.mkdir(parents=True, exist_ok=True)
+            (blend_dir / "G65_Exterior.blend").write_bytes(
+                b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 9000000\n"
+            )
+            (blend_dir / "G65_Interior.blend").write_bytes(b"BLENDER-v405" + b"\x00" * 64)
+
+            health = inspect_raw_checkout_health(raw_root)
+
+        self.assertEqual(health["state"], "lfs_pointers_detected")
+        self.assertEqual(health["sampled"], 2)
+        self.assertEqual(health["pointer_count"], 1)
+        self.assertEqual(
+            health["pointer_files"], ["cars/BMW/G65/_WorkFiles/blender/G65_Exterior.blend"]
+        )
+
+    def test_inspect_raw_checkout_health_reports_ok_for_real_binaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            raw_root = Path(temp_dir) / "digital-3d-car-raw"
+            blend_dir = raw_root / "cars" / "BMW" / "G65" / "_WorkFiles" / "blender"
+            blend_dir.mkdir(parents=True, exist_ok=True)
+            (blend_dir / "G65_Exterior.blend").write_bytes(b"BLENDER-v405" + b"\x00" * 64)
+
+            health = inspect_raw_checkout_health(raw_root)
+
+        self.assertEqual(health["state"], "ok")
+        self.assertEqual(health["pointer_count"], 0)
+        self.assertEqual(health["pointer_files"], [])
+
+    def test_prerequisite_status_details_lfs_pointer_only_raw_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            raw_root = Path(temp_dir) / "bmw-oracle-repos" / "digital-3d-car-raw"
+            blend_dir = raw_root / "cars" / "BMW" / "G65" / "_WorkFiles" / "blender"
+            blend_dir.mkdir(parents=True, exist_ok=True)
+            (blend_dir / "G65_Exterior.blend").write_bytes(
+                b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 9000000\n"
+            )
+            root.mkdir(parents=True, exist_ok=True)
+
+            env_overrides = {**_clear_bmw_repo_env(), **_clear_reference_checkout_env()}
+            with mock.patch.dict(os.environ, env_overrides, clear=False):
+                payload = {item["key"]: item for item in prerequisite_status(root)}
+
+            record = payload["bmw_raw_workfiles_repo"]
+            self.assertEqual(record["status"], "available")
+            self.assertIn("Git LFS pointer stubs", record["detail"])
+            self.assertIn("git lfs pull", record["detail"])
 
     def test_inspect_bmw_screenshot_surface_reports_empty_payload_truthfully(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
