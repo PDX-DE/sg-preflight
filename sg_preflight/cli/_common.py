@@ -2025,6 +2025,16 @@ def build_parser() -> argparse.ArgumentParser:
     pivot_mapping.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     pivot_mapping.add_argument("--json", action="store_true", help="Print pivot/position-mapping payload as JSON")
 
+    rack_performance = sub.add_parser(
+        "rack-performance",
+        help="Read RAMSES performance/VRAM metrics from a rack logcat capture against an optional budget",
+    )
+    rack_performance.add_argument("--log", required=True, help="Path to the adb logcat capture from a rack session")
+    rack_performance.add_argument("--budget", help='Inline JSON budget, e.g. {"min_fps":30,"max_vram_total_kb":65536}')
+    rack_performance.add_argument("--budget-file", help="Read the JSON budget from this file")
+    rack_performance.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    rack_performance.add_argument("--json", action="store_true", help="Print rack performance payload as JSON")
+
     sub.add_parser(
         "list-workflows",
         help="List JSON-defined SG QA workflows under qa_workflows/",
@@ -3179,6 +3189,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         "rca-references",
         "ramses-stamps",
         "pivot-mapping",
+        "rack-performance",
     }:
         from sg_preflight.cli.boards import handle_board_command
 

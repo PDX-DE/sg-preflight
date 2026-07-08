@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from sg_preflight.cli._common import (
@@ -45,6 +46,11 @@ from sg_preflight.pivot_mapping_integrity import (
     pivot_mapping_board_markdown,
     write_pivot_mapping_board,
 )
+from sg_preflight.rack_performance import (
+    build_rack_performance_report,
+    rack_performance_markdown,
+    write_rack_performance_report,
+)
 
 
 BOARD_COMMANDS = {
@@ -58,6 +64,7 @@ BOARD_COMMANDS = {
     "rca-references",
     "ramses-stamps",
     "pivot-mapping",
+    "rack-performance",
 }
 
 
@@ -227,6 +234,25 @@ def handle_board_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             _emit_json(board, args)
         else:
             print(pivot_mapping_board_markdown(board))
+        return 0
+
+    if args.command == "rack-performance":
+        budget = None
+        if getattr(args, "budget_file", None):
+            budget = json.loads(Path(args.budget_file).read_text(encoding="utf-8"))
+        elif getattr(args, "budget", None):
+            budget = json.loads(args.budget)
+        if budget is not None and not isinstance(budget, dict):
+            parser.error("--budget must be a JSON object of budget-key to numeric limit")
+        report = build_rack_performance_report(Path(args.log).resolve(), budget=budget)
+        if args.output_root:
+            report["artifacts"] = str(
+                write_rack_performance_report(report, Path(args.output_root).resolve() / "rack_performance.md")
+            )
+        if args.json:
+            _emit_json(report, args)
+        else:
+            print(rack_performance_markdown(report))
         return 0
 
     parser.error(f"Unhandled board command: {args.command}")
