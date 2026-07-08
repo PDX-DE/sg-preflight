@@ -114,6 +114,8 @@ class ScreenshotPair:
     changed_pixel_ratio: float | None = None
     mean_abs_diff: float | None = None
     review_score: float | None = None
+    psnr_db: float | None = None
+    laplacian_variance_ratio: float | None = None
     anomaly_hints: tuple[str, ...] = ()
     diff_image_path: str = ""
     diagnostic_chain_status: str = ""
@@ -376,15 +378,40 @@ def _bmw_comparator_from_diff(diff_mask: Any, total_pixels: int) -> tuple[bool, 
     )
 
 
+_LAPLACIAN_KERNEL = (0, -1, 0, -1, 4, -1, 0, -1, 0)
+
+
+def _image_quality_metrics(baseline_gray: Any, candidate_gray: Any) -> dict[str, float | None]:
+    import math
+
+    diff_histogram = ImageChops.difference(baseline_gray, candidate_gray).histogram()
+    total = sum(diff_histogram)
+    mse = (
+        sum(count * (value * value) for value, count in enumerate(diff_histogram)) / total
+        if total
+        else 0.0
+    )
+    psnr_db = round(10.0 * math.log10((255.0 * 255.0) / mse), 2) if mse > 0 else None
+
+    # Pillow clips negative kernel responses to zero; both sides clip alike, so the
+    # variance ratio stays a comparable sharpness signal even if absolute values differ
+    # from an unclipped Laplacian.
+    kernel = ImageFilter.Kernel((3, 3), _LAPLACIAN_KERNEL, scale=1)
+    baseline_var = float(ImageStat.Stat(baseline_gray.filter(kernel)).var[0])
+    candidate_var = float(ImageStat.Stat(candidate_gray.filter(kernel)).var[0])
+    ratio = round(candidate_var / baseline_var, 4) if baseline_var > 0 else None
+    return {"psnr_db": psnr_db, "laplacian_variance_ratio": ratio}
+
+
 def _auto_review_signals(
     baseline: Any,
     candidate: Any,
     *,
     changed_ratio: float,
     mean_abs_diff: float,
-) -> tuple[float, tuple[str, ...]]:
+) -> tuple[float, tuple[str, ...], dict[str, float | None]]:
     if ImageOps is None or ImageStat is None or ImageFilter is None:
-        return 0.0, ()
+        return 0.0, (), {}
 
     baseline_gray = ImageOps.grayscale(baseline)
     candidate_gray = ImageOps.grayscale(candidate)
@@ -419,6 +446,11 @@ def _auto_review_signals(
     ):
         hints.append("possible texture/material patch")
 
+    quality = _image_quality_metrics(baseline_gray, candidate_gray)
+    ratio = quality.get("laplacian_variance_ratio")
+    if ratio is not None and ratio <= 0.90:
+        hints.append("possible sharpness/detail loss (Laplacian variance dropped)")
+
     score = min(
         100.0,
         (changed_ratio * 120.0)
@@ -427,7 +459,7 @@ def _auto_review_signals(
         + (edge_delta * 1.75)
         + alpha_shift,
     )
-    return round(score, 2), tuple(dict.fromkeys(hints))
+    return round(score, 2), tuple(dict.fromkeys(hints)), quality
 
 
 def _visual_diff_classification(
@@ -616,6 +648,7 @@ def _diff_metrics(
     bool | None,
     str,
     tuple[BmwComparatorTier, ...],
+    dict[str, float | None],
 ]:
     if Image is None or ImageChops is None or ImageOps is None or ImageStat is None:
         exact_match = _binary_identical(baseline_path, candidate_path)
@@ -639,6 +672,7 @@ def _diff_metrics(
             None,
             "BMW comparator unavailable because the image backend is not available.",
             (),
+            {},
         )
 
     baseline = _load_rgba(baseline_path)
@@ -658,6 +692,7 @@ def _diff_metrics(
             None,
             "BMW comparator unavailable because one image could not be loaded.",
             (),
+            {},
         )
 
     baseline_size = tuple(int(value) for value in baseline.size)
@@ -677,6 +712,7 @@ def _diff_metrics(
             False,
             "BMW comparator would fail: image dimensions differ.",
             (),
+            {},
         )
 
     diff = ImageChops.difference(baseline, candidate)
@@ -698,6 +734,7 @@ def _diff_metrics(
             bmw_would_pass,
             bmw_summary,
             bmw_tiers,
+            {},
         )
 
     histogram = diff_mask.point(lambda value: 255 if value else 0).histogram()
@@ -707,7 +744,7 @@ def _diff_metrics(
     mean_abs_diff = sum(float(value) for value in stat.mean) / len(stat.mean)
 
     classification = "near_identical" if changed_ratio <= _NEAR_IDENTICAL_RATIO and mean_abs_diff <= _NEAR_IDENTICAL_MEAN else "needs_review"
-    review_score, anomaly_hints = _auto_review_signals(
+    review_score, anomaly_hints, quality_metrics = _auto_review_signals(
         baseline,
         candidate,
         changed_ratio=changed_ratio,
@@ -740,6 +777,7 @@ def _diff_metrics(
         bmw_would_pass,
         bmw_summary,
         bmw_tiers,
+        quality_metrics,
     )
 
 
@@ -876,6 +914,7 @@ def build_screenshot_triage(
                 bmw_would_pass,
                 bmw_summary,
                 bmw_tiers,
+                quality_metrics,
             ) = _diff_metrics(
                 baseline_path,
                 candidate_path,
@@ -905,6 +944,8 @@ def build_screenshot_triage(
                 changed_pixel_ratio=changed_ratio,
                 mean_abs_diff=mean_abs_diff,
                 review_score=review_score,
+                psnr_db=quality_metrics.get("psnr_db"),
+                laplacian_variance_ratio=quality_metrics.get("laplacian_variance_ratio"),
                 anomaly_hints=anomaly_hints,
                 diff_image_path=diff_path,
                 bmw_comparator_would_pass=bmw_would_pass,

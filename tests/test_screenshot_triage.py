@@ -109,6 +109,44 @@ class TestScreenshotTriage(unittest.TestCase):
             self.assertTrue(Path(pair_map["tiny_drift"].diff_image_path).exists())
             self.assertTrue(Path(pair_map["changed"].diff_image_path).exists())
 
+    def test_materialize_screenshot_triage_reports_psnr_and_sharpness_metrics(self) -> None:
+        from PIL import ImageDraw, ImageFilter
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_root = root / "Cars_IDCevo" / "BMW" / "G70"
+            expected_root = project_root / "export" / "tests" / "expected"
+            candidate_root = project_root / "export" / "tests" / "results"
+            expected_root.mkdir(parents=True, exist_ok=True)
+            candidate_root.mkdir(parents=True, exist_ok=True)
+
+            detailed = Image.new("RGBA", (64, 64), (10, 20, 30, 255))
+            draw = ImageDraw.Draw(detailed)
+            for offset in range(0, 64, 4):
+                draw.line((offset, 0, offset, 63), fill=(230, 230, 230, 255))
+                draw.line((0, offset, 63, offset), fill=(120, 40, 200, 255))
+            detailed.save(expected_root / "blurred.png")
+            detailed.filter(ImageFilter.GaussianBlur(radius=3)).save(candidate_root / "blurred.png")
+            detailed.save(expected_root / "identical.png")
+            detailed.save(candidate_root / "identical.png")
+            write_text(project_root / "export" / "tests" / "test_config.lua", "-- fixture\n")
+
+            bundle = materialize_screenshot_triage("G70", project_root, root / "out" / "triage")
+
+            pairs = {pair.key: pair for pair in bundle.report.pairs}
+            blurred = pairs["blurred"]
+            self.assertIsNotNone(blurred.psnr_db)
+            self.assertLess(blurred.psnr_db, 40.0)
+            self.assertIsNotNone(blurred.laplacian_variance_ratio)
+            self.assertLess(blurred.laplacian_variance_ratio, 0.90)
+            self.assertIn(
+                "possible sharpness/detail loss (Laplacian variance dropped)",
+                blurred.anomaly_hints,
+            )
+            identical = pairs["identical"]
+            self.assertIsNone(identical.psnr_db)
+            self.assertIsNone(identical.laplacian_variance_ratio)
+
     def test_materialize_screenshot_triage_accepts_visual_threshold_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
