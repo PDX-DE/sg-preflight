@@ -2035,6 +2035,17 @@ def build_parser() -> argparse.ArgumentParser:
     rack_performance.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     rack_performance.add_argument("--json", action="store_true", help="Print rack performance payload as JSON")
 
+    lfs_scan = sub.add_parser(
+        "lfs-scan",
+        help="Scan a checkout for un-pulled Git-LFS pointer stubs based on its .gitattributes",
+    )
+    lfs_scan.add_argument("--workspace", help="Workspace root override")
+    lfs_scan.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    lfs_scan.add_argument("--raw-repo-root", help="BMW digital-3d-car-raw workfiles root override")
+    lfs_scan.add_argument("--root", help="Explicit checkout directory to scan (overrides repo roots)")
+    lfs_scan.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    lfs_scan.add_argument("--json", action="store_true", help="Print LFS scan payload as JSON")
+
     sub.add_parser(
         "list-workflows",
         help="List JSON-defined SG QA workflows under qa_workflows/",
@@ -3190,6 +3201,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         "ramses-stamps",
         "pivot-mapping",
         "rack-performance",
+        "lfs-scan",
     }:
         from sg_preflight.cli.boards import handle_board_command
 

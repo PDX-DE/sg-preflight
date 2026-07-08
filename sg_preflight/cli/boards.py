@@ -51,6 +51,11 @@ from sg_preflight.rack_performance import (
     rack_performance_markdown,
     write_rack_performance_report,
 )
+from sg_preflight.lfs_pointer_scan import (
+    lfs_pointer_scan_markdown,
+    scan_lfs_pointers,
+    write_lfs_pointer_scan,
+)
 
 
 BOARD_COMMANDS = {
@@ -65,6 +70,7 @@ BOARD_COMMANDS = {
     "ramses-stamps",
     "pivot-mapping",
     "rack-performance",
+    "lfs-scan",
 }
 
 
@@ -253,6 +259,26 @@ def handle_board_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             _emit_json(report, args)
         else:
             print(rack_performance_markdown(report))
+        return 0
+
+    if args.command == "lfs-scan":
+        if getattr(args, "root", None):
+            scan_root = Path(args.root).resolve()
+        elif getattr(args, "raw_repo_root", None):
+            scan_root = Path(args.raw_repo_root).resolve()
+        elif args.bmw_repo_root:
+            scan_root = Path(args.bmw_repo_root).resolve()
+        else:
+            scan_root = _resolve_workspace(args)
+        board = scan_lfs_pointers(scan_root)
+        if args.output_root:
+            board["artifacts"] = str(
+                write_lfs_pointer_scan(board, Path(args.output_root).resolve() / "lfs_scan.md")
+            )
+        if args.json:
+            _emit_json(board, args)
+        else:
+            print(lfs_pointer_scan_markdown(board))
         return 0
 
     parser.error(f"Unhandled board command: {args.command}")
