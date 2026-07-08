@@ -2046,6 +2046,16 @@ def build_parser() -> argparse.ArgumentParser:
     lfs_scan.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     lfs_scan.add_argument("--json", action="store_true", help="Print LFS scan payload as JSON")
 
+    authoring_assets = sub.add_parser(
+        "authoring-assets",
+        help="Inventory authoring-only Blender special/ workfiles and flag donor-copy and NOEXPORT files",
+    )
+    authoring_assets.add_argument("--workspace", help="Workspace root override")
+    authoring_assets.add_argument("--raw-repo-root", help="BMW digital-3d-car-raw workfiles root override")
+    authoring_assets.add_argument("--root", help="Explicit directory to scan (overrides raw repo root)")
+    authoring_assets.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    authoring_assets.add_argument("--json", action="store_true", help="Print authoring-asset payload as JSON")
+
     sub.add_parser(
         "list-workflows",
         help="List JSON-defined SG QA workflows under qa_workflows/",
@@ -3202,6 +3212,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         "pivot-mapping",
         "rack-performance",
         "lfs-scan",
+        "authoring-assets",
     }:
         from sg_preflight.cli.boards import handle_board_command
 

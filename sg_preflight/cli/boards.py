@@ -56,6 +56,11 @@ from sg_preflight.lfs_pointer_scan import (
     scan_lfs_pointers,
     write_lfs_pointer_scan,
 )
+from sg_preflight.authoring_assets import (
+    authoring_asset_board_markdown,
+    build_authoring_asset_board,
+    write_authoring_asset_board,
+)
 
 
 BOARD_COMMANDS = {
@@ -71,6 +76,7 @@ BOARD_COMMANDS = {
     "pivot-mapping",
     "rack-performance",
     "lfs-scan",
+    "authoring-assets",
 }
 
 
@@ -279,6 +285,24 @@ def handle_board_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             _emit_json(board, args)
         else:
             print(lfs_pointer_scan_markdown(board))
+        return 0
+
+    if args.command == "authoring-assets":
+        if getattr(args, "root", None):
+            scan_root = Path(args.root).resolve()
+        elif getattr(args, "raw_repo_root", None):
+            scan_root = Path(args.raw_repo_root).resolve()
+        else:
+            scan_root = _resolve_workspace(args)
+        board = build_authoring_asset_board(scan_root)
+        if args.output_root:
+            board["artifacts"] = str(
+                write_authoring_asset_board(board, Path(args.output_root).resolve() / "authoring_assets.md")
+            )
+        if args.json:
+            _emit_json(board, args)
+        else:
+            print(authoring_asset_board_markdown(board))
         return 0
 
     parser.error(f"Unhandled board command: {args.command}")
