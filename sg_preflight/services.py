@@ -16,7 +16,11 @@ from sg_preflight.adapters.materialize import (
     materialize_bundle,
     resolve_materialize_inputs,
 )
-from sg_preflight.bmw_delivery import discover_bmw_models_repo
+from sg_preflight.bmw_delivery import (
+    discover_bmw_models_repo,
+    discover_bmw_raw_repo,
+    discover_ui_components_lib_repo,
+)
 from sg_preflight.bmw_process import (
     bmw_interface_smoke_commands,
     country_variant_lightfx_expectations,
@@ -811,6 +815,8 @@ def prerequisite_status(repo_root: Path | None = None) -> list[dict[str, str]]:
         ("checker_root", checker_root),
         ("reference_root", Path(r"C:\repositories\trunk")),
         ("bmw_models_repo", bmw_models_repo),
+        ("bmw_raw_workfiles_repo", discover_bmw_raw_repo(root)),
+        ("widget_shared_lib_repo", discover_ui_components_lib_repo(root)),
         ("execute_checks", checker_root / "executeChecks.py"),
         ("unused_resource_checker", checker_root / "printNotUsedResources.py"),
         (

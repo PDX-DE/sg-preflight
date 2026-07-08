@@ -11,6 +11,8 @@ from typing import Any
 
 DIGITAL_3D_CAR_REPO_ENV = "Digital-3D-Car-Repo"
 DIGITAL_3D_CAR_REPO_IDC23_ENV = "Digital-3D-Car-Repo-IDC23"
+DIGITAL_3D_CAR_RAW_REPO_ENV = "Digital-3D-Car-Raw-Repo"
+UI_COMPONENTS_LIB_REPO_ENV = "UI-Components-Lib-Repo"
 BMW_MODEL_CONFIG_RELATIVE = Path("ci") / "scripts" / "common" / "models_build_config.yaml"
 LANE_IDC23 = "idc_23"
 LANE_IDCEVO = "idc_evo"
@@ -107,6 +109,49 @@ def discover_bmw_models_repo(workspace_root: Path | None = None) -> Path:
         if candidate.exists():
             return candidate
     return candidates[0]
+
+
+def _discover_reference_checkout(
+    root: Path,
+    checkout_name: str,
+    env_keys: tuple[str, ...],
+    marker_relative: Path,
+) -> Path:
+    candidates = (
+        root / checkout_name,
+        root / "external" / checkout_name,
+        root.parent / checkout_name,
+        root.parent / "bmw-oracle-repos" / checkout_name,
+    )
+    for candidate in candidates[:3]:
+        if (candidate / marker_relative).exists():
+            return candidate
+    for key in env_keys:
+        raw = os.environ.get(key, "").strip()
+        if raw:
+            return Path(raw)
+    for candidate in candidates[3:]:
+        if (candidate / marker_relative).exists():
+            return candidate
+    return candidates[0]
+
+
+def discover_bmw_raw_repo(workspace_root: Path | None = None) -> Path:
+    return _discover_reference_checkout(
+        _workspace_root(workspace_root),
+        "digital-3d-car-raw",
+        (DIGITAL_3D_CAR_RAW_REPO_ENV, "SG_BMW_CAR_RAW_ROOT"),
+        Path("cars"),
+    )
+
+
+def discover_ui_components_lib_repo(workspace_root: Path | None = None) -> Path:
+    return _discover_reference_checkout(
+        _workspace_root(workspace_root),
+        "ui-components-lib",
+        (UI_COMPONENTS_LIB_REPO_ENV, "SG_UI_COMPONENTS_LIB_ROOT"),
+        Path("CHANGELOG.md"),
+    )
 
 
 def _yaml_scalar(value: str) -> str:

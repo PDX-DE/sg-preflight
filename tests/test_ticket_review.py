@@ -15,6 +15,7 @@ from sg_preflight.qa_actions import (
     get_operator_action,
     save_action_record,
 )
+from sg_preflight.ticket_dod import _qa_capability_matrix_markdown
 from sg_preflight.ticket_review import materialize_ticket_review_bundle
 from tests.operator_helpers import isolated_missing_external_dependencies, write_text
 
@@ -287,6 +288,35 @@ def _create_daily_snapshot_fixture(root: Path, profile_id: str) -> None:
 
 
 class TestTicketReview(unittest.TestCase):
+    def test_qa_capability_matrix_reports_reference_checkout_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir) / "workspace"
+            workspace.mkdir(parents=True, exist_ok=True)
+            lib_root = Path(temp_dir) / "bmw-oracle-repos" / "ui-components-lib"
+            write_text(lib_root / "CHANGELOG.md", "# Changelog\n")
+
+            env_overrides = {
+                "Digital-3D-Car-Raw-Repo": "",
+                "SG_BMW_CAR_RAW_ROOT": "",
+                "UI-Components-Lib-Repo": "",
+                "SG_UI_COMPONENTS_LIB_ROOT": "",
+            }
+            with mock.patch.dict(os.environ, env_overrides, clear=False):
+                text = _qa_capability_matrix_markdown(
+                    ticket_id="IDCEVODEV-000000",
+                    source_root=workspace,
+                    workspace=workspace,
+                    scope_note="",
+                    profile_ids=(),
+                )
+
+        self.assertIn(
+            "| Widget shared-library cross-check | available locally (read-only checkout) |", text
+        )
+        self.assertIn("| Raw 3D workfiles cross-check | not cloned locally |", text)
+        self.assertIn("Confluence section: `How to deliver to BMW`", text)
+        self.assertIn("`not cloned locally` means the read-only BMW reference checkout", text)
+
     def test_materialize_ticket_review_bundle_can_stay_scope_first_without_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

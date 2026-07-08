@@ -143,6 +143,26 @@ _QA_CAPABILITY_SPECS = (
         "blocker": "Needs the BMW repo helper surface, runnable local toolchain, and a captured success log; packaging the helper alone does not prove export success.",
     },
     {
+        "label": "Raw 3D workfiles cross-check",
+        "section": "How to deliver to BMW",
+        "relative_paths": (),
+        "status_present": "not cloned locally",
+        "status_missing": "not cloned locally",
+        "checks": "Read-only comparisons against the BMW raw workfiles repository (digital-3d-car-raw): which profiles have authoring sources, and whether delivered content still matches them.",
+        "how_to_use": "Clone digital-3d-car-raw next to the workspace or set the Digital-3D-Car-Raw-Repo environment variable; the boards detect the checkout automatically.",
+        "blocker": "Needs a local read-only checkout of digital-3d-car-raw; without it the raw-vs-delivered comparisons stay unavailable rather than guessed.",
+    },
+    {
+        "label": "Widget shared-library cross-check",
+        "section": "",
+        "relative_paths": (),
+        "status_present": "not cloned locally",
+        "status_missing": "not cloned locally",
+        "checks": "Read-only comparisons against the shared widget UI library (ui-components-lib): released library version versus the versions widgets declare.",
+        "how_to_use": "Clone ui-components-lib next to the workspace or set the UI-Components-Lib-Repo environment variable; the boards detect the checkout automatically.",
+        "blocker": "Needs a local read-only checkout of ui-components-lib; without it widget library-version checks stay unavailable rather than guessed.",
+    },
+    {
         "label": "Rack / hardware car-paint review",
         "section": "How to... Car Paint",
         "relative_paths": (),
@@ -506,7 +526,27 @@ def _qa_capability_matrix_markdown(
         "| Capability | Local status | Verified path(s) or source | What it validates | How to use now | Main blocker |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
+    oracle_readiness_keys = {
+        "Raw 3D workfiles cross-check": "bmw_raw_workfiles_repo",
+        "Widget shared-library cross-check": "widget_shared_lib_repo",
+    }
     for spec in _QA_CAPABILITY_SPECS:
+        if spec["label"] in oracle_readiness_keys:
+            record = readiness.get(oracle_readiness_keys[spec["label"]], {})
+            if record.get("status") == "available" and record.get("path"):
+                status = "available locally (read-only checkout)"
+                verified = f"`{record['path']}`"
+            else:
+                status = spec["status_missing"]
+                verified = (
+                    f"Confluence section: `{spec['section']}`"
+                    if spec["section"]
+                    else "No local checkout detected."
+                )
+            lines.append(
+                f"| {spec['label']} | {status} | {verified} | {spec['checks']} | {spec['how_to_use']} | {spec['blocker']} |"
+            )
+            continue
         if spec["label"] in {"BMW screenshot smoke flow", "BMW headless export proof"}:
             bmw_models = readiness.get("bmw_models_repo", {})
             bmw_car_manager = readiness.get("bmw_car_manager_script", {})
@@ -563,6 +603,7 @@ def _qa_capability_matrix_markdown(
             "- `archived in SVN` means the documentation still refers to the capability, but the live path has already moved to archive and should not be assumed as an active default workflow.",
             "- `blocked by BMW access` means the flow is documented, but the required BMW-owned repository, scripts, or runtime environment are still inaccessible from this machine.",
             "- `manual / rack dependent` means the flow is real, but it requires physical hardware or a reviewer session rather than a deterministic local CLI-only run.",
+            "- `not cloned locally` means the read-only BMW reference checkout is not present on this machine yet, so the related cross-checks stay unavailable instead of guessed.",
             "",
         ]
     )

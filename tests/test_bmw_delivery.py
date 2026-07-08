@@ -9,6 +9,8 @@ from unittest import mock
 from sg_preflight.bmw_delivery import (
     detect_lane,
     discover_bmw_models_repo,
+    discover_bmw_raw_repo,
+    discover_ui_components_lib_repo,
     inspect_bmw_screenshot_surface,
     load_bmw_registry,
     read_bmw_screenshot_state,
@@ -23,6 +25,15 @@ def _clear_bmw_repo_env() -> dict[str, str]:
         "SG_BMW_CAR_MODELS_ROOT": "",
         "SG_CARMODELS_REPO": "",
         "SG-CarModels-Repo": "",
+    }
+
+
+def _clear_reference_checkout_env() -> dict[str, str]:
+    return {
+        "Digital-3D-Car-Raw-Repo": "",
+        "SG_BMW_CAR_RAW_ROOT": "",
+        "UI-Components-Lib-Repo": "",
+        "SG_UI_COMPONENTS_LIB_ROOT": "",
     }
 
 
@@ -154,6 +165,60 @@ class TestBmwDelivery(unittest.TestCase):
                 detected = discover_bmw_models_repo(root)
 
             self.assertEqual(detected.resolve(), repo_root.resolve())
+
+    def test_discover_bmw_raw_repo_prefers_workspace_local_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            raw_root = root / "digital-3d-car-raw"
+            (raw_root / "cars" / "BMW").mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.dict(os.environ, _clear_reference_checkout_env(), clear=False):
+                detected = discover_bmw_raw_repo(root)
+
+            self.assertEqual(detected.resolve(), raw_root.resolve())
+
+    def test_discover_bmw_raw_repo_skips_markerless_directory_and_uses_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "digital-3d-car-raw").mkdir(parents=True, exist_ok=True)
+            env_root = root / "elsewhere" / "digital-3d-car-raw"
+            (env_root / "cars").mkdir(parents=True, exist_ok=True)
+            overrides = _clear_reference_checkout_env()
+            overrides["Digital-3D-Car-Raw-Repo"] = str(env_root)
+
+            with mock.patch.dict(os.environ, overrides, clear=False):
+                detected = discover_bmw_raw_repo(root)
+
+            self.assertEqual(detected.resolve(), env_root.resolve())
+
+    def test_discover_ui_components_lib_repo_finds_sibling_oracle_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            lib_root = Path(temp_dir) / "bmw-oracle-repos" / "ui-components-lib"
+            root.mkdir(parents=True, exist_ok=True)
+            write_text(lib_root / "CHANGELOG.md", "# Changelog\n")
+
+            with mock.patch.dict(os.environ, _clear_reference_checkout_env(), clear=False):
+                detected = discover_ui_components_lib_repo(root)
+
+            self.assertEqual(detected.resolve(), lib_root.resolve())
+
+    def test_prerequisite_status_reports_reference_checkouts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            raw_root = Path(temp_dir) / "bmw-oracle-repos" / "digital-3d-car-raw"
+            (raw_root / "cars" / "BMW").mkdir(parents=True, exist_ok=True)
+            root.mkdir(parents=True, exist_ok=True)
+
+            env_overrides = {**_clear_bmw_repo_env(), **_clear_reference_checkout_env()}
+            with mock.patch.dict(os.environ, env_overrides, clear=False):
+                payload = {item["key"]: item for item in prerequisite_status(root)}
+
+            self.assertEqual(payload["bmw_raw_workfiles_repo"]["status"], "available")
+            self.assertEqual(
+                Path(payload["bmw_raw_workfiles_repo"]["path"]).resolve(), raw_root.resolve()
+            )
+            self.assertEqual(payload["widget_shared_lib_repo"]["status"], "missing")
 
     def test_inspect_bmw_screenshot_surface_reports_empty_payload_truthfully(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
