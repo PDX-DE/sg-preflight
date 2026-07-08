@@ -214,6 +214,7 @@ from sg_preflight.dashboard_grafiks import (
     _grafiks_profile_registry_file,
     _grafiks_shell_command,
     _grafiks_shell_exe_candidates,
+    _grafiks_shell_label,
     _resolve_grafiks_shell_exe,
     _unique_existing_order,
 )
@@ -3340,6 +3341,7 @@ def _render_dashboard(
             .sgfx-main { flex: 1; min-width: 0; padding: 24px 28px 24px 76px; gap: 18px; background: var(--sgfx-bg); }
             .sgfx-header { border-bottom: 1px solid var(--sgfx-border); padding-bottom: 14px; }
             .sgfx-subtitle { color: var(--sgfx-fg-muted); font-size: 13px; }
+            .sgfx-registry-note { font-size: 12px; opacity: 0.75; }
             .sgfx-brand-lockup { gap: 14px; }
             .sgfx-brand-logo { height: 96px; max-width: 360px; width: auto; object-fit: contain; flex: 0 0 auto; }
             .sgfx-about-logo { width: 240px; max-width: 42vw; height: auto; object-fit: contain; flex: 0 0 auto; }
@@ -3557,7 +3559,7 @@ def _render_dashboard(
             )
             if exit_code:
                 _show_grafiks_confirm_dialog(
-                    f"Grafiks cinematic shell exited early with code {exit_code}.",
+                    f"{_grafiks_shell_label(shell_path)} exited early with code {exit_code}.",
                     allow_continue=True,
                 )
 
@@ -3568,7 +3570,7 @@ def _render_dashboard(
                 _show_grafiks_confirm_dialog(_grafiks_not_installed_message(workspace), allow_continue=False)
                 return
             _show_grafiks_confirm_dialog(
-                f"Ready to launch Grafiks cinematic shell: {shell_path}",
+                f"Ready to launch the {_grafiks_shell_label(shell_path)}: {shell_path}",
                 allow_continue=True,
             )
 
@@ -4443,8 +4445,8 @@ def _render_dashboard(
             </div>
             <div class="sgfx-sidebar-backdrop" data-sgfx-sidebar-backdrop onclick="window.sgfxSetSidebarOpen && window.sgfxSetSidebarOpen(false)" aria-hidden="true"></div>
             <div class="sgfx-floating-shortcuts" aria-label="Keyboard shortcuts">
+              <span>/ Jump to page</span>
               <span>F1 Help</span>
-              <span>F12 Diagnostic</span>
               <span>Esc Close sidebar</span>
             </div>
             """,
@@ -4512,18 +4514,17 @@ def _render_dashboard(
                         with ui.column():
                             controls["profile_label"] = ui.label(_header_text()).classes("sgfx-subtitle")
                             ui.html(
-                                '<div id="sgfx-shortcut-feedback" class="sgfx-shortcut-feedback">'
-                                "Shortcuts available: F1 help, F2 profile, F5 refresh, F12 diagnostic, Esc closes sidebar."
-                                "</div>"
+                                '<div id="sgfx-shortcut-feedback" class="sgfx-shortcut-feedback"></div>'
                             )
                             registry = state["snapshot"].get("profile_registry", {})
-                            controls["profile_registry_label"] = ui.label(
-                                str(registry.get("summary", "")) if isinstance(registry, dict) else ""
-                            ).classes("sgfx-subtitle")
+                            controls["profile_registry_label"] = _attach_tooltip(
+                                ui,
+                                ui.label(
+                                    str(registry.get("summary", "")) if isinstance(registry, dict) else ""
+                                ).classes("sgfx-subtitle sgfx-registry-note"),
+                                "Number of build profiles available in this workspace.",
+                            )
                     with ui.row().classes("items-center"):
-                        ui.label("F1 Help").classes("sgfx-shortcut")
-                        ui.label("F12 Diagnostic").classes("sgfx-shortcut")
-                        ui.label("Esc Close sidebar").classes("sgfx-shortcut")
                         controls["profile_show_all"] = ui.switch(
                             "Show all profiles",
                             value=bool(state["snapshot"].get("profile_show_all", False)),

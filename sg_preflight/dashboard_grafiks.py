@@ -14,10 +14,18 @@ from sg_preflight.dashboard_webserver import append_startup_log
 GRAFIKS_SHELL_EXE_ENV_KEYS = ("SGFX_GRAFIKS_SHELL_EXE", "SGFX_CINEMATIC_SHELL_EXE")
 GRAFIKS_SHELL_EXE_NAME = "sgfx_cine_cinematic_shell.exe"
 OPERATOR_CONSOLE_SHELL_EXE_NAME = "sgfx_screens.exe"
+# Subdirectory the packaged exe carries the operator-console dist under (_internal/grafiks_shell/).
+GRAFIKS_BUNDLED_SHELL_DIR = Path("grafiks_shell")
 GRAFIKS_STATUS_HANDOFF_NAME = "sgfx_status.json"
 GRAFIKS_CXX_BUILD_DIR = Path("cpp") / "build" / "vs2022-ramses-28.16" / "Release"
 GRAFIKS_DEFAULT_BMW_CARS_ROOT = Path(r"C:\3D Car git\digital-3d-car-models\cars\BMW")
-GRAFIKS_MODE_WIP_HINT = "Grafiks mode is WIP - use Clean for now unless the C++ cinematic shell is installed."
+GRAFIKS_MODE_WIP_HINT = "Grafiks mode is WIP - use Clean for now unless the C++ Grafiks shell is installed."
+
+
+def _grafiks_shell_label(exe_path: Path | None = None) -> str:
+    if exe_path is not None and not _is_operator_console_shell(exe_path):
+        return "Grafiks cinematic shell"
+    return "Grafiks operator console"
 GRAFIKS_MODE_WARNING_TITLE = "WARNING - Grafiks mode is still a work in progress."
 GRAFIKS_MODE_WARNING_BODY = "Expect instability and bugs. Thanks for your patience!"
 
@@ -75,6 +83,12 @@ def _grafiks_shell_exe_candidates(workspace: Path | str | None = None) -> list[P
     for root in _unique_existing_order(roots):
         candidates.extend(
             [
+                # Grafiks mode is the operator console; prefer it everywhere. The packaged
+                # exe carries it under _internal/grafiks_shell/ (see build_sgfx_exe.py).
+                root / GRAFIKS_BUNDLED_SHELL_DIR / OPERATOR_CONSOLE_SHELL_EXE_NAME,
+                root / OPERATOR_CONSOLE_SHELL_EXE_NAME,
+                # The Ramses cinematic shell is a separate R&D track, only a last resort.
+                root / GRAFIKS_BUNDLED_SHELL_DIR / GRAFIKS_SHELL_EXE_NAME,
                 root / GRAFIKS_CXX_BUILD_DIR / GRAFIKS_SHELL_EXE_NAME,
                 root / "build" / "vs2022-ramses-28.16" / "Release" / GRAFIKS_SHELL_EXE_NAME,
                 root / GRAFIKS_SHELL_EXE_NAME,
@@ -175,10 +189,9 @@ def _grafiks_not_installed_message(workspace: Path | str | None = None) -> str:
     first_expected = str(expected[0]) if expected else OPERATOR_CONSOLE_SHELL_EXE_NAME
     return (
         f"{GRAFIKS_MODE_WIP_HINT}\n"
-        f"C++ shell not installed: cinematic shell not found. Expected first: {first_expected}\n"
+        f"C++ shell not installed: Grafiks operator console not found. Expected first: {first_expected}\n"
         f"Set the Grafiks shell path on the Settings page (or {GRAFIKS_SHELL_EXE_ENV_KEYS[0]}) to the "
-        f"built shell exe ({OPERATOR_CONSOLE_SHELL_EXE_NAME} or {GRAFIKS_SHELL_EXE_NAME}) to enable "
-        f"Grafiks mode."
+        f"built operator console ({OPERATOR_CONSOLE_SHELL_EXE_NAME}) to enable Grafiks mode."
     )
 
 
@@ -205,9 +218,10 @@ def run_grafiks_mode(
         command = [str(exe_path)]
     else:
         command = _grafiks_shell_command(exe_path, profile_id=profile_id, bmw_root=bmw_root)
-    append_startup_log(f"launching Grafiks C++ shell: {exe_path}")
+    shell_label = _grafiks_shell_label(exe_path)
+    append_startup_log(f"launching {shell_label}: {exe_path}")
     print(GRAFIKS_MODE_WIP_HINT)
-    print(f"Launching Grafiks C++ shell: {exe_path}")
+    print(f"Launching {shell_label}: {exe_path}")
     process = subprocess.Popen(command, cwd=exe_path.parent)
     try:
         exit_code = process.wait(timeout=2)

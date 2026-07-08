@@ -3156,6 +3156,46 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
             ["sgfx_screens.exe", "sgfx_cine_cinematic_shell.exe"],
         )
 
+    def test_grafiks_candidates_prefer_bundled_operator_console_over_cinematic(self) -> None:
+        from sg_preflight import dashboard_grafiks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with mock.patch.dict(
+                os.environ,
+                {"SGFX_GRAFIKS_SHELL_EXE": "", "SGFX_CINEMATIC_SHELL_EXE": ""},
+                clear=False,
+            ):
+                names = [candidate.name for candidate in dashboard_grafiks._grafiks_shell_exe_candidates(workspace)]
+
+        # The operator console is Grafiks mode and must be searched before the cinematic R&D shell.
+        self.assertIn("sgfx_screens.exe", names)
+        self.assertIn("sgfx_cine_cinematic_shell.exe", names)
+        self.assertLess(
+            names.index("sgfx_screens.exe"),
+            names.index("sgfx_cine_cinematic_shell.exe"),
+        )
+        # And the bundled subdirectory path is present so the packaged exe finds it.
+        bundled = [
+            candidate
+            for candidate in dashboard_grafiks._grafiks_shell_exe_candidates(workspace)
+            if candidate.parent.name == "grafiks_shell" and candidate.name == "sgfx_screens.exe"
+        ]
+        self.assertTrue(bundled)
+
+    def test_grafiks_shell_label_reflects_resolved_shell(self) -> None:
+        from sg_preflight import dashboard_grafiks
+
+        self.assertEqual(
+            dashboard_grafiks._grafiks_shell_label(Path("x/sgfx_screens.exe")),
+            "Grafiks operator console",
+        )
+        self.assertEqual(
+            dashboard_grafiks._grafiks_shell_label(Path("x/sgfx_cine_cinematic_shell.exe")),
+            "Grafiks cinematic shell",
+        )
+        self.assertEqual(dashboard_grafiks._grafiks_shell_label(None), "Grafiks operator console")
+
     def test_grafiks_mode_missing_shell_degrades_with_wip_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard import main as dashboard_main

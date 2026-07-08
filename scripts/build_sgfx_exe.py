@@ -26,6 +26,12 @@ GRAFIKS_RUNTIME_FILES = (
     "ramses-shared-lib.dll",
     "SDL3.dll",
 )
+# The operator console (Grafiks mode) — its whole dist travels under _internal/grafiks_shell/
+# so the double-clicked exe opens it instead of the cinematic R&D shell.
+OPERATOR_CONSOLE_DIST_ENV = "SGFX_GRAFIKS_OPERATOR_CONSOLE_DIST"
+OPERATOR_CONSOLE_DIST_SOURCE = Path(r"C:\swardbuild\sgfx_ui\dist")
+OPERATOR_CONSOLE_SHELL_EXE_NAME = "sgfx_screens.exe"
+GRAFIKS_BUNDLED_SHELL_DIR_NAME = "grafiks_shell"
 
 
 def _data_arg(source: str, destination: str) -> str:
@@ -115,6 +121,33 @@ def copy_grafiks_runtime(bundle_dir: Path) -> list[Path]:
     return copied
 
 
+def _operator_console_dist_source() -> Path | None:
+    configured = os.environ.get(OPERATOR_CONSOLE_DIST_ENV, "").strip()
+    candidates = [Path(configured)] if configured else []
+    candidates.append(OPERATOR_CONSOLE_DIST_SOURCE)
+    for candidate in candidates:
+        dist_dir = candidate.resolve()
+        if (dist_dir / OPERATOR_CONSOLE_SHELL_EXE_NAME).is_file():
+            return dist_dir
+    return None
+
+
+def copy_operator_console_shell(bundle_dir: Path) -> Path | None:
+    """Copy the operator-console dist tree into _internal/grafiks_shell/ so the
+    packaged exe opens the Grafiks operator console (not the cinematic R&D shell).
+    Optional: skipped cleanly when the dist is not present at build time."""
+    dist_dir = _operator_console_dist_source()
+    if dist_dir is None:
+        print("Grafiks operator console dist not found; skipping optional copy.")
+        return None
+    target_dir = bundle_dir / "_internal" / GRAFIKS_BUNDLED_SHELL_DIR_NAME
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    shutil.copytree(dist_dir, target_dir)
+    print(f"Copied Grafiks operator console ({dist_dir}) to {target_dir}")
+    return target_dir / OPERATOR_CONSOLE_SHELL_EXE_NAME
+
+
 def validate_staged_bundle() -> Path:
     bundle_dir = STAGING_DIST_PATH / "sgfx-preflight"
     exe_path = bundle_dir / "sgfx-preflight.exe"
@@ -186,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     PyInstaller.__main__.run(pyinstaller_args)
     staged_bundle = validate_staged_bundle()
     copy_grafiks_runtime(staged_bundle)
+    copy_operator_console_shell(staged_bundle)
     swap_staged_bundle(staged_bundle)
     return 0
 
