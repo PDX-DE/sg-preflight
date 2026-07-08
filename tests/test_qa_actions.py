@@ -411,6 +411,12 @@ starting  luacheck on  12  files
             ):
                 action = get_operator_action("bmw_screenshot_smoke__g65", root, profiles=[profile])
                 record = build_action_record(action, root)
+                log_path = Path(record.paths["log"])
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path.write_text(
+                    "step: prepare\nFAILURE: Build failed with an exception.\nstep: abort\n",
+                    encoding="utf-8",
+                )
                 with mock.patch(
                     "sg_preflight.qa_actions.subprocess.run",
                     side_effect=subprocess.TimeoutExpired(cmd=["python"], timeout=BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS),
@@ -422,6 +428,10 @@ starting  luacheck on  12  files
             self.assertEqual(saved.status, "failed")
             self.assertEqual(saved.exit_code, 1)
             self.assertIn("timed out", saved.error_message)
+            digest_notes = [note for note in saved.notes if note.startswith("Failure digest")]
+            self.assertEqual(len(digest_notes), 1)
+            self.assertIn("FAILURE: Build failed with an exception.", digest_notes[0])
+            self.assertIn("line 2", digest_notes[0])
             self.assertEqual(run.call_args.kwargs["timeout"], BMW_SCREENSHOT_SMOKE_TIMEOUT_SECONDS)
 
 

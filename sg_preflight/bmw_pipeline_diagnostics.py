@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib import resources
 import json
+import re
 from typing import Any
 
 
@@ -57,3 +58,34 @@ def diagnostic_pattern_anchors(*pattern_ids: str) -> tuple[str, ...]:
             if candidate not in anchors:
                 anchors.append(candidate)
     return tuple(anchors)
+
+
+_FAILURE_LINE_RE = re.compile(
+    r"(?i)\b(FAILURE|FAILED|FATAL|Traceback \(most recent call last\)|ERROR|Exception)\b"
+)
+
+
+def extract_failure_digest(
+    log_text: str, *, context_lines: int = 6, max_chars: int = 1200
+) -> dict[str, Any]:
+    lines = str(log_text or "").splitlines()
+    if not lines:
+        return {"found": False, "line_number": 0, "marker_line": "", "excerpt": ""}
+    for index, line in enumerate(lines):
+        if _FAILURE_LINE_RE.search(line):
+            start = max(0, index - context_lines)
+            end = min(len(lines), index + context_lines + 1)
+            excerpt = "\n".join(lines[start:end])[:max_chars]
+            return {
+                "found": True,
+                "line_number": index + 1,
+                "marker_line": line.strip()[:300],
+                "excerpt": excerpt,
+            }
+    tail = "\n".join(lines[-(context_lines * 2) :])[:max_chars]
+    return {
+        "found": False,
+        "line_number": len(lines),
+        "marker_line": lines[-1].strip()[:300],
+        "excerpt": tail,
+    }

@@ -271,6 +271,35 @@ def _log(record: ActionRecord, text: str) -> None:
         handle.write(text.rstrip() + "\n")
 
 
+def _attach_failure_digest(record: ActionRecord) -> None:
+    # Best-effort enrichment inside the failure path: never mask the original error.
+    try:
+        from sg_preflight.bmw_pipeline_diagnostics import extract_failure_digest
+        from sg_preflight.session_log import event as session_event
+
+        log_path = Path(record.paths.get("log", ""))
+        log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+        if not log_text.strip():
+            return
+        digest = extract_failure_digest(log_text)
+        marker = "first failure line" if digest["found"] else "log tail (no failure marker matched)"
+        note = (
+            f"Failure digest ({marker}, line {digest['line_number']} of {record.paths.get('log', '')}):\n"
+            f"{digest['excerpt']}"
+        )
+        record.notes = [*(record.notes or []), note]
+        session_event(
+            source="qa_actions",
+            surface=record.action_id or record.kind,
+            message="Action failed",
+            detail=f"{digest['marker_line']} (line {digest['line_number']}; full log: {record.paths.get('log', '')})",
+            level="error",
+            profile=record.profile_id,
+        )
+    except Exception:
+        return
+
+
 def _summary_md_lines(summary: dict[str, Any]) -> list[str]:
     lines = [
         f"# {summary.get('title', 'SG Preflight QA Action')}",
@@ -1464,6 +1493,7 @@ def execute_operator_action(
         record.error_message = str(exc)
         record.exit_code = 1
         record.completed_at_utc = utc_now()
+        _attach_failure_digest(record)
         existing_progress = dict(record.progress or {})
         failure_step = str(existing_progress.get("step_key", "finalize")).strip() or "finalize"
         events = _merged_progress_events(

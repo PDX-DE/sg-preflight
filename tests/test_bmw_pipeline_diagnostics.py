@@ -53,6 +53,39 @@ class BmwPipelineDiagnosticsTests(unittest.TestCase):
         ):
             self.assertNotIn(token, data_text)
 
+class TestFailureDigest(unittest.TestCase):
+    def test_extracts_first_failure_line_with_context(self) -> None:
+        from sg_preflight.bmw_pipeline_diagnostics import extract_failure_digest
+
+        log = "\n".join(f"line {i}" for i in range(1, 20))
+        log = log.replace("line 9", "FAILURE: Build failed with an exception.")
+        digest = extract_failure_digest(log, context_lines=2)
+
+        self.assertTrue(digest["found"])
+        self.assertEqual(digest["line_number"], 9)
+        self.assertIn("FAILURE: Build failed", digest["marker_line"])
+        self.assertEqual(
+            digest["excerpt"].splitlines(),
+            ["line 7", "line 8", "FAILURE: Build failed with an exception.", "line 10", "line 11"],
+        )
+
+    def test_falls_back_to_tail_when_no_marker_matches(self) -> None:
+        from sg_preflight.bmw_pipeline_diagnostics import extract_failure_digest
+
+        digest = extract_failure_digest("all good\nstill good\ndone", context_lines=2)
+
+        self.assertFalse(digest["found"])
+        self.assertEqual(digest["marker_line"], "done")
+        self.assertIn("all good", digest["excerpt"])
+
+    def test_empty_log_reports_nothing_found(self) -> None:
+        from sg_preflight.bmw_pipeline_diagnostics import extract_failure_digest
+
+        digest = extract_failure_digest("")
+
+        self.assertFalse(digest["found"])
+        self.assertEqual(digest["excerpt"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
