@@ -2014,6 +2014,17 @@ def build_parser() -> argparse.ArgumentParser:
     ramses_stamps.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     ramses_stamps.add_argument("--json", action="store_true", help="Print RAMSES stamp payload as JSON")
 
+    pivot_mapping = sub.add_parser(
+        "pivot-mapping",
+        help="Check that each profile's position aliases resolve to a defined Pivot_Master transform",
+    )
+    pivot_mapping.add_argument("--workspace", help="Workspace root override")
+    pivot_mapping.add_argument("--raw-repo-root", help="BMW digital-3d-car-raw workfiles root override")
+    pivot_mapping.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    pivot_mapping.add_argument("--root", help="Explicit directory to scan (overrides raw/bmw repo roots)")
+    pivot_mapping.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    pivot_mapping.add_argument("--json", action="store_true", help="Print pivot/position-mapping payload as JSON")
+
     sub.add_parser(
         "list-workflows",
         help="List JSON-defined SG QA workflows under qa_workflows/",
@@ -3167,6 +3178,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         "export-size-trend",
         "rca-references",
         "ramses-stamps",
+        "pivot-mapping",
     }:
         from sg_preflight.cli.boards import handle_board_command
 

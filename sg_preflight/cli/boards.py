@@ -40,6 +40,11 @@ from sg_preflight.ramses_stamp import (
     ramses_stamp_board_markdown,
     write_ramses_stamp_board,
 )
+from sg_preflight.pivot_mapping_integrity import (
+    build_pivot_mapping_board,
+    pivot_mapping_board_markdown,
+    write_pivot_mapping_board,
+)
 
 
 BOARD_COMMANDS = {
@@ -52,6 +57,7 @@ BOARD_COMMANDS = {
     "export-size-trend",
     "rca-references",
     "ramses-stamps",
+    "pivot-mapping",
 }
 
 
@@ -201,6 +207,26 @@ def handle_board_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             _emit_json(board, args)
         else:
             print(ramses_stamp_board_markdown(board))
+        return 0
+
+    if args.command == "pivot-mapping":
+        if getattr(args, "root", None):
+            scan_root = Path(args.root).resolve()
+        elif getattr(args, "raw_repo_root", None):
+            scan_root = Path(args.raw_repo_root).resolve()
+        elif args.bmw_repo_root:
+            scan_root = Path(args.bmw_repo_root).resolve()
+        else:
+            scan_root = _resolve_workspace(args)
+        board = build_pivot_mapping_board(scan_root)
+        if args.output_root:
+            board["artifacts"] = str(
+                write_pivot_mapping_board(board, Path(args.output_root).resolve() / "pivot_mapping.md")
+            )
+        if args.json:
+            _emit_json(board, args)
+        else:
+            print(pivot_mapping_board_markdown(board))
         return 0
 
     parser.error(f"Unhandled board command: {args.command}")
