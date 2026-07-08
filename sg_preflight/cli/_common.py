@@ -1994,6 +1994,16 @@ def build_parser() -> argparse.ArgumentParser:
     export_size_trend.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     export_size_trend.add_argument("--json", action="store_true", help="Print export-size trend payload as JSON")
 
+    rca_references = sub.add_parser(
+        "rca-references",
+        help="Check RaCo external-project (.rca) references resolve on disk",
+    )
+    rca_references.add_argument("--workspace", help="Workspace root override")
+    rca_references.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    rca_references.add_argument("--root", help="Explicit directory or .rca file to scan (overrides bmw-repo-root)")
+    rca_references.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    rca_references.add_argument("--json", action="store_true", help="Print RaCo reference payload as JSON")
+
     sub.add_parser(
         "list-workflows",
         help="List JSON-defined SG QA workflows under qa_workflows/",
@@ -3145,6 +3155,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         "perspectives-inventory",
         "rack-readiness",
         "export-size-trend",
+        "rca-references",
     }:
         from sg_preflight.cli.boards import handle_board_command
 

@@ -30,6 +30,13 @@ from sg_preflight.cli._common import (
 )
 
 
+from sg_preflight.rca_reference_integrity import (
+    build_rca_reference_board,
+    rca_reference_board_markdown,
+    write_rca_reference_board,
+)
+
+
 BOARD_COMMANDS = {
     "disabled-tests",
     "api-version-coverage",
@@ -38,6 +45,7 @@ BOARD_COMMANDS = {
     "perspectives-inventory",
     "rack-readiness",
     "export-size-trend",
+    "rca-references",
 }
 
 
@@ -151,6 +159,24 @@ def handle_board_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             _emit_json(payload, args)
         else:
             _console_export_size_trend(payload)
+        return 0
+
+    if args.command == "rca-references":
+        if getattr(args, "root", None):
+            scan_root = Path(args.root).resolve()
+        elif args.bmw_repo_root:
+            scan_root = Path(args.bmw_repo_root).resolve()
+        else:
+            scan_root = _resolve_workspace(args)
+        board = build_rca_reference_board(scan_root)
+        if args.output_root:
+            board["artifacts"] = str(
+                write_rca_reference_board(board, Path(args.output_root).resolve() / "rca_references.md")
+            )
+        if args.json:
+            _emit_json(board, args)
+        else:
+            print(rca_reference_board_markdown(board))
         return 0
 
     parser.error(f"Unhandled board command: {args.command}")
