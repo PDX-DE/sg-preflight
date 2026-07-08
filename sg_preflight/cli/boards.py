@@ -35,6 +35,11 @@ from sg_preflight.rca_reference_integrity import (
     rca_reference_board_markdown,
     write_rca_reference_board,
 )
+from sg_preflight.ramses_stamp import (
+    build_ramses_stamp_board,
+    ramses_stamp_board_markdown,
+    write_ramses_stamp_board,
+)
 
 
 BOARD_COMMANDS = {
@@ -46,6 +51,7 @@ BOARD_COMMANDS = {
     "rack-readiness",
     "export-size-trend",
     "rca-references",
+    "ramses-stamps",
 }
 
 
@@ -177,6 +183,24 @@ def handle_board_command(args: argparse.Namespace, parser: argparse.ArgumentPars
             _emit_json(board, args)
         else:
             print(rca_reference_board_markdown(board))
+        return 0
+
+    if args.command == "ramses-stamps":
+        if getattr(args, "root", None):
+            scan_root = Path(args.root).resolve()
+        elif args.bmw_repo_root:
+            scan_root = Path(args.bmw_repo_root).resolve()
+        else:
+            scan_root = _resolve_workspace(args)
+        board = build_ramses_stamp_board(scan_root)
+        if args.output_root:
+            board["artifacts"] = str(
+                write_ramses_stamp_board(board, Path(args.output_root).resolve() / "ramses_stamps.md")
+            )
+        if args.json:
+            _emit_json(board, args)
+        else:
+            print(ramses_stamp_board_markdown(board))
         return 0
 
     parser.error(f"Unhandled board command: {args.command}")

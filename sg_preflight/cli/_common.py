@@ -2004,6 +2004,16 @@ def build_parser() -> argparse.ArgumentParser:
     rca_references.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
     rca_references.add_argument("--json", action="store_true", help="Print RaCo reference payload as JSON")
 
+    ramses_stamps = sub.add_parser(
+        "ramses-stamps",
+        help="Read RAMSES scene version stamps and flag duplicated scenes that are out of sync",
+    )
+    ramses_stamps.add_argument("--workspace", help="Workspace root override")
+    ramses_stamps.add_argument("--bmw-repo-root", help="BMW digital-3d-car-models root override")
+    ramses_stamps.add_argument("--root", help="Explicit directory or .ramses file to scan (overrides bmw-repo-root)")
+    ramses_stamps.add_argument("--output-root", help="Optional directory to write JSON and markdown evidence")
+    ramses_stamps.add_argument("--json", action="store_true", help="Print RAMSES stamp payload as JSON")
+
     sub.add_parser(
         "list-workflows",
         help="List JSON-defined SG QA workflows under qa_workflows/",
@@ -3156,6 +3166,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
         "rack-readiness",
         "export-size-trend",
         "rca-references",
+        "ramses-stamps",
     }:
         from sg_preflight.cli.boards import handle_board_command
 
