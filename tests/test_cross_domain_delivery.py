@@ -175,9 +175,59 @@ class TestCrossDomainDelivery(unittest.TestCase):
         drift = payload["counts"]["version_drift"]
         self.assertEqual(drift["max_ramses"], "28.0.0")
         self.assertEqual(drift["max_raco_headless"], "2.9.0")
+        self.assertEqual(drift["raco_basis"], "max_observed")
+        self.assertEqual(drift["raco_pinned_versions"], [])
         self.assertEqual(drift["ramses_drift_count"], 1)
         self.assertEqual(drift["raco_headless_drift_count"], 1)
         self.assertEqual(drift["items"][0]["relative_path"], "Widgets/BMW/ClockWidget")
+
+    def test_raco_drift_uses_interface_version_pins_when_bmw_repo_is_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = _cross_domain_fixture(root)
+            bmw_repo = root / "digital-3d-car-models"
+            _write_text(
+                bmw_repo / "ci" / "scripts" / "common" / "interface_versions.yaml",
+                "40:\n  raco_version: '2.8.0'\n",
+            )
+            board = build_cross_domain_delivery_board(
+                repo,
+                workspace_root=root,
+                bmw_repo_root=bmw_repo,
+                now=datetime(2026, 6, 18, 20, 45, tzinfo=timezone.utc),
+            )
+
+        payload = board.to_dict()
+        drift = payload["counts"]["version_drift"]
+        self.assertEqual(drift["raco_basis"], "pinned")
+        self.assertEqual(drift["raco_pinned_versions"], ["2.8.0"])
+        self.assertTrue(drift["raco_pin_source"].endswith("interface_versions.yaml"))
+        self.assertEqual(drift["raco_headless_drift_count"], 2)
+        drift_paths = {item["relative_path"] for item in drift["items"]}
+        self.assertIn("Cars/BMW/F70", drift_paths)
+        self.assertIn("AmbientLayer/BMW_Default", drift_paths)
+
+        markdown = cross_domain_delivery_markdown(board)
+        self.assertIn("RaCo drift basis: pinned versions 2.8.0", markdown)
+
+    def test_raco_drift_falls_back_to_max_observed_when_pin_file_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repo = _cross_domain_fixture(root)
+            board = build_cross_domain_delivery_board(
+                repo,
+                workspace_root=root,
+                bmw_repo_root=root / "missing-bmw-repo",
+                now=datetime(2026, 6, 18, 20, 45, tzinfo=timezone.utc),
+            )
+
+        drift = board.to_dict()["counts"]["version_drift"]
+        self.assertEqual(drift["raco_basis"], "max_observed")
+        self.assertEqual(drift["raco_pin_source"], "")
+        self.assertEqual(drift["raco_headless_drift_count"], 1)
+
+        markdown = cross_domain_delivery_markdown(board)
+        self.assertIn("RaCo drift basis: max observed across items", markdown)
 
     def test_widget_with_differently_named_rca_is_kept_as_no_changelog_item(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

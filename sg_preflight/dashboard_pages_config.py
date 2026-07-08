@@ -351,6 +351,13 @@ def _cross_domain_delivery_payload(
             "detail": (
                 f"Ramses max {drift.get('max_ramses') or 'not found'}; "
                 f"RaCo Headless max {drift.get('max_raco_headless') or 'not found'}."
+                + (
+                    " RaCo drift measured against pinned versions "
+                    + ", ".join(str(v) for v in drift.get("raco_pinned_versions") or [])
+                    + "."
+                    if drift.get("raco_basis") == "pinned"
+                    else ""
+                )
             ),
         },
     ]

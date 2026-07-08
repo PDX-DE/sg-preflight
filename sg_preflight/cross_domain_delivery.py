@@ -17,6 +17,7 @@ from sg_preflight.delivery_readiness import (
 )
 from sg_preflight.io_utils import read_text
 from sg_preflight.profiles import resolve_source_repo_root
+from sg_preflight.tool_version_pins import load_raco_pins
 
 
 EVIDENCE_ONLY_BANNER = (
@@ -138,6 +139,7 @@ class CrossDomainDeliveryBoard:
     domains: tuple[str, ...]
     entries: tuple[CrossDomainItem, ...]
     manual_review_banner: str = EVIDENCE_ONLY_BANNER
+    raco_pins: Any = None
 
     @property
     def counts(self) -> dict[str, Any]:
@@ -161,7 +163,7 @@ class CrossDomainDeliveryBoard:
             "no_changelog": sum(1 for entry in self.entries if not entry.has_changelog),
             "by_domain": by_domain,
             "rca_total_bytes": sum(entry.rca_total_bytes for entry in self.entries),
-            "version_drift": _version_drift_summary(self.entries),
+            "version_drift": _version_drift_summary(self.entries, self.raco_pins),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -397,7 +399,9 @@ def _max_version(values: Iterable[str | None]) -> str:
     return max(present, key=_version_key)
 
 
-def _version_drift_summary(entries: tuple[CrossDomainItem, ...]) -> dict[str, Any]:
+def _version_drift_summary(
+    entries: tuple[CrossDomainItem, ...], raco_pins: Any = None
+) -> dict[str, Any]:
     max_ramses = _max_version(entry.ramses for entry in entries)
     max_raco = _max_version(entry.raco_headless for entry in entries)
     max_ramses_key = _version_key(max_ramses) if max_ramses else None
@@ -407,11 +411,29 @@ def _version_drift_summary(entries: tuple[CrossDomainItem, ...]) -> dict[str, An
         for entry in entries
         if max_ramses_key is not None and entry.ramses and _version_key(entry.ramses) != max_ramses_key
     ]
-    raco_drift = [
-        entry
-        for entry in entries
-        if max_raco_key is not None and entry.raco_headless and _version_key(entry.raco_headless) != max_raco_key
-    ]
+    pinned_raco_versions: list[str] = []
+    raco_pin_source = ""
+    if isinstance(raco_pins, dict) and not raco_pins.get("fallback"):
+        raw_versions = raco_pins.get("versions", {})
+        if isinstance(raw_versions, dict):
+            pinned_raco_versions = sorted((str(value) for value in raw_versions), key=_version_key)
+        raco_pin_source = str(raco_pins.get("source", ""))
+    if pinned_raco_versions:
+        pinned_keys = {_version_key(value) for value in pinned_raco_versions}
+        raco_basis = "pinned"
+        raco_drift = [
+            entry
+            for entry in entries
+            if entry.raco_headless and _version_key(entry.raco_headless) not in pinned_keys
+        ]
+    else:
+        raco_basis = "max_observed"
+        raco_pin_source = ""
+        raco_drift = [
+            entry
+            for entry in entries
+            if max_raco_key is not None and entry.raco_headless and _version_key(entry.raco_headless) != max_raco_key
+        ]
     drift_entries = tuple(
         sorted(
             {entry.relative_path: entry for entry in [*ramses_drift, *raco_drift]}.values(),
@@ -421,6 +443,9 @@ def _version_drift_summary(entries: tuple[CrossDomainItem, ...]) -> dict[str, An
     return {
         "max_ramses": max_ramses,
         "max_raco_headless": max_raco,
+        "raco_basis": raco_basis,
+        "raco_pinned_versions": pinned_raco_versions,
+        "raco_pin_source": raco_pin_source,
         "ramses_drift_count": len(ramses_drift),
         "raco_headless_drift_count": len(raco_drift),
         "items": [
@@ -461,7 +486,7 @@ def build_cross_domain_delivery_board(
     domains: Iterable[str] | None = None,
     now: datetime | None = None,
 ) -> CrossDomainDeliveryBoard:
-    _ = bmw_repo_root
+    raco_pins = load_raco_pins(bmw_repo_root) if bmw_repo_root is not None else None
     workspace = Path(workspace_root).resolve() if workspace_root is not None else None
     source_root = Path(repo_root).resolve() if repo_root is not None else resolve_source_repo_root(workspace)
     domain_ids = _domain_ids(domains)
@@ -473,6 +498,7 @@ def build_cross_domain_delivery_board(
             generated_at_utc=generated_at,
             domains=domain_ids,
             entries=(),
+            raco_pins=raco_pins,
         )
     entries: list[CrossDomainItem] = []
     for domain_id in domain_ids:
@@ -484,6 +510,7 @@ def build_cross_domain_delivery_board(
         generated_at_utc=generated_at,
         domains=domain_ids,
         entries=tuple(sorted(entries, key=lambda entry: (entry.domain, entry.relative_path.lower()))),
+        raco_pins=raco_pins,
     )
 
 
@@ -536,6 +563,11 @@ def cross_domain_delivery_markdown(board: CrossDomainDeliveryBoard) -> str:
             "",
             f"- Ramses max: {drift['max_ramses'] or 'not found'}",
             f"- RaCo Headless max: {drift['max_raco_headless'] or 'not found'}",
+            (
+                f"- RaCo drift basis: pinned versions {', '.join(drift['raco_pinned_versions'])} (`{drift['raco_pin_source']}`)"
+                if drift.get("raco_basis") == "pinned"
+                else "- RaCo drift basis: max observed across items (no pin source available)"
+            ),
             f"- Ramses drift rows: {drift['ramses_drift_count']}",
             f"- RaCo Headless drift rows: {drift['raco_headless_drift_count']}",
         )

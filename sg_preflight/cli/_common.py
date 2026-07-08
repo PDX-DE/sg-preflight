@@ -1361,6 +1361,12 @@ def _console_cross_domain_delivery(payload: dict[str, object]) -> None:
         f"RaCo Headless max {drift.get('max_raco_headless') or 'not found'} "
         f"({drift.get('raco_headless_drift_count', 0)} row(s))"
     )
+    if drift.get("raco_basis") == "pinned":
+        pinned = drift.get("raco_pinned_versions") or []
+        print(
+            f"RaCo drift measured against pinned versions {', '.join(str(v) for v in pinned)} "
+            f"from {drift.get('raco_pin_source', '')}"
+        )
     print(str(payload.get("manual_review_banner", "")))
     artifacts = payload.get("artifacts")
     if isinstance(artifacts, dict):
