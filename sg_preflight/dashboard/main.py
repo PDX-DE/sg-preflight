@@ -735,6 +735,24 @@ def _dashboard_changed_profiles(workspace_text: str, bmw_root_text: str) -> dict
     )
 
 
+_EAGER_PAGE_IDS = frozenset({"home", "whats-new", "keyboard-shortcuts", "bmw-process"})
+
+
+def _deferred_page_stub(page_id: str, title: str) -> dict[str, Any]:
+    return {
+        "id": page_id,
+        "title": title,
+        "tagline": "",
+        "status": "not_run",
+        "raw_status": "not_run",
+        "data_available": False,
+        "deferred": True,
+        "summary": f"{title} loads when opened.",
+        "items": [],
+        "actions": [],
+    }
+
+
 def build_dashboard_snapshot(
     profile_id: str,
     workspace: Path | str,
@@ -743,6 +761,8 @@ def build_dashboard_snapshot(
     ui_mode: str | None = None,
     defer_daily_digest: bool = False,
     defer_team_digest_board: bool = False,
+    lazy_pages: bool = False,
+    materialize_page_ids: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     root = _workspace(workspace)
     profile_options = dashboard_profile_options(bmw_root=bmw_root, profile_scope=PROFILE_SCOPE_DEFAULT)
@@ -834,54 +854,105 @@ def build_dashboard_snapshot(
             "guardrails": list(DASHBOARD_GUARDRAILS),
         },
         "changed_profiles": changed_profiles,
-        "pages": [
-            _home_page(root),
-            _full_qa_pass_page(
-                resolved_profile_id,
-                root,
-                bmw_root=bmw_root,
-                trusted_tool_mode=_dashboard_run_mode(root) == "automatic",
-            ),
-            _batch_full_qa_pass_page(resolved_profile_id, root),
-            _my_tickets_page(resolved_profile_id, root),
-            _weekly_ticket_draft_page(resolved_profile_id, root),
-            _whats_new_page(root),
-            _keyboard_shortcuts_page(
-                shortcut_actions=shortcut_actions,
-                shortcuts=shortcuts,
-            ),
-            _settings_page(
-                root,
-                profile_options=profile_options_all,
-                current_profile_id=resolved_profile_id,
-            ),
-            _delivery_checklist_page(resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status),
-            _delivery_readiness_page(root, bmw_root=bmw_root),
-            _cross_domain_delivery_page(root, bmw_root=bmw_root),
-            _perspectives_inventory_page(root, bmw_root=bmw_root),
-            _rack_readiness_page(root, bmw_root=bmw_root),
-            _disabled_tests_page(root, bmw_root=bmw_root),
-            _api_version_coverage_page(root, bmw_root=bmw_root),
-            _country_variant_coverage_page(root, bmw_root=bmw_root),
-            _export_size_trend_page(root, bmw_root=bmw_root),
-            _onboarding_guide_page(
-                resolved_profile_id,
-                root,
-                bmw_root=bmw_root,
-                setup_status=setup_status,
-            ),
-            _setup_doctor_page(root),
-            _qa_workflows_page(root),
-            _bmw_process_page(),
-            _screenshot_test_state_page(resolved_profile_id, root, bmw_root=bmw_root),
-            _risk_score_page(resolved_profile_id, root, bmw_root=bmw_root),
-            _cross_car_comparison_page(root, bmw_root=bmw_root),
-            daily_digest_page,
-            team_digest_page,
-            _operator_handoff_page(resolved_profile_id, root),
-            _manual_review_page(resolved_profile_id, root, active_ticket_id=active_ticket_id),
-        ],
+        "pages": _build_dashboard_pages(
+            page_builders={
+                "home": lambda: _home_page(root),
+                "full-qa-pass": lambda: _full_qa_pass_page(
+                    resolved_profile_id,
+                    root,
+                    bmw_root=bmw_root,
+                    trusted_tool_mode=_dashboard_run_mode(root) == "automatic",
+                ),
+                "batch-full-qa-pass": lambda: _batch_full_qa_pass_page(resolved_profile_id, root),
+                "my-tickets": lambda: _my_tickets_page(resolved_profile_id, root),
+                "weekly-ticket-draft": lambda: _weekly_ticket_draft_page(resolved_profile_id, root),
+                "whats-new": lambda: _whats_new_page(root),
+                "keyboard-shortcuts": lambda: _keyboard_shortcuts_page(
+                    shortcut_actions=shortcut_actions,
+                    shortcuts=shortcuts,
+                ),
+                "settings": lambda: _settings_page(
+                    root,
+                    profile_options=profile_options_all,
+                    current_profile_id=resolved_profile_id,
+                ),
+                "delivery-checklist": lambda: _delivery_checklist_page(
+                    resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status
+                ),
+                "delivery-readiness": lambda: _delivery_readiness_page(root, bmw_root=bmw_root),
+                "cross-domain-delivery": lambda: _cross_domain_delivery_page(root, bmw_root=bmw_root),
+                "perspectives-inventory": lambda: _perspectives_inventory_page(root, bmw_root=bmw_root),
+                "rack-readiness": lambda: _rack_readiness_page(root, bmw_root=bmw_root),
+                "disabled-tests": lambda: _disabled_tests_page(root, bmw_root=bmw_root),
+                "api-version-coverage": lambda: _api_version_coverage_page(root, bmw_root=bmw_root),
+                "country-variant-coverage": lambda: _country_variant_coverage_page(root, bmw_root=bmw_root),
+                "export-size-trend": lambda: _export_size_trend_page(root, bmw_root=bmw_root),
+                "onboarding-guide": lambda: _onboarding_guide_page(
+                    resolved_profile_id,
+                    root,
+                    bmw_root=bmw_root,
+                    setup_status=setup_status,
+                ),
+                "setup-doctor": lambda: _setup_doctor_page(root),
+                "qa-workflows": lambda: _qa_workflows_page(root),
+                "bmw-process": lambda: _bmw_process_page(),
+                "screenshot-test-state": lambda: _screenshot_test_state_page(
+                    resolved_profile_id, root, bmw_root=bmw_root
+                ),
+                "risk-score": lambda: _risk_score_page(resolved_profile_id, root, bmw_root=bmw_root),
+                "cross-car-comparison": lambda: _cross_car_comparison_page(root, bmw_root=bmw_root),
+                "daily-digest": lambda: daily_digest_page,
+                "team-digest-board": lambda: team_digest_page,
+                "operator-handoff": lambda: _operator_handoff_page(resolved_profile_id, root),
+                "manual-review": lambda: _manual_review_page(
+                    resolved_profile_id, root, active_ticket_id=active_ticket_id
+                ),
+            },
+            lazy_pages=lazy_pages,
+            materialize_page_ids=materialize_page_ids,
+        ),
     }
+
+
+def _build_dashboard_pages(
+    *,
+    page_builders: dict[str, Any],
+    lazy_pages: bool,
+    materialize_page_ids: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    titles = dict(DASHBOARD_NAVIGATION)
+    requested = {str(item).strip() for item in materialize_page_ids if str(item).strip()}
+    pages: list[dict[str, Any]] = []
+    for page_id, builder in page_builders.items():
+        if lazy_pages and page_id not in _EAGER_PAGE_IDS and page_id not in requested:
+            pages.append(_deferred_page_stub(page_id, titles.get(page_id, page_id)))
+        else:
+            pages.append(builder())
+    return pages
+
+
+def build_dashboard_page(
+    page_id: str,
+    profile_id: str,
+    workspace: Path | str,
+    *,
+    bmw_root: Path | str | None = None,
+    ui_mode: str | None = None,
+) -> dict[str, Any]:
+    snapshot = build_dashboard_snapshot(
+        profile_id,
+        workspace,
+        bmw_root=bmw_root,
+        ui_mode=ui_mode,
+        defer_daily_digest=page_id != "daily-digest",
+        defer_team_digest_board=page_id != "team-digest-board",
+        lazy_pages=True,
+        materialize_page_ids=(page_id,),
+    )
+    for page in snapshot["pages"]:
+        if str(page.get("id")) == page_id:
+            return page
+    raise KeyError(f"Unknown dashboard page: {page_id}")
 
 
 def _manual_review_state_path(workspace: Path | str, profile_id: str) -> Path:
@@ -2963,6 +3034,7 @@ def _render_dashboard(
         ui_mode_override: str | None = None,
         defer_daily_digest: bool,
         defer_team_digest_board: bool,
+        materialize_page_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         return await _io_bound(
             build_dashboard_snapshot,
@@ -2972,6 +3044,8 @@ def _render_dashboard(
             ui_mode=ui_mode_override if ui_mode_override is not None else ui_mode,
             defer_daily_digest=defer_daily_digest,
             defer_team_digest_board=defer_team_digest_board,
+            lazy_pages=True,
+            materialize_page_ids=materialize_page_ids,
         )
 
     def _schedule_background(awaitable: Any, *, name: str) -> None:
@@ -2987,6 +3061,7 @@ def _render_dashboard(
         ui_mode=ui_mode,
         defer_daily_digest=True,
         defer_team_digest_board=True,
+        lazy_pages=True,
     )
 
     @app.get("/sgfx-dashboard-api/full-qa-pass")
@@ -3768,6 +3843,7 @@ def _render_dashboard(
                     ui_mode_override=_current_theme(),
                     defer_daily_digest=defer_daily_digest,
                     defer_team_digest_board=defer_team_digest_board,
+                    materialize_page_ids=(active_page_id,),
                 )
             except Exception as exc:  # noqa: BLE001
                 state["loading_message"] = ""
@@ -3816,6 +3892,40 @@ def _render_dashboard(
                 name="sgfx-dashboard-snapshot-refresh",
             )
 
+        async def _load_single_page(page_id: str) -> None:
+            try:
+                page = await _io_bound(
+                    build_dashboard_page,
+                    page_id,
+                    str(state["snapshot"]["profile_id"]),
+                    workspace,
+                    bmw_root=bmw_root,
+                    ui_mode=_current_theme(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                state["loading_message"] = ""
+                _render_current_page()
+                ui.notify(f"Page load failed: {exc}")
+                return
+            pages = state["snapshot"].get("pages", [])
+            for index, existing in enumerate(pages):
+                if str(existing.get("id")) == page_id:
+                    pages[index] = page
+                    break
+            state["loading_message"] = ""
+            if str(state.get("active_page_id", "")) == page_id:
+                _render_current_page()
+                _run_javascript_if_client_alive(
+                    ui,
+                    f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
+                )
+
+        def _start_single_page_load(page_id: str) -> None:
+            title = str(_pages_by_id().get(page_id, {}).get("title", page_id))
+            state["loading_message"] = f"Loading {title}..."
+            _render_current_page()
+            _schedule_background(_load_single_page(page_id), name=f"sgfx-dashboard-page-{page_id}")
+
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
             _run_javascript_if_client_alive(ui, f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
@@ -3847,6 +3957,9 @@ def _render_dashboard(
                     ui,
                     f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
                 )
+                return
+            if _pages_by_id().get(page_id, {}).get("deferred"):
+                _start_single_page_load(page_id)
                 return
             state["loading_message"] = ""
             _render_current_page()

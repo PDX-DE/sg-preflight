@@ -243,6 +243,40 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(home["items"], [])
         self.assertIn("No local activity recorded yet", home["summary"])
 
+    def test_lazy_snapshot_defers_heavy_pages_and_keeps_home_real(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            snapshot = build_dashboard_snapshot(
+                "",
+                tmp,
+                defer_daily_digest=True,
+                defer_team_digest_board=True,
+                lazy_pages=True,
+                materialize_page_ids=("delivery-readiness",),
+            )
+
+        pages = {page["id"]: page for page in snapshot["pages"]}
+        self.assertEqual(len(snapshot["pages"]), 28)
+        self.assertFalse(pages["home"].get("deferred", False))
+        self.assertFalse(pages["whats-new"].get("deferred", False))
+        self.assertFalse(pages["delivery-readiness"].get("deferred", False))
+        self.assertTrue(pages["cross-domain-delivery"]["deferred"])
+        self.assertTrue(pages["manual-review"]["deferred"])
+        self.assertEqual(pages["manual-review"]["status"], "not_run")
+        self.assertIn("loads when opened", pages["manual-review"]["summary"])
+
+    def test_build_dashboard_page_materializes_a_single_real_page(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_page
+
+            page = build_dashboard_page("setup-doctor", "", tmp)
+            with self.assertRaises(KeyError):
+                build_dashboard_page("no-such-page", "", tmp)
+
+        self.assertEqual(page["id"], "setup-doctor")
+        self.assertFalse(page.get("deferred", False))
+
     def test_dashboard_snapshot_contains_twenty_eight_operator_pages_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
