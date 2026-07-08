@@ -243,6 +243,22 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(home["items"], [])
         self.assertIn("No local activity recorded yet", home["summary"])
 
+    def test_strip_standing_disclaimers_removes_boilerplate_and_keeps_facts(self) -> None:
+        from sg_preflight.dashboard.main import _strip_standing_disclaimers
+
+        cases = [
+            (
+                "56 items scanned. Manual review remains required. Decision: not approval — evidence only.",
+                "56 items scanned.",
+            ),
+            ("Manual review remains required.", ""),
+            ("Manual review stays required before any verdict is recorded; 3 diffs found.", "3 diffs found."),
+            ("Plain factual summary with no boilerplate.", "Plain factual summary with no boilerplate."),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(_strip_standing_disclaimers(raw), expected)
+
     def test_lazy_snapshot_defers_heavy_pages_and_keeps_home_real(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot

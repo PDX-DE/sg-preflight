@@ -1299,10 +1299,11 @@ def _render_source_root_reader_panel(
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         _render_page_confluence_anchors(ui, page)
+        summary_label = ui.label(_strip_standing_disclaimers(str(page.get("summary", "")))).classes("sgfx-summary")
+        standing_note = ui.label(_STANDING_PANEL_NOTE).classes("sgfx-muted sgfx-standing-note")
         ownership_note = str(page.get("ownership_note", "")).strip()
         if ownership_note:
-            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
-        summary_label = ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+            _attach_tooltip(ui, standing_note, ownership_note)
         _render_empty_state_note(ui, page)
         source_input = ui.input(label="SVN trunk root", value=selected_source).classes("full-width")
         source_status = ui.label(f"Reading from: {selected_source or 'auto-discovery'}").classes("sgfx-muted")
@@ -1347,7 +1348,9 @@ def _render_source_root_reader_panel(
                         button.enable()
                     except Exception:
                         pass
-            summary_label.text = _payload_summary(next_payload, str(page["title"]), workspace=workspace)
+            summary_label.text = _strip_standing_disclaimers(
+                _payload_summary(next_payload, str(page["title"]), workspace=workspace)
+            )
             source_status.text = f"Reading from: {next_payload.get('repo_root', source_input.value)}"
             _render_payload_rows(next_payload)
             ui.notify(f"{page['title']} refreshed.")
@@ -1376,6 +1379,19 @@ def _render_source_root_reader_panel(
         _render_payload_rows(payload)
 
 
+_STANDING_DISCLAIMER_RE = re.compile(
+    r"\s*Manual review (?:remains|stays) required(?:\s+before any verdict is recorded)?"
+    r"[.;]?(?:\s*Decision: not approval\s*[—-]\s*evidence only[.;]?)?(?:\s*this is not an approval[.;]?)?",
+    re.IGNORECASE,
+)
+_STANDING_PANEL_NOTE = "Read-only · Evidence only · Review stays manual"
+
+
+def _strip_standing_disclaimers(text: str) -> str:
+    stripped = _STANDING_DISCLAIMER_RE.sub(" ", str(text or ""))
+    return re.sub(r"\s{2,}", " ", stripped).strip()
+
+
 def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
     with _attach_tooltip(
         ui,
@@ -1383,20 +1399,23 @@ def _render_page_panel(ui: Any, page: dict[str, Any]) -> None:
         "Read-only evidence card for the selected local workspace and profile.",
     ):
         with ui.row().classes("items-center justify-between full-width"):
-            ui.label(str(page["title"])).classes("sgfx-panel-title")
+            title_label = ui.label(str(page["title"])).classes("sgfx-panel-title")
+            ownership_note = str(page.get("ownership_note", "")).strip()
+            if ownership_note:
+                _attach_tooltip(ui, title_label, ownership_note)
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         _render_page_confluence_anchors(ui, page)
-        ownership_note = str(page.get("ownership_note", "")).strip()
-        if ownership_note:
-            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
-        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
+        summary = _strip_standing_disclaimers(str(page.get("summary", "")))
+        if summary:
+            ui.label(summary).classes("sgfx-summary")
+        ui.label(_STANDING_PANEL_NOTE).classes("sgfx-muted sgfx-standing-note")
         _render_empty_state_note(ui, page)
         rows = [
             {
                 "label": str(item.get("label", "")),
                 "status": str(item.get("status", "")),
-                "detail": str(item.get("detail", "")),
+                "detail": _strip_standing_disclaimers(str(item.get("detail", ""))),
             }
             for item in page.get("items", [])
             if isinstance(item, dict)
@@ -2443,11 +2462,13 @@ def _render_risk_score_panel(ui: Any, snapshot: dict[str, Any]) -> None:
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         _render_page_confluence_anchors(ui, page)
+        summary = _strip_standing_disclaimers(str(page.get("summary", "")))
+        if summary:
+            ui.label(summary).classes("sgfx-summary")
+        standing_note = ui.label(_STANDING_PANEL_NOTE).classes("sgfx-muted sgfx-standing-note")
         ownership_note = str(page.get("ownership_note", "")).strip()
         if ownership_note:
-            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
-        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
-        ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
+            _attach_tooltip(ui, standing_note, ownership_note)
         _render_empty_state_note(ui, page)
         # internal milestone Part C wiring: internal milestone sparkline next to the risk-score numbers so
         # the dashboard live UI surfaces the same trend signal that lands in
@@ -2514,11 +2535,13 @@ def _render_cross_car_comparison_panel(ui: Any, snapshot: dict[str, Any]) -> Non
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         _render_page_confluence_anchors(ui, page)
+        summary = _strip_standing_disclaimers(str(page.get("summary", "")))
+        if summary:
+            ui.label(summary).classes("sgfx-summary")
+        standing_note = ui.label(_STANDING_PANEL_NOTE).classes("sgfx-muted sgfx-standing-note")
         ownership_note = str(page.get("ownership_note", "")).strip()
         if ownership_note:
-            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
-        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
-        ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
+            _attach_tooltip(ui, standing_note, ownership_note)
         _render_empty_state_note(ui, page)
         rows = [
             {
@@ -2559,11 +2582,13 @@ def _render_team_digest_board_panel(ui: Any, snapshot: dict[str, Any]) -> None:
             _render_status_chip(ui, str(page.get("status", "unknown")))
         ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
         _render_page_confluence_anchors(ui, page)
+        summary = _strip_standing_disclaimers(str(page.get("summary", "")))
+        if summary:
+            ui.label(summary).classes("sgfx-summary")
+        standing_note = ui.label(_STANDING_PANEL_NOTE).classes("sgfx-muted sgfx-standing-note")
         ownership_note = str(page.get("ownership_note", "")).strip()
         if ownership_note:
-            ui.label(ownership_note).classes("sgfx-muted sgfx-ownership-note")
-        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
-        ui.label("Manual review remains required. Decision: not approval — evidence only.").classes("sgfx-muted")
+            _attach_tooltip(ui, standing_note, ownership_note)
         _render_empty_state_note(ui, page)
         ui.label("Sharing model trade-offs").classes("sgfx-panel-tagline")
         ui.label(str(share.get("rationale", ""))).classes("sgfx-muted")
@@ -3229,6 +3254,7 @@ def _render_dashboard(
             .sgfx-link-button:hover { text-decoration: underline; }
             .sgfx-panel-title { font-size: 18px; font-weight: 650; color: var(--sgfx-fg-strong); }
             .sgfx-panel-tagline, .sgfx-muted { color: var(--sgfx-fg-muted); font-size: 13px; }
+            .sgfx-standing-note { font-size: 11px; letter-spacing: 0.04em; opacity: 0.75; }
             .sgfx-doc-link-row { gap: 10px; align-items: center; flex-wrap: wrap; }
             .sgfx-doc-link { color: var(--sgfx-accent) !important; font-size: 13px; text-decoration: none; border-bottom: 1px solid rgba(78, 201, 176, 0.45); }
             .sgfx-summary { color: var(--sgfx-fg); font-size: 14px; line-height: 1.55; }
