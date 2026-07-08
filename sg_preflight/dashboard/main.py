@@ -245,7 +245,6 @@ from sg_preflight.dashboard_pages_config import (
     _bmw_process_payload,
     _bmw_process_page,
     _home_page,
-    HOME_QUICK_LINKS,
     _onboarding_guide_page,
     _screenshot_test_state_page,
     _risk_score_page,
@@ -492,7 +491,68 @@ DASHBOARD_NAVIGATION = (
     ("manual-review", "Manual Review Companion"),
     ("about", "About"),
 )
-DASHBOARD_SHORTCUTS = ("F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Close sidebar")
+# Sidebar information architecture: the flat page list above is grouped into a small
+# number of scannable sections. "home" is the standalone hub and is not listed here.
+# Any page id missing from every group falls into a visible "More" catch-all so a new
+# page can never silently vanish from navigation.
+DASHBOARD_NAV_GROUPS = (
+    ("Daily work", ("full-qa-pass", "batch-full-qa-pass", "my-tickets", "weekly-ticket-draft")),
+    (
+        "Delivery",
+        (
+            "delivery-checklist",
+            "delivery-readiness",
+            "cross-domain-delivery",
+            "perspectives-inventory",
+            "rack-readiness",
+        ),
+    ),
+    (
+        "Screenshots & coverage",
+        (
+            "screenshot-test-state",
+            "risk-score",
+            "cross-car-comparison",
+            "disabled-tests",
+            "api-version-coverage",
+            "country-variant-coverage",
+            "export-size-trend",
+        ),
+    ),
+    ("Reviews & digests", ("daily-digest", "team-digest-board", "operator-handoff", "manual-review")),
+    (
+        "Setup & help",
+        (
+            "settings",
+            "setup-doctor",
+            "onboarding-guide",
+            "qa-workflows",
+            "bmw-process",
+            "keyboard-shortcuts",
+            "whats-new",
+            "about",
+        ),
+    ),
+)
+# Home hub: the "where do I need to look today" tiles. Each tile is a big clickable
+# card that jumps to a core page. Kept navigation-only (no board computation) so the
+# hub renders instantly.
+HOME_HUB_TILES = (
+    ("full-qa-pass", "Full QA Pass", "dashboard", "Run the whole preflight for one car profile."),
+    ("delivery-checklist", "Delivery Checklist", "fact_check", "Delivery evidence for the selected car."),
+    ("screenshot-test-state", "Screenshots", "image", "Reference vs actual screenshot status."),
+    ("cross-domain-delivery", "Cross-Domain", "account_tree", "Version drift across the pipeline."),
+    ("my-tickets", "My Tickets", "confirmation_number", "Your Jira tickets and draft updates."),
+    ("daily-digest", "Daily Digest", "summarize", "Morning standup summary for the team."),
+)
+DASHBOARD_SHORTCUTS = (
+    "F1 Help",
+    "F2 Profile switch",
+    "F5 Refresh page",
+    "/ Jump to page",
+    "F12 Diagnostic",
+    "Esc Close sidebar",
+)
 DASHBOARD_SHORTCUT_ACTIONS = (
     ("F1", "Help: use the sidebar pages to inspect read-only SGFX evidence."),
     ("F2", "Profile switch: use the Profile selector in the header."),
@@ -834,6 +894,9 @@ def build_dashboard_snapshot(
         "output_root_label": _path_label(output_root),
         "theme": theme,
         "navigation": [{"id": page_id, "label": label} for page_id, label in DASHBOARD_NAVIGATION],
+        "navigation_groups": _build_navigation_groups(
+            [{"id": page_id, "label": label} for page_id, label in DASHBOARD_NAVIGATION]
+        ),
         "shortcuts": shortcuts,
         "shortcut_actions": shortcut_actions,
         "guardrails": list(DASHBOARD_GUARDRAILS),
@@ -912,6 +975,38 @@ def build_dashboard_snapshot(
             materialize_page_ids=materialize_page_ids,
         ),
     }
+
+
+def _build_navigation_groups(
+    navigation: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Group the flat navigation list into the sidebar sections.
+
+    ``home`` is left out (it is the standalone hub). Any page not named in
+    ``DASHBOARD_NAV_GROUPS`` lands in a visible ``More`` group so navigation can
+    never silently drop a page.
+    """
+
+    labels = {str(item["id"]): str(item["label"]) for item in navigation}
+    grouped_ids: set[str] = set()
+    groups: list[dict[str, Any]] = []
+    for title, page_ids in DASHBOARD_NAV_GROUPS:
+        items = []
+        for page_id in page_ids:
+            if page_id not in labels:
+                continue
+            grouped_ids.add(page_id)
+            items.append({"id": page_id, "label": labels[page_id]})
+        if items:
+            groups.append({"title": title, "items": items})
+    leftover = [
+        {"id": str(item["id"]), "label": str(item["label"])}
+        for item in navigation
+        if str(item["id"]) not in grouped_ids and str(item["id"]) != "home"
+    ]
+    if leftover:
+        groups.append({"title": "More", "items": leftover})
+    return groups
 
 
 def _build_dashboard_pages(
@@ -3218,8 +3313,24 @@ def _render_dashboard(
             .sgfx-sidebar-backdrop { position: fixed; inset: 0; z-index: 9090; background: rgba(0, 0, 0, 0.46); opacity: 0; pointer-events: none; transition: opacity 160ms ease-out; }
             body.sgfx-sidebar-open .sgfx-sidebar-backdrop { opacity: 1; pointer-events: auto; }
             .sgfx-sidebar-logo { width: 200px; max-width: 100%; height: auto; object-fit: contain; margin: 4px 0 14px 0; }
-            .sgfx-nav-button { justify-content: flex-start; border-radius: 6px; color: var(--sgfx-fg) !important; }
+            .sgfx-nav-button { justify-content: flex-start; border-radius: 6px; color: var(--sgfx-fg) !important; min-height: 34px; }
             .sgfx-nav-button:hover { background: var(--sgfx-accent-soft) !important; }
+            .sgfx-nav-button[data-sgfx-nav-active="true"] { background: var(--sgfx-accent-soft) !important; color: var(--sgfx-accent) !important; font-weight: 600; }
+            .sgfx-nav-home, .sgfx-nav-jump { border: 1px solid var(--sgfx-border) !important; }
+            .sgfx-nav-jump { color: var(--sgfx-fg-muted) !important; }
+            .sgfx-nav-group-title { margin: 12px 4px 2px 4px; color: var(--sgfx-fg-muted); font-size: 11px; letter-spacing: 0.02em; font-weight: 600; }
+            .sgfx-jump-option { justify-content: flex-start; border-radius: 6px; color: var(--sgfx-fg) !important; min-height: 34px; }
+            .sgfx-jump-option:hover, .sgfx-jump-option[data-sgfx-jump-active="true"] { background: var(--sgfx-accent-soft) !important; }
+            .sgfx-jump-group { margin: 8px 2px 0 2px; color: var(--sgfx-fg-muted); font-size: 11px; letter-spacing: 0.02em; font-weight: 600; }
+            .sgfx-jump-card { width: min(520px, 92vw); max-height: 78vh; gap: 8px; padding: 14px; background: var(--sgfx-bg-elev); border: 1px solid var(--sgfx-border); }
+            .sgfx-jump-list { gap: 2px; overflow-y: auto; max-height: 58vh; }
+            .sgfx-jump-input { margin-bottom: 4px; }
+            .sgfx-hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 4px 0 8px 0; }
+            .sgfx-hub-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; padding: 16px; border-radius: 10px; border: 1px solid var(--sgfx-border); background: var(--sgfx-bg-panel); color: var(--sgfx-fg); cursor: pointer; transition: border-color 120ms ease-out, transform 120ms ease-out; }
+            .sgfx-hub-tile:hover { border-color: var(--sgfx-accent); transform: translateY(-1px); }
+            .sgfx-hub-tile-icon { font-size: 26px; color: var(--sgfx-accent); }
+            .sgfx-hub-tile-title { font-size: 15px; font-weight: 650; color: var(--sgfx-fg-strong); }
+            .sgfx-hub-tile-desc { font-size: 12px; color: var(--sgfx-fg-muted); line-height: 1.4; }
             .sgfx-shortcut { color: var(--sgfx-fg-muted); font-size: 12px; line-height: 1.5; }
             .sgfx-menu-button { position: fixed; top: 18px; left: 18px; z-index: 9080; width: 36px; height: 36px; border: 1px solid var(--sgfx-border) !important; border-radius: 999px; background: var(--sgfx-bg-elev) !important; color: var(--sgfx-fg) !important; font-size: 20px; line-height: 1; cursor: pointer; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22); }
             body.sgfx-sidebar-open .sgfx-menu-button { border-color: var(--sgfx-accent) !important; color: var(--sgfx-accent) !important; }
@@ -3722,14 +3833,16 @@ def _render_dashboard(
                         state["snapshot"],
                         open_batch=_open_changed_profiles_batch,
                     )
+                    with ui.element("div").classes("sgfx-hub-grid full-width"):
+                        for tile_id, tile_label, tile_icon, tile_desc in HOME_HUB_TILES:
+                            with ui.element("button").classes("sgfx-hub-tile").on(
+                                "click", lambda page_id=tile_id: _open_page(page_id)
+                            ):
+                                ui.icon(tile_icon).classes("sgfx-hub-tile-icon")
+                                ui.label(tile_label).classes("sgfx-hub-tile-title")
+                                ui.label(tile_desc).classes("sgfx-hub-tile-desc")
                     home_page = _pages_by_id().get("home", {})
                     _render_page_panel(ui, home_page)
-                    with ui.row().classes("sgfx-full-qa-controls"):
-                        for target_id, target_label in HOME_QUICK_LINKS:
-                            ui.button(
-                                target_label,
-                                on_click=lambda page_id=target_id: _open_page(page_id),
-                            ).props("outline")
                 elif active_page_id == "delivery-checklist":
                     _render_delivery_checklist_panel(
                         ui,
@@ -3955,6 +4068,7 @@ def _render_dashboard(
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
             _run_javascript_if_client_alive(ui, f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
+            _run_javascript_if_client_alive(ui, f"window.sgfxHighlightNav && window.sgfxHighlightNav({json.dumps(page_id)});")
             _run_javascript_if_client_alive(ui, "window.sgfxSetSidebarOpen && window.sgfxSetSidebarOpen(false);")
             if page_id in {"daily-digest", "team-digest-board"} and _pages_by_id().get(page_id, {}).get("deferred"):
                 _start_snapshot_refresh(
@@ -4169,6 +4283,12 @@ def _render_dashboard(
                     window.sgfxToggleSidebar = () => {{
                         window.sgfxSetSidebarOpen(!document.body.classList.contains('sgfx-sidebar-open'));
                     }};
+                    window.sgfxHighlightNav = (pageId) => {{
+                        document.querySelectorAll('[data-sgfx-nav-item]').forEach((el) => {{
+                            el.dataset.sgfxNavActive = (el.dataset.sgfxNavItem === pageId) ? 'true' : 'false';
+                        }});
+                    }};
+                    window.sgfxHighlightNav(document.body.dataset.sgfxActivePage || {json.dumps(state["active_page_id"])});
                     window.sgfxSetSidebarOpen(false);
                     if (window.__sgfxDashboardShortcutsInstalled) return;
                     window.__sgfxDashboardShortcutsInstalled = true;
@@ -4235,6 +4355,80 @@ def _render_dashboard(
                     ).props("color=warning no-caps")
                     ui.button("Cancel", on_click=grafiks_confirm_dialog.close).props("flat no-caps")
 
+        jump_state: dict[str, Any] = {"filtered": []}
+
+        def _jump_to(page_id: str) -> None:
+            jump_dialog.close()
+            _open_page(page_id)
+
+        def _render_jump_options(query: str = "") -> None:
+            jump_list.clear()
+            needle = str(query or "").strip().lower()
+            ordered: list[str] = []
+            snapshot = state["snapshot"]
+            nav_labels = {str(item["id"]): str(item["label"]) for item in snapshot["navigation"]}
+            with jump_list:
+                home_label = nav_labels.get("home", "Home")
+                if not needle or needle in home_label.lower() or needle in "home":
+                    ordered.append("home")
+                    ui.button(
+                        home_label,
+                        icon="home",
+                        on_click=lambda: _jump_to("home"),
+                    ).props("flat no-caps align=left").classes("sgfx-jump-option full-width")
+                for group in snapshot.get("navigation_groups", []):
+                    matches = [
+                        item
+                        for item in group["items"]
+                        if not needle
+                        or needle in str(item["label"]).lower()
+                        or needle in str(item["id"]).lower()
+                    ]
+                    if not matches:
+                        continue
+                    ui.label(str(group["title"])).classes("sgfx-jump-group")
+                    for item in matches:
+                        page_id = str(item["id"])
+                        ordered.append(page_id)
+                        ui.button(
+                            str(item["label"]),
+                            on_click=lambda pid=page_id: _jump_to(pid),
+                        ).props("flat no-caps align=left").classes("sgfx-jump-option full-width")
+                if not ordered:
+                    ui.label("No page matches.").classes("sgfx-muted")
+            jump_state["filtered"] = ordered
+
+        def _jump_first() -> None:
+            if jump_state["filtered"]:
+                _jump_to(jump_state["filtered"][0])
+
+        def _open_jump_palette() -> None:
+            jump_input.value = ""
+            _render_jump_options("")
+            jump_dialog.open()
+
+        def _handle_global_key(event: Any) -> None:
+            try:
+                if not getattr(event.action, "keydown", False):
+                    return
+                if event.key == "/":
+                    _open_jump_palette()
+            except Exception:  # pragma: no cover - defensive UI guard
+                pass
+
+        with ui.dialog() as jump_dialog:
+            with ui.card().classes("sgfx-jump-card"):
+                jump_input = (
+                    ui.input(placeholder="Jump to page — type to filter, Enter opens the first match")
+                    .props("autofocus outlined dense clearable")
+                    .classes("sgfx-jump-input full-width")
+                )
+                jump_input.on_value_change(lambda: _render_jump_options(str(jump_input.value or "")))
+                jump_input.on("keydown.enter", lambda: _jump_first())
+                jump_list = ui.column().classes("sgfx-jump-list full-width")
+
+        ui.keyboard(on_key=_handle_global_key)
+
         ui.html(
             f"""
             <button type="button" class="sgfx-menu-button" aria-label="Open navigation" onclick="window.sgfxToggleSidebar && window.sgfxToggleSidebar()">
@@ -4260,19 +4454,44 @@ def _render_dashboard(
         with ui.row().classes("sgfx-shell full-width no-wrap"):
             with ui.column().classes("sgfx-sidebar"):
                 ui.image(f"/sgfx-dashboard-assets/{DASHBOARD_BRAND_ICON_ASSET}").classes("sgfx-sidebar-logo")
-                ui.separator()
-                for nav_item in state["snapshot"]["navigation"]:
-                    nav_id = str(nav_item["id"])
-                    _attach_tooltip(
-                        ui,
-                        ui.button(
-                            str(nav_item["label"]),
-                            on_click=lambda page_id=nav_id: _open_page(page_id),
-                        ).props(f"flat no-caps align=left data-sgfx-nav-item={nav_id}").classes(
-                            "sgfx-nav-button full-width"
-                        ),
-                        f"Open {nav_item['label']} for the selected local profile.",
-                    )
+                nav_titles = {
+                    str(item["id"]): str(item["label"])
+                    for item in state["snapshot"]["navigation"]
+                }
+                _attach_tooltip(
+                    ui,
+                    ui.button(
+                        nav_titles.get("home", "Home"),
+                        icon="home",
+                        on_click=lambda: _open_page("home"),
+                    ).props("flat no-caps align=left data-sgfx-nav-item=home").classes(
+                        "sgfx-nav-button sgfx-nav-home full-width"
+                    ),
+                    "Open the operator hub for the selected local profile.",
+                )
+                _attach_tooltip(
+                    ui,
+                    ui.button(
+                        "Jump to page",
+                        icon="search",
+                        on_click=lambda: _open_jump_palette(),
+                    ).props("flat no-caps align=left").classes("sgfx-nav-button sgfx-nav-jump full-width"),
+                    "Jump to any page — press / anywhere.",
+                )
+                for group in state["snapshot"].get("navigation_groups", []):
+                    ui.label(str(group["title"])).classes("sgfx-nav-group-title")
+                    for nav_item in group["items"]:
+                        nav_id = str(nav_item["id"])
+                        _attach_tooltip(
+                            ui,
+                            ui.button(
+                                str(nav_item["label"]),
+                                on_click=lambda page_id=nav_id: _open_page(page_id),
+                            ).props(f"flat no-caps align=left data-sgfx-nav-item={nav_id}").classes(
+                                "sgfx-nav-button full-width"
+                            ),
+                            f"Open {nav_item['label']} for the selected local profile.",
+                        )
                 ui.separator()
                 for shortcut in state["snapshot"]["shortcuts"]:
                     ui.label(str(shortcut)).classes("sgfx-shortcut")

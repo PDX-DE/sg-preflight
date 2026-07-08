@@ -243,6 +243,43 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(home["items"], [])
         self.assertIn("No local activity recorded yet", home["summary"])
 
+    def test_navigation_groups_cover_every_page_exactly_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            snapshot = build_dashboard_snapshot("", tmp)
+
+        groups = snapshot["navigation_groups"]
+        self.assertTrue(groups)
+        grouped_ids: list[str] = []
+        for group in groups:
+            self.assertIn("title", group)
+            self.assertTrue(group["items"])
+            grouped_ids.extend(str(item["id"]) for item in group["items"])
+        # Home is the standalone hub and is intentionally not in any group.
+        self.assertNotIn("home", grouped_ids)
+        # No page is dropped and none is listed twice.
+        self.assertEqual(len(grouped_ids), len(set(grouped_ids)))
+        nav_ids = {str(item["id"]) for item in snapshot["navigation"]}
+        self.assertEqual(set(grouped_ids) | {"home"}, nav_ids)
+        # Every group id resolves to a real navigation label.
+        labels = {str(item["id"]) for item in snapshot["navigation"]}
+        for page_id in grouped_ids:
+            self.assertIn(page_id, labels)
+
+    def test_navigation_groups_place_unknown_page_in_visible_more_bucket(self) -> None:
+        from sg_preflight.dashboard.main import _build_navigation_groups
+
+        navigation = [
+            {"id": "home", "label": "Home"},
+            {"id": "full-qa-pass", "label": "Full QA Pass"},
+            {"id": "brand-new-page", "label": "Brand New Page"},
+        ]
+        groups = _build_navigation_groups(navigation)
+        more = [group for group in groups if group["title"] == "More"]
+        self.assertEqual(len(more), 1)
+        self.assertEqual([item["id"] for item in more[0]["items"]], ["brand-new-page"])
+
     def test_strip_standing_disclaimers_removes_boilerplate_and_keeps_facts(self) -> None:
         from sg_preflight.dashboard.main import _strip_standing_disclaimers
 
@@ -378,7 +415,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
         self.assertEqual(
             snapshot["shortcuts"],
-            ["F1 Help", "F2 Profile switch", "F5 Refresh page", "F12 Diagnostic", "Esc Close sidebar"],
+            [
+                "F1 Help",
+                "F2 Profile switch",
+                "F5 Refresh page",
+                "/ Jump to page",
+                "F12 Diagnostic",
+                "Esc Close sidebar",
+            ],
         )
         self.assertEqual(
             snapshot["pages"][0]["tagline"],
