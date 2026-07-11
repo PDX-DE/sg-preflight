@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -2601,6 +2601,65 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
 
 class DashboardDualModeLaunchTests(unittest.TestCase):
+    def test_grafiks_candidates_prefer_operator_console_before_cinematic_fallback(self) -> None:
+        from sg_preflight.dashboard_grafiks import GRAFIKS_SHELL_EXE_ENV_KEYS, _grafiks_shell_exe_candidates
+
+        with tempfile.TemporaryDirectory() as tmp:
+            isolated_environment = {key: "" for key in GRAFIKS_SHELL_EXE_ENV_KEYS}
+            with mock.patch.dict(os.environ, isolated_environment, clear=False):
+                candidates = _grafiks_shell_exe_candidates(tmp)
+
+        names = [path.name for path in candidates]
+        self.assertIn("sgfx_screens.exe", names)
+        self.assertIn("sgfx_cine_cinematic_shell.exe", names)
+        self.assertLess(names.index("sgfx_screens.exe"), names.index("sgfx_cine_cinematic_shell.exe"))
+
+    def test_grafiks_discovery_prefers_later_root_operator_over_earlier_cinematic(self) -> None:
+        from sg_preflight import dashboard_grafiks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_root = root / "source"
+            neutral_cwd = root / "cwd"
+            workspace = root / "workspace"
+            source_root.mkdir()
+            neutral_cwd.mkdir()
+            workspace.mkdir()
+            earlier_cinematic = (
+                source_root / dashboard_grafiks.GRAFIKS_CXX_BUILD_DIR / dashboard_grafiks.GRAFIKS_SHELL_EXE_NAME
+            )
+            earlier_cinematic.parent.mkdir(parents=True)
+            earlier_cinematic.write_bytes(b"fixture")
+            later_operator = (
+                workspace
+                / dashboard_grafiks.GRAFIKS_CXX_BUILD_DIR
+                / dashboard_grafiks.OPERATOR_CONSOLE_SHELL_EXE_NAME
+            )
+            later_operator.parent.mkdir(parents=True)
+            later_operator.write_bytes(b"fixture")
+            isolated_environment = {key: "" for key in dashboard_grafiks.GRAFIKS_SHELL_EXE_ENV_KEYS}
+
+            with mock.patch.dict(os.environ, isolated_environment, clear=False):
+                with mock.patch.object(dashboard_grafiks, "_dashboard_source_root", return_value=source_root):
+                    with mock.patch.object(dashboard_grafiks.Path, "cwd", return_value=neutral_cwd):
+                        resolved = dashboard_grafiks._resolve_grafiks_shell_exe(workspace)
+
+        self.assertEqual(resolved, later_operator.resolve())
+
+    def test_grafiks_explicit_configured_file_keeps_precedence(self) -> None:
+        from sg_preflight.dashboard_grafiks import GRAFIKS_SHELL_EXE_ENV_KEYS, _grafiks_shell_exe_candidates
+
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = Path(tmp) / "explicit-shell.exe"
+            isolated_environment = {
+                GRAFIKS_SHELL_EXE_ENV_KEYS[0]: str(configured),
+                GRAFIKS_SHELL_EXE_ENV_KEYS[1]: "",
+            }
+            with mock.patch.dict(os.environ, isolated_environment, clear=False):
+                candidates = _grafiks_shell_exe_candidates(tmp)
+
+        self.assertEqual(candidates[0], configured.resolve())
+
     def test_dashboard_grafiks_mode_dispatches_to_cinematic_shell_launcher(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.cli import main
@@ -2633,6 +2692,13 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
             exe = root / "Release" / "sgfx_cine_cinematic_shell.exe"
             exe.parent.mkdir(parents=True)
             exe.write_text("fixture\n", encoding="utf-8")
+            for companion in (
+                "ramses-shared-lib-headless.dll",
+                "ramses-shared-lib-renderer.dll",
+                "ramses-shared-lib.dll",
+                "SDL3.dll",
+            ):
+                (exe.parent / companion).write_bytes(b"fixture")
             bmw_root = root / "digital-3d-car-models"
             (bmw_root / "cars" / "BMW").mkdir(parents=True)
 
@@ -2645,6 +2711,7 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
             ):
                 with mock.patch("sg_preflight.dashboard.main.subprocess.Popen", return_value=process) as popen:
                     result = dashboard_main.run_grafiks_mode(profile_id="G70", workspace=root, bmw_root=bmw_root)
+                    status_handoff_created = (exe.parent / "sgfx_status.json").exists()
 
         self.assertEqual(result, 0)
         command = popen.call_args.args[0]
@@ -2657,51 +2724,28 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
         self.assertIn("--fusion-profile-id", command)
         self.assertIn("G70", command)
         self.assertEqual(popen.call_args.kwargs["cwd"], exe.resolve().parent)
+        self.assertFalse(status_handoff_created)
 
-    def test_grafiks_mode_launches_operator_console_shell_with_status_handoff(self) -> None:
+    def test_grafiks_operator_console_uses_bare_command_without_status_handoff(self) -> None:
+        from sg_preflight import dashboard_grafiks
+
         with tempfile.TemporaryDirectory() as tmp:
-            from sg_preflight.dashboard import main as dashboard_main
-
             root = Path(tmp)
-            exe = root / "dist" / "sgfx_screens.exe"
+            exe = root / "Release" / "sgfx_screens.exe"
             exe.parent.mkdir(parents=True)
-            exe.write_text("fixture\n", encoding="utf-8")
-
+            exe.write_bytes(b"fixture")
+            expected_exe = exe.resolve()
             process = mock.Mock()
             process.wait.side_effect = subprocess.TimeoutExpired(str(exe), 2)
-            with mock.patch.dict(os.environ, {"SGFX_GRAFIKS_SHELL_EXE": str(exe)}, clear=False):
-                with mock.patch("sg_preflight.dashboard.main.subprocess.Popen", return_value=process) as popen:
-                    result = dashboard_main.run_grafiks_mode(profile_id="G65_EVO", workspace=root)
-
-            status_payload = json.loads((exe.parent / "sgfx_status.json").read_text(encoding="utf-8"))
-
-        self.assertEqual(result, 0)
-        command = popen.call_args.args[0]
-        self.assertEqual(command, [str(exe.resolve())])
-        self.assertEqual(popen.call_args.kwargs["cwd"], exe.resolve().parent)
-        self.assertEqual(status_payload["run"]["activeProfile"], "G65")
-
-    def test_grafiks_status_handoff_failure_still_launches(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            from sg_preflight.dashboard import main as dashboard_main
-
-            root = Path(tmp)
-            exe = root / "dist" / "sgfx_screens.exe"
-            exe.parent.mkdir(parents=True)
-            exe.write_text("fixture\n", encoding="utf-8")
-
-            process = mock.Mock()
-            process.wait.side_effect = subprocess.TimeoutExpired(str(exe), 2)
-            with mock.patch.dict(os.environ, {"SGFX_GRAFIKS_SHELL_EXE": str(exe)}, clear=False):
-                with mock.patch("sg_preflight.dashboard.main.subprocess.Popen", return_value=process) as popen:
-                    with mock.patch.object(Path, "write_text", side_effect=OSError("denied")):
-                        result = dashboard_main.run_grafiks_mode(profile_id="G65", workspace=root)
-
-            status_written = (exe.parent / "sgfx_status.json").exists()
+            with mock.patch.object(dashboard_grafiks, "_resolve_grafiks_shell_exe", return_value=exe):
+                with mock.patch.object(dashboard_grafiks.subprocess, "Popen", return_value=process) as popen:
+                    result = dashboard_grafiks.run_grafiks_mode(profile_id="G65", workspace=root)
+                    status_handoff_created = (exe.parent / "sgfx_status.json").exists()
 
         self.assertEqual(result, 0)
-        popen.assert_called_once()
-        self.assertFalse(status_written)
+        self.assertEqual(popen.call_args.args[0], [str(expected_exe)])
+        self.assertEqual(popen.call_args.kwargs["cwd"], expected_exe.parent)
+        self.assertFalse(status_handoff_created)
 
     def test_grafiks_candidates_prefer_operator_console_name_in_configured_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2718,10 +2762,11 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
             ):
                 candidates = dashboard_grafiks._grafiks_shell_exe_candidates(workspace)
 
-        self.assertEqual(
-            [candidate.name for candidate in candidates[:2]],
-            ["sgfx_screens.exe", "sgfx_cine_cinematic_shell.exe"],
-        )
+        operator = (shell_dir / dashboard_grafiks.OPERATOR_CONSOLE_SHELL_EXE_NAME).resolve()
+        cinematic = (shell_dir / dashboard_grafiks.GRAFIKS_SHELL_EXE_NAME).resolve()
+        self.assertIn(operator, candidates)
+        self.assertIn(cinematic, candidates)
+        self.assertLess(candidates.index(operator), candidates.index(cinematic))
 
     def test_grafiks_candidates_prefer_bundled_operator_console_over_cinematic(self) -> None:
         from sg_preflight import dashboard_grafiks
@@ -2763,20 +2808,218 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
         )
         self.assertEqual(dashboard_grafiks._grafiks_shell_label(None), "Grafiks operator console")
 
-    def test_grafiks_mode_missing_shell_degrades_with_wip_hint(self) -> None:
+    def test_grafiks_cinematic_runtime_requires_exact_companions(self) -> None:
+        from sg_preflight import dashboard_grafiks
+
+        expected_companions = (
+            "ramses-shared-lib-headless.dll",
+            "ramses-shared-lib-renderer.dll",
+            "ramses-shared-lib.dll",
+            "SDL3.dll",
+        )
+        self.assertEqual(getattr(dashboard_grafiks, "CINEMATIC_RUNTIME_COMPANIONS", None), expected_companions)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exe = root / "Release" / "sgfx_cine_cinematic_shell.exe"
+            exe.parent.mkdir(parents=True)
+            exe.write_bytes(b"fixture")
+            process = mock.Mock()
+            process.wait.side_effect = subprocess.TimeoutExpired(str(exe), 2)
+            stderr = io.StringIO()
+            with mock.patch.object(dashboard_grafiks, "_resolve_grafiks_shell_exe", return_value=exe):
+                with mock.patch.object(dashboard_grafiks.subprocess, "Popen", return_value=process) as popen:
+                    with mock.patch.object(dashboard_grafiks, "append_startup_log") as startup_log:
+                        with redirect_stderr(stderr):
+                            result = dashboard_grafiks.run_grafiks_mode(profile_id="G65", workspace=root)
+
+            log_text = "\n".join(str(call.args[0]) for call in startup_log.call_args_list)
+            self.assertEqual(result, 126)
+            popen.assert_not_called()
+            self.assertIn("category=missing_runtime", log_text)
+            self.assertNotIn(str(exe), log_text)
+            self.assertNotIn(str(exe), stderr.getvalue())
+            self.assertFalse((exe.parent / "sgfx_status.json").exists())
+
+    def test_grafiks_pre_resolved_shell_is_not_resolved_again_if_it_disappears(self) -> None:
+        from sg_preflight import dashboard_grafiks
+        from sg_preflight.dashboard import main as dashboard_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            confirmed_shell = root / "sgfx_screens.exe"
+            confirmed_shell.write_bytes(b"fixture")
+            confirmed_shell.unlink()
+            stderr = io.StringIO()
+            with mock.patch.object(
+                dashboard_main,
+                "_resolve_grafiks_shell_exe",
+                side_effect=AssertionError("confirmed shell must not be resolved again"),
+            ) as resolver:
+                with mock.patch.object(dashboard_grafiks.subprocess, "Popen") as popen:
+                    with mock.patch.object(dashboard_grafiks, "append_startup_log") as startup_log:
+                        with redirect_stderr(stderr):
+                            try:
+                                result = dashboard_main.run_grafiks_mode(
+                                    profile_id="G65",
+                                    workspace=root,
+                                    shell_path=confirmed_shell,
+                                )
+                            except TypeError as exc:
+                                self.fail(f"run_grafiks_mode must accept a confirmed shell path: {exc}")
+
+            log_text = "\n".join(str(call.args[0]) for call in startup_log.call_args_list)
+            self.assertEqual(result, 126)
+            resolver.assert_not_called()
+            popen.assert_not_called()
+            self.assertIn("category=missing_runtime", log_text)
+            self.assertNotIn(str(confirmed_shell), log_text)
+            self.assertNotIn(str(confirmed_shell), stderr.getvalue())
+
+    def test_grafiks_spawn_failure_returns_deterministic_error(self) -> None:
+        from sg_preflight import dashboard_grafiks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exe = root / "sgfx_screens.exe"
+            exe.write_bytes(b"fixture")
+            stderr = io.StringIO()
+            with mock.patch.object(dashboard_grafiks, "_resolve_grafiks_shell_exe", return_value=exe):
+                with mock.patch.object(
+                    dashboard_grafiks.subprocess,
+                    "Popen",
+                    side_effect=PermissionError(r"denied C:\private\runtime --secret"),
+                ):
+                    with mock.patch.object(dashboard_grafiks, "append_startup_log") as startup_log:
+                        with redirect_stderr(stderr):
+                            try:
+                                result = dashboard_grafiks.run_grafiks_mode(profile_id="G65", workspace=root)
+                            except OSError:
+                                result = None
+
+            log_text = "\n".join(str(call.args[0]) for call in startup_log.call_args_list)
+            self.assertEqual(getattr(dashboard_grafiks, "GRAFIKS_SPAWN_FAILURE_EXIT_CODE", None), 126)
+            self.assertEqual(result, 126)
+            self.assertIn("category=spawn_failed", log_text)
+            self.assertIn("error=PermissionError", log_text)
+            self.assertNotIn("private", log_text)
+            self.assertNotIn(str(exe), log_text)
+            self.assertNotIn("private", stderr.getvalue())
+            self.assertNotIn(str(exe), stderr.getvalue())
+            self.assertFalse((exe.parent / "sgfx_status.json").exists())
+
+    def test_grafiks_wait_failure_returns_sanitized_deterministic_error(self) -> None:
+        from sg_preflight import dashboard_grafiks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exe = root / "sgfx_screens.exe"
+            exe.write_bytes(b"fixture")
+            process = mock.Mock()
+            process.wait.side_effect = PermissionError(r"denied C:\private\runtime --secret")
+            stderr = io.StringIO()
+            with mock.patch.object(dashboard_grafiks, "_resolve_grafiks_shell_exe", return_value=exe):
+                with mock.patch.object(dashboard_grafiks.subprocess, "Popen", return_value=process):
+                    with mock.patch.object(dashboard_grafiks, "append_startup_log") as startup_log:
+                        with redirect_stderr(stderr):
+                            try:
+                                result = dashboard_grafiks.run_grafiks_mode(profile_id="G65", workspace=root)
+                            except OSError:
+                                result = None
+
+            log_text = "\n".join(str(call.args[0]) for call in startup_log.call_args_list)
+            self.assertEqual(result, 126)
+            self.assertIn("category=spawn_failed", log_text)
+            self.assertIn("error=PermissionError", log_text)
+            self.assertNotIn("private", log_text)
+            self.assertNotIn(str(exe), log_text)
+            self.assertNotIn("private", stderr.getvalue())
+            self.assertNotIn(str(exe), stderr.getvalue())
+
+    def test_grafiks_immediate_nonzero_exit_is_preserved_and_logged(self) -> None:
+        from sg_preflight import dashboard_grafiks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exe = root / "sgfx_screens.exe"
+            exe.write_bytes(b"fixture")
+            process = mock.Mock()
+            process.wait.return_value = 23
+            stderr = io.StringIO()
+            with mock.patch.object(dashboard_grafiks, "_resolve_grafiks_shell_exe", return_value=exe):
+                with mock.patch.object(dashboard_grafiks.subprocess, "Popen", return_value=process):
+                    with mock.patch.object(dashboard_grafiks, "append_startup_log") as startup_log:
+                        with redirect_stderr(stderr):
+                            result = dashboard_grafiks.run_grafiks_mode(profile_id="G65", workspace=root)
+
+            log_text = "\n".join(str(call.args[0]) for call in startup_log.call_args_list)
+            self.assertEqual(result, 23)
+            self.assertIn("category=early_exit", log_text)
+            self.assertIn("exit_code=23", log_text)
+            self.assertNotIn(str(exe), log_text)
+            self.assertNotIn(str(exe), stderr.getvalue())
+            self.assertFalse((exe.parent / "sgfx_status.json").exists())
+
+    def test_grafiks_nonzero_ui_result_restores_clean_before_fallback_dialog(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+        confirm_start = source.index("        async def _confirm_grafiks_launch() -> None:")
+        confirm_end = source.index("        async def _select_grafiks_mode() -> None:", confirm_start)
+        confirm_source = source[confirm_start:confirm_end]
+
+        self.assertRegex(confirm_source, r"exit_code = await _io_bound\(\s*run_grafiks_mode,")
+        self.assertRegex(
+            confirm_source,
+            r'if exit_code:\s+_set_mode_button_state\("clean"\)\s+_show_grafiks_confirm_dialog\(',
+        )
+
+    def test_grafiks_confirm_passes_the_resolved_shell_path_to_launcher(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+        confirm_start = source.index("        async def _confirm_grafiks_launch() -> None:")
+        confirm_end = source.index("        async def _select_grafiks_mode() -> None:", confirm_start)
+        confirm_source = source[confirm_start:confirm_end]
+
+        self.assertIn("shell_path=shell_path", confirm_source)
+
+    def test_grafiks_ready_dialog_uses_generic_copy_without_resolved_path(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+        select_start = source.index("        async def _select_grafiks_mode() -> None:")
+        select_end = source.index("        def _header_text() -> str:", select_start)
+        select_source = source[select_start:select_end]
+
+        self.assertIn('"Grafiks is ready to launch."', select_source)
+        self.assertNotIn("{shell_path}", select_source)
+        self.assertNotIn("cinematic shell", select_source.casefold())
+
+    def test_grafiks_mode_missing_shell_returns_deterministic_error_with_wip_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard import main as dashboard_main
 
             stdout = io.StringIO()
             with mock.patch("sg_preflight.dashboard.main._resolve_grafiks_shell_exe", return_value=None):
                 with mock.patch("sg_preflight.dashboard.main.subprocess.Popen") as popen:
-                    with redirect_stdout(stdout):
-                        result = dashboard_main.run_grafiks_mode(profile_id="G70", workspace=tmp)
+                    with mock.patch("sg_preflight.dashboard_grafiks.append_startup_log") as startup_log:
+                        with redirect_stdout(stdout):
+                            result = dashboard_main.run_grafiks_mode(profile_id="G70", workspace=tmp)
+                            status_handoff_created = (Path(tmp) / "sgfx_status.json").exists()
 
-        self.assertEqual(result, 0)
+        self.assertEqual(result, 126)
         popen.assert_not_called()
         self.assertIn("WIP - use Clean for now", stdout.getvalue())
         self.assertIn("C++ shell not installed", stdout.getvalue())
+        self.assertIn("sgfx_screens.exe", stdout.getvalue())
+        self.assertIn("sgfx_cine_cinematic_shell.exe", stdout.getvalue())
+        self.assertIn("SGFX_GRAFIKS_SHELL_EXE", stdout.getvalue())
+        self.assertNotIn(str(Path(tmp).resolve()), stdout.getvalue())
+        log_text = "\n".join(str(call.args[0]) for call in startup_log.call_args_list)
+        self.assertIn("category=missing_executable", log_text)
+        self.assertNotIn(str(Path(tmp).resolve()), log_text)
+        self.assertFalse(status_handoff_created)
 
     def test_frozen_clean_dashboard_dispatches_to_desktop_shell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

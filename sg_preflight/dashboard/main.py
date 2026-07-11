@@ -190,6 +190,7 @@ from sg_preflight.dashboard_preferences import (
     save_dashboard_preference,
 )
 from sg_preflight.dashboard_grafiks import (
+    CINEMATIC_RUNTIME_COMPANIONS,
     GRAFIKS_CXX_BUILD_DIR,
     GRAFIKS_DEFAULT_BMW_CARS_ROOT,
     GRAFIKS_MODE_WARNING_BODY,
@@ -197,6 +198,8 @@ from sg_preflight.dashboard_grafiks import (
     GRAFIKS_MODE_WIP_HINT,
     GRAFIKS_SHELL_EXE_ENV_KEYS,
     GRAFIKS_SHELL_EXE_NAME,
+    GRAFIKS_SPAWN_FAILURE_EXIT_CODE,
+    OPERATOR_CONSOLE_SHELL_EXE_NAME,
     _dashboard_source_root,
     _grafiks_bmw_cars_root,
     _grafiks_not_installed_message,
@@ -757,11 +760,13 @@ def run_grafiks_mode(
     profile_id: str = "",
     workspace: Path | str,
     bmw_root: Path | str | None = None,
+    shell_path: Path | str | None = None,
 ) -> int:
     return _dashboard_grafiks.run_grafiks_mode(
         profile_id=profile_id,
         workspace=workspace,
         bmw_root=bmw_root,
+        shell_path=shell_path,
         resolve_shell_exe=_resolve_grafiks_shell_exe,
         not_installed_message=_grafiks_not_installed_message,
     )
@@ -3387,10 +3392,12 @@ def _render_dashboard(
                 profile_id=str(state["snapshot"].get("profile_id", "")),
                 workspace=workspace,
                 bmw_root=bmw_root,
+                shell_path=shell_path,
             )
             if exit_code:
+                _set_mode_button_state("clean")
                 _show_grafiks_confirm_dialog(
-                    f"{_grafiks_shell_label(shell_path)} exited early with code {exit_code}.",
+                    f"Grafiks could not launch (code {exit_code}). Clean mode remains active.",
                     allow_continue=True,
                 )
 
@@ -3401,7 +3408,7 @@ def _render_dashboard(
                 _show_grafiks_confirm_dialog(_grafiks_not_installed_message(workspace), allow_continue=False)
                 return
             _show_grafiks_confirm_dialog(
-                f"Ready to launch the {_grafiks_shell_label(shell_path)}: {shell_path}",
+                "Grafiks is ready to launch.",
                 allow_continue=True,
             )
 
