@@ -862,6 +862,7 @@ def build_dashboard_snapshot(
     defer_team_digest_board: bool = False,
     lazy_pages: bool = False,
     materialize_page_ids: tuple[str, ...] = (),
+    persist_dependency_state: bool = True,
 ) -> dict[str, Any]:
     root = _workspace(workspace)
     profile_options = dashboard_profile_options(bmw_root=bmw_root, profile_scope=PROFILE_SCOPE_DEFAULT)
@@ -880,7 +881,11 @@ def build_dashboard_snapshot(
     profile_known = _dashboard_profile_known(resolved_profile_id, profile_options_all)
     profile_in_default_view = _dashboard_profile_known(resolved_profile_id, profile_options)
     theme = _clean_theme(ui_mode or load_dashboard_preference(root))
-    setup_status = build_dependency_onboarding_status(workspace=root, bmw_root=bmw_root)
+    setup_status = build_dependency_onboarding_status(
+        workspace=root,
+        bmw_root=bmw_root,
+        persist_auto_detected_paths=persist_dependency_state,
+    )
     active_ticket_id = _dashboard_active_ticket_id(root)
     daily_ticket_context = _daily_digest_ticket_context(root)
     output_root = operator_ui_root(root)
@@ -1054,16 +1059,18 @@ def build_dashboard_page(
     *,
     bmw_root: Path | str | None = None,
     ui_mode: str | None = None,
+    persist_dependency_state: bool = True,
 ) -> dict[str, Any]:
     snapshot = build_dashboard_snapshot(
-        profile_id,
-        workspace,
+        profile_id=profile_id,
+        workspace=workspace,
         bmw_root=bmw_root,
         ui_mode=ui_mode,
         defer_daily_digest=page_id != "daily-digest",
         defer_team_digest_board=page_id != "team-digest-board",
         lazy_pages=True,
         materialize_page_ids=(page_id,),
+        persist_dependency_state=persist_dependency_state,
     )
     for page in snapshot["pages"]:
         if str(page.get("id")) == page_id:

@@ -1104,6 +1104,7 @@ def build_dependency_onboarding_status(
     *,
     workspace: Path | str,
     bmw_root: Path | str | None = None,
+    persist_auto_detected_paths: bool = True,
 ) -> dict[str, Any]:
     root = _workspace(workspace)
     first_run = not has_operator_state(root)
@@ -1134,11 +1135,12 @@ def build_dependency_onboarding_status(
     missing_count = sum(1 for item in items if item["status"] == "missing")
     incomplete_count = sum(1 for item in items if item["status"] == "incomplete")
     status = "available" if available_count == len(items) else "incomplete"
-    _persist_auto_detected_dependency_paths(
-        root,
-        original_paths=registered_paths_before_detection,
-        detected_state=state,
-    )
+    if persist_auto_detected_paths:
+        _persist_auto_detected_dependency_paths(
+            root,
+            original_paths=registered_paths_before_detection,
+            detected_state=state,
+        )
     return {
         "status": status,
         "summary": (

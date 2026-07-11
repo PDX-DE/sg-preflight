@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import FrozenInstanceError, dataclass, replace
+from datetime import date, datetime, timezone
+from enum import Enum
+import gc
+import inspect
+from pathlib import Path
+import tempfile
+import threading
+import time
+from types import MappingProxyType
 import unittest
+from unittest import mock
+import weakref
 
 try:
-    from PySide6.QtCore import QModelIndex, Qt
+    from PySide6.QtCore import QCoreApplication, QModelIndex, QObject, QThreadPool, Signal, Slot, Qt
+    from PySide6.QtTest import QSignalSpy
 except ModuleNotFoundError as error:
     if error.name != "PySide6":
         raise
@@ -11,6 +25,88 @@ except ModuleNotFoundError as error:
 
 from sg_preflight.shell_registry import HOME_ROUTE_ID, NAVIGATION_GROUP_ORDER
 from sg_preflight.surface_registry import SURFACE_DESCRIPTORS
+
+
+def _pump_until(predicate: Callable[[], bool], timeout_ms: int = 3000) -> bool:
+    deadline = time.monotonic() + timeout_ms / 1000
+    application = QCoreApplication.instance()
+    while not predicate() and time.monotonic() < deadline:
+        if application is not None:
+            application.processEvents()
+        time.sleep(0.001)
+    return predicate()
+
+
+class _CompletionThreadReceiver(QObject):
+    def __init__(self) -> None:
+        super().__init__()
+        self.callback_thread_id = 0
+        self.worker_thread_id = 0
+
+    @Slot(object, object)
+    def receive(self, _identity: object, payload: object) -> None:
+        self.callback_thread_id = threading.get_ident()
+        self.worker_thread_id = int(payload)
+
+
+class _PayloadStatus(Enum):
+    AVAILABLE = "available"
+
+
+@dataclass(frozen=True)
+class _PayloadFixture:
+    report_path: Path
+    status: _PayloadStatus
+    count: int
+    revision: str
+    provenance: str
+    observed_on: date
+    observed_at: datetime
+    labels: set[str]
+
+
+@dataclass(frozen=True)
+class _PayloadWithExecutionFields:
+    command: tuple[str, ...]
+    environment: dict[str, str]
+    executable: Path
+    capability: str
+    revision: str
+
+
+class _FakeTaskCoordinator(QObject):
+    task_succeeded = Signal(object, object)
+    task_failed = Signal(object, object)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[tuple[object, object]] = []
+        self.active: set[object] = set()
+        self.reject_next = False
+        self.shutdown_calls: list[int] = []
+
+    def submit(self, identity: object, operation: object) -> bool:
+        if self.reject_next:
+            self.reject_next = False
+            return False
+        if identity in self.active:
+            return False
+        self.active.add(identity)
+        self.requests.append((identity, operation))
+        return True
+
+    def succeed(self, identity: object, payload: object) -> None:
+        self.active.discard(identity)
+        self.task_succeeded.emit(identity, payload)
+
+    def fail(self, identity: object, failure: object) -> None:
+        self.active.discard(identity)
+        self.task_failed.emit(identity, failure)
+
+    def shutdown(self, timeout_ms: int = 1000) -> bool:
+        self.shutdown_calls.append(timeout_ms)
+        self.active.clear()
+        return True
 
 
 class TestSurfaceRegistryModel(unittest.TestCase):
@@ -120,6 +216,1215 @@ class TestSurfaceRegistryModel(unittest.TestCase):
         self.assertFalse(count_property.isWritable())
         self.assertEqual(count_property.read(self.model), 19)
         self.assertEqual(own_methods, ())
+
+
+class TestPageTaskCoordinator(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.application = QCoreApplication.instance() or QCoreApplication([])
+
+    def _coordinator(self, *, max_thread_count: int = 2):
+        from sg_preflight.desktop.task_pool import PageTaskCoordinator
+
+        coordinator = PageTaskCoordinator(max_thread_count=max_thread_count)
+        self.addCleanup(lambda: coordinator.shutdown(timeout_ms=1000))
+        return coordinator
+
+    def test_task_values_are_frozen_slotted_and_use_the_full_identity(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskFailure, TaskIdentity
+
+        identity = TaskIdentity(7, "G65", "delivery-checklist", "load")
+        failure = TaskFailure(
+            "page_reader_failed",
+            "The local page evidence could not be loaded.",
+            "PermissionError",
+        )
+
+        self.assertFalse(hasattr(identity, "__dict__"))
+        self.assertFalse(hasattr(failure, "__dict__"))
+        with self.assertRaises(FrozenInstanceError):
+            identity.generation = 8
+        with self.assertRaises(FrozenInstanceError):
+            failure.code = "changed"
+        for field_name, changed_value in (
+            ("generation", 8),
+            ("profile_id", "G70"),
+            ("page_id", "risk-score"),
+            ("operation", "refresh"),
+        ):
+            with self.subTest(field=field_name):
+                self.assertNotEqual(identity, replace(identity, **{field_name: changed_value}))
+
+    def test_default_coordinator_constructs_a_private_two_thread_pool(self) -> None:
+        from sg_preflight.desktop import task_pool
+
+        class PoolFactory:
+            @staticmethod
+            def globalInstance() -> object:
+                raise AssertionError("global thread pool must stay unused")
+
+            def __new__(cls, parent: QObject) -> QThreadPool:
+                return QThreadPool(parent)
+
+        with mock.patch.object(task_pool, "QThreadPool", PoolFactory):
+            coordinator = task_pool.PageTaskCoordinator()
+        self.addCleanup(lambda: coordinator.shutdown(timeout_ms=1000))
+
+        self.assertEqual(coordinator.max_thread_count, 2)
+        self.assertEqual(coordinator._pool.maxThreadCount(), 2)
+        self.assertIs(coordinator._pool.parent(), coordinator)
+        self.assertEqual(coordinator.active_count, 0)
+
+    def test_default_pool_never_runs_more_than_two_of_three_gated_readers(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskIdentity
+
+        coordinator = self._coordinator()
+        release = threading.Event()
+        two_started = threading.Event()
+        counter_lock = threading.Lock()
+        current = 0
+        peak = 0
+        started = 0
+
+        def gated_reader() -> str:
+            nonlocal current, peak, started
+            with counter_lock:
+                current += 1
+                started += 1
+                peak = max(peak, current)
+                if started == 2:
+                    two_started.set()
+            try:
+                if not release.wait(3):
+                    raise TimeoutError("gated reader release timed out")
+                return "complete"
+            finally:
+                with counter_lock:
+                    current -= 1
+
+        spy = QSignalSpy(coordinator.task_succeeded)
+        for generation in range(3):
+            self.assertTrue(
+                coordinator.submit(
+                    TaskIdentity(generation, "G65", "delivery-checklist", "load"),
+                    gated_reader,
+                )
+            )
+
+        try:
+            self.assertTrue(two_started.wait(1))
+            time.sleep(0.05)
+            with counter_lock:
+                self.assertEqual(started, 2)
+                self.assertEqual(peak, 2)
+            self.assertEqual(coordinator.active_count, 3)
+        finally:
+            release.set()
+
+        self.assertTrue(_pump_until(lambda: spy.count() == 3))
+        self.assertEqual(peak, 2)
+        self.assertEqual(coordinator.active_count, 0)
+
+    def test_reader_runs_off_gui_thread_and_completion_is_queued_to_gui(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskIdentity
+
+        coordinator = self._coordinator()
+        identity = TaskIdentity(1, "G65", "delivery-checklist", "load")
+        receiver = _CompletionThreadReceiver()
+        coordinator.task_succeeded.connect(receiver.receive)
+        spy = QSignalSpy(coordinator.task_succeeded)
+        gui_thread_id = threading.get_ident()
+
+        self.assertTrue(coordinator.submit(identity, threading.get_ident))
+        self.assertTrue(_pump_until(lambda: spy.count() == 1))
+        self.assertEqual(receiver.callback_thread_id, gui_thread_id)
+        self.assertNotEqual(receiver.worker_thread_id, gui_thread_id)
+        self.assertEqual(coordinator.active_count, 0)
+
+    def test_duplicate_full_identity_is_coalesced_but_other_operations_are_not(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskIdentity
+
+        coordinator = self._coordinator()
+        release = threading.Event()
+        started = threading.Event()
+        identity = TaskIdentity(2, "G65", "disabled-tests", "load")
+
+        def delayed_result() -> str:
+            started.set()
+            if not release.wait(3):
+                raise TimeoutError("delayed reader release timed out")
+            return "complete"
+
+        spy = QSignalSpy(coordinator.task_succeeded)
+        self.assertTrue(coordinator.submit(identity, delayed_result))
+        self.assertTrue(started.wait(1))
+        self.assertFalse(coordinator.submit(identity, delayed_result))
+        self.assertTrue(coordinator.submit(replace(identity, operation="refresh"), delayed_result))
+        self.assertEqual(coordinator.active_count, 2)
+        release.set()
+
+        self.assertTrue(_pump_until(lambda: spy.count() == 2))
+        self.assertEqual(coordinator.active_count, 0)
+
+    def test_worker_failure_is_sanitized_and_clears_active_state(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskIdentity
+
+        coordinator = self._coordinator()
+        identity = TaskIdentity(3, "G65", "risk-score", "load")
+        spy = QSignalSpy(coordinator.task_failed)
+
+        def fail_with_private_detail() -> None:
+            raise PermissionError(r"denied C:\operator-private\runtime --bearer secret-value")
+
+        self.assertTrue(coordinator.submit(identity, fail_with_private_detail))
+        self.assertTrue(_pump_until(lambda: spy.count() == 1))
+        completed_identity, failure = spy.at(0)
+        rendered = repr(failure).casefold()
+
+        self.assertEqual(completed_identity, identity)
+        self.assertEqual(failure.code, "page_reader_failed")
+        self.assertEqual(failure.summary, "The local page evidence could not be loaded.")
+        self.assertEqual(failure.error_type, "PermissionError")
+        for fragment in ("operator-private", "secret-value", "c:\\"):
+            self.assertNotIn(fragment, rendered)
+        self.assertEqual(coordinator.active_count, 0)
+
+    def test_task_cancelled_before_execution_never_starts_its_reader(self) -> None:
+        from sg_preflight.desktop.task_pool import _PageTask, TaskIdentity
+
+        executed = threading.Event()
+        task = _PageTask(
+            TaskIdentity(4, "G65", "risk-score", "load"),
+            executed.set,
+        )
+
+        task.cancel()
+        task.run()
+
+        self.assertFalse(executed.is_set())
+
+    def test_shutdown_cancels_queued_work_is_bounded_and_rejects_new_tasks(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskIdentity
+
+        coordinator = self._coordinator(max_thread_count=1)
+        running_started = threading.Event()
+        running_release = threading.Event()
+        queued_executed = threading.Event()
+        finalized_on: list[int] = []
+
+        def running_reader() -> None:
+            running_started.set()
+            running_release.wait(3)
+
+        self.assertTrue(
+            coordinator.submit(
+                TaskIdentity(4, "G65", "full-qa-pass", "load"),
+                running_reader,
+            )
+        )
+        self.assertTrue(running_started.wait(1))
+        self.assertTrue(
+            coordinator.submit(
+                TaskIdentity(4, "G65", "risk-score", "load"),
+                queued_executed.set,
+            )
+        )
+        task_references = tuple(weakref.ref(task) for task in coordinator._active.values())
+        for task in tuple(coordinator._active.values()):
+            weakref.finalize(task, lambda: finalized_on.append(threading.get_ident()))
+        del task
+
+        started_at = time.monotonic()
+        try:
+            self.assertTrue(coordinator.shutdown(timeout_ms=100))
+            self.assertLess(time.monotonic() - started_at, 0.6)
+            self.assertFalse(queued_executed.is_set())
+            self.assertEqual(coordinator.active_count, 0)
+            self.assertFalse(
+                coordinator.submit(
+                    TaskIdentity(5, "G65", "risk-score", "load"),
+                    lambda: None,
+                )
+            )
+        finally:
+            running_release.set()
+        self.assertTrue(coordinator.wait_for_done(1000))
+        self.assertFalse(queued_executed.is_set())
+        gc.collect()
+        self.assertTrue(all(reference() is None for reference in task_references))
+        self.assertEqual(finalized_on, [threading.get_ident()] * 2)
+
+    def test_completed_wrapper_releases_python_ownership_without_unbounded_retention(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskIdentity
+
+        coordinator = self._coordinator()
+        identity = TaskIdentity(6, "G65", "risk-score", "load")
+        spy = QSignalSpy(coordinator.task_succeeded)
+        finalized_on: list[int] = []
+
+        self.assertTrue(coordinator.submit(identity, lambda: "complete"))
+        task = coordinator._active[identity]
+        task_reference = weakref.ref(task)
+        weakref.finalize(task, lambda: finalized_on.append(threading.get_ident()))
+        self.assertTrue(_pump_until(lambda: spy.count() == 1))
+        self.assertFalse(hasattr(coordinator, "_retained"))
+        self.assertTrue(coordinator.wait_for_done(1000))
+        self.application.processEvents()
+        del task
+        for _attempt in range(10):
+            self.application.processEvents()
+            gc.collect()
+            if task_reference() is None:
+                break
+
+        self.assertIsNone(task_reference())
+        self.assertEqual(finalized_on, [threading.get_ident()])
+
+
+class TestPayloadAdapter(unittest.TestCase):
+    def test_adapter_preserves_safe_structures_and_workspace_relative_labels(self) -> None:
+        from sg_preflight.desktop.payload_adapter import adapt_page_payload
+
+        revision = "0123456789abcdef0123456789abcdef01234567"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir).resolve()
+            fixture = _PayloadFixture(
+                report_path=workspace / "evidence" / "result.json",
+                status=_PayloadStatus.AVAILABLE,
+                count=3,
+                revision=revision,
+                provenance="local_scan",
+                observed_on=date(2026, 7, 11),
+                observed_at=datetime(2026, 7, 11, 8, 30, tzinfo=timezone.utc),
+                labels={"beta", "alpha"},
+            )
+
+            adapted = adapt_page_payload(
+                {"fixture": fixture, "source": workspace / "evidence" / "result.json"},
+                workspace=workspace,
+            )
+
+        self.assertEqual(
+            adapted,
+            {
+                "fixture": {
+                    "report_path": "evidence/result.json",
+                    "status": "available",
+                    "count": 3,
+                    "revision": revision,
+                    "provenance": "local_scan",
+                    "observed_on": "2026-07-11",
+                    "observed_at": "2026-07-11T08:30:00+00:00",
+                    "labels": ["alpha", "beta"],
+                },
+                "source": "evidence/result.json",
+            },
+        )
+
+    def test_adapter_orders_sets_deterministically_and_reduces_external_paths(self) -> None:
+        from sg_preflight.desktop.payload_adapter import adapt_page_payload
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir).resolve()
+            outside = workspace.parent / "operator-private" / "evidence.xlsx"
+
+            first = adapt_page_payload(
+                {"labels": {"charlie", "alpha", "bravo"}, "path": outside},
+                workspace=workspace,
+            )
+            second = adapt_page_payload(
+                {"labels": {"bravo", "charlie", "alpha"}, "path": outside},
+                workspace=workspace,
+            )
+
+        self.assertEqual(first, second)
+        self.assertEqual(first["labels"], ["alpha", "bravo", "charlie"])
+        self.assertEqual(first["path"], "evidence.xlsx")
+        self.assertNotIn("operator-private", repr(first))
+
+    def test_adapter_omits_execution_environment_executable_and_capability_fields_recursively(self) -> None:
+        from sg_preflight.desktop.payload_adapter import adapt_page_payload
+
+        revision = "abc123"
+        adapted = adapt_page_payload(
+            {
+                "command": ["secret-tool", "--token", "value"],
+                "environment": {"TOKEN": "value"},
+                "executable": Path(r"C:\private\secret-tool.exe"),
+                "capability": "launch arbitrary process",
+                "nested": {
+                    "command_line": "private --secret",
+                    "reader_command_status": "private-command-status",
+                    "environment_status": {"TOKEN": "available"},
+                    "safe_environment_summary": "private-environment-summary",
+                    "executable_path": r"C:\private\tool.exe",
+                    "runtime_executable_status": "private-executable-status",
+                    "capability_flags": ["write", "network"],
+                    "read_capability_flags": ["private-capability"],
+                    "revision": revision,
+                },
+                "items": [
+                    _PayloadWithExecutionFields(
+                        command=("private-command",),
+                        environment={"PRIVATE": "private-environment"},
+                        executable=Path(r"C:\private\runner.exe"),
+                        capability="repository-write",
+                        revision=revision,
+                    )
+                ],
+            },
+            workspace=Path.cwd(),
+        )
+
+        self.assertEqual(adapted, {"nested": {"revision": revision}, "items": [{"revision": revision}]})
+        rendered = repr(adapted).casefold()
+        for fragment in ("secret-tool", "token", "private", "runner", "repository-write"):
+            self.assertNotIn(fragment, rendered)
+
+    def test_adapter_redacts_sensitive_containers_and_inline_secrets(self) -> None:
+        from sg_preflight.desktop.payload_adapter import adapt_page_payload
+
+        adapted = adapt_page_payload(
+            {
+                "token": "short-token",
+                "credential_bundle": ["account", "short-credential"],
+                "nested": {
+                    "password": "tiny-password",
+                    "authorization_data": {"value": "short-authorization"},
+                    "operator_token_value": "nested-token",
+                    "local_credential_bundle": {"value": "nested-credential"},
+                    "summary": (
+                        "token=inline-token password:inline-password "
+                        "Authorization: Bearer bearer-secret status available"
+                    ),
+                    "status": "available",
+                },
+            },
+            workspace=Path.cwd(),
+        )
+
+        self.assertEqual(adapted["token"], "****")
+        self.assertEqual(adapted["credential_bundle"], "****")
+        self.assertEqual(adapted["nested"]["password"], "****")
+        self.assertEqual(adapted["nested"]["authorization_data"], "****")
+        self.assertEqual(adapted["nested"]["operator_token_value"], "****")
+        self.assertEqual(adapted["nested"]["local_credential_bundle"], "****")
+        self.assertEqual(adapted["nested"]["status"], "available")
+        rendered = repr(adapted).casefold()
+        for fragment in (
+            "short-token",
+            "short-credential",
+            "tiny-password",
+            "short-authorization",
+            "nested-token",
+            "nested-credential",
+            "inline-token",
+            "inline-password",
+            "bearer-secret",
+        ):
+            self.assertNotIn(fragment, rendered)
+
+    def test_adapter_redacts_every_scheme_url_and_embedded_absolute_path(self) -> None:
+        from sg_preflight.desktop.payload_adapter import adapt_page_payload
+
+        raw_urls = (
+            "https://user:pass@example.invalid/private",
+            "http://example.invalid/private",
+            "ftp://example.invalid/private",
+            "file://server/private/report.json",
+            "sgfx+local://private/operation",
+        )
+        adapted = adapt_page_payload(
+            {
+                "summary": (
+                    "Read C:\\operator-private\\first.json, "
+                    "C:\\Operator Private\\reports with spaces\\fourth report.json, "
+                    "\\\\fileserver\\share\\second.json and /home/operator/third.json; "
+                    "also /secret.txt; "
+                    + " ".join(raw_urls)
+                ),
+                "network_notes": (
+                    r"network \\rootonly-server\rootonly-share; "
+                    r"network \\dotted-server\dotted-share."
+                ),
+                "links": list(raw_urls),
+                "url": raw_urls[0],
+                "report_path": raw_urls[3],
+            },
+            workspace=Path.cwd(),
+        )
+
+        self.assertNotIn("url", adapted)
+        self.assertEqual(adapted["links"], ["$EXTERNAL_LINK"] * len(raw_urls))
+        self.assertEqual(adapted["report_path"], "$EXTERNAL_LINK")
+        self.assertGreaterEqual(adapted["summary"].count("$EXTERNAL_LINK"), len(raw_urls))
+        self.assertIn("first.json", adapted["summary"])
+        self.assertIn("second.json", adapted["summary"])
+        self.assertIn("third.json", adapted["summary"])
+        self.assertIn("fourth report.json", adapted["summary"])
+        self.assertIn("secret.txt", adapted["summary"])
+        rendered = repr(adapted).casefold()
+        for fragment in (
+            "example.invalid",
+            "user:pass",
+            "fileserver",
+            "/home/operator",
+            "operator private",
+            "reports with spaces",
+            "rootonly-server",
+            "rootonly-share",
+            "dotted-server",
+            "dotted-share",
+            "/secret.txt",
+            "c:\\",
+        ):
+            self.assertNotIn(fragment, rendered)
+
+    def test_adapter_inspects_mapping_keys_before_emitting_them(self) -> None:
+        from sg_preflight.desktop.payload_adapter import adapt_page_payload
+
+        raw_fragments = (
+            "https://example.invalid/key",
+            r"C:\operator-private\key",
+            r"C:\Operator Private\key with spaces.txt",
+            r"\\key-server\key-share",
+            r"\\dotted-key-server\dotted-key-share.",
+            "/home/operator/private/key",
+            "/secret-key",
+            "Authorization: Bearer bearer-key-secret",
+            "password=inline-key-secret",
+        )
+        payload = {fragment: "otherwise-safe" for fragment in raw_fragments}
+        payload["revision"] = "abc123"
+
+        adapted = adapt_page_payload(payload, workspace=Path.cwd())
+
+        self.assertEqual(adapted, {"revision": "abc123"})
+        rendered = repr(adapted).casefold()
+        for fragment in raw_fragments:
+            self.assertNotIn(fragment.casefold(), rendered)
+
+
+class TestDesktopController(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.application = QCoreApplication.instance() or QCoreApplication([])
+
+    def _controller(
+        self,
+        workspace: Path,
+        *,
+        initial_profile_id: str = "G65",
+        loader: object | None = None,
+        resolver: object | None = None,
+    ):
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+
+        coordinator = _FakeTaskCoordinator()
+        page_loader = loader or mock.Mock(
+            return_value=MappingProxyType({"id": "delivery-checklist", "rows": [1]})
+        )
+        profile_resolver = resolver or mock.Mock(return_value="G65")
+        controller = DesktopController(
+            workspace=workspace,
+            initial_profile_id=initial_profile_id,
+            task_coordinator=coordinator,
+            page_loader=page_loader,
+            profile_resolver=profile_resolver,
+        )
+        return controller, coordinator, page_loader, profile_resolver
+
+    @staticmethod
+    def _error_values(controller: QObject) -> tuple[object, ...]:
+        return (
+            controller.errorCode,
+            controller.errorTitle,
+            controller.errorSummary,
+            controller.errorRetryable,
+            controller.errorRecoveryAction,
+        )
+
+    def test_ui_error_contract_is_frozen_slotted_canonical_and_uses_one_notify_signal(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import (
+            EMPTY_UI_ERROR,
+            UI_ERROR_DEFINITIONS,
+            DesktopController,
+            UiError,
+        )
+
+        expected_definitions = {
+            "qml_resource_missing": (
+                "Interface unavailable",
+                "The Qt Quick interface files are unavailable.",
+                False,
+                "launch_clean",
+            ),
+            "qml_engine_load_failed": (
+                "Interface unavailable",
+                "The Qt Quick interface could not be initialized.",
+                True,
+                "retry",
+            ),
+            "page_reader_failed": (
+                "Evidence unavailable",
+                "The local page evidence could not be loaded.",
+                True,
+                "retry",
+            ),
+            "page_payload_invalid": (
+                "Evidence unavailable",
+                "The page evidence has an unsupported shape.",
+                False,
+                "open_clean",
+            ),
+            "action_rejected": (
+                "Action unavailable",
+                "This action is not available from the current page.",
+                False,
+                "dismiss",
+            ),
+            "grafiks_missing": (
+                "Grafiks unavailable",
+                "Grafiks is unavailable in this installation.",
+                False,
+                "stay_clean",
+            ),
+            "grafiks_runtime_invalid": (
+                "Grafiks unavailable",
+                "The Grafiks runtime is incomplete.",
+                False,
+                "stay_clean",
+            ),
+            "grafiks_spawn_failed": (
+                "Grafiks unavailable",
+                "Grafiks could not be started.",
+                True,
+                "retry",
+            ),
+            "grafiks_early_exit": (
+                "Grafiks unavailable",
+                "Grafiks stopped during startup.",
+                True,
+                "retry",
+            ),
+        }
+        self.assertEqual(UI_ERROR_DEFINITIONS, expected_definitions)
+        self.assertEqual(EMPTY_UI_ERROR, UiError("", "", "", False, ""))
+        self.assertFalse(hasattr(EMPTY_UI_ERROR, "__dict__"))
+        with self.assertRaises(FrozenInstanceError):
+            EMPTY_UI_ERROR.code = "changed"
+
+        meta_object = DesktopController.staticMetaObject
+        notify_signatures = set()
+        for property_name in (
+            "errorCode",
+            "errorTitle",
+            "errorSummary",
+            "errorRetryable",
+            "errorRecoveryAction",
+        ):
+            qt_property = meta_object.property(meta_object.indexOfProperty(property_name))
+            self.assertTrue(qt_property.isValid())
+            self.assertTrue(qt_property.isReadable())
+            self.assertFalse(qt_property.isWritable())
+            notify_signatures.add(bytes(qt_property.notifySignal().methodSignature()))
+        self.assertEqual(notify_signatures, {b"errorChanged()"})
+
+    def test_construction_is_reader_free_and_starts_on_about(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, loader, resolver = self._controller(Path(temp_dir))
+
+        loader.assert_not_called()
+        resolver.assert_not_called()
+        self.assertEqual(coordinator.requests, [])
+        self.assertEqual(controller.currentPageId, "about")
+        self.assertEqual(controller.currentProfileId, "G65")
+        self.assertEqual(controller.pageTitle, "About")
+        self.assertTrue(controller.pageSubtitle)
+        self.assertEqual(controller.pageState, "idle")
+        self.assertEqual(controller.currentPayload, {})
+        self.assertEqual(self._error_values(controller), ("", "", "", False, ""))
+
+    def test_invalid_initial_profile_is_rejected_before_it_can_be_observed(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaisesRegex(ValueError, "initial_profile_id"):
+                DesktopController(workspace=temp_dir, initial_profile_id=r"..\private")
+
+    def test_lazy_load_uses_keyword_page_first_arguments_then_cache_refresh_and_profile_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            loader = mock.Mock(
+                return_value=MappingProxyType(
+                    {"id": "delivery-checklist", "rows": [1], "status": "available"}
+                )
+            )
+            controller, coordinator, _loader, _resolver = self._controller(
+                workspace,
+                loader=loader,
+            )
+
+            self.assertTrue(controller.navigate("delivery-checklist"))
+            self.assertFalse(controller.navigate("delivery-checklist"))
+            identity, operation = coordinator.requests[-1]
+            self.assertEqual(
+                (
+                    identity.generation,
+                    identity.profile_id,
+                    identity.page_id,
+                    identity.operation,
+                ),
+                (1, "G65", "delivery-checklist", "load"),
+            )
+            self.assertEqual(controller.pageState, "loading")
+            self.assertNotIn("self", operation.__code__.co_freevars)
+            self.assertNotIn(controller, tuple(cell.cell_contents for cell in operation.__closure__ or ()))
+            loader.assert_not_called()
+
+            raw_payload = operation()
+            loader.assert_called_once_with(
+                page_id="delivery-checklist",
+                profile_id="G65",
+                workspace=workspace.resolve(),
+                bmw_root=None,
+            )
+            coordinator.succeed(identity, raw_payload)
+            self.assertEqual(controller.pageState, "ready")
+            self.assertIs(type(controller.currentPayload), dict)
+            self.assertEqual(controller.currentPayload["rows"], [1])
+
+            self.assertTrue(controller.navigate("delivery-checklist"))
+            self.assertEqual(len(coordinator.requests), 1)
+            self.assertEqual(controller.pageState, "ready")
+
+            self.assertTrue(controller.refresh())
+            refresh_identity, _refresh_operation = coordinator.requests[-1]
+            self.assertEqual(refresh_identity.operation, "refresh")
+            self.assertGreater(refresh_identity.generation, identity.generation)
+
+            self.assertTrue(controller.selectProfile("G70"))
+            profile_identity, _profile_operation = coordinator.requests[-1]
+
+        self.assertEqual(profile_identity.profile_id, "G70")
+        self.assertEqual(profile_identity.page_id, "delivery-checklist")
+        self.assertEqual(profile_identity.operation, "load")
+        self.assertGreater(profile_identity.generation, refresh_identity.generation)
+        self.assertEqual(controller.currentProfileId, "G70")
+
+    def test_initialize_defers_profile_resolution_and_calls_resolver_by_keyword(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            resolver = mock.Mock(return_value="G70")
+            controller, coordinator, loader, _resolver = self._controller(
+                workspace,
+                initial_profile_id="",
+                resolver=resolver,
+            )
+
+            self.assertEqual(coordinator.requests, [])
+            self.assertTrue(controller.initialize())
+            self.assertFalse(controller.initialize())
+            self.assertFalse(controller.navigate("delivery-checklist"))
+            self.assertEqual(len(coordinator.requests), 1)
+            identity, operation = coordinator.requests[0]
+            self.assertEqual(identity.operation, "resolve-profile")
+            resolver.assert_not_called()
+
+            resolved_profile = operation()
+            resolver.assert_called_once_with(workspace=workspace.resolve(), bmw_root=None)
+            coordinator.succeed(identity, resolved_profile)
+
+        loader.assert_not_called()
+        self.assertEqual(controller.currentProfileId, "G70")
+        self.assertEqual(controller.pageState, "idle")
+
+    def test_invalid_route_sets_all_error_properties_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _loader, _resolver = self._controller(Path(temp_dir))
+            observed: list[tuple[object, ...]] = []
+            controller.errorChanged.connect(lambda: observed.append(self._error_values(controller)))
+
+            self.assertFalse(controller.navigate("not-a-surface"))
+            expected = (
+                "action_rejected",
+                "Action unavailable",
+                "This action is not available from the current page.",
+                False,
+                "dismiss",
+            )
+            self.assertEqual(observed, [expected])
+            self.assertTrue(controller.navigate("delivery-checklist"))
+
+        empty = ("", "", "", False, "")
+        expected = (
+            "action_rejected",
+            "Action unavailable",
+            "This action is not available from the current page.",
+            False,
+            "dismiss",
+        )
+        self.assertEqual(observed, [expected, empty])
+        self.assertEqual(self._error_values(controller), empty)
+        self.assertEqual(len(coordinator.requests), 1)
+
+    def test_schedule_rejection_maps_to_action_rejected_without_raw_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _loader, _resolver = self._controller(Path(temp_dir))
+            coordinator.reject_next = True
+
+            self.assertFalse(controller.navigate("delivery-checklist"))
+
+        self.assertEqual(controller.pageState, "error")
+        self.assertEqual(controller.errorCode, "action_rejected")
+        self.assertEqual(
+            controller.errorSummary,
+            "This action is not available from the current page.",
+        )
+        self.assertEqual(coordinator.requests, [])
+
+    def test_invalid_profile_is_rejected_without_work_or_raw_input_exposure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _loader, _resolver = self._controller(Path(temp_dir))
+            raw_profile = r"..\operator-private\secret"
+
+            self.assertFalse(controller.selectProfile(raw_profile))
+
+        self.assertEqual(controller.currentProfileId, "G65")
+        self.assertEqual(coordinator.requests, [])
+        self.assertEqual(controller.errorCode, "action_rejected")
+        rendered = repr(self._error_values(controller)).casefold()
+        self.assertNotIn("operator-private", rendered)
+        self.assertNotIn("secret", rendered)
+
+    def test_current_mapping_success_is_copied_to_plain_dict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _loader, _resolver = self._controller(Path(temp_dir))
+            controller.navigate("delivery-checklist")
+            identity, _operation = coordinator.requests[-1]
+            source = {"id": "delivery-checklist", "rows": [1]}
+
+            coordinator.succeed(identity, MappingProxyType(source))
+            source["rows"] = [2]
+
+        self.assertEqual(controller.pageState, "ready")
+        self.assertIs(type(controller.currentPayload), dict)
+        self.assertEqual(controller.currentPayload["rows"], [1])
+
+    def test_current_non_mapping_success_maps_to_page_payload_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _loader, _resolver = self._controller(Path(temp_dir))
+            controller.navigate("delivery-checklist")
+            identity, _operation = coordinator.requests[-1]
+
+            coordinator.succeed(identity, ["unsupported", r"C:\private\payload"])
+
+        self.assertEqual(controller.pageState, "error")
+        self.assertEqual(controller.currentPayload, {})
+        self.assertEqual(
+            self._error_values(controller),
+            (
+                "page_payload_invalid",
+                "Evidence unavailable",
+                "The page evidence has an unsupported shape.",
+                False,
+                "open_clean",
+            ),
+        )
+        self.assertNotIn("private", repr(self._error_values(controller)).casefold())
+
+    def test_malformed_or_unknown_failure_maps_to_canonical_page_reader_failed(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskFailure
+
+        failures = (
+            None,
+            {"code": "raw", "summary": r"C:\private\failure"},
+            TaskFailure("page_reader_failed", r"C:\private\known raw secret", "PrivateError"),
+            TaskFailure("unknown_worker_code", r"C:\private\raw secret", "PrivateError"),
+        )
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    controller, coordinator, _loader, _resolver = self._controller(Path(temp_dir))
+                    controller.navigate("risk-score")
+                    identity, _operation = coordinator.requests[-1]
+
+                    coordinator.fail(identity, failure)
+
+                self.assertEqual(controller.pageState, "error")
+                self.assertEqual(
+                    self._error_values(controller),
+                    (
+                        "page_reader_failed",
+                        "Evidence unavailable",
+                        "The local page evidence could not be loaded.",
+                        True,
+                        "retry",
+                    ),
+                )
+                rendered = repr(self._error_values(controller)).casefold()
+                self.assertNotIn("private", rendered)
+                self.assertNotIn("secret", rendered)
+                self.assertNotIn("privateerror", rendered)
+
+    def _assert_stale_identity_field_is_rejected(self, field_name: str, changed_value: object) -> None:
+        from sg_preflight.desktop.task_pool import TaskFailure
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _loader, _resolver = self._controller(Path(temp_dir))
+            controller.navigate("delivery-checklist")
+            current_identity, _operation = coordinator.requests[-1]
+            stale_identity = replace(current_identity, **{field_name: changed_value})
+            before = (
+                controller.currentPageId,
+                controller.currentProfileId,
+                controller.pageState,
+                dict(controller.currentPayload),
+                dict(controller._cache),
+                self._error_values(controller),
+            )
+
+            coordinator.succeed(
+                stale_identity,
+                {"id": "delivery-checklist", "rows": ["stale-success"]},
+            )
+            self.assertEqual(
+                (
+                    controller.currentPageId,
+                    controller.currentProfileId,
+                    controller.pageState,
+                    dict(controller.currentPayload),
+                    dict(controller._cache),
+                    self._error_values(controller),
+                ),
+                before,
+            )
+
+            coordinator.fail(
+                stale_identity,
+                TaskFailure(
+                    "page_reader_failed",
+                    r"raw C:\private\stale failure",
+                    "PrivateError",
+                ),
+            )
+
+        self.assertEqual(
+            (
+                controller.currentPageId,
+                controller.currentProfileId,
+                controller.pageState,
+                dict(controller.currentPayload),
+                dict(controller._cache),
+                self._error_values(controller),
+            ),
+            before,
+        )
+
+    def test_stale_generation_success_and_failure_change_nothing(self) -> None:
+        self._assert_stale_identity_field_is_rejected("generation", 99)
+
+    def test_stale_profile_success_and_failure_change_nothing(self) -> None:
+        self._assert_stale_identity_field_is_rejected("profile_id", "G70")
+
+    def test_stale_page_success_and_failure_change_nothing(self) -> None:
+        self._assert_stale_identity_field_is_rejected("page_id", "risk-score")
+
+    def test_stale_operation_success_and_failure_change_nothing(self) -> None:
+        self._assert_stale_identity_field_is_rejected("operation", "refresh")
+
+    def test_real_coordinator_keeps_reader_work_off_the_gui_thread(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.desktop.task_pool import PageTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = PageTaskCoordinator()
+            reader_threads: list[int] = []
+            signal_threads: list[tuple[str, int]] = []
+
+            def loader(**kwargs: object) -> dict[str, object]:
+                reader_threads.append(threading.get_ident())
+                return {"id": kwargs["page_id"], "state": "available"}
+
+            controller = DesktopController(
+                workspace=temp_dir,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=loader,
+            )
+            gui_thread_id = threading.get_ident()
+            for signal_name in (
+                "currentPageChanged",
+                "currentProfileChanged",
+                "pageStateChanged",
+                "payloadChanged",
+                "errorChanged",
+            ):
+                signal = getattr(controller, signal_name)
+                signal.connect(
+                    lambda signal_name=signal_name: signal_threads.append(
+                        (signal_name, threading.get_ident())
+                    )
+                )
+
+            self.assertFalse(controller.navigate("not-a-surface"))
+            self.assertTrue(controller.navigate("delivery-checklist"))
+            self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
+            self.assertTrue(controller.selectProfile("G70"))
+            self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
+            self.assertTrue(coordinator.wait_for_done(1000))
+            coordinator.shutdown(timeout_ms=1000)
+
+        self.assertEqual(controller.pageState, "ready")
+        self.assertEqual(controller.currentPayload["state"], "available")
+        self.assertEqual(len(reader_threads), 2)
+        self.assertTrue(all(thread_id != gui_thread_id for thread_id in reader_threads))
+        self.assertEqual(
+            {signal_name for signal_name, _thread_id in signal_threads},
+            {
+                "currentPageChanged",
+                "currentProfileChanged",
+                "pageStateChanged",
+                "payloadChanged",
+                "errorChanged",
+            },
+        )
+        self.assertTrue(
+            all(thread_id == gui_thread_id for _signal_name, thread_id in signal_threads)
+        )
+
+    def test_shutdown_clears_state_is_idempotent_and_rejects_later_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _loader, _resolver = self._controller(Path(temp_dir))
+            controller.navigate("delivery-checklist")
+            identity, _operation = coordinator.requests[-1]
+            coordinator.succeed(identity, {"id": "delivery-checklist", "rows": [1]})
+            controller.navigate("not-a-surface")
+
+            self.assertIsNone(controller.shutdown())
+            self.assertIsNone(controller.shutdown())
+            self.assertFalse(controller.navigate("risk-score"))
+            self.assertFalse(controller.selectProfile("G70"))
+            self.assertFalse(controller.refresh())
+            self.assertFalse(controller.initialize())
+
+        self.assertEqual(coordinator.shutdown_calls, [])
+        self.assertEqual(controller.pageState, "idle")
+        self.assertEqual(controller.currentPayload, {})
+        self.assertEqual(self._error_values(controller), ("", "", "", False, ""))
+
+
+class TestQtPageReadSafety(unittest.TestCase):
+    @staticmethod
+    def _dependency_item(key: str) -> dict[str, object]:
+        return {
+            "key": key,
+            "label": key,
+            "status": "missing",
+            "detail": "Unavailable in test fixture.",
+            "path": "",
+            "setup_action": None,
+        }
+
+    def test_public_page_and_loader_contracts_remain_page_first(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_page
+        from sg_preflight.desktop.qt_quick_controller import (
+            PageLoader,
+            ProfileResolver,
+            load_dashboard_surface,
+            resolve_dashboard_profile,
+        )
+
+        page_parameters = tuple(inspect.signature(build_dashboard_page).parameters.values())
+        loader_parameters = tuple(inspect.signature(load_dashboard_surface).parameters.values())
+        resolver_parameters = tuple(inspect.signature(resolve_dashboard_profile).parameters.values())
+        loader_protocol_parameters = tuple(inspect.signature(PageLoader.__call__).parameters.values())
+        resolver_protocol_parameters = tuple(inspect.signature(ProfileResolver.__call__).parameters.values())
+
+        self.assertEqual(tuple(item.name for item in page_parameters[:3]), ("page_id", "profile_id", "workspace"))
+        self.assertEqual(tuple(item.name for item in loader_parameters[:3]), ("page_id", "profile_id", "workspace"))
+        self.assertEqual(loader_parameters[3].name, "bmw_root")
+        self.assertEqual(loader_parameters[3].kind, inspect.Parameter.KEYWORD_ONLY)
+        self.assertEqual(resolver_parameters[0].name, "workspace")
+        self.assertEqual(resolver_parameters[1].name, "bmw_root")
+        self.assertEqual(resolver_parameters[1].kind, inspect.Parameter.KEYWORD_ONLY)
+        self.assertEqual(
+            tuple(item.name for item in loader_protocol_parameters[1:4]),
+            ("page_id", "profile_id", "workspace"),
+        )
+        self.assertEqual(loader_protocol_parameters[4].name, "bmw_root")
+        self.assertEqual(loader_protocol_parameters[4].kind, inspect.Parameter.KEYWORD_ONLY)
+        self.assertEqual(resolver_protocol_parameters[1].name, "workspace")
+        self.assertEqual(resolver_protocol_parameters[2].name, "bmw_root")
+        self.assertEqual(resolver_protocol_parameters[2].kind, inspect.Parameter.KEYWORD_ONLY)
+
+    def test_page_first_loader_calls_dashboard_builder_by_keyword_and_disables_persistence(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import load_dashboard_surface
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            with mock.patch(
+                "sg_preflight.dashboard.main.build_dashboard_page",
+                return_value={"id": "delivery-checklist", "revision": "abc123"},
+            ) as page_builder:
+                payload = load_dashboard_surface(
+                    "delivery-checklist",
+                    "G65",
+                    workspace,
+                    bmw_root=None,
+                )
+
+        self.assertEqual(payload["id"], "delivery-checklist")
+        page_builder.assert_called_once_with(
+            page_id="delivery-checklist",
+            profile_id="G65",
+            workspace=workspace,
+            bmw_root=None,
+            ui_mode="clean",
+            persist_dependency_state=False,
+        )
+
+    def test_profile_resolver_uses_direct_read_only_profile_options_by_keyword(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import resolve_dashboard_profile
+        from sg_preflight.profiles import PROFILE_SCOPE_DEFAULT
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            default_options = [{"id": "G65"}]
+            all_options = [{"id": "G65"}, {"id": "G70"}]
+            with (
+                mock.patch(
+                    "sg_preflight.dashboard_preferences.dashboard_profile_options",
+                    side_effect=(default_options, all_options),
+                ) as profile_options,
+                mock.patch(
+                    "sg_preflight.dashboard_preferences._resolve_dashboard_profile_id",
+                    return_value="G70",
+                ) as profile_resolver,
+                mock.patch(
+                    "sg_preflight.dashboard.main.build_dashboard_snapshot",
+                    side_effect=AssertionError("profile resolution must stay on direct readers"),
+                ) as snapshot_builder,
+            ):
+                profile_id = resolve_dashboard_profile(workspace=workspace, bmw_root=None)
+
+        self.assertEqual(profile_id, "G70")
+        self.assertEqual(
+            profile_options.call_args_list,
+            [
+                mock.call(bmw_root=None, profile_scope=PROFILE_SCOPE_DEFAULT),
+                mock.call(bmw_root=None, profile_scope="all"),
+            ],
+        )
+        profile_resolver.assert_called_once_with(
+            "",
+            all_options,
+            workspace=workspace.resolve(),
+            fallback_options=default_options,
+        )
+        snapshot_builder.assert_not_called()
+
+    def test_dashboard_page_forwards_persistence_mode_to_snapshot_by_keyword(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_page
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            with mock.patch(
+                "sg_preflight.dashboard.main.build_dashboard_snapshot",
+                return_value={"pages": [{"id": "setup-doctor", "status": "available"}]},
+            ) as snapshot_builder:
+                page = build_dashboard_page(
+                    "setup-doctor",
+                    "G65",
+                    workspace,
+                    persist_dependency_state=False,
+                )
+
+        self.assertEqual(page["id"], "setup-doctor")
+        kwargs = snapshot_builder.call_args.kwargs
+        self.assertEqual(kwargs["profile_id"], "G65")
+        self.assertEqual(kwargs["workspace"], workspace)
+        self.assertFalse(kwargs["persist_dependency_state"])
+        self.assertEqual(snapshot_builder.call_args.args, ())
+
+    def test_snapshot_forwards_non_persistence_to_dependency_status(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            with mock.patch(
+                "sg_preflight.dashboard.main.build_dependency_onboarding_status",
+                return_value={"first_run": False, "actions": []},
+            ) as status:
+                build_dashboard_snapshot(
+                    "G65",
+                    workspace,
+                    defer_daily_digest=True,
+                    defer_team_digest_board=True,
+                    lazy_pages=True,
+                    persist_dependency_state=False,
+                )
+
+        self.assertFalse(status.call_args.kwargs["persist_auto_detected_paths"])
+
+    def test_dependency_status_guard_skips_only_the_final_task4_persistence_helper(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        item = self._dependency_item("fixture")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            patches = (
+                mock.patch.object(onboarding, "_raco_status", return_value=(dict(item), dict(item))),
+                mock.patch.object(onboarding, "_blender_status", return_value=dict(item)),
+                mock.patch.object(onboarding, "_bmw_repo_status", return_value=dict(item)),
+                mock.patch.object(onboarding, "_idc23_repo_status", return_value=dict(item)),
+                mock.patch.object(onboarding, "_bmw_ci_requirements_status", return_value=dict(item)),
+                mock.patch.object(onboarding, "_persist_auto_detected_dependency_paths"),
+            )
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5] as persist:
+                onboarding.build_dependency_onboarding_status(
+                    workspace=workspace,
+                    persist_auto_detected_paths=False,
+                )
+                persist.assert_not_called()
+
+                onboarding.build_dependency_onboarding_status(workspace=workspace)
+                persist.assert_called_once()
+
+    def test_qt_loader_disables_dependency_persistence_in_the_real_page_chain(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import load_dashboard_surface
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            with mock.patch(
+                "sg_preflight.dashboard.main.build_dependency_onboarding_status",
+                return_value={"first_run": False, "actions": []},
+            ) as status:
+                load_dashboard_surface("setup-doctor", "G65", workspace)
+
+        self.assertFalse(status.call_args.kwargs["persist_auto_detected_paths"])
+
+    def test_real_qt_read_leaves_the_temporary_workspace_file_set_unchanged(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import load_dashboard_surface
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            before = tuple(
+                path.relative_to(workspace)
+                for path in workspace.rglob("*")
+                if path.is_file()
+            )
+
+            payload = load_dashboard_surface("delivery-checklist", "G65", workspace)
+
+            after = tuple(
+                path.relative_to(workspace)
+                for path in workspace.rglob("*")
+                if path.is_file()
+            )
+
+        self.assertEqual(payload["id"], "delivery-checklist")
+        self.assertEqual(after, before)
 
 
 if __name__ == "__main__":
