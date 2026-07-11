@@ -72,7 +72,7 @@ Templates are saved as JSON under the current workspace's `templates\` folder. T
 ### SG / BMW evidence readers
 
 ```powershell
-python -m sg_preflight delivery-checklist read --profile <profile> --format json
+python -m sg_preflight delivery-documentation read --profile <profile> --format json
 python -m sg_preflight export-size-analysis read --profile <profile> --workspace C:\repositories\trunk --latest --format markdown
 python -m sg_preflight screenshot-test-state read --profile <profile> --format json
 python -m sg_preflight bmw-git-readiness read --profile <profile> --format markdown

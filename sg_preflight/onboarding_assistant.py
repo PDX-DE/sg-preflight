@@ -62,7 +62,7 @@ def build_onboarding_guide(
     template = review_template_for_profile(clean_profile, workspace=root)
     setup_step_status = str(setup_status.get("status", "unknown")).strip() or "unknown"
     setup_next_action = (
-        "Open Delivery Checklist -> Dependency setup and run only the confirmed setup action."
+        "Open Delivery documentation -> Dependency setup and run only the confirmed setup action."
         if setup_actions
         else "No setup action is pending; continue to evidence pages."
     )
@@ -90,7 +90,7 @@ def build_onboarding_guide(
             key="evidence-pages",
             label="Evidence pages",
             status="not_run",
-            detail="Read Delivery Checklist, Screenshot Test State, Risk Score, and Cross-Car Comparison for this car.",
+            detail="Read Delivery documentation, Screenshot Test State, Risk Score, and Cross-Car Comparison for this car.",
             next_action="Open each evidence page and review local file status before recording findings.",
         ),
         _guide_step(

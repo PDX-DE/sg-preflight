@@ -12,7 +12,7 @@ from sg_preflight.bmw_delivery import candidate_bmw_profile_ids, resolve_svn_pro
 
 WORKBOOK_NAME = "Delivery Data - BMW.xlsx"
 READ_ONLY_BANNER = (
-    "Delivery checklist data is read-only from the operator-local Excel workbook. "
+    "Delivery documentation is read-only evidence from the operator-local Excel workbook. "
     "SGFX does not run the delivery checklist or modify the workbook."
 )
 DELIVERY_CHECKLIST_ESCALATION_ANCHOR = (
@@ -357,7 +357,7 @@ def delivery_workbook_missing_summary(
     """
     profile = profile_id.strip() or "profile"
     parts = [
-        f"delivery-checklist data unavailable: size-analysis workbook not found for {profile}.",
+        f"Delivery documentation unavailable: size-analysis workbook not found for {profile}.",
     ]
 
     # When workspace is available, consult the internal milestone finder so the operator sees
@@ -439,7 +439,7 @@ def _missing_payload(
         "workbook_metadata": _workbook_metadata(workbook_path, brand=brand),
         "checks": [],
         "summary": summary,
-        "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+        "note": "Read-only delivery documentation evidence guidance; not approval or delivery signoff.",
         "manual_review_required": True,
         "is_approval": False,
     }
@@ -535,7 +535,7 @@ def _overview_delivery_payload(
     workbook_date = _date_text_from_token(_filename_date_token(workbook))
     date_text = f" dated {workbook_date}" if workbook_date else ""
     summary = (
-        f"Delivery checklist {profile}: size-analysis workbook{date_text} found with "
+        f"Delivery documentation for {profile}: size-analysis workbook{date_text} found with "
         f"{len(variants)} variant rows in the Overview sheet."
     )
     return {
@@ -552,7 +552,7 @@ def _overview_delivery_payload(
         "workbook_metadata": _workbook_metadata(workbook, brand=brand, row_count=len(rows)),
         "checks": checks,
         "summary": summary,
-        "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+        "note": "Read-only delivery documentation evidence guidance; not approval or delivery signoff.",
         "is_approval": False,
     }
 
@@ -611,7 +611,7 @@ def _versioned_overview_delivery_payload(
     ]
     date_text = f" dated {last_tested}" if last_tested else ""
     summary = (
-        f"Delivery checklist {profile}: size-analysis workbook{date_text} found with "
+        f"Delivery documentation for {profile}: size-analysis workbook{date_text} found with "
         f"{len(variant_totals)} variant columns in the Overview sheet."
     )
     return {
@@ -628,7 +628,7 @@ def _versioned_overview_delivery_payload(
         "workbook_metadata": _workbook_metadata(workbook, brand=brand, row_count=len(rows)),
         "checks": checks,
         "summary": summary,
-        "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+        "note": "Read-only delivery documentation evidence guidance; not approval or delivery signoff.",
         "is_approval": False,
     }
 
@@ -653,9 +653,9 @@ def _sheet_delivery_payload(
         if item["raw_value"] or item["status"] != "pending"
     ]
     summary = (
-        f"Delivery checklist {profile}: {'; '.join(summary_parts)}."
+        f"Delivery documentation for {profile}: {'; '.join(summary_parts)}."
         if summary_parts
-        else f"Delivery checklist {profile}: workbook row found, but no export-size values were recorded."
+        else f"Delivery documentation for {profile}: workbook row found, but no export-size values were recorded."
     )
     comment = _cell_text(mapped.get("comment"))
     if comment:
@@ -674,7 +674,7 @@ def _sheet_delivery_payload(
         "workbook_metadata": _workbook_metadata(workbook, brand=brand, row_count=row_count),
         "checks": checks,
         "summary": summary,
-        "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+        "note": "Read-only delivery documentation evidence guidance; not approval or delivery signoff.",
         "is_approval": False,
     }
 
@@ -726,7 +726,7 @@ def read_delivery_checklist(
             profile,
             workbook,
             "unreadable",
-            f"delivery-checklist data unavailable: workbook could not be read: {exc}",
+            f"Delivery documentation unavailable: workbook could not be read: {exc}",
             brand=brand,
         )
 
@@ -795,7 +795,11 @@ def read_delivery_checklist(
                 check_summary = "; ".join(
                     f"{item['label']} {_status_text(str(item['status']))}" for item in checks
                 )
-                summary = f"Delivery checklist {profile}: {check_summary}." if check_summary else f"Delivery checklist {profile}: no check columns found."
+                summary = (
+                    f"Delivery documentation for {profile}: {check_summary}."
+                    if check_summary
+                    else f"Delivery documentation for {profile}: no check columns found."
+                )
                 return {
                     "profile_id": profile,
                     "matched_profile_id": profile_value,
@@ -810,7 +814,7 @@ def read_delivery_checklist(
                     "workbook_metadata": _workbook_metadata(workbook, brand=brand, row_count=workbook_row_count),
                     "checks": checks,
                     "summary": summary,
-                    "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+                    "note": "Read-only delivery documentation evidence guidance; not approval or delivery signoff.",
                     "is_approval": False,
                 }
             if latest_sheet_row is not None:
@@ -871,12 +875,12 @@ def delivery_checklist_digest_items(state: dict[str, Any]) -> list[dict[str, Any
             detail = "; ".join(check_parts)
         items.append(
             {
-                "label": f"Delivery checklist {profile}",
+                "label": f"Delivery documentation for {profile}",
                 "status": "prepared" if raw_item.get("data_available") else str(raw_item.get("status", "not_available")),
                 "detail": detail,
                 "source": "delivery_checklist",
                 "path": str(raw_item.get("workbook_path", "")).strip(),
-                "note": "Read-only delivery-checklist evidence guidance; not approval or delivery signoff.",
+                "note": "Read-only delivery documentation evidence guidance; not approval or delivery signoff.",
             }
         )
     return items
@@ -886,7 +890,7 @@ def render_delivery_checklist_markdown(payload: dict[str, Any]) -> str:
     lines = [
         READ_ONLY_BANNER,
         "",
-        f"# Delivery Checklist Evidence - {payload.get('profile_id', 'profile')}",
+        f"# Delivery documentation evidence - {payload.get('profile_id', 'profile')}",
         "",
         f"- Status: `{payload.get('status', 'unknown')}`",
         f"- Data available: `{str(bool(payload.get('data_available'))).lower()}`",
@@ -935,7 +939,7 @@ def render_delivery_checklist_markdown(payload: dict[str, Any]) -> str:
 def render_delivery_checklist_text(payload: dict[str, Any]) -> str:
     lines = [
         READ_ONLY_BANNER,
-        str(payload.get("summary", "Delivery checklist status unavailable.")),
+        str(payload.get("summary", "Delivery documentation status unavailable.")),
         "Manual delivery review remains required.",
     ]
     workbook_path = str(payload.get("workbook_path", "")).strip()

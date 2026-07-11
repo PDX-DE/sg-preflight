@@ -134,8 +134,17 @@ from sg_preflight.screenshot_capture import (
     start_screenshot_capture_with_export_check,
 )
 from sg_preflight.services import operator_ui_root
+from sg_preflight.shell_registry import (
+    HOME_HUB_TILES,
+    HOME_ROUTE_ID,
+    HOME_SUBTITLE,
+    HOME_TITLE,
+    NAVIGATION_GROUP_ORDER,
+    SHORTCUT_ACTIONS,
+)
 from sg_preflight.setup_doctor import build_setup_doctor_report
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs, sgfx_cli_command
+from sg_preflight.surface_registry import SURFACE_DESCRIPTORS, get_surface_descriptor, is_registered_surface
 from sg_preflight.team_digest_board import build_team_daily_digest_board
 from sg_preflight.utils import ensure_parent
 from sg_preflight.visual_review import build_visual_review_prep
@@ -222,7 +231,7 @@ from sg_preflight.dashboard_pages_config import (
     _int_payload_value,
     _screenshot_empty_note,
     _reader_page,
-    _delivery_checklist_page,
+    _delivery_checklist_page as _build_delivery_checklist_page,
     _delivery_readiness_payload,
     _delivery_readiness_page,
     _cross_domain_delivery_payload,
@@ -461,90 +470,68 @@ DASHBOARD_GUARDRAILS = (
     "BMW Git access is read-only. SGFX never modifies BMW source.",
     "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
 )
+
+
+def _navigation_item(page_id: str, fallback_title: str) -> tuple[str, str]:
+    if is_registered_surface(page_id):
+        return page_id, get_surface_descriptor(page_id).title
+    return page_id, fallback_title
+
+
 DASHBOARD_NAVIGATION = (
-    ("home", "Home"),
-    ("full-qa-pass", "Full QA Pass"),
-    ("batch-full-qa-pass", "Batch Full QA Pass"),
+    (HOME_ROUTE_ID, HOME_TITLE),
+    _navigation_item("full-qa-pass", "Full QA Pass"),
+    _navigation_item("batch-full-qa-pass", "Batch Full QA Pass"),
     ("my-tickets", "My Tickets"),
     ("weekly-ticket-draft", "Weekly Ticket Draft"),
     ("whats-new", "What's New"),
     ("keyboard-shortcuts", "Keyboard Shortcuts"),
     ("settings", "Settings"),
-    ("delivery-checklist", "Delivery Checklist"),
+    _navigation_item("delivery-checklist", "Delivery documentation"),
     ("delivery-readiness", "Delivery Readiness"),
     ("cross-domain-delivery", "Cross-Domain Delivery"),
     ("perspectives-inventory", "Perspectives"),
     ("rack-readiness", "Rack Readiness"),
-    ("disabled-tests", "Disabled Tests"),
-    ("api-version-coverage", "API Version"),
-    ("country-variant-coverage", "Country Variants"),
-    ("export-size-trend", "Size Trend"),
-    ("onboarding-guide", "Onboarding Guide"),
-    ("setup-doctor", "Setup Doctor"),
-    ("qa-workflows", "QA Workflows"),
-    ("bmw-process", "BMW Process"),
-    ("screenshot-test-state", "Screenshot Test State"),
-    ("risk-score", "Risk Score"),
-    ("cross-car-comparison", "Cross-Car Comparison"),
-    ("daily-digest", "Daily Digest"),
-    ("team-digest-board", "Team Digest Board"),
-    ("operator-handoff", "Operator Handoff"),
-    ("manual-review", "Manual Review Companion"),
-    ("about", "About"),
+    _navigation_item("disabled-tests", "Disabled Tests"),
+    _navigation_item("api-version-coverage", "API Version"),
+    _navigation_item("country-variant-coverage", "Country Variants"),
+    _navigation_item("export-size-trend", "Size Trend"),
+    _navigation_item("onboarding-guide", "Onboarding Guide"),
+    _navigation_item("setup-doctor", "Setup Doctor"),
+    _navigation_item("qa-workflows", "QA Workflows"),
+    _navigation_item("bmw-process", "BMW Process"),
+    _navigation_item("screenshot-test-state", "Screenshot Test State"),
+    _navigation_item("risk-score", "Risk Score"),
+    _navigation_item("cross-car-comparison", "Cross-Car Comparison"),
+    _navigation_item("daily-digest", "Daily Digest"),
+    _navigation_item("team-digest-board", "Team Digest Board"),
+    _navigation_item("operator-handoff", "Operator Handoff"),
+    _navigation_item("manual-review", "Manual Review Companion"),
+    _navigation_item("about", "About"),
 )
+PRIMARY_SURFACE_SUBTITLES = {item.surface_id: item.subtitle for item in SURFACE_DESCRIPTORS}
 # Sidebar information architecture: the flat page list above is grouped into a small
 # number of scannable sections. "home" is the standalone hub and is not listed here.
 # Any page id missing from every group falls into a visible "More" catch-all so a new
 # page can never silently vanish from navigation.
-DASHBOARD_NAV_GROUPS = (
-    ("Daily work", ("full-qa-pass", "batch-full-qa-pass", "my-tickets", "weekly-ticket-draft")),
+_PRESERVED_NAV_GROUP_EXTRAS = {
+    "Daily work": ("my-tickets", "weekly-ticket-draft"),
+    "Delivery": ("delivery-readiness", "cross-domain-delivery", "perspectives-inventory", "rack-readiness"),
+    "Screenshots & coverage": (),
+    "Reviews & digests": (),
+    "Setup & help": ("settings", "keyboard-shortcuts", "whats-new"),
+}
+DASHBOARD_NAV_GROUPS = tuple(
     (
-        "Delivery",
-        (
-            "delivery-checklist",
-            "delivery-readiness",
-            "cross-domain-delivery",
-            "perspectives-inventory",
-            "rack-readiness",
-        ),
-    ),
-    (
-        "Screenshots & coverage",
-        (
-            "screenshot-test-state",
-            "risk-score",
-            "cross-car-comparison",
-            "disabled-tests",
-            "api-version-coverage",
-            "country-variant-coverage",
-            "export-size-trend",
-        ),
-    ),
-    ("Reviews & digests", ("daily-digest", "team-digest-board", "operator-handoff", "manual-review")),
-    (
-        "Setup & help",
-        (
-            "settings",
-            "setup-doctor",
-            "onboarding-guide",
-            "qa-workflows",
-            "bmw-process",
-            "keyboard-shortcuts",
-            "whats-new",
-            "about",
-        ),
-    ),
-)
-# Home hub: the "where do I need to look today" tiles. Each tile is a big clickable
-# card that jumps to a core page. Kept navigation-only (no board computation) so the
-# hub renders instantly.
-HOME_HUB_TILES = (
-    ("full-qa-pass", "Full QA Pass", "dashboard", "Run the whole preflight for one car profile."),
-    ("delivery-checklist", "Delivery Checklist", "fact_check", "Delivery evidence for the selected car."),
-    ("screenshot-test-state", "Screenshots", "image", "Reference vs actual screenshot status."),
-    ("cross-domain-delivery", "Cross-Domain", "account_tree", "Version drift across the pipeline."),
-    ("my-tickets", "My Tickets", "confirmation_number", "Your Jira tickets and draft updates."),
-    ("daily-digest", "Daily Digest", "summarize", "Morning standup summary for the team."),
+        group_title,
+        tuple(
+            item.surface_id
+            for item in SURFACE_DESCRIPTORS
+            if item.navigation_group == group_title
+        )
+        + _PRESERVED_NAV_GROUP_EXTRAS[group_title],
+    )
+    for group_title in NAVIGATION_GROUP_ORDER
 )
 DASHBOARD_SHORTCUTS = (
     "F1 Help",
@@ -554,21 +541,7 @@ DASHBOARD_SHORTCUTS = (
     "F12 Diagnostic",
     "Esc Close sidebar",
 )
-DASHBOARD_SHORTCUT_ACTIONS = (
-    ("F1", "Help: use the sidebar pages to inspect read-only SGFX evidence."),
-    ("F2", "Profile switch: use the Profile selector in the header."),
-    ("F3", "Reference: no action is assigned to F3 in this release."),
-    ("F4", "Reference: no action is assigned to F4 in this release."),
-    ("F5", "Refresh page: re-read the current profile evidence."),
-    ("F6", "Reference: no action is assigned to F6 in this release."),
-    ("F7", "Reference: no action is assigned to F7 in this release."),
-    ("F8", "Reference: no action is assigned to F8 in this release."),
-    ("F9", "Reference: no action is assigned to F9 in this release."),
-    ("F10", "Reference: no action is assigned to F10 in this release."),
-    ("F11", "Reference: no action is assigned to F11 in this release."),
-    ("F12", "Diagnostic: profile, workspace, and current page are shown in the header."),
-    ("Esc", "Close sidebar: hides the sidebar. To exit, close the native window or browser tab when your review is done."),
-)
+DASHBOARD_SHORTCUT_ACTIONS = SHORTCUT_ACTIONS
 THEME_CHOICES = ["clean"]
 CONFLUENCE_DUMP_SPACE_KEY = "PDX_SERGFX"
 CONFLUENCE_DUMP_PREFIX = f"{CONFLUENCE_DUMP_SPACE_KEY}/"
@@ -592,7 +565,7 @@ ABOUT_CONTENT: dict[str, Any] = {
     "heading": "About",
     "description": (
         "Local-only QA preflight tool for the SGFX Seriengrafik delivery workflow. "
-        "Reads operator-local evidence (delivery checklists, screenshot test state, BMW pipeline "
+        "Reads operator-local evidence (delivery documentation, screenshot test state, BMW pipeline "
         "outputs, manual-review verdicts) and surfaces it for the morning Quality-Hero standup. "
         "Never modifies BMW source; never posts to Jira, SVN, or BMW Git."
     ),
@@ -614,11 +587,12 @@ ABOUT_CONTENT: dict[str, Any] = {
     ),
     "data_handling_disclosure": (
         "Data handling",
-        "This tool reads operator-local files (delivery checklists, BMW pipeline outputs, screenshot test state, manual-review records) and renders them for the morning Quality-Hero standup. No telemetry, no external service calls.",
+        "This tool reads operator-local files (delivery documentation, BMW pipeline outputs, screenshot test state, manual-review records) and renders them for the morning Quality-Hero standup. No telemetry, no external service calls.",
         "Suggested evidence comes from a deterministic local filesystem probe — does this file exist, does this directory contain these files, does this workbook have these rows. The operator records every verdict; the tool does not pre-decide.",
         "The Jira post flow is the one explicit network boundary, and it stays default-off behind a --confirm flag. Default mode is dry-run.",
     ),
 }
+ABOUT_CONTENT["tagline"] = PRIMARY_SURFACE_SUBTITLES["about"]
 
 # Logo placement spec:
 #   sidebar header (Clean):        sgfx_icon.png        ~200 x auto px
@@ -796,11 +770,30 @@ def _dashboard_changed_profiles(workspace_text: str, bmw_root_text: str) -> dict
     )
 
 
+def _delivery_checklist_page(
+    profile_id: str,
+    workspace: Path,
+    *,
+    bmw_root: Path | str | None = None,
+    setup_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    page = _build_delivery_checklist_page(
+        profile_id,
+        workspace,
+        bmw_root=bmw_root,
+        setup_status=setup_status,
+    )
+    descriptor = get_surface_descriptor("delivery-checklist")
+    page["title"] = descriptor.title
+    page["tagline"] = descriptor.subtitle
+    return page
+
+
 _EAGER_PAGE_IDS = frozenset({"home", "whats-new", "keyboard-shortcuts", "bmw-process"})
 
 
 def _deferred_page_stub(page_id: str, title: str) -> dict[str, Any]:
-    return {
+    return _apply_shell_metadata(page_id, {
         "id": page_id,
         "title": title,
         "tagline": "",
@@ -811,7 +804,19 @@ def _deferred_page_stub(page_id: str, title: str) -> dict[str, Any]:
         "summary": f"{title} loads when opened.",
         "items": [],
         "actions": [],
-    }
+    })
+
+
+def _apply_shell_metadata(page_id: str, page: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(page)
+    if page_id == HOME_ROUTE_ID:
+        normalized["title"] = HOME_TITLE
+        normalized["tagline"] = HOME_SUBTITLE
+    elif is_registered_surface(page_id):
+        descriptor = get_surface_descriptor(page_id)
+        normalized["title"] = descriptor.title
+        normalized["tagline"] = descriptor.subtitle
+    return normalized
 
 
 def build_dashboard_snapshot(
@@ -1023,7 +1028,7 @@ def _build_dashboard_pages(
         if lazy_pages and page_id not in _EAGER_PAGE_IDS and page_id not in requested:
             pages.append(_deferred_page_stub(page_id, titles.get(page_id, page_id)))
         else:
-            pages.append(builder())
+            pages.append(_apply_shell_metadata(page_id, builder()))
     return pages
 
 
@@ -3836,13 +3841,13 @@ def _render_dashboard(
                         open_batch=_open_changed_profiles_batch,
                     )
                     with ui.element("div").classes("sgfx-hub-grid full-width"):
-                        for tile_id, tile_label, tile_icon, tile_desc in HOME_HUB_TILES:
+                        for tile in HOME_HUB_TILES:
                             with ui.element("button").classes("sgfx-hub-tile").on(
-                                "click", lambda page_id=tile_id: _open_page(page_id)
+                                "click", lambda page_id=tile.surface_id: _open_page(page_id)
                             ):
-                                ui.icon(tile_icon).classes("sgfx-hub-tile-icon")
-                                ui.label(tile_label).classes("sgfx-hub-tile-title")
-                                ui.label(tile_desc).classes("sgfx-hub-tile-desc")
+                                ui.icon(tile.icon_key).classes("sgfx-hub-tile-icon")
+                                ui.label(tile.title).classes("sgfx-hub-tile-title")
+                                ui.label(tile.subtitle).classes("sgfx-hub-tile-desc")
                     home_page = _pages_by_id().get("home", {})
                     _render_page_panel(ui, home_page)
                 elif active_page_id == "delivery-checklist":

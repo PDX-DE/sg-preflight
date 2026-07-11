@@ -11,7 +11,7 @@ outside this bundle.
 - Screenshot review prioritization: P0-P3 suggested review order for screenshot candidates. This is guidance, not a verdict.
 - Daily / morning QA digest: JSON, text, and Markdown status summaries with evidence, blockers, manual-review pending, waiting-owner, and suggested-review-order sections.
 - RaCo / Blender manual-review companion: operator-recorded manual-review sessions with Quality Hero step focus and no automatic verdict recording.
-- Delivery-checklist and export-size analysis readers: read-only ingestion of operator-local workbook evidence.
+- Delivery documentation and export-size analysis readers: read-only ingestion of operator-local workbook evidence.
 - BMW / MINI screenshot-test state and BMW Git readiness surfaces: read-only local dependency visibility for profile-level QA readiness.
 - QA Hero readiness surface: read-only presence/count summary for documented 3D Car review subsystems.
 - CLI usability updates: consistent `--format text|json|markdown` rendering and `--output-path` / `--out` file output for supported read/status commands.
@@ -24,7 +24,7 @@ outside this bundle.
 - Animated F1-F12 hotkey popup with debug icon: pressing a function key shows a brief evidence overlay with a one-line explainer.
 - Setup detection fast-path: when RaCo, Blender, RaCoHeadless, and the BMW Git checkout are present locally, SGFX detects them and skips manual setup ceremony.
 - Cross-panel dependency consistency: Dependency Setup and Generate Workbook pre-flight read from the same operator-local registration source.
-- Empty-state guidance per evidence page: Screenshot Test State, Daily Digest, Manual Review, Delivery Checklist, and the completed-setup welcome card explain unavailable local data.
+- Empty-state guidance per evidence page: Screenshot Test State, Daily Digest, Manual Review, Delivery documentation, and the completed-setup welcome card explain unavailable local data.
 - Auto-detect active ticket for Daily Digest from operator state, current branch, activity log, or operator entry.
 - Manual Review evidence hints per Quality-Hero step: SGFX surfaces available or missing local evidence while keeping `manual_review_required: true`.
 - Build review package progress UI: confirmation gate, background subprocess, live stdout tail, file-activity feed, elapsed time hint, and cancel button.
@@ -33,7 +33,7 @@ outside this bundle.
 - SVN-side profile name mapping: SGFX strips `_EVO` where needed for SVN-mirror reads.
 - Dynamic profile registry from BMW Git with active-build defaults and Show-all access to the full registered set.
 - Three honest `unavailable` classifications with Confluence anchors: BMW Git car not onboarded, BMW export succeeded but workbook not yet generated, and IDC_23 worktree setup missing.
-- Per-page Confluence anchor surfacing for delivery checklist, Quality-Hero workflow, BMW pipeline Python, SG Daily, manual review, and About surfaces.
+- Per-page Confluence anchor surfacing for delivery documentation, Quality-Hero workflow, BMW pipeline Python, SG Daily, manual review, and About surfaces.
 - Reusable env-gated real BMW pipeline probe for delivery export and screenshot capture evidence across G65, G70, NA8, F70, and U10.
 - Multi-profile walkthrough evidence across the five-profile set for Clean and Grafiks.
 - BMW pipeline copy-on-completion output: generated workbook evidence and screenshot actual/diff evidence are copied into `workspace/out/<profile>/` while the native BMW working path remains visible in the evidence payload.

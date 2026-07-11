@@ -72,12 +72,12 @@ The detailed checker-by-checker mapping now lives in [sg-checker-coverage-matrix
 
 ### 5. SG checker stack and `check_scenes.py`
 
-Current status: partially covered, with the main SG checker stack plus the delivery-checklist bridge now exposed more truthfully than before
+Current status: partially covered, with the main SG checker stack plus the delivery documentation bridge now exposed more truthfully than before
 
 What this means:
 
 - the mirrored repo already contains `check_scenes.py`
-- the UI now exposes repo checker, delivery-checklist readiness, scene check, and recommended QA-stack actions directly
+- the UI now exposes repo checker, delivery documentation readiness, scene check, and recommended QA-stack actions directly
 - the workspace action list now also covers `checkall.bat` scope through a full-repo checker action without calling the batch wrapper directly
 - repo checker now runs the SG checker stack through `code_style_checker\check_all_styles.py` plus `.pdx\checkers\executeChecks.py`
 - the per-car action list now also wraps `printNotUsedResources.py` for local unused-resource scans against the mirrored car project

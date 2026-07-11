@@ -43,6 +43,26 @@ class NiceGuiDashboardLazyImportTests(unittest.TestCase):
 
 
 class NiceGuiDashboardModelTests(unittest.TestCase):
+    def test_dashboard_uses_delivery_documentation_with_stable_id(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = build_dashboard_snapshot(
+                "G65",
+                tmp,
+                defer_daily_digest=True,
+                defer_team_digest_board=True,
+            )
+
+        page = next(item for item in snapshot["pages"] if item["id"] == "delivery-checklist")
+        nav = next(item for item in snapshot["navigation"] if item["id"] == "delivery-checklist")
+        self.assertEqual(page["title"], "Delivery documentation")
+        self.assertEqual(nav["label"], "Delivery documentation")
+        self.assertEqual(
+            page["tagline"],
+            "Read-only delivery workbook evidence for the selected profile.",
+        )
+
     def test_runtime_asset_helper_finds_sgfx_branding_files(self) -> None:
         from sg_preflight.assets import runtime_asset_dir, runtime_asset_path
 
@@ -390,7 +410,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 {"id": "whats-new", "label": "What's New"},
                 {"id": "keyboard-shortcuts", "label": "Keyboard Shortcuts"},
                 {"id": "settings", "label": "Settings"},
-                {"id": "delivery-checklist", "label": "Delivery Checklist"},
+                {"id": "delivery-checklist", "label": "Delivery documentation"},
                 {"id": "delivery-readiness", "label": "Delivery Readiness"},
                 {"id": "cross-domain-delivery", "label": "Cross-Domain Delivery"},
                 {"id": "perspectives-inventory", "label": "Perspectives"},
@@ -426,7 +446,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
         self.assertEqual(
             snapshot["pages"][0]["tagline"],
-            "What needs your attention today: data freshness, changed profiles, and your latest local activity.",
+            "Start with the local checks and evidence needed for the selected car.",
         )
         self.assertEqual(
             snapshot["pages"][1]["tagline"],
@@ -450,7 +470,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             pages_by_id["settings"]["tagline"],
             "Operator-local dashboard preferences for this machine.",
         )
-        self.assertEqual(pages_by_id["delivery-checklist"]["tagline"], "Workbook evidence per delivery profile (read-only).")
+        self.assertEqual(
+            pages_by_id["delivery-checklist"]["tagline"],
+            "Read-only delivery workbook evidence for the selected profile.",
+        )
         self.assertEqual(
             pages_by_id["delivery-readiness"]["tagline"],
             "Per-car CHANGELOG delivery status from local SVN and BMW catalog evidence.",
@@ -489,7 +512,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
         self.assertEqual(
             pages_by_id["setup-doctor"]["tagline"],
-            "Detect local SGFX dependencies and show version guidance from documented pins.",
+            "Detect-only setup status for local SGFX dependencies.",
         )
         self.assertEqual(
             pages_by_id["qa-workflows"]["tagline"],
@@ -1433,7 +1456,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             for item in page["items"]
             if "no action is assigned" not in item["detail"].lower()
         ]
-        self.assertEqual([item["label"] for item in active_actions], ["F1", "F2", "F5", "F12", "Esc"])
+        self.assertEqual([item["label"] for item in active_actions], ["F1", "F2", "F5", "/", "F12", "Esc"])
 
     def test_keyboard_shortcuts_page_is_read_only_human_voice_surface(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight"
@@ -2763,14 +2786,12 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         actions = {item["key"]: item["message"] for item in snapshot["shortcut_actions"]}
         self.assertIn("F1", actions)
         self.assertIn("F2", actions)
-        self.assertIn("F3", actions)
         self.assertIn("F5", actions)
-        self.assertIn("F11", actions)
+        self.assertIn("/", actions)
         self.assertIn("F12", actions)
         self.assertIn("Esc", actions)
-        self.assertIn("Profile", actions["F2"])
-        self.assertIn("Close sidebar", actions["Esc"])
-        self.assertNotIn("Quit", actions["Esc"])
+        self.assertEqual(actions["F2"], "Focus profile selection")
+        self.assertEqual(actions["Esc"], "Close the topmost overlay or sidebar")
 
     def test_dashboard_snapshot_abbreviates_visible_workspace_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2895,7 +2916,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 return_value={
                     "status": "available",
                     "data_available": True,
-                    "summary": "Delivery checklist G70: workbook found.",
+                    "summary": "Delivery documentation for G70: workbook found.",
                     "checks": [],
                     "is_approval": False,
                 },

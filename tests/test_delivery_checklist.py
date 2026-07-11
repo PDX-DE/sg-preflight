@@ -152,7 +152,7 @@ class TestDeliveryChecklist(unittest.TestCase):
         self.assertFalse(payload["data_available"])
         self.assertEqual(payload["profile_id"], "G65")
         self.assertIn("BMW Export Size.xlsx", payload["workbook_path"])
-        self.assertIn("delivery-checklist data unavailable", payload["summary"].lower())
+        self.assertIn("delivery documentation unavailable", payload["summary"].lower())
         self.assertEqual(payload["checks"], [])
         self.assertTrue(payload["manual_review_required"])
         self.assertIn("escalation", payload)
@@ -400,7 +400,7 @@ class TestDeliveryChecklist(unittest.TestCase):
                 {"key": "export_size", "label": "Export Size", "status": "passed"},
                 {"key": "screenshots", "label": "Screenshots", "status": "failed"},
             ],
-            "summary": "Delivery checklist G65: Export Size passed; Screenshots failed.",
+            "summary": "Delivery documentation for G65: Export Size passed; Screenshots failed.",
         }
 
         digest = build_daily_digest(
@@ -424,20 +424,20 @@ class TestDeliveryChecklist(unittest.TestCase):
         delivery_items = [item for item in evidence_items if item.get("source") == "delivery_checklist"]
 
         self.assertEqual(len(delivery_items), 1)
-        self.assertEqual(delivery_items[0]["label"], "Delivery checklist G65")
+        self.assertEqual(delivery_items[0]["label"], "Delivery documentation for G65")
         self.assertEqual(delivery_items[0]["status"], "prepared")
         self.assertIn("Export Size passed", delivery_items[0]["detail"])
         self.assertIn("Screenshots failed", delivery_items[0]["detail"])
         self.assertIn("evidence guidance", delivery_items[0]["note"])
         self.assertNotIn("approved", delivery_items[0]["note"].lower())
-        self.assertIn("Delivery checklist G65", digest["markdown"])
+        self.assertIn("Delivery documentation for G65", digest["markdown"])
 
     def test_daily_digest_does_not_hide_unavailable_delivery_checklist_data(self) -> None:
         checklist_payload = {
             "profile_id": "G65",
             "status": "unavailable",
             "data_available": False,
-            "summary": "delivery-checklist data unavailable: workbook not found.",
+            "summary": "Delivery documentation unavailable: workbook not found.",
             "workbook_path": "C:/missing/Delivery Data - BMW.xlsx",
         }
 
@@ -463,8 +463,8 @@ class TestDeliveryChecklist(unittest.TestCase):
 
         self.assertEqual(len(delivery_items), 1)
         self.assertEqual(delivery_items[0]["status"], "unavailable")
-        self.assertIn("data unavailable", delivery_items[0]["detail"])
-        self.assertIn("Delivery checklist G65", digest["markdown"])
+        self.assertIn("unavailable", delivery_items[0]["detail"])
+        self.assertIn("Delivery documentation for G65", digest["markdown"])
 
 
 if __name__ == "__main__":

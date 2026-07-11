@@ -256,6 +256,8 @@ class TestFullQaPass(unittest.TestCase):
 
         steps = {step["id"]: step for step in payload["steps"]}
         checklist_action = steps["delivery-checklist"]["inline_actions"][0]
+        self.assertEqual(steps["delivery-checklist"]["id"], "delivery-checklist")
+        self.assertEqual(steps["delivery-checklist"]["label"], "Delivery documentation")
         self.assertFalse(payload["halted"])
         self.assertEqual(steps["delivery-checklist"]["status"], "incomplete")
         self.assertEqual(checklist_action["id"], "generate-delivery-workbook")
@@ -316,11 +318,11 @@ class TestFullQaPass(unittest.TestCase):
 
         self.assertEqual(payload["status"], "incomplete")
         self.assertTrue(payload["halted"])
-        self.assertEqual(payload["halted_step"], "Delivery checklist")
-        self.assertIn("Halted at Delivery checklist", payload["summary"])
+        self.assertEqual(payload["halted_step"], "Delivery documentation")
+        self.assertIn("Halted at Delivery documentation", payload["summary"])
         skipped = [step for step in payload["steps"] if step["status"] == "skipped"]
         self.assertGreaterEqual(len(skipped), 1)
-        self.assertIn("Delivery checklist", skipped[0]["summary"])
+        self.assertIn("Delivery documentation", skipped[0]["summary"])
 
     def test_renderers_keep_guardrails_and_no_approval_claim(self) -> None:
         payload = {

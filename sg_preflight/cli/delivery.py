@@ -59,7 +59,7 @@ def _console_delivery_readiness(payload: dict[str, object]) -> None:
 
 
 def handle_delivery_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
-    if args.command == "delivery-checklist":
+    if args.command == "delivery-documentation":
         checklist_root = common._resolve_workspace(args)
         try:
             if args.delivery_checklist_command == "read":
@@ -72,10 +72,10 @@ def handle_delivery_command(args: argparse.Namespace, parser: argparse.ArgumentP
                     enable_auto_generate=bool(getattr(args, "enable_auto_generate", True)),
                 )
             else:
-                parser.error(f"Unhandled delivery-checklist command: {args.delivery_checklist_command}")
+                parser.error(f"Unhandled delivery-documentation command: {args.delivery_checklist_command}")
                 return 1
         except Exception as exc:
-            print(common._console_safe(f"delivery-checklist failed: {exc}"), file=sys.stderr)
+            print(common._console_safe(f"delivery-documentation failed: {exc}"), file=sys.stderr)
             return 1
         output_format = common._resolve_render_format(args, parser)
         if output_format == "json":

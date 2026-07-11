@@ -879,9 +879,9 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
         r"sgfx-preflight.exe delivery-workbook trigger --profile F70 --workspace C:\repositories\trunk --format json",
     ),
     (
-        "delivery-checklist",
-        "Read the operator-local delivery checklist workbook.",
-        r"sgfx-preflight.exe delivery-checklist read --profile G65 --workspace C:\repositories\trunk --format markdown",
+        "delivery-documentation",
+        "Read operator-local delivery workbook evidence.",
+        r"sgfx-preflight.exe delivery-documentation read --profile G65 --workspace C:\repositories\trunk --format markdown",
     ),
     (
         "export-size-analysis",
@@ -1019,6 +1019,8 @@ _COMMAND_EXAMPLES: dict[str, tuple[str, ...]] = {
     "full-qa-pass run": (_MAIN_ACTION_MAP[0][2],),
     "delivery-workbook": (_MAIN_ACTION_MAP[4][2],),
     "delivery-workbook trigger": (_MAIN_ACTION_MAP[4][2],),
+    "delivery-documentation": (_MAIN_ACTION_MAP[5][2],),
+    "delivery-documentation read": (_MAIN_ACTION_MAP[5][2],),
     "digest": (r"sgfx-preflight.exe digest weekly-tickets --workspace C:\repositories\trunk --format markdown",),
     "digest weekly-tickets": (
         r"sgfx-preflight.exe digest weekly-tickets --workspace C:\repositories\trunk --format markdown",
@@ -1687,15 +1689,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_render_options(full_qa_pass_run)
 
     delivery_checklist = sub.add_parser(
-        "delivery-checklist",
-        help="Read the operator-local delivery checklist workbook without writing to it",
+        "delivery-documentation",
+        help="Read delivery documentation from the operator-local Delivery Checklist workbook",
     )
     delivery_checklist_sub = delivery_checklist.add_subparsers(dest="delivery_checklist_command", required=True)
-    delivery_checklist_read = delivery_checklist_sub.add_parser("read", help="Read delivery checklist evidence for one profile")
+    delivery_checklist_read = delivery_checklist_sub.add_parser("read", help="Read delivery documentation for one profile")
     delivery_checklist_read.add_argument("--workspace", help="Workspace root override")
     delivery_checklist_read.add_argument("--profile", required=True, help="Profile id such as <profile>")
     delivery_checklist_read.add_argument("--brand", default="BMW", help="Workbook brand label such as BMW or Mini")
-    delivery_checklist_read.add_argument("--workbook", help="Explicit delivery checklist workbook path")
+    delivery_checklist_read.add_argument("--workbook", help="Explicit Delivery Checklist workbook path")
     delivery_checklist_read.add_argument(
         "--bmw-root",
         help="Explicit digital-3d-car-models checkout path (enables multi-location finder + auto-generation)",
@@ -1707,8 +1709,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Disable the raw-data to Format A xlsx auto-generation fallback",
     )
-    delivery_checklist_read.add_argument("--json", action="store_true", help="Print delivery checklist payload as JSON")
-    delivery_checklist_read.add_argument("--markdown", action="store_true", help="Print delivery checklist payload as Markdown")
+    delivery_checklist_read.add_argument("--json", action="store_true", help="Print delivery documentation payload as JSON")
+    delivery_checklist_read.add_argument("--markdown", action="store_true", help="Print delivery documentation payload as Markdown")
     _add_render_options(delivery_checklist_read)
 
     delivery_workbook = sub.add_parser(
@@ -3101,9 +3103,19 @@ def _normalize_weekly_ticket_since_argv(argv: list[str] | None) -> list[str] | N
     return normalized
 
 
+def _normalize_command_argv(argv: list[str] | None) -> list[str] | None:
+    normalized = _normalize_weekly_ticket_since_argv(argv)
+    if not normalized:
+        return normalized
+    normalized = list(normalized)
+    if normalized[0] == "delivery-checklist":
+        normalized[0] = "delivery-documentation"
+    return normalized
+
+
 def _main_impl(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(_normalize_weekly_ticket_since_argv(argv))
+    args = parser.parse_args(_normalize_command_argv(argv))
 
     if args.command == "run":
         from sg_preflight.cli.dev import handle_dev_command
@@ -3129,7 +3141,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
 
         return handle_readiness_command(args, parser)
 
-    if args.command in {"delivery-checklist", "delivery-workbook", "export-size-analysis"}:
+    if args.command in {"delivery-documentation", "delivery-workbook", "export-size-analysis"}:
         from sg_preflight.cli.delivery import handle_delivery_command
 
         return handle_delivery_command(args, parser)

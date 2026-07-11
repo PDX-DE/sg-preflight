@@ -15,7 +15,7 @@ from unittest import mock
 from openpyxl import Workbook
 
 from sg_preflight.activity_log import read_activity_entries
-from sg_preflight.cli import main
+from sg_preflight.cli import build_parser, main
 from sg_preflight.jira_client import JIRA_KEYRING_SERVICE
 from sg_preflight.qa_actions import build_action_record, get_operator_action, save_action_record
 from sg_preflight.services import RunRequest, execute_profile_run
@@ -1270,8 +1270,46 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(checks["screenshots"]["status"], "failed")
         self.assertFalse(payload["is_approval"])
         self.assertEqual(markdown_result, 0)
-        self.assertIn("Delivery checklist data is read-only", markdown_stdout.getvalue())
+        self.assertIn("Delivery documentation is read-only evidence", markdown_stdout.getvalue())
         self.assertIn("SGFX does not run the delivery checklist or modify the workbook.", markdown_stdout.getvalue())
+
+    def test_delivery_documentation_command_keeps_hidden_legacy_compatibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            canonical = io.StringIO()
+            legacy = io.StringIO()
+            with redirect_stdout(canonical):
+                canonical_code = main(
+                    [
+                        "delivery-documentation",
+                        "read",
+                        "--profile",
+                        "G65",
+                        "--workspace",
+                        tmp,
+                        "--format",
+                        "json",
+                    ]
+                )
+            with redirect_stdout(legacy):
+                legacy_code = main(
+                    [
+                        "delivery-checklist",
+                        "read",
+                        "--profile",
+                        "G65",
+                        "--workspace",
+                        tmp,
+                        "--format",
+                        "json",
+                    ]
+                )
+
+        help_text = build_parser().format_help()
+        self.assertEqual(canonical_code, 0)
+        self.assertEqual(legacy_code, 0)
+        self.assertEqual(json.loads(canonical.getvalue()), json.loads(legacy.getvalue()))
+        self.assertIn("delivery-documentation read", help_text)
+        self.assertNotIn("delivery-checklist", help_text)
 
     def test_delivery_workbook_trigger_cli_returns_json_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

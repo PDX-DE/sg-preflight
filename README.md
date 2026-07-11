@@ -10,16 +10,16 @@ It is not a production deployment, not a delivery package, and not a replacement
 - Screenshot review prioritization: P0-P3 suggested review order with reasons and signals. No screenshots are hidden or approved by the tool.
 - Daily / morning QA digest: JSON, text, and Markdown summaries for evidence prepared, blockers, manual review pending, waiting-for-owner state, workflow status, and suggested review order.
 - Manual review companion: Quality Hero review steps surfaced for operator notes and verdict entry. `recorded_by_tool` stays false.
-- Delivery checklist workbook reader: read-only ingestion of operator-local delivery checklist workbook data.
+- Delivery documentation reader: read-only ingestion of operator-local Delivery Checklist workbook data.
 - Export-size analysis reader: read-only ingestion of operator-local `Cars\size_analysis\<profile>_<date>.xlsx` workbook data.
-- Clean evidence surfaces: delivery checklist, delivery readiness, disabled-test inventory, API version reference, country-variant matrix, export-size trend board, setup doctor, workflows, screenshot test state, daily digest, and manual review companion render from the same Python readers.
+- Clean evidence surfaces: delivery documentation, delivery readiness, disabled-test inventory, API version reference, country-variant matrix, export-size trend board, setup doctor, workflows, screenshot test state, daily digest, and manual review companion render from the same Python readers.
 - Screenshot test state reader: read-only BMW / MINI screenshot baseline and test-config state from local BMW Git.
 - BMW Git readiness reader: read-only per-profile state from the local `digital-3d-car-models` checkout.
 - QA Hero readiness reader: read-only presence and count checks for documented Quality Hero assets such as LightFX, WelcomeFX, ShadesFX, CarPaint, AnchorPoints, Constants, and Perspectives.
 - CLI uniformity: read/status commands support `--format text|json|markdown` and `--output-path` / `--out` where relevant, while preserving compatible `--json` and `--markdown` aliases.
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
 - Clean dashboard mode: `python -m sg_preflight dashboard run --ui-mode clean` launches the neutral NiceGUI work view from source. Grafiks mode launches the experimental C++ cinematic shell if it is installed; otherwise it prints a WIP hint and tells the operator to use Clean for now. Both modes are local evidence views and do not change backend QA logic.
-- OpenHTF station MVP: local station surface for delivery checklist, screenshot test state, daily digest, and manual review companion phases. Internal OpenHTF execution state is evidence status only; manual review remains required.
+- OpenHTF station MVP: local station surface for delivery documentation, screenshot test state, daily digest, and manual review companion phases. Internal OpenHTF execution state is evidence status only; manual review remains required.
 - Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--auto-confirm`.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
 
@@ -117,14 +117,14 @@ The station command starts a local OpenHTF-backed SGFX surface and opens a brows
 python -m sg_preflight station run --profile <profile> --workspace C:\repositories\trunk --port 0 --history out\openhtf-history --no-browser --once
 ```
 
-The first MVP station run covers four daily operator phases: delivery checklist, screenshot test state, daily digest, and manual review companion. Missing local inputs can appear as missing execution state in the station; that is not a QA verdict.
+The first MVP station run covers four daily operator phases: delivery documentation, screenshot test state, daily digest, and manual review companion. Missing local inputs can appear as missing execution state in the station; that is not a QA verdict.
 
 ## Real SVN / BMW Git Read-Only Checks
 
 These commands read operator-local content only. They do not modify SVN or BMW Git:
 
 ```powershell
-python -m sg_preflight delivery-checklist read --profile <profile> --workspace C:\repositories\trunk --format markdown
+python -m sg_preflight delivery-documentation read --profile <profile> --workspace C:\repositories\trunk --format markdown
 python -m sg_preflight export-size-analysis read --profile <profile> --workspace C:\repositories\trunk --latest --format markdown
 python -m sg_preflight screenshot-test-state read --profile <profile> --format json
 python -m sg_preflight bmw-git-readiness read --profile <profile> --format json

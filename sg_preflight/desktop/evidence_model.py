@@ -354,13 +354,13 @@ def desktop_environment_doctor(workspace: Path | None = None) -> list[DesktopEnv
     delivery_ready = sum(1 for key in delivery_keys if _ready_from_prereq(key))
     if delivery_ready == len(delivery_keys):
         delivery_state = "available"
-        delivery_summary = "The mirrored delivery-checklist bridge assets are present locally. This remains SG-side readiness, not BMW execution."
+        delivery_summary = "The mirrored delivery documentation assets are present locally. This remains SG-side readiness, not BMW execution."
     elif delivery_ready > 0:
         delivery_state = "partial"
-        delivery_summary = "Some delivery-checklist bridge assets exist locally, but the mirrored set is incomplete."
+        delivery_summary = "Some delivery documentation assets exist locally, but the mirrored set is incomplete."
     else:
         delivery_state = "blocked"
-        delivery_summary = "The mirrored delivery-checklist bridge assets are not available locally yet."
+        delivery_summary = "The mirrored delivery documentation assets are not available locally yet."
 
     bmw_script_keys = (
         "bmw_screenshot_scripts",
@@ -968,9 +968,9 @@ def desktop_manual_cards(
         ),
         DesktopManualCard(
             key="delivery_note",
-            label="Delivery checklist note",
+            label="Delivery documentation note",
             state=str(delivery.get("state", "blocked")),
-            summary=str(delivery.get("summary", "The delivery-checklist bridge state is not available.")),
+            summary=str(delivery.get("summary", "The delivery documentation state is not available.")),
             note="Call out BMW blockers explicitly instead of hiding them in a vague note.",
         ),
         DesktopManualCard(
@@ -1065,7 +1065,7 @@ def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> lis
     return [
         _safe_item(
             "delivery-checklist",
-            "Delivery Checklist",
+            "Delivery documentation",
             lambda: read_delivery_checklist(profile_id=normalized_profile, workspace=root),
         ),
         _safe_item(

@@ -504,7 +504,7 @@ def _step_defs(
         ),
         (
             "delivery-checklist",
-            "Delivery checklist",
+            "Delivery documentation",
             lambda: read_delivery_checklist(
                 profile_id=profile,
                 workspace=workspace,

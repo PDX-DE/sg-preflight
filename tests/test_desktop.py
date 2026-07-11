@@ -116,7 +116,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
                 "manual-review",
             ],
         )
-        self.assertEqual([item.label for item in surfaces][0], "Delivery Checklist")
+        self.assertEqual([item.label for item in surfaces][0], "Delivery documentation")
         self.assertTrue(all(item.state for item in surfaces))
         self.assertTrue(all(item.summary for item in surfaces))
         self.assertIn("Quality-Hero", surfaces[-1].summary)
