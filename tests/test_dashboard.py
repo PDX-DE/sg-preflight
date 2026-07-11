@@ -115,29 +115,31 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn("Attach to Jira ticket", workflow_source)
 
     def test_default_page_construction_never_loads_jira(self) -> None:
+        from sg_preflight import jira_client
         from sg_preflight.dashboard.main import build_dashboard_snapshot
         from sg_preflight.surface_registry import SURFACE_DESCRIPTORS
 
         operational_ids = tuple(item.surface_id for item in SURFACE_DESCRIPTORS if item.operational)
         with tempfile.TemporaryDirectory() as tmp:
             with (
-                mock.patch(
-                    "sg_preflight.dashboard.main.load_jira_credentials",
+                mock.patch.object(
+                    jira_client,
+                    "load_jira_credentials",
                     side_effect=AssertionError("credentials must stay unused"),
-                    create=True,
                 ) as credential_loader,
-                mock.patch(
-                    "sg_preflight.dashboard.main.search_jira_profile_tickets",
+                mock.patch.object(
+                    jira_client,
+                    "search_jira_profile_tickets",
                     side_effect=AssertionError("Jira search must stay unused"),
-                    create=True,
                 ) as profile_search,
-                mock.patch(
-                    "sg_preflight.dashboard.main.search_my_unresolved_tickets",
+                mock.patch.object(
+                    jira_client,
+                    "search_my_unresolved_tickets",
                     side_effect=AssertionError("personal Jira search must stay unused"),
-                    create=True,
                 ) as personal_search,
-                mock.patch(
-                    "sg_preflight.jira_client.urllib_request.urlopen",
+                mock.patch.object(
+                    jira_client.urllib_request,
+                    "urlopen",
                     side_effect=AssertionError("transport must stay unused"),
                 ) as transport,
             ):
