@@ -74,6 +74,235 @@ class NiceGuiDashboardLazyImportTests(unittest.TestCase):
 
 
 class NiceGuiDashboardModelTests(unittest.TestCase):
+    @staticmethod
+    def _stale_load_state() -> dict[str, object]:
+        return {
+            "load_generation": 8,
+            "requested_profile_id": "G70",
+            "active_page_id": "risk-score",
+            "loading_message": "Loading current data...",
+            "snapshot": {
+                "profile_id": "G70",
+                "pages": [{"id": "risk-score", "summary": "current"}],
+            },
+        }
+
+    def test_load_token_rejects_stale_generation_profile_or_page(self) -> None:
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        matcher = getattr(main, "_dashboard_load_token_matches", None)
+        self.assertIsNotNone(token_type)
+        self.assertIsNotNone(matcher)
+        token = token_type(generation=4, profile_id="G65", page_id="disabled-tests")
+
+        self.assertTrue(matcher(token, generation=4, profile_id="G65", page_id="disabled-tests"))
+        self.assertFalse(matcher(token, generation=5, profile_id="G65", page_id="disabled-tests"))
+        self.assertFalse(matcher(token, generation=4, profile_id="G70", page_id="disabled-tests"))
+        self.assertFalse(matcher(token, generation=4, profile_id="G65", page_id="risk-score"))
+
+    def test_load_token_is_frozen_and_slotted(self) -> None:
+        from dataclasses import FrozenInstanceError
+
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        self.assertIsNotNone(token_type)
+        token = token_type(generation=1, profile_id="G65", page_id="risk-score")
+
+        with self.assertRaises(FrozenInstanceError):
+            setattr(token, "generation", 2)
+        self.assertFalse(hasattr(token, "__dict__"))
+
+    def test_navigation_profile_change_and_refresh_invalidate_older_generations(self) -> None:
+        from sg_preflight.dashboard import main
+
+        next_token = getattr(main, "_next_dashboard_load_token", None)
+        matcher = getattr(main, "_dashboard_load_token_matches", None)
+        self.assertIsNotNone(next_token)
+        self.assertIsNotNone(matcher)
+        state: dict[str, object] = {
+            "load_generation": 0,
+            "requested_profile_id": "G65",
+            "active_page_id": "home",
+        }
+
+        navigation = next_token(
+            state,
+            profile_id="G65",
+            page_id="risk-score",
+            reason="navigation",
+        )
+        profile_change = next_token(
+            state,
+            profile_id="G70",
+            page_id="risk-score",
+            reason="profile_change",
+        )
+        refresh = next_token(
+            state,
+            profile_id="G70",
+            page_id="risk-score",
+            reason="refresh",
+        )
+
+        self.assertEqual(
+            [navigation.generation, profile_change.generation, refresh.generation],
+            [1, 2, 3],
+        )
+        self.assertFalse(
+            matcher(
+                navigation,
+                generation=state["load_generation"],
+                profile_id=state["requested_profile_id"],
+                page_id=state["active_page_id"],
+            )
+        )
+        self.assertFalse(
+            matcher(
+                profile_change,
+                generation=state["load_generation"],
+                profile_id=state["requested_profile_id"],
+                page_id=state["active_page_id"],
+            )
+        )
+        self.assertTrue(
+            matcher(
+                refresh,
+                generation=state["load_generation"],
+                profile_id=state["requested_profile_id"],
+                page_id=state["active_page_id"],
+            )
+        )
+
+    def test_load_single_page_stale_success_has_no_visible_effects(self) -> None:
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        complete = getattr(main, "_complete_dashboard_page_load", None)
+        self.assertIsNotNone(token_type)
+        self.assertIsNotNone(complete)
+        state = self._stale_load_state()
+        before = json.loads(json.dumps(state))
+        render = mock.Mock()
+        notify = mock.Mock()
+        finish_transition = mock.Mock()
+
+        applied = complete(
+            token_type(generation=7, profile_id="G65", page_id="disabled-tests"),
+            state=state,
+            page={"id": "disabled-tests", "summary": "stale"},
+            error=None,
+            render_current_page=render,
+            notify=notify,
+            finish_transition=finish_transition,
+            transition_page_id="disabled-tests",
+            notify_message="stale page loaded",
+        )
+
+        self.assertFalse(applied)
+        self.assertEqual(state, before)
+        render.assert_not_called()
+        notify.assert_not_called()
+        finish_transition.assert_not_called()
+
+    def test_load_single_page_stale_exception_has_no_visible_effects(self) -> None:
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        complete = getattr(main, "_complete_dashboard_page_load", None)
+        self.assertIsNotNone(token_type)
+        self.assertIsNotNone(complete)
+        state = self._stale_load_state()
+        before = json.loads(json.dumps(state))
+        render = mock.Mock()
+        notify = mock.Mock()
+        finish_transition = mock.Mock()
+
+        applied = complete(
+            token_type(generation=7, profile_id="G65", page_id="disabled-tests"),
+            state=state,
+            page=None,
+            error=RuntimeError("stale failure"),
+            render_current_page=render,
+            notify=notify,
+            finish_transition=finish_transition,
+            transition_page_id="disabled-tests",
+        )
+
+        self.assertFalse(applied)
+        self.assertEqual(state, before)
+        render.assert_not_called()
+        notify.assert_not_called()
+        finish_transition.assert_not_called()
+
+    def test_finish_snapshot_refresh_stale_success_has_no_visible_effects(self) -> None:
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        complete = getattr(main, "_complete_dashboard_snapshot_refresh", None)
+        self.assertIsNotNone(token_type)
+        self.assertIsNotNone(complete)
+        state = self._stale_load_state()
+        before = json.loads(json.dumps(state))
+        render = mock.Mock()
+        refresh_labels = mock.Mock()
+        notify = mock.Mock()
+        finish_transition = mock.Mock()
+
+        applied = complete(
+            token_type(generation=7, profile_id="G65", page_id="disabled-tests"),
+            state=state,
+            snapshot={"profile_id": "G65", "pages": []},
+            error=None,
+            render_current_page=render,
+            refresh_labels=refresh_labels,
+            notify=notify,
+            finish_transition=finish_transition,
+            transition_page_id="disabled-tests",
+            notify_message="stale refresh finished",
+        )
+
+        self.assertFalse(applied)
+        self.assertEqual(state, before)
+        render.assert_not_called()
+        refresh_labels.assert_not_called()
+        notify.assert_not_called()
+        finish_transition.assert_not_called()
+
+    def test_finish_snapshot_refresh_stale_exception_has_no_visible_effects(self) -> None:
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        complete = getattr(main, "_complete_dashboard_snapshot_refresh", None)
+        self.assertIsNotNone(token_type)
+        self.assertIsNotNone(complete)
+        state = self._stale_load_state()
+        before = json.loads(json.dumps(state))
+        render = mock.Mock()
+        refresh_labels = mock.Mock()
+        notify = mock.Mock()
+        finish_transition = mock.Mock()
+
+        applied = complete(
+            token_type(generation=7, profile_id="G65", page_id="disabled-tests"),
+            state=state,
+            snapshot=None,
+            error=RuntimeError("stale failure"),
+            render_current_page=render,
+            refresh_labels=refresh_labels,
+            notify=notify,
+            finish_transition=finish_transition,
+            transition_page_id="disabled-tests",
+        )
+
+        self.assertFalse(applied)
+        self.assertEqual(state, before)
+        render.assert_not_called()
+        refresh_labels.assert_not_called()
+        notify.assert_not_called()
+        finish_transition.assert_not_called()
+
     def test_primary_shell_contract_preserves_home_without_extra_surfaces(self) -> None:
         from sg_preflight.dashboard.main import build_dashboard_snapshot
 

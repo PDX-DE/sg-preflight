@@ -44,6 +44,7 @@ outside this bundle.
 - Advanced `integration jira` previews load no credentials and make no network request. `--confirm-network` permits Jira verification and weekly-ticket GETs; a Jira write also needs its action-specific confirmation.
 
 ### Fixed
+- Kept dashboard/profile evidence local and current: stale page or refresh completions are ignored, profile summaries do not run Jira lookup, legacy Jira credential reads remain non-mutating, and dependency registrations use atomic cross-process transactions.
 - Focused the default Clean shell on Home, 18 operational evidence surfaces, and nav-only About. Personal-ticket, duplicate readiness, parked analysis, settings, automatic Jira lookup, and dashboard report-attachment controls are no longer registered on the default path.
 - Moved the weekly ticket draft to `integration jira weekly-tickets`; its default preview is log-free, leaves credential and cache state untouched, and keeps the former command only as hidden argv compatibility.
 - `daily-digest latest --markdown` is safe on a fresh checkout and returns a clear no-review-package summary instead of failing.

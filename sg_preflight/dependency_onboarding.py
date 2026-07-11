@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -8,10 +10,16 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from typing import Any
 import urllib.request
 import zipfile
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 from sg_preflight.subprocess_utils import hidden_subprocess_kwargs, sgfx_cli_command
 from sg_preflight.utils import ensure_parent
@@ -20,6 +28,7 @@ from sg_preflight.utils import ensure_parent
 DIGITAL_3D_CAR_REPO_ENV = "Digital-3D-Car-Repo"
 DIGITAL_3D_CAR_REPO_IDC23_ENV = "Digital-3D-Car-Repo-IDC23"
 ONBOARDING_STATE_FILENAME = "dependency_onboarding.json"
+ONBOARDING_STATE_LOCK_FILENAME = "dependency_onboarding.lock"
 RACO_BASELINE_VERSION = "2.3.1"
 BLENDER_BASELINE_VERSION = "4.1.1"
 BLENDER_INSTALLER_URL = "https://download.blender.org/release/Blender4.1/blender-4.1.1-windows-x64.msi"
@@ -30,7 +39,10 @@ DEPENDENCY_SETUP_STDOUT_TAIL_LINES = 20
 DEPENDENCY_SETUP_STDOUT_TAIL_BYTES = 2000
 DEPENDENCY_SETUP_FILE_ACTIVITY_LIMIT = 20
 DEPENDENCY_STATE_REPLACE_RETRY_ATTEMPTS = 3
-DEPENDENCY_STATE_REPLACE_RETRY_SECONDS = 0.05
+DEPENDENCY_STATE_REPLACE_ATTEMPTS = DEPENDENCY_STATE_REPLACE_RETRY_ATTEMPTS
+DEPENDENCY_STATE_REPLACE_RETRY_SECONDS = 0.01
+_DEPENDENCY_STATE_LOCK = threading.RLock()
+_DEPENDENCY_STATE_TRANSACTIONS = threading.local()
 RACO_SETUP_TYPICAL_RANGE_LABEL = "typical ~30 sec"
 BLENDER_SETUP_TYPICAL_RANGE_LABEL = "typical ~2 min"
 BMW_GIT_SETUP_TYPICAL_RANGE_LABEL = "typical ~2-10 min"
@@ -126,6 +138,69 @@ def dependency_onboarding_state_path(workspace: Path | str) -> Path:
     return operator_state_root(workspace) / ONBOARDING_STATE_FILENAME
 
 
+def dependency_onboarding_state_lock_path(workspace: Path | str) -> Path:
+    return operator_state_root(workspace) / ONBOARDING_STATE_LOCK_FILENAME
+
+
+def _held_dependency_state_transactions() -> dict[str, Any]:
+    process_id = os.getpid()
+    transaction_state = getattr(_DEPENDENCY_STATE_TRANSACTIONS, "state", None)
+    if transaction_state is not None and transaction_state[0] != process_id:
+        for handle in transaction_state[1].values():
+            try:
+                handle.close()
+            except OSError:
+                pass
+        transaction_state = None
+    if transaction_state is None:
+        transaction_state = (process_id, {})
+        _DEPENDENCY_STATE_TRANSACTIONS.state = transaction_state
+    return transaction_state[1]
+
+
+def _acquire_dependency_state_file_lock(handle: Any) -> None:
+    handle.seek(0)
+    if os.name == "nt":
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _release_dependency_state_file_lock(handle: Any) -> None:
+    handle.seek(0)
+    if os.name == "nt":
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _dependency_state_transaction(workspace: Path | str) -> Iterator[None]:
+    lock_path = dependency_onboarding_state_lock_path(workspace)
+    lock_key = os.path.normcase(str(lock_path))
+    with _DEPENDENCY_STATE_LOCK:
+        held_transactions = _held_dependency_state_transactions()
+        if lock_key in held_transactions:
+            yield
+            return
+
+        ensure_parent(lock_path)
+        handle = lock_path.open("a+b")
+        acquired = False
+        try:
+            _acquire_dependency_state_file_lock(handle)
+            acquired = True
+            held_transactions[lock_key] = handle
+            yield
+        finally:
+            held_transactions.pop(lock_key, None)
+            try:
+                if acquired:
+                    _release_dependency_state_file_lock(handle)
+            finally:
+                handle.close()
+
+
 def has_operator_state(workspace: Path | str) -> bool:
     root = operator_state_root(workspace)
     if not root.exists():
@@ -137,37 +212,40 @@ def has_operator_state(workspace: Path | str) -> bool:
 
 
 def load_dependency_onboarding_state(workspace: Path | str) -> dict[str, Any]:
-    path = dependency_onboarding_state_path(workspace)
-    if not path.is_file():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _replace_dependency_onboarding_state(temp_path: Path, output_path: Path) -> None:
-    delay = DEPENDENCY_STATE_REPLACE_RETRY_SECONDS
-    for attempt in range(DEPENDENCY_STATE_REPLACE_RETRY_ATTEMPTS):
+    with _DEPENDENCY_STATE_LOCK:
+        path = dependency_onboarding_state_path(workspace)
+        if not path.is_file():
+            return {}
         try:
-            temp_path.replace(output_path)
-            return
-        except PermissionError:
-            if attempt + 1 >= DEPENDENCY_STATE_REPLACE_RETRY_ATTEMPTS:
-                raise
-            time.sleep(delay)
-            delay *= 2
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
 
 def _write_dependency_onboarding_state(workspace: Path | str, state: dict[str, Any]) -> dict[str, Any]:
-    state["updated_at_utc"] = _utc_now()
-    output_path = dependency_onboarding_state_path(workspace)
-    ensure_parent(output_path)
-    temp_path = output_path.with_name(f".{output_path.name}.{os.getpid()}.{time.time_ns()}.tmp")
-    temp_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-    _replace_dependency_onboarding_state(temp_path, output_path)
-    return state
+    with _dependency_state_transaction(workspace):
+        state["updated_at_utc"] = _utc_now()
+        output_path = dependency_onboarding_state_path(workspace)
+        ensure_parent(output_path)
+        temp_path = output_path.with_name(f".{output_path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+        try:
+            temp_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+            for attempt in range(DEPENDENCY_STATE_REPLACE_ATTEMPTS):
+                try:
+                    temp_path.replace(output_path)
+                    break
+                except PermissionError:
+                    if attempt + 1 == DEPENDENCY_STATE_REPLACE_ATTEMPTS:
+                        raise
+                    time.sleep(DEPENDENCY_STATE_REPLACE_RETRY_SECONDS)
+        finally:
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+        return state
 
 
 def record_dependency_path(*, workspace: Path | str, key: str, path: Path | str) -> dict[str, Any]:
@@ -175,14 +253,15 @@ def record_dependency_path(*, workspace: Path | str, key: str, path: Path | str)
     if clean_key not in _KNOWN_REGISTERED_PATHS:
         raise KeyError(f"Unsupported dependency key: {key}")
     target = Path(path).expanduser().resolve()
-    state = load_dependency_onboarding_state(workspace)
-    registered_paths = state.setdefault("registered_paths", {})
-    if not isinstance(registered_paths, dict):
-        registered_paths = {}
-        state["registered_paths"] = registered_paths
-    registered_paths[clean_key] = str(target)
-    state["source"] = "dependency onboarding"
-    return _write_dependency_onboarding_state(workspace, state)
+    with _dependency_state_transaction(workspace):
+        state = load_dependency_onboarding_state(workspace)
+        registered_paths = state.setdefault("registered_paths", {})
+        if not isinstance(registered_paths, dict):
+            registered_paths = {}
+            state["registered_paths"] = registered_paths
+        registered_paths[clean_key] = str(target)
+        state["source"] = "dependency onboarding"
+        return _write_dependency_onboarding_state(workspace, state)
 
 
 def _same_registered_path(current: Path | None, target: Path) -> bool:
@@ -218,8 +297,51 @@ def _auto_register_dependency_path(
     registered_paths[clean_key] = str(target)
     state["source"] = str(state.get("source") or "dependency onboarding fast-path")
     state["last_auto_registered_key"] = clean_key
-    _write_dependency_onboarding_state(workspace, state)
     return True
+
+
+def _registered_paths_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    registered_paths = state.get("registered_paths", {})
+    return dict(registered_paths) if isinstance(registered_paths, dict) else {}
+
+
+def _persist_auto_detected_dependency_paths(
+    workspace: Path | str,
+    *,
+    original_paths: dict[str, Any],
+    detected_state: dict[str, Any],
+) -> None:
+    detected_paths = _registered_paths_snapshot(detected_state)
+    auto_changes = {
+        key: value
+        for key, value in detected_paths.items()
+        if key in _KNOWN_REGISTERED_PATHS
+        and (key not in original_paths or original_paths[key] != value)
+    }
+    if not auto_changes:
+        return
+
+    with _dependency_state_transaction(workspace):
+        latest_state = load_dependency_onboarding_state(workspace)
+        latest_paths = _registered_paths_snapshot(latest_state)
+        applied_keys: list[str] = []
+        for key, value in auto_changes.items():
+            if (key in latest_paths) != (key in original_paths):
+                continue
+            if key in latest_paths and latest_paths[key] != original_paths[key]:
+                continue
+            latest_paths[key] = value
+            applied_keys.append(key)
+        if not applied_keys:
+            return
+        latest_state["registered_paths"] = latest_paths
+        latest_state["source"] = str(
+            latest_state.get("source")
+            or detected_state.get("source")
+            or "dependency onboarding fast-path"
+        )
+        latest_state["last_auto_registered_key"] = applied_keys[-1]
+        _write_dependency_onboarding_state(workspace, latest_state)
 
 
 def _registered_path(state: dict[str, Any], key: str) -> Path | None:
@@ -986,6 +1108,7 @@ def build_dependency_onboarding_status(
     root = _workspace(workspace)
     first_run = not has_operator_state(root)
     state = load_dependency_onboarding_state(root)
+    registered_paths_before_detection = _registered_paths_snapshot(state)
     raco_gui, raco_headless = _raco_status(state, root)
     dependencies = {
         "raco_gui": raco_gui,
@@ -1011,6 +1134,11 @@ def build_dependency_onboarding_status(
     missing_count = sum(1 for item in items if item["status"] == "missing")
     incomplete_count = sum(1 for item in items if item["status"] == "incomplete")
     status = "available" if available_count == len(items) else "incomplete"
+    _persist_auto_detected_dependency_paths(
+        root,
+        original_paths=registered_paths_before_detection,
+        detected_state=state,
+    )
     return {
         "status": status,
         "summary": (

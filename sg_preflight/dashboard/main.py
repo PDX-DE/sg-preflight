@@ -568,6 +568,120 @@ MANUAL_REVIEW_EMPTY_NOTE = (
 SETUP_COMPLETE_NOTE = "Setup complete — go to evidence pages to start your QA Hero workflow."
 
 
+@dataclass(frozen=True, slots=True)
+class DashboardLoadToken:
+    generation: int
+    profile_id: str
+    page_id: str
+
+
+def _dashboard_load_token_matches(
+    token: DashboardLoadToken,
+    *,
+    generation: int,
+    profile_id: str,
+    page_id: str,
+) -> bool:
+    return token == DashboardLoadToken(generation, profile_id, page_id)
+
+
+def _next_dashboard_load_token(
+    state: dict[str, Any],
+    *,
+    profile_id: str,
+    page_id: str,
+    reason: str,
+) -> DashboardLoadToken:
+    if reason not in {"navigation", "profile_change", "refresh"}:
+        raise ValueError(f"Unsupported dashboard load invalidation reason: {reason}")
+    generation = int(state.get("load_generation", 0)) + 1
+    state["load_generation"] = generation
+    state["requested_profile_id"] = str(profile_id)
+    state["active_page_id"] = str(page_id)
+    return DashboardLoadToken(generation, str(profile_id), str(page_id))
+
+
+def _dashboard_load_token_is_current(token: DashboardLoadToken, state: dict[str, Any]) -> bool:
+    return _dashboard_load_token_matches(
+        token,
+        generation=int(state.get("load_generation", 0)),
+        profile_id=str(state.get("requested_profile_id", "")),
+        page_id=str(state.get("active_page_id", "")),
+    )
+
+
+def _complete_dashboard_page_load(
+    token: DashboardLoadToken,
+    *,
+    state: dict[str, Any],
+    page: dict[str, Any] | None,
+    error: Exception | None,
+    render_current_page: Callable[[], None],
+    notify: Callable[[str], None],
+    finish_transition: Callable[[str], None],
+    transition_page_id: str = "",
+    notify_message: str = "",
+) -> bool:
+    if not _dashboard_load_token_is_current(token, state):
+        return False
+    if error is not None:
+        state["loading_message"] = ""
+        render_current_page()
+        finish_transition(transition_page_id)
+        notify(f"Page load failed: {error}")
+        return True
+    if page is None:
+        raise ValueError("Dashboard page completion requires a page or an error")
+    snapshot = state.get("snapshot", {})
+    pages = snapshot.get("pages", []) if isinstance(snapshot, dict) else []
+    updated_pages = [
+        page if str(existing.get("id", "")) == token.page_id else existing
+        for existing in pages
+        if isinstance(existing, dict)
+    ]
+    state["snapshot"] = {**snapshot, "pages": updated_pages}
+    state["loading_message"] = ""
+    render_current_page()
+    finish_transition(transition_page_id)
+    if notify_message:
+        notify(notify_message)
+    return True
+
+
+def _complete_dashboard_snapshot_refresh(
+    token: DashboardLoadToken,
+    *,
+    state: dict[str, Any],
+    snapshot: dict[str, Any] | None,
+    error: Exception | None,
+    render_current_page: Callable[[], None],
+    refresh_labels: Callable[[], None],
+    notify: Callable[[str], None],
+    finish_transition: Callable[[str], None],
+    transition_page_id: str = "",
+    notify_message: str = "",
+) -> bool:
+    if not _dashboard_load_token_is_current(token, state):
+        return False
+    if error is not None:
+        state["loading_message"] = ""
+        render_current_page()
+        finish_transition(transition_page_id)
+        notify(f"Dashboard refresh failed: {error}")
+        return True
+    if snapshot is None:
+        raise ValueError("Dashboard snapshot completion requires a snapshot or an error")
+    state["snapshot"] = snapshot
+    state["requested_profile_id"] = str(snapshot.get("profile_id", token.profile_id))
+    state["loading_message"] = ""
+    refresh_labels()
+    render_current_page()
+    finish_transition(transition_page_id)
+    if notify_message:
+        notify(notify_message)
+    return True
+
+
 def _start_background_poll_timer(interval: float, callback: Callable[[], None]) -> Any:
     from nicegui.timer import Timer
 
@@ -3212,6 +3326,8 @@ def _render_dashboard(
         state: dict[str, Any] = {
             "snapshot": snapshot,
             "active_page_id": first_page_id,
+            "requested_profile_id": str(snapshot.get("profile_id", "")),
+            "load_generation": 0,
             "dashboard_mode": "clean",
         }
         content_holder: dict[str, Any] = {}
@@ -3508,10 +3624,17 @@ def _render_dashboard(
                 "window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();",
             )
 
+        def _finish_page_transition(page_id: str) -> None:
+            if not page_id:
+                return
+            _run_javascript_if_client_alive(
+                ui,
+                f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
+            )
+
         async def _finish_snapshot_refresh(
+            token: DashboardLoadToken,
             *,
-            profile_id: str,
-            active_page_id: str,
             defer_daily_digest: bool,
             defer_team_digest_board: bool,
             transition_page_id: str = "",
@@ -3519,24 +3642,37 @@ def _render_dashboard(
         ) -> None:
             try:
                 snapshot = await _build_snapshot_io(
-                    profile_id,
+                    token.profile_id,
                     ui_mode_override=_current_theme(),
                     defer_daily_digest=defer_daily_digest,
                     defer_team_digest_board=defer_team_digest_board,
-                    materialize_page_ids=(active_page_id,),
+                    materialize_page_ids=(token.page_id,),
                 )
             except Exception as exc:  # noqa: BLE001
-                state["loading_message"] = ""
-                _render_current_page()
-                ui.notify(f"Dashboard refresh failed: {exc}")
+                _complete_dashboard_snapshot_refresh(
+                    token,
+                    state=state,
+                    snapshot=None,
+                    error=exc,
+                    render_current_page=_render_current_page,
+                    refresh_labels=_refresh_labels,
+                    notify=ui.notify,
+                    finish_transition=_finish_page_transition,
+                    transition_page_id=transition_page_id,
+                )
                 return
-            state["snapshot"] = snapshot
-            state["loading_message"] = ""
-            _refresh_labels()
-            if str(state.get("active_page_id", "")) == active_page_id:
-                _render_current_page()
-            if notify_message:
-                ui.notify(notify_message)
+            _complete_dashboard_snapshot_refresh(
+                token,
+                state=state,
+                snapshot=snapshot,
+                error=None,
+                render_current_page=_render_current_page,
+                refresh_labels=_refresh_labels,
+                notify=ui.notify,
+                finish_transition=_finish_page_transition,
+                transition_page_id=transition_page_id,
+                notify_message=notify_message,
+            )
 
         def _start_snapshot_refresh(
             *,
@@ -3545,21 +3681,22 @@ def _render_dashboard(
             defer_daily_digest: bool,
             defer_team_digest_board: bool,
             loading_message: str,
+            reason: str,
             transition_page_id: str = "",
             notify_message: str = "",
         ) -> None:
             _dashboard_changed_profiles.cache_clear()
+            token = _next_dashboard_load_token(
+                state,
+                profile_id=profile_id,
+                page_id=active_page_id,
+                reason=reason,
+            )
             state["loading_message"] = loading_message
             _render_current_page()
-            if transition_page_id:
-                _run_javascript_if_client_alive(
-                    ui,
-                    f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(transition_page_id)});",
-                )
             _schedule_background(
                 _finish_snapshot_refresh(
-                    profile_id=profile_id,
-                    active_page_id=active_page_id,
+                    token,
                     defer_daily_digest=defer_daily_digest,
                     defer_team_digest_board=defer_team_digest_board,
                     transition_page_id=transition_page_id,
@@ -3568,67 +3705,141 @@ def _render_dashboard(
                 name="sgfx-dashboard-snapshot-refresh",
             )
 
-        async def _load_single_page(page_id: str) -> None:
+        async def _load_single_page(
+            token: DashboardLoadToken,
+            *,
+            transition_page_id: str = "",
+            notify_message: str = "",
+        ) -> None:
             try:
                 page = await _io_bound(
                     build_dashboard_page,
-                    page_id,
-                    str(state["snapshot"]["profile_id"]),
+                    token.page_id,
+                    token.profile_id,
                     workspace,
                     bmw_root=bmw_root,
                     ui_mode=_current_theme(),
                 )
             except Exception as exc:  # noqa: BLE001
-                state["loading_message"] = ""
-                _render_current_page()
-                ui.notify(f"Page load failed: {exc}")
-                return
-            pages = state["snapshot"].get("pages", [])
-            for index, existing in enumerate(pages):
-                if str(existing.get("id")) == page_id:
-                    pages[index] = page
-                    break
-            state["loading_message"] = ""
-            if str(state.get("active_page_id", "")) == page_id:
-                _render_current_page()
-                _run_javascript_if_client_alive(
-                    ui,
-                    f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
+                _complete_dashboard_page_load(
+                    token,
+                    state=state,
+                    page=None,
+                    error=exc,
+                    render_current_page=_render_current_page,
+                    notify=ui.notify,
+                    finish_transition=_finish_page_transition,
+                    transition_page_id=transition_page_id,
                 )
+                return
+            _complete_dashboard_page_load(
+                token,
+                state=state,
+                page=page,
+                error=None,
+                render_current_page=_render_current_page,
+                notify=ui.notify,
+                finish_transition=_finish_page_transition,
+                transition_page_id=transition_page_id,
+                notify_message=notify_message,
+            )
 
-        def _start_single_page_load(page_id: str) -> None:
+        def _start_single_page_load(
+            page_id: str,
+            *,
+            profile_id: str,
+            reason: str,
+            transition_page_id: str = "",
+            notify_message: str = "",
+        ) -> None:
+            token = _next_dashboard_load_token(
+                state,
+                profile_id=profile_id,
+                page_id=page_id,
+                reason=reason,
+            )
             title = str(_pages_by_id().get(page_id, {}).get("title", page_id))
             state["loading_message"] = f"Loading {title}..."
             _render_current_page()
-            _schedule_background(_load_single_page(page_id), name=f"sgfx-dashboard-page-{page_id}")
+            _schedule_background(
+                _load_single_page(
+                    token,
+                    transition_page_id=transition_page_id,
+                    notify_message=notify_message,
+                ),
+                name=f"sgfx-dashboard-page-{page_id}",
+            )
 
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
             _run_javascript_if_client_alive(ui, f"document.body.dataset.sgfxActivePage = {json.dumps(page_id)};")
             _run_javascript_if_client_alive(ui, f"window.sgfxHighlightNav && window.sgfxHighlightNav({json.dumps(page_id)});")
             _run_javascript_if_client_alive(ui, "window.sgfxSetSidebarOpen && window.sgfxSetSidebarOpen(false);")
-            if page_id in {"daily-digest", "team-digest-board"} and _pages_by_id().get(page_id, {}).get("deferred"):
+            requested_profile = str(
+                state.get("requested_profile_id") or state["snapshot"].get("profile_id", "")
+            )
+            if page_id == "about":
+                _next_dashboard_load_token(
+                    state,
+                    profile_id=requested_profile,
+                    page_id=page_id,
+                    reason="navigation",
+                )
+                state["loading_message"] = ""
+                _render_current_page()
+                _finish_page_transition(page_id)
+                return
+            if requested_profile != str(state["snapshot"].get("profile_id", "")):
                 _start_snapshot_refresh(
-                    profile_id=str(state["snapshot"]["profile_id"]),
+                    profile_id=requested_profile,
                     active_page_id=page_id,
                     defer_daily_digest=page_id != "daily-digest",
                     defer_team_digest_board=page_id != "team-digest-board",
                     loading_message=f"Loading {str(_pages_by_id().get(page_id, {}).get('title', page_id))}...",
+                    reason="navigation",
+                    transition_page_id=page_id,
+                )
+                return
+            if page_id in {"daily-digest", "team-digest-board"} and _pages_by_id().get(page_id, {}).get("deferred"):
+                _start_snapshot_refresh(
+                    profile_id=requested_profile,
+                    active_page_id=page_id,
+                    defer_daily_digest=page_id != "daily-digest",
+                    defer_team_digest_board=page_id != "team-digest-board",
+                    loading_message=f"Loading {str(_pages_by_id().get(page_id, {}).get('title', page_id))}...",
+                    reason="navigation",
                     transition_page_id=page_id,
                 )
                 return
             if _pages_by_id().get(page_id, {}).get("deferred"):
-                _start_single_page_load(page_id)
+                _start_single_page_load(
+                    page_id,
+                    profile_id=requested_profile,
+                    reason="navigation",
+                    transition_page_id=page_id,
+                )
                 return
+            _next_dashboard_load_token(
+                state,
+                profile_id=requested_profile,
+                page_id=page_id,
+                reason="navigation",
+            )
             state["loading_message"] = ""
             _render_current_page()
-            _run_javascript_if_client_alive(
-                ui,
-                f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
-            )
+            _finish_page_transition(page_id)
 
-        def _refresh_snapshot(profile_id: str | None = None, *, notify_message: str = "") -> None:
-            current_profile = profile_id if profile_id is not None else str(state["snapshot"]["profile_id"])
+        def _refresh_snapshot(
+            profile_id: str | None = None,
+            *,
+            notify_message: str = "",
+            reason: str = "refresh",
+        ) -> None:
+            current_profile = (
+                profile_id
+                if profile_id is not None
+                else str(state.get("requested_profile_id") or state["snapshot"].get("profile_id", ""))
+            )
             active_page_id = str(state.get("active_page_id", "delivery-checklist"))
             _start_snapshot_refresh(
                 profile_id=current_profile,
@@ -3636,6 +3847,7 @@ def _render_dashboard(
                 defer_daily_digest=active_page_id != "daily-digest",
                 defer_team_digest_board=active_page_id != "team-digest-board",
                 loading_message="Refreshing dashboard data...",
+                reason=reason,
                 notify_message=notify_message,
             )
 
@@ -3646,7 +3858,11 @@ def _render_dashboard(
             profile_id = _profile_id_from_select_value(value)
             if profile_id:
                 _write_dashboard_profile_preference(workspace, profile_id)
-            _refresh_snapshot(profile_id, notify_message=f"Profile switched to {profile_id or state['snapshot']['profile_id']}.")
+            _refresh_snapshot(
+                profile_id,
+                notify_message=f"Profile switched to {profile_id or state['snapshot']['profile_id']}.",
+                reason="profile_change",
+            )
 
         def _install_shortcut_script() -> None:
             messages = {str(item["key"]): str(item["message"]) for item in state["snapshot"]["shortcut_actions"]}

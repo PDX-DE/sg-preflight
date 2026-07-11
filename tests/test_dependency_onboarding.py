@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import multiprocessing
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from typing import Any
 import unittest
 from unittest import mock
 
@@ -25,7 +27,263 @@ def _write_bmw_ci_python(repo_root: Path) -> Path:
     return write_text(repo_root / ".venv_bmw_ci" / "Scripts" / "python.exe", "python\n")
 
 
+def _hold_auto_persistence_transaction(
+    workspace: str,
+    detected_gui: str,
+    write_entered: Any,
+    release_write: Any,
+) -> None:
+    from sg_preflight import dependency_onboarding as onboarding
+
+    original_write = onboarding._write_dependency_onboarding_state
+
+    def wait_before_write(workspace_arg: Path | str, state: dict[str, Any]) -> dict[str, Any]:
+        write_entered.set()
+        if not release_write.wait(15):
+            raise TimeoutError("Timed out waiting to release dependency-state auto persistence")
+        return original_write(workspace_arg, state)
+
+    detected_state: dict[str, Any] = {
+        "registered_paths": {"raco_gui": detected_gui},
+        "source": "dependency onboarding fast-path",
+        "last_auto_registered_key": "raco_gui",
+    }
+    with mock.patch.object(
+        onboarding,
+        "_write_dependency_onboarding_state",
+        side_effect=wait_before_write,
+    ):
+        onboarding._persist_auto_detected_dependency_paths(
+            workspace,
+            original_paths={},
+            detected_state=detected_state,
+        )
+
+
+def _record_explicit_paths(
+    workspace: str,
+    operator_gui: str,
+    operator_python: str,
+    record_started: Any,
+    record_finished: Any,
+) -> None:
+    from sg_preflight import dependency_onboarding as onboarding
+
+    original_acquire = onboarding._acquire_dependency_state_file_lock
+
+    def signal_before_acquire(handle: Any) -> None:
+        record_started.set()
+        original_acquire(handle)
+
+    with mock.patch.object(
+        onboarding,
+        "_acquire_dependency_state_file_lock",
+        side_effect=signal_before_acquire,
+    ):
+        onboarding.record_dependency_path(workspace=workspace, key="raco_gui", path=operator_gui)
+        onboarding.record_dependency_path(
+            workspace=workspace,
+            key="bmw_pipeline_python",
+            path=operator_python,
+        )
+    record_finished.set()
+
+
 class TestDependencyOnboarding(unittest.TestCase):
+    def test_status_batches_auto_registered_paths_into_one_state_write(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            raco_root = root / "external" / "ramses"
+            raco_bin = raco_root / "bin" / "RelWithDebInfo"
+            gui = raco_bin / "RamsesComposer.exe"
+            headless = raco_bin / "RaCoHeadless.exe"
+            blender = root / "external" / "blender" / "blender.exe"
+            for path in (gui, headless, blender):
+                write_text(path, "fixture\n")
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(onboarding, "_raco_install_roots", return_value=[raco_root]):
+                    with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
+                        with mock.patch.object(onboarding, "_blender_path_candidates", return_value=[blender]):
+                            with mock.patch.object(onboarding, "_candidate_bmw_repo_paths", return_value=[]):
+                                with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[]):
+                                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                                        with mock.patch.object(
+                                            onboarding,
+                                            "_write_dependency_onboarding_state",
+                                            wraps=onboarding._write_dependency_onboarding_state,
+                                        ) as write_state:
+                                            payload = onboarding.build_dependency_onboarding_status(workspace=root)
+            state = onboarding.load_dependency_onboarding_state(root)
+
+        self.assertEqual(write_state.call_count, 1)
+        self.assertEqual(payload["counts"]["available"], 3)
+        self.assertEqual(Path(state["registered_paths"]["raco_gui"]), gui.resolve())
+        self.assertEqual(Path(state["registered_paths"]["raco_headless"]), headless.resolve())
+        self.assertEqual(Path(state["registered_paths"]["blender"]), blender.resolve())
+
+    def test_status_auto_registration_preserves_interleaved_explicit_paths(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            raco_root = root / "external" / "ramses"
+            raco_bin = raco_root / "bin" / "RelWithDebInfo"
+            detected_gui = raco_bin / "RamsesComposer.exe"
+            detected_headless = raco_bin / "RaCoHeadless.exe"
+            detected_blender = root / "external" / "blender" / "blender.exe"
+            operator_gui = root / "operator-tools" / "RamsesComposer.exe"
+            operator_python = root / "operator-tools" / "python.exe"
+            for path in (
+                detected_gui,
+                detected_headless,
+                detected_blender,
+                operator_gui,
+                operator_python,
+            ):
+                write_text(path, "fixture\n")
+
+            original_blender_status = onboarding._blender_status
+
+            def register_paths_during_detection(state: dict[str, Any], workspace: Path) -> dict[str, Any]:
+                onboarding.record_dependency_path(workspace=root, key="raco_gui", path=operator_gui)
+                onboarding.record_dependency_path(
+                    workspace=root,
+                    key="bmw_pipeline_python",
+                    path=operator_python,
+                )
+                return original_blender_status(state, workspace)
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with mock.patch.object(onboarding, "_raco_install_roots", return_value=[raco_root]):
+                    with mock.patch.object(onboarding, "_onedrive_raco_sources", return_value=[]):
+                        with mock.patch.object(onboarding, "_blender_path_candidates", return_value=[detected_blender]):
+                            with mock.patch.object(onboarding, "_candidate_bmw_repo_paths", return_value=[]):
+                                with mock.patch.object(onboarding, "_candidate_idc23_repo_paths", return_value=[]):
+                                    with mock.patch.object(onboarding, "_find_executable", return_value=None):
+                                        with mock.patch.object(
+                                            onboarding,
+                                            "_blender_status",
+                                            side_effect=register_paths_during_detection,
+                                        ):
+                                            onboarding.build_dependency_onboarding_status(workspace=root)
+            state = onboarding.load_dependency_onboarding_state(root)
+
+        registered_paths = state["registered_paths"]
+        self.assertEqual(Path(registered_paths["raco_gui"]), operator_gui.resolve())
+        self.assertEqual(Path(registered_paths["raco_headless"]), detected_headless.resolve())
+        self.assertEqual(Path(registered_paths["blender"]), detected_blender.resolve())
+        self.assertEqual(Path(registered_paths["bmw_pipeline_python"]), operator_python.resolve())
+        self.assertFalse(any(str(key).startswith("_") for key in state))
+
+    def test_auto_and_explicit_persistence_share_a_cross_process_transaction_lock(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        self.assertTrue(hasattr(onboarding, "_persist_auto_detected_dependency_paths"))
+        self.assertTrue(hasattr(onboarding, "_acquire_dependency_state_file_lock"))
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            detected_gui = root / "detected" / "RamsesComposer.exe"
+            operator_gui = root / "operator" / "RamsesComposer.exe"
+            operator_python = root / "operator" / "python.exe"
+            for path in (detected_gui, operator_gui, operator_python):
+                write_text(path, "fixture\n")
+            write_entered = context.Event()
+            release_write = context.Event()
+            record_started = context.Event()
+            record_finished = context.Event()
+            auto_process = context.Process(
+                target=_hold_auto_persistence_transaction,
+                args=(str(root), str(detected_gui.resolve()), write_entered, release_write),
+            )
+            record_process = context.Process(
+                target=_record_explicit_paths,
+                args=(
+                    str(root),
+                    str(operator_gui.resolve()),
+                    str(operator_python.resolve()),
+                    record_started,
+                    record_finished,
+                ),
+            )
+
+            auto_process.start()
+            auto_reached_write = write_entered.wait(15)
+            lock_path = root / "operator_state" / "dependency_onboarding.lock"
+            lock_identity_while_held = lock_path.stat().st_ino if lock_path.is_file() else None
+            if auto_reached_write:
+                record_process.start()
+            record_reached_transaction = auto_reached_write and record_started.wait(15)
+            record_finished_before_release = record_finished.wait(1) if record_reached_transaction else False
+            release_write.set()
+            auto_process.join(20)
+            if record_process.pid is not None:
+                record_process.join(20)
+            for process in (auto_process, record_process):
+                if process.pid is not None and process.is_alive():
+                    process.terminate()
+                    process.join(5)
+
+            state = onboarding.load_dependency_onboarding_state(root)
+            lock_identity_after = lock_path.stat().st_ino if lock_path.is_file() else None
+
+        self.assertTrue(auto_reached_write)
+        self.assertTrue(record_reached_transaction)
+        self.assertFalse(record_finished_before_release)
+        self.assertEqual(auto_process.exitcode, 0)
+        self.assertEqual(record_process.exitcode, 0)
+        self.assertIsNotNone(lock_identity_while_held)
+        self.assertEqual(lock_identity_after, lock_identity_while_held)
+        registered_paths = state["registered_paths"]
+        self.assertEqual(Path(registered_paths["raco_gui"]), operator_gui.resolve())
+        self.assertEqual(Path(registered_paths["bmw_pipeline_python"]), operator_python.resolve())
+
+    def test_state_write_retries_one_transient_replace_permission_error(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        original_replace = Path.replace
+        replace_attempts = 0
+
+        def replace_once_denied(source: Path, target: Path) -> Path:
+            nonlocal replace_attempts
+            replace_attempts += 1
+            if replace_attempts == 1:
+                raise PermissionError("transient destination lock")
+            return original_replace(source, target)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with mock.patch.object(Path, "replace", new=replace_once_denied):
+                with mock.patch.object(onboarding.time, "sleep") as sleep:
+                    try:
+                        result = onboarding._write_dependency_onboarding_state(root, {"source": "test"})
+                    except PermissionError:
+                        self.fail("A transient replace PermissionError should be retried")
+            saved = onboarding.load_dependency_onboarding_state(root)
+
+        self.assertEqual(replace_attempts, 2)
+        sleep.assert_called_once_with(0.01)
+        self.assertEqual(saved, result)
+
+    def test_state_write_cleans_temp_file_when_replace_retries_are_exhausted(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with mock.patch.object(Path, "replace", side_effect=PermissionError("destination locked")) as replace:
+                with mock.patch.object(onboarding.time, "sleep") as sleep:
+                    with self.assertRaises(PermissionError):
+                        onboarding._write_dependency_onboarding_state(root, {"source": "test"})
+            state_root = onboarding.operator_state_root(root)
+            temp_paths = list(state_root.glob(".dependency_onboarding.json.*.tmp"))
+
+        self.assertEqual(replace.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertFalse(temp_paths)
+
     def test_status_marks_missing_dependencies_and_first_run_without_writing_state(self) -> None:
         from sg_preflight import dependency_onboarding as onboarding
 
