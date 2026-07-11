@@ -56,25 +56,35 @@ def _unique_existing_order(paths: list[Path]) -> list[Path]:
 
 
 def _grafiks_shell_exe_candidates(workspace: Path | str | None = None) -> list[Path]:
-    configured_files: list[Path] = []
-    configured_directories: list[Path] = []
+    preference_candidates: list[Path] = []
     configured_preference = _dashboard_grafiks_shell_exe_preference(workspace)
     if configured_preference:
         preferred = Path(configured_preference)
         if preferred.is_dir():
-            configured_directories.append(preferred)
+            preference_candidates.extend(
+                [preferred / OPERATOR_CONSOLE_SHELL_EXE_NAME, preferred / GRAFIKS_SHELL_EXE_NAME]
+            )
         else:
-            configured_files.append(preferred)
+            preference_candidates.append(preferred)
 
+    environment_files: list[Path] = []
+    environment_directories: list[Path] = []
     for key in GRAFIKS_SHELL_EXE_ENV_KEYS:
         raw = os.environ.get(key, "").strip()
         if not raw:
             continue
         configured = Path(raw)
         if configured.is_dir():
-            configured_directories.append(configured)
+            environment_directories.append(configured)
         else:
-            configured_files.append(configured)
+            environment_files.append(configured)
+
+    environment_directories = _unique_existing_order(environment_directories)
+    environment_candidates = [
+        *environment_files,
+        *(directory / OPERATOR_CONSOLE_SHELL_EXE_NAME for directory in environment_directories),
+        *(directory / GRAFIKS_SHELL_EXE_NAME for directory in environment_directories),
+    ]
 
     source_root = _dashboard_source_root()
     roots = [source_root, Path.cwd()]
@@ -93,13 +103,12 @@ def _grafiks_shell_exe_candidates(workspace: Path | str | None = None) -> list[P
                 root,
             ]
         )
-    candidate_directories = _unique_existing_order(configured_directories + discovered_directories)
-    candidates = [
-        *configured_files,
-        *(directory / OPERATOR_CONSOLE_SHELL_EXE_NAME for directory in candidate_directories),
-        *(directory / GRAFIKS_SHELL_EXE_NAME for directory in candidate_directories),
+    discovered_directories = _unique_existing_order(discovered_directories)
+    discovery_candidates = [
+        *(directory / OPERATOR_CONSOLE_SHELL_EXE_NAME for directory in discovered_directories),
+        *(directory / GRAFIKS_SHELL_EXE_NAME for directory in discovered_directories),
     ]
-    return _unique_existing_order(candidates)
+    return _unique_existing_order(preference_candidates + environment_candidates + discovery_candidates)
 
 
 def _resolve_grafiks_shell_exe(workspace: Path | str | None = None) -> Path | None:

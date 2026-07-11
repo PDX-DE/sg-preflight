@@ -1389,6 +1389,33 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 preferred.unlink()
                 self.assertEqual(dashboard_grafiks._resolve_grafiks_shell_exe(workspace), env_exe.resolve())
 
+    def test_grafiks_shell_preference_directory_precedes_env_file_and_empty_falls_back(self) -> None:
+        from sg_preflight import dashboard_grafiks, dashboard_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            preferred_dir = workspace / "preferred"
+            preferred_operator = preferred_dir / dashboard_grafiks.OPERATOR_CONSOLE_SHELL_EXE_NAME
+            env_exe = workspace / "env" / dashboard_grafiks.GRAFIKS_SHELL_EXE_NAME
+            write_text(preferred_operator, "preferred\n")
+            write_text(env_exe, "env\n")
+            dashboard_preferences.save_dashboard_settings(workspace, grafiks_shell_exe=preferred_dir)
+
+            isolated_environment = {
+                dashboard_grafiks.GRAFIKS_SHELL_EXE_ENV_KEYS[0]: str(env_exe),
+                dashboard_grafiks.GRAFIKS_SHELL_EXE_ENV_KEYS[1]: "",
+            }
+            with mock.patch.dict(os.environ, isolated_environment, clear=False):
+                candidates = dashboard_grafiks._grafiks_shell_exe_candidates(workspace)
+                self.assertLess(candidates.index(preferred_operator.resolve()), candidates.index(env_exe.resolve()))
+                self.assertEqual(
+                    dashboard_grafiks._resolve_grafiks_shell_exe(workspace),
+                    preferred_operator.resolve(),
+                )
+
+                preferred_operator.unlink()
+                self.assertEqual(dashboard_grafiks._resolve_grafiks_shell_exe(workspace), env_exe.resolve())
+
     def test_dashboard_doc_links_are_copy_only(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"
