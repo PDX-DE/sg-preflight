@@ -360,6 +360,67 @@ Item {
         self.assertEqual(payload["changed"][0], payload["changed"][1])
         self.assertNotEqual(payload["changed"][0], "G70")
 
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_qml_observes_matching_page_state_and_operation_transitions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self._run_headless(
+                f"""
+                import json
+                import threading
+                import time
+                from PySide6.QtCore import QUrl
+                from PySide6.QtQml import QQmlComponent
+                from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
+
+                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-test"])
+                deadline = time.monotonic() + 5
+                while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
+                    runtime.application.processEvents()
+                    time.sleep(0.005)
+
+                component = QQmlComponent(runtime.engine)
+                component.setData(
+                    b'import QtQml\\nQtObject {{ required property var controller; property string observedState: controller.pageState; property string observedOperation: controller.currentOperation }}\\n',
+                    QUrl(),
+                )
+                probe = component.createWithInitialProperties({{"controller": runtime.controller}})
+                if probe is None:
+                    raise SystemExit(" | ".join(error.toString() for error in component.errors()))
+
+                gate = threading.Event()
+                payload = dict(runtime.controller.currentPayload)
+
+                def delayed_shell_context(**_kwargs):
+                    gate.wait(2)
+                    return payload
+
+                runtime.controller._shell_loader = delayed_shell_context
+                accepted = runtime.controller.refresh()
+                runtime.application.processEvents()
+                started = [probe.property("observedState"), probe.property("observedOperation")]
+                gate.set()
+                deadline = time.monotonic() + 5
+                while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
+                    runtime.application.processEvents()
+                    time.sleep(0.005)
+                runtime.application.processEvents()
+                completed = [probe.property("observedState"), probe.property("observedOperation")]
+                print(json.dumps({{"accepted": accepted, "started": started, "completed": completed}}))
+                probe.deleteLater()
+                runtime.close()
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertEqual(
+            __import__("json").loads(result.stdout),
+            {
+                "accepted": True,
+                "started": ["loading", "shell_context"],
+                "completed": ["ready", ""],
+            },
+        )
+
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
 class TestQtQuickHostRuntime(unittest.TestCase):

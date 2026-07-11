@@ -278,11 +278,11 @@ class DesktopController(QObject):
     def profileOptions(self) -> list[dict[str, str]]:
         return [dict(option) for option in self._profile_options]
 
-    @Property(str, notify=operationChanged)
+    @Property(str, notify=pageStateChanged)
     def pageState(self) -> str:
         return self._page_state
 
-    @Property(str, notify=pageStateChanged)
+    @Property(str, notify=operationChanged)
     def currentOperation(self) -> str:
         return self._current_identity.operation if self._current_identity is not None else ""
 

@@ -895,6 +895,28 @@ class TestDesktopController(unittest.TestCase):
             notify_signatures.add(bytes(qt_property.notifySignal().methodSignature()))
         self.assertEqual(notify_signatures, {b"errorChanged()"})
 
+    def test_page_state_and_operation_properties_use_matching_notify_signals(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, _coordinator, _loader, _resolver = self._controller(Path(temp_dir))
+
+        meta_object = controller.metaObject()
+        actual = {
+            name: bytes(
+                meta_object.property(meta_object.indexOfProperty(name))
+                .notifySignal()
+                .methodSignature()
+            )
+            for name in ("pageState", "currentOperation")
+        }
+
+        self.assertEqual(
+            actual,
+            {
+                "pageState": b"pageStateChanged()",
+                "currentOperation": b"operationChanged()",
+            },
+        )
+
     def test_construction_is_reader_free_and_starts_on_home(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller, coordinator, loader, resolver = self._controller(Path(temp_dir))
