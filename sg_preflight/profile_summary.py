@@ -412,12 +412,18 @@ def build_profile_summary(
             risk_payload = {}
     except Exception:
         risk_payload = {}
-    jira_payload: dict[str, Any] = {"status": "unavailable", "tickets": []}
-    try:
-        from sg_preflight.jira_client import search_jira_profile_tickets
-        jira_payload = search_jira_profile_tickets(profile, max_results=jira_max_results, timeout_seconds=8)
-    except Exception:
-        jira_payload = {"status": "unavailable", "tickets": [], "summary": "Jira tickets unavailable."}
+    jira_payload: dict[str, Any] = {
+        "status": "not_run",
+        "profile_id": profile,
+        "ticket_count": 0,
+        "tickets": [],
+        "summary": (
+            "Jira ticket lookup is not run as part of this local profile summary. "
+            "Use integration jira with explicit network confirmation when needed."
+        ),
+        "read_only": True,
+        "is_approval": False,
+    }
     full_qa_runs: list[dict[str, Any]] = []
     try:
         from sg_preflight.full_qa_history import read_full_qa_run_list

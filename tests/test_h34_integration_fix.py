@@ -196,20 +196,16 @@ class IntegrationCoverageAuditTests(unittest.TestCase):
     """internal milestone Part C — verify shipped packs actually activate at the operator-
     visible surfaces, not just behind the CLI subparsers."""
 
-    def test_h29_jira_inline_render_copies_link_without_browser_handoff(self) -> None:
-        """The Jira inline ticket render is copy-only: no raw anchor and no
-        automatic browser handoff."""
+    def test_h29_primary_dashboard_has_no_jira_inline_render(self) -> None:
         source = (
             Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py"
         ).read_text(encoding="utf-8")
-        idx = source.find("sgfx-jira-ticket-key")
-        self.assertNotEqual(idx, -1, "Jira ticket render block not found")
-        block = source[max(idx - 800, 0):idx + 1200]
-        self.assertIn("ui.button(", block)
-        self.assertIn("_copy_dashboard_link_to_clipboard(ui, url, key)", block)
+        self.assertNotIn("_render_jira_profile_tickets_card", source)
+        self.assertNotIn("data-sgfx-jira-profile-tickets", source)
+        self.assertNotIn("Active tickets for this profile", source)
         self.assertIn("def _copy_dashboard_link_to_clipboard", source)
         helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
-        helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", helper_idx)
+        helper_end = source.find("\n\ndef _render_selected_page", helper_idx)
         self.assertNotEqual(helper_end, -1, "clipboard helper end marker not found")
         helper_body = source[helper_idx:helper_end]
         self.assertNotIn("webbrowser.open", helper_body)

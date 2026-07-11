@@ -15,6 +15,37 @@ from unittest import mock
 from tests.operator_helpers import write_text
 
 
+EXPECTED_SURFACE_IDS = (
+    "full-qa-pass",
+    "batch-full-qa-pass",
+    "delivery-checklist",
+    "disabled-tests",
+    "api-version-coverage",
+    "country-variant-coverage",
+    "export-size-trend",
+    "onboarding-guide",
+    "setup-doctor",
+    "qa-workflows",
+    "bmw-process",
+    "screenshot-test-state",
+    "risk-score",
+    "cross-car-comparison",
+    "daily-digest",
+    "team-digest-board",
+    "operator-handoff",
+    "manual-review",
+    "about",
+)
+EXPECTED_HOME_TILE_IDS = (
+    "full-qa-pass",
+    "delivery-checklist",
+    "screenshot-test-state",
+    "manual-review",
+    "daily-digest",
+    "setup-doctor",
+)
+
+
 class NiceGuiDashboardLazyImportTests(unittest.TestCase):
     def test_cli_import_and_parser_do_not_import_nicegui(self) -> None:
         sys.modules.pop("nicegui", None)
@@ -43,6 +74,114 @@ class NiceGuiDashboardLazyImportTests(unittest.TestCase):
 
 
 class NiceGuiDashboardModelTests(unittest.TestCase):
+    def test_primary_shell_contract_preserves_home_without_extra_surfaces(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = build_dashboard_snapshot("G65", tmp, lazy_pages=True)
+
+        navigation = tuple(item["id"] for item in snapshot["navigation"])
+        pages = tuple(item["id"] for item in snapshot["pages"])
+        self.assertEqual(navigation, ("home",) + EXPECTED_SURFACE_IDS)
+        self.assertEqual(pages, ("home",) + EXPECTED_SURFACE_IDS[:-1])
+        self.assertNotIn("about", pages)
+
+    def test_default_shell_excludes_quarantined_routes(self) -> None:
+        from sg_preflight.dashboard.main import DASHBOARD_NAVIGATION, HOME_HUB_TILES
+
+        blocked = {
+            "my-tickets",
+            "weekly-ticket-draft",
+            "whats-new",
+            "keyboard-shortcuts",
+            "settings",
+            "delivery-readiness",
+            "cross-domain-delivery",
+            "perspectives-inventory",
+            "rack-readiness",
+        }
+        self.assertTrue(blocked.isdisjoint(dict(DASHBOARD_NAVIGATION)))
+        self.assertEqual(tuple(item[0] for item in HOME_HUB_TILES), EXPECTED_HOME_TILE_IDS)
+
+    def test_dashboard_source_has_no_default_jira_loader_or_attachment_control(self) -> None:
+        source = (Path(__file__).parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+        workflow_source = (Path(__file__).parents[1] / "sg_preflight" / "dashboard_pages_workflows.py").read_text(
+            encoding="utf-8"
+        )
+        for token in ("_render_jira_profile_tickets_card", "_start_my_tickets_refresh", "search_jira_profile_tickets"):
+            self.assertNotIn(token, source)
+        self.assertNotIn("Attach to Jira ticket", workflow_source)
+
+    def test_default_page_construction_never_loads_jira(self) -> None:
+        from sg_preflight.dashboard.main import build_dashboard_snapshot
+        from sg_preflight.surface_registry import SURFACE_DESCRIPTORS
+
+        operational_ids = tuple(item.surface_id for item in SURFACE_DESCRIPTORS if item.operational)
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch(
+                    "sg_preflight.dashboard.main.load_jira_credentials",
+                    side_effect=AssertionError("credentials must stay unused"),
+                    create=True,
+                ) as credential_loader,
+                mock.patch(
+                    "sg_preflight.dashboard.main.search_jira_profile_tickets",
+                    side_effect=AssertionError("Jira search must stay unused"),
+                    create=True,
+                ) as profile_search,
+                mock.patch(
+                    "sg_preflight.dashboard.main.search_my_unresolved_tickets",
+                    side_effect=AssertionError("personal Jira search must stay unused"),
+                    create=True,
+                ) as personal_search,
+                mock.patch(
+                    "sg_preflight.jira_client.urllib_request.urlopen",
+                    side_effect=AssertionError("transport must stay unused"),
+                ) as transport,
+            ):
+                default_snapshot = build_dashboard_snapshot("G65", tmp, lazy_pages=True)
+                primary_snapshot = build_dashboard_snapshot(
+                    "G65",
+                    tmp,
+                    lazy_pages=True,
+                    materialize_page_ids=operational_ids,
+                )
+
+        default_pages = {item["id"]: item for item in default_snapshot["pages"]}
+        primary_pages = {item["id"]: item for item in primary_snapshot["pages"]}
+        self.assertFalse(default_pages["home"].get("deferred", False))
+        self.assertFalse(primary_pages["full-qa-pass"].get("deferred", False))
+        self.assertFalse(primary_pages["daily-digest"].get("deferred", False))
+        self.assertTrue(all(not primary_pages[page_id].get("deferred", False) for page_id in operational_ids))
+        credential_loader.assert_not_called()
+        profile_search.assert_not_called()
+        personal_search.assert_not_called()
+        transport.assert_not_called()
+
+    def test_clean_shell_preserves_navigation_interactions_and_spacing(self) -> None:
+        source = (Path(__file__).parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
+            encoding="utf-8"
+        )
+
+        for token in (
+            "def _render_jump_options",
+            "snapshot.get(\"navigation_groups\", [])",
+            "window.sgfxHighlightNav",
+            'sgfx-status sgfx-tone-',
+            ".sgfx-status.sgfx-tone-bad",
+            ".sgfx-status-cell.sgfx-tone-good",
+            "_launch_browser_fallback_process",
+            "WebView2 runtime not found; falling back to browser mode",
+            ".sgfx-dashboard { background:",
+            "line-height: 1.5;",
+            ".sgfx-page-panel {",
+            "padding: 22px 24px;",
+            "line-height: 1.55;",
+        ):
+            self.assertIn(token, source)
+
     def test_dashboard_uses_delivery_documentation_with_stable_id(self) -> None:
         from sg_preflight.dashboard.main import build_dashboard_snapshot
 
@@ -271,6 +410,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         groups = snapshot["navigation_groups"]
         self.assertTrue(groups)
+        self.assertEqual(
+            [group["title"] for group in groups],
+            ["Daily work", "Delivery", "Screenshots & coverage", "Reviews & digests", "Setup & help"],
+        )
+        self.assertNotIn("More", [group["title"] for group in groups])
         grouped_ids: list[str] = []
         for group in groups:
             self.assertIn("title", group)
@@ -326,15 +470,14 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 defer_daily_digest=True,
                 defer_team_digest_board=True,
                 lazy_pages=True,
-                materialize_page_ids=("delivery-readiness",),
+                materialize_page_ids=("delivery-checklist",),
             )
 
         pages = {page["id"]: page for page in snapshot["pages"]}
-        self.assertEqual(len(snapshot["pages"]), 28)
+        self.assertEqual(len(snapshot["pages"]), 19)
         self.assertFalse(pages["home"].get("deferred", False))
-        self.assertFalse(pages["whats-new"].get("deferred", False))
-        self.assertFalse(pages["delivery-readiness"].get("deferred", False))
-        self.assertTrue(pages["cross-domain-delivery"]["deferred"])
+        self.assertFalse(pages["delivery-checklist"].get("deferred", False))
+        self.assertFalse(pages["bmw-process"].get("deferred", False))
         self.assertTrue(pages["manual-review"]["deferred"])
         self.assertEqual(pages["manual-review"]["status"], "not_run")
         self.assertIn("loads when opened", pages["manual-review"]["summary"])
@@ -350,46 +493,12 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(page["id"], "setup-doctor")
         self.assertFalse(page.get("deferred", False))
 
-    def test_dashboard_snapshot_contains_twenty_eight_operator_pages_and_guardrails(self) -> None:
+    def test_dashboard_snapshot_preserves_shell_metadata_and_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             from sg_preflight.dashboard.main import build_dashboard_snapshot
 
-            snapshot = build_dashboard_snapshot("", tmp)
+            snapshot = build_dashboard_snapshot("", tmp, lazy_pages=True)
 
-        page_ids = [page["id"] for page in snapshot["pages"]]
-        self.assertEqual(
-            page_ids,
-            [
-                "home",
-                "full-qa-pass",
-                "batch-full-qa-pass",
-                "my-tickets",
-                "weekly-ticket-draft",
-                "whats-new",
-                "keyboard-shortcuts",
-                "settings",
-                "delivery-checklist",
-                "delivery-readiness",
-                "cross-domain-delivery",
-                "perspectives-inventory",
-                "rack-readiness",
-                "disabled-tests",
-                "api-version-coverage",
-                "country-variant-coverage",
-                "export-size-trend",
-                "onboarding-guide",
-                "setup-doctor",
-                "qa-workflows",
-                "bmw-process",
-                "screenshot-test-state",
-                "risk-score",
-                "cross-car-comparison",
-                "daily-digest",
-                "team-digest-board",
-                "operator-handoff",
-                "manual-review",
-            ],
-        )
         self.assertEqual(snapshot["profile_id"], snapshot["profile_options"][0]["id"])
         self.assertTrue(snapshot["profile_known"])
         self.assertIn("profile_options_all", snapshot)
@@ -399,40 +508,6 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(snapshot["workspace_label"], Path(tmp).name)
         self.assertEqual(snapshot["output_root"], str(Path(tmp).resolve() / "out" / "operator-ui"))
         self.assertEqual(snapshot["output_root_label"], "operator-ui")
-        self.assertEqual(
-            snapshot["navigation"],
-            [
-                {"id": "home", "label": "Home"},
-                {"id": "full-qa-pass", "label": "Full QA Pass"},
-                {"id": "batch-full-qa-pass", "label": "Batch Full QA Pass"},
-                {"id": "my-tickets", "label": "My Tickets"},
-                {"id": "weekly-ticket-draft", "label": "Weekly Ticket Draft"},
-                {"id": "whats-new", "label": "What's New"},
-                {"id": "keyboard-shortcuts", "label": "Keyboard Shortcuts"},
-                {"id": "settings", "label": "Settings"},
-                {"id": "delivery-checklist", "label": "Delivery documentation"},
-                {"id": "delivery-readiness", "label": "Delivery Readiness"},
-                {"id": "cross-domain-delivery", "label": "Cross-Domain Delivery"},
-                {"id": "perspectives-inventory", "label": "Perspectives"},
-                {"id": "rack-readiness", "label": "Rack Readiness"},
-                {"id": "disabled-tests", "label": "Disabled Tests"},
-                {"id": "api-version-coverage", "label": "API Version"},
-                {"id": "country-variant-coverage", "label": "Country Variants"},
-                {"id": "export-size-trend", "label": "Size Trend"},
-                {"id": "onboarding-guide", "label": "Onboarding Guide"},
-                {"id": "setup-doctor", "label": "Setup Doctor"},
-                {"id": "qa-workflows", "label": "QA Workflows"},
-                {"id": "bmw-process", "label": "BMW Process"},
-                {"id": "screenshot-test-state", "label": "Screenshot Test State"},
-                {"id": "risk-score", "label": "Risk Score"},
-                {"id": "cross-car-comparison", "label": "Cross-Car Comparison"},
-                {"id": "daily-digest", "label": "Daily Digest"},
-                {"id": "team-digest-board", "label": "Team Digest Board"},
-                {"id": "operator-handoff", "label": "Operator Handoff"},
-                {"id": "manual-review", "label": "Manual Review Companion"},
-                {"id": "about", "label": "About"},
-            ],
-        )
         self.assertEqual(
             snapshot["shortcuts"],
             [
@@ -444,157 +519,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 "Esc Close sidebar",
             ],
         )
-        self.assertEqual(
-            snapshot["pages"][0]["tagline"],
-            "Start with the local checks and evidence needed for the selected car.",
-        )
-        self.assertEqual(
-            snapshot["pages"][1]["tagline"],
-            "One local pass through setup, evidence, review assist, and handoff status.",
-        )
-        self.assertEqual(
-            snapshot["pages"][2]["tagline"],
-            "Run selected profiles sequentially; one profile finishes before the next starts.",
-        )
-        pages_by_id = {page["id"]: page for page in snapshot["pages"]}
-        self.assertEqual(
-            pages_by_id["weekly-ticket-draft"]["tagline"],
-            "Draft your end-of-week ticket list from Jira updates and local SGFX activity.",
-        )
-        self.assertEqual(pages_by_id["whats-new"]["tagline"], "Current build notes from bundled CHANGELOG.md.")
-        self.assertEqual(
-            pages_by_id["keyboard-shortcuts"]["tagline"],
-            "Reference for the dashboard keyboard shortcuts that are already wired.",
-        )
-        self.assertEqual(
-            pages_by_id["settings"]["tagline"],
-            "Operator-local dashboard preferences for this machine.",
-        )
-        self.assertEqual(
-            pages_by_id["delivery-checklist"]["tagline"],
-            "Read-only delivery workbook evidence for the selected profile.",
-        )
-        self.assertEqual(
-            pages_by_id["delivery-readiness"]["tagline"],
-            "Per-car CHANGELOG delivery status from local SVN and BMW catalog evidence.",
-        )
-        self.assertEqual(
-            pages_by_id["cross-domain-delivery"]["tagline"],
-            "Cars, Widgets, and Ambient delivery/version evidence from local SVN.",
-        )
-        self.assertEqual(
-            pages_by_id["perspectives-inventory"]["tagline"],
-            "Perspectives scene inventory and same-display-type peer evidence from local SVN.",
-        )
-        self.assertEqual(
-            pages_by_id["rack-readiness"]["tagline"],
-            "IDCevo pre-flash asset readiness and operator-confirmed rack checklist.",
-        )
-        self.assertEqual(
-            pages_by_id["disabled-tests"]["tagline"],
-            "Per-car disabled-test inventory from local test_config.lua files.",
-        )
-        self.assertEqual(
-            pages_by_id["api-version-coverage"]["tagline"],
-            "Shared MainInterfaces API reference with cautious impact hints.",
-        )
-        self.assertEqual(
-            pages_by_id["country-variant-coverage"]["tagline"],
-            "Country-coding test matrix with expected, actual, and diff evidence slots.",
-        )
-        self.assertEqual(
-            pages_by_id["export-size-trend"]["tagline"],
-            "Export-size workbook trends from local size_analysis evidence.",
-        )
-        self.assertEqual(
-            pages_by_id["onboarding-guide"]["tagline"],
-            "New-operator path through setup, evidence pages, manual review, and handoff.",
-        )
-        self.assertEqual(
-            pages_by_id["setup-doctor"]["tagline"],
-            "Detect-only setup status for local SGFX dependencies.",
-        )
-        self.assertEqual(
-            pages_by_id["qa-workflows"]["tagline"],
-            "Local JSON workflow catalog with manual-attestation gates preserved.",
-        )
-        self.assertEqual(
-            pages_by_id["bmw-process"]["tagline"],
-            "Read-only workflow contracts for BMW interface, triage, and visual review paths.",
-        )
-        self.assertEqual(pages_by_id["screenshot-test-state"]["tagline"], "BMW + MINI baseline / actual / diff counts per brand.")
-        self.assertEqual(
-            pages_by_id["risk-score"]["tagline"],
-            "Per-car review focus signal with delta since latest local manual review.",
-        )
-        self.assertEqual(pages_by_id["cross-car-comparison"]["tagline"], "G70 vs G65 risk-score widget side by side.")
-        self.assertEqual(pages_by_id["daily-digest"]["tagline"], "Morning status snapshot for the SG Daily standup.")
-        self.assertEqual(
-            pages_by_id["team-digest-board"]["tagline"],
-            "Local snapshot for standup review across selected car profiles.",
-        )
-        self.assertEqual(
-            pages_by_id["operator-handoff"]["tagline"],
-            "Record the stopping point before a shift handoff.",
-        )
-        self.assertEqual(
-            pages_by_id["manual-review"]["tagline"],
-            "Step through the 7 Quality-Hero review steps. Operator verdict per step.",
-        )
         self.assertIn("Manual review remains required.", snapshot["guardrails"])
         self.assertIn("Decision: not approval — evidence only.", snapshot["guardrails"])
         self.assertIn("BMW Git access is read-only. SGFX never modifies BMW source.", snapshot["guardrails"])
         self.assertIn("Activity log is local-only — never posted to Jira, SVN, or BMW Git.", snapshot["guardrails"])
-        full_pass_page = next(page for page in snapshot["pages"] if page["id"] == "full-qa-pass")
-        self.assertIn("steps", full_pass_page["payload"])
-        self.assertTrue(full_pass_page["payload"]["manual_review_required"])
-        self.assertFalse(full_pass_page["payload"]["records_operator_verdict"])
-        self.assertFalse(full_pass_page["payload"]["is_approval"])
-        manual_page = next(page for page in snapshot["pages"] if page["id"] == "manual-review")
-        self.assertEqual(manual_page["status"], "not_run")
-        self.assertIn("Manual review session not started", manual_page["empty_state_note"])
-        self.assertTrue(manual_page["confluence_anchors"])
-        self.assertTrue(all(item["status"] == "not_run" for item in manual_page["items"]))
-        self.assertTrue(all(step["verdict"] == "not_run" for step in manual_page["payload"]["steps"]))
-        onboarding_page = next(page for page in snapshot["pages"] if page["id"] == "onboarding-guide")
-        self.assertEqual(onboarding_page["payload"]["status"], "available")
-        self.assertTrue(onboarding_page["payload"]["manual_review_required"])
-        self.assertFalse(onboarding_page["payload"]["is_approval"])
-        self.assertIn("dependency-setup", {item["key"] for item in onboarding_page["payload"]["steps"]})
-        risk_page = next(page for page in snapshot["pages"] if page["id"] == "risk-score")
-        self.assertIn("risk_score", risk_page["payload"])
-        self.assertFalse(risk_page["payload"]["is_approval"])
-        self.assertTrue(risk_page["payload"]["manual_review_required"])
-        comparison_page = next(page for page in snapshot["pages"] if page["id"] == "cross-car-comparison")
-        self.assertEqual(comparison_page["payload"]["comparison_axis"], "risk-score")
-        self.assertEqual(comparison_page["payload"]["profiles"], ["G70", "G65"])
-        self.assertFalse(comparison_page["payload"]["is_approval"])
-        team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
-        self.assertEqual(team_page["payload"]["share_decision"]["selected_model"], "local_snapshot")
-        self.assertFalse(team_page["payload"]["is_approval"])
-        weekly_page = next(page for page in snapshot["pages"] if page["id"] == "weekly-ticket-draft")
-        self.assertTrue(weekly_page["deferred"])
-        self.assertEqual(weekly_page["status"], "read_only")
-        self.assertTrue(weekly_page["payload"]["read_only"])
-        self.assertFalse(weekly_page["payload"]["is_approval"])
-        cross_domain_page = next(page for page in snapshot["pages"] if page["id"] == "cross-domain-delivery")
-        self.assertIn(cross_domain_page["status"], {"available", "unavailable"})
-        self.assertTrue(cross_domain_page["payload"]["read_only"])
-        self.assertFalse(cross_domain_page["payload"]["is_approval"])
-        perspectives_page = next(page for page in snapshot["pages"] if page["id"] == "perspectives-inventory")
-        self.assertIn(perspectives_page["status"], {"available", "unavailable"})
-        self.assertTrue(perspectives_page["payload"]["read_only"])
-        self.assertFalse(perspectives_page["payload"]["is_approval"])
-        rack_page = next(page for page in snapshot["pages"] if page["id"] == "rack-readiness")
-        self.assertIn(rack_page["status"], {"available", "unavailable"})
-        self.assertTrue(rack_page["payload"]["read_only"])
-        self.assertFalse(rack_page["payload"]["is_approval"])
-        handoff_page = next(page for page in snapshot["pages"] if page["id"] == "operator-handoff")
-        self.assertEqual(handoff_page["payload"]["status"], "not_run")
-        self.assertFalse(handoff_page["payload"]["is_approval"])
-        self.assertIn("stopping point", handoff_page["empty_state_note"].casefold())
-        for forbidden in ("approved", "cleared", "signed-off", "production-ready"):
-            self.assertNotIn(forbidden, json.dumps(snapshot, ensure_ascii=False).casefold())
+
 
     def test_dashboard_snapshot_exposes_default_and_show_all_profile_sets_from_bmw_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -732,7 +661,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             with self.subTest(profile_id=profile_id):
                 self.assertEqual(snapshot["profile_id"], profile_id)
                 self.assertTrue(snapshot["profile_known"])
-                self.assertEqual(len(snapshot["pages"]), 28)
+                self.assertEqual(len(snapshot["pages"]), 19)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -787,7 +716,6 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("window.__sgfxPerformanceTrace", source)
         self.assertIn("data-sgfx-nav-item", source)
         self.assertIn("functionKeys", source)
-        self.assertIn("F11", source)
         self.assertIn("data-sgfx-feedback-button", source)
         self.assertIn("window.sgfxOpenFeedback", source)
         self.assertIn("mailto:", source)
@@ -797,13 +725,6 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn(".exe SHA", source)
         self.assertIn("No telemetry was sent automatically", source)
         self.assertIn("feedback_email", source)
-        self.assertIn("data-sgfx-jira-profile-tickets", source)
-        self.assertIn("Active tickets for this profile", source)
-        self.assertIn("search_jira_profile_tickets", source)
-        self.assertIn("Read-only Jira REST query", source)
-        self.assertIn("Jira tickets unavailable", source)
-        self.assertIn("Open setup guidance", source)
-        self.assertIn("Batch Full QA Pass", source)
         self.assertIn("Run selected profiles", source)
         self.assertIn("Cancel after current", source)
         self.assertIn("start_dashboard_batch_full_qa_pass", source)
@@ -837,31 +758,6 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "sg_preflight"
         source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
         workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
-
-        jira_card = source[
-            source.find("def _render_jira_profile_tickets_card"):
-            source.find("\n\ndef _render_selected_page", source.find("def _render_jira_profile_tickets_card"))
-        ]
-        self.assertNotIn("search_jira_profile_tickets(", jira_card)
-        self.assertIn("jira_profile_tickets_loader=_load_jira_profile_tickets_payload", source)
-        self.assertIn("background_tasks.create(_load_jira_profile_tickets_card()", workflow_source)
-
-        my_tickets_panel = workflow_source[
-            workflow_source.find("def _render_my_tickets_panel"):
-            workflow_source.find("\n\ndef _render_full_qa_pass_panel", workflow_source.find("def _render_my_tickets_panel"))
-        ]
-        self.assertNotIn("search_my_unresolved_tickets(", my_tickets_panel)
-        self.assertNotIn("build_latest_daily_digest(", my_tickets_panel)
-        self.assertIn("await _io_bound(_build_my_tickets_payload, workspace)", source)
-        self.assertIn('page_id == "my-tickets"', source)
-
-        weekly_ticket_panel = workflow_source[
-            workflow_source.find("def _render_weekly_ticket_draft_panel"):
-            workflow_source.find("\n\ndef _render_full_qa_pass_panel", workflow_source.find("def _render_weekly_ticket_draft_panel"))
-        ]
-        self.assertNotIn("build_weekly_ticket_draft(", weekly_ticket_panel)
-        self.assertIn("await _io_bound(_build_weekly_ticket_draft_payload, workspace)", source)
-        self.assertIn('page_id == "weekly-ticket-draft"', source)
 
         visual_renderer = workflow_source[
             workflow_source.find("def _render_action_visuals"):
@@ -1155,88 +1051,6 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         violations = _find_dashboard_blocking_violations(sources)
         self.assertEqual([], violations)
 
-    def test_jira_inline_tickets_render_as_copy_only_buttons(self) -> None:
-        """Clicking a Jira ticket in the inline panel copies the URL only and
-        shows a visible toast. It must not auto-open a browser."""
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
-        # Locate the Jira ticket renderer.
-        render_marker = "if tickets:"
-        idx = source.find(render_marker, source.find("_render_jira_profile_tickets_card"))
-        self.assertNotEqual(idx, -1, "internal milestone / internal milestone: Jira ticket renderer 'if tickets:' block not found")
-        block = source[idx:idx + 1500]
-        self.assertIn("ui.button(", block, "Jira ticket must render as a button (not anchor)")
-        self.assertIn(
-            "_copy_dashboard_link_to_clipboard(ui, url, key)",
-            block,
-            "Jira ticket button must copy only",
-        )
-        self.assertIn("sgfx-jira-ticket-key", block, "internal milestone styling class must remain")
-        self.assertIn("def _copy_dashboard_link_to_clipboard", source)
-        helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
-        helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", helper_idx)
-        self.assertNotEqual(helper_end, -1, "Jira helper end marker not found")
-        helper_block = source[helper_idx:helper_end]
-        self.assertNotIn("webbrowser.open", helper_block, "Jira helper must not auto-open a browser")
-        self.assertIn("navigator.clipboard.writeText", helper_block, "Jira helper must copy URL to clipboard")
-        self.assertIn("Copied to clipboard:", helper_block, "notify wording must mention clipboard")
-
-    def test_my_tickets_page_is_read_only_with_editable_copy_drafts(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn('("my-tickets", "My Tickets")', source)
-        self.assertIn("_my_tickets_page", source)
-        self.assertIn("_render_my_tickets_panel", source)
-        self.assertIn("search_my_unresolved_tickets", source)
-        from sg_preflight.jira_client import build_my_unresolved_ticket_jql
-
-        self.assertEqual(
-            build_my_unresolved_ticket_jql(),
-            "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC",
-        )
-        self.assertIn('data-sgfx-my-tickets-page="true"', source)
-        self.assertIn("Editable status draft", source)
-        self.assertIn("Copy status draft", source)
-        self.assertIn("No Jira post is sent", source)
-        self.assertNotIn("auto_confirm=True", source[source.find("def _render_my_tickets_panel"):source.find("def _render_batch_full_qa_pass_panel")])
-
-    def test_dashboard_snapshot_contains_my_tickets_page_without_jira_query(self) -> None:
-        from sg_preflight.dashboard.main import build_dashboard_snapshot
-
-        with tempfile.TemporaryDirectory() as tmp:
-            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
-
-        navigation = [item["id"] for item in snapshot["navigation"]]
-        self.assertIn("my-tickets", navigation)
-        pages = {page["id"]: page for page in snapshot["pages"]}
-        self.assertIn("my-tickets", pages)
-        self.assertEqual(pages["my-tickets"]["status"], "read_only")
-        self.assertIn("operator-local credentials", pages["my-tickets"]["summary"])
-
-    def test_weekly_ticket_draft_page_is_read_only_with_editable_copy_draft(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
-        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
-
-        self.assertIn('("weekly-ticket-draft", "Weekly Ticket Draft")', source)
-        self.assertIn("_weekly_ticket_draft_page", source)
-        self.assertIn("_render_weekly_ticket_draft_panel", source)
-        self.assertIn("_build_weekly_ticket_draft_payload", source)
-        self.assertIn("render_weekly_ticket_draft_text", workflow_source)
-        self.assertIn('data-sgfx-weekly-ticket-draft-page="true"', workflow_source)
-        self.assertIn("Editable weekly ticket draft", workflow_source)
-        self.assertIn("Copy draft", workflow_source)
-        self.assertIn("Draft only - review and edit before sending", workflow_source)
-        panel = workflow_source[
-            workflow_source.find("def _render_weekly_ticket_draft_panel"):
-            workflow_source.find("\n\ndef _render_full_qa_pass_panel", workflow_source.find("def _render_weekly_ticket_draft_panel"))
-        ]
-        self.assertNotIn("auto_confirm=True", panel)
-        self.assertNotIn("post_jira", panel)
-
     def test_ticket_error_visible_summaries_do_not_embed_raw_exception_source(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight"
         source = "\n".join(
@@ -1274,11 +1088,10 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn(".sgfx-status.sgfx-tone-bad", source)
         self.assertIn(".sgfx-status-cell.sgfx-tone-good", source)
 
-    def test_jira_card_and_diagnostic_chain_error_paths_hide_raw_exception(self) -> None:
+    def test_diagnostic_chain_error_paths_hide_raw_exception(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        for relative in ("dashboard/main.py", "dashboard_pages_workflows.py", "jira_client.py"):
+        for relative in ("dashboard/main.py", "dashboard_pages_workflows.py"):
             source = (root / relative).read_text(encoding="utf-8")
-            self.assertNotIn('"summary": f"Jira tickets unavailable: {exc}"', source, relative)
             self.assertNotIn(
                 '"summary": f"Missing-actual diagnostic chain failed: {exc}"', source, relative
             )
@@ -1287,192 +1100,6 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn(
             '"diagnostic_detail": f"Missing-actual diagnostic chain failed: {exc}"', workflows_source
         )
-        self.assertIn('"diagnostic_detail": f"Jira tickets unavailable: {exc}"', workflows_source)
-
-    def test_my_tickets_error_payload_hides_raw_exception_in_visible_summary(self) -> None:
-        from sg_preflight import dashboard_pages_workflows as workflows
-        from sg_preflight.dashboard import main as dashboard_main
-
-        raw_error = "raw jira auth traceback"
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(
-                dashboard_main,
-                "search_my_unresolved_tickets",
-                side_effect=RuntimeError(raw_error),
-            ):
-                payload = workflows._build_my_tickets_payload(Path(tmp))
-
-        self.assertEqual(payload["summary"], "My Tickets unavailable. Check local Jira setup before retrying.")
-        self.assertNotIn(raw_error, payload["summary"])
-        self.assertIn(raw_error, payload["diagnostic_detail"])
-        self.assertTrue(payload["read_only"])
-        self.assertFalse(payload["is_approval"])
-
-        returned_error = "returned transport failure detail"
-        failed_payload = {
-            "status": "failed",
-            "ticket_count": 0,
-            "tickets": [],
-            "summary": f"My Tickets unavailable: {returned_error}",
-            "read_only": True,
-            "is_approval": False,
-        }
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(dashboard_main, "search_my_unresolved_tickets", return_value=failed_payload):
-                payload = workflows._build_my_tickets_payload(Path(tmp))
-
-        self.assertEqual(payload["summary"], "My Tickets unavailable. Check local Jira setup before retrying.")
-        self.assertNotIn(returned_error, payload["summary"])
-        self.assertIn(returned_error, payload["diagnostic_detail"])
-
-    def test_weekly_ticket_error_payload_hides_raw_exception_in_visible_summary(self) -> None:
-        from sg_preflight import dashboard_pages_workflows as workflows
-
-        raw_error = "raw weekly jira traceback"
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(
-                workflows,
-                "build_weekly_ticket_draft",
-                side_effect=RuntimeError(raw_error),
-            ):
-                payload = workflows._build_weekly_ticket_draft_payload(Path(tmp))
-
-        self.assertEqual(
-            payload["summary"],
-            "Weekly Ticket Draft unavailable. Check local Jira setup before retrying.",
-        )
-        self.assertNotIn(raw_error, payload["summary"])
-        self.assertIn(raw_error, payload["diagnostic_detail"])
-        self.assertTrue(payload["read_only"])
-        self.assertFalse(payload["is_approval"])
-
-    def test_dashboard_snapshot_contains_weekly_ticket_draft_page_without_jira_query(self) -> None:
-        from sg_preflight.dashboard.main import build_dashboard_snapshot
-
-        with tempfile.TemporaryDirectory() as tmp:
-            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
-
-        navigation = [item["id"] for item in snapshot["navigation"]]
-        self.assertIn("weekly-ticket-draft", navigation)
-        pages = {page["id"]: page for page in snapshot["pages"]}
-        self.assertIn("weekly-ticket-draft", pages)
-        page = pages["weekly-ticket-draft"]
-        self.assertEqual(page["status"], "read_only")
-        self.assertTrue(page["deferred"])
-        self.assertTrue(page["payload"]["read_only"])
-        self.assertFalse(page["payload"]["is_approval"])
-        self.assertIn("review and send", page["summary"])
-
-    def test_whats_new_page_is_read_only_changelog_surface(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
-        config_source = (root / "dashboard_pages_config.py").read_text(encoding="utf-8")
-
-        self.assertIn('("whats-new", "What\'s New")', source)
-        self.assertIn("_whats_new_page", source)
-        self.assertIn("_whats_new_payload", config_source)
-        self.assertIn("build_changelog_whats_new", source)
-        self.assertIn("whats_new_page_id", source)
-        self.assertIn("open_whats_new", source)
-        self.assertIn("What's new", source)
-        self.assertNotIn("what changed since last version", source.lower())
-
-    def test_dashboard_snapshot_contains_whats_new_page_from_local_changelog(self) -> None:
-        from sg_preflight.dashboard.main import build_dashboard_snapshot
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            write_text(
-                root / "CHANGELOG.md",
-                "\ufeff# Changelog\n\n"
-                "## [2.0.0] - 2026-06-27\n\n"
-                "### Added\n"
-                "- What's new page\n"
-                "- Welcome card link\n\n"
-                "### Fixed\n"
-                "- Empty-state wording\n",
-            )
-
-            snapshot = build_dashboard_snapshot("G70", root, defer_daily_digest=True, defer_team_digest_board=True)
-
-        navigation = [item["id"] for item in snapshot["navigation"]]
-        self.assertIn("whats-new", navigation)
-        pages = {page["id"]: page for page in snapshot["pages"]}
-        page = pages["whats-new"]
-        self.assertEqual(page["status"], "available")
-        self.assertEqual(page["title"], "What's New")
-        self.assertTrue(page["payload"]["read_only"])
-        self.assertFalse(page["payload"]["is_approval"])
-        self.assertEqual(page["payload"]["current_section"]["title"], "2.0.0 - 2026-06-27")
-        self.assertEqual(page["payload"]["counts"]["current_item_count"], 3)
-        self.assertIn("What's new in this build", page["summary"])
-        item_details = "\n".join(item["detail"] for item in page["items"])
-        self.assertIn("What's new page", item_details)
-        self.assertIn("Empty-state wording", item_details)
-        combined_text = json.dumps(page, ensure_ascii=False).lower()
-        self.assertNotIn("since last version", combined_text)
-        self.assertNotIn("approved", combined_text)
-
-    def test_dashboard_snapshot_whats_new_empty_state_when_changelog_missing(self) -> None:
-        from sg_preflight.dashboard.main import build_dashboard_snapshot
-
-        with tempfile.TemporaryDirectory() as tmp:
-            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
-
-        page = {page["id"]: page for page in snapshot["pages"]}["whats-new"]
-        self.assertEqual(page["status"], "unavailable")
-        self.assertFalse(page["data_available"])
-        self.assertEqual(page["items"], [])
-        self.assertIn("CHANGELOG.md was not found", page["summary"])
-        self.assertIn("No changelog found", page["empty_state_note"])
-        self.assertTrue(page["payload"]["read_only"])
-
-    def test_keyboard_shortcuts_page_derives_rows_from_snapshot_actions(self) -> None:
-        from sg_preflight.dashboard.main import build_dashboard_snapshot
-
-        with tempfile.TemporaryDirectory() as tmp:
-            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
-
-        navigation = [item["id"] for item in snapshot["navigation"]]
-        self.assertIn("keyboard-shortcuts", navigation)
-        page = {page["id"]: page for page in snapshot["pages"]}["keyboard-shortcuts"]
-        self.assertEqual(page["title"], "Keyboard Shortcuts")
-        self.assertEqual(page["status"], "read_only")
-        self.assertTrue(page["data_available"])
-        self.assertIn("window or browser tab has focus", page["summary"])
-        self.assertEqual(page["payload"]["shortcut_actions"], snapshot["shortcut_actions"])
-        self.assertEqual(page["payload"]["shortcuts"], snapshot["shortcuts"])
-        self.assertTrue(page["payload"]["read_only"])
-        self.assertFalse(page["payload"]["is_approval"])
-
-        self.assertEqual(
-            [item["label"] for item in page["items"]],
-            [action["key"] for action in snapshot["shortcut_actions"]],
-        )
-        for item, action in zip(page["items"], snapshot["shortcut_actions"]):
-            self.assertEqual(item["detail"], action["message"])
-        active_actions = [
-            item
-            for item in page["items"]
-            if "no action is assigned" not in item["detail"].lower()
-        ]
-        self.assertEqual([item["label"] for item in active_actions], ["F1", "F2", "F5", "/", "F12", "Esc"])
-
-    def test_keyboard_shortcuts_page_is_read_only_human_voice_surface(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
-        config_source = (root / "dashboard_pages_config.py").read_text(encoding="utf-8")
-
-        self.assertIn('("keyboard-shortcuts", "Keyboard Shortcuts")', source)
-        self.assertIn("_keyboard_shortcuts_page", source)
-        self.assertIn("_keyboard_shortcuts_payload", config_source)
-        self.assertIn("shortcut_actions=shortcut_actions", source)
-        self.assertIn("window or browser tab has focus", config_source)
-        combined = f"{source}\n{config_source}".lower()
-        self.assertNotIn("codename", combined)
-        self.assertNotIn("ai-generated", combined)
-        self.assertNotIn("fully automated", combined)
-        self.assertNotIn("approved by sgfx", combined)
 
     def test_settings_preferences_round_trip_to_operator_local_json(self) -> None:
         from sg_preflight import dashboard_preferences as preferences
@@ -1530,304 +1157,6 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
                 preferred.unlink()
                 self.assertEqual(dashboard_grafiks._resolve_grafiks_shell_exe(workspace), env_exe.resolve())
-
-    def test_dashboard_snapshot_contains_settings_page_with_local_only_copy(self) -> None:
-        from sg_preflight.dashboard.main import build_dashboard_snapshot
-
-        with tempfile.TemporaryDirectory() as tmp:
-            snapshot = build_dashboard_snapshot("G70", Path(tmp), defer_daily_digest=True, defer_team_digest_board=True)
-
-        navigation = [item["id"] for item in snapshot["navigation"]]
-        self.assertIn("settings", navigation)
-        page = {page["id"]: page for page in snapshot["pages"]}["settings"]
-        self.assertEqual(page["title"], "Settings")
-        self.assertEqual(page["status"], "available")
-        self.assertFalse(page["payload"]["read_only"])
-        self.assertTrue(page["payload"]["writes_operator_state"])
-        self.assertTrue(page["payload"]["local_only"])
-        self.assertFalse(page["payload"]["is_approval"])
-        self.assertIn("stored locally on this machine and never leave it", page["summary"])
-        labels = [item["label"] for item in page["items"]]
-        for label in (
-            "Default profile",
-            "Run mode",
-            "Desktop notifications",
-            "Feedback email",
-            "Default ticket",
-            "Grafiks shell exe",
-            "Theme",
-            "Local storage",
-        ):
-            self.assertIn(label, labels)
-        self.assertEqual(page["payload"]["settings"]["theme"], "clean")
-        self.assertEqual(page["payload"]["settings"]["run_mode"], "automatic")
-
-    def test_settings_page_is_human_voice_without_codename_or_hype(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = "\n".join(
-            (
-                (root / "dashboard" / "main.py").read_text(encoding="utf-8"),
-                (root / "dashboard_pages_config.py").read_text(encoding="utf-8"),
-                (root / "dashboard_preferences.py").read_text(encoding="utf-8"),
-            )
-        ).lower()
-
-        self.assertIn('("settings", "settings")', source)
-        self.assertIn("_settings_page", source)
-        self.assertIn("operator-local dashboard preferences", source)
-        self.assertIn("dark ide style", source)
-        self.assertNotIn("codename", source)
-        self.assertNotIn("ai-generated", source)
-        self.assertNotIn("fully automated", source)
-        self.assertNotIn("approved by sgfx", source)
-
-    def test_cross_domain_delivery_page_is_read_only_source_root_board(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
-        config_source = (root / "dashboard_pages_config.py").read_text(encoding="utf-8")
-
-        self.assertIn('("cross-domain-delivery", "Cross-Domain Delivery")', source)
-        self.assertIn("_cross_domain_delivery_page", source)
-        self.assertIn("_cross_domain_delivery_payload", source)
-        self.assertIn("build_cross_domain_delivery_board", source)
-        self.assertIn("build_cross_domain_delivery_board", config_source)
-        self.assertIn('page_id == "cross-domain-delivery"', source)
-        self.assertIn("payload_builder=_cross_domain_delivery_payload", source)
-        self.assertIn("Cars, Widgets, and Ambient delivery/version evidence", config_source)
-        self.assertIn("Version drift", config_source)
-
-    def test_perspectives_inventory_page_is_read_only_source_root_board(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
-        config_source = (root / "dashboard_pages_config.py").read_text(encoding="utf-8")
-
-        self.assertIn('("perspectives-inventory", "Perspectives")', source)
-        self.assertIn("_perspectives_inventory_page", source)
-        self.assertIn("_perspectives_inventory_payload", source)
-        self.assertIn("build_perspectives_inventory_board", source)
-        self.assertIn("build_perspectives_inventory_board", config_source)
-        self.assertIn('page_id == "perspectives-inventory"', source)
-        self.assertIn("payload_builder=_perspectives_inventory_payload", source)
-        self.assertIn("Perspectives scene inventory", config_source)
-        self.assertIn("Peer evidence", config_source)
-
-    def test_rack_readiness_page_is_read_only_source_root_board(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
-        config_source = (root / "dashboard_pages_config.py").read_text(encoding="utf-8")
-
-        self.assertIn('("rack-readiness", "Rack Readiness")', source)
-        self.assertIn("_rack_readiness_page", source)
-        self.assertIn("_rack_readiness_payload", source)
-        self.assertIn("build_rack_readiness_board", source)
-        self.assertIn("build_rack_readiness_board", config_source)
-        self.assertIn('page_id == "rack-readiness"', source)
-        self.assertIn("payload_builder=_rack_readiness_payload", source)
-        self.assertIn("IDCevo pre-flash asset readiness", config_source)
-        self.assertIn("Operator checklist", config_source)
-
-    def test_dashboard_snapshot_contains_cross_domain_delivery_page_from_local_fixture(self) -> None:
-        from sg_preflight.dashboard.main import build_dashboard_snapshot
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            repo = root / "repositories" / "trunk"
-            write_text(
-                repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md",
-                "\n".join(
-                    (
-                        "## [3.4.0] - 2026-06-01",
-                        "",
-                        "> _Ramses Composer / Headless: 2.9.0_",
-                        "> _Ramses: 28.0.0_",
-                        "> _Ramses Logic: 1.18.0_",
-                        "> _Feature Level: 2026.2_",
-                        "> _API version: 14_",
-                        "",
-                    )
-                ),
-            )
-            write_text(
-                repo / "Widgets" / "BMW" / "ClockWidget" / "Main" / "CHANGELOG.md",
-                "\n".join(
-                    (
-                        "## [1.5.0] - To be delivered",
-                        "",
-                        "> _Ramses Composer / Headless: 2.8.0_",
-                        "> _Ramses: 27.0.0_",
-                        "",
-                    )
-                ),
-            )
-            write_text(
-                repo / "AmbientLayer" / "BMW_Default" / "CHANGELOG.md",
-                "\n".join(
-                    (
-                        "## [4.0.0] - NOT YET DELIVERED",
-                        "",
-                        "> _Ramses Composer / Headless: 2.9.0_",
-                        "> _Ramses: 28.0.0_",
-                        "",
-                    )
-                ),
-            )
-            (repo / "Cars" / "BMW" / "F70" / "export").mkdir(parents=True, exist_ok=True)
-            (repo / "Cars" / "BMW" / "F70" / "export" / "Export_F70.rca").write_bytes(b"car")
-            (repo / "Widgets" / "BMW" / "ClockWidget" / "Main").mkdir(parents=True, exist_ok=True)
-            (repo / "Widgets" / "BMW" / "ClockWidget" / "Main" / "ClockWidget.rca").write_bytes(b"widget")
-            (repo / "AmbientLayer" / "BMW_Default" / "export_ECE").mkdir(parents=True, exist_ok=True)
-            (repo / "AmbientLayer" / "BMW_Default" / "export_ECE" / "ambient.rca").write_bytes(b"ambient")
-
-            with mock.patch("sg_preflight.dashboard_preferences.CANONICAL_SOURCE_REPO_ROOT", root / "missing-canonical"), mock.patch.dict(
-                os.environ,
-                {"SG_SOURCE_REPO_ROOT": str(repo), "SG_REPO": ""},
-                clear=False,
-            ):
-                snapshot = build_dashboard_snapshot("G70", root, defer_daily_digest=True, defer_team_digest_board=True)
-
-        navigation = [item["id"] for item in snapshot["navigation"]]
-        self.assertIn("cross-domain-delivery", navigation)
-        page = next(page for page in snapshot["pages"] if page["id"] == "cross-domain-delivery")
-        self.assertEqual(page["status"], "available")
-        self.assertTrue(page["payload"]["read_only"])
-        self.assertFalse(page["payload"]["is_approval"])
-        self.assertEqual(page["payload"]["counts"]["total"], 3)
-        self.assertEqual(page["payload"]["counts"]["version_drift"]["ramses_drift_count"], 1)
-        self.assertIn("version drift", page["summary"].casefold())
-        labels = [item["label"] for item in page["items"]]
-        self.assertIn("Cars / F70", labels)
-        self.assertIn("Widgets / ClockWidget", labels)
-        self.assertIn("Ambient / BMW_Default", labels)
-
-    def test_dashboard_snapshot_contains_perspectives_inventory_page_from_local_fixture(self) -> None:
-        from sg_preflight.dashboard.main import build_dashboard_snapshot
-
-        scene = {"CraneGimbal": {}, "Frustum": {}, "Viewport": {}}
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            repo = root / "repositories" / "trunk"
-            write_text(
-                repo / "Cars" / "BMW" / "perspectives_CID_2to1.json",
-                json.dumps({"Home": scene, "BrandOnly": scene}),
-            )
-            write_text(repo / "Cars" / "BMW" / "F70" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
-            write_text(
-                repo / "Cars" / "BMW" / "F70" / "perspectives_CID_2to1.json",
-                json.dumps({"Home": scene, "Service": scene}),
-            )
-            write_text(repo / "Cars" / "BMW" / "F71" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
-            write_text(
-                repo / "Cars" / "BMW" / "F71" / "perspectives_CID_2to1.json",
-                json.dumps({"Home": scene}),
-            )
-            write_text(repo / "Cars" / "BMW" / "F72" / "CHANGELOG.md", "## [1.0.0] - 2026-01-01\n")
-            write_text(
-                repo / "Cars" / "BMW" / "F72" / "perspectives_CID_2to1.json",
-                json.dumps({"Home": scene, "Service": scene}),
-            )
-
-            with mock.patch("sg_preflight.dashboard_preferences.CANONICAL_SOURCE_REPO_ROOT", root / "missing-canonical"), mock.patch.dict(
-                os.environ,
-                {"SG_SOURCE_REPO_ROOT": str(repo), "SG_REPO": ""},
-                clear=False,
-            ):
-                snapshot = build_dashboard_snapshot("G70", root, defer_daily_digest=True, defer_team_digest_board=True)
-
-        navigation = [item["id"] for item in snapshot["navigation"]]
-        self.assertIn("perspectives-inventory", navigation)
-        page = next(page for page in snapshot["pages"] if page["id"] == "perspectives-inventory")
-        self.assertEqual(page["status"], "available")
-        self.assertTrue(page["payload"]["read_only"])
-        self.assertFalse(page["payload"]["is_approval"])
-        self.assertEqual(page["payload"]["counts"]["car_total"], 3)
-        self.assertEqual(page["payload"]["counts"]["file_total"], 3)
-        self.assertEqual(page["payload"]["counts"]["brand_reference_count"], 1)
-        self.assertEqual(page["payload"]["brand_reference_entries"][0]["relative_path"], "Cars/BMW")
-        self.assertEqual(page["payload"]["display_type_groups"]["CID_2to1"]["common_scenes"], ["Home", "Service"])
-        self.assertEqual(page["payload"]["display_type_groups"]["CID_2to1"]["car_count"], 3)
-        self.assertEqual(page["payload"]["counts"]["peer_outlier_count"], 1)
-        self.assertNotIn("BMW", {entry["model_id"] for entry in page["payload"].get("entries", [])})
-        self.assertIn("peer evidence", page["summary"].casefold())
-        self.assertIn("brand reference", page["summary"].casefold())
-        labels = [item["label"] for item in page["items"]]
-        self.assertIn("CID_2to1 / F70", labels)
-        self.assertIn("CID_2to1 / F71", labels)
-        self.assertIn("Brand reference / BMW CID_2to1", labels)
-
-    def test_dashboard_snapshot_contains_rack_readiness_page_from_local_fixture(self) -> None:
-        from sg_preflight.dashboard.main import build_dashboard_snapshot
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            repo = root / "repositories" / "trunk"
-            write_text(
-                repo / "Cars_IDCevo" / "BMW" / "G70" / "CHANGELOG.md",
-                "\n".join(
-                    (
-                        "## [3.4.0] - 2026-06-01",
-                        "",
-                        "> _Ramses Composer / Headless: 2.9.0_",
-                        "> _Ramses: 28.16_",
-                        "",
-                    )
-                ),
-            )
-            (repo / "Cars_IDCevo" / "BMW" / "G70" / "export").mkdir(parents=True, exist_ok=True)
-            (repo / "Cars_IDCevo" / "BMW" / "G70" / "export" / "G70.rca").write_bytes(b"asset")
-            write_text(
-                repo / "Cars_IDCevo" / "BMW" / "G58" / "CHANGELOG.md",
-                "\n".join(
-                    (
-                        "## [3.4.0] - 2026-06-01",
-                        "",
-                        "> _Ramses Composer / Headless: 2.9.0_",
-                        "> _Ramses: 28.16_",
-                        "",
-                    )
-                ),
-            )
-
-            with mock.patch("sg_preflight.dashboard_preferences.CANONICAL_SOURCE_REPO_ROOT", root / "missing-canonical"), mock.patch.dict(
-                os.environ,
-                {"SG_SOURCE_REPO_ROOT": str(repo), "SG_REPO": ""},
-                clear=False,
-            ):
-                snapshot = build_dashboard_snapshot("G70", root, bmw_root=root / "missing-bmw-repo", defer_daily_digest=True, defer_team_digest_board=True)
-
-        navigation = [item["id"] for item in snapshot["navigation"]]
-        self.assertIn("rack-readiness", navigation)
-        page = next(page for page in snapshot["pages"] if page["id"] == "rack-readiness")
-        self.assertEqual(page["status"], "available")
-        self.assertTrue(page["payload"]["read_only"])
-        self.assertFalse(page["payload"]["is_approval"])
-        self.assertEqual(page["payload"]["counts"]["entry_total"], 2)
-        self.assertEqual(page["payload"]["counts"]["asset_ready_count"], 1)
-        self.assertEqual(page["payload"]["counts"]["asset_blocked_count"], 1)
-        rack_entries = {entry["model_id"]: entry for entry in page["payload"]["rack_readiness_entries"]}
-        self.assertEqual(rack_entries["G70"]["expected_svt_filename"], "SVT_IDCEVO-WITHOUT_SWITCH_G70_EVO.xml")
-        self.assertTrue(page["payload"]["operator_checklist"])
-        self.assertFalse(any(item["auto_checked"] for item in page["payload"]["operator_checklist"]))
-        self.assertFalse(page["payload"]["rack_inventory"]["live"])
-        self.assertFalse(page["payload"]["rack_inventory"]["verified_by_sgfx"])
-        self.assertIn("not live", page["payload"]["rack_inventory"]["provenance_note"].casefold())
-        self.assertIn("sgfx does not measure or verify", page["payload"]["rack_inventory"]["provenance_note"].casefold())
-        self.assertFalse(page["payload"]["kpi_reference"]["live"])
-        self.assertFalse(page["payload"]["kpi_reference"]["measured_by_sgfx"])
-        self.assertIn("not live", page["payload"]["kpi_reference"]["provenance_note"].casefold())
-        self.assertIn("sgfx does not measure or verify", page["payload"]["kpi_reference"]["provenance_note"].casefold())
-        self.assertTrue(all(panel["collapsible"] for panel in page["payload"]["rack_reference_panels"]))
-        self.assertTrue(all(panel["secondary"] for panel in page["payload"]["rack_reference_panels"]))
-        self.assertIn("asset-ready", page["summary"].casefold())
-        self.assertIn("operator-confirmed", page["summary"].casefold())
-        labels = [item["label"] for item in page["items"]]
-        items_by_label = {item["label"]: item for item in page["items"]}
-        self.assertIn("Rack asset / G70", labels)
-        self.assertIn("Rack asset / G58", labels)
-        self.assertIn("Operator checklist", labels)
-        self.assertIn("Reference / Rack target inventory", labels)
-        self.assertIn("Reference / KPI expectation", labels)
-        self.assertIn("not live", items_by_label["Reference / Rack target inventory"]["detail"].casefold())
-        self.assertIn("not measured by sgfx", items_by_label["Reference / KPI expectation"]["detail"].casefold())
 
     def test_dashboard_doc_links_are_copy_only(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
@@ -2203,19 +1532,6 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("sanitize=False", source)
         self.assertNotIn("window.open", source)
 
-    def test_dashboard_source_exposes_quality_report_jira_attach_flow(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("Build Quality-Hero report", source)
-        self.assertIn("HTML report", source)
-        self.assertIn("Attach to Jira ticket", source)
-        self.assertIn("Ticket picker", source)
-        self.assertIn("Post to Jira?", source)
-        self.assertIn("--attach-ticket", source)
-        self.assertIn("--auto-confirm", source)
-
     def test_dashboard_source_exposes_full_qa_wizard_actions(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
             encoding="utf-8"
@@ -2422,8 +1738,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
 
         self.assertTrue(snapshot["welcome"]["show"])
         self.assertEqual(snapshot["welcome"]["setup_page_id"], "setup-doctor")
-        self.assertEqual(snapshot["welcome"]["whats_new_page_id"], "whats-new")
-        self.assertEqual(snapshot["welcome"]["whats_new_label"], "What's new")
+        self.assertNotIn("whats_new_page_id", snapshot["welcome"])
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["setup_status"], fake_setup)
         self.assertEqual(delivery["setup_status"]["actions"][0]["label"], "Set up RaCo")
@@ -2487,7 +1802,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True, defer_team_digest_board=True)
 
         page = next(page for page in snapshot["pages"] if page["id"] == "setup-doctor")
-        self.assertIn("documented pins", page["tagline"])
+        self.assertEqual(page["tagline"], "Detect-only setup status for local SGFX dependencies.")
         self.assertIn("guidance", page["ownership_note"].casefold())
         self.assertIn("Version validation: 1 ok, 1 drift, 0 unknown, 1 not pinned.", page["summary"])
         self.assertEqual(page["payload"]["version_validation"]["drift"], 1)
@@ -2506,7 +1821,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_team_digest_board=True)
 
         team_board.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 28)
+        self.assertEqual(len(snapshot["pages"]), 19)
         team_page = next(page for page in snapshot["pages"] if page["id"] == "team-digest-board")
         self.assertTrue(team_page["deferred"])
         self.assertEqual(team_page["status"], "not_run")
@@ -2520,7 +1835,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 snapshot = build_dashboard_snapshot("G70", tmp, defer_daily_digest=True)
 
         daily_digest.assert_not_called()
-        self.assertEqual(len(snapshot["pages"]), 28)
+        self.assertEqual(len(snapshot["pages"]), 19)
         daily_page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
         self.assertTrue(daily_page["deferred"])
         self.assertEqual(daily_page["status"], "not_run")
@@ -3684,62 +2999,6 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertEqual(result["html_size_bytes"], html_size)
         self.assertEqual(result["markdown_path"], str(markdown_path))
         self.assertEqual(result["html_path"], str(html_path))
-
-    def test_build_quality_hero_report_attachment_requires_operator_confirmation(self) -> None:
-        from sg_preflight.dashboard import main as dashboard_main
-
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValueError):
-                dashboard_main.build_dashboard_quality_hero_report(
-                    workspace=Path(tmp),
-                    profile_id="G70",
-                    ticket_id="IDCEVODEV-1009244",
-                    attach_ticket="IDCEVODEV-1009244",
-                    operator_confirmed=False,
-                )
-
-    def test_build_quality_hero_report_attach_uses_auto_confirmed_cli_path(self) -> None:
-        from sg_preflight.dashboard import main as dashboard_main
-
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp)
-            markdown_path = workspace / "out" / "quality" / "quality-hero-review-g70.md"
-            html_path = workspace / "out" / "quality" / "quality-hero-review-g70.html"
-            json_path = workspace / "out" / "quality" / "quality-hero-review-g70.json"
-            markdown_path.parent.mkdir(parents=True)
-            markdown_path.write_text("# report\n", encoding="utf-8")
-            html_path.write_text("<html></html>\n", encoding="utf-8")
-            json_path.write_text("{}", encoding="utf-8")
-            fake_completed = mock.Mock(
-                returncode=0,
-                stdout=json.dumps(
-                    {
-                        "markdown_path": str(markdown_path),
-                        "html_path": str(html_path),
-                        "json_path": str(json_path),
-                        "jira_attachment": {
-                            "status": "recorded",
-                            "response": [{"id": "11915479", "self": "https://jira.example/attachment/11915479"}],
-                        },
-                    }
-                ),
-                stderr="",
-            )
-            with mock.patch.object(dashboard_main.subprocess, "run", return_value=fake_completed) as run_mock:
-                result = dashboard_main.build_dashboard_quality_hero_report(
-                    workspace=workspace,
-                    profile_id="G70",
-                    ticket_id="IDCEVODEV-1009244",
-                    output_root=workspace / "out" / "quality",
-                    attach_ticket="IDCEVODEV-1009244",
-                    operator_confirmed=True,
-                )
-
-        command = run_mock.call_args.args[0]
-        self.assertIn("--attach-ticket", command)
-        self.assertIn("--auto-confirm", command)
-        self.assertEqual(result["attachment_id"], "11915479")
-        self.assertEqual(result["jira_url"], "https://jira.example/attachment/11915479")
 
     def test_build_dashboard_review_package_marks_failed_outcome_on_nonzero_exit(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main

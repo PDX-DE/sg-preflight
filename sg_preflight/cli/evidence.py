@@ -267,15 +267,6 @@ def handle_evidence_command(args: argparse.Namespace, parser: argparse.ArgumentP
                 thumbnail_limit=args.thumbnail_limit,
             )
             payload = dict(bundle.payload)
-            attach_ticket = str(args.attach_ticket or "").strip()
-            if attach_ticket:
-                attachment = common.attach_jira_file_action(
-                    attach_ticket,
-                    bundle.markdown_path,
-                    auto_confirm=bool(args.auto_confirm),
-                )
-                payload["jira_attachment"] = attachment
-                bundle.json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception as exc:
             print(common._console_safe(f"quality-hero-report failed: {exc}"), file=sys.stderr)
             return 1
@@ -293,12 +284,6 @@ def handle_evidence_command(args: argparse.Namespace, parser: argparse.ArgumentP
                 f"HTML: {bundle.html_path}",
                 f"JSON: {bundle.json_path}",
             ]
-            if payload.get("jira_attachment"):
-                attachment = payload["jira_attachment"]
-                lines.append(
-                    f"Jira attachment: {attachment.get('status', 'unknown')} "
-                    f"for {attachment.get('ticket', attach_ticket)}"
-                )
             common._emit_text("\n".join(lines), args)
         return 0
 

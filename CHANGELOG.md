@@ -44,6 +44,7 @@ outside this bundle.
 - Network boundary: only the explicit Jira post flow leaves the workstation, and only behind a --confirm flag (default is dry-run / off).
 
 ### Fixed
+- Focused the default Clean shell on Home, 18 operational evidence surfaces, and nav-only About. Personal-ticket, duplicate readiness, parked analysis, settings, automatic Jira lookup, and dashboard report-attachment controls are no longer registered on the default path.
 - `daily-digest latest --markdown` is safe on a fresh checkout and returns a clear no-review-package summary instead of failing.
 - Native shell resource discovery uses generic SGFX resource roots and skips generated/build folders.
 - Reviewed all team-facing text for a clear, consistent voice.

@@ -22,12 +22,6 @@ from sg_preflight.qa_pass_report import (
     export_qa_pass_report_zip,
     write_qa_pass_report_html,
 )
-from sg_preflight.weekly_ticket_draft import build_weekly_ticket_draft, render_weekly_ticket_draft_text
-
-
-MY_TICKETS_UNAVAILABLE_SUMMARY = "My Tickets unavailable. Check local Jira setup before retrying."
-WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY = "Weekly Ticket Draft unavailable. Check local Jira setup before retrying."
-JIRA_TICKETS_UNAVAILABLE_SUMMARY = "Jira tickets unavailable. Check local Jira setup before retrying."
 MISSING_ACTUAL_CHAIN_UNAVAILABLE_SUMMARY = (
     "Missing-actual diagnostic could not run. Check the BMW pipeline setup before retrying."
 )
@@ -65,7 +59,6 @@ _MAIN_GLOBAL_NAMES = (
     "DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL",
     "QUALITY_HERO_REPORT_ACTION_ID",
     "QUALITY_HERO_REPORT_ACTION_LABEL",
-    "QUALITY_HERO_REPORT_ATTACH_ACTION_LABEL",
     "DAILY_DIGEST_TICKET_ID_PLACEHOLDER",
     "_DAILY_DIGEST_PARTIAL_SECTION_KEYS",
     "_BUILD_PACKAGE_TIMEOUT_SECONDS",
@@ -109,18 +102,12 @@ _MAIN_GLOBAL_NAMES = (
     "_attach_tooltip",
     "_copy_dashboard_text_to_clipboard",
     "_copy_dashboard_link_to_clipboard",
-    "_render_jira_profile_tickets_card",
     "_start_background_poll_timer",
     "_start_io_bound_poll_timer",
     "_cancel_background_poll_timer",
     "_parent_slot_deleted",
     "_ignorable_nicegui_runtime_error",
     "_run_javascript_if_client_alive",
-    "build_my_unresolved_ticket_jql",
-    "search_my_unresolved_tickets",
-    "search_jira_profile_tickets",
-    "load_jira_credentials",
-    "DEFAULT_JIRA_URL",
     "operator_ui_root",
     "sgfx_cli_command",
     "hidden_subprocess_kwargs",
@@ -178,12 +165,8 @@ _MAIN_GLOBAL_NAMES = (
     "build_manual_review_assist_from_auto_checks",
     "apply_manual_review_suggestions",
     "run_manual_review_auto_checks",
-    "build_weekly_ticket_draft",
-    "render_weekly_ticket_draft_text",
     "_full_qa_pass_page",
     "_batch_full_qa_pass_page",
-    "_my_tickets_page",
-    "_weekly_ticket_draft_page",
     "_is_truthy_trigger",
     "_full_qa_pass_token",
     "_full_qa_pass_dedup_key",
@@ -228,9 +211,6 @@ _MAIN_GLOBAL_NAMES = (
     "build_dashboard_review_package",
     "_quality_hero_report_output_root",
     "_dashboard_quality_hero_report_command",
-    "_dashboard_jira_attachment_endpoint",
-    "_attachment_response_url",
-    "_attachment_response_id",
     "build_dashboard_quality_hero_report",
     "_build_action_visual_payload",
     "_full_qa_int",
@@ -245,11 +225,6 @@ _MAIN_GLOBAL_NAMES = (
     "_render_daily_digest_panel",
     "_render_operator_handoff_panel",
     "_render_manual_review_panel",
-    "_my_ticket_status_draft",
-    "_build_my_tickets_payload",
-    "_build_weekly_ticket_draft_payload",
-    "_render_my_tickets_panel",
-    "_render_weekly_ticket_draft_panel",
     "_render_batch_full_qa_pass_panel",
     "_render_full_qa_pass_panel",
 )
@@ -344,55 +319,6 @@ def _batch_full_qa_pass_page(profile_id: str, workspace: Path) -> dict[str, Any]
         "items": [],
         "payload": payload,
         "confluence_anchors": list(payload.get("confluence_anchors", [])),
-    }
-
-
-def _my_tickets_page(profile_id: str, workspace: Path) -> dict[str, Any]:
-    jql = build_my_unresolved_ticket_jql()
-    payload = {
-        "schema_version": 1,
-        "profile_id": profile_id,
-        "workspace": str(workspace),
-        "status": "read_only",
-        "summary": "Open this page to load your assigned unresolved Jira tickets from operator-local credentials.",
-        "jql": jql,
-        "draft_source": "local SGFX review evidence; no Jira post is sent",
-        "read_only": True,
-        "is_approval": False,
-    }
-    return {
-        "id": "my-tickets",
-        "title": "My Tickets",
-        "tagline": "Read your assigned unresolved Jira tickets and prepare review-only status drafts.",
-        "status": "read_only",
-        "data_available": False,
-        "summary": str(payload["summary"]),
-        "items": [],
-        "payload": payload,
-        "deferred": True,
-    }
-
-
-def _weekly_ticket_draft_page(profile_id: str, workspace: Path) -> dict[str, Any]:
-    payload = {
-        "schema_version": 1,
-        "profile_id": profile_id,
-        "workspace": str(workspace),
-        "status": "read_only",
-        "summary": "Open this page to draft your weekly ticket list, ready to review and send.",
-        "read_only": True,
-        "is_approval": False,
-    }
-    return {
-        "id": "weekly-ticket-draft",
-        "title": "Weekly Ticket Draft",
-        "tagline": "Draft your end-of-week ticket list from Jira updates and local SGFX activity.",
-        "status": "read_only",
-        "data_available": False,
-        "summary": str(payload["summary"]),
-        "items": [],
-        "payload": payload,
-        "deferred": True,
     }
 
 
@@ -725,7 +651,6 @@ DAILY_DIGEST_BUILD_PACKAGE_ACTION_ID = "build-review-package"
 DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL = "Build review package for this workspace"
 QUALITY_HERO_REPORT_ACTION_ID = "build-quality-hero-report"
 QUALITY_HERO_REPORT_ACTION_LABEL = "Build Quality-Hero report"
-QUALITY_HERO_REPORT_ATTACH_ACTION_LABEL = "Attach to Jira ticket"
 DAILY_DIGEST_TICKET_ID_PLACEHOLDER = "e.g., IDCEVODEV-1005738"
 _DAILY_DIGEST_PARTIAL_SECTION_KEYS = (
     "what_landed_today",
@@ -1553,7 +1478,6 @@ def _dashboard_quality_hero_report_command(
     profile_id: str,
     ticket_id: str,
     output_root: Path,
-    attach_ticket: str = "",
 ) -> list[str]:
     command = sgfx_cli_command(
         "quality-hero-report",
@@ -1569,40 +1493,7 @@ def _dashboard_quality_hero_report_command(
     )
     if ticket_id:
         command.extend(["--ticket", ticket_id])
-    if attach_ticket:
-        command.extend(["--attach-ticket", attach_ticket, "--auto-confirm"])
     return command
-
-
-def _dashboard_jira_attachment_endpoint(ticket_id: str) -> str:
-    ticket = ticket_id.strip().upper()
-    try:
-        base_url = str(load_jira_credentials().get("jira_url", "") or DEFAULT_JIRA_URL)
-    except Exception:  # noqa: BLE001
-        base_url = DEFAULT_JIRA_URL
-    return f"{base_url.rstrip('/')}/rest/api/2/issue/{ticket}/attachments"
-
-
-def _attachment_response_url(attachment: dict[str, Any]) -> str:
-    response = attachment.get("response")
-    if isinstance(response, list) and response:
-        first = response[0]
-        if isinstance(first, dict):
-            return str(first.get("self", "") or "")
-    if isinstance(response, dict):
-        return str(response.get("self", "") or "")
-    return ""
-
-
-def _attachment_response_id(attachment: dict[str, Any]) -> str:
-    response = attachment.get("response")
-    if isinstance(response, list) and response:
-        first = response[0]
-        if isinstance(first, dict):
-            return str(first.get("id", "") or first.get("key", "") or "")
-    if isinstance(response, dict):
-        return str(response.get("id", "") or response.get("key", "") or "")
-    return ""
 
 
 def build_dashboard_quality_hero_report(
@@ -1611,17 +1502,12 @@ def build_dashboard_quality_hero_report(
     profile_id: str,
     ticket_id: str = "",
     output_root: Path | str | None = None,
-    attach_ticket: str = "",
-    operator_confirmed: bool = False,
     timeout_seconds: int = _QUALITY_HERO_REPORT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     clean_profile = profile_id.strip()
     if not clean_profile:
         raise ValueError("Profile ID required to build a Quality-Hero report.")
     clean_ticket = ticket_id.strip().upper()
-    clean_attach_ticket = attach_ticket.strip().upper()
-    if clean_attach_ticket and not operator_confirmed:
-        raise ValueError("Operator confirmation is required before attaching a Quality-Hero report to Jira.")
     workspace_path = Path(workspace).resolve()
     output_path = Path(output_root).resolve() if output_root else _quality_hero_report_output_root(workspace_path, clean_profile)
     command = _dashboard_quality_hero_report_command(
@@ -1629,7 +1515,6 @@ def build_dashboard_quality_hero_report(
         profile_id=clean_profile,
         ticket_id=clean_ticket,
         output_root=output_path,
-        attach_ticket=clean_attach_ticket,
     )
     completed = subprocess.run(
         command,
@@ -1647,28 +1532,21 @@ def build_dashboard_quality_hero_report(
         except json.JSONDecodeError:
             payload = {}
     outcome = "recorded" if completed.returncode == 0 else "failed"
-    ticket_for_state = clean_attach_ticket or clean_ticket
-    if completed.returncode == 0 and ticket_for_state:
-        _write_active_ticket_state(workspace_path, ticket_for_state, source="quality-hero-report")
+    if completed.returncode == 0 and clean_ticket:
+        _write_active_ticket_state(workspace_path, clean_ticket, source="quality-hero-report")
     append_activity_entry(
         workspace_path,
         verb="ran",
         surface="daily-digest",
         profile=clean_profile,
         outcome="ok" if completed.returncode == 0 else "error",
-        note=(
-            f"Attach Quality-Hero report to {clean_attach_ticket}"
-            if clean_attach_ticket
-            else f"Build Quality-Hero report for {clean_ticket or 'no ticket'}"
-        ),
+        note=f"Build Quality-Hero report for {clean_ticket or 'no ticket'}",
     )
     markdown_path = str(payload.get("markdown_path", "") or "")
     html_path = str(payload.get("html_path", "") or "")
     json_path = str(payload.get("json_path", "") or "")
-    attachment = payload.get("jira_attachment", {}) if isinstance(payload.get("jira_attachment"), dict) else {}
     return {
         "ticket_id": clean_ticket,
-        "attach_ticket": clean_attach_ticket,
         "profile_id": clean_profile,
         "workspace": str(workspace_path),
         "output_root": str(output_path),
@@ -1682,9 +1560,6 @@ def build_dashboard_quality_hero_report(
         "markdown_size_bytes": Path(markdown_path).stat().st_size if markdown_path and Path(markdown_path).is_file() else 0,
         "html_size_bytes": Path(html_path).stat().st_size if html_path and Path(html_path).is_file() else 0,
         "json_size_bytes": Path(json_path).stat().st_size if json_path and Path(json_path).is_file() else 0,
-        "jira_attachment": attachment,
-        "attachment_id": _attachment_response_id(attachment),
-        "jira_url": _attachment_response_url(attachment),
         "stdout_tail": completed.stdout[-2000:] if completed.stdout else "",
         "stderr_tail": completed.stderr[-2000:] if completed.stderr else "",
         "recorded_by_tool": True,
@@ -2260,9 +2135,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
         if quality_action:
             ui.separator()
             ui.label("Quality-Hero report").classes("sgfx-panel-tagline")
-            ui.label(
-                "Generate the local Markdown report first. Attaching to Jira stays confirmation-gated per post."
-            ).classes("sgfx-muted")
+            ui.label("Generate local Markdown and HTML reports for review.").classes("sgfx-muted")
             anchor = str(quality_action.get("confluence_anchor", "")).strip()
             if anchor:
                 ui.label(f"Confluence anchor: {anchor}").classes("sgfx-muted")
@@ -2289,10 +2162,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
             report_path_label = ui.label("").classes("sgfx-muted")
             report_html_label = ui.label("").classes("sgfx-muted")
             report_html_actions_host = ui.row().classes("sgfx-confirm-actions")
-            attach_status = ui.label("").classes("sgfx-muted")
-            jira_link_host = ui.column().classes("full-width")
             report_state: dict[str, Any] = {}
-            attach_button_holder: dict[str, Any] = {}
 
             def _selected_report_ticket() -> str:
                 raw = str(ticket_override.value or ticket_select.value or "").strip().upper()
@@ -2375,98 +2245,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                                 "Quality-Hero HTML report path",
                             ),
                         ).props("flat dense no-caps")
-                attach_status.text = "Report can now be attached after confirmation." if markdown_path else ""
-                jira_link_host.clear()
-                if markdown_path:
-                    attach_button_holder["button"].enable()
                 ui.notify("Quality-Hero report generated locally.")
-
-            def _open_attach_dialog() -> None:
-                ticket_value = _selected_report_ticket()
-                markdown_path = _report_markdown_path()
-                if not ticket_value:
-                    ui.notify("Choose or enter a Jira ticket before attaching.")
-                    return
-                if markdown_path is None:
-                    ui.notify("Generate the Quality-Hero report before attaching to Jira.")
-                    return
-                confirm_ticket.text = f"Ticket: {ticket_value}"
-                confirm_path.text = f"Report path: {markdown_path}"
-                confirm_size.text = f"Attachment size: {_size_label(markdown_path.stat().st_size)}"
-                confirm_endpoint.text = f"Endpoint: {_dashboard_jira_attachment_endpoint(ticket_value)}"
-                attach_dialog.open()
-
-            with ui.dialog() as attach_dialog, ui.card():
-                ui.label("Attach to Jira ticket").classes("sgfx-panel-title")
-                ui.label("Post to Jira?").classes("sgfx-summary")
-                ui.label("This posts the generated Markdown report only after this confirmation. HTML stays local.").classes(
-                    "sgfx-summary"
-                )
-                confirm_ticket = ui.label("Ticket:").classes("sgfx-muted")
-                confirm_path = ui.label("Report path:").classes("sgfx-muted")
-                confirm_size = ui.label("Attachment size:").classes("sgfx-muted")
-                confirm_endpoint = ui.label("Endpoint:").classes("sgfx-muted")
-                ui.label("Manual review remains required. Decision: not approval — evidence only.").classes(
-                    "sgfx-muted"
-                )
-
-                async def _post_report_attachment() -> None:
-                    ticket_value = _selected_report_ticket()
-                    markdown_path = _report_markdown_path()
-                    if not ticket_value or markdown_path is None:
-                        ui.notify("Generate a report and choose a ticket before posting.")
-                        return
-                    post_button.disable()
-                    attach_status.text = "Attaching Quality-Hero report to Jira..."
-                    try:
-                        from nicegui import run as nicegui_run
-
-                        result = await nicegui_run.io_bound(
-                            build_dashboard_quality_hero_report,
-                            workspace=workspace,
-                            profile_id=str(snapshot["profile_id"]),
-                            ticket_id=ticket_value,
-                            output_root=Path(str(report_state.get("output_root", ""))),
-                            attach_ticket=ticket_value,
-                            operator_confirmed=True,
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        attach_status.text = f"Jira attachment failed: {exc}"
-                        ui.notify("Jira attachment failed.")
-                        attach_dialog.close()
-                        return
-                    finally:
-                        post_button.enable()
-                    report_state.clear()
-                    report_state.update(result)
-                    attachment_id = str(result.get("attachment_id", "") or "")
-                    jira_url = str(result.get("jira_url", "") or "")
-                    attach_status.text = (
-                        f"Jira attachment {attachment_id or result.get('outcome', 'unknown')} "
-                        f"for {ticket_value}."
-                    )
-                    jira_link_host.clear()
-                    with jira_link_host:
-                        if jira_url:
-                            ui.button(
-                                "Copy Jira attachment URL",
-                                on_click=lambda jira_url=jira_url: _copy_dashboard_link_to_clipboard(
-                                    ui,
-                                    jira_url,
-                                    "Jira attachment URL",
-                                ),
-                            ).props("flat dense no-caps").classes("sgfx-muted")
-                        else:
-                            ui.label("Jira attachment URL unavailable in response.").classes("sgfx-muted")
-                    ui.notify("Quality-Hero report attached to Jira.")
-                    attach_dialog.close()
-
-                post_button = _attach_tooltip(
-                    ui,
-                    ui.button("Post", on_click=_post_report_attachment).props("color=primary"),
-                    "Attach this local Markdown report to the selected Jira ticket.",
-                )
-                ui.button("Cancel", on_click=attach_dialog.close)
 
             build_report_button = _attach_tooltip(
                 ui,
@@ -2474,13 +2253,7 @@ def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Pat
                 .props("color=primary"),
                 "Generate a local Quality-Hero Markdown report.",
             )
-            attach_button = _attach_tooltip(
-                ui,
-                ui.button(QUALITY_HERO_REPORT_ATTACH_ACTION_LABEL, on_click=_open_attach_dialog),
-                "Review the Jira ticket, report path, size, and endpoint before attaching.",
-            )
-            attach_button.disable()
-            attach_button_holder["button"] = attach_button
+
 
 def _render_operator_handoff_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "operator-handoff")
@@ -2721,265 +2494,11 @@ def _render_manual_review_panel(ui: Any, snapshot: dict[str, Any], workspace: Pa
                     "Record the operator verdict locally for this manual-review step.",
                 )
 
-def _my_ticket_status_draft(ticket: dict[str, Any], workspace: Path) -> str:
-    key = str(ticket.get("key", "") or "").strip().upper()
-    summary = str(ticket.get("summary", "") or "").strip()
-    status = str(ticket.get("status", "") or "unknown").strip()
-    priority = str(ticket.get("priority", "") or "").strip()
-    headline = f"Status update draft for {key}"
-    if summary:
-        headline += f" - {summary}"
-    meta = [f"Current Jira status: {status}"]
-    if priority:
-        meta.append(f"Priority: {priority}")
-    try:
-        digest = build_latest_daily_digest(ticket_id=key, workspace=workspace)
-    except Exception as exc:  # noqa: BLE001
-        return (
-            f"{headline}\n\n"
-            f"{'; '.join(meta)}.\n\n"
-            "SGFX could not read the local review evidence for this ticket yet. "
-            f"Local evidence read failed with: {exc}\n\n"
-            "Next step: build or refresh the local review package, then review the evidence before posting. "
-            "Manual review remains required."
-        )
-    if bool(digest.get("data_available", False)):
-        digest_text = render_daily_digest_text(digest).strip()
-        return (
-            f"{headline}\n\n"
-            f"{'; '.join(meta)}.\n\n"
-            f"{digest_text}\n\n"
-            "Operator note: review and edit this draft before copying it to Jira. "
-            "Manual review remains required; this is not an approval."
-        )
-    setup_hint = str(digest.get("setup_hint", "") or "").strip()
-    if not setup_hint:
-        setup_hint = f"sgfx-preflight.exe ticket-review {key} --profile <profile> --workspace {workspace} --json"
-    return (
-        f"{headline}\n\n"
-        f"{'; '.join(meta)}.\n\n"
-        "SGFX checked the local review evidence for this ticket and no review package is available in this workspace yet. "
-        "No Jira post is sent.\n\n"
-        f"Next step: {setup_hint}\n\n"
-        "After the package is built, refresh My Tickets and edit this draft from the loaded evidence before copying it."
-    )
-
-
 def _genericize_failed_summary(payload: dict[str, Any], *, raw_prefix: str, generic_summary: str) -> None:
     summary = str(payload.get("summary", "") or "").strip()
     if summary.startswith(f"{raw_prefix}:"):
         payload.setdefault("diagnostic_detail", summary)
         payload["summary"] = generic_summary
-
-
-def _build_my_tickets_payload(workspace: Path) -> dict[str, Any]:
-    try:
-        payload = search_my_unresolved_tickets(max_results=12, timeout_seconds=8)
-    except Exception as exc:  # noqa: BLE001
-        payload = {
-            "status": "failed",
-            "ticket_count": 0,
-            "tickets": [],
-            "summary": MY_TICKETS_UNAVAILABLE_SUMMARY,
-            "diagnostic_detail": f"My Tickets unavailable: {exc}",
-            "settings_hint": "Check local Jira setup before retrying.",
-            "read_only": True,
-            "is_approval": False,
-            "jql": build_my_unresolved_ticket_jql(),
-        }
-    if not isinstance(payload, dict):
-        payload = {
-            "status": "failed",
-            "ticket_count": 0,
-            "tickets": [],
-            "summary": "My Tickets unavailable: Jira returned an unexpected response.",
-            "settings_hint": "Check local Jira setup before retrying.",
-            "read_only": True,
-            "is_approval": False,
-            "jql": build_my_unresolved_ticket_jql(),
-        }
-    _genericize_failed_summary(
-        payload,
-        raw_prefix="My Tickets unavailable",
-        generic_summary=MY_TICKETS_UNAVAILABLE_SUMMARY,
-    )
-    tickets = [ticket for ticket in payload.get("tickets", []) if isinstance(ticket, dict)]
-    enriched_tickets: list[dict[str, Any]] = []
-    for ticket in tickets:
-        enriched = dict(ticket)
-        enriched["status_draft"] = _my_ticket_status_draft(enriched, workspace)
-        enriched_tickets.append(enriched)
-    payload["tickets"] = enriched_tickets
-    payload["ticket_count"] = len(enriched_tickets)
-    payload.setdefault("jql", build_my_unresolved_ticket_jql())
-    payload.setdefault("read_only", True)
-    payload.setdefault("is_approval", False)
-    return payload
-
-
-def _build_weekly_ticket_draft_payload(workspace: Path) -> dict[str, Any]:
-    try:
-        payload = build_weekly_ticket_draft(workspace=workspace)
-    except Exception as exc:  # noqa: BLE001
-        payload = {
-            "status": "failed",
-            "jira_status": "failed",
-            "summary": WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY,
-            "diagnostic_detail": f"Weekly Ticket Draft unavailable: {exc}",
-            "text": "",
-            "read_only": True,
-            "is_approval": False,
-        }
-    if not isinstance(payload, dict):
-        payload = {
-            "status": "failed",
-            "jira_status": "failed",
-            "summary": "Weekly Ticket Draft unavailable: unexpected response.",
-            "text": "",
-            "read_only": True,
-            "is_approval": False,
-        }
-    _genericize_failed_summary(
-        payload,
-        raw_prefix="Weekly Ticket Draft unavailable",
-        generic_summary=WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY,
-    )
-    payload.setdefault("read_only", True)
-    payload.setdefault("is_approval", False)
-    payload["text"] = render_weekly_ticket_draft_text(payload)
-    return payload
-
-
-def _render_my_tickets_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
-    page = next(page for page in snapshot["pages"] if page["id"] == "my-tickets")
-    payload = snapshot.get("my_tickets_payload", {}) if isinstance(snapshot.get("my_tickets_payload"), dict) else {}
-    if not payload:
-        payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
-    status = str(payload.get("status", "unknown"))
-    tickets = [ticket for ticket in payload.get("tickets", []) if isinstance(ticket, dict)]
-    with ui.column().classes("sgfx-page-panel").props('data-sgfx-my-tickets-page="true"'):
-        with ui.row().classes("items-center justify-between full-width"):
-            ui.label(str(page["title"])).classes("sgfx-panel-title")
-            _render_status_chip(ui, status)
-        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
-        ui.label(str(payload.get("summary", page.get("summary", "My Tickets unavailable.")))).classes("sgfx-summary")
-        ui.label("Read-only Jira REST query. No Jira post is sent from this page.").classes("sgfx-muted")
-        jql = str(payload.get("jql", build_my_unresolved_ticket_jql()) or "")
-        if jql:
-            ui.label(f"JQL: {jql}").classes("sgfx-muted")
-        cache_status = str(payload.get("cache_status", "") or "").strip()
-        if cache_status:
-            ui.label(f"Cache: {cache_status}.").classes("sgfx-muted")
-        if status == "loading":
-            ui.linear_progress(value=0).props("indeterminate").classes("full-width")
-            ui.label("Loading active tickets and local status drafts off the UI event loop.").classes("sgfx-muted")
-            return
-        if not tickets:
-            settings_hint = str(payload.get("settings_hint", "") or "")
-            if settings_hint:
-                ui.label(settings_hint).classes("sgfx-muted")
-            elif status == "available":
-                ui.label("No assigned unresolved tickets were returned.").classes("sgfx-muted")
-            return
-        for ticket in tickets:
-            key = str(ticket.get("key", "") or "").strip().upper()
-            url = str(ticket.get("url", "") or "").strip()
-            draft = str(ticket.get("status_draft", "") or "").strip()
-            if not draft:
-                draft = (
-                    f"Status update draft for {key}\n\n"
-                    "SGFX is still preparing the local evidence draft. Refresh My Tickets after the loader finishes."
-                )
-            with ui.column().classes("sgfx-my-ticket-item full-width").props('data-sgfx-my-ticket-row="true"'):
-                with ui.row().classes("items-center full-width sgfx-my-ticket-header"):
-                    if url:
-                        ui.button(
-                            key,
-                            on_click=lambda url=url, key=key: _copy_dashboard_link_to_clipboard(ui, url, key),
-                        ).props("flat dense no-caps").classes("sgfx-jira-ticket-key")
-                    else:
-                        ui.label(key).classes("sgfx-jira-ticket-key")
-                    ui.label(str(ticket.get("status", "unknown"))).classes("sgfx-jira-status-pill")
-                    priority = str(ticket.get("priority", "") or "").strip()
-                    if priority:
-                        ui.label(priority).classes("sgfx-jira-status-pill")
-                ui.label(str(ticket.get("summary", ""))).classes("sgfx-summary")
-                updated = str(ticket.get("updated", "") or "").strip()
-                if updated:
-                    ui.label(f"Updated: {updated}").classes("sgfx-muted")
-                draft_input = (
-                    ui.textarea(label=f"Editable status draft for {key}", value=draft)
-                    .props("outlined")
-                    .classes("full-width sgfx-my-ticket-draft")
-                )
-                with ui.row().classes("sgfx-confirm-actions"):
-                    _attach_tooltip(
-                        ui,
-                        ui.button(
-                            "Copy status draft",
-                            on_click=lambda draft_input=draft_input, key=key: _copy_dashboard_text_to_clipboard(
-                                ui,
-                                str(draft_input.value or ""),
-                                f"{key} status draft",
-                            ),
-                        ).props("color=primary no-caps"),
-                        "Copy the edited local draft. SGFX does not post it to Jira.",
-                    )
-                    if url:
-                        _attach_tooltip(
-                            ui,
-                            ui.button(
-                                "Copy ticket link",
-                                on_click=lambda url=url, key=key: _copy_dashboard_link_to_clipboard(ui, url, key),
-                            ).props("flat dense no-caps"),
-                            "Copy the Jira ticket link only.",
-                        )
-
-
-def _render_weekly_ticket_draft_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
-    page = next(page for page in snapshot["pages"] if page["id"] == "weekly-ticket-draft")
-    payload = (
-        snapshot.get("weekly_ticket_draft_payload", {})
-        if isinstance(snapshot.get("weekly_ticket_draft_payload"), dict)
-        else {}
-    )
-    if not payload:
-        payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
-    status = str(payload.get("status", payload.get("jira_status", "unknown")) or "unknown")
-    draft_text = str(payload.get("text", "") or "").strip()
-    if not draft_text:
-        draft_text = render_weekly_ticket_draft_text(payload)
-    with ui.column().classes("sgfx-page-panel").props('data-sgfx-weekly-ticket-draft-page="true"'):
-        with ui.row().classes("items-center justify-between full-width"):
-            ui.label(str(page["title"])).classes("sgfx-panel-title")
-            _render_status_chip(ui, status)
-        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
-        ui.label(str(payload.get("summary", page.get("summary", "Weekly Ticket Draft unavailable.")))).classes(
-            "sgfx-summary"
-        )
-        ui.label("Draft only - review and edit before sending. SGFX doesn't send anything.").classes("sgfx-muted")
-        if status == "loading":
-            ui.linear_progress(value=0).props("indeterminate").classes("full-width")
-            ui.label("Loading the weekly ticket draft off the UI event loop.").classes("sgfx-muted")
-            return
-        draft_input = (
-            ui.textarea(label="Editable weekly ticket draft", value=draft_text)
-            .props("outlined")
-            .classes("full-width sgfx-weekly-ticket-draft")
-        )
-        with ui.row().classes("sgfx-confirm-actions"):
-            _attach_tooltip(
-                ui,
-                ui.button(
-                    "Copy draft",
-                    on_click=lambda draft_input=draft_input: _copy_dashboard_text_to_clipboard(
-                        ui,
-                        str(draft_input.value or ""),
-                        "weekly ticket draft",
-                    ),
-                ).props("color=primary no-caps"),
-                "Copy the edited weekly draft. SGFX does not send it.",
-            )
 
 
 def _render_batch_full_qa_pass_panel(
@@ -3191,8 +2710,6 @@ def _render_full_qa_pass_panel(
     *,
     bmw_root: Path | str | None = None,
     open_page: Callable[[str], None] | None = None,
-    jira_profile_tickets_payload: dict[str, Any] | None = None,
-    jira_profile_tickets_loader: Callable[[str], Any] | None = None,
 ) -> None:
     running_navigation_message = "Action running — cancel first to navigate"
     page = next(page for page in snapshot["pages"] if page["id"] == "full-qa-pass")
@@ -3253,46 +2770,6 @@ def _render_full_qa_pass_panel(
             "Ramses may show a black offscreen-rendering window during screenshot capture; "
             "live output appears in the action panel."
         ).classes("sgfx-muted")
-        jira_card_host = ui.column().classes("full-width")
-
-        def _paint_jira_profile_tickets(payload: dict[str, Any] | None) -> None:
-            jira_card_host.clear()
-            with jira_card_host:
-                _render_jira_profile_tickets_card(
-                    ui,
-                    profile_id,
-                    payload=payload,
-                    open_page=open_page,
-                )
-
-        _paint_jira_profile_tickets(jira_profile_tickets_payload)
-        if (
-            jira_profile_tickets_loader is not None
-            and str((jira_profile_tickets_payload or {}).get("status", "")).casefold() == "loading"
-        ):
-            async def _load_jira_profile_tickets_card() -> None:
-                try:
-                    payload = await jira_profile_tickets_loader(profile_id)
-                except Exception as exc:  # noqa: BLE001
-                    payload = {
-                        "status": "failed",
-                        "ticket_count": 0,
-                        "tickets": [],
-                        "summary": JIRA_TICKETS_UNAVAILABLE_SUMMARY,
-                        "diagnostic_detail": f"Jira tickets unavailable: {exc}",
-                        "settings_hint": "Check local Jira setup before retrying.",
-                        "read_only": True,
-                        "is_approval": False,
-                    }
-                _paint_jira_profile_tickets(payload if isinstance(payload, dict) else None)
-
-            try:
-                from nicegui import background_tasks
-
-                background_tasks.create(_load_jira_profile_tickets_card(), name="sgfx-jira-profile-card")
-            except RuntimeError:
-                asyncio.create_task(_load_jira_profile_tickets_card())
-
         with ui.row().classes("sgfx-full-qa-controls"):
             trusted_control = ui.checkbox(
                 "Automatic mode",
@@ -5397,8 +4874,6 @@ def _render_full_qa_pass_panel(
 
 _full_qa_pass_page = _with_main_globals(_full_qa_pass_page)
 _batch_full_qa_pass_page = _with_main_globals(_batch_full_qa_pass_page)
-_my_tickets_page = _with_main_globals(_my_tickets_page)
-_weekly_ticket_draft_page = _with_main_globals(_weekly_ticket_draft_page)
 _is_truthy_trigger = _with_main_globals(_is_truthy_trigger)
 _full_qa_pass_token = _with_main_globals(_full_qa_pass_token)
 _full_qa_pass_dedup_key = _with_main_globals(_full_qa_pass_dedup_key)
@@ -5450,9 +4925,6 @@ cancel_dashboard_review_package_build = _with_main_globals(cancel_dashboard_revi
 build_dashboard_review_package = _with_main_globals(build_dashboard_review_package)
 _quality_hero_report_output_root = _with_main_globals(_quality_hero_report_output_root)
 _dashboard_quality_hero_report_command = _with_main_globals(_dashboard_quality_hero_report_command)
-_dashboard_jira_attachment_endpoint = _with_main_globals(_dashboard_jira_attachment_endpoint)
-_attachment_response_url = _with_main_globals(_attachment_response_url)
-_attachment_response_id = _with_main_globals(_attachment_response_id)
 build_dashboard_quality_hero_report = _with_main_globals(build_dashboard_quality_hero_report)
 _build_action_visual_payload = _with_main_globals(_build_action_visual_payload)
 _render_action_visuals = _with_main_globals(_render_action_visuals)
@@ -5469,10 +4941,5 @@ _full_qa_bulk_ack_drafts = _with_main_globals(_full_qa_bulk_ack_drafts)
 _render_daily_digest_panel = _with_main_globals(_render_daily_digest_panel)
 _render_operator_handoff_panel = _with_main_globals(_render_operator_handoff_panel)
 _render_manual_review_panel = _with_main_globals(_render_manual_review_panel)
-_my_ticket_status_draft = _with_main_globals(_my_ticket_status_draft)
-_build_my_tickets_payload = _with_main_globals(_build_my_tickets_payload)
-_build_weekly_ticket_draft_payload = _with_main_globals(_build_weekly_ticket_draft_payload)
-_render_my_tickets_panel = _with_main_globals(_render_my_tickets_panel)
-_render_weekly_ticket_draft_panel = _with_main_globals(_render_weekly_ticket_draft_panel)
 _render_batch_full_qa_pass_panel = _with_main_globals(_render_batch_full_qa_pass_panel)
 _render_full_qa_pass_panel = _with_main_globals(_render_full_qa_pass_panel)

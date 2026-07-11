@@ -126,7 +126,7 @@ class TestQualityHeroReport(unittest.TestCase):
             self.assertIn("Manual review remains required.", html)
             self.assertIn("HTML:", markdown)
 
-    def test_cli_quality_hero_report_can_prepare_jira_attachment_payload(self) -> None:
+    def test_cli_quality_hero_report_stays_local_without_jira_attachment_flags(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
@@ -146,7 +146,7 @@ class TestQualityHeroReport(unittest.TestCase):
             stdout = io.StringIO()
             with mock.patch(
                 "sg_preflight.cli.attach_jira_file_action",
-                return_value={"status": "recorded", "ticket": "IDCEVODEV-1009244", "posted": True},
+                side_effect=AssertionError("local report generation must not attach to Jira"),
             ) as attach:
                 with redirect_stdout(stdout):
                     result = main(
@@ -163,9 +163,6 @@ class TestQualityHeroReport(unittest.TestCase):
                             str(viewer_json),
                             "--output-root",
                             str(root / "out" / "report"),
-                            "--attach-ticket",
-                            "IDCEVODEV-1009244",
-                            "--auto-confirm",
                             "--format",
                             "json",
                         ]
@@ -173,10 +170,17 @@ class TestQualityHeroReport(unittest.TestCase):
 
             self.assertEqual(result, 0)
             payload = json.loads(stdout.getvalue())
-            self.assertEqual(payload["jira_attachment"]["status"], "recorded")
+            self.assertNotIn("jira_attachment", payload)
             self.assertTrue(Path(payload["html_path"]).exists())
-            attach.assert_called_once()
-            self.assertTrue(attach.call_args.kwargs["auto_confirm"])
+            attach.assert_not_called()
+
+            parser_help = io.StringIO()
+            with redirect_stdout(parser_help):
+                with self.assertRaises(SystemExit) as help_exit:
+                    main(["quality-hero-report", "generate", "--help"])
+            self.assertEqual(int(help_exit.exception.code), 0)
+            self.assertNotIn("--attach-ticket", parser_help.getvalue())
+            self.assertNotIn("--auto-confirm", parser_help.getvalue())
 
             html_stdout = io.StringIO()
             with redirect_stdout(html_stdout):

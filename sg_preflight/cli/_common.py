@@ -2477,8 +2477,6 @@ def build_parser() -> argparse.ArgumentParser:
     quality_hero_report_generate.add_argument("--screenshot-viewer-json", help="Reuse an existing viewer JSON payload")
     quality_hero_report_generate.add_argument("--output-root", help="Directory to write report artifacts")
     quality_hero_report_generate.add_argument("--thumbnail-limit", type=int, default=4, help="Embedded screenshot thumbnail limit")
-    quality_hero_report_generate.add_argument("--attach-ticket", default="", help="Optional Jira ticket id to attach the Markdown report")
-    quality_hero_report_generate.add_argument("--auto-confirm", action="store_true", help="Attach the report after confirmation")
     _add_render_options(quality_hero_report_generate, formats=("text", "json", "markdown", "html"))
 
     desktop_notification = sub.add_parser(

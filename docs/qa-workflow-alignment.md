@@ -13,6 +13,8 @@ The intent is explicit:
 
 `sg-preflight` is not a replacement for Blender visual review, rack approval, or BMW-maintained screenshot smoke.
 
+The default Clean dashboard is intentionally focused on Home, 18 operational evidence pages, and nav-only About. Personal-ticket views, duplicate readiness views, parked analysis, settings, automatic Jira lookup, and Jira report attachments are outside that default path. Their independent read-only readers or explicitly gated CLI integrations remain separate where available.
+
 ## Current Workflow Fit
 
 ### 1. Deterministic preflight before review

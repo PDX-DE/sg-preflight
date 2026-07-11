@@ -58,7 +58,7 @@ class JiraClipboardOnlyTests(unittest.TestCase):
         self.assertNotIn("import webbrowser", source)
         jira_helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
         self.assertNotEqual(jira_helper_idx, -1, "clipboard helper not found")
-        helper_end = source.find("\n\ndef _render_jira_profile_tickets_card", jira_helper_idx)
+        helper_end = source.find("\n\ndef _render_selected_page", jira_helper_idx)
         self.assertNotEqual(helper_end, -1, "clipboard helper end marker not found")
         helper_body = source[jira_helper_idx:helper_end]
         self.assertNotIn("webbrowser.open", helper_body)

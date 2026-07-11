@@ -6,6 +6,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from sg_preflight.profile_summary import (
     PROFILE_SUMMARY_SCHEMA_VERSION,
@@ -162,6 +163,37 @@ class RenderTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
+    def test_build_stays_local_and_reports_jira_lookup_not_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            (workspace / "operator_state").mkdir()
+            with (
+                mock.patch(
+                    "sg_preflight.jira_client.load_jira_credentials",
+                    side_effect=AssertionError("credentials must stay unused"),
+                ) as credential_loader,
+                mock.patch(
+                    "sg_preflight.jira_client.urllib_request.urlopen",
+                    side_effect=AssertionError("transport must stay unused"),
+                ) as transport,
+            ):
+                summary = build_profile_summary(
+                    "F70",
+                    workspace=workspace,
+                    home=Path(tmp) / "home",
+                )
+
+        jira = summary.to_payload()["jira_tickets"]
+        self.assertEqual(jira["status"], "not_run")
+        self.assertEqual(jira["ticket_count"], 0)
+        self.assertEqual(jira["tickets"], [])
+        self.assertTrue(jira["read_only"])
+        self.assertFalse(jira["is_approval"])
+        self.assertIn("integration jira", jira["summary"])
+        credential_loader.assert_not_called()
+        transport.assert_not_called()
+
     def test_build_against_empty_workspace_returns_unavailable_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "workspace"

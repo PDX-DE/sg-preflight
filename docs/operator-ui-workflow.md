@@ -65,6 +65,8 @@ Shared shell:
 - every page also keeps a guide toggle so teammate-facing help can be hidden without leaving the current view
 - the header `What is this for?` helper gives the shortest explanation for first-time users or PM demos
 
+The default Clean dashboard keeps Home plus 19 registered navigation descriptors: 18 operational pages and nav-only About. It does not register personal-ticket, duplicate readiness, parked analysis, or settings pages. Default page construction and local report generation do not load Jira credentials, query Jira, or expose report-attachment controls; the independent Jira CLI remains separate and explicitly gated.
+
 ## Views
 
 ### Home

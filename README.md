@@ -12,7 +12,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 - Manual review companion: Quality Hero review steps surfaced for operator notes and verdict entry. `recorded_by_tool` stays false.
 - Delivery documentation reader: read-only ingestion of operator-local Delivery Checklist workbook data.
 - Export-size analysis reader: read-only ingestion of operator-local `Cars\size_analysis\<profile>_<date>.xlsx` workbook data.
-- Clean evidence surfaces: delivery documentation, delivery readiness, disabled-test inventory, API version reference, country-variant matrix, export-size trend board, setup doctor, workflows, screenshot test state, daily digest, and manual review companion render from the same Python readers.
+- Focused Clean dashboard: Home links to 18 operational evidence surfaces, with About available from navigation. Personal-ticket, duplicate readiness, parked analysis, and settings pages are not registered on the default path.
 - Screenshot test state reader: read-only BMW / MINI screenshot baseline and test-config state from local BMW Git.
 - BMW Git readiness reader: read-only per-profile state from the local `digital-3d-car-models` checkout.
 - QA Hero readiness reader: read-only presence and count checks for documented Quality Hero assets such as LightFX, WelcomeFX, ShadesFX, CarPaint, AnchorPoints, Constants, and Perspectives.
@@ -20,7 +20,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
 - Clean dashboard mode: `python -m sg_preflight dashboard run --ui-mode clean` launches the neutral NiceGUI work view from source. Grafiks mode launches the experimental C++ cinematic shell if it is installed; otherwise it prints a WIP hint and tells the operator to use Clean for now. Both modes are local evidence views and do not change backend QA logic.
 - OpenHTF station MVP: local station surface for delivery documentation, screenshot test state, daily digest, and manual review companion phases. Internal OpenHTF execution state is evidence status only; manual review remains required.
-- Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. Nothing posts unless the operator explicitly reruns with `--auto-confirm`.
+- Confirmation-gated Jira posting remains an optional CLI integration. The default dashboard and Quality-Hero report flow do not load Jira or offer report attachments.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
 
 ## Included Files
@@ -198,7 +198,7 @@ Profile configs may reference operator-local paths under `C:\repositories\trunk`
 
 ## Non-Destructive Behaviour
 
-SGFX QA Preflight is designed to stay out of the way of active work:
+The default dashboard and evidence flows are designed to stay out of the way of active work:
 
 - It does not write to BMW Git.
 - It does not commit to SVN.
@@ -211,11 +211,11 @@ If a command appears to modify source content unexpectedly, stop and report it. 
 
 ## Data handling
 
-When you run SGFX QA Preflight, it reads operator-local files and renders them for review. It does not call any external service or send telemetry. Everything that happens is local to your workstation.
+The default dashboard and evidence flows read operator-local files, render them for review, and send no telemetry. Building the default dashboard does not load Jira credentials or make Jira requests.
 
 Where the tool surfaces "suggested" evidence — for example the per-step evidence hints in the Manual Review Companion — the suggestion comes from a deterministic local filesystem probe (file exists, directory has these files, workbook has these rows). The operator records every verdict; the tool never pre-decides.
 
-The Jira post flow is the one explicit network boundary. It stays default-off behind an `--auto-confirm` flag; the default mode is dry-run. A real post additionally requires operator-provided Jira base URL and PAT.
+The separate Jira CLI is the explicit network boundary. It stays default-off behind an `--auto-confirm` flag; the default mode is dry-run. A real post additionally requires operator-provided Jira base URL and PAT.
 
 Manual review remains required. Decision: not approval — evidence only.
 BMW Git access is read-only. SGFX never modifies BMW source.

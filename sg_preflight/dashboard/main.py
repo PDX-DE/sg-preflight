@@ -31,17 +31,10 @@ from sg_preflight.bmw_pipeline_auto_fix import (
     render_missing_actual_diagnostic_text,
     run_missing_actual_diagnostic_chain,
 )
-from sg_preflight.changelog_whats_new import build_changelog_whats_new
 from sg_preflight.bmw_process import workflow_contracts
 from sg_preflight.cross_car_comparison import build_cross_car_comparison
 from sg_preflight.daily_digest import build_latest_daily_digest, render_daily_digest_text
 from sg_preflight.delivery_checklist import read_delivery_checklist
-from sg_preflight.delivery_readiness import (
-    STATUS_DELIVERED,
-    STATUS_NOT_DELIVERED_YET,
-    STATUS_UNKNOWN,
-    build_delivery_readiness_board,
-)
 from sg_preflight.api_version_coverage import IMPACT_REVIEW_LABEL, build_api_version_coverage_board
 from sg_preflight.country_variant_coverage import (
     MAPPING_REVIEW_LABEL,
@@ -49,9 +42,6 @@ from sg_preflight.country_variant_coverage import (
     NO_RUNTIME_LABEL,
     build_country_variant_coverage_board,
 )
-from sg_preflight.cross_domain_delivery import build_cross_domain_delivery_board
-from sg_preflight.perspectives_inventory import build_perspectives_inventory_board
-from sg_preflight.rack_readiness import build_rack_readiness_board
 from sg_preflight.export_size_trend import (
     SIGNIFICANT_CHANGE_LABEL,
     UNREADABLE_LAYOUT_LABEL,
@@ -76,13 +66,6 @@ from sg_preflight.dependency_onboarding import (
 )
 from sg_preflight.full_qa_pass import build_full_qa_pass
 from sg_preflight.full_qa_history import record_full_qa_run_history
-from sg_preflight.jira_client import (
-    DEFAULT_JIRA_URL,
-    build_my_unresolved_ticket_jql,
-    load_jira_credentials,
-    search_jira_profile_tickets,
-    search_my_unresolved_tickets,
-)
 from sg_preflight.manual_review import (
     QUALITY_HERO_STEPS,
     apply_manual_review_suggestions,
@@ -135,7 +118,7 @@ from sg_preflight.screenshot_capture import (
 )
 from sg_preflight.services import operator_ui_root
 from sg_preflight.shell_registry import (
-    HOME_HUB_TILES,
+    HOME_HUB_TILES as REGISTERED_HOME_HUB_TILES,
     HOME_ROUTE_ID,
     HOME_SUBTITLE,
     HOME_TITLE,
@@ -165,7 +148,6 @@ from sg_preflight.dashboard_webserver import (
 )
 from sg_preflight.dashboard_preferences import (
     _abbreviate_workspace_text,
-    _bool_preference,
     _candidate_git_roots,
     _clean_theme,
     _dashboard_active_ticket_id as _dashboard_active_ticket_id_impl,
@@ -204,9 +186,7 @@ from sg_preflight.dashboard_preferences import (
     _write_dashboard_profile_preference,
     _write_full_qa_wizard_state,
     dashboard_profile_options,
-    load_dashboard_settings,
     load_dashboard_preference,
-    save_dashboard_settings,
     save_dashboard_preference,
 )
 from sg_preflight.dashboard_grafiks import (
@@ -232,14 +212,6 @@ from sg_preflight.dashboard_pages_config import (
     _screenshot_empty_note,
     _reader_page,
     _delivery_checklist_page as _build_delivery_checklist_page,
-    _delivery_readiness_payload,
-    _delivery_readiness_page,
-    _cross_domain_delivery_payload,
-    _cross_domain_delivery_page,
-    _perspectives_inventory_payload,
-    _perspectives_inventory_page,
-    _rack_readiness_payload,
-    _rack_readiness_page,
     _disabled_tests_payload,
     _disabled_tests_page,
     _api_version_coverage_payload,
@@ -259,10 +231,6 @@ from sg_preflight.dashboard_pages_config import (
     _screenshot_test_state_page,
     _risk_score_page,
     _cross_car_comparison_page,
-    _whats_new_page,
-    _keyboard_shortcuts_page,
-    _settings_page,
-    _settings_payload,
     _payload_items,
     _sanitized_payload,
     _section_count,
@@ -277,8 +245,6 @@ from sg_preflight.dashboard_pages_workflows import (
     _TRUTHY_TRIGGERS,
     _full_qa_pass_page,
     _batch_full_qa_pass_page,
-    _my_tickets_page,
-    _weekly_ticket_draft_page,
     _is_truthy_trigger,
     FULL_QA_PASS_DEDUP_WINDOW_SECONDS,
     _full_qa_pass_dedup_lock,
@@ -304,7 +270,6 @@ from sg_preflight.dashboard_pages_workflows import (
     DAILY_DIGEST_BUILD_PACKAGE_ACTION_LABEL,
     QUALITY_HERO_REPORT_ACTION_ID,
     QUALITY_HERO_REPORT_ACTION_LABEL,
-    QUALITY_HERO_REPORT_ATTACH_ACTION_LABEL,
     DAILY_DIGEST_TICKET_ID_PLACEHOLDER,
     _DAILY_DIGEST_PARTIAL_SECTION_KEYS,
     _manual_review_profile_token,
@@ -351,9 +316,6 @@ from sg_preflight.dashboard_pages_workflows import (
     build_dashboard_review_package,
     _quality_hero_report_output_root,
     _dashboard_quality_hero_report_command,
-    _dashboard_jira_attachment_endpoint,
-    _attachment_response_url,
-    _attachment_response_id,
     build_dashboard_quality_hero_report,
     _render_action_visuals,
     _render_action_technical_details,
@@ -370,14 +332,6 @@ from sg_preflight.dashboard_pages_workflows import (
     _render_daily_digest_panel,
     _render_operator_handoff_panel,
     _render_manual_review_panel,
-    MY_TICKETS_UNAVAILABLE_SUMMARY,
-    WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY,
-    JIRA_TICKETS_UNAVAILABLE_SUMMARY,
-    _my_ticket_status_draft,
-    _build_my_tickets_payload,
-    _build_weekly_ticket_draft_payload,
-    _render_my_tickets_panel,
-    _render_weekly_ticket_draft_panel,
     _render_batch_full_qa_pass_panel,
     _render_full_qa_pass_panel,
 )
@@ -401,8 +355,7 @@ _DASHBOARD_RESPONSIVENESS_SOURCE_GUARD = (
     "Refreshing dashboard data off the UI event loop.",
 )
 _DASHBOARD_WORKFLOW_SOURCE_GUARD = (
-    "Build Quality-Hero report", "HTML report", "Attach to Jira ticket", "Ticket picker", "Post to Jira?",
-    "--attach-ticket", "--auto-confirm", "sgfx-wizard-card", "sgfx-wizard-overlay",
+    "Build Quality-Hero report", "HTML report", "sgfx-wizard-card", "sgfx-wizard-overlay",
     "Confirm local tool action", "Skip current", "Full QA Pass summary", "full_qa_run", "automatic_mode",
     "Open report", "Export ZIP", "build_dashboard_qa_pass_report", "export_dashboard_qa_pass_report",
     "QA Pass report ready", "sgfx-qa-pass-verdict",
@@ -439,8 +392,7 @@ _DASHBOARD_WORKFLOW_SOURCE_GUARD = (
     "set_running_controls: Callable[[bool], None]", "set_running_controls=set_running_controls",
     '"launch_timer": None', "Canceled before local subprocess started.",
     "lambda _event=None, current=action: _show_prompt_or_start(current)",
-    "lambda _event=None, current=action: _confirm_start(current)", 'data-sgfx-my-tickets-page="true"',
-    "Editable status draft", "Copy status draft", "No Jira post is sent", "Run selected profiles",
+    "lambda _event=None, current=action: _confirm_start(current)", "Run selected profiles",
     "Cancel after current", "Sequential execution", "Live package output", "Build review package running.",
     "typical 1-5 min", "start_dashboard_review_package_build", "poll_dashboard_review_package_build",
     "cancel_dashboard_review_package_build", "def _scroll_live_output_to_bottom() -> None:",
@@ -472,66 +424,28 @@ DASHBOARD_GUARDRAILS = (
 )
 
 
-def _navigation_item(page_id: str, fallback_title: str) -> tuple[str, str]:
-    if is_registered_surface(page_id):
-        return page_id, get_surface_descriptor(page_id).title
-    return page_id, fallback_title
-
-
-DASHBOARD_NAVIGATION = (
-    (HOME_ROUTE_ID, HOME_TITLE),
-    _navigation_item("full-qa-pass", "Full QA Pass"),
-    _navigation_item("batch-full-qa-pass", "Batch Full QA Pass"),
-    ("my-tickets", "My Tickets"),
-    ("weekly-ticket-draft", "Weekly Ticket Draft"),
-    ("whats-new", "What's New"),
-    ("keyboard-shortcuts", "Keyboard Shortcuts"),
-    ("settings", "Settings"),
-    _navigation_item("delivery-checklist", "Delivery documentation"),
-    ("delivery-readiness", "Delivery Readiness"),
-    ("cross-domain-delivery", "Cross-Domain Delivery"),
-    ("perspectives-inventory", "Perspectives"),
-    ("rack-readiness", "Rack Readiness"),
-    _navigation_item("disabled-tests", "Disabled Tests"),
-    _navigation_item("api-version-coverage", "API Version"),
-    _navigation_item("country-variant-coverage", "Country Variants"),
-    _navigation_item("export-size-trend", "Size Trend"),
-    _navigation_item("onboarding-guide", "Onboarding Guide"),
-    _navigation_item("setup-doctor", "Setup Doctor"),
-    _navigation_item("qa-workflows", "QA Workflows"),
-    _navigation_item("bmw-process", "BMW Process"),
-    _navigation_item("screenshot-test-state", "Screenshot Test State"),
-    _navigation_item("risk-score", "Risk Score"),
-    _navigation_item("cross-car-comparison", "Cross-Car Comparison"),
-    _navigation_item("daily-digest", "Daily Digest"),
-    _navigation_item("team-digest-board", "Team Digest Board"),
-    _navigation_item("operator-handoff", "Operator Handoff"),
-    _navigation_item("manual-review", "Manual Review Companion"),
-    _navigation_item("about", "About"),
+DASHBOARD_NAVIGATION = ((HOME_ROUTE_ID, HOME_TITLE),) + tuple(
+    (item.surface_id, item.title) for item in SURFACE_DESCRIPTORS
 )
 PRIMARY_SURFACE_SUBTITLES = {item.surface_id: item.subtitle for item in SURFACE_DESCRIPTORS}
 # Sidebar information architecture: the flat page list above is grouped into a small
 # number of scannable sections. "home" is the standalone hub and is not listed here.
 # Any page id missing from every group falls into a visible "More" catch-all so a new
 # page can never silently vanish from navigation.
-_PRESERVED_NAV_GROUP_EXTRAS = {
-    "Daily work": ("my-tickets", "weekly-ticket-draft"),
-    "Delivery": ("delivery-readiness", "cross-domain-delivery", "perspectives-inventory", "rack-readiness"),
-    "Screenshots & coverage": (),
-    "Reviews & digests": (),
-    "Setup & help": ("settings", "keyboard-shortcuts", "whats-new"),
-}
 DASHBOARD_NAV_GROUPS = tuple(
     (
-        group_title,
+        group,
         tuple(
             item.surface_id
             for item in SURFACE_DESCRIPTORS
-            if item.navigation_group == group_title
-        )
-        + _PRESERVED_NAV_GROUP_EXTRAS[group_title],
+            if item.navigation_group == group
+        ),
     )
-    for group_title in NAVIGATION_GROUP_ORDER
+    for group in NAVIGATION_GROUP_ORDER
+)
+HOME_HUB_TILES = tuple(
+    (item.surface_id, item.title, item.icon_key, item.subtitle)
+    for item in REGISTERED_HOME_HUB_TILES
 )
 DASHBOARD_SHORTCUTS = (
     "F1 Help",
@@ -789,7 +703,7 @@ def _delivery_checklist_page(
     return page
 
 
-_EAGER_PAGE_IDS = frozenset({"home", "whats-new", "keyboard-shortcuts", "bmw-process"})
+_EAGER_PAGE_IDS = frozenset({"home", "bmw-process"})
 
 
 def _deferred_page_stub(page_id: str, title: str) -> dict[str, Any]:
@@ -914,8 +828,6 @@ def build_dashboard_snapshot(
                 "Choose the car profile first, then start Full QA Pass from the visible entry point."
             ),
             "setup_page_id": "setup-doctor",
-            "whats_new_page_id": "whats-new",
-            "whats_new_label": "What's new",
             "setup_action_count": len(
                 [action for action in setup_status.get("actions", []) if isinstance(action, dict)]
             ),
@@ -933,25 +845,9 @@ def build_dashboard_snapshot(
                     trusted_tool_mode=_dashboard_run_mode(root) == "automatic",
                 ),
                 "batch-full-qa-pass": lambda: _batch_full_qa_pass_page(resolved_profile_id, root),
-                "my-tickets": lambda: _my_tickets_page(resolved_profile_id, root),
-                "weekly-ticket-draft": lambda: _weekly_ticket_draft_page(resolved_profile_id, root),
-                "whats-new": lambda: _whats_new_page(root),
-                "keyboard-shortcuts": lambda: _keyboard_shortcuts_page(
-                    shortcut_actions=shortcut_actions,
-                    shortcuts=shortcuts,
-                ),
-                "settings": lambda: _settings_page(
-                    root,
-                    profile_options=profile_options_all,
-                    current_profile_id=resolved_profile_id,
-                ),
                 "delivery-checklist": lambda: _delivery_checklist_page(
                     resolved_profile_id, root, bmw_root=bmw_root, setup_status=setup_status
                 ),
-                "delivery-readiness": lambda: _delivery_readiness_page(root, bmw_root=bmw_root),
-                "cross-domain-delivery": lambda: _cross_domain_delivery_page(root, bmw_root=bmw_root),
-                "perspectives-inventory": lambda: _perspectives_inventory_page(root, bmw_root=bmw_root),
-                "rack-readiness": lambda: _rack_readiness_page(root, bmw_root=bmw_root),
                 "disabled-tests": lambda: _disabled_tests_page(root, bmw_root=bmw_root),
                 "api-version-coverage": lambda: _api_version_coverage_page(root, bmw_root=bmw_root),
                 "country-variant-coverage": lambda: _country_variant_coverage_page(root, bmw_root=bmw_root),
@@ -1535,7 +1431,6 @@ def _render_first_run_welcome(
     snapshot: dict[str, Any],
     open_setup: Callable[[], None] | None = None,
     open_full_qa: Callable[[], None] | None = None,
-    open_whats_new: Callable[[], None] | None = None,
 ) -> None:
     welcome = snapshot.get("welcome", {})
     if not isinstance(welcome, dict) or not welcome.get("show"):
@@ -1559,13 +1454,6 @@ def _render_first_run_welcome(
                     ui,
                     ui.button("Full QA Pass", on_click=open_full_qa).props("color=primary no-caps dense"),
                     "Open the one-pass wizard for the selected profile.",
-                )
-            whats_new_label = str(welcome.get("whats_new_label", "What's new") or "What's new")
-            if open_whats_new is not None and str(welcome.get("whats_new_page_id", "")).strip():
-                _attach_tooltip(
-                    ui,
-                    ui.button(whats_new_label, on_click=open_whats_new).props("flat no-caps dense"),
-                    "Open the current build notes.",
                 )
             setup_action_count = int(welcome.get("setup_action_count", 0) or 0)
             if open_setup is not None and setup_action_count > 0:
@@ -2895,147 +2783,6 @@ def _copy_dashboard_link_to_clipboard(ui: Any, url: str, label: str) -> None:
             pass
 
 
-def _render_jira_profile_tickets_card(
-    ui: Any,
-    profile_id: str,
-    *,
-    payload: dict[str, Any] | None = None,
-    open_page: Callable[[str], None] | None = None,
-) -> None:
-    if not isinstance(payload, dict):
-        payload = {
-            "status": "loading",
-            "ticket_count": 0,
-            "tickets": [],
-            "summary": "Loading active profile tickets from operator-local Jira credentials...",
-            "settings_hint": "",
-            "read_only": True,
-            "is_approval": False,
-        }
-    status = str(payload.get("status", "unknown"))
-    tickets = [ticket for ticket in payload.get("tickets", []) if isinstance(ticket, dict)]
-    with ui.column().classes("sgfx-jira-profile-card full-width"):
-        ui.html('<span data-sgfx-jira-profile-tickets="true"></span>', sanitize=False)
-        with ui.row().classes("items-center justify-between full-width"):
-            ui.label("Active tickets for this profile").classes("sgfx-panel-tagline")
-            _render_status_chip(ui, status)
-        ui.label(str(payload.get("summary", "Jira tickets unavailable."))).classes("sgfx-summary")
-        if status == "loading":
-            ui.linear_progress(value=0).props("indeterminate").classes("full-width")
-        cache_status = str(payload.get("cache_status", "")).strip()
-        if cache_status:
-            ui.label(f"Read-only Jira REST query. Cache: {cache_status}; no Jira update is sent.").classes(
-                "sgfx-muted"
-            )
-        if tickets:
-            for ticket in tickets:
-                key = str(ticket.get("key", "") or "")
-                url = str(ticket.get("url", "") or "")
-                with ui.row().classes("sgfx-jira-ticket-row full-width items-center"):
-                    if url:
-                        ui.button(
-                            key,
-                            on_click=lambda url=url, key=key: _copy_dashboard_link_to_clipboard(ui, url, key),
-                        ).props("flat dense no-caps").classes("sgfx-jira-ticket-key")
-                    else:
-                        ui.label(key).classes("sgfx-jira-ticket-key")
-                    ui.label(str(ticket.get("status", "unknown"))).classes("sgfx-jira-status-pill")
-                    ui.label(str(ticket.get("summary", ""))).classes("sgfx-muted")
-        elif status != "available":
-            ui.label("Jira tickets unavailable").classes("sgfx-summary")
-            settings_hint = str(payload.get("settings_hint", "") or "")
-            if settings_hint:
-                ui.label(settings_hint).classes("sgfx-muted")
-            if open_page is not None:
-                _attach_tooltip(
-                    ui,
-                    ui.button("Open setup guidance", on_click=lambda: open_page("onboarding-guide")).props(
-                        "flat no-caps dense"
-                    ),
-                    "Open local setup guidance. Jira credentials remain operator-local.",
-                )
-        else:
-            ui.label("No open profile-matched Jira tickets were returned.").classes("sgfx-muted")
-
-
-def _render_settings_panel(
-    ui: Any,
-    snapshot: dict[str, Any],
-    workspace: Path,
-) -> None:
-    page = next(page for page in snapshot["pages"] if page["id"] == "settings")
-    payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
-    settings = payload.get("settings", {}) if isinstance(payload.get("settings"), dict) else {}
-    profile_options = [
-        option for option in payload.get("profile_options", []) if isinstance(option, dict)
-    ]
-    profile_labels = {
-        str(option.get("select_label", option.get("id", ""))): str(option.get("id", ""))
-        for option in profile_options
-        if str(option.get("id", "")).strip()
-    }
-    current_profile_id = str(settings.get("profile_id", snapshot.get("profile_id", "")) or "")
-    current_profile_label = next(
-        (label for label, profile_id in profile_labels.items() if profile_id == current_profile_id),
-        current_profile_id,
-    )
-
-    def _event_value(event: Any) -> str:
-        return str(getattr(event, "value", "") or "").strip()
-
-    def _save_setting(**updates: Any) -> None:
-        save_dashboard_settings(workspace, **updates)
-        ui.notify("Settings saved locally.")
-
-    with ui.column().classes("sgfx-page-panel").props('data-sgfx-settings-page="true"'):
-        with ui.row().classes("items-center justify-between full-width"):
-            ui.label(str(page["title"])).classes("sgfx-panel-title")
-            _render_status_chip(ui, str(page.get("status", "available")))
-        ui.label(str(page["tagline"])).classes("sgfx-panel-tagline")
-        ui.label(str(page.get("summary", ""))).classes("sgfx-summary")
-        ui.label("Local preferences only. No Jira, SVN, or BMW source update is sent.").classes("sgfx-muted")
-        with ui.column().classes("full-width"):
-            profile_select = ui.select(
-                options=list(profile_labels.keys()),
-                value=current_profile_label if current_profile_label in profile_labels else None,
-                label="Default profile",
-                on_change=lambda event: _save_setting(profile_id=profile_labels.get(_event_value(event), "")),
-            ).props("outlined dense")
-            profile_select.classes("full-width")
-            ui.select(
-                options=["automatic", "manual"],
-                value=str(settings.get("run_mode", "automatic")),
-                label="Run mode",
-                on_change=lambda event: _save_setting(run_mode=_event_value(event)),
-            ).props("outlined dense").classes("full-width")
-            ui.checkbox(
-                "Desktop notifications",
-                value=bool(settings.get("desktop_notifications_enabled", True)),
-                on_change=lambda event: _save_setting(
-                    desktop_notifications_enabled=bool(getattr(event, "value", False))
-                ),
-            )
-            ui.input(
-                "Feedback email",
-                value=str(settings.get("feedback_email", "")),
-                on_change=lambda event: _save_setting(feedback_email=_event_value(event)),
-            ).props("outlined dense clearable").classes("full-width")
-            ui.input(
-                "Default ticket",
-                value=str(settings.get("default_ticket_id", _DASHBOARD_TICKET_FALLBACK)),
-                on_change=lambda event: _save_setting(default_ticket_id=_event_value(event)),
-            ).props("outlined dense").classes("full-width")
-            ui.input(
-                "Grafiks shell exe",
-                value=str(settings.get("grafiks_shell_exe", "")),
-                on_change=lambda event: _save_setting(grafiks_shell_exe=_event_value(event)),
-            ).props("outlined dense clearable").classes("full-width")
-            ui.label("Theme: Dark IDE style - the default and only theme.").classes("sgfx-muted")
-
-        rows = [item for item in page.get("items", []) if isinstance(item, dict)]
-        _render_reader_rows(ui, rows)
-
-
 def _render_selected_page(
     ui: Any,
     container: Any,
@@ -3050,38 +2797,6 @@ def _render_selected_page(
             _render_full_qa_pass_panel(ui, snapshot, workspace)
         elif page_id == "delivery-checklist":
             _render_delivery_checklist_panel(ui, snapshot, workspace)
-        elif page_id == "my-tickets":
-            _render_my_tickets_panel(ui, snapshot, workspace)
-        elif page_id == "weekly-ticket-draft":
-            _render_weekly_ticket_draft_panel(ui, snapshot, workspace)
-        elif page_id == "delivery-readiness":
-            _render_source_root_reader_panel(
-                ui,
-                pages_by_id[page_id],
-                workspace,
-                payload_builder=_delivery_readiness_payload,
-            )
-        elif page_id == "cross-domain-delivery":
-            _render_source_root_reader_panel(
-                ui,
-                pages_by_id[page_id],
-                workspace,
-                payload_builder=_cross_domain_delivery_payload,
-            )
-        elif page_id == "perspectives-inventory":
-            _render_source_root_reader_panel(
-                ui,
-                pages_by_id[page_id],
-                workspace,
-                payload_builder=_perspectives_inventory_payload,
-            )
-        elif page_id == "rack-readiness":
-            _render_source_root_reader_panel(
-                ui,
-                pages_by_id[page_id],
-                workspace,
-                payload_builder=_rack_readiness_payload,
-            )
         elif page_id == "disabled-tests":
             _render_source_root_reader_panel(
                 ui,
@@ -3124,8 +2839,6 @@ def _render_selected_page(
             _render_team_digest_board_panel(ui, snapshot)
         elif page_id == "operator-handoff":
             _render_operator_handoff_panel(ui, snapshot, workspace)
-        elif page_id == "settings":
-            _render_settings_panel(ui, snapshot, workspace)
         elif page_id == "about":
             _render_about_panel(ui, ABOUT_CONTENT)
         else:
@@ -3500,9 +3213,6 @@ def _render_dashboard(
             "snapshot": snapshot,
             "active_page_id": first_page_id,
             "dashboard_mode": "clean",
-            "jira_profile_ticket_payloads": {},
-            "my_tickets_loading": False,
-            "weekly_ticket_draft_loading": False,
         }
         content_holder: dict[str, Any] = {}
         controls: dict[str, Any] = {}
@@ -3674,137 +3384,6 @@ def _render_dashboard(
             state["batch_profile_prefill"] = [str(profile).strip() for profile in profile_ids if str(profile).strip()]
             _open_page("batch-full-qa-pass")
 
-        def _jira_profile_ticket_loading_payload(profile_id: str) -> dict[str, Any]:
-            return {
-                "status": "loading",
-                "ticket_count": 0,
-                "tickets": [],
-                "summary": f"Loading active Jira tickets for {profile_id}...",
-                "read_only": True,
-                "is_approval": False,
-            }
-
-        def _my_tickets_loading_payload() -> dict[str, Any]:
-            return {
-                "status": "loading",
-                "ticket_count": 0,
-                "tickets": [],
-                "summary": "Loading active tickets and local status drafts from operator-local sources...",
-                "jql": build_my_unresolved_ticket_jql(),
-                "read_only": True,
-                "is_approval": False,
-            }
-
-        def _weekly_ticket_draft_loading_payload() -> dict[str, Any]:
-            return {
-                "status": "loading",
-                "jira_status": "loading",
-                "summary": "Loading weekly ticket draft from operator-local sources...",
-                "text": "",
-                "read_only": True,
-                "is_approval": False,
-            }
-
-        async def _load_jira_profile_tickets_payload(profile_id: str) -> dict[str, Any]:
-            cache_key = str(profile_id or "").strip().upper()
-            try:
-                payload = await _io_bound(search_jira_profile_tickets, cache_key, max_results=5, timeout_seconds=8)
-            except Exception as exc:  # noqa: BLE001
-                payload = {
-                    "status": "failed",
-                    "ticket_count": 0,
-                    "tickets": [],
-                    "summary": JIRA_TICKETS_UNAVAILABLE_SUMMARY,
-                    "diagnostic_detail": f"Jira tickets unavailable: {exc}",
-                    "settings_hint": "Check local Jira setup before retrying.",
-                    "read_only": True,
-                    "is_approval": False,
-                }
-            payloads = state.setdefault("jira_profile_ticket_payloads", {})
-            if isinstance(payloads, dict):
-                payloads[cache_key] = payload if isinstance(payload, dict) else {
-                    "status": "failed",
-                    "ticket_count": 0,
-                    "tickets": [],
-                    "summary": "Jira tickets unavailable: unexpected response.",
-                    "read_only": True,
-                    "is_approval": False,
-                }
-                return payloads[cache_key]
-            return payload
-
-        def _jira_profile_tickets_payload(profile_id: str) -> dict[str, Any]:
-            clean_profile = str(profile_id or "").strip().upper()
-            if not clean_profile:
-                return _jira_profile_ticket_loading_payload("profile")
-            payloads = state.setdefault("jira_profile_ticket_payloads", {})
-            if not isinstance(payloads, dict):
-                state["jira_profile_ticket_payloads"] = payloads = {}
-            payload = payloads.get(clean_profile)
-            if isinstance(payload, dict):
-                return payload
-            payload = _jira_profile_ticket_loading_payload(clean_profile)
-            payloads[clean_profile] = payload
-            return payload
-
-        async def _finish_my_tickets_refresh() -> None:
-            try:
-                payload = await _io_bound(_build_my_tickets_payload, workspace)
-            except Exception as exc:  # noqa: BLE001
-                payload = {
-                    "status": "failed",
-                    "ticket_count": 0,
-                    "tickets": [],
-                    "summary": MY_TICKETS_UNAVAILABLE_SUMMARY,
-                    "diagnostic_detail": f"My Tickets unavailable: {exc}",
-                    "settings_hint": "Check local Jira setup before retrying.",
-                    "read_only": True,
-                    "is_approval": False,
-                    "jql": build_my_unresolved_ticket_jql(),
-                }
-            state["snapshot"]["my_tickets_payload"] = payload
-            state["my_tickets_loading"] = False
-            if str(state.get("active_page_id", "")) == "my-tickets":
-                _render_current_page()
-
-        def _start_my_tickets_refresh(*, force: bool = False) -> None:
-            if bool(state.get("my_tickets_loading", False)):
-                return
-            current_payload = state["snapshot"].get("my_tickets_payload")
-            if isinstance(current_payload, dict) and current_payload.get("status") != "loading" and not force:
-                return
-            state["my_tickets_loading"] = True
-            state["snapshot"]["my_tickets_payload"] = _my_tickets_loading_payload()
-            _schedule_background(_finish_my_tickets_refresh(), name="sgfx-dashboard-my-tickets")
-
-        async def _finish_weekly_ticket_draft_refresh() -> None:
-            try:
-                payload = await _io_bound(_build_weekly_ticket_draft_payload, workspace)
-            except Exception as exc:  # noqa: BLE001
-                payload = {
-                    "status": "failed",
-                    "jira_status": "failed",
-                    "summary": WEEKLY_TICKET_DRAFT_UNAVAILABLE_SUMMARY,
-                    "diagnostic_detail": f"Weekly Ticket Draft unavailable: {exc}",
-                    "text": "",
-                    "read_only": True,
-                    "is_approval": False,
-                }
-            state["snapshot"]["weekly_ticket_draft_payload"] = payload
-            state["weekly_ticket_draft_loading"] = False
-            if str(state.get("active_page_id", "")) == "weekly-ticket-draft":
-                _render_current_page()
-
-        def _start_weekly_ticket_draft_refresh(*, force: bool = False) -> None:
-            if bool(state.get("weekly_ticket_draft_loading", False)):
-                return
-            current_payload = state["snapshot"].get("weekly_ticket_draft_payload")
-            if isinstance(current_payload, dict) and current_payload.get("status") != "loading" and not force:
-                return
-            state["weekly_ticket_draft_loading"] = True
-            state["snapshot"]["weekly_ticket_draft_payload"] = _weekly_ticket_draft_loading_payload()
-            _schedule_background(_finish_weekly_ticket_draft_refresh(), name="sgfx-dashboard-weekly-ticket-draft")
-
         def _render_current_page() -> None:
             content = content_holder.get("content")
             if content is None:
@@ -3832,7 +3411,6 @@ def _render_dashboard(
                     state["snapshot"],
                     open_setup=lambda: _open_page("setup-doctor"),
                     open_full_qa=lambda: _open_page("full-qa-pass"),
-                    open_whats_new=lambda: _open_page("whats-new"),
                 )
                 if active_page_id == "home":
                     _render_changed_profiles_card(
@@ -3841,13 +3419,13 @@ def _render_dashboard(
                         open_batch=_open_changed_profiles_batch,
                     )
                     with ui.element("div").classes("sgfx-hub-grid full-width"):
-                        for tile in HOME_HUB_TILES:
+                        for surface_id, title, icon_key, subtitle in HOME_HUB_TILES:
                             with ui.element("button").classes("sgfx-hub-tile").on(
-                                "click", lambda page_id=tile.surface_id: _open_page(page_id)
+                                "click", lambda page_id=surface_id: _open_page(page_id)
                             ):
-                                ui.icon(tile.icon_key).classes("sgfx-hub-tile-icon")
-                                ui.label(tile.title).classes("sgfx-hub-tile-title")
-                                ui.label(tile.subtitle).classes("sgfx-hub-tile-desc")
+                                ui.icon(icon_key).classes("sgfx-hub-tile-icon")
+                                ui.label(title).classes("sgfx-hub-tile-title")
+                                ui.label(subtitle).classes("sgfx-hub-tile-desc")
                     home_page = _pages_by_id().get("home", {})
                     _render_page_panel(ui, home_page)
                 elif active_page_id == "delivery-checklist":
@@ -3856,38 +3434,6 @@ def _render_dashboard(
                         state["snapshot"],
                         workspace,
                         on_setup_completed=_refresh_snapshot,
-                    )
-                elif active_page_id == "delivery-readiness":
-                    _render_source_root_reader_panel(
-                        ui,
-                        _pages_by_id()[active_page_id],
-                        workspace,
-                        bmw_root=bmw_root,
-                        payload_builder=_delivery_readiness_payload,
-                    )
-                elif active_page_id == "cross-domain-delivery":
-                    _render_source_root_reader_panel(
-                        ui,
-                        _pages_by_id()[active_page_id],
-                        workspace,
-                        bmw_root=bmw_root,
-                        payload_builder=_cross_domain_delivery_payload,
-                    )
-                elif active_page_id == "perspectives-inventory":
-                    _render_source_root_reader_panel(
-                        ui,
-                        _pages_by_id()[active_page_id],
-                        workspace,
-                        bmw_root=bmw_root,
-                        payload_builder=_perspectives_inventory_payload,
-                    )
-                elif active_page_id == "rack-readiness":
-                    _render_source_root_reader_panel(
-                        ui,
-                        _pages_by_id()[active_page_id],
-                        workspace,
-                        bmw_root=bmw_root,
-                        payload_builder=_rack_readiness_payload,
                     )
                 elif active_page_id == "disabled-tests":
                     _render_source_root_reader_panel(
@@ -3928,10 +3474,6 @@ def _render_dashboard(
                         workspace,
                         bmw_root=bmw_root,
                         open_page=_open_page,
-                        jira_profile_tickets_payload=_jira_profile_tickets_payload(
-                            str(state["snapshot"].get("profile_id", ""))
-                        ),
-                        jira_profile_tickets_loader=_load_jira_profile_tickets_payload,
                     )
                 elif active_page_id == "batch-full-qa-pass":
                     _render_batch_full_qa_pass_panel(
@@ -3942,12 +3484,6 @@ def _render_dashboard(
                         open_profile=lambda profile_id: (_set_profile(profile_id), _open_page("full-qa-pass")),
                         default_profile_ids=state.get("batch_profile_prefill", []),
                     )
-                elif active_page_id == "my-tickets":
-                    _start_my_tickets_refresh()
-                    _render_my_tickets_panel(ui, state["snapshot"], workspace)
-                elif active_page_id == "weekly-ticket-draft":
-                    _start_weekly_ticket_draft_refresh()
-                    _render_weekly_ticket_draft_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "screenshot-test-state":
                     _render_screenshot_test_state_panel(ui, state["snapshot"], workspace, bmw_root=bmw_root)
                 elif active_page_id == "risk-score":
@@ -3962,8 +3498,6 @@ def _render_dashboard(
                     _render_operator_handoff_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "manual-review":
                     _render_manual_review_panel(ui, state["snapshot"], workspace)
-                elif active_page_id == "settings":
-                    _render_settings_panel(ui, state["snapshot"], workspace)
                 elif active_page_id == "about":
                     _render_about_panel(ui, ABOUT_CONTENT)
                 else:
@@ -3998,10 +3532,6 @@ def _render_dashboard(
                 return
             state["snapshot"] = snapshot
             state["loading_message"] = ""
-            if active_page_id == "my-tickets":
-                _start_my_tickets_refresh(force=True)
-            if active_page_id == "weekly-ticket-draft":
-                _start_weekly_ticket_draft_refresh(force=True)
             _refresh_labels()
             if str(state.get("active_page_id", "")) == active_page_id:
                 _render_current_page()
@@ -4085,24 +3615,6 @@ def _render_dashboard(
                     defer_team_digest_board=page_id != "team-digest-board",
                     loading_message=f"Loading {str(_pages_by_id().get(page_id, {}).get('title', page_id))}...",
                     transition_page_id=page_id,
-                )
-                return
-            if page_id == "my-tickets" and _pages_by_id().get(page_id, {}).get("deferred"):
-                state["loading_message"] = ""
-                _start_my_tickets_refresh(force=True)
-                _render_current_page()
-                _run_javascript_if_client_alive(
-                    ui,
-                    f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
-                )
-                return
-            if page_id == "weekly-ticket-draft" and _pages_by_id().get(page_id, {}).get("deferred"):
-                state["loading_message"] = ""
-                _start_weekly_ticket_draft_refresh(force=True)
-                _render_current_page()
-                _run_javascript_if_client_alive(
-                    ui,
-                    f"window.sgfxFinishTransition && window.sgfxFinishTransition('tab', {json.dumps(page_id)});",
                 )
                 return
             if _pages_by_id().get(page_id, {}).get("deferred"):
