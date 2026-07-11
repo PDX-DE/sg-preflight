@@ -14,6 +14,7 @@ Item {
     required property string errorCode
     required property string errorSummary
     required property bool reducedMotion
+    property var desktopController: null
     readonly property string rendererKind: root.page && root.page.rendererKind ? root.page.rendererKind : ""
 
     Component {
@@ -38,12 +39,14 @@ Item {
         id: workflowComponent
         Renderers.WorkflowRenderer {
             page: root.page
+            controller: root.desktopController
         }
     }
     Component {
         id: reviewComponent
         Renderers.ReviewRenderer {
             page: root.page
+            controller: root.desktopController
         }
     }
     Component {
@@ -57,6 +60,7 @@ Item {
         id: rendererLoader
         objectName: "readyRenderer"
         anchors.fill: parent
+        anchors.bottomMargin: artifactBar.visible ? 52 : 0
         active: root.pageState === "ready"
         sourceComponent: {
             switch (root.rendererKind) {
@@ -74,6 +78,34 @@ Item {
                 return aboutComponent;
             default:
                 return undefined;
+            }
+        }
+    }
+
+    RowLayout {
+        id: artifactBar
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        visible: root.pageState === "ready" && root.page.artifacts && root.page.artifacts.length > 0
+        spacing: 8
+
+        Label {
+            Layout.fillWidth: true
+            text: "Local evidence artifacts"
+            color: Theme.muted
+            font.pixelSize: 11
+        }
+        Repeater {
+            model: root.page.artifacts || []
+            delegate: Button {
+                id: artifactDelegate
+                required property var modelData
+                objectName: "artifactRevealControl"
+                text: artifactDelegate.modelData.label || "Reveal artifact"
+                enabled: root.desktopController !== null
+                Accessible.name: text
+                onClicked: root.desktopController.revealArtifact(artifactDelegate.modelData.artifactId)
             }
         }
     }

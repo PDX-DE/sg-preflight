@@ -9,9 +9,19 @@ Item {
     id: root
 
     required property var page
+    property var controller: null
     readonly property string rendererKind: "workflow"
     readonly property int renderedItemCount: root.page.visibleItems ? root.page.visibleItems.length : 0
     readonly property string renderedStatus: root.page.status || ""
+    readonly property bool capabilityBusy: root.controller !== null && (root.controller.capabilityState === "queued" || root.controller.capabilityState === "running")
+    readonly property bool canRecordHandoff: {
+        const actions = root.page.actions || [];
+        for (let index = 0; index < actions.length; ++index) {
+            if (actions[index].capabilityId === "operator_handoff.record" && actions[index].enabled)
+                return root.controller !== null && !root.capabilityBusy;
+        }
+        return false;
+    }
 
     ScrollView {
         id: scroll
@@ -107,6 +117,76 @@ Item {
                             }
                         }
                     }
+                }
+            }
+            Repeater {
+                model: root.page.actions || []
+                delegate: Button {
+                    id: diagnosticDelegate
+                    required property var modelData
+                    objectName: "diagnosticActionControl"
+                    Layout.fillWidth: true
+                    visible: diagnosticDelegate.modelData.capabilityId === "diagnostic.run"
+                    enabled: visible && diagnosticDelegate.modelData.enabled && root.controller !== null && !root.capabilityBusy
+                    text: diagnosticDelegate.modelData.label || "Run audited diagnostic"
+                    Accessible.name: text
+                    onClicked: root.controller.runDiagnostic(diagnosticDelegate.modelData.actionId, [root.controller.currentProfileId])
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root.controller !== null && (root.controller.capabilityState !== "idle" || root.controller.capabilityError.length > 0)
+                spacing: 10
+
+                Label {
+                    objectName: "capabilityLifecycleText"
+                    Layout.fillWidth: true
+                    text: root.controller.capabilityError || ("Action state: " + root.controller.capabilityState)
+                    color: root.controller.capabilityError.length > 0 ? Theme.statusBad : Theme.muted
+                    wrapMode: Text.WordWrap
+                }
+                Button {
+                    objectName: "cancelDiagnosticControl"
+                    text: "Cancel queued diagnostic"
+                    visible: root.controller !== null && root.controller.diagnosticCanCancel
+                    enabled: visible
+                    Accessible.name: text
+                    onClicked: root.controller.cancelDiagnostic()
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: root.canRecordHandoff
+                spacing: 8
+
+                TextField {
+                    id: stoppingPointControl
+                    objectName: "handoffStoppingPointControl"
+                    Layout.fillWidth: true
+                    placeholderText: "Stopping point"
+                    maximumLength: 1000
+                }
+                TextField {
+                    id: nextStepControl
+                    objectName: "handoffNextStepControl"
+                    Layout.fillWidth: true
+                    placeholderText: "Next local step"
+                    maximumLength: 1000
+                }
+                TextArea {
+                    id: handoffNoteControl
+                    objectName: "handoffNoteControl"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 72
+                    placeholderText: "Bounded operator note"
+                    wrapMode: TextEdit.Wrap
+                }
+                Button {
+                    objectName: "recordOperatorHandoffControl"
+                    text: "Record handoff"
+                    enabled: root.canRecordHandoff && stoppingPointControl.text.trim().length > 0
+                    Accessible.name: text
+                    onClicked: root.controller.recordOperatorHandoff(stoppingPointControl.text, nextStepControl.text, handoffNoteControl.text)
                 }
             }
         }

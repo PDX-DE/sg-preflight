@@ -516,6 +516,10 @@ def _surface_items(surface_id: str, payload: Mapping[str, Any]) -> tuple[list[di
             detail_keys=("evidence_prompt", "suggestion_reason", "note"),
             status_keys=("status", "verdict", "suggestion_status"),
         )
+        for item, step in zip(items, steps, strict=True):
+            step_id = _first(step, "slug", "id", "key")
+            if step_id:
+                item["itemId"] = step_id
         return items, [_SectionSpec("steps", "Manual review steps")]
     _reject()
 

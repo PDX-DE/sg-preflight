@@ -245,6 +245,7 @@ ApplicationWindow {
                             errorCode: window.desktopController.errorCode
                             errorSummary: window.desktopController.errorSummary
                             reducedMotion: window.reducedMotion
+                            desktopController: window.desktopController
                         }
                     }
 

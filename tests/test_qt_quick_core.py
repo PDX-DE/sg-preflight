@@ -1487,7 +1487,15 @@ class TestTask10ControllerPresentation(unittest.TestCase):
                 coordinator.succeed(identity, worker_result)
 
         self.assertEqual(controller.pageState, "ready")
-        self.assertEqual(controller.currentPayload, presented)
+        published = dict(controller.currentPayload)
+        published_actions = published.pop("actions")
+        expected_presented = dict(presented)
+        expected_presented.pop("actions")
+        self.assertEqual(published, expected_presented)
+        self.assertEqual(
+            [item["capabilityId"] for item in published_actions],
+            ["page.refresh"],
+        )
         self.assertEqual(
             controller._cache,
             {("G65", "delivery-checklist"): presented},
@@ -1648,9 +1656,11 @@ class TestTask10ControllerPresentation(unittest.TestCase):
         rendered = repr(controller.currentPayload)
         self.assertIn("version: task-10-about-sentinel", rendered)
         self.assertNotIn("version_placeholder", rendered)
+        cached_about = controller._cache[("G65", "about")]
+        self.assertEqual(cached_about["actions"], [])
         self.assertEqual(
-            controller._cache,
-            {("G65", "about"): controller.currentPayload},
+            [item["capabilityId"] for item in controller.currentPayload["actions"]],
+            ["page.refresh"],
         )
         self.assertEqual(before, after)
 
