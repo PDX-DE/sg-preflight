@@ -1176,6 +1176,22 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
 
 
 class TestCapabilityQmlBindings(unittest.TestCase):
+    def test_artifact_visibility_is_always_a_boolean(self) -> None:
+        qml = (
+            Path(__file__).resolve().parents[1]
+            / "sg_preflight"
+            / "desktop"
+            / "qml"
+            / "components"
+            / "PageFrame.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('visible: Boolean(root.pageState === "ready"', qml)
+        self.assertNotIn(
+            'visible: root.pageState === "ready" && root.page.artifacts && root.page.artifacts.length > 0',
+            qml,
+        )
+
     def test_qml_binds_only_typed_capabilities_and_artifact_handles(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight" / "desktop" / "qml"
         main = (root / "Main.qml").read_text(encoding="utf-8")

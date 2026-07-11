@@ -87,7 +87,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        visible: root.pageState === "ready" && root.page.artifacts && root.page.artifacts.length > 0
+        visible: Boolean(root.pageState === "ready" && root.page && root.page.artifacts && root.page.artifacts.length > 0)
         spacing: 8
 
         Label {

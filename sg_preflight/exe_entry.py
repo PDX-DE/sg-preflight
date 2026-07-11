@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 import importlib
+import json
 import os
 from pathlib import Path
+import platform
+import re
 import sys
 import tempfile
 import traceback
@@ -15,7 +18,90 @@ DEFAULT_DOUBLE_CLICK_ARGS = ["dashboard", "run", "--ui-mode", "clean"]
 DEFAULT_OPERATOR_WORKSPACE = Path(r"C:\repositories\trunk")
 WORKSPACE_ENV = "SGFX_PREFLIGHT_WORKSPACE"
 PACKAGING_IMPORT_PROBE_ENV = "SGFX_PACKAGING_IMPORT_PROBE"
-PACKAGING_REQUIRED_IMPORTS = ("keyring", "keyring.backends.Windows")
+BENCHMARK_REQUEST_ENV = "SGFX_QT_BENCHMARK_REQUEST"
+PACKAGING_REQUIRED_IMPORTS = (
+    "keyring",
+    "keyring.backends.Windows",
+    "PySide6",
+    "PySide6.QtCore",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuickControls2",
+)
+_COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
+
+
+def _packaging_runtime_is_complete(
+    imported: dict[str, object],
+    *,
+    qml_entry: Path | None = None,
+) -> bool:
+    try:
+        qt_core = imported["PySide6.QtCore"]
+        library_info = qt_core.QLibraryInfo  # type: ignore[attr-defined]
+        library_path = library_info.LibraryPath
+        libraries = Path(library_info.path(library_path.LibrariesPath))
+        plugins = Path(library_info.path(library_path.PluginsPath))
+        qml_imports = Path(library_info.path(library_path.QmlImportsPath))
+        library_roots = [libraries]
+        module_file = getattr(qt_core, "__file__", None)
+        if isinstance(module_file, str) and module_file:
+            library_roots.append(Path(module_file).resolve().parent)
+        if qml_entry is None:
+            from sg_preflight.assets import runtime_asset_path
+
+            qml_entry = runtime_asset_path("sg_preflight/desktop/qml/Main.qml")
+        libraries_complete = any(
+            (root / "Qt6Qml.dll").is_file() and (root / "Qt6Quick.dll").is_file()
+            for root in library_roots
+        )
+        required = (
+            plugins / "platforms" / "qwindows.dll",
+            qml_imports / "QtQuick" / "Controls" / "qmldir",
+            Path(qml_entry),
+        )
+        return libraries_complete and all(path.is_file() for path in required)
+    except (AttributeError, KeyError, OSError, TypeError, ValueError):
+        return False
+
+
+def _packaging_manifest_matches_runtime(
+    imported: dict[str, object],
+    *,
+    manifest_path: Path,
+) -> bool:
+    try:
+        payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return False
+        from sg_preflight import __version__
+
+        pyside6 = imported["PySide6"]
+        qt_core = imported["PySide6.QtCore"]
+        expected = {
+            "schema_version": 1,
+            "sgfx_version": __version__,
+            "python_version": platform.python_version(),
+            "pyside6_version": pyside6.__version__,  # type: ignore[attr-defined]
+            "qt_version": qt_core.qVersion(),  # type: ignore[attr-defined]
+            "qml_contract_version": 1,
+        }
+        if any(payload.get(key) != value for key, value in expected.items()):
+            return False
+        commit = payload.get("source_commit")
+        modes = payload.get("presentation_modes")
+        imports = payload.get("qml_imports")
+        return (
+            isinstance(commit, str)
+            and _COMMIT_PATTERN.fullmatch(commit) is not None
+            and isinstance(modes, list)
+            and "clean" in modes
+            and "qt-quick" in modes
+            and isinstance(imports, list)
+            and bool(imports)
+        )
+    except (AttributeError, KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
 
 
 def run_packaging_import_probe() -> int | None:
@@ -28,9 +114,27 @@ def run_packaging_import_probe() -> int | None:
         windows_backend = imported["keyring.backends.Windows"]
         if windows_backend.WinVaultKeyring.priority <= 0:  # type: ignore[attr-defined]
             return 86
+        if not _packaging_runtime_is_complete(imported):
+            return 86
+        if getattr(sys, "frozen", False):
+            manifest_path = Path(sys.executable).resolve().parent / "bundle-manifest.json"
+            if not _packaging_manifest_matches_runtime(imported, manifest_path=manifest_path):
+                return 86
     except Exception:
         return 86
     return 0
+
+
+def run_qt_benchmark_probe() -> int | None:
+    configured = os.environ.get(BENCHMARK_REQUEST_ENV, "").strip()
+    if not configured:
+        return None
+    try:
+        from sg_preflight.desktop.qt_quick_benchmark_probe import run_benchmark_request
+
+        return run_benchmark_request(Path(configured))
+    except Exception:
+        return 87
 
 
 def _svn_trunk_ancestor(path: Path) -> Path | None:
@@ -209,6 +313,9 @@ def should_show_startup_error(args: list[str]) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    benchmark_result = run_qt_benchmark_probe()
+    if benchmark_result is not None:
+        return benchmark_result
     probe_result = run_packaging_import_probe()
     if probe_result is not None:
         return probe_result

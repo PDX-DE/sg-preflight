@@ -8,8 +8,29 @@ import shutil
 import subprocess
 import sys
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from sg_preflight.bundle_manifest import (
+    QmlImport,
+    create_current_bundle_manifest,
+    scan_qml_imports,
+    validate_staged_bundle_contents,
+    write_bundle_manifest,
+)
+from sg_preflight.grafiks_provenance import (
+    GrafiksProvenance,
+    GrafiksProvenanceError,
+    accept_grafiks_bundle,
+    copy_grafiks_provenance_evidence,
+    grafiks_manifest_reference,
+    license_manifest_covers_files,
+    load_grafiks_provenance,
+    sha256_file,
+)
+
+
 ENTRY_POINT_RELATIVE = Path("sg_preflight/exe_entry.py")
 ENTRY_POINT = ROOT / ENTRY_POINT_RELATIVE
 DIST_PATH = ROOT / "dist"
@@ -20,6 +41,7 @@ BACKUP_BUNDLE_PATH = ROOT / "build" / "p"
 BACKUP_SINGLE_FILE_PATH = ROOT / "build" / "p.exe"
 ICON_PATH = ROOT / "desktop_native" / "resources" / "exe_ico.ico"
 GRAFIKS_RUNTIME_ENV = "SGFX_GRAFIKS_RUNTIME_DIR"
+GRAFIKS_PROVENANCE_ENV = "SGFX_GRAFIKS_PROVENANCE_RECORD"
 PACKAGING_IMPORT_PROBE_ENV = "SGFX_PACKAGING_IMPORT_PROBE"
 PACKAGING_REQUIRED_IMPORTS = ("keyring", "keyring.backends.Windows")
 GRAFIKS_RUNTIME_SOURCE = ROOT / "cpp" / "build" / "vs2022-ramses-28.16" / "Release"
@@ -136,15 +158,28 @@ def _grafiks_runtime_source() -> Path | None:
     return None
 
 
-def copy_grafiks_runtime(bundle_dir: Path) -> list[Path]:
+def copy_grafiks_runtime(
+    bundle_dir: Path,
+    provenance: GrafiksProvenance | None,
+) -> list[Path]:
     runtime_dir = _grafiks_runtime_source()
     if runtime_dir is None:
         print("Grafiks C++ runtime not found; skipping optional runtime copy.")
         return []
+    executable = runtime_dir / GRAFIKS_RUNTIME_FILES[0]
+    if provenance is None or not accept_grafiks_bundle(executable, provenance):
+        print("Grafiks provenance is absent or does not match; omitting the optional runtime.")
+        return []
+    if not license_manifest_covers_files(
+        Path(provenance.license_manifest_path),
+        GRAFIKS_RUNTIME_FILES,
+    ):
+        print("Grafiks license evidence is incomplete; omitting the optional runtime.")
+        return []
     missing = [name for name in GRAFIKS_RUNTIME_FILES if not (runtime_dir / name).is_file()]
     if missing:
-        joined = ", ".join(missing)
-        raise SystemExit(f"Grafiks C++ runtime is incomplete in {runtime_dir}: missing {joined}")
+        print("Grafiks C++ runtime is incomplete; omitting the optional runtime.")
+        return []
 
     target_dir = bundle_dir / "_internal"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -153,7 +188,19 @@ def copy_grafiks_runtime(bundle_dir: Path) -> list[Path]:
         target = target_dir / name
         shutil.copy2(runtime_dir / name, target)
         copied.append(target)
-    print(f"Copied Grafiks C++ runtime to {target_dir}")
+    copied_executable = target_dir / GRAFIKS_RUNTIME_FILES[0]
+    if sha256_file(copied_executable).casefold() != provenance.sha256.casefold():
+        for target in copied:
+            target.unlink(missing_ok=True)
+        print("The copied Grafiks runtime changed; omitting the optional runtime.")
+        return []
+    copied.extend(
+        copy_grafiks_provenance_evidence(
+            provenance,
+            target_dir / "grafiks-provenance",
+        )
+    )
+    print("Copied the provenance-cleared Grafiks C++ runtime.")
     return copied
 
 
@@ -168,29 +215,66 @@ def _operator_console_dist_source() -> Path | None:
     return None
 
 
-def copy_operator_console_shell(bundle_dir: Path) -> Path | None:
-    """Copy the operator-console dist tree into _internal/grafiks_shell/ so the
-    packaged exe opens the Grafiks operator console (not the cinematic R&D shell).
-    Optional: skipped cleanly when the dist is not present at build time."""
+def copy_operator_console_shell(
+    bundle_dir: Path,
+    provenance: GrafiksProvenance | None,
+) -> Path | None:
     dist_dir = _operator_console_dist_source()
     if dist_dir is None:
         print("Grafiks operator console dist not found; skipping optional copy.")
+        return None
+    executable = dist_dir / OPERATOR_CONSOLE_SHELL_EXE_NAME
+    if provenance is None or not accept_grafiks_bundle(executable, provenance):
+        print("Grafiks provenance is absent or does not match; omitting the optional operator console.")
+        return None
+    relative_files = tuple(
+        sorted(path.relative_to(dist_dir).as_posix() for path in dist_dir.rglob("*") if path.is_file())
+    )
+    if not license_manifest_covers_files(
+        Path(provenance.license_manifest_path),
+        relative_files,
+    ):
+        print("Grafiks license evidence is incomplete; omitting the optional operator console.")
         return None
     target_dir = bundle_dir / "_internal" / GRAFIKS_BUNDLED_SHELL_DIR_NAME
     if target_dir.exists():
         shutil.rmtree(target_dir)
     shutil.copytree(dist_dir, target_dir)
-    print(f"Copied Grafiks operator console ({dist_dir}) to {target_dir}")
+    copied_executable = target_dir / OPERATOR_CONSOLE_SHELL_EXE_NAME
+    if sha256_file(copied_executable).casefold() != provenance.sha256.casefold():
+        shutil.rmtree(target_dir)
+        print("The copied Grafiks operator console changed; omitting it.")
+        return None
+    copy_grafiks_provenance_evidence(provenance, target_dir / "provenance")
+    print("Copied the provenance-cleared Grafiks operator console.")
     return target_dir / OPERATOR_CONSOLE_SHELL_EXE_NAME
 
 
-def validate_staged_bundle() -> Path:
+def load_configured_grafiks_provenance() -> GrafiksProvenance | None:
+    configured = os.environ.get(GRAFIKS_PROVENANCE_ENV, "").strip()
+    if not configured:
+        return None
+    try:
+        return load_grafiks_provenance(Path(configured))
+    except GrafiksProvenanceError:
+        print("Grafiks provenance is invalid; omitting all optional Grafiks binaries.")
+        return None
+
+
+def validate_staged_bundle(qml_imports: tuple[QmlImport, ...] | None = None) -> Path:
     bundle_dir = STAGING_DIST_PATH / "sgfx-preflight"
     exe_path = bundle_dir / "sgfx-preflight.exe"
     if not exe_path.is_file():
-        raise SystemExit(f"PyInstaller did not produce the expected executable: {exe_path}")
+        raise SystemExit("PyInstaller did not produce the expected executable.")
+    if qml_imports is not None:
+        try:
+            validate_staged_bundle_contents(bundle_dir, qml_imports)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
     environment = os.environ.copy()
     environment[PACKAGING_IMPORT_PROBE_ENV] = "1"
+    for key in ("QML2_IMPORT_PATH", "QML_IMPORT_PATH", "QT_PLUGIN_PATH", "PYTHONPATH"):
+        environment.pop(key, None)
     try:
         probe = subprocess.run(
             [str(exe_path)],
@@ -275,9 +359,23 @@ def main(argv: list[str] | None = None) -> int:
 
     clean_staging_outputs()
     PyInstaller.__main__.run(pyinstaller_args)
-    staged_bundle = validate_staged_bundle()
-    copy_grafiks_runtime(staged_bundle)
-    copy_operator_console_shell(staged_bundle)
+    staged_bundle = STAGING_DIST_PATH / "sgfx-preflight"
+    qml_imports = scan_qml_imports(ROOT / "sg_preflight" / "desktop" / "qml")
+    provenance = load_configured_grafiks_provenance()
+    copied_operator = copy_operator_console_shell(staged_bundle, provenance)
+    copied_runtime = [] if copied_operator is not None else copy_grafiks_runtime(staged_bundle, provenance)
+    accepted_provenance = provenance if copied_operator is not None or copied_runtime else None
+    manifest = create_current_bundle_manifest(
+        ROOT,
+        qml_imports,
+        grafiks_reference=(
+            grafiks_manifest_reference(accepted_provenance)
+            if accepted_provenance is not None
+            else None
+        ),
+    )
+    write_bundle_manifest(staged_bundle, manifest)
+    staged_bundle = validate_staged_bundle(qml_imports)
     swap_staged_bundle(staged_bundle)
     return 0
 

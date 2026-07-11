@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -120,6 +121,10 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("GRAFIKS_RUNTIME_FILES", text)
         self.assertIn("sgfx_cine_cinematic_shell.exe", text)
         self.assertIn("ramses-shared-lib-headless.dll", text)
+        self.assertIn("accept_grafiks_bundle", text)
+        self.assertIn("load_grafiks_provenance", text)
+        self.assertIn("scan_qml_imports", text)
+        self.assertIn("write_bundle_manifest", text)
         self.assertIn("STAGING_DIST_PATH", text)
         self.assertIn("validate_staged_bundle", text)
         self.assertIn("swap_staged_bundle", text)
@@ -146,14 +151,107 @@ class TestNativeScaffold(unittest.TestCase):
             self.assertIn(asset_name, text)
         self.assertIn('rglob("*.qml")', text)
         self.assertIn('rglob("qmldir")', text)
+        self.assertIn("copy_grafiks_runtime(staged_bundle, provenance)", text)
+        self.assertIn("copy_operator_console_shell(staged_bundle, provenance)", text)
         self.assertLess(
-            text.index("copy_grafiks_runtime(staged_bundle)"),
-            text.index("copy_operator_console_shell(staged_bundle)"),
+            text.index("qml_imports = scan_qml_imports("),
+            text.index("staged_bundle = validate_staged_bundle("),
         )
         self.assertLess(
-            text.index("copy_operator_console_shell(staged_bundle)"),
+            text.index("write_bundle_manifest(staged_bundle"),
+            text.index("staged_bundle = validate_staged_bundle("),
+        )
+        self.assertLess(
+            text.index("staged_bundle = validate_staged_bundle("),
             text.index("swap_staged_bundle(staged_bundle)"),
         )
+
+    def test_grafiks_presence_alone_never_authorizes_a_runtime_copy(self) -> None:
+        module = self._load_build_exe_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            operator = root / "operator"
+            bundle = root / "bundle"
+            runtime.mkdir()
+            operator.mkdir()
+            bundle.mkdir()
+            for name in module.GRAFIKS_RUNTIME_FILES:
+                (runtime / name).write_bytes(b"fixture")
+            (operator / module.OPERATOR_CONSOLE_SHELL_EXE_NAME).write_bytes(b"fixture")
+
+            with mock.patch.object(module, "_grafiks_runtime_source", return_value=runtime):
+                self.assertEqual(module.copy_grafiks_runtime(bundle, None), [])
+            with mock.patch.object(module, "_operator_console_dist_source", return_value=operator):
+                self.assertIsNone(module.copy_operator_console_shell(bundle, None))
+
+            self.assertFalse((bundle / "_internal" / module.GRAFIKS_RUNTIME_FILES[0]).exists())
+            self.assertFalse((bundle / "_internal" / module.GRAFIKS_BUNDLED_SHELL_DIR_NAME).exists())
+
+    def test_only_an_exact_accepted_record_copies_grafiks_and_its_evidence(self) -> None:
+        module = self._load_build_exe_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            bundle = root / "bundle"
+            runtime.mkdir()
+            bundle.mkdir()
+            for name in module.GRAFIKS_RUNTIME_FILES:
+                (runtime / name).write_bytes(name.encode("utf-8"))
+            provenance = mock.Mock(
+                license_manifest_path="licenses.json",
+                sha256=module.sha256_file(runtime / module.GRAFIKS_RUNTIME_FILES[0]),
+            )
+            evidence = bundle / "_internal" / "grafiks-provenance" / "NOTICE.txt"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_bytes(b"fixture")
+
+            with (
+                mock.patch.object(module, "_grafiks_runtime_source", return_value=runtime),
+                mock.patch.object(module, "accept_grafiks_bundle", return_value=True) as accept,
+                mock.patch.object(module, "license_manifest_covers_files", return_value=True) as coverage,
+                mock.patch.object(
+                    module,
+                    "copy_grafiks_provenance_evidence",
+                    return_value=(evidence,),
+                ) as copy_evidence,
+            ):
+                copied = module.copy_grafiks_runtime(bundle, provenance)
+
+        accept.assert_called_once_with(runtime / module.GRAFIKS_RUNTIME_FILES[0], provenance)
+        coverage.assert_called_once_with(
+            Path(provenance.license_manifest_path),
+            module.GRAFIKS_RUNTIME_FILES,
+        )
+        copy_evidence.assert_called_once_with(provenance, bundle / "_internal" / "grafiks-provenance")
+        self.assertEqual(len(copied), len(module.GRAFIKS_RUNTIME_FILES) + 1)
+
+    def test_changed_grafiks_copy_is_removed_before_evidence_is_added(self) -> None:
+        module = self._load_build_exe_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            bundle = root / "bundle"
+            runtime.mkdir()
+            bundle.mkdir()
+            for name in module.GRAFIKS_RUNTIME_FILES:
+                (runtime / name).write_bytes(name.encode("utf-8"))
+            provenance = mock.Mock(license_manifest_path="licenses.json", sha256="a" * 64)
+
+            with (
+                mock.patch.object(module, "_grafiks_runtime_source", return_value=runtime),
+                mock.patch.object(module, "accept_grafiks_bundle", return_value=True),
+                mock.patch.object(module, "license_manifest_covers_files", return_value=True),
+                mock.patch.object(module, "sha256_file", return_value="b" * 64),
+                mock.patch.object(module, "copy_grafiks_provenance_evidence") as copy_evidence,
+            ):
+                copied = module.copy_grafiks_runtime(bundle, provenance)
+
+            internal = bundle / "_internal"
+            self.assertEqual(copied, [])
+            self.assertTrue(internal.is_dir())
+            self.assertEqual(list(internal.iterdir()), [])
+            copy_evidence.assert_not_called()
 
     def test_qml_package_inputs_include_nested_components_singleton_and_qmldir(self) -> None:
         module = self._load_build_exe_module()
@@ -196,19 +294,33 @@ class TestNativeScaffold(unittest.TestCase):
     def test_packaging_import_probe_requires_keyring_and_positive_windows_backend(self) -> None:
         from sg_preflight import exe_entry
 
+        expected_imports = (
+            "keyring",
+            "keyring.backends.Windows",
+            "PySide6",
+            "PySide6.QtCore",
+            "PySide6.QtQml",
+            "PySide6.QtQuick",
+            "PySide6.QtQuickControls2",
+        )
+
+        def imported_modules(backend: object) -> dict[str, object]:
+            return {
+                name: backend if name == "keyring.backends.Windows" else mock.Mock()
+                for name in expected_imports
+            }
+
         backend = self._windows_backend(priority=5)
         with mock.patch.dict(os.environ, {exe_entry.PACKAGING_IMPORT_PROBE_ENV: "1"}):
             with mock.patch.object(
                 exe_entry.importlib,
                 "import_module",
-                side_effect=[mock.Mock(), backend],
+                side_effect=imported_modules(backend).__getitem__,
             ) as importer:
-                self.assertEqual(exe_entry.run_packaging_import_probe(), 0)
+                with mock.patch.object(exe_entry, "_packaging_runtime_is_complete", return_value=True):
+                    self.assertEqual(exe_entry.run_packaging_import_probe(), 0)
 
-        self.assertEqual(
-            exe_entry.PACKAGING_REQUIRED_IMPORTS,
-            ("keyring", "keyring.backends.Windows"),
-        )
+        self.assertEqual(exe_entry.PACKAGING_REQUIRED_IMPORTS, expected_imports)
         self.assertEqual(
             [call.args[0] for call in importer.call_args_list],
             list(exe_entry.PACKAGING_REQUIRED_IMPORTS),
@@ -221,9 +333,10 @@ class TestNativeScaffold(unittest.TestCase):
                     with mock.patch.object(
                         exe_entry.importlib,
                         "import_module",
-                        side_effect=[mock.Mock(), backend],
+                        side_effect=imported_modules(backend).__getitem__,
                     ):
-                        self.assertEqual(exe_entry.run_packaging_import_probe(), 86)
+                        with mock.patch.object(exe_entry, "_packaging_runtime_is_complete", return_value=True):
+                            self.assertEqual(exe_entry.run_packaging_import_probe(), 86)
 
         with mock.patch.dict(os.environ, {exe_entry.PACKAGING_IMPORT_PROBE_ENV: "1"}):
             with mock.patch.object(
@@ -238,9 +351,95 @@ class TestNativeScaffold(unittest.TestCase):
             with mock.patch.object(
                 exe_entry.importlib,
                 "import_module",
-                side_effect=[mock.Mock(), backend],
+                side_effect=imported_modules(backend).__getitem__,
             ):
-                self.assertEqual(exe_entry.run_packaging_import_probe(), 86)
+                with mock.patch.object(exe_entry, "_packaging_runtime_is_complete", return_value=True):
+                    self.assertEqual(exe_entry.run_packaging_import_probe(), 86)
+
+        backend = self._windows_backend(priority=5)
+        with mock.patch.dict(os.environ, {exe_entry.PACKAGING_IMPORT_PROBE_ENV: "1"}):
+            with mock.patch.object(
+                exe_entry.importlib,
+                "import_module",
+                side_effect=imported_modules(backend).__getitem__,
+            ):
+                with mock.patch.object(exe_entry, "_packaging_runtime_is_complete", return_value=False):
+                    self.assertEqual(exe_entry.run_packaging_import_probe(), 86)
+
+    def test_packaging_probe_checks_qt_libraries_platform_controls_and_app_qml(self) -> None:
+        from sg_preflight import exe_entry
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            libraries = root / "bin"
+            plugins = root / "plugins"
+            qml = root / "qml"
+            app_qml = root / "app" / "Main.qml"
+            required = (
+                libraries / "Qt6Qml.dll",
+                libraries / "Qt6Quick.dll",
+                plugins / "platforms" / "qwindows.dll",
+                qml / "QtQuick" / "Controls" / "qmldir",
+                app_qml,
+            )
+            for path in required:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+
+            class FakeLibraryPath:
+                LibrariesPath = "libraries"
+                PluginsPath = "plugins"
+                QmlImportsPath = "qml"
+
+            class LibraryInfo:
+                @staticmethod
+                def path(kind: str) -> str:
+                    return {
+                        "libraries": str(libraries),
+                        "plugins": str(plugins),
+                        "qml": str(qml),
+                    }[kind]
+
+            LibraryInfo.LibraryPath = FakeLibraryPath
+
+            qt_core = mock.Mock(QLibraryInfo=LibraryInfo)
+            imported = {"PySide6.QtCore": qt_core}
+            self.assertTrue(exe_entry._packaging_runtime_is_complete(imported, qml_entry=app_qml))
+            (plugins / "platforms" / "qwindows.dll").unlink()
+            self.assertFalse(exe_entry._packaging_runtime_is_complete(imported, qml_entry=app_qml))
+
+    def test_packaging_probe_matches_frozen_manifest_runtime_versions(self) -> None:
+        import platform
+
+        from sg_preflight import __version__, exe_entry
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "bundle-manifest.json"
+            manifest = {
+                "schema_version": 1,
+                "source_commit": "1" * 40,
+                "sgfx_version": __version__,
+                "python_version": platform.python_version(),
+                "pyside6_version": "6.11.1",
+                "qt_version": "6.11.1",
+                "qml_contract_version": 1,
+                "presentation_modes": ["clean", "qt-quick"],
+                "qml_imports": [{"module": "QtQuick", "plugin": "qtquick2plugin"}],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            pyside = mock.Mock(__version__="6.11.1")
+            qt_core = mock.Mock()
+            qt_core.qVersion.return_value = "6.11.1"
+            imported = {"PySide6": pyside, "PySide6.QtCore": qt_core}
+
+            self.assertTrue(
+                exe_entry._packaging_manifest_matches_runtime(imported, manifest_path=manifest_path)
+            )
+            manifest["qt_version"] = "6.10.0"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertFalse(
+                exe_entry._packaging_manifest_matches_runtime(imported, manifest_path=manifest_path)
+            )
 
     def test_packaging_probe_short_circuits_before_cli_startup(self) -> None:
         from sg_preflight import exe_entry
@@ -251,6 +450,22 @@ class TestNativeScaffold(unittest.TestCase):
                     self.assertEqual(exe_entry.main([]), 86)
 
         probe.assert_called_once_with()
+        cli_main.assert_not_called()
+
+    def test_benchmark_probe_short_circuits_before_packaging_and_cli_startup(self) -> None:
+        from sg_preflight import exe_entry
+
+        with mock.patch.dict(os.environ, {exe_entry.BENCHMARK_REQUEST_ENV: "request.json"}):
+            with mock.patch(
+                "sg_preflight.desktop.qt_quick_benchmark_probe.run_benchmark_request",
+                return_value=0,
+            ) as benchmark:
+                with mock.patch.object(exe_entry, "run_packaging_import_probe") as packaging:
+                    with mock.patch("sg_preflight.cli.main") as cli_main:
+                        self.assertEqual(exe_entry.main([]), 0)
+
+        benchmark.assert_called_once_with(Path("request.json"))
+        packaging.assert_not_called()
         cli_main.assert_not_called()
 
     def test_windows_exe_build_validates_keyring_before_collection(self) -> None:
@@ -338,6 +553,27 @@ class TestNativeScaffold(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(SystemExit, "runtime dependency validation timed out"):
                     module.validate_staged_bundle()
+
+    def test_staged_content_failure_stops_before_the_executable_probe(self) -> None:
+        module = self._load_build_exe_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            module.STAGING_DIST_PATH = root / "staging"
+            bundle = module.STAGING_DIST_PATH / "sgfx-preflight"
+            bundle.mkdir(parents=True)
+            (bundle / "sgfx-preflight.exe").write_bytes(b"fixture")
+            imports = (mock.sentinel.qml_import,)
+            with mock.patch.object(
+                module,
+                "validate_staged_bundle_contents",
+                side_effect=ValueError("The staged bundle is incomplete."),
+            ) as content_validator:
+                with mock.patch.object(module.subprocess, "run") as runner:
+                    with self.assertRaisesRegex(SystemExit, "staged bundle is incomplete"):
+                        module.validate_staged_bundle(imports)
+
+        content_validator.assert_called_once_with(bundle, imports)
+        runner.assert_not_called()
 
     def test_windows_exe_build_script_swaps_staged_bundle_after_success(self) -> None:
         module = self._load_build_exe_module()
