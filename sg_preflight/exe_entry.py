@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import importlib
 import os
 from pathlib import Path
 import sys
@@ -13,6 +14,23 @@ from sg_preflight.live_state import sanitize_payload
 DEFAULT_DOUBLE_CLICK_ARGS = ["dashboard", "run", "--ui-mode", "clean"]
 DEFAULT_OPERATOR_WORKSPACE = Path(r"C:\repositories\trunk")
 WORKSPACE_ENV = "SGFX_PREFLIGHT_WORKSPACE"
+PACKAGING_IMPORT_PROBE_ENV = "SGFX_PACKAGING_IMPORT_PROBE"
+PACKAGING_REQUIRED_IMPORTS = ("keyring", "keyring.backends.Windows")
+
+
+def run_packaging_import_probe() -> int | None:
+    if os.environ.get(PACKAGING_IMPORT_PROBE_ENV) != "1":
+        return None
+    try:
+        imported: dict[str, object] = {}
+        for module_name in PACKAGING_REQUIRED_IMPORTS:
+            imported[module_name] = importlib.import_module(module_name)
+        windows_backend = imported["keyring.backends.Windows"]
+        if windows_backend.WinVaultKeyring.priority <= 0:  # type: ignore[attr-defined]
+            return 86
+    except Exception:
+        return 86
+    return 0
 
 
 def _svn_trunk_ancestor(path: Path) -> Path | None:
@@ -191,6 +209,9 @@ def should_show_startup_error(args: list[str]) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    probe_result = run_packaging_import_probe()
+    if probe_result is not None:
+        return probe_result
     from sg_preflight.cli import main as cli_main
 
     args = list(sys.argv[1:] if argv is None else argv)

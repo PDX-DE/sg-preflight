@@ -2867,7 +2867,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dashboard_run.add_argument("--workspace", required=True, help="Workspace root for SGFX read-only checks")
     dashboard_run.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
-    dashboard_run.add_argument("--ui-mode", default=None, choices=("clean", "grafiks"), help="Dashboard presentation mode")
+    dashboard_run.add_argument(
+        "--ui-mode",
+        default=None,
+        choices=("clean", "qt-quick", "grafiks"),
+        help="Dashboard presentation mode",
+    )
     dashboard_run.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     dashboard_run.add_argument("--port", type=int, default=0, help="Dashboard port; 0 chooses an available port")
     dashboard_run.add_argument("--no-native", action="store_true", help="Run a local server without opening a native window")

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 
@@ -18,6 +20,8 @@ BACKUP_BUNDLE_PATH = ROOT / "build" / "p"
 BACKUP_SINGLE_FILE_PATH = ROOT / "build" / "p.exe"
 ICON_PATH = ROOT / "desktop_native" / "resources" / "exe_ico.ico"
 GRAFIKS_RUNTIME_ENV = "SGFX_GRAFIKS_RUNTIME_DIR"
+PACKAGING_IMPORT_PROBE_ENV = "SGFX_PACKAGING_IMPORT_PROBE"
+PACKAGING_REQUIRED_IMPORTS = ("keyring", "keyring.backends.Windows")
 GRAFIKS_RUNTIME_SOURCE = ROOT / "cpp" / "build" / "vs2022-ramses-28.16" / "Release"
 GRAFIKS_RUNTIME_FILES = (
     "sgfx_cine_cinematic_shell.exe",
@@ -38,6 +42,21 @@ def _data_arg(source: str, destination: str) -> str:
     return f"{ROOT / source}{os.pathsep}{destination}"
 
 
+def validate_build_environment() -> None:
+    try:
+        imported: dict[str, object] = {}
+        for module_name in PACKAGING_REQUIRED_IMPORTS:
+            imported[module_name] = importlib.import_module(module_name)
+        windows_backend = imported["keyring.backends.Windows"]
+        if windows_backend.WinVaultKeyring.priority <= 0:  # type: ignore[attr-defined]
+            raise RuntimeError("Windows credential backend is unavailable")
+    except Exception as exc:
+        raise SystemExit(
+            "The build environment is missing required runtime dependencies. "
+            "Install with `pip install -e .[packaging,desktop]`."
+        ) from exc
+
+
 def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
     data_files = (
         ("sgfx_icon.png", "."),
@@ -51,6 +70,7 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
         ("sg_preflight/templates", "sg_preflight/templates"),
         ("sg_preflight/dashboard", "sg_preflight/dashboard"),
         ("sg_preflight/data", "sg_preflight/data"),
+        ("sg_preflight/desktop/qml", "sg_preflight/desktop/qml"),
     )
     args = [
         "--noconfirm",
@@ -77,6 +97,10 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
         "win32ctypes",
         "--hidden-import",
         "keyring.backends.Windows",
+        "--hidden-import",
+        "PySide6.QtQml",
+        "--hidden-import",
+        "PySide6.QtQuick",
     ]
     for source, destination in data_files:
         args.extend(["--add-data", _data_arg(source, destination)])
@@ -153,6 +177,27 @@ def validate_staged_bundle() -> Path:
     exe_path = bundle_dir / "sgfx-preflight.exe"
     if not exe_path.is_file():
         raise SystemExit(f"PyInstaller did not produce the expected executable: {exe_path}")
+    environment = os.environ.copy()
+    environment[PACKAGING_IMPORT_PROBE_ENV] = "1"
+    try:
+        probe = subprocess.run(
+            [str(exe_path)],
+            cwd=bundle_dir,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SystemExit("Packaged runtime dependency validation timed out.") from exc
+    if probe.returncode != 0:
+        raise SystemExit(
+            "Packaged runtime dependency validation failed. "
+            "Reinstall with `pip install -e .[packaging,desktop]` and rebuild."
+        )
     return bundle_dir
 
 
@@ -210,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
             print(item)
         return 0
 
+    validate_build_environment()
     try:
         import PyInstaller.__main__
     except ImportError as exc:

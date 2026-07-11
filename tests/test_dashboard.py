@@ -2703,13 +2703,67 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
                             tmp,
                             "--ui-mode",
                             "grafiks",
-                            "--no-native",
                         ]
                     )
 
         self.assertEqual(result, 9)
         clean_runner.assert_not_called()
         grafiks_runner.assert_called_once_with(profile_id="NA8", workspace=Path(tmp), bmw_root=None)
+
+    def test_dashboard_qt_quick_mode_dispatches_to_native_host_from_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.cli import main
+
+            with mock.patch("sg_preflight.dashboard.main.run_dashboard", return_value=11) as clean_runner:
+                with mock.patch("sg_preflight.desktop.app.run_desktop_app", return_value=9) as desktop_runner:
+                    result = main(
+                        [
+                            "dashboard",
+                            "run",
+                            "--profile",
+                            "G65",
+                            "--workspace",
+                            tmp,
+                            "--ui-mode",
+                            "qt-quick",
+                        ]
+                    )
+
+        self.assertEqual(result, 9)
+        clean_runner.assert_not_called()
+        desktop_runner.assert_called_once_with(
+            workspace=Path(tmp),
+            initial_profile_id="G65",
+            initial_mode="qt-quick",
+            bmw_root=None,
+        )
+
+    def test_native_only_modes_reject_no_native_before_starting_a_host(self) -> None:
+        from sg_preflight.cli import main
+
+        for mode in ("qt-quick", "grafiks"):
+            with self.subTest(mode=mode):
+                stderr = io.StringIO()
+                with mock.patch("sg_preflight.desktop.app.run_desktop_app") as desktop_runner:
+                    with mock.patch("sg_preflight.dashboard.main.run_grafiks_mode") as grafiks_runner:
+                        with redirect_stderr(stderr):
+                            with self.assertRaises(SystemExit) as exc:
+                                main(
+                                    [
+                                        "dashboard",
+                                        "run",
+                                        "--workspace",
+                                        r"C:\workspace",
+                                        "--ui-mode",
+                                        mode,
+                                        "--no-native",
+                                    ]
+                                )
+
+                self.assertEqual(exc.exception.code, 2)
+                self.assertIn("cannot be combined", stderr.getvalue())
+                desktop_runner.assert_not_called()
+                grafiks_runner.assert_not_called()
 
     def test_grafiks_mode_launches_cinematic_shell_when_installed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3116,6 +3170,32 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
         self.assertEqual(result, 11)
         desktop_runner.assert_not_called()
         clean_runner.assert_called_once()
+
+    def test_frozen_explicit_qt_quick_failure_never_uses_clean_browser_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import sg_preflight.cli as cli
+
+            with mock.patch.object(cli.sys, "frozen", True, create=True):
+                with mock.patch(
+                    "sg_preflight.desktop.app.run_desktop_app",
+                    side_effect=RuntimeError("The Qt Quick interface could not be initialized."),
+                ):
+                    with mock.patch(
+                        "sg_preflight.dashboard_webserver._launch_browser_fallback_process",
+                    ) as fallback:
+                        with self.assertRaisesRegex(RuntimeError, "Qt Quick interface"):
+                            cli.main(
+                                [
+                                    "dashboard",
+                                    "run",
+                                    "--workspace",
+                                    tmp,
+                                    "--ui-mode",
+                                    "qt-quick",
+                                ]
+                            )
+
+        fallback.assert_not_called()
 
     def test_desktop_alias_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

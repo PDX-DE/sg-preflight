@@ -87,6 +87,12 @@ def handle_dashboard_command(args: argparse.Namespace, parser: argparse.Argument
             return 1
 
     if args.command == "dashboard":
+        if (
+            args.dashboard_command == "run"
+            and args.no_native
+            and args.ui_mode in {"qt-quick", "grafiks"}
+        ):
+            parser.error(f"--ui-mode {args.ui_mode} cannot be combined with --no-native")
         if args.dashboard_command == "run" and args.ui_mode == "grafiks":
             try:
                 from sg_preflight.dashboard.main import run_grafiks_mode
@@ -101,24 +107,34 @@ def handle_dashboard_command(args: argparse.Namespace, parser: argparse.Argument
                 return 1
         use_desktop_shell = (
             args.dashboard_command == "run"
-            and (common._is_frozen_exe() and not args.no_native and args.ui_mode in {None, "clean"})
+            and not args.no_native
+            and (
+                args.ui_mode == "qt-quick"
+                or (common._is_frozen_exe() and args.ui_mode in {None, "clean"})
+            )
         )
         if use_desktop_shell:
             try:
-                import os
+                if args.ui_mode != "qt-quick":
+                    import os
 
-                _existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-                _flags = "--disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
-                os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (_existing + " " + _flags).strip()
+                    _existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+                    _flags = "--disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
+                    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (_existing + " " + _flags).strip()
                 from sg_preflight.desktop.app import run_desktop_app
 
-                return run_desktop_app(
-                    workspace=Path(args.workspace),
-                    initial_profile_id=args.profile or "",
-                    initial_mode=args.ui_mode or "clean",
-                )
+                desktop_options = {
+                    "workspace": Path(args.workspace),
+                    "initial_profile_id": args.profile or "",
+                    "initial_mode": args.ui_mode or "clean",
+                }
+                if args.ui_mode == "qt-quick":
+                    desktop_options["bmw_root"] = Path(args.bmw_root).resolve() if args.bmw_root else None
+                return run_desktop_app(**desktop_options)
             except RuntimeError as exc:
                 print(common._console_safe(str(exc)), file=sys.stderr)
+                if args.ui_mode == "qt-quick":
+                    raise
                 fallback_code = _frozen_browser_fallback(args, str(exc))
                 if fallback_code is not None:
                     return fallback_code

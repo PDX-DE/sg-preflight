@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -98,6 +100,13 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("packaging = [", pyproject)
         self.assertIn("PyInstaller>=6.20,<7", pyproject)
         self.assertIn("data/*.json", pyproject)
+        self.assertIn('requires-python = ">=3.10"', pyproject)
+        self.assertEqual(pyproject.count('"keyring>=25,<26"'), 1)
+        self.assertEqual(
+            pyproject.count('"pywin32-ctypes>=0.2.2,<1; platform_system == \'Windows\'"'),
+            1,
+        )
+        self.assertEqual(pyproject.count('"desktop/qml/*.qml"'), 1)
 
         text = script_path.read_text(encoding="utf-8")
         self.assertIn("--onedir", text)
@@ -113,6 +122,9 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("validate_staged_bundle", text)
         self.assertIn("swap_staged_bundle", text)
         self.assertIn('bundle_dir / "_internal"', text)
+        self.assertEqual(text.count('"PySide6.QtQml"'), 1)
+        self.assertEqual(text.count('"PySide6.QtQuick"'), 1)
+        self.assertIn(".[packaging,desktop]", text)
         self.assertNotIn("clean_stale_outputs", text)
         for asset_name in (
             "sgfx_icon.png",
@@ -126,8 +138,175 @@ class TestNativeScaffold(unittest.TestCase):
             "sg_preflight/templates",
             "sg_preflight/dashboard",
             "sg_preflight/data",
+            "sg_preflight/desktop/qml",
         ):
             self.assertIn(asset_name, text)
+        self.assertLess(
+            text.index("copy_grafiks_runtime(staged_bundle)"),
+            text.index("copy_operator_console_shell(staged_bundle)"),
+        )
+        self.assertLess(
+            text.index("copy_operator_console_shell(staged_bundle)"),
+            text.index("swap_staged_bundle(staged_bundle)"),
+        )
+
+    @staticmethod
+    def _windows_backend(*, priority: int | BaseException = 5) -> mock.Mock:
+        backend = mock.Mock()
+        backend_type = mock.Mock()
+        if isinstance(priority, BaseException):
+            descriptor = mock.PropertyMock(side_effect=priority)
+        else:
+            descriptor = mock.PropertyMock(return_value=priority)
+        type(backend_type).priority = descriptor
+        backend.WinVaultKeyring = backend_type
+        return backend
+
+    def test_packaging_import_probe_requires_keyring_and_positive_windows_backend(self) -> None:
+        from sg_preflight import exe_entry
+
+        backend = self._windows_backend(priority=5)
+        with mock.patch.dict(os.environ, {exe_entry.PACKAGING_IMPORT_PROBE_ENV: "1"}):
+            with mock.patch.object(
+                exe_entry.importlib,
+                "import_module",
+                side_effect=[mock.Mock(), backend],
+            ) as importer:
+                self.assertEqual(exe_entry.run_packaging_import_probe(), 0)
+
+        self.assertEqual(
+            exe_entry.PACKAGING_REQUIRED_IMPORTS,
+            ("keyring", "keyring.backends.Windows"),
+        )
+        self.assertEqual(
+            [call.args[0] for call in importer.call_args_list],
+            list(exe_entry.PACKAGING_REQUIRED_IMPORTS),
+        )
+
+        for priority in (0, -1):
+            with self.subTest(priority=priority):
+                backend = self._windows_backend(priority=priority)
+                with mock.patch.dict(os.environ, {exe_entry.PACKAGING_IMPORT_PROBE_ENV: "1"}):
+                    with mock.patch.object(
+                        exe_entry.importlib,
+                        "import_module",
+                        side_effect=[mock.Mock(), backend],
+                    ):
+                        self.assertEqual(exe_entry.run_packaging_import_probe(), 86)
+
+        with mock.patch.dict(os.environ, {exe_entry.PACKAGING_IMPORT_PROBE_ENV: "1"}):
+            with mock.patch.object(
+                exe_entry.importlib,
+                "import_module",
+                side_effect=ImportError("private import detail"),
+            ):
+                self.assertEqual(exe_entry.run_packaging_import_probe(), 86)
+
+        backend = self._windows_backend(priority=RuntimeError("missing backend"))
+        with mock.patch.dict(os.environ, {exe_entry.PACKAGING_IMPORT_PROBE_ENV: "1"}):
+            with mock.patch.object(
+                exe_entry.importlib,
+                "import_module",
+                side_effect=[mock.Mock(), backend],
+            ):
+                self.assertEqual(exe_entry.run_packaging_import_probe(), 86)
+
+    def test_packaging_probe_short_circuits_before_cli_startup(self) -> None:
+        from sg_preflight import exe_entry
+
+        with mock.patch.dict(os.environ, {exe_entry.PACKAGING_IMPORT_PROBE_ENV: "1"}):
+            with mock.patch.object(exe_entry, "run_packaging_import_probe", return_value=86) as probe:
+                with mock.patch("sg_preflight.cli.main") as cli_main:
+                    self.assertEqual(exe_entry.main([]), 86)
+
+        probe.assert_called_once_with()
+        cli_main.assert_not_called()
+
+    def test_windows_exe_build_validates_keyring_before_collection(self) -> None:
+        module = self._load_build_exe_module()
+
+        backend = self._windows_backend(priority=5)
+        with mock.patch.object(
+            module.importlib,
+            "import_module",
+            side_effect=[mock.Mock(), backend],
+        ) as importer:
+            module.validate_build_environment()
+        self.assertEqual(
+            [call.args[0] for call in importer.call_args_list],
+            ["keyring", "keyring.backends.Windows"],
+        )
+
+        for priority in (0, -1):
+            with self.subTest(priority=priority):
+                backend = self._windows_backend(priority=priority)
+                with mock.patch.object(
+                    module.importlib,
+                    "import_module",
+                    side_effect=[mock.Mock(), backend],
+                ):
+                    with self.assertRaisesRegex(SystemExit, "required runtime dependencies"):
+                        module.validate_build_environment()
+
+        with mock.patch.object(
+            module.importlib,
+            "import_module",
+            side_effect=ImportError("private import detail"),
+        ):
+            with self.assertRaisesRegex(SystemExit, "required runtime dependencies"):
+                module.validate_build_environment()
+
+    def test_build_print_args_does_not_require_runtime_imports(self) -> None:
+        module = self._load_build_exe_module()
+
+        with mock.patch.object(
+            module,
+            "validate_build_environment",
+            side_effect=AssertionError("print-only mode must stay import-free"),
+        ) as validator:
+            with mock.patch("builtins.print"):
+                self.assertEqual(module.main(["--print-args"]), 0)
+
+        validator.assert_not_called()
+
+    def test_staged_bundle_probe_uses_bounded_hidden_process_controls(self) -> None:
+        module = self._load_build_exe_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            module.STAGING_DIST_PATH = root / "staging"
+            bundle = module.STAGING_DIST_PATH / "sgfx-preflight"
+            bundle.mkdir(parents=True)
+            exe = bundle / "sgfx-preflight.exe"
+            exe.write_text("fixture", encoding="utf-8")
+
+            completed = mock.Mock(returncode=0)
+            with mock.patch.object(module.subprocess, "run", return_value=completed) as runner:
+                self.assertEqual(module.validate_staged_bundle(), bundle)
+
+            self.assertEqual(runner.call_args.args[0], [str(exe)])
+            kwargs = runner.call_args.kwargs
+            self.assertEqual(kwargs["cwd"], bundle)
+            self.assertEqual(kwargs["timeout"], 30)
+            self.assertIs(kwargs["stdout"], subprocess.DEVNULL)
+            self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
+            self.assertFalse(kwargs["check"])
+            self.assertEqual(
+                kwargs["creationflags"],
+                getattr(module.subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            self.assertEqual(kwargs["env"][module.PACKAGING_IMPORT_PROBE_ENV], "1")
+
+            with mock.patch.object(module.subprocess, "run", return_value=mock.Mock(returncode=86)):
+                with self.assertRaisesRegex(SystemExit, "runtime dependency validation failed"):
+                    module.validate_staged_bundle()
+
+            with mock.patch.object(
+                module.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired([str(exe)], 30),
+            ):
+                with self.assertRaisesRegex(SystemExit, "runtime dependency validation timed out"):
+                    module.validate_staged_bundle()
 
     def test_windows_exe_build_script_swaps_staged_bundle_after_success(self) -> None:
         module = self._load_build_exe_module()

@@ -43,22 +43,29 @@ def _write_export_size_analysis_workbook(path: Path, *, profile: str = "G65") ->
 
 
 class TestDesktopEvidenceModel(unittest.TestCase):
-    def test_active_desktop_package_keeps_clean_host_only(self) -> None:
+    def test_clean_compatibility_host_remains_isolated_from_the_qt_quick_dispatcher(self) -> None:
         app_source = (ROOT / "sg_preflight" / "desktop" / "app.py").read_text(encoding="utf-8")
+        clean_app_source = (ROOT / "sg_preflight" / "desktop" / "clean_app.py").read_text(encoding="utf-8")
         host_source = (ROOT / "sg_preflight" / "desktop" / "clean_host.py").read_text(encoding="utf-8")
         theme_source = (ROOT / "sg_preflight" / "desktop" / "theme.py").read_text(encoding="utf-8")
 
         self.assertFalse((ROOT / "sg_preflight" / "desktop" / "main_window.py").exists())
         self.assertFalse((ROOT / "sg_preflight" / "desktop" / "widgets.py").exists())
         self.assertFalse((ROOT / "sg_preflight" / "desktop" / "workers.py").exists())
-        self.assertIn("QIcon", app_source)
-        self.assertIn("setWindowIcon", app_source)
+        self.assertIn("run_clean_desktop_app", app_source)
+        self.assertIn("run_qt_quick_app", app_source)
         self.assertIn('initial_mode: str = "clean"', app_source)
-        self.assertIn("desktop_native/resources/exe_ico.ico", app_source)
-        self.assertIn("_desktop_tooltip_stylesheet", app_source)
-        self.assertIn("_create_startup_splash", app_source)
-        self.assertIn("app.processEvents()", app_source)
-        self.assertIn("CleanDashboardWindow", app_source)
+        self.assertNotIn("PySide6", app_source)
+        self.assertNotIn("QGuiApplication", app_source)
+        self.assertNotIn("QApplication", app_source)
+        self.assertIn("QIcon", clean_app_source)
+        self.assertIn("setWindowIcon", clean_app_source)
+        self.assertIn('initial_mode: str = "clean"', clean_app_source)
+        self.assertIn("desktop_native/resources/exe_ico.ico", clean_app_source)
+        self.assertIn("_desktop_tooltip_stylesheet", clean_app_source)
+        self.assertIn("_create_startup_splash", clean_app_source)
+        self.assertIn("app.processEvents()", clean_app_source)
+        self.assertIn("CleanDashboardWindow", clean_app_source)
         self.assertNotIn("DesktopMainWindow", app_source)
         self.assertNotIn("grafiks_window_type", app_source)
         self.assertNotIn("prewarm", app_source)
@@ -69,7 +76,7 @@ class TestDesktopEvidenceModel(unittest.TestCase):
 
     def test_clean_host_embeds_nicegui_without_external_browser(self) -> None:
         host_source = (ROOT / "sg_preflight" / "desktop" / "clean_host.py").read_text(encoding="utf-8")
-        app_source = (ROOT / "sg_preflight" / "desktop" / "app.py").read_text(encoding="utf-8")
+        app_source = (ROOT / "sg_preflight" / "desktop" / "clean_app.py").read_text(encoding="utf-8")
 
         self.assertIn("QWebEngineView", host_source)
         self.assertIn("QWebEngineSettings", host_source)
@@ -94,6 +101,46 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertNotIn("Dashboard ready", host_source)
         self.assertNotIn("Clean " + "dashboard", host_source)
         self.assertNotIn("Clean Operator " + "Console", host_source)
+
+    def test_desktop_dispatcher_selects_only_the_requested_native_host(self) -> None:
+        from sg_preflight.desktop.app import run_desktop_app
+
+        workspace = Path(r"C:\workspace")
+        with mock.patch("sg_preflight.desktop.clean_app.run_clean_desktop_app", return_value=7) as clean_runner:
+            with mock.patch("sg_preflight.desktop.qt_quick_app.run_qt_quick_app", return_value=9) as quick_runner:
+                clean_result = run_desktop_app(
+                    workspace=workspace,
+                    initial_profile_id="G65",
+                    initial_mode="clean",
+                )
+                quick_result = run_desktop_app(
+                    workspace=workspace,
+                    initial_profile_id="G70",
+                    initial_mode="qt-quick",
+                    bmw_root=Path(r"C:\bmw"),
+                )
+
+        self.assertEqual(clean_result, 7)
+        self.assertEqual(quick_result, 9)
+        clean_runner.assert_called_once_with(
+            workspace=workspace,
+            initial_profile_id="G65",
+            initial_mode="clean",
+        )
+        quick_runner.assert_called_once_with(
+            workspace=workspace,
+            initial_profile_id="G70",
+            bmw_root=Path(r"C:\bmw"),
+        )
+
+    def test_desktop_dispatcher_rejects_unknown_modes_before_importing_a_host(self) -> None:
+        from sg_preflight.desktop.app import run_desktop_app
+
+        with mock.patch("importlib.import_module") as importer:
+            with self.assertRaisesRegex(ValueError, "Unsupported desktop UI mode"):
+                run_desktop_app(workspace=Path.cwd(), initial_mode="unknown")
+
+        importer.assert_not_called()
 
     def test_desktop_surface_items_exposes_clean_mode_evidence_surfaces(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
