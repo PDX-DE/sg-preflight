@@ -52,7 +52,7 @@ EXPECTED_HOME_TILES = (
 )
 
 
-class SurfaceRegistryTests(unittest.TestCase):
+class TestSurfaceRegistry(unittest.TestCase):
     def test_surface_registry_matches_the_approved_contract(self) -> None:
         actual = tuple(
             (
@@ -127,7 +127,13 @@ class SurfaceRegistryTests(unittest.TestCase):
         labels = dict(DASHBOARD_NAVIGATION)
         self.assertEqual(DASHBOARD_NAVIGATION[0], (HOME_ROUTE_ID, HOME_TITLE))
         self.assertEqual(tuple(title for title, _page_ids in DASHBOARD_NAV_GROUPS), NAVIGATION_GROUP_ORDER)
-        self.assertEqual(DASHBOARD_HOME_HUB_TILES, HOME_HUB_TILES)
+        self.assertEqual(
+            DASHBOARD_HOME_HUB_TILES,
+            tuple(
+                (item.surface_id, item.title, item.icon_key, item.subtitle)
+                for item in HOME_HUB_TILES
+            ),
+        )
         self.assertEqual(DASHBOARD_SHORTCUT_ACTIONS, SHORTCUT_ACTIONS)
         self.assertTrue(all(labels[item.surface_id] == item.title for item in SURFACE_DESCRIPTORS))
         self.assertEqual(
