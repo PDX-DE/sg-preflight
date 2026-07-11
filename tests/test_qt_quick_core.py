@@ -945,7 +945,25 @@ class TestDesktopController(unittest.TestCase):
             workspace = Path(temp_dir)
             loader = mock.Mock(
                 return_value=MappingProxyType(
-                    {"id": "delivery-checklist", "rows": [1], "status": "available"}
+                    {
+                        "id": "delivery-checklist",
+                        "status": "available",
+                        "data_available": True,
+                        "summary": "delivery fixture",
+                        "payload": {
+                            "status": "available",
+                            "data_available": True,
+                            "summary": "delivery fixture",
+                            "checks": [
+                                {
+                                    "key": "fixture",
+                                    "label": "Fixture row",
+                                    "status": "available",
+                                    "raw_value": "1",
+                                }
+                            ],
+                        },
+                    }
                 )
             )
             controller, coordinator, _loader, _resolver = self._controller(
@@ -983,7 +1001,7 @@ class TestDesktopController(unittest.TestCase):
             coordinator.succeed(identity, raw_payload)
             self.assertEqual(controller.pageState, "ready")
             self.assertIs(type(controller.currentPayload), dict)
-            self.assertEqual(controller.currentPayload["rows"], [1])
+            self.assertEqual(controller.currentPayload["visibleItems"][0]["value"], "1")
 
             self.assertTrue(controller.navigate("delivery-checklist"))
             self.assertEqual(len(coordinator.requests), 2)
@@ -1247,7 +1265,25 @@ class TestDesktopController(unittest.TestCase):
 
             def loader(**kwargs: object) -> dict[str, object]:
                 reader_threads.append(threading.get_ident())
-                return {"id": kwargs["page_id"], "state": "available"}
+                return {
+                    "id": kwargs["page_id"],
+                    "status": "available",
+                    "data_available": True,
+                    "summary": "threaded delivery fixture",
+                    "payload": {
+                        "status": "available",
+                        "data_available": True,
+                        "summary": "threaded delivery fixture",
+                        "checks": [
+                            {
+                                "key": "threaded",
+                                "label": "Threaded read",
+                                "status": "available",
+                                "raw_value": "available",
+                            }
+                        ],
+                    },
+                }
 
             controller = DesktopController(
                 workspace=temp_dir,
@@ -1289,7 +1325,7 @@ class TestDesktopController(unittest.TestCase):
             coordinator.shutdown(timeout_ms=1000)
 
         self.assertEqual(controller.pageState, "ready")
-        self.assertEqual(controller.currentPayload["state"], "available")
+        self.assertEqual(controller.currentPayload["status"], "available")
         self.assertEqual(len(reader_threads), 2)
         self.assertTrue(all(thread_id != gui_thread_id for thread_id in reader_threads))
         self.assertEqual(
@@ -1325,6 +1361,400 @@ class TestDesktopController(unittest.TestCase):
         self.assertEqual(controller.pageState, "idle")
         self.assertEqual(controller.currentPayload, {})
         self.assertEqual(self._error_values(controller), ("", "", "", False, ""))
+
+
+class TestTask10ControllerPresentation(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.application = QCoreApplication.instance() or QCoreApplication([])
+
+    @staticmethod
+    def _error_values(controller: QObject) -> tuple[object, ...]:
+        return (
+            controller.errorCode,
+            controller.errorTitle,
+            controller.errorSummary,
+            controller.errorRetryable,
+            controller.errorRecoveryAction,
+        )
+
+    @staticmethod
+    def _presented_payload(
+        page_id: str = "delivery-checklist",
+        *,
+        renderer_kind: str = "evidence",
+    ) -> dict[str, object]:
+        from sg_preflight.surface_registry import get_surface_descriptor
+
+        descriptor = get_surface_descriptor(page_id)
+        item = {
+            "itemId": "controller-sentinel",
+            "sectionId": "delivery-evidence",
+            "label": "Controller integration",
+            "value": "presented-only sentinel",
+            "detail": "",
+            "status": "partial",
+            "expected": "",
+            "actual": "",
+            "diff": "",
+            "source": "",
+            "revision": "revision-controller-10",
+        }
+        return {
+            "surfaceId": page_id,
+            "rendererKind": renderer_kind,
+            "title": descriptor.title,
+            "subtitle": descriptor.subtitle,
+            "status": "partial",
+            "dataAvailable": True,
+            "primaryText": "presented-only sentinel",
+            "visibleItems": [item],
+            "visibleItemCount": 1,
+            "sections": [
+                {
+                    "sectionId": "delivery-evidence",
+                    "title": "Delivery evidence",
+                    "status": "partial",
+                    "items": [item],
+                }
+            ],
+            "actions": [],
+            "artifacts": [],
+            "provenance": {"revision": "revision-controller-10"},
+            "ownershipNote": "",
+            "readOnly": True,
+            "isApproval": False,
+            "manualReviewRequired": False,
+            "recordsOperatorVerdict": False,
+        }
+
+    def test_registered_page_worker_adapts_then_presents_before_cache_publication(self) -> None:
+        from sg_preflight.desktop import qt_quick_controller as controller_module
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.surface_registry import get_surface_descriptor
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            coordinator = _FakeTaskCoordinator()
+            raw = {
+                "id": "delivery-checklist",
+                "status": "partial",
+                "payload": {"checks": [{"label": "raw-only sentinel"}]},
+            }
+            adapted = {
+                "id": "delivery-checklist",
+                "status": "partial",
+                "payload": {"checks": [{"label": "adapted-only sentinel"}]},
+            }
+            presented = self._presented_payload()
+            adapter = mock.Mock(return_value=adapted)
+            presenter = mock.Mock(return_value=presented)
+            pipeline = mock.Mock()
+            pipeline.attach_mock(adapter, "adapt")
+            pipeline.attach_mock(presenter, "present")
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=mock.Mock(return_value=raw),
+            )
+
+            with (
+                mock.patch.object(controller_module, "adapt_page_payload", adapter),
+                mock.patch.object(
+                    controller_module,
+                    "present_page_payload",
+                    presenter,
+                    create=True,
+                ),
+            ):
+                self.assertTrue(controller.navigate("delivery-checklist"))
+                identity, operation = coordinator.requests[-1]
+                worker_result = operation()
+
+                self.assertEqual(controller._cache, {})
+                self.assertEqual(
+                    pipeline.mock_calls,
+                    [
+                        mock.call.adapt(raw, workspace=workspace.resolve()),
+                        mock.call.present(
+                            get_surface_descriptor("delivery-checklist"),
+                            adapted,
+                        ),
+                    ],
+                )
+                self.assertEqual(worker_result, presented)
+                coordinator.succeed(identity, worker_result)
+
+        self.assertEqual(controller.pageState, "ready")
+        self.assertEqual(controller.currentPayload, presented)
+        self.assertEqual(
+            controller._cache,
+            {("G65", "delivery-checklist"): presented},
+        )
+        self.assertNotIn("raw-only sentinel", repr(controller.currentPayload))
+        self.assertNotIn("adapted-only sentinel", repr(controller.currentPayload))
+
+    def test_home_shell_context_bypasses_presentation_and_page_cache(self) -> None:
+        from sg_preflight.desktop import qt_quick_controller as controller_module
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            coordinator = _FakeTaskCoordinator()
+            shell_payload = {
+                "status": "not_run",
+                "summary": "home shell sentinel",
+                "profile_options": [{"id": "G65", "label": "G65"}],
+                "selected_profile_id": "G65",
+            }
+            presenter = mock.Mock(side_effect=AssertionError("Home must bypass presentation"))
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                shell_loader=mock.Mock(return_value=shell_payload),
+            )
+
+            with mock.patch.object(
+                controller_module,
+                "present_page_payload",
+                presenter,
+                create=True,
+            ):
+                self.assertTrue(controller.initialize())
+                identity, operation = coordinator.requests[-1]
+                self.assertEqual(identity.operation, "shell_context")
+                worker_result = operation()
+                coordinator.succeed(identity, worker_result)
+
+        presenter.assert_not_called()
+        self.assertEqual(controller.pageState, "ready")
+        self.assertEqual(controller.currentPayload["summary"], "home shell sentinel")
+        self.assertNotIn("rendererKind", controller.currentPayload)
+        self.assertEqual(controller._cache, {})
+
+    def test_missing_required_page_payload_is_uncached_atomic_page_payload_invalid(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.desktop.task_pool import PageTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            before = tuple(workspace.rglob("*"))
+            coordinator = PageTaskCoordinator()
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=lambda **_kwargs: {
+                    "id": "delivery-checklist",
+                    "status": "available",
+                    "payload": {},
+                },
+            )
+            observed: list[tuple[object, ...]] = []
+            controller.errorChanged.connect(
+                lambda: observed.append(self._error_values(controller))
+            )
+
+            self.assertTrue(controller.navigate("delivery-checklist"))
+            self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
+            self.assertTrue(coordinator.wait_for_done(1000))
+            after = tuple(workspace.rglob("*"))
+            coordinator.shutdown(timeout_ms=1000)
+
+        expected_error = (
+            "page_payload_invalid",
+            "Evidence unavailable",
+            "The page evidence has an unsupported shape.",
+            False,
+            "open_clean",
+        )
+        self.assertEqual(controller.pageState, "error")
+        self.assertEqual(controller.currentPayload, {})
+        self.assertEqual(controller._cache, {})
+        self.assertEqual(observed, [expected_error])
+        self.assertEqual(self._error_values(controller), expected_error)
+        self.assertEqual(before, after)
+
+    def test_about_uses_the_special_content_shape_and_publishes_only_presented_fields(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.surface_registry import get_surface_descriptor
+
+        descriptor = get_surface_descriptor("about")
+        raw_about = {
+            "id": "about",
+            "title": descriptor.title,
+            "tagline": descriptor.subtitle,
+            "content": {
+                "heading": "About",
+                "description": "about controller sentinel",
+                "version_placeholder": "version: task-10-about-sentinel",
+                "data_handling_disclosure": (
+                    "Data handling",
+                    "Local-only evidence.",
+                ),
+            },
+        }
+        expected_keys = {
+            "surfaceId",
+            "rendererKind",
+            "title",
+            "subtitle",
+            "status",
+            "dataAvailable",
+            "primaryText",
+            "visibleItems",
+            "visibleItemCount",
+            "sections",
+            "actions",
+            "artifacts",
+            "provenance",
+            "ownershipNote",
+            "readOnly",
+            "isApproval",
+            "manualReviewRequired",
+            "recordsOperatorVerdict",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            before = tuple(workspace.rglob("*"))
+            coordinator = _FakeTaskCoordinator()
+            loader = mock.Mock(return_value=raw_about)
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=loader,
+            )
+
+            self.assertTrue(controller.navigate("about"))
+            identity, operation = coordinator.requests[-1]
+            worker_result = operation()
+            self.assertEqual(controller._cache, {})
+            coordinator.succeed(identity, worker_result)
+            after = tuple(workspace.rglob("*"))
+
+        loader.assert_called_once_with(
+            page_id="about",
+            profile_id="G65",
+            workspace=workspace.resolve(),
+            bmw_root=None,
+        )
+        self.assertEqual(set(controller.currentPayload), expected_keys)
+        self.assertEqual(controller.currentPayload["surfaceId"], "about")
+        self.assertEqual(controller.currentPayload["rendererKind"], "about")
+        rendered = repr(controller.currentPayload)
+        self.assertIn("version: task-10-about-sentinel", rendered)
+        self.assertNotIn("version_placeholder", rendered)
+        self.assertEqual(
+            controller._cache,
+            {("G65", "about"): controller.currentPayload},
+        )
+        self.assertEqual(before, after)
+
+    def test_stale_presented_success_and_failure_reject_each_full_identity_mismatch(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.desktop.task_pool import TaskFailure
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = _FakeTaskCoordinator()
+            controller = DesktopController(
+                workspace=Path(temp_dir),
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=mock.Mock(return_value={}),
+            )
+            self.assertTrue(controller.navigate("delivery-checklist"))
+            current_identity, _operation = coordinator.requests[-1]
+            presented = self._presented_payload()
+            stale_identities = (
+                replace(current_identity, generation=current_identity.generation + 1),
+                replace(current_identity, profile_id="G70"),
+                replace(current_identity, page_id="risk-score"),
+                replace(current_identity, operation="refresh"),
+            )
+            before = (
+                controller._current_identity,
+                controller.currentRouteId,
+                controller.currentPageId,
+                controller.currentProfileId,
+                controller.pageState,
+                dict(controller.currentPayload),
+                dict(controller._cache),
+                self._error_values(controller),
+            )
+
+            for stale_identity in stale_identities:
+                with self.subTest(identity=stale_identity):
+                    coordinator.succeed(stale_identity, presented)
+                    coordinator.fail(
+                        stale_identity,
+                        TaskFailure(
+                            "page_payload_invalid",
+                            "private stale detail",
+                            "PrivatePresentationError",
+                        ),
+                    )
+                    self.assertEqual(
+                        (
+                            controller._current_identity,
+                            controller.currentRouteId,
+                            controller.currentPageId,
+                            controller.currentProfileId,
+                            controller.pageState,
+                            dict(controller.currentPayload),
+                            dict(controller._cache),
+                            self._error_values(controller),
+                        ),
+                        before,
+                    )
+
+    def test_generic_reader_exception_remains_uncached_atomic_page_reader_failed(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.desktop.task_pool import PageTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            before = tuple(workspace.rglob("*"))
+            coordinator = PageTaskCoordinator()
+
+            def failed_reader(**_kwargs: object) -> dict[str, object]:
+                raise PermissionError(r"denied C:\operator-private\evidence secret-value")
+
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=failed_reader,
+            )
+            observed: list[tuple[object, ...]] = []
+            controller.errorChanged.connect(
+                lambda: observed.append(self._error_values(controller))
+            )
+
+            self.assertTrue(controller.navigate("delivery-checklist"))
+            self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
+            self.assertTrue(coordinator.wait_for_done(1000))
+            after = tuple(workspace.rglob("*"))
+            coordinator.shutdown(timeout_ms=1000)
+
+        expected_error = (
+            "page_reader_failed",
+            "Evidence unavailable",
+            "The local page evidence could not be loaded.",
+            True,
+            "retry",
+        )
+        self.assertEqual(controller.pageState, "error")
+        self.assertEqual(controller.currentPayload, {})
+        self.assertEqual(controller._cache, {})
+        self.assertEqual(observed, [expected_error])
+        self.assertEqual(self._error_values(controller), expected_error)
+        self.assertNotIn("operator-private", repr(observed).casefold())
+        self.assertNotIn("secret-value", repr(observed).casefold())
+        self.assertEqual(before, after)
 
 
 class TestQtShellRoute(unittest.TestCase):

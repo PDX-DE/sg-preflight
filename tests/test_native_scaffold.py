@@ -165,6 +165,18 @@ class TestNativeScaffold(unittest.TestCase):
 
         self.assertIn("Main.qml", inputs)
         self.assertIn("components/HomePage.qml", inputs)
+        self.assertIn("components/PageFrame.qml", inputs)
+        self.assertEqual(
+            {
+                "renderers/OverviewRenderer.qml",
+                "renderers/MatrixRenderer.qml",
+                "renderers/EvidenceRenderer.qml",
+                "renderers/WorkflowRenderer.qml",
+                "renderers/ReviewRenderer.qml",
+                "renderers/AboutRenderer.qml",
+            },
+            {path for path in inputs if path.startswith("renderers/")},
+        )
         self.assertIn("SGFX/Theme.qml", inputs)
         self.assertIn("SGFX/qmldir", inputs)
         self.assertTrue(all(path.suffix == ".qml" or path.name == "qmldir" for path in module.qml_package_inputs()))

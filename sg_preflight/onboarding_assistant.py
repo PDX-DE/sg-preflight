@@ -138,6 +138,7 @@ def build_onboarding_guide(
             for step in steps
         ],
         "operator_focus_steps": incomplete_steps,
+        "read_only": True,
         "manual_review_required": True,
         "operator_confirmation_required": bool(setup_actions),
         "records_operator_verdict": False,

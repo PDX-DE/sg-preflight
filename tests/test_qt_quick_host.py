@@ -60,6 +60,409 @@ class TestQtQuickHostSource(unittest.TestCase):
         self.assertNotIn("QQuickWidget", source)
 
 
+class TestQtQuickTask10QmlContract(unittest.TestCase):
+    RENDERERS = {
+        "overview": "OverviewRenderer.qml",
+        "matrix": "MatrixRenderer.qml",
+        "evidence": "EvidenceRenderer.qml",
+        "workflow": "WorkflowRenderer.qml",
+        "review": "ReviewRenderer.qml",
+        "about": "AboutRenderer.qml",
+    }
+    READY_STATES = {
+        "empty": ("not_run", False),
+        "partial": ("partial", True),
+        "blocked": ("blocked", True),
+        "failed": ("failed", True),
+        "available": ("available", True),
+    }
+
+    def _run_headless(self, script: str, *, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+        environment = os.environ.copy()
+        environment["QT_QPA_PLATFORM"] = "offscreen"
+        environment["QSG_RHI_BACKEND"] = "software"
+        environment["QT_QUICK_CONTROLS_STYLE"] = "Basic"
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        return subprocess.run(
+            [sys.executable, "-B", "-c", textwrap.dedent(script)],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+
+    def test_task10_sources_package_page_frame_and_six_scrollable_renderers(self) -> None:
+        qml_root = ROOT / "sg_preflight" / "desktop" / "qml"
+        page_frame_path = qml_root / "components" / "PageFrame.qml"
+        self.assertTrue(page_frame_path.is_file(), msg=str(page_frame_path))
+        page_frame = page_frame_path.read_text(encoding="utf-8")
+        for state in ("idle", "loading", "ready", "error"):
+            with self.subTest(page_frame_state=state):
+                self.assertIn(f'"{state}"', page_frame)
+
+        for renderer_kind, filename in self.RENDERERS.items():
+            with self.subTest(renderer_kind=renderer_kind):
+                path = qml_root / "renderers" / filename
+                self.assertTrue(path.is_file(), msg=str(path))
+                source = path.read_text(encoding="utf-8")
+                self.assertRegex(source, r"readonly\s+property\s+string\s+rendererKind\b")
+                self.assertIn(f'"{renderer_kind}"', source)
+                self.assertRegex(source, r"readonly\s+property\s+int\s+renderedItemCount\b")
+                self.assertRegex(source, r"readonly\s+property\s+string\s+renderedStatus\b")
+                self.assertIn("visibleItems", source)
+                self.assertIn('objectName: "primaryPayloadText"', source)
+                self.assertRegex(source, r"\b(?:ScrollView|Flickable)\b")
+
+        review = (qml_root / "renderers" / "ReviewRenderer.qml").read_text(encoding="utf-8")
+        self.assertRegex(review, r"\benabled\s*:")
+        self.assertRegex(review, r"\breadOnly\s*:")
+
+    def test_task10_main_dispatches_through_page_frame_without_task9_placeholder(self) -> None:
+        main = (ROOT / "sg_preflight" / "desktop" / "qml" / "Main.qml").read_text(encoding="utf-8")
+
+        self.assertIn("Components.PageFrame", main)
+        self.assertIn("pageState: window.desktopController.pageState", main)
+        self.assertIn("window.desktopController.currentPayload", main)
+        self.assertIn("window.desktopController.errorSummary", main)
+        self.assertNotIn("Page content is loaded lazily from local evidence.", main)
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_task10_ready_renderers_load_and_bind_canonical_visible_items_exactly(self) -> None:
+        qml_root = ROOT / "sg_preflight" / "desktop" / "qml"
+        result = self._run_headless(
+            f"""
+            import json
+            from PySide6.QtCore import QObject, QUrl
+            from PySide6.QtGui import QGuiApplication
+            from PySide6.QtQml import QQmlComponent, QQmlEngine
+
+            app = QGuiApplication(["sgfx-task10-renderer-test"])
+            engine = QQmlEngine()
+            engine.addImportPath({str(qml_root)!r})
+            renderer_files = {self.RENDERERS!r}
+            ready_states = {self.READY_STATES!r}
+            observed = {{}}
+            for kind, filename in renderer_files.items():
+                path = {str(qml_root)!r} + "/renderers/" + filename
+                component = QQmlComponent(engine, QUrl.fromLocalFile(path))
+                for state_name, (status, data_available) in ready_states.items():
+                    sentinel = f"Task 10 {{kind}} {{state_name}} primary payload"
+                    provenance_source = f"Task 10 {{kind}} provenance source"
+                    revision = f"task10-{{kind}}-revision"
+                    visible_items = [] if state_name == "empty" else [
+                        {{
+                            "itemId": f"{{kind}}-{{state_name}}-primary",
+                            "sectionId": "main",
+                            "label": "Primary evidence",
+                            "value": sentinel,
+                            "detail": "",
+                            "status": status,
+                            "expected": "",
+                            "actual": "",
+                            "diff": "",
+                            "source": provenance_source,
+                            "revision": revision,
+                        }},
+                        {{
+                            "itemId": f"{{kind}}-{{state_name}}-secondary",
+                            "sectionId": "main",
+                            "label": "Secondary evidence",
+                            "value": f"Task 10 {{kind}} {{state_name}} secondary payload",
+                            "detail": "",
+                            "status": status,
+                            "expected": "",
+                            "actual": "",
+                            "diff": "",
+                            "source": "",
+                            "revision": "",
+                        }},
+                    ]
+                    page = {{
+                        "surfaceId": f"task10-{{kind}}-{{state_name}}",
+                        "rendererKind": kind,
+                        "title": "Chrome must not satisfy the payload assertion",
+                        "subtitle": "Chrome subtitle",
+                        "status": status,
+                        "dataAvailable": data_available,
+                        "primaryText": sentinel,
+                        "visibleItems": visible_items,
+                        "visibleItemCount": len(visible_items),
+                        "sections": [{{"sectionId": "main", "title": "Evidence", "status": status, "items": visible_items}}],
+                        "actions": [],
+                        "artifacts": [],
+                        "provenance": {{"source": provenance_source, "revision": revision}},
+                        "ownershipNote": "Operator-owned review",
+                        "readOnly": True,
+                        "isApproval": False,
+                        "manualReviewRequired": kind == "review",
+                        "recordsOperatorVerdict": False,
+                    }}
+                    root = component.createWithInitialProperties({{"page": page}})
+                    if root is None:
+                        raise SystemExit(kind + "/" + state_name + ": " + " | ".join(error.toString() for error in component.errors()))
+                    root.setProperty("width", 720)
+                    root.setProperty("height", 480)
+                    app.processEvents()
+                    primary = root.findChild(QObject, "primaryPayloadText")
+                    detail = root.findChild(QObject, "payloadDetailRegion")
+                    detail_texts = []
+                    if detail is not None:
+                        for child in detail.findChildren(QObject):
+                            text = child.property("text")
+                            if isinstance(text, str) and text:
+                                detail_texts.append(text)
+                    key = kind + "/" + state_name
+                    observed[key] = {{
+                        "rendererKind": root.property("rendererKind"),
+                        "renderedItemCount": root.property("renderedItemCount"),
+                        "renderedStatus": root.property("renderedStatus"),
+                        "primaryExists": primary is not None,
+                        "primaryVisible": primary is not None and bool(primary.property("visible")),
+                        "primaryText": None if primary is None else primary.property("text"),
+                        "detailExists": detail is not None,
+                        "detailTexts": detail_texts,
+                    }}
+                    if kind == "review" and state_name == "available":
+                        verdict = root.findChild(QObject, "reviewVerdictControl")
+                        note = root.findChild(QObject, "reviewNoteControl")
+                        observed[key]["verdictDisabled"] = verdict is not None and not bool(verdict.property("enabled"))
+                        observed[key]["noteReadOnly"] = note is not None and bool(note.property("readOnly"))
+                    root.deleteLater()
+            print(json.dumps(observed, sort_keys=True))
+            """
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        observed = __import__("json").loads(result.stdout)
+        for renderer_kind in self.RENDERERS:
+            for state_name, (status, _data_available) in self.READY_STATES.items():
+                with self.subTest(renderer_kind=renderer_kind, state=state_name):
+                    renderer = observed[f"{renderer_kind}/{state_name}"]
+                    self.assertEqual(renderer["rendererKind"], renderer_kind)
+                    self.assertEqual(renderer["renderedItemCount"], 0 if state_name == "empty" else 2)
+                    self.assertEqual(renderer["renderedStatus"], status)
+                    self.assertTrue(renderer["primaryExists"])
+                    self.assertTrue(renderer["primaryVisible"])
+                    self.assertEqual(
+                        renderer["primaryText"],
+                        f"Task 10 {renderer_kind} {state_name} primary payload",
+                    )
+                    if state_name == "available":
+                        self.assertTrue(renderer["detailExists"])
+                        detail_text = "\n".join(renderer["detailTexts"])
+                        self.assertIn(f"Task 10 {renderer_kind} provenance source", detail_text)
+                        self.assertIn(f"task10-{renderer_kind}-revision", detail_text)
+        review = observed["review/available"]
+        self.assertTrue(review["verdictDisabled"])
+        self.assertTrue(review["noteReadOnly"])
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_task10_all_real_surfaces_instantiate_the_declared_renderer(self) -> None:
+        qml_root = ROOT / "sg_preflight" / "desktop" / "qml"
+        result = self._run_headless(
+            f"""
+            import json
+            import os
+            from pathlib import Path
+            import tempfile
+            from unittest import mock
+            from PySide6.QtCore import QObject, QUrl
+            from PySide6.QtGui import QGuiApplication
+            from PySide6.QtQml import QQmlComponent, QQmlEngine
+            from sg_preflight import dashboard_preferences
+            from sg_preflight.dashboard.main import build_dashboard_page
+            from sg_preflight.desktop.page_presenter import present_page_payload
+            from sg_preflight.desktop.payload_adapter import adapt_page_payload
+            from sg_preflight.desktop.qt_quick_controller import load_dashboard_surface
+            from sg_preflight.surface_registry import SURFACE_DESCRIPTORS, get_surface_descriptor
+
+            app = QGuiApplication(["sgfx-task10-real-surface-test"])
+            engine = QQmlEngine()
+            engine.addImportPath({str(qml_root)!r})
+            renderer_files = {self.RENDERERS!r}
+            observed = []
+            with tempfile.TemporaryDirectory() as temp_dir:
+                isolated = Path(temp_dir)
+                workspace = isolated / "workspace"
+                bmw_root = isolated / "bmw"
+                source_root = isolated / "source"
+                workspace.mkdir()
+                bmw_root.mkdir()
+                (source_root / "Cars").mkdir(parents=True)
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {{"SG_SOURCE_REPO_ROOT": str(source_root), "SG_REPO": str(source_root)}},
+                        clear=False,
+                    ),
+                    mock.patch.object(
+                        dashboard_preferences,
+                        "CANONICAL_SOURCE_REPO_ROOT",
+                        source_root,
+                    ),
+                ):
+                    descriptors = [item for item in SURFACE_DESCRIPTORS if item.operational]
+                    for descriptor in descriptors:
+                        raw = build_dashboard_page(
+                            page_id=descriptor.surface_id,
+                            profile_id="G65",
+                            workspace=workspace,
+                            bmw_root=bmw_root,
+                            ui_mode="clean",
+                            persist_dependency_state=False,
+                        )
+                        page = present_page_payload(
+                            descriptor,
+                            adapt_page_payload(raw, workspace=workspace),
+                        )
+                        component = QQmlComponent(
+                            engine,
+                            QUrl.fromLocalFile(
+                                {str(qml_root)!r} + "/renderers/" + renderer_files[descriptor.renderer_kind]
+                            ),
+                        )
+                        root = component.createWithInitialProperties({{"page": page}})
+                        if root is None:
+                            raise SystemExit(
+                                descriptor.surface_id + ": " + " | ".join(error.toString() for error in component.errors())
+                            )
+                        root.setProperty("width", 720)
+                        root.setProperty("height", 480)
+                        app.processEvents()
+                        primary = root.findChild(QObject, "primaryPayloadText")
+                        observed.append([
+                            descriptor.surface_id,
+                            root.property("rendererKind"),
+                            root.property("renderedItemCount"),
+                            root.property("renderedStatus"),
+                            primary is not None and bool(primary.property("visible")),
+                            None if primary is None else primary.property("text"),
+                            page["visibleItemCount"],
+                            page["status"],
+                            page["primaryText"],
+                        ])
+                        root.deleteLater()
+
+                    descriptor = get_surface_descriptor("about")
+                    raw = load_dashboard_surface("about", "G65", workspace, bmw_root=bmw_root)
+                    page = present_page_payload(
+                        descriptor,
+                        adapt_page_payload(raw, workspace=workspace),
+                    )
+                    component = QQmlComponent(
+                        engine,
+                        QUrl.fromLocalFile({str(qml_root)!r} + "/renderers/AboutRenderer.qml"),
+                    )
+                    root = component.createWithInitialProperties({{"page": page}})
+                    if root is None:
+                        raise SystemExit("about: " + " | ".join(error.toString() for error in component.errors()))
+                    root.setProperty("width", 720)
+                    root.setProperty("height", 480)
+                    app.processEvents()
+                    primary = root.findChild(QObject, "primaryPayloadText")
+                    observed.append([
+                        "about",
+                        root.property("rendererKind"),
+                        root.property("renderedItemCount"),
+                        root.property("renderedStatus"),
+                        primary is not None and bool(primary.property("visible")),
+                        None if primary is None else primary.property("text"),
+                        page["visibleItemCount"],
+                        page["status"],
+                        page["primaryText"],
+                    ])
+                    root.deleteLater()
+            print(json.dumps(observed))
+            """,
+            timeout=180,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        observed = __import__("json").loads(result.stdout)
+        self.assertEqual(len(observed), 19)
+        expected_kinds = {
+            descriptor.surface_id: descriptor.renderer_kind
+            for descriptor in __import__("sg_preflight.surface_registry", fromlist=["SURFACE_DESCRIPTORS"]).SURFACE_DESCRIPTORS
+        }
+        for surface_id, kind, count, status, primary_visible, primary_text, expected_count, expected_status, expected_text in observed:
+            with self.subTest(surface_id=surface_id):
+                self.assertEqual(kind, expected_kinds[surface_id])
+                self.assertEqual(count, expected_count)
+                self.assertGreater(count, 0)
+                self.assertEqual(status, expected_status)
+                self.assertTrue(primary_visible)
+                self.assertEqual(primary_text, expected_text)
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_task10_page_frame_alone_owns_loading_and_error_states(self) -> None:
+        qml_root = ROOT / "sg_preflight" / "desktop" / "qml"
+        result = self._run_headless(
+            f"""
+            import json
+            from PySide6.QtCore import QObject, QUrl
+            from PySide6.QtGui import QGuiApplication
+            from PySide6.QtQml import QQmlComponent, QQmlEngine
+            from PySide6.QtQuick import QQuickItem
+
+            app = QGuiApplication(["sgfx-task10-page-frame-test"])
+            engine = QQmlEngine()
+            engine.addImportPath({str(qml_root)!r})
+            component = QQmlComponent(
+                engine,
+                QUrl.fromLocalFile({str(qml_root / "components" / "PageFrame.qml")!r}),
+            )
+
+            def create_frame(state, page=None, error_summary=""):
+                frame = component.createWithInitialProperties({{
+                    "pageState": state,
+                    "page": page or {{}},
+                    "errorCode": "page_reader_failed" if state == "error" else "",
+                    "errorSummary": error_summary,
+                    "reducedMotion": True,
+                }})
+                if frame is None:
+                    raise SystemExit(state + ": " + " | ".join(error.toString() for error in component.errors()))
+                frame.setProperty("width", 720)
+                frame.setProperty("height", 480)
+                app.processEvents()
+                texts = []
+                for child in frame.findChildren(QQuickItem):
+                    text = child.property("text")
+                    if child.isVisible() and isinstance(text, str) and text:
+                        texts.append(text)
+                primary = frame.findChild(QObject, "primaryPayloadText")
+                return frame, texts, primary
+
+            idle, idle_texts, idle_primary = create_frame("idle")
+            loading, loading_texts, loading_primary = create_frame("loading")
+            error, error_texts, error_primary = create_frame(
+                "error",
+                error_summary="Task 10 exact PageFrame error",
+            )
+            print(json.dumps({{
+                "idleHasPrimary": idle_primary is not None,
+                "loadingHasPrimary": loading_primary is not None,
+                "loadingTexts": loading_texts,
+                "errorHasPrimary": error_primary is not None,
+                "errorTexts": error_texts,
+            }}, sort_keys=True))
+            idle.deleteLater()
+            loading.deleteLater()
+            error.deleteLater()
+            """
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        observed = __import__("json").loads(result.stdout)
+        self.assertFalse(observed["idleHasPrimary"])
+        self.assertFalse(observed["loadingHasPrimary"])
+        self.assertTrue(any("loading" in text.casefold() for text in observed["loadingTexts"]))
+        self.assertFalse(observed["errorHasPrimary"])
+        self.assertIn("Task 10 exact PageFrame error", observed["errorTexts"])
+
+
 class TestQtQuickShell(unittest.TestCase):
     def _run_headless(self, script: str, *, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()

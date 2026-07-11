@@ -3746,3 +3746,33 @@ class TestBuildDashboardReviewPackage(unittest.TestCase):
         self.assertEqual(active_ticket["active_ticket_id"], "IDCEVODEV-1005738")
         self.assertIn("IDCEVODEV-1005738", activity_log)
         self.assertTrue(any("manifest.md" in item["relative_path"] for item in result["file_activity"]))
+
+
+class DashboardQtPresentationProjectionTests(unittest.TestCase):
+    def test_task10_structured_projection_preserves_evidence_and_omits_execution_fields(self) -> None:
+        from sg_preflight.dashboard_pages_config import _sanitized_payload
+
+        structured = {
+            "checks": [{"label": "Delivery", "status": "available"}],
+            "shared_api_references": [{"brand": "BMW", "current_version": "8"}],
+            "interface_family_entries": [{"model_id": "G65", "hmi_family_label": "IDC"}],
+            "impact_scans": [{"matched_car_count": 1, "matched_file_count": 2}],
+            "entries": [{"test_name": "countryCoding_DE", "expected_path": "expected.png"}],
+            "expectations": [{"car": "G65", "expected_variants": ["DE"]}],
+            "trend_changes": [{"profile_id": "G65", "delta_total": 12}],
+            "workbooks": [{"relative_path": "size.xlsx", "status": "parsed"}],
+            "workflows": [{"id": "daily", "last_status": "not_started"}],
+            "contracts": [{"key": "triage", "steps": ["Inspect"]}],
+            "provenance": {"source": "local", "revision": "rev-1"},
+            "records_operator_verdict": False,
+            "command": ["private.exe", "--secret"],
+            "url": "https://private.invalid/evidence",
+            "executable": r"C:\private\tool.exe",
+        }
+
+        projected = _sanitized_payload(structured)
+
+        expected = set(structured) - {"command", "url", "executable"}
+        self.assertEqual(set(projected), expected)
+        self.assertEqual(projected["entries"][0]["expected_path"], "expected.png")
+        self.assertEqual(projected["provenance"], {"source": "local", "revision": "rev-1"})

@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
+from sg_preflight.desktop.page_presenter import PagePresentationError, present_page_payload
 from sg_preflight.desktop.payload_adapter import adapt_page_payload
 from sg_preflight.desktop.task_pool import PageTaskCoordinator, TaskFailure, TaskIdentity
 from sg_preflight.shell_registry import HOME_ROUTE_ID, HOME_SUBTITLE, HOME_TITLE
@@ -55,6 +56,11 @@ class UiError:
     safe_detail: str
     retryable: bool
     recovery_action: str
+
+
+@dataclass(frozen=True, slots=True)
+class _InvalidPagePayload:
+    code: str = "page_payload_invalid"
 
 
 EMPTY_UI_ERROR = UiError("", "", "", False, "")
@@ -455,14 +461,21 @@ class DesktopController(QObject):
         workspace = self._workspace
         bmw_root = self._bmw_root
 
-        def read_page() -> dict[str, Any]:
+        def read_page() -> dict[str, Any] | _InvalidPagePayload:
             raw = page_loader(
                 page_id=identity.page_id,
                 profile_id=identity.profile_id,
                 workspace=workspace,
                 bmw_root=bmw_root,
             )
-            return adapt_page_payload(raw, workspace=workspace)
+            adapted = adapt_page_payload(raw, workspace=workspace)
+            try:
+                return present_page_payload(
+                    get_surface_descriptor(identity.page_id),
+                    adapted,
+                )
+            except PagePresentationError:
+                return _InvalidPagePayload()
 
         return self._submit(identity, read_page)
 
@@ -480,6 +493,11 @@ class DesktopController(QObject):
         if identity != self._current_identity:
             return
         self._set_current_identity(None)
+        if isinstance(payload, _InvalidPagePayload):
+            self._set_payload({})
+            self._set_state("error")
+            self._set_error(_ui_error(payload.code))
+            return
         if not isinstance(payload, Mapping):
             self._set_payload({})
             self._set_state("error")

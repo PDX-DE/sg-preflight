@@ -103,6 +103,44 @@ def _screenshot_empty_note(payload: dict[str, Any]) -> str:
         return SCREENSHOT_TEST_STATE_EMPTY_NOTE
     return ""
 
+_PRESENTATION_EMPTY_FIELDS: dict[str, dict[str, Any]] = {
+    "delivery-checklist": {"checks": []},
+    "disabled-tests": {"counts": {}, "baseline": {}, "board_rows": []},
+    "api-version-coverage": {
+        "counts": {},
+        "shared_api_references": [],
+        "interface_family_entries": [],
+        "impact_scans": [],
+    },
+    "country-variant-coverage": {"counts": {}, "entries": [], "expectations": []},
+    "export-size-trend": {"counts": {}, "trend_changes": [], "workbooks": []},
+    "setup-doctor": {"version_validation": {}, "board_rows": []},
+    "qa-workflows": {"workflows": [], "board_rows": []},
+    "bmw-process": {"contracts": []},
+    "screenshot-test-state": {
+        "display_type_groups": [],
+        "rack_readiness_entries": [],
+        "operator_checklist": [],
+    },
+    "risk-score": {"signals": []},
+    "cross-car-comparison": {"comparison_rows": []},
+    "team-digest-board": {"sections": {}},
+    "operator-handoff": {"handoff_items": []},
+}
+
+def _presentation_payload_defaults(page_id: str) -> dict[str, Any]:
+    defaults: dict[str, Any] = {
+        "status": "unknown",
+        "data_available": False,
+        "read_only": True,
+        "is_approval": False,
+        "manual_review_required": False,
+        "records_operator_verdict": False,
+    }
+    for key, value in _PRESENTATION_EMPTY_FIELDS.get(page_id, {}).items():
+        defaults[key] = value.copy() if isinstance(value, (dict, list)) else value
+    return defaults
+
 def _reader_page(
     *,
     page_id: str,
@@ -115,6 +153,8 @@ def _reader_page(
     try:
         payload = reader()
     except Exception as exc:
+        safe_payload = _presentation_payload_defaults(page_id)
+        safe_payload["summary"] = f"{title} could not be read: {exc}"
         return {
             "id": page_id,
             "title": title,
@@ -124,10 +164,13 @@ def _reader_page(
             "data_available": False,
             "summary": f"{title} could not be read: {exc}",
             "items": [],
-            "payload": {},
+            "payload": safe_payload,
         }
     raw_status = str(payload.get("status", "unknown") or "unknown")
     data_available = bool(payload.get("data_available", False))
+    safe_payload = _sanitized_payload(payload)
+    for key, value in _presentation_payload_defaults(page_id).items():
+        safe_payload.setdefault(key, value)
     page = {
         "id": page_id,
         "title": title,
@@ -138,7 +181,7 @@ def _reader_page(
         "data_available": data_available,
         "summary": _payload_summary(payload, title, workspace=workspace),
         "items": _payload_items(payload),
-        "payload": _sanitized_payload(payload),
+        "payload": safe_payload,
     }
     if page_id == "screenshot-test-state":
         page["empty_state_note"] = _screenshot_empty_note(payload)
@@ -1033,6 +1076,7 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "workbook_path",
         "source_path",
         "generated_at_utc",
+        "provenance",
         "empty_state_note",
         "expected_count",
         "actual_count",
@@ -1051,10 +1095,12 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "latest_review",
         "delta_since_last_review",
         "signals",
+        "checks",
         "confluence_anchors",
         "read_only",
         "manual_review_required",
         "is_approval",
+        "records_operator_verdict",
         "note",
         "guidance",
         "share_decision",
@@ -1086,6 +1132,15 @@ def _sanitized_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "source_root_candidates",
         "counts",
         "baseline",
+        "shared_api_references",
+        "interface_family_entries",
+        "impact_scans",
+        "entries",
+        "expectations",
+        "trend_changes",
+        "workbooks",
+        "workflows",
+        "contracts",
         "comparison_axis",
         "comparison_rows",
         "left_profile",
@@ -1156,6 +1211,13 @@ def _daily_digest_page(
             "confluence_anchors": [SG_DAILY_CONFLUENCE_ANCHOR],
             "payload": {
                 "profile_id": profile_id,
+                "status": "unknown",
+                "data_available": False,
+                "sections": {},
+                "read_only": True,
+                "is_approval": False,
+                "manual_review_required": False,
+                "records_operator_verdict": False,
                 "active_ticket_id": default_ticket,
                 "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
                 "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
@@ -1194,8 +1256,14 @@ def _daily_digest_page(
         "confluence_anchors": [SG_DAILY_CONFLUENCE_ANCHOR],
         "payload": {
             "status": digest.get("status", "unknown"),
+            "data_available": data_available or has_partial,
             "scope": digest.get("scope", []),
             "date": digest.get("date", ""),
+            "sections": sections if isinstance(sections, dict) else {},
+            "read_only": True,
+            "is_approval": False,
+            "manual_review_required": False,
+            "records_operator_verdict": False,
             "active_ticket_id": default_ticket,
             "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
             "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),
@@ -1242,8 +1310,14 @@ def _deferred_daily_digest_page(profile_id: str, ticket_context: dict[str, Any] 
         "payload": {
             "profile_id": profile_id,
             "status": "not_run",
+            "data_available": False,
             "scope": [],
             "date": "",
+            "sections": {},
+            "read_only": True,
+            "is_approval": False,
+            "manual_review_required": False,
+            "records_operator_verdict": False,
             "active_ticket_id": default_ticket,
             "ticket_id_source": str(context.get("ticket_id_source", "manual_entry")),
             "recent_ticket_ids": list(context.get("recent_ticket_ids", [])),

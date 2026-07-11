@@ -234,22 +234,17 @@ ApplicationWindow {
                             onNavigateRequested: routeId => window.desktopController.navigate(routeId)
                         }
 
-                        Item {
+                        Components.PageFrame {
                             id: pageContentHost
                             objectName: "pageContentHost"
                             anchors.fill: parent
                             anchors.margins: 24
                             visible: window.desktopController.currentRouteId !== "home"
-                            readonly property var payload: window.desktopController.currentPayload
-
-                            Label {
-                                anchors.centerIn: parent
-                                width: Math.min(parent.width - 80, 620)
-                                text: window.desktopController.pageState === "loading" ? "Loading local evidence…" : window.desktopController.errorCode.length > 0 ? window.desktopController.errorSummary : "Page content is loaded lazily from local evidence."
-                                color: window.desktopController.errorCode.length > 0 ? Theme.statusBad : Theme.muted
-                                horizontalAlignment: Text.AlignHCenter
-                                wrapMode: Text.WordWrap
-                            }
+                            pageState: window.desktopController.pageState
+                            page: window.desktopController.currentPayload
+                            errorCode: window.desktopController.errorCode
+                            errorSummary: window.desktopController.errorSummary
+                            reducedMotion: window.reducedMotion
                         }
                     }
 
