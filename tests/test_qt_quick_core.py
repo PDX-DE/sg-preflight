@@ -218,6 +218,59 @@ class TestSurfaceRegistryModel(unittest.TestCase):
         self.assertEqual(own_methods, ())
 
 
+class TestShellRegistryModel(unittest.TestCase):
+    def test_roles_order_and_immutable_shell_metadata_are_exact(self) -> None:
+        from sg_preflight.desktop.shell_model import ShellRegistryModel, ShellRole
+        from sg_preflight.shell_registry import HOME_HUB_TILES, SHORTCUT_ACTIONS
+
+        model = ShellRegistryModel()
+        roles = tuple((int(role), bytes(name)) for role, name in model.roleNames().items())
+        first_role = int(Qt.ItemDataRole.UserRole) + 1
+        self.assertEqual(
+            roles,
+            (
+                (first_role, b"routeId"),
+                (first_role + 1, b"title"),
+                (first_role + 2, b"subtitle"),
+                (first_role + 3, b"group"),
+                (first_role + 4, b"rendererKind"),
+                (first_role + 5, b"operational"),
+            ),
+        )
+        self.assertEqual(tuple(int(role) for role in ShellRole), tuple(range(first_role, first_role + 6)))
+        route_ids = tuple(
+            model.data(model.index(row, 0), int(ShellRole.RouteId))
+            for row in range(model.rowCount())
+        )
+        expected_descriptors = tuple(
+            descriptor.surface_id
+            for group in NAVIGATION_GROUP_ORDER
+            for descriptor in SURFACE_DESCRIPTORS
+            if descriptor.navigation_group == group
+        )
+        self.assertEqual(route_ids, (HOME_ROUTE_ID,) + expected_descriptors)
+        self.assertEqual(model.count, 20)
+        self.assertEqual(tuple(model.groupOrder), NAVIGATION_GROUP_ORDER)
+        self.assertEqual(
+            tuple(item["routeId"] for item in model.homeTiles),
+            tuple(item.surface_id for item in HOME_HUB_TILES),
+        )
+        self.assertEqual(
+            tuple((item["key"], item["label"]) for item in model.shortcuts),
+            SHORTCUT_ACTIONS,
+        )
+        meta_object = model.metaObject()
+        own_methods = tuple(
+            bytes(meta_object.method(index).methodSignature())
+            for index in range(meta_object.methodOffset(), meta_object.methodCount())
+        )
+        self.assertEqual(own_methods, ())
+        for name in ("count", "groupOrder", "homeTiles", "shortcuts"):
+            qt_property = meta_object.property(meta_object.indexOfProperty(name))
+            self.assertTrue(qt_property.isConstant())
+            self.assertFalse(qt_property.isWritable())
+
+
 class TestPageTaskCoordinator(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -717,6 +770,7 @@ class TestDesktopController(unittest.TestCase):
         initial_profile_id: str = "G65",
         loader: object | None = None,
         resolver: object | None = None,
+        shell_loader: object | None = None,
     ):
         from sg_preflight.desktop.qt_quick_controller import DesktopController
 
@@ -725,12 +779,23 @@ class TestDesktopController(unittest.TestCase):
             return_value=MappingProxyType({"id": "delivery-checklist", "rows": [1]})
         )
         profile_resolver = resolver or mock.Mock(return_value="G65")
+        shell_context_loader = shell_loader or mock.Mock(
+            return_value={
+                "status": "not_run",
+                "profile_options": [
+                    {"id": "G65", "label": "G65"},
+                    {"id": "G70", "label": "G70"},
+                ],
+                "selected_profile_id": initial_profile_id or "G65",
+            }
+        )
         controller = DesktopController(
             workspace=workspace,
             initial_profile_id=initial_profile_id,
             task_coordinator=coordinator,
             page_loader=page_loader,
             profile_resolver=profile_resolver,
+            shell_loader=shell_context_loader,
         )
         return controller, coordinator, page_loader, profile_resolver
 
@@ -830,16 +895,17 @@ class TestDesktopController(unittest.TestCase):
             notify_signatures.add(bytes(qt_property.notifySignal().methodSignature()))
         self.assertEqual(notify_signatures, {b"errorChanged()"})
 
-    def test_construction_is_reader_free_and_starts_on_about(self) -> None:
+    def test_construction_is_reader_free_and_starts_on_home(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller, coordinator, loader, resolver = self._controller(Path(temp_dir))
 
         loader.assert_not_called()
         resolver.assert_not_called()
         self.assertEqual(coordinator.requests, [])
-        self.assertEqual(controller.currentPageId, "about")
+        self.assertEqual(controller.currentRouteId, "home")
+        self.assertEqual(controller.currentPageId, "")
         self.assertEqual(controller.currentProfileId, "G65")
-        self.assertEqual(controller.pageTitle, "About")
+        self.assertEqual(controller.pageTitle, "Home")
         self.assertTrue(controller.pageSubtitle)
         self.assertEqual(controller.pageState, "idle")
         self.assertEqual(controller.currentPayload, {})
@@ -864,6 +930,9 @@ class TestDesktopController(unittest.TestCase):
                 workspace,
                 loader=loader,
             )
+            self.assertTrue(controller.initialize())
+            shell_identity, shell_operation = coordinator.requests[-1]
+            coordinator.succeed(shell_identity, shell_operation())
 
             self.assertTrue(controller.navigate("delivery-checklist"))
             self.assertFalse(controller.navigate("delivery-checklist"))
@@ -875,7 +944,7 @@ class TestDesktopController(unittest.TestCase):
                     identity.page_id,
                     identity.operation,
                 ),
-                (1, "G65", "delivery-checklist", "load"),
+                (2, "G65", "delivery-checklist", "load"),
             )
             self.assertEqual(controller.pageState, "loading")
             self.assertNotIn("self", operation.__code__.co_freevars)
@@ -895,7 +964,7 @@ class TestDesktopController(unittest.TestCase):
             self.assertEqual(controller.currentPayload["rows"], [1])
 
             self.assertTrue(controller.navigate("delivery-checklist"))
-            self.assertEqual(len(coordinator.requests), 1)
+            self.assertEqual(len(coordinator.requests), 2)
             self.assertEqual(controller.pageState, "ready")
 
             self.assertTrue(controller.refresh())
@@ -912,14 +981,22 @@ class TestDesktopController(unittest.TestCase):
         self.assertGreater(profile_identity.generation, refresh_identity.generation)
         self.assertEqual(controller.currentProfileId, "G70")
 
-    def test_initialize_defers_profile_resolution_and_calls_resolver_by_keyword(self) -> None:
+    def test_initialize_defers_profile_resolution_inside_shell_context(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
             resolver = mock.Mock(return_value="G70")
+            shell_loader = mock.Mock(
+                return_value={
+                    "status": "not_run",
+                    "profile_options": [{"id": "G70", "label": "G70"}],
+                    "selected_profile_id": "G70",
+                }
+            )
             controller, coordinator, loader, _resolver = self._controller(
                 workspace,
                 initial_profile_id="",
                 resolver=resolver,
+                shell_loader=shell_loader,
             )
 
             self.assertEqual(coordinator.requests, [])
@@ -928,16 +1005,20 @@ class TestDesktopController(unittest.TestCase):
             self.assertFalse(controller.navigate("delivery-checklist"))
             self.assertEqual(len(coordinator.requests), 1)
             identity, operation = coordinator.requests[0]
-            self.assertEqual(identity.operation, "resolve-profile")
+            self.assertEqual(identity.operation, "shell_context")
             resolver.assert_not_called()
 
-            resolved_profile = operation()
-            resolver.assert_called_once_with(workspace=workspace.resolve(), bmw_root=None)
-            coordinator.succeed(identity, resolved_profile)
+            resolved_context = operation()
+            shell_loader.assert_called_once_with(
+                workspace=workspace.resolve(),
+                profile_id="",
+                bmw_root=None,
+            )
+            coordinator.succeed(identity, resolved_context)
 
         loader.assert_not_called()
         self.assertEqual(controller.currentProfileId, "G70")
-        self.assertEqual(controller.pageState, "idle")
+        self.assertEqual(controller.pageState, "ready")
 
     def test_invalid_route_sets_all_error_properties_atomically(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1151,6 +1232,14 @@ class TestDesktopController(unittest.TestCase):
                 initial_profile_id="G65",
                 task_coordinator=coordinator,
                 page_loader=loader,
+                shell_loader=lambda **_kwargs: {
+                    "status": "not_run",
+                    "profile_options": [
+                        {"id": "G65", "label": "G65"},
+                        {"id": "G70", "label": "G70"},
+                    ],
+                    "selected_profile_id": "G65",
+                },
             )
             gui_thread_id = threading.get_ident()
             for signal_name in (
@@ -1167,6 +1256,8 @@ class TestDesktopController(unittest.TestCase):
                     )
                 )
 
+            self.assertTrue(controller.initialize())
+            self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
             self.assertFalse(controller.navigate("not-a-surface"))
             self.assertTrue(controller.navigate("delivery-checklist"))
             self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
@@ -1212,6 +1303,271 @@ class TestDesktopController(unittest.TestCase):
         self.assertEqual(controller.pageState, "idle")
         self.assertEqual(controller.currentPayload, {})
         self.assertEqual(self._error_values(controller), ("", "", "", False, ""))
+
+
+class TestQtShellRoute(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.application = QCoreApplication.instance() or QCoreApplication([])
+
+    @staticmethod
+    def _error_values(controller: QObject) -> tuple[object, ...]:
+        return (
+            controller.errorCode,
+            controller.errorTitle,
+            controller.errorSummary,
+            controller.errorRetryable,
+            controller.errorRecoveryAction,
+        )
+
+    def _controller(self, workspace: Path, *, initial_profile_id: str = "G65"):
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+
+        coordinator = _FakeTaskCoordinator()
+        shell_loader = mock.Mock(
+            return_value={
+                "status": "not_run",
+                "summary": "No local activity recorded yet.",
+                "profile_options": [
+                    {"id": "G65", "label": "G65 label"},
+                    {"id": "G70", "label": "G70 label"},
+                ],
+                "selected_profile_id": initial_profile_id or "G65",
+                "unsafe": {"command": ["secret"], "path": r"C:\private\activity.jsonl"},
+            }
+        )
+        page_loader = mock.Mock(return_value={"id": "risk-score", "status": "available"})
+        controller = DesktopController(
+            workspace=workspace,
+            initial_profile_id=initial_profile_id,
+            task_coordinator=coordinator,
+            shell_loader=shell_loader,
+            page_loader=page_loader,
+        )
+        return controller, coordinator, shell_loader, page_loader
+
+    def test_initial_home_submits_one_adapted_shell_context_and_stays_outside_surfaces(self) -> None:
+        from sg_preflight.surface_registry import is_registered_surface
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            controller, coordinator, shell_loader, page_loader = self._controller(workspace)
+
+            self.assertEqual(controller.currentRouteId, "home")
+            self.assertEqual(controller.currentPageId, "")
+            self.assertEqual(controller.pageTitle, "Home")
+            self.assertEqual(coordinator.requests, [])
+            self.assertTrue(controller.initialize())
+            self.assertFalse(controller.initialize())
+            identity, operation = coordinator.requests[-1]
+            self.assertEqual(
+                (identity.profile_id, identity.page_id, identity.operation),
+                ("G65", "home", "shell_context"),
+            )
+            payload = operation()
+            coordinator.succeed(identity, payload)
+
+        shell_loader.assert_called_once_with(
+            workspace=workspace.resolve(),
+            profile_id="G65",
+            bmw_root=None,
+        )
+        page_loader.assert_not_called()
+        self.assertEqual(controller.currentRouteId, "home")
+        self.assertEqual(controller.currentPageId, "")
+        self.assertEqual(controller.pageState, "ready")
+        self.assertEqual(controller.profileOptions, [{"id": "G65", "label": "G65 label"}, {"id": "G70", "label": "G70 label"}])
+        rendered = repr(controller.currentPayload).casefold()
+        self.assertNotIn("secret", rendered)
+        self.assertNotIn("private", rendered)
+        self.assertFalse(is_registered_surface("home"))
+
+    def test_no_profile_resolves_inside_exactly_one_shell_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _shell_loader, _page_loader = self._controller(
+                Path(temp_dir), initial_profile_id=""
+            )
+            self.assertTrue(controller.initialize())
+            identity, operation = coordinator.requests[0]
+            self.assertEqual((identity.profile_id, identity.page_id, identity.operation), ("", "home", "shell_context"))
+            coordinator.succeed(identity, operation())
+
+        self.assertEqual(len(coordinator.requests), 1)
+        self.assertEqual(controller.currentProfileId, "G65")
+
+    def test_unknown_route_preserves_route_payload_and_work_and_sets_atomic_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _shell_loader, _page_loader = self._controller(Path(temp_dir))
+            controller.initialize()
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+            before = (
+                controller.currentRouteId,
+                controller.currentPageId,
+                controller.pageState,
+                dict(controller.currentPayload),
+                len(coordinator.requests),
+            )
+            observed: list[tuple[object, ...]] = []
+            controller.errorChanged.connect(lambda: observed.append(self._error_values(controller)))
+
+            self.assertFalse(controller.navigate("weekly-ticket-draft"))
+
+        self.assertEqual(
+            (
+                controller.currentRouteId,
+                controller.currentPageId,
+                controller.pageState,
+                dict(controller.currentPayload),
+                len(coordinator.requests),
+            ),
+            before,
+        )
+        self.assertEqual(
+            observed,
+            [("action_rejected", "Action unavailable", "This action is not available from the current page.", False, "dismiss")],
+        )
+
+    def test_home_refresh_profile_and_navigation_use_full_stale_identities(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskFailure
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _shell_loader, _page_loader = self._controller(Path(temp_dir))
+            controller.initialize()
+            initial_identity, initial_operation = coordinator.requests[-1]
+            coordinator.succeed(initial_identity, initial_operation())
+            self.assertTrue(controller.refresh())
+            stale_identity, _stale_operation = coordinator.requests[-1]
+            self.assertTrue(controller.navigate("home"))
+            current_identity, current_operation = coordinator.requests[-1]
+            self.assertNotEqual(stale_identity, current_identity)
+            before = (controller.currentRouteId, controller.pageState, dict(controller.currentPayload))
+            coordinator.succeed(stale_identity, {"status": "available", "summary": "stale"})
+            coordinator.fail(stale_identity, TaskFailure("page_reader_failed", "private", "PrivateError"))
+            self.assertEqual((controller.currentRouteId, controller.pageState, dict(controller.currentPayload)), before)
+            coordinator.succeed(current_identity, current_operation())
+            self.assertTrue(controller.selectProfile("G70"))
+            profile_identity, _profile_operation = coordinator.requests[-1]
+            self.assertEqual((profile_identity.profile_id, profile_identity.page_id, profile_identity.operation), ("G70", "home", "shell_context"))
+            self.assertFalse(controller.selectProfile("UNLISTED"))
+            self.assertEqual(len(coordinator.requests), 4)
+            self.assertTrue(controller.navigate("risk-score"))
+            page_identity, _page_operation = coordinator.requests[-1]
+
+        self.assertEqual((page_identity.profile_id, page_identity.page_id, page_identity.operation), ("G70", "risk-score", "load"))
+        self.assertEqual(controller.currentRouteId, "risk-score")
+        self.assertEqual(controller.currentPageId, "risk-score")
+
+    def test_page_home_profile_refresh_and_repeated_home_reject_every_stale_tuple(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskFailure
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _shell_loader, _page_loader = self._controller(Path(temp_dir))
+            controller.initialize()
+            initial_identity, initial_operation = coordinator.requests[-1]
+            coordinator.succeed(initial_identity, initial_operation())
+
+            controller.navigate("risk-score")
+            page_identity, _page_operation = coordinator.requests[-1]
+            controller.navigate("home")
+            home_identity, _home_operation = coordinator.requests[-1]
+            before_page_stale = (
+                controller.currentRouteId,
+                controller.currentPageId,
+                controller.pageState,
+                dict(controller.currentPayload),
+            )
+            coordinator.succeed(page_identity, {"id": "risk-score", "status": "stale"})
+            self.assertEqual(
+                (controller.currentRouteId, controller.currentPageId, controller.pageState, dict(controller.currentPayload)),
+                before_page_stale,
+            )
+
+            controller.selectProfile("G70")
+            profile_identity, _profile_operation = coordinator.requests[-1]
+            before_home_stale = (
+                controller.currentRouteId,
+                controller.currentProfileId,
+                controller.pageState,
+                dict(controller.currentPayload),
+            )
+            coordinator.fail(home_identity, TaskFailure("page_reader_failed", "private", "PrivateError"))
+            self.assertEqual(
+                (controller.currentRouteId, controller.currentProfileId, controller.pageState, dict(controller.currentPayload)),
+                before_home_stale,
+            )
+
+            controller.refresh()
+            refresh_identity, _refresh_operation = coordinator.requests[-1]
+            controller.navigate("home")
+            repeated_identity, _repeated_operation = coordinator.requests[-1]
+
+        self.assertEqual(
+            [
+                (identity.generation, identity.profile_id, identity.page_id, identity.operation)
+                for identity in (
+                    page_identity,
+                    home_identity,
+                    profile_identity,
+                    refresh_identity,
+                    repeated_identity,
+                )
+            ],
+            [
+                (2, "G65", "risk-score", "load"),
+                (3, "G65", "home", "shell_context"),
+                (4, "G70", "home", "shell_context"),
+                (5, "G70", "home", "shell_context"),
+                (6, "G70", "home", "shell_context"),
+            ],
+        )
+
+    def test_real_shell_context_resolves_profile_options_off_thread_and_never_persists_selection(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.desktop.task_pool import PageTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            gui_thread_id = threading.get_ident()
+            option_threads: list[int] = []
+
+            def options(**_kwargs: object) -> list[dict[str, object]]:
+                option_threads.append(threading.get_ident())
+                return [
+                    {"id": "G65", "label": "BMW G65", "select_label": "BMW / build / G65"},
+                    {"id": "G70", "label": "BMW G70", "select_label": "BMW / build / G70"},
+                ]
+
+            coordinator = PageTaskCoordinator()
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="",
+                task_coordinator=coordinator,
+                profile_resolver=lambda **_kwargs: "G65",
+            )
+            before = tuple(path.relative_to(workspace) for path in workspace.rglob("*") if path.is_file())
+            with mock.patch(
+                "sg_preflight.dashboard_preferences.dashboard_profile_options",
+                side_effect=options,
+            ):
+                self.assertTrue(controller.initialize())
+                self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
+                self.assertTrue(controller.selectProfile("g70"))
+                self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
+            after = tuple(path.relative_to(workspace) for path in workspace.rglob("*") if path.is_file())
+            coordinator.shutdown(timeout_ms=1000)
+
+        self.assertEqual(controller.currentProfileId, "G70")
+        self.assertEqual(
+            controller.profileOptions,
+            [
+                {"id": "G65", "label": "BMW G65"},
+                {"id": "G70", "label": "BMW G70"},
+            ],
+        )
+        self.assertEqual(len(option_threads), 2)
+        self.assertTrue(all(thread_id != gui_thread_id for thread_id in option_threads))
+        self.assertEqual(before, after)
 
 
 class TestQtPageReadSafety(unittest.TestCase):

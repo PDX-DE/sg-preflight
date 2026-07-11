@@ -3,311 +3,370 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import SGFX 1.0
+import "components" as Components
 
 ApplicationWindow {
     id: window
-    objectName: "sgfxQtQuickWindow"
+
     required property var surfaceModel
+    required property var shellModel
     required property var desktopController
+    readonly property var navigationGroupTitles: shellModel.groupOrder
+    readonly property var homeTileIds: {
+        const ids = [];
+        for (let index = 0; index < shellModel.homeTiles.length; ++index)
+            ids.push(shellModel.homeTiles[index].routeId);
+        return ids;
+    }
+    readonly property bool moreGroupVisible: shellModel.hasMore
+    readonly property real referenceScale: Math.min(width / 1280, height / 720)
+    readonly property real referenceOffsetX: (width - 1280 * referenceScale) / 2
+    readonly property real referenceOffsetY: (height - 720 * referenceScale) / 2
+    readonly property real firstHomeTileWidth: homePage.firstTileWidth
+    readonly property real firstHomeTileHeight: homePage.firstTileHeight
+    readonly property bool homeTileLayoutValid: homePage.tileLayoutValid
+    readonly property int reducedMotionDuration: Theme.duration(Theme.motionEmphasis, true)
+    readonly property int reducedMotionTravel: Theme.travel(16, true)
+    readonly property int reducedMotionStagger: Theme.stagger(5, true)
+    readonly property string activeNavigationRouteId: navigationSidebar.currentRouteId
+    readonly property bool profileSelectorFocused: profileSelector.activeFocus
+    readonly property string selectedProfileValue: profileSelector.currentValue || ""
+    property bool reducedMotion: false
+    property bool jumpOpen: false
+    property bool helpOpen: false
+    property bool diagnosticsOpen: false
+    property bool sidebarOpen: true
+    property bool exitGuidanceVisible: false
+
+    function handleShortcut(key: string) {
+        if (key === "F1") {
+            helpOpen = true;
+        } else if (key === "F2") {
+            profileSelector.forceActiveFocus();
+        } else if (key === "F5") {
+            desktopController.refresh();
+        } else if (key === "F12") {
+            diagnosticsOpen = true;
+        } else if (key === "/") {
+            jumpOpen = true;
+        } else if (key === "Esc") {
+            if (jumpOpen)
+                jumpOpen = false;
+            else if (helpOpen)
+                helpOpen = false;
+            else if (diagnosticsOpen)
+                diagnosticsOpen = false;
+            else if (sidebarOpen)
+                sidebarOpen = false;
+            else
+                exitGuidanceVisible = true;
+        }
+    }
+
+    function updateHomeTileMetrics() {
+        homePage.updateTileMetrics();
+    }
+
+    objectName: "sgfxQtQuickWindow"
     width: 1280
     height: 720
     minimumWidth: 1024
     minimumHeight: 640
     visible: true
     title: "SGFX QA Preflight"
-    color: "#111416"
-
-    readonly property color canvasColor: "#111416"
-    readonly property color panelColor: "#191e21"
-    readonly property color raisedColor: "#22292d"
-    readonly property color borderColor: "#344047"
-    readonly property color accentColor: "#4ec9b0"
-    readonly property color textColor: "#eef3f1"
-    readonly property color mutedColor: "#a6b0b5"
-    readonly property int motionFast: 120
-    readonly property int motionNormal: 180
+    color: Theme.canvas
 
     Component.onCompleted: desktopController.initialize()
 
     Shortcut {
-        sequence: "F5"
-        onActivated: window.desktopController.refresh()
+        sequence: "F1"
+        onActivated: window.handleShortcut("F1")
     }
-
+    Shortcut {
+        sequence: "F2"
+        onActivated: window.handleShortcut("F2")
+    }
+    Shortcut {
+        sequence: "F5"
+        onActivated: window.handleShortcut("F5")
+    }
+    Shortcut {
+        sequence: "F12"
+        onActivated: window.handleShortcut("F12")
+    }
+    Shortcut {
+        sequence: "/"
+        onActivated: window.handleShortcut("/")
+    }
     Shortcut {
         sequence: "Esc"
-        onActivated: window.close()
+        onActivated: window.handleShortcut("Esc")
     }
 
-    RowLayout {
-        anchors.fill: parent
-        spacing: 0
+    Item {
+        id: referenceSurface
+        x: window.referenceOffsetX
+        y: window.referenceOffsetY
+        width: 1280
+        height: 720
+        scale: window.referenceScale
+        transformOrigin: Item.TopLeft
 
-        Rectangle {
-            Layout.fillHeight: true
-            Layout.preferredWidth: 292
-            color: window.panelColor
-            border.color: window.borderColor
-            border.width: 1
+        RowLayout {
+            anchors.fill: parent
+            spacing: 0
 
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 18
-                spacing: 14
+            Components.NavigationSidebar {
+                id: navigationSidebar
+                objectName: "navigationSidebar"
+                Layout.preferredWidth: window.sidebarOpen ? 292 : 0
+                Layout.fillHeight: true
+                shellModel: window.shellModel
+                currentRouteId: window.desktopController.currentRouteId
+                currentProfileId: window.desktopController.currentProfileId
+                reducedMotion: window.reducedMotion
+                visible: window.sidebarOpen
+                onNavigateRequested: routeId => window.desktopController.navigate(routeId)
+                onJumpRequested: window.handleShortcut("/")
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: Theme.canvas
 
                 ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 3
+                    anchors.fill: parent
+                    anchors.leftMargin: 36
+                    anchors.rightMargin: 36
+                    anchors.topMargin: 28
+                    anchors.bottomMargin: 24
+                    spacing: 18
 
-                    Label {
-                        text: "SGFX QA Preflight"
-                        color: window.textColor
-                        font.pixelSize: 18
-                        font.weight: Font.DemiBold
-                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 18
 
-                    Label {
-                        text: "Local, read-only delivery evidence"
-                        color: window.mutedColor
-                        font.pixelSize: 12
-                    }
-                }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 5
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 1
-                    color: window.borderColor
-                }
-
-                ListView {
-                    id: navigation
-                    objectName: "surfaceNavigation"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    spacing: 2
-                    clip: true
-                    model: window.surfaceModel
-                    section.property: "group"
-                    section.criteria: ViewSection.FullString
-
-                    section.delegate: Item {
-                        required property string section
-                        width: navigation.width
-                        height: 30
-
-                        Label {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            anchors.bottomMargin: 6
-                            text: parent.section
-                            color: window.mutedColor
-                            font.pixelSize: 11
-                            font.weight: Font.DemiBold
-                        }
-                    }
-
-                    delegate: ItemDelegate {
-                        id: navigationItem
-                        required property string surfaceId
-                        required property string title
-                        required property string subtitle
-                        required property string group
-                        required property string rendererKind
-                        required property bool operational
-                        width: navigation.width
-                        height: 42
-                        enabled: !operational || window.desktopController.currentProfileId.length > 0
-                        hoverEnabled: true
-                        padding: 10
-                        onClicked: window.desktopController.navigate(surfaceId)
-
-                        contentItem: Label {
-                            text: navigationItem.title
-                            color: window.textColor
-                            font.pixelSize: 13
-                            elide: Text.ElideRight
-                            verticalAlignment: Text.AlignVCenter
+                            Label {
+                                Layout.fillWidth: true
+                                text: window.desktopController.pageTitle
+                                color: Theme.text
+                                font.pixelSize: 28
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: window.desktopController.pageSubtitle
+                                color: Theme.muted
+                                font.pixelSize: 14
+                                wrapMode: Text.WordWrap
+                            }
                         }
 
-                        background: Rectangle {
-                            radius: 8
-                            color: navigationItem.surfaceId === window.desktopController.currentPageId
-                                   ? Qt.alpha(window.accentColor, 0.18)
-                                   : navigationItem.hovered
-                                     ? window.raisedColor
-                                     : "transparent"
-                            border.color: navigationItem.surfaceId === window.desktopController.currentPageId
-                                          ? Qt.alpha(window.accentColor, 0.65)
-                                          : "transparent"
+                        ComboBox {
+                            id: profileSelector
 
-                            Behavior on color {
-                                ColorAnimation { duration: window.motionFast }
+                            function syncProfileIndex() {
+                                const selected = window.desktopController.currentProfileId;
+                                for (let index = 0; index < count; ++index) {
+                                    if (valueAt(index) === selected) {
+                                        currentIndex = index;
+                                        return;
+                                    }
+                                }
+                                currentIndex = -1;
+                            }
+
+                            objectName: "profileSelector"
+                            Layout.minimumWidth: 230
+                            Layout.preferredHeight: 50
+                            model: window.desktopController.profileOptions
+                            textRole: "label"
+                            valueRole: "id"
+                            enabled: count > 0
+                            focusPolicy: Qt.StrongFocus
+                            Accessible.role: Accessible.ComboBox
+                            Accessible.name: "Selected car profile"
+                            onActivated: window.desktopController.selectProfile(currentValue)
+                            onCountChanged: Qt.callLater(syncProfileIndex)
+
+                            Component.onCompleted: Qt.callLater(syncProfileIndex)
+
+                            Connections {
+                                target: window.desktopController
+
+                                function onCurrentProfileChanged() {
+                                    Qt.callLater(profileSelector.syncProfileIndex);
+                                }
+
+                                function onProfileOptionsChanged() {
+                                    Qt.callLater(profileSelector.syncProfileIndex);
+                                }
                             }
                         }
                     }
 
-                    ScrollBar.vertical: ScrollBar { }
+                    Rectangle {
+                        id: contentFrame
+                        objectName: "pageFrame"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 14
+                        color: Theme.panel
+                        border.color: Theme.border
+                        border.width: 1
+
+                        Components.HomePage {
+                            id: homePage
+                            anchors.fill: parent
+                            visible: window.desktopController.currentRouteId === "home"
+                            homeTiles: window.shellModel.homeTiles
+                            homeTileCount: window.shellModel.homeTileCount
+                            payload: window.desktopController.currentPayload
+                            pageState: window.desktopController.pageState
+                            reducedMotion: window.reducedMotion
+                            onNavigateRequested: routeId => window.desktopController.navigate(routeId)
+                        }
+
+                        Item {
+                            id: pageContentHost
+                            objectName: "pageContentHost"
+                            anchors.fill: parent
+                            anchors.margins: 24
+                            visible: window.desktopController.currentRouteId !== "home"
+                            readonly property var payload: window.desktopController.currentPayload
+
+                            Label {
+                                anchors.centerIn: parent
+                                width: Math.min(parent.width - 80, 620)
+                                text: window.desktopController.pageState === "loading" ? "Loading local evidence…" : window.desktopController.errorCode.length > 0 ? window.desktopController.errorSummary : "Page content is loaded lazily from local evidence."
+                                color: window.desktopController.errorCode.length > 0 ? Theme.statusBad : Theme.muted
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Components.StatusBadge {
+                            objectName: "shellStatus"
+                            status: window.desktopController.pageState === "error" ? "error" : window.desktopController.currentPayload.status || window.desktopController.pageState
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "Read-only · Evidence only · Review stays manual"
+                            color: Theme.muted
+                            font.pixelSize: 11
+                        }
+                        Label {
+                            text: "/ Jump · F1 Help · F12 Diagnostics · Esc Back"
+                            color: Theme.muted
+                            font.pixelSize: 11
+                        }
+                    }
                 }
             }
         }
+    }
+
+    Components.JumpPalette {
+        id: jumpPalette
+        anchors.fill: parent
+        open: window.jumpOpen
+        routes: window.shellModel.routes
+        onCloseRequested: window.jumpOpen = false
+        onNavigateRequested: routeId => {
+            window.jumpOpen = false;
+            window.desktopController.navigate(routeId);
+        }
+    }
+    Components.ShortcutHelp {
+        anchors.fill: parent
+        open: window.helpOpen
+        shortcuts: window.shellModel.shortcuts
+        onCloseRequested: window.helpOpen = false
+    }
+    Rectangle {
+        anchors.fill: parent
+        visible: window.diagnosticsOpen
+        color: "#b0000000"
+        z: 100
 
         Rectangle {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            color: window.canvasColor
+            anchors.centerIn: parent
+            width: 520
+            height: 300
+            radius: 14
+            color: Theme.raised
+            border.color: Theme.border
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 36
-                anchors.rightMargin: 36
-                anchors.topMargin: 30
-                anchors.bottomMargin: 30
-                spacing: 22
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 18
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-
-                        Label {
-                            text: window.desktopController.pageTitle
-                            color: window.textColor
-                            font.pixelSize: 28
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-
-                        Label {
-                            text: window.desktopController.pageSubtitle
-                            color: window.mutedColor
-                            font.pixelSize: 14
-                            wrapMode: Text.WordWrap
-                            Layout.fillWidth: true
-                        }
-                    }
-
-                    Rectangle {
-                        implicitWidth: profileLabel.implicitWidth + 24
-                        implicitHeight: 34
-                        radius: 17
-                        color: window.raisedColor
-                        border.color: window.borderColor
-
-                        Label {
-                            id: profileLabel
-                            anchors.centerIn: parent
-                            text: window.desktopController.currentProfileId.length > 0
-                                  ? window.desktopController.currentProfileId
-                                  : "Profile not selected"
-                            color: window.textColor
-                            font.pixelSize: 12
-                        }
-                    }
+                anchors.margins: 28
+                spacing: 12
+                Label {
+                    text: "Local diagnostics"
+                    color: Theme.text
+                    font.pixelSize: 22
                 }
-
-                Rectangle {
-                    id: contentFrame
-                    objectName: "pageFrame"
-                    Layout.fillWidth: true
+                Label {
+                    text: "Route: " + window.desktopController.currentRouteId
+                    color: Theme.text
+                }
+                Label {
+                    text: "Profile: " + window.desktopController.currentProfileId
+                    color: Theme.text
+                }
+                Label {
+                    text: "Operation: " + window.desktopController.currentOperation
+                    color: Theme.text
+                }
+                Label {
+                    text: "Error: " + (window.desktopController.errorCode || "none")
+                    color: Theme.text
+                }
+                Label {
+                    text: "No paths, credentials, commands, or network details are shown."
+                    color: Theme.muted
+                }
+                Item {
                     Layout.fillHeight: true
-                    radius: 14
-                    color: window.panelColor
-                    border.color: window.borderColor
-                    border.width: 1
-                    state: window.desktopController.pageState
-
-                    Item {
-                        id: pageContentHost
-                        objectName: "pageContentHost"
-                        readonly property var payload: window.desktopController.currentPayload
-                        anchors.fill: parent
-                        anchors.margins: 24
-                        opacity: 0
-                    }
-
-                    Column {
-                        id: loadingLayer
-                        anchors.centerIn: parent
-                        spacing: 12
-                        opacity: 0
-
-                        BusyIndicator {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            running: loadingLayer.opacity > 0
-                        }
-
-                        Label {
-                            text: "Loading local evidence…"
-                            color: window.mutedColor
-                            font.pixelSize: 13
-                        }
-                    }
-
-                    Label {
-                        id: errorLayer
-                        anchors.centerIn: parent
-                        width: Math.min(parent.width - 80, 560)
-                        text: window.desktopController.errorSummary
-                        color: "#f2b8b5"
-                        font.pixelSize: 14
-                        wrapMode: Text.WordWrap
-                        horizontalAlignment: Text.AlignHCenter
-                        opacity: 0
-                    }
-
-                    states: [
-                        State {
-                            name: "idle"
-                            PropertyChanges { pageContentHost.opacity: 1 }
-                        },
-                        State {
-                            name: "loading"
-                            PropertyChanges { loadingLayer.opacity: 1 }
-                        },
-                        State {
-                            name: "ready"
-                            PropertyChanges { pageContentHost.opacity: 1 }
-                        },
-                        State {
-                            name: "error"
-                            PropertyChanges { errorLayer.opacity: 1 }
-                        }
-                    ]
-
-                    transitions: Transition {
-                        NumberAnimation {
-                            properties: "opacity"
-                            duration: window.motionNormal
-                            easing.type: Easing.OutCubic
-                        }
-                    }
                 }
-
-                RowLayout {
-                    Layout.fillWidth: true
-
-                    Label {
-                        text: window.desktopController.pageState === "loading"
-                              ? "Reading operator-local evidence"
-                              : "Read-only · Evidence only · Review stays manual"
-                        color: window.mutedColor
-                        font.pixelSize: 11
-                    }
-
-                    Item { Layout.fillWidth: true }
-
-                    Label {
-                        text: "F5 Refresh · Esc Close"
-                        color: window.mutedColor
-                        font.pixelSize: 11
-                    }
+                Button {
+                    text: "Close diagnostics"
+                    focusPolicy: Qt.StrongFocus
+                    Accessible.role: Accessible.Button
+                    Accessible.name: text
+                    onClicked: window.diagnosticsOpen = false
                 }
             }
+        }
+    }
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 24
+        visible: window.exitGuidanceVisible
+        z: 120
+        width: exitLabel.implicitWidth + 32
+        height: 48
+        radius: 12
+        color: Theme.raised
+        border.color: Theme.border
+
+        Label {
+            id: exitLabel
+            anchors.centerIn: parent
+            text: "Use the window close button to exit SGFX."
+            color: Theme.text
         }
     }
 }

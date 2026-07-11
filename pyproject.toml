@@ -50,4 +50,4 @@ where = ["."]
 include = ["sg_preflight*"]
 
 [tool.setuptools.package-data]
-sg_preflight = ["templates/*.html", "static/*.css", "static/*.js", "data/*.json", "desktop/qml/*.qml"]
+sg_preflight = ["templates/*.html", "static/*.css", "static/*.js", "data/*.json", "desktop/qml/*.qml", "desktop/qml/**/*.qml", "desktop/qml/**/qmldir"]

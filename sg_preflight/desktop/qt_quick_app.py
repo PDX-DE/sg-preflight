@@ -9,6 +9,7 @@ try:
     from PySide6.QtCore import QCoreApplication, QUrl
     from PySide6.QtGui import QGuiApplication, QIcon
     from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQuickControls2 import QQuickStyle
 except ImportError as exc:
     raise RuntimeError(
         "Qt Quick desktop mode requires the optional PySide6 dependency. "
@@ -17,6 +18,7 @@ except ImportError as exc:
 
 from sg_preflight.assets import runtime_asset_path
 from sg_preflight.desktop.qt_quick_controller import DesktopController
+from sg_preflight.desktop.shell_model import ShellRegistryModel
 from sg_preflight.desktop.surface_model import SurfaceRegistryModel
 from sg_preflight.desktop.task_pool import PageTaskCoordinator
 
@@ -32,6 +34,7 @@ class QtQuickRuntime:
     application: QGuiApplication
     engine: QQmlApplicationEngine
     surface_model: SurfaceRegistryModel
+    shell_model: ShellRegistryModel
     controller: DesktopController
     task_coordinator: PageTaskCoordinator
     _closed: bool = False
@@ -54,6 +57,8 @@ def _application(argv: Sequence[str] | None) -> QGuiApplication:
     existing = QCoreApplication.instance()
     if existing is not None and not isinstance(existing, QGuiApplication):
         raise RuntimeError("Qt Quick requires a graphical application instance.")
+    if existing is None:
+        QQuickStyle.setStyle("Basic")
     application = existing or QGuiApplication(list(argv) if argv is not None else sys.argv)
     application.setApplicationName(APPLICATION_NAME)
     application.setApplicationDisplayName(APPLICATION_NAME)
@@ -96,6 +101,10 @@ def create_qt_quick_runtime(
     try:
         application = _application(argv)
         engine = QQmlApplicationEngine()
+        qml_import_root = runtime_asset_path("sg_preflight/desktop/qml")
+        if not qml_import_root.is_dir():
+            qml_import_root = source.parent
+        engine.addImportPath(str(qml_import_root.resolve()))
         task_coordinator = PageTaskCoordinator(parent=engine)
         controller = DesktopController(
             workspace=workspace,
@@ -105,12 +114,15 @@ def create_qt_quick_runtime(
             parent=engine,
         )
         surface_model = SurfaceRegistryModel(parent=engine)
+        shell_model = ShellRegistryModel(parent=engine)
         context = engine.rootContext()
         context.setContextProperty("surfaceModel", surface_model)
+        context.setContextProperty("shellModel", shell_model)
         context.setContextProperty("desktopController", controller)
         engine.setInitialProperties(
             {
                 "surfaceModel": surface_model,
+                "shellModel": shell_model,
                 "desktopController": controller,
             }
         )
@@ -125,6 +137,7 @@ def create_qt_quick_runtime(
         application=application,
         engine=engine,
         surface_model=surface_model,
+        shell_model=shell_model,
         controller=controller,
         task_coordinator=task_coordinator,
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 import re
 from typing import Any, Protocol
@@ -10,6 +11,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 
 from sg_preflight.desktop.payload_adapter import adapt_page_payload
 from sg_preflight.desktop.task_pool import PageTaskCoordinator, TaskFailure, TaskIdentity
+from sg_preflight.shell_registry import HOME_ROUTE_ID, HOME_SUBTITLE, HOME_TITLE
 from sg_preflight.surface_registry import get_surface_descriptor, is_registered_surface
 
 
@@ -34,6 +36,16 @@ class ProfileResolver(Protocol):
         *,
         bmw_root: Path | None = None,
     ) -> str: ...
+
+
+class ShellLoader(Protocol):
+    def __call__(
+        self,
+        workspace: Path,
+        profile_id: str,
+        *,
+        bmw_root: Path | None = None,
+    ) -> Mapping[str, Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,10 +177,49 @@ def resolve_dashboard_profile(
     )
 
 
+def load_shell_context(
+    workspace: Path | str,
+    profile_id: str = "",
+    *,
+    bmw_root: Path | str | None = None,
+    profile_resolver: ProfileResolver = resolve_dashboard_profile,
+) -> Mapping[str, Any]:
+    from sg_preflight.dashboard_preferences import dashboard_profile_options
+    from sg_preflight.home_context import build_home_context
+
+    raw_options = dashboard_profile_options(bmw_root=bmw_root, profile_scope="all")
+    options: list[dict[str, str]] = []
+    for option in raw_options:
+        candidate = str(option.get("id", "") or "").strip()
+        if not _PROFILE_ID_PATTERN.fullmatch(candidate):
+            continue
+        label = str(option.get("label", candidate) or candidate).strip()
+        options.append({"id": candidate, "label": label or candidate})
+    requested = str(profile_id or "").strip()
+    selected = next(
+        (option["id"] for option in options if option["id"].casefold() == requested.casefold()),
+        "",
+    )
+    if not selected:
+        resolved = profile_resolver(workspace=Path(workspace).resolve(), bmw_root=bmw_root)
+        selected = next(
+            (option["id"] for option in options if option["id"].casefold() == resolved.casefold()),
+            options[0]["id"] if options else "",
+        )
+    return {
+        **build_home_context(workspace),
+        "profile_options": options,
+        "selected_profile_id": selected,
+    }
+
+
 class DesktopController(QObject):
+    currentRouteChanged = Signal()
     currentPageChanged = Signal()
     currentProfileChanged = Signal()
+    profileOptionsChanged = Signal()
     pageStateChanged = Signal()
+    operationChanged = Signal()
     payloadChanged = Signal()
     errorChanged = Signal()
 
@@ -177,56 +228,75 @@ class DesktopController(QObject):
         *,
         workspace: Path | str,
         initial_profile_id: str = "",
-        initial_page_id: str = "about",
         bmw_root: Path | str | None = None,
         task_coordinator: PageTaskCoordinator | None = None,
         page_loader: PageLoader | None = None,
         profile_resolver: ProfileResolver | None = None,
+        shell_loader: ShellLoader | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        if not is_registered_surface(initial_page_id):
-            raise ValueError("initial_page_id must reference a registered surface")
         profile_id = initial_profile_id.strip()
         if profile_id and not _PROFILE_ID_PATTERN.fullmatch(profile_id):
             raise ValueError("initial_profile_id must be empty or a canonical profile ID")
         self._workspace = Path(workspace).resolve()
         self._bmw_root = Path(bmw_root).resolve() if bmw_root is not None else None
+        self._current_route_id = HOME_ROUTE_ID
         self._current_profile_id = profile_id
-        self._current_page_id = initial_page_id
+        self._profile_options: list[dict[str, str]] = []
         self._page_state = "idle"
         self._payload: dict[str, Any] = {}
         self._error = EMPTY_UI_ERROR
         self._generation = 0
         self._current_identity: TaskIdentity | None = None
-        self._profile_identity: TaskIdentity | None = None
         self._cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._task_coordinator = task_coordinator or PageTaskCoordinator(parent=self)
         self._page_loader = page_loader or load_dashboard_surface
         self._profile_resolver = profile_resolver or resolve_dashboard_profile
+        self._shell_loader = shell_loader or partial(
+            load_shell_context,
+            profile_resolver=self._profile_resolver,
+        )
         self._closed = False
+        self._initialized = False
         self._task_coordinator.task_succeeded.connect(self._accept_success)
         self._task_coordinator.task_failed.connect(self._accept_failure)
 
+    @Property(str, notify=currentRouteChanged)
+    def currentRouteId(self) -> str:
+        return self._current_route_id
+
     @Property(str, notify=currentPageChanged)
     def currentPageId(self) -> str:
-        return self._current_page_id
+        return "" if self._current_route_id == HOME_ROUTE_ID else self._current_route_id
 
     @Property(str, notify=currentProfileChanged)
     def currentProfileId(self) -> str:
         return self._current_profile_id
 
-    @Property(str, notify=pageStateChanged)
+    @Property("QVariantList", notify=profileOptionsChanged)
+    def profileOptions(self) -> list[dict[str, str]]:
+        return [dict(option) for option in self._profile_options]
+
+    @Property(str, notify=operationChanged)
     def pageState(self) -> str:
         return self._page_state
 
-    @Property(str, notify=currentPageChanged)
-    def pageTitle(self) -> str:
-        return get_surface_descriptor(self._current_page_id).title
+    @Property(str, notify=pageStateChanged)
+    def currentOperation(self) -> str:
+        return self._current_identity.operation if self._current_identity is not None else ""
 
-    @Property(str, notify=currentPageChanged)
+    @Property(str, notify=currentRouteChanged)
+    def pageTitle(self) -> str:
+        if self._current_route_id == HOME_ROUTE_ID:
+            return HOME_TITLE
+        return get_surface_descriptor(self._current_route_id).title
+
+    @Property(str, notify=currentRouteChanged)
     def pageSubtitle(self) -> str:
-        return get_surface_descriptor(self._current_page_id).subtitle
+        if self._current_route_id == HOME_ROUTE_ID:
+            return HOME_SUBTITLE
+        return get_surface_descriptor(self._current_route_id).subtitle
 
     @Property(object, notify=payloadChanged)
     def currentPayload(self) -> dict[str, Any]:
@@ -253,109 +323,134 @@ class DesktopController(QObject):
         return self._error.recovery_action
 
     @Slot(str, result=bool)
-    def navigate(self, page_id: str) -> bool:
+    def navigate(self, route_id: str) -> bool:
         if self._closed:
             return False
-        candidate = page_id.strip()
-        if not is_registered_surface(candidate):
+        candidate = route_id.strip()
+        if candidate != HOME_ROUTE_ID and not is_registered_surface(candidate):
             self._set_error(_ui_error("action_rejected"))
             return False
-        if not self._current_profile_id and candidate != "about":
+        if candidate == HOME_ROUTE_ID:
+            self._set_route(HOME_ROUTE_ID)
+            return self._schedule_shell_context()
+        if not self._current_profile_id:
             self.initialize()
             return False
-        if candidate == self._current_page_id:
-            if self._page_state == "loading":
-                return False
-            cached = self._cache.get(self._cache_key())
-            if cached is not None:
-                self._set_ready_payload(cached)
-                return True
-        else:
-            self._current_page_id = candidate
-            self.currentPageChanged.emit()
+        if candidate == self._current_route_id and self._page_state == "loading":
+            return False
+        self._set_route(candidate)
         cached = self._cache.get(self._cache_key())
         if cached is not None:
             self._generation += 1
-            self._current_identity = None
+            self._set_current_identity(None)
             self._set_ready_payload(cached)
             return True
-        return self._schedule("load")
+        return self._schedule_page("load")
 
     @Slot(str, result=bool)
     def selectProfile(self, profile_id: str) -> bool:
         if self._closed:
             return False
         candidate = profile_id.strip()
-        if not _PROFILE_ID_PATTERN.fullmatch(candidate):
+        canonical = next(
+            (
+                option["id"]
+                for option in self._profile_options
+                if option["id"].casefold() == candidate.casefold()
+            ),
+            "",
+        )
+        if not canonical:
             self._set_error(_ui_error("action_rejected"))
             return False
-        if candidate == self._current_profile_id:
+        if canonical == self._current_profile_id:
             return True
-        self._profile_identity = None
-        self._current_profile_id = candidate
+        self._current_profile_id = canonical
         self.currentProfileChanged.emit()
-        return self._schedule("load")
+        if self._current_route_id == HOME_ROUTE_ID:
+            return self._schedule_shell_context()
+        return self._schedule_page("load")
 
     @Slot(result=bool)
     def refresh(self) -> bool:
-        if self._closed or self._current_identity is not None:
+        if self._closed:
+            return False
+        if self._current_route_id == HOME_ROUTE_ID:
+            return self._schedule_shell_context()
+        if self._current_identity is not None:
             return False
         self._cache.pop(self._cache_key(), None)
-        return self._schedule("refresh")
+        return self._schedule_page("refresh")
 
     @Slot(result=bool)
     def initialize(self) -> bool:
-        if self._closed or self._current_profile_id or self._profile_identity is not None:
+        if self._closed or self._initialized or self._current_route_id != HOME_ROUTE_ID:
             return False
-        self._generation += 1
-        identity = TaskIdentity(
-            self._generation,
-            "",
-            self._current_page_id,
-            "resolve-profile",
-        )
-        profile_resolver = self._profile_resolver
-        workspace = self._workspace
-        bmw_root = self._bmw_root
-
-        def resolve_profile() -> str:
-            return profile_resolver(workspace=workspace, bmw_root=bmw_root)
-
-        if not self._task_coordinator.submit(identity, resolve_profile):
-            self._set_error(_ui_error("action_rejected"))
-            return False
-        self._profile_identity = identity
-        self._set_error(EMPTY_UI_ERROR)
-        return True
+        accepted = self._schedule_shell_context()
+        if accepted:
+            self._initialized = True
+        return accepted
 
     @Slot()
     def shutdown(self) -> None:
         if self._closed:
             return
         self._closed = True
-        self._current_identity = None
-        self._profile_identity = None
+        self._set_current_identity(None)
         self._set_payload({})
+        self._set_profile_options([])
         self._set_error(EMPTY_UI_ERROR)
         self._set_state("idle")
 
     def _cache_key(self) -> tuple[str, str]:
-        return self._current_profile_id, self._current_page_id
+        return self._current_profile_id, self._current_route_id
 
-    def _schedule(self, operation: str) -> bool:
-        if self._closed:
-            return False
+    def _set_route(self, route_id: str) -> None:
+        if route_id == self._current_route_id:
+            return
+        self._current_route_id = route_id
+        self.currentRouteChanged.emit()
+        self.currentPageChanged.emit()
+
+    def _next_identity(self, operation: str) -> TaskIdentity:
         self._generation += 1
-        identity = TaskIdentity(
+        return TaskIdentity(
             self._generation,
             self._current_profile_id,
-            self._current_page_id,
+            self._current_route_id,
             operation,
         )
-        self._current_identity = identity
+
+    def _prepare_schedule(self, identity: TaskIdentity) -> None:
+        self._set_current_identity(identity)
         self._set_state("loading")
         self._set_payload({})
         self._set_error(EMPTY_UI_ERROR)
+
+    def _schedule_shell_context(self) -> bool:
+        if self._closed:
+            return False
+        identity = self._next_identity("shell_context")
+        self._prepare_schedule(identity)
+        shell_loader = self._shell_loader
+        workspace = self._workspace
+        bmw_root = self._bmw_root
+
+        def read_shell_context() -> dict[str, Any]:
+            raw = shell_loader(
+                workspace=workspace,
+                profile_id=identity.profile_id,
+                bmw_root=bmw_root,
+            )
+            return adapt_page_payload(raw, workspace=workspace)
+
+        return self._submit(identity, read_shell_context)
+
+    def _schedule_page(self, operation: str) -> bool:
+        if self._closed:
+            return False
+        identity = self._next_identity(operation)
+        self._prepare_schedule(identity)
         page_loader = self._page_loader
         workspace = self._workspace
         bmw_root = self._bmw_root
@@ -369,53 +464,72 @@ class DesktopController(QObject):
             )
             return adapt_page_payload(raw, workspace=workspace)
 
-        accepted = self._task_coordinator.submit(identity, read_page)
+        return self._submit(identity, read_page)
+
+    def _submit(self, identity: TaskIdentity, operation: Any) -> bool:
+        accepted = self._task_coordinator.submit(identity, operation)
         if not accepted:
-            self._current_identity = None
-            self._set_state("error")
-            self._set_error(_ui_error("action_rejected"))
+            if identity == self._current_identity:
+                self._set_current_identity(None)
+                self._set_state("error")
+                self._set_error(_ui_error("action_rejected"))
         return accepted
 
     @Slot(object, object)
     def _accept_success(self, identity: TaskIdentity, payload: object) -> None:
-        if identity == self._profile_identity:
-            self._profile_identity = None
-            candidate = str(payload or "").strip()
-            if (
-                not self._closed
-                and not self._current_profile_id
-                and _PROFILE_ID_PATTERN.fullmatch(candidate)
-            ):
-                self._current_profile_id = candidate
-                self.currentProfileChanged.emit()
-                self._set_error(EMPTY_UI_ERROR)
-            elif not self._closed:
-                self._set_state("error")
-                self._set_error(_ui_error("page_reader_failed"))
-            return
         if identity != self._current_identity:
             return
-        self._current_identity = None
+        self._set_current_identity(None)
         if not isinstance(payload, Mapping):
             self._set_payload({})
             self._set_state("error")
             self._set_error(_ui_error("page_payload_invalid"))
             return
         normalized = dict(payload)
-        self._cache[(identity.profile_id, identity.page_id)] = dict(normalized)
+        if identity.operation == "shell_context":
+            if not self._accept_shell_profile(normalized):
+                self._set_payload({})
+                self._set_state("error")
+                self._set_error(_ui_error("page_payload_invalid"))
+                return
+        else:
+            self._cache[(identity.profile_id, identity.page_id)] = dict(normalized)
         self._set_ready_payload(normalized)
+
+    def _accept_shell_profile(self, payload: Mapping[str, Any]) -> bool:
+        raw_options = payload.get("profile_options", [])
+        if not isinstance(raw_options, list):
+            return False
+        options: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for raw_option in raw_options:
+            if not isinstance(raw_option, Mapping):
+                return False
+            profile_id = str(raw_option.get("id", "") or "").strip()
+            label = str(raw_option.get("label", "") or "").strip()
+            folded = profile_id.casefold()
+            if not _PROFILE_ID_PATTERN.fullmatch(profile_id) or not label or folded in seen:
+                return False
+            seen.add(folded)
+            options.append({"id": profile_id, "label": label})
+        selected = str(payload.get("selected_profile_id", "") or "").strip()
+        canonical = next(
+            (option["id"] for option in options if option["id"].casefold() == selected.casefold()),
+            "",
+        )
+        if not canonical:
+            return False
+        self._set_profile_options(options)
+        if canonical != self._current_profile_id:
+            self._current_profile_id = canonical
+            self.currentProfileChanged.emit()
+        return True
 
     @Slot(object, object)
     def _accept_failure(self, identity: TaskIdentity, failure: object) -> None:
-        if identity == self._profile_identity:
-            self._profile_identity = None
-            if not self._closed:
-                self._set_state("error")
-                self._set_error(_ui_error("page_reader_failed"))
-            return
         if identity != self._current_identity:
             return
-        self._current_identity = None
+        self._set_current_identity(None)
         code = (
             failure.code
             if isinstance(failure, TaskFailure) and failure.code in UI_ERROR_DEFINITIONS
@@ -436,11 +550,23 @@ class DesktopController(QObject):
         self._page_state = state
         self.pageStateChanged.emit()
 
+    def _set_current_identity(self, identity: TaskIdentity | None) -> None:
+        if identity == self._current_identity:
+            return
+        self._current_identity = identity
+        self.operationChanged.emit()
+
     def _set_payload(self, payload: dict[str, Any]) -> None:
         if payload == self._payload:
             return
         self._payload = payload
         self.payloadChanged.emit()
+
+    def _set_profile_options(self, options: list[dict[str, str]]) -> None:
+        if options == self._profile_options:
+            return
+        self._profile_options = [dict(option) for option in options]
+        self.profileOptionsChanged.emit()
 
     def _set_error(self, error: UiError) -> None:
         if error == self._error:

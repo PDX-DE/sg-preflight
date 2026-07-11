@@ -107,6 +107,8 @@ class TestNativeScaffold(unittest.TestCase):
             1,
         )
         self.assertEqual(pyproject.count('"desktop/qml/*.qml"'), 1)
+        self.assertEqual(pyproject.count('"desktop/qml/**/*.qml"'), 1)
+        self.assertEqual(pyproject.count('"desktop/qml/**/qmldir"'), 1)
 
         text = script_path.read_text(encoding="utf-8")
         self.assertIn("--onedir", text)
@@ -124,6 +126,7 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn('bundle_dir / "_internal"', text)
         self.assertEqual(text.count('"PySide6.QtQml"'), 1)
         self.assertEqual(text.count('"PySide6.QtQuick"'), 1)
+        self.assertEqual(text.count('"PySide6.QtQuickControls2"'), 1)
         self.assertIn(".[packaging,desktop]", text)
         self.assertNotIn("clean_stale_outputs", text)
         for asset_name in (
@@ -141,6 +144,8 @@ class TestNativeScaffold(unittest.TestCase):
             "sg_preflight/desktop/qml",
         ):
             self.assertIn(asset_name, text)
+        self.assertIn('rglob("*.qml")', text)
+        self.assertIn('rglob("qmldir")', text)
         self.assertLess(
             text.index("copy_grafiks_runtime(staged_bundle)"),
             text.index("copy_operator_console_shell(staged_bundle)"),
@@ -149,6 +154,20 @@ class TestNativeScaffold(unittest.TestCase):
             text.index("copy_operator_console_shell(staged_bundle)"),
             text.index("swap_staged_bundle(staged_bundle)"),
         )
+
+    def test_qml_package_inputs_include_nested_components_singleton_and_qmldir(self) -> None:
+        module = self._load_build_exe_module()
+
+        inputs = {
+            path.relative_to(ROOT / "sg_preflight" / "desktop" / "qml").as_posix()
+            for path in module.qml_package_inputs()
+        }
+
+        self.assertIn("Main.qml", inputs)
+        self.assertIn("components/HomePage.qml", inputs)
+        self.assertIn("SGFX/Theme.qml", inputs)
+        self.assertIn("SGFX/qmldir", inputs)
+        self.assertTrue(all(path.suffix == ".qml" or path.name == "qmldir" for path in module.qml_package_inputs()))
 
     @staticmethod
     def _windows_backend(*, priority: int | BaseException = 5) -> mock.Mock:

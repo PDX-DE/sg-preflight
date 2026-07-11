@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from datetime import datetime, timedelta, timezone
 import io
 import json
 import os
@@ -44,6 +45,89 @@ EXPECTED_HOME_TILE_IDS = (
     "daily-digest",
     "setup-doctor",
 )
+
+
+class TestHomeContext(unittest.TestCase):
+    def test_latest_five_all_time_entries_are_newest_first_and_frontend_neutral(self) -> None:
+        from sg_preflight.activity_log import append_activity_entry
+        from sg_preflight.home_context import build_home_context
+
+        current = datetime(2026, 7, 11, 13, 5, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for index in range(7):
+                append_activity_entry(
+                    temp_dir,
+                    verb="opened",
+                    surface=f"surface-{index}",
+                    profile="G65",
+                    outcome="ok",
+                    note=f"entry {index}",
+                    now=current - timedelta(days=30, minutes=index),
+                )
+
+            context = build_home_context(temp_dir, now=current)
+
+        self.assertEqual(context["status"], "available")
+        self.assertTrue(context["data_available"])
+        self.assertEqual(len(context["activity"]), 5)
+        self.assertEqual(
+            [item["detail"] for item in context["activity"]],
+            [
+                "opened surface-0 G65 entry 0",
+                "opened surface-1 G65 entry 1",
+                "opened surface-2 G65 entry 2",
+                "opened surface-3 G65 entry 3",
+                "opened surface-4 G65 entry 4",
+            ],
+        )
+        self.assertEqual(context["freshness_label"], f"Data as of {current.astimezone():%Y-%m-%d %H:%M}")
+        self.assertTrue(context["read_only"])
+        self.assertFalse(context["is_approval"])
+        self.assertNotIn("path", repr(context).casefold())
+
+    def test_empty_and_read_error_are_honest_not_run_states(self) -> None:
+        from sg_preflight.home_context import build_home_context
+
+        current = datetime(2026, 7, 11, 13, 5, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            empty = build_home_context(temp_dir, now=current)
+            with mock.patch(
+                "sg_preflight.home_context.read_activity_entries",
+                side_effect=OSError(r"C:\private\operator\activity.jsonl"),
+            ):
+                failed = build_home_context(temp_dir, now=current)
+
+        for context in (empty, failed):
+            self.assertEqual(context["status"], "not_run")
+            self.assertFalse(context["data_available"])
+            self.assertEqual(context["activity"], [])
+            self.assertEqual(context["empty_message"], "No local activity recorded yet.")
+            self.assertIn("No local activity recorded yet", context["summary"])
+            self.assertNotIn("private", repr(context).casefold())
+
+    def test_nicegui_home_payload_delegates_to_shared_context(self) -> None:
+        from sg_preflight import dashboard_pages_config
+
+        expected = {
+            "status": "not_run",
+            "data_available": False,
+            "summary": "shared",
+            "freshness_label": "Data as of 2026-07-11 15:05",
+            "data_as_of": "2026-07-11 15:05",
+            "activity": [],
+            "board_rows": [],
+            "empty_message": "No local activity recorded yet.",
+            "read_only": True,
+            "is_approval": False,
+        }
+        with mock.patch(
+            "sg_preflight.home_context.build_home_context",
+            return_value=expected,
+        ) as builder:
+            actual = dashboard_pages_config._home_payload(Path("workspace"))
+
+        builder.assert_called_once_with(Path("workspace"))
+        self.assertEqual(actual, expected)
 
 
 class NiceGuiDashboardLazyImportTests(unittest.TestCase):

@@ -57,7 +57,17 @@ def validate_build_environment() -> None:
         ) from exc
 
 
+def qml_package_inputs(qml_root: Path | None = None) -> tuple[Path, ...]:
+    root = qml_root or ROOT / "sg_preflight" / "desktop" / "qml"
+    qml_files = tuple(root.rglob("*.qml"))
+    qmldir_files = tuple(root.rglob("qmldir"))
+    if not qml_files or not qmldir_files:
+        raise RuntimeError("Qt Quick package inputs are incomplete.")
+    return tuple(sorted(qml_files + qmldir_files))
+
+
 def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
+    qml_package_inputs()
     data_files = (
         ("sgfx_icon.png", "."),
         ("framework_sgfx_logo.png", "."),
@@ -101,6 +111,8 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
         "PySide6.QtQml",
         "--hidden-import",
         "PySide6.QtQuick",
+        "--hidden-import",
+        "PySide6.QtQuickControls2",
     ]
     for source, destination in data_files:
         args.extend(["--add-data", _data_arg(source, destination)])
