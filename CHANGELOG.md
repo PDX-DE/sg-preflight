@@ -18,7 +18,7 @@ outside this bundle.
 - CLI and JSON workflow guides for operators adding or running checks through existing Python-owned SGFX surfaces.
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
 - Clean-first display mode for the native shell and SGFX QA Status Board. This is presentation-only and does not change backend QA logic.
-- Confirmation-gated Jira posting: optional dry-run-first Jira comment posting through the CLI. A real post requires operator-provided Jira configuration and an explicit `--confirm` flag.
+- Advanced Jira integration: previews and the weekly ticket draft live under `integration jira`; verification and write behavior use separate explicit gates.
 - Dark IDE-style theme as the default operator surface with readable contrast and a single shipped theme.
 - Operator-friendly logo branding in place of redundant header text across the sidebar, main header, and About panel.
 - Animated F1-F12 hotkey popup with debug icon: pressing a function key shows a brief evidence overlay with a one-line explainer.
@@ -41,10 +41,11 @@ outside this bundle.
 ### Data handling
 - Runtime: local-only. The shipped tool reads operator-local files and does not call any external service or send telemetry. Operator records every verdict.
 - Suggested evidence: deterministic local filesystem probes (file exists, directory contains these files, workbook has these rows). The tool does not pre-decide.
-- Network boundary: only the explicit Jira post flow leaves the workstation, and only behind a --confirm flag (default is dry-run / off).
+- Advanced `integration jira` previews load no credentials and make no network request. `--confirm-network` permits Jira verification and weekly-ticket GETs; a Jira write also needs its action-specific confirmation.
 
 ### Fixed
 - Focused the default Clean shell on Home, 18 operational evidence surfaces, and nav-only About. Personal-ticket, duplicate readiness, parked analysis, settings, automatic Jira lookup, and dashboard report-attachment controls are no longer registered on the default path.
+- Moved the weekly ticket draft to `integration jira weekly-tickets`; its default preview is log-free, leaves credential and cache state untouched, and keeps the former command only as hidden argv compatibility.
 - `daily-digest latest --markdown` is safe on a fresh checkout and returns a clear no-review-package summary instead of failing.
 - Native shell resource discovery uses generic SGFX resource roots and skips generated/build folders.
 - Reviewed all team-facing text for a clear, consistent voice.

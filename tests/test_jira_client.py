@@ -119,7 +119,46 @@ Other text
         self.assertEqual(result["note"], JIRA_POSTING_BANNER)
         self.assertIn("--confirm", result["guard"])
 
-    def test_jira_base_url_must_be_https_even_for_dry_run(self) -> None:
+    def test_default_jira_action_preview_loads_no_credentials_and_calls_no_transport(self) -> None:
+        transport = mock.Mock(side_effect=AssertionError("transport must stay unused"))
+        with mock.patch(
+            "sg_preflight.jira_client.load_jira_credentials",
+            side_effect=AssertionError("credentials must stay unused"),
+        ):
+            payload = post_jira_comment_action(
+                "IDCEVODEV-1000001",
+                "Preview body",
+                transport=transport,
+            )
+
+        self.assertTrue(payload["dry_run"])
+        self.assertTrue(payload["confirm_network_required"])
+        transport.assert_not_called()
+
+    def test_jira_write_requires_network_and_write_confirmation(self) -> None:
+        with self.assertRaises(JiraPostError):
+            post_jira_comment_action(
+                "IDCEVODEV-1000001",
+                "Body",
+                auto_confirm=True,
+                confirm_network=False,
+            )
+
+    def test_legacy_jira_post_requires_network_confirmation_before_write(self) -> None:
+        transport = mock.Mock(side_effect=AssertionError("transport must stay unused"))
+        with self.assertRaises(JiraPostError):
+            post_jira_comment(
+                "IDCEVODEV-977874",
+                "Status update",
+                base_url="https://jira.example",
+                token="test-pat-placeholder-not-real",
+                confirm=True,
+                confirm_network=False,
+                transport=transport,
+            )
+        transport.assert_not_called()
+
+    def test_jira_base_url_must_be_https_after_network_confirmation(self) -> None:
         with self.assertRaises(ConfigError):
             post_jira_comment(
                 "IDCEVODEV-977874",
@@ -127,14 +166,27 @@ Other text
                 base_url="http://jira.example",
                 token="test-pat-placeholder-not-real",
                 confirm=False,
+                confirm_network=True,
             )
 
     def test_confirm_requires_base_url_and_pat(self) -> None:
         with self.assertRaises(JiraPostError) as missing_base:
-            post_jira_comment("IDCEVODEV-977874", "Status update", token="test-pat-placeholder-not-real", confirm=True)
+            post_jira_comment(
+                "IDCEVODEV-977874",
+                "Status update",
+                token="test-pat-placeholder-not-real",
+                confirm=True,
+                confirm_network=True,
+            )
 
         with self.assertRaises(JiraPostError) as missing_token:
-            post_jira_comment("IDCEVODEV-977874", "Status update", base_url="https://jira.example", confirm=True)
+            post_jira_comment(
+                "IDCEVODEV-977874",
+                "Status update",
+                base_url="https://jira.example",
+                confirm=True,
+                confirm_network=True,
+            )
 
         self.assertIn("base URL", str(missing_base.exception))
         self.assertIn("PAT", str(missing_token.exception))
@@ -146,7 +198,7 @@ Other text
             captured["url"] = request.full_url
             captured["method"] = request.get_method()
             captured["headers"] = dict(request.header_items())
-            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            captured["payload"] = json.loads(request.data.decode("utf-8")) if request.data else None
             captured["timeout"] = timeout
             return _FakeResponse()
 
@@ -156,6 +208,7 @@ Other text
             base_url="https://jira.example/",
             token="test-pat-placeholder-not-real",
             confirm=True,
+            confirm_network=True,
             transport=transport,
         )
 
@@ -180,7 +233,7 @@ Other text
 
         self.assertEqual(body, "Ready for operator-confirmed posting.")
 
-    def test_load_jira_credentials_prefers_operator_state_env_without_echoing_pat(self) -> None:
+    def test_load_jira_credentials_prefers_operator_state_env_without_mutating_legacy_config(self) -> None:
         fake_keyring = _FakeKeyring()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir) / "state"
@@ -198,8 +251,11 @@ Other text
         self.assertEqual(credentials["jira_url"], "https://jira.example")
         self.assertEqual(credentials["pat"], "test-pat-placeholder-not-real")
         self.assertTrue(credentials["path"].endswith("jira_pat.json"))
-        self.assertEqual(saved, {"jira_url": "https://jira.example"})
-        self.assertEqual(fake_keyring.store[(JIRA_KEYRING_SERVICE, "https://jira.example")], "test-pat-placeholder-not-real")
+        self.assertEqual(
+            saved,
+            {"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"},
+        )
+        self.assertEqual(fake_keyring.store, {})
 
     def test_load_jira_credentials_reads_pat_from_keychain(self) -> None:
         fake_keyring = _FakeKeyring()
@@ -213,7 +269,7 @@ Other text
         self.assertEqual(credentials["jira_url"], "https://jira.example")
         self.assertEqual(credentials["pat"], "test-pat-placeholder-not-real")
 
-    def test_load_jira_credentials_accepts_legacy_token_key_without_echoing_pat(self) -> None:
+    def test_load_jira_credentials_accepts_legacy_token_key_without_mutation(self) -> None:
         fake_keyring = _FakeKeyring()
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir) / "state"
@@ -229,8 +285,11 @@ Other text
             saved = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(credentials["pat"], "test-pat-placeholder-not-real")
-        self.assertEqual(saved, {"jira_url": "https://jira.example"})
-        self.assertEqual(fake_keyring.store[(JIRA_KEYRING_SERVICE, "https://jira.example")], "test-pat-placeholder-not-real")
+        self.assertEqual(
+            saved,
+            {"jira_url": "https://jira.example", "pat_api_id": "test-pat-placeholder-not-real"},
+        )
+        self.assertEqual(fake_keyring.store, {})
 
     def test_load_jira_credentials_reports_missing_with_remediation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -261,9 +320,12 @@ Other text
         self.assertIn("keychain", str(caught.exception))
         self.assertNotIn("pat", json.dumps(saved_after).lower())
 
-    def test_load_jira_credentials_scrubs_legacy_pat_when_keychain_store_fails(self) -> None:
+    def test_load_jira_credentials_does_not_touch_keychain_for_legacy_pat(self) -> None:
         class BrokenKeyring:
             def set_password(self, service: str, account: str, password: str) -> None:
+                raise RuntimeError("backend unavailable")
+
+            def get_password(self, service: str, account: str) -> str | None:
                 raise RuntimeError("backend unavailable")
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -276,12 +338,14 @@ Other text
             )
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
                 with mock.patch.dict(sys.modules, {"keyring": BrokenKeyring()}):
-                    with self.assertRaises(ConfigError) as caught:
-                        load_jira_credentials()
+                    credentials = load_jira_credentials()
             saved_after = json.loads(path.read_text(encoding="utf-8"))
 
-        self.assertIn("keychain", str(caught.exception))
-        self.assertEqual(saved_after, {"jira_url": "https://jira.example"})
+        self.assertEqual(credentials["pat"], "test-pat-placeholder-not-real")
+        self.assertEqual(
+            saved_after,
+            {"jira_url": "https://jira.example", "pat": "test-pat-placeholder-not-real"},
+        )
 
     def test_write_jira_credentials_records_operator_local_file_with_redacted_payload(self) -> None:
         fake_keyring = _FakeKeyring()
@@ -315,12 +379,61 @@ Other text
             _write_keychain_credentials(state_dir, fake_keyring)
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
                 with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
-                    result = jira_status(ticket="IDCEVODEV-1009244", transport=transport)
+                    result = jira_status(
+                        ticket="IDCEVODEV-1009244",
+                        confirm_network=True,
+                        transport=transport,
+                    )
 
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["connection_status"], "available")
         self.assertEqual(result["ticket_status"], "available")
         self.assertEqual([method for method, _url in calls], ["GET", "GET"])
+        self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
+
+    def test_jira_status_reads_legacy_pat_without_migration_or_config_rewrite(self) -> None:
+        calls: list[tuple[str, str]] = []
+        keyring_calls: list[str] = []
+
+        class RecordingKeyring:
+            def set_password(self, service: str, account: str, password: str) -> None:
+                keyring_calls.append("set")
+
+            def get_password(self, service: str, account: str) -> str | None:
+                keyring_calls.append("get")
+                return None
+
+            def delete_password(self, service: str, account: str) -> None:
+                keyring_calls.append("delete")
+
+        def transport(request, timeout=30):
+            calls.append((request.get_method(), request.full_url))
+            return _FakeResponse(200, b'{"name":"operator"}')
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            path = state_dir / "jira_pat.json"
+            original = json.dumps(
+                {
+                    "jira_url": "https://jira.example",
+                    "pat": "test-pat-placeholder-not-real",
+                },
+                indent=2,
+            ).encode("utf-8")
+            path.write_bytes(original)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": RecordingKeyring()}):
+                    result = jira_status(
+                        ticket="IDCEVODEV-1009244",
+                        confirm_network=True,
+                        transport=transport,
+                    )
+            saved = path.read_bytes()
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual([method for method, _url in calls], ["GET", "GET"])
+        self.assertEqual(saved, original)
+        self.assertEqual(keyring_calls, [])
         self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
 
     def test_profile_ticket_search_builds_read_only_jql_and_sanitizes_rows(self) -> None:
@@ -551,6 +664,104 @@ Other text
         self.assertIn("offline raw detail", result["diagnostic_detail"])
         self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
 
+    def test_weekly_ticket_search_preview_loads_nothing(self) -> None:
+        transport = mock.Mock(side_effect=AssertionError("transport must stay unused"))
+        with mock.patch(
+            "sg_preflight.jira_client.load_jira_credentials",
+            side_effect=AssertionError("credentials must stay unused"),
+        ):
+            payload = search_my_weekly_tickets(
+                since="-7d",
+                confirm_network=False,
+                transport=transport,
+            )
+
+        self.assertEqual(payload["status"], "not_run")
+        self.assertEqual(payload["connection_status"], "not_run")
+        self.assertEqual(payload["credential"]["status"], "not_loaded")
+        self.assertEqual(payload["verification"]["status"], "not_run")
+        self.assertFalse(payload["network_confirmed"])
+        self.assertTrue(payload["confirm_network_required"])
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["ticket_count"], 0)
+        self.assertEqual(payload["cache_status"], "skipped")
+        self.assertEqual(payload["tickets"], [])
+        self.assertEqual(payload["total_available"], None)
+        self.assertEqual(payload["result_limit"], 50)
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["is_approval"])
+        self.assertEqual(
+            payload["summary"],
+            "Jira lookup not run. Add --confirm-network to include assigned tickets.",
+        )
+        transport.assert_not_called()
+
+    def test_weekly_ticket_search_preview_leaves_cache_unchanged(self) -> None:
+        from sg_preflight import jira_client as jira_client_module
+
+        sentinel_key = ("https://jira.example", "2", "-7d", 50)
+        sentinel_payload = {
+            "status": "available",
+            "ticket_count": 1,
+            "tickets": [{"key": "IDCEVODEV-1000003"}],
+        }
+        with mock.patch.dict(
+            jira_client_module._JIRA_MY_WEEKLY_TICKETS_CACHE,
+            {sentinel_key: (123456789.0, sentinel_payload)},
+            clear=True,
+        ):
+            before = dict(jira_client_module._JIRA_MY_WEEKLY_TICKETS_CACHE)
+            search_my_weekly_tickets(confirm_network=False)
+            after = dict(jira_client_module._JIRA_MY_WEEKLY_TICKETS_CACHE)
+
+        self.assertEqual(after, before)
+
+    def test_weekly_ticket_search_preview_clamps_result_limit(self) -> None:
+        preview = search_my_weekly_tickets(max_results=0, confirm_network=False)
+
+        self.assertEqual(preview["result_limit"], 1)
+
+    def test_weekly_ticket_confirmed_legacy_credentials_use_get_without_mutation(self) -> None:
+        calls: list[tuple[str, str]] = []
+        keyring_calls: list[str] = []
+
+        class RecordingKeyring:
+            def set_password(self, service: str, account: str, password: str) -> None:
+                keyring_calls.append("set")
+
+            def get_password(self, service: str, account: str) -> str | None:
+                keyring_calls.append("get")
+                return None
+
+            def delete_password(self, service: str, account: str) -> None:
+                keyring_calls.append("delete")
+
+        def transport(request, timeout=30):
+            calls.append((request.get_method(), request.full_url))
+            return _FakeResponse(200, b'{"total":0,"issues":[]}')
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_dir = Path(temp_dir)
+            path = state_dir / "jira_pat.json"
+            original = (
+                '{\n  "jira_url": "https://jira.example",\n'
+                '  "pat": "test-pat-placeholder-not-real"\n}\n'
+            ).encode("utf-8")
+            path.write_bytes(original)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": RecordingKeyring()}):
+                    payload = search_my_weekly_tickets(
+                        confirm_network=True,
+                        transport=transport,
+                    )
+            saved = path.read_bytes()
+
+        self.assertEqual(payload["status"], "available")
+        self.assertEqual([method for method, _url in calls], ["GET"])
+        self.assertEqual(saved, original)
+        self.assertEqual(keyring_calls, [])
+        self.assertNotIn("test-pat-placeholder-not-real", json.dumps(payload))
+
     def test_my_weekly_ticket_search_is_read_only_and_allows_done_items(self) -> None:
         clear_jira_my_tickets_cache()
         calls: list[tuple[str, str]] = []
@@ -585,7 +796,12 @@ Other text
             _write_keychain_credentials(state_dir, fake_keyring)
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
                 with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
-                    result = search_my_weekly_tickets(since="-7d", max_results=50, transport=transport)
+                    result = search_my_weekly_tickets(
+                        since="-7d",
+                        max_results=50,
+                        confirm_network=True,
+                        transport=transport,
+                    )
 
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["ticket_count"], 1)
@@ -607,7 +823,7 @@ Other text
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(Path(temp_dir) / "missing")}):
                 with mock.patch("pathlib.Path.home", return_value=Path(temp_dir) / "home"):
                     with mock.patch("pathlib.Path.cwd", return_value=Path(temp_dir) / "cwd"):
-                        result = search_my_weekly_tickets()
+                        result = search_my_weekly_tickets(confirm_network=True)
 
         self.assertEqual(result["status"], "missing")
         self.assertEqual(result["ticket_count"], 0)
@@ -625,12 +841,39 @@ Other text
             _write_keychain_credentials(state_dir, fake_keyring)
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
                 with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
-                    result = search_my_weekly_tickets(transport=transport)
+                    result = search_my_weekly_tickets(confirm_network=True, transport=transport)
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["ticket_count"], 0)
         self.assertIn("Weekly Tickets unavailable", result["summary"])
         self.assertNotIn("test-pat-placeholder-not-real", json.dumps(result))
+
+    def test_weekly_ticket_confirmed_missing_and_offline_stay_distinct_from_preview(self) -> None:
+        preview = search_my_weekly_tickets(confirm_network=False)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(root / "missing")}):
+                with mock.patch("pathlib.Path.home", return_value=root / "home"):
+                    with mock.patch("pathlib.Path.cwd", return_value=root / "cwd"):
+                        missing = search_my_weekly_tickets(confirm_network=True)
+
+            state_dir = root / "state"
+            fake_keyring = _FakeKeyring()
+            _write_keychain_credentials(state_dir, fake_keyring)
+            with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
+                with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
+                    failed = search_my_weekly_tickets(
+                        confirm_network=True,
+                        transport=mock.Mock(side_effect=urllib_error.URLError("offline")),
+                    )
+
+        self.assertEqual(preview["status"], "not_run")
+        self.assertEqual(missing["status"], "missing")
+        self.assertEqual(failed["status"], "failed")
+        self.assertFalse(preview["network_confirmed"])
+        self.assertTrue(missing["network_confirmed"])
+        self.assertTrue(failed["network_confirmed"])
 
     def test_post_comment_action_previews_with_gets_before_auto_confirm_posts(self) -> None:
         calls: list[tuple[str, str, object]] = []
@@ -654,12 +897,14 @@ Other text
                     preview = post_jira_comment_action(
                         "IDCEVODEV-1009244",
                         "Integration test comment.",
+                        confirm_network=True,
                         transport=transport,
                     )
                     posted = post_jira_comment_action(
                         "IDCEVODEV-1009244",
                         "Integration test comment.",
                         auto_confirm=True,
+                        confirm_network=True,
                         transport=transport,
                     )
 
@@ -689,11 +934,13 @@ Other text
                     update_preview = update_jira_issue_action(
                         "IDCEVODEV-1009244",
                         {"summary": "Updated summary"},
+                        confirm_network=True,
                         transport=transport,
                     )
                     attach_preview = attach_jira_file_action(
                         "IDCEVODEV-1009244",
                         attachment,
+                        confirm_network=True,
                         transport=transport,
                     )
 

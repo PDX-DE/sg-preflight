@@ -83,6 +83,59 @@ class TestWeeklyTicketDraft(unittest.TestCase):
     def setUp(self) -> None:
         clear_jira_my_tickets_cache()
 
+    def test_weekly_ticket_draft_preview_propagates_not_run_contract(self) -> None:
+        jira_preview = {
+            "status": "not_run",
+            "connection_status": "not_run",
+            "credential": {"status": "not_loaded"},
+            "verification": {"status": "not_run"},
+            "network_confirmed": False,
+            "confirm_network_required": True,
+            "dry_run": True,
+            "tickets": [],
+            "ticket_count": 0,
+            "cache_status": "skipped",
+            "jql": "assignee = currentUser() AND updated >= -7d ORDER BY updated DESC",
+            "total_available": None,
+            "result_limit": 50,
+            "read_only": True,
+            "is_approval": False,
+            "summary": "Jira lookup not run. Add --confirm-network to include assigned tickets.",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with mock.patch(
+                "sg_preflight.weekly_ticket_draft.search_my_weekly_tickets",
+                return_value=jira_preview,
+            ) as search:
+                payload = build_weekly_ticket_draft(
+                    since="-7d",
+                    workspace=root,
+                    now=datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc),
+                )
+
+        search.assert_called_once_with(
+            since="-7d",
+            max_results=50,
+            confirm_network=False,
+            transport=None,
+        )
+        self.assertEqual(payload["jira_status"], "not_run")
+        self.assertEqual(payload["connection_status"], "not_run")
+        self.assertEqual(payload["verification"], {"status": "not_run"})
+        self.assertFalse(payload["network_confirmed"])
+        self.assertTrue(payload["confirm_network_required"])
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["tickets"], [])
+        self.assertEqual(payload["ticket_count"], 0)
+        self.assertEqual(payload["cache_status"], "skipped")
+        banner = "Jira lookup not run. Add --confirm-network to include assigned tickets."
+        self.assertIn(f"\n{banner}\n", payload["text"])
+        self.assertIn(f"> {banner}\n", payload["markdown"])
+        self.assertNotIn("Jira not connected", payload["text"])
+        self.assertNotIn("Couldn't reach Jira", payload["text"])
+
     def test_weekly_ticket_draft_groups_jira_tickets_and_local_activity(self) -> None:
         fixed_now = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
         fake_keyring = _FakeKeyring()
@@ -129,6 +182,7 @@ class TestWeeklyTicketDraft(unittest.TestCase):
                 with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
                     payload = build_weekly_ticket_draft(
                         workspace=root,
+                        confirm_network=True,
                         transport=_transport_with_issues(issues),
                         now=fixed_now,
                     )
@@ -162,6 +216,7 @@ class TestWeeklyTicketDraft(unittest.TestCase):
                 with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
                     payload = build_weekly_ticket_draft(
                         workspace=root,
+                        confirm_network=True,
                         transport=_transport_with_issues([]),
                         now=fixed_now,
                     )
@@ -184,6 +239,7 @@ class TestWeeklyTicketDraft(unittest.TestCase):
                 with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
                     payload = build_weekly_ticket_draft(
                         workspace=root,
+                        confirm_network=True,
                         transport=_transport_with_issues([_weekly_issue(index) for index in range(50)], total=74),
                         now=fixed_now,
                     )
@@ -208,11 +264,13 @@ class TestWeeklyTicketDraft(unittest.TestCase):
                 with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
                     capped_payload = build_weekly_ticket_draft(
                         workspace=root,
+                        confirm_network=True,
                         transport=_transport_with_issues([_weekly_issue(index) for index in range(50)]),
                         now=fixed_now,
                     )
                     uncapped_payload = build_weekly_ticket_draft(
                         workspace=root,
+                        confirm_network=True,
                         transport=_transport_with_issues([_weekly_issue(1)]),
                         now=fixed_now,
                     )
@@ -234,12 +292,17 @@ class TestWeeklyTicketDraft(unittest.TestCase):
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(root / "missing")}):
                 with mock.patch("pathlib.Path.home", return_value=root / "home"):
                     with mock.patch("pathlib.Path.cwd", return_value=root / "cwd"):
-                        payload = build_weekly_ticket_draft(workspace=root, now=fixed_now)
+                        payload = build_weekly_ticket_draft(
+                            workspace=root,
+                            confirm_network=True,
+                            now=fixed_now,
+                        )
 
         text = render_weekly_ticket_draft_text(payload)
 
         self.assertEqual(payload["jira_status"], "missing")
         self.assertIn("Jira not connected", text)
+        self.assertNotIn("Jira lookup not run", text)
         self.assertNotIn("No tickets updated this week", text)
         self.assertNotIn("Weekly Tickets unavailable", text)
         self.assertIn("delivery board", text)
@@ -269,7 +332,12 @@ class TestWeeklyTicketDraft(unittest.TestCase):
             append_activity_entry(root, verb="ran", surface="screenshot capture", profile="G65", now=fixed_now)
             with mock.patch.dict(os.environ, {"SGFX_OPERATOR_STATE_DIR": str(state_dir)}):
                 with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
-                    payload = build_weekly_ticket_draft(workspace=root, transport=transport, now=fixed_now)
+                    payload = build_weekly_ticket_draft(
+                        workspace=root,
+                        confirm_network=True,
+                        transport=transport,
+                        now=fixed_now,
+                    )
 
         text = render_weekly_ticket_draft_text(payload)
         markdown = render_weekly_ticket_draft_markdown(payload)
@@ -277,6 +345,7 @@ class TestWeeklyTicketDraft(unittest.TestCase):
         self.assertEqual(payload["jira_status"], "failed")
         for rendered in (text, markdown):
             self.assertIn("Couldn't reach Jira", rendered)
+            self.assertNotIn("Jira lookup not run", rendered)
             self.assertIn("screenshot capture", rendered)
             self.assertNotIn("jira.cc.bmwgroup.net", rendered)
             self.assertNotIn("10.20.30.40", rendered)
@@ -297,6 +366,7 @@ class TestWeeklyTicketDraft(unittest.TestCase):
                 with mock.patch.dict(sys.modules, {"keyring": fake_keyring}):
                     payload = build_weekly_ticket_draft(
                         workspace=root,
+                        confirm_network=True,
                         transport=_transport_with_issues([]),
                         now=fixed_now,
                     )

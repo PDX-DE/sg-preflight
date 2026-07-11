@@ -107,28 +107,5 @@ def handle_digest_command(args: argparse.Namespace, parser: argparse.ArgumentPar
             common._emit_text(common.render_team_digest_board_text(payload), args)
         return 0
 
-    if args.command == "digest":
-        digest_root = common._resolve_workspace(args)
-        try:
-            if args.digest_command == "weekly-tickets":
-                payload = common.build_weekly_ticket_draft(
-                    since=args.since,
-                    workspace=digest_root,
-                )
-            else:
-                parser.error(f"Unhandled digest command: {args.digest_command}")
-                return 1
-        except Exception as exc:
-            print(common._console_safe(f"weekly-tickets failed: {exc}"), file=sys.stderr)
-            return 1
-        output_format = common._resolve_render_format(args, parser)
-        if output_format == "json":
-            common._emit_json(payload, args)
-        elif output_format == "markdown":
-            common._emit_text(common.render_weekly_ticket_draft_markdown(payload), args)
-        else:
-            common._emit_text(common.render_weekly_ticket_draft_text(payload), args)
-        return 0
-
     parser.error(f"Unhandled digest command: {args.command}")
     return 1

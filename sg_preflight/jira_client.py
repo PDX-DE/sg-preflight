@@ -16,8 +16,8 @@ from urllib.parse import quote, urlencode
 
 
 JIRA_POSTING_BANNER = (
-    "Jira posting is opt-in and confirmation-gated. SGFX does not auto-post; "
-    "every post requires an explicit --confirm flag."
+    "Jira REST access is opt-in and confirmation-gated. SGFX does not auto-connect or auto-post; "
+    "network access and writes require separate confirmation."
 )
 DEFAULT_BASE_URL_ENV = "BMW_JIRA_BASE_URL"
 DEFAULT_TOKEN_ENV = "BMW_JIRA_PAT"
@@ -102,7 +102,10 @@ def default_jira_credentials_path(state_dir: Path | str | None = None) -> Path:
 def _require_https(url: str) -> str:
     cleaned = str(url or "").strip().rstrip("/")
     if not cleaned.lower().startswith("https://"):
-        raise ConfigError("Jira URL must use HTTPS. Run `sgfx-preflight.exe jira register --jira-url https://...`.")
+        raise ConfigError(
+            "Jira URL must use HTTPS. Run `sgfx-preflight.exe integration jira register "
+            "--jira-url https://... --confirm-local-write`."
+        )
     return cleaned
 
 
@@ -137,7 +140,10 @@ def _load_jira_pat_from_keyring(jira_url: str) -> str:
         raise ConfigError("Jira PAT keychain is unavailable or locked; cannot load Jira credentials.") from exc
     token_value = str(token or "").strip()
     if not token_value:
-        raise ConfigError("Jira PAT is missing from the OS keychain. Run `sgfx-preflight.exe jira register`.")
+        raise ConfigError(
+            "Jira PAT is missing from the OS keychain. Run "
+            "`sgfx-preflight.exe integration jira register --confirm-local-write`."
+        )
     return token_value
 
 
@@ -195,13 +201,14 @@ def load_jira_credentials() -> dict[str, str]:
         if not configured_url:
             raise ConfigError(f"Jira credential file is missing jira_url: {path_label}")
         jira_url = _require_https(configured_url)
-        pat = _migrate_legacy_jira_pat(path, payload, jira_url)
+        pat = _legacy_pat_from_payload(payload)
         if not pat:
             pat = _load_jira_pat_from_keyring(jira_url)
         return {"jira_url": jira_url, "pat": pat, "path": str(path)}
     checked = ", ".join(_display_operator_path(path) for path in jira_credentials_candidate_paths())
     raise ConfigError(
-        "Jira PAT is missing. Run `sgfx-preflight.exe jira register`; the URL config is stored at "
+        "Jira PAT is missing. Run `sgfx-preflight.exe integration jira register --confirm-local-write`; "
+        "the URL config is stored at "
         f"{_display_operator_path(default_jira_credentials_path())} and the PAT is stored in the OS keychain. "
         f"Checked: {checked}"
     )
@@ -256,13 +263,55 @@ def redact_jira_credentials(credentials: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def _unloaded_jira_credential() -> dict[str, Any]:
+    return {
+        "status": "not_loaded",
+        "jira_url": "",
+        "credential_path": "",
+        "pat_length": 0,
+        "pat_fingerprint": "",
+        "pat_loaded": False,
+    }
+
+
+def _jira_verification_not_run(ticket: str = "") -> dict[str, Any]:
+    ticket_key = str(ticket or "").strip()
+    return {
+        "status": "not_run",
+        "connection": {
+            "status": "not_run",
+            "http_status": 0,
+            "detail": "Network confirmation was not provided.",
+        },
+        "ticket": {
+            "status": "not_run",
+            "http_status": 0,
+            "detail": "Ticket verification was not requested." if not ticket_key else "Network confirmation was not provided.",
+        },
+    }
+
+
 def jira_status(
     *,
     ticket: str = "",
     api_version: str = DEFAULT_API_VERSION,
+    confirm_network: bool = False,
     transport: Transport | None = None,
     timeout_seconds: int = 30,
 ) -> dict[str, Any]:
+    if not confirm_network:
+        return {
+            "status": "preview",
+            "connection_status": "not_run",
+            "ticket_status": "not_run",
+            "credential": _unloaded_jira_credential(),
+            "verification": _jira_verification_not_run(ticket),
+            "dry_run": True,
+            "confirm_network_required": True,
+            "network_confirmed": False,
+            "guard": "No Jira credentials were loaded and no request was sent. Re-run with --confirm-network.",
+            "is_approval": False,
+        }
     try:
         credentials = load_jira_credentials()
     except ConfigError as exc:
@@ -271,6 +320,10 @@ def jira_status(
             "connection_status": "not_run",
             "ticket_status": "not_run",
             "credential": {"status": "missing", "remediation": str(exc)},
+            "verification": _jira_verification_not_run(ticket),
+            "dry_run": True,
+            "confirm_network_required": False,
+            "network_confirmed": True,
             "is_approval": False,
         }
 
@@ -287,6 +340,10 @@ def jira_status(
         "ticket_status": verification["ticket"]["status"],
         "credential": redact_jira_credentials(credentials),
         "verification": verification,
+        "dry_run": True,
+        "confirm_network_required": False,
+        "network_confirmed": True,
+        "guard": "Jira verification GET requests completed; no Jira write was sent.",
         "is_approval": False,
     }
 
@@ -522,12 +579,34 @@ def search_my_weekly_tickets(
     api_version: str = DEFAULT_API_VERSION,
     max_results: int = JIRA_MY_WEEKLY_TICKETS_MAX_RESULTS,
     cache_seconds: float = JIRA_MY_TICKETS_CACHE_SECONDS,
+    confirm_network: bool = False,
     transport: Transport | None = None,
     timeout_seconds: int = 30,
 ) -> dict[str, Any]:
+    preview_result_limit = min(max(1, int(max_results)), 50)
+    jql = build_my_weekly_ticket_jql(since)
+    if not confirm_network:
+        return {
+            "status": "not_run",
+            "connection_status": "not_run",
+            "credential": _unloaded_jira_credential(),
+            "verification": _jira_verification_not_run(),
+            "network_confirmed": False,
+            "confirm_network_required": True,
+            "dry_run": True,
+            "ticket_count": 0,
+            "cache_status": "skipped",
+            "tickets": [],
+            "jql": jql,
+            "total_available": None,
+            "result_limit": preview_result_limit,
+            "read_only": True,
+            "is_approval": False,
+            "summary": "Jira lookup not run. Add --confirm-network to include assigned tickets.",
+        }
+
     version = _normalize_api_version(api_version)
     result_limit = max(1, min(int(max_results or JIRA_MY_WEEKLY_TICKETS_MAX_RESULTS), 50))
-    jql = build_my_weekly_ticket_jql(since)
     try:
         credentials = load_jira_credentials()
     except ConfigError as exc:
@@ -538,7 +617,16 @@ def search_my_weekly_tickets(
             "tickets": [],
             "summary": "Weekly Tickets unavailable. Register operator-local Jira credentials before using this draft.",
             "credential": {"status": "missing", "remediation": str(exc)},
-            "settings_hint": "Run sgfx-preflight.exe jira register from the operator machine.",
+            "verification": _jira_verification_not_run(),
+            "connection_status": "not_run",
+            "network_confirmed": True,
+            "confirm_network_required": False,
+            "dry_run": True,
+            "total_available": None,
+            "result_limit": result_limit,
+            "settings_hint": (
+                "Run sgfx-preflight.exe integration jira register --confirm-local-write from the operator machine."
+            ),
             "cache_status": "skipped",
             "read_only": True,
             "is_approval": False,
@@ -578,7 +666,28 @@ def search_my_weekly_tickets(
             "summary": "Weekly Tickets unavailable: couldn't reach Jira this time.",
             "detail": _preview(str(exc), limit=200),
             "credential": redact_jira_credentials(credentials),
-            "settings_hint": "Check Jira connection from the local setup page or run sgfx-preflight.exe jira status.",
+            "verification": {
+                "status": "failed",
+                "connection": {
+                    "status": "failed",
+                    "http_status": 0,
+                    "detail": "Jira weekly ticket GET failed.",
+                },
+                "ticket": {
+                    "status": "not_run",
+                    "http_status": 0,
+                    "detail": "Ticket verification was not requested.",
+                },
+            },
+            "connection_status": "failed",
+            "network_confirmed": True,
+            "confirm_network_required": False,
+            "dry_run": True,
+            "total_available": None,
+            "result_limit": result_limit,
+            "settings_hint": (
+                "Run sgfx-preflight.exe integration jira status --confirm-network from the operator machine."
+            ),
             "cache_status": "miss",
             "read_only": True,
             "is_approval": False,
@@ -600,6 +709,23 @@ def search_my_weekly_tickets(
                 else "No assigned Jira tickets were updated in the selected week."
             ),
             "credential": redact_jira_credentials(credentials),
+            "verification": {
+                "status": "available",
+                "connection": {
+                    "status": "available",
+                    "http_status": response.get("http_status", 0),
+                    "detail": "Jira weekly ticket GET completed.",
+                },
+                "ticket": {
+                    "status": "not_run",
+                    "http_status": 0,
+                    "detail": "Ticket verification was not requested.",
+                },
+            },
+            "connection_status": "available",
+            "network_confirmed": True,
+            "confirm_network_required": False,
+            "dry_run": True,
             "http_status": response.get("http_status", 0),
             "cache_status": "miss",
             "read_only": True,
@@ -667,6 +793,7 @@ def post_jira_comment_action(
     body: str,
     *,
     auto_confirm: bool = False,
+    confirm_network: bool = False,
     api_version: str = DEFAULT_API_VERSION,
     source: str = "",
     section: str = "",
@@ -676,6 +803,20 @@ def post_jira_comment_action(
     ticket = _require_ticket(issue_key)
     comment = _require_body(body)
     version = _normalize_api_version(api_version)
+    common = _jira_action_common(
+        action="add-comment",
+        ticket=ticket,
+        endpoint="",
+        body_preview=_preview(comment, limit=400),
+        source=source,
+        section=section,
+    )
+    common.update({"body": comment, "body_length": len(comment)})
+    if auto_confirm and not confirm_network:
+        raise JiraPostError("Jira write confirmation requires --confirm-network.")
+    if not confirm_network:
+        return common
+
     credentials = load_jira_credentials()
     endpoint = _comment_endpoint(credentials["jira_url"], ticket, version)
     verification = verify_jira_access(
@@ -691,6 +832,7 @@ def post_jira_comment_action(
         endpoint=endpoint,
         credentials=credentials,
         verification=verification,
+        network_confirmed=True,
         body_preview=_preview(comment, limit=400),
         source=source,
         section=section,
@@ -715,6 +857,7 @@ def update_jira_issue_action(
     fields: dict[str, Any],
     *,
     auto_confirm: bool = False,
+    confirm_network: bool = False,
     api_version: str = DEFAULT_API_VERSION,
     transport: Transport | None = None,
     timeout_seconds: int = 30,
@@ -723,6 +866,19 @@ def update_jira_issue_action(
     if not isinstance(fields, dict) or not fields:
         raise JiraPostError("Jira update fields must be a non-empty JSON object.")
     version = _normalize_api_version(api_version)
+    payload = fields if "fields" in fields else {"fields": fields}
+    common = _jira_action_common(
+        action="update-issue",
+        ticket=ticket,
+        endpoint="",
+        fields_preview=", ".join(sorted(str(key) for key in payload.get("fields", {}).keys())),
+    )
+    common["fields"] = payload
+    if auto_confirm and not confirm_network:
+        raise JiraPostError("Jira write confirmation requires --confirm-network.")
+    if not confirm_network:
+        return common
+
     credentials = load_jira_credentials()
     endpoint = _issue_endpoint(credentials["jira_url"], ticket, version)
     verification = verify_jira_access(
@@ -732,13 +888,13 @@ def update_jira_issue_action(
         transport=transport,
         timeout_seconds=timeout_seconds,
     )
-    payload = fields if "fields" in fields else {"fields": fields}
     common = _jira_action_common(
         action="update-issue",
         ticket=ticket,
         endpoint=endpoint,
         credentials=credentials,
         verification=verification,
+        network_confirmed=True,
         fields_preview=", ".join(sorted(str(key) for key in payload.get("fields", {}).keys())),
     )
     common["fields"] = payload
@@ -761,6 +917,7 @@ def attach_jira_file_action(
     file_path: Path | str,
     *,
     auto_confirm: bool = False,
+    confirm_network: bool = False,
     api_version: str = DEFAULT_API_VERSION,
     transport: Transport | None = None,
     timeout_seconds: int = 30,
@@ -770,6 +927,18 @@ def attach_jira_file_action(
     if not path.is_file():
         raise JiraPostError(f"Attachment file was not found: {path}")
     version = _normalize_api_version(api_version)
+    attachment = {"name": path.name, "path": str(path), "size_bytes": path.stat().st_size}
+    common = _jira_action_common(
+        action="attach-file",
+        ticket=ticket,
+        endpoint="",
+        attachments=[attachment],
+    )
+    if auto_confirm and not confirm_network:
+        raise JiraPostError("Jira write confirmation requires --confirm-network.")
+    if not confirm_network:
+        return common
+
     credentials = load_jira_credentials()
     endpoint = _attachments_endpoint(credentials["jira_url"], ticket, version)
     verification = verify_jira_access(
@@ -779,13 +948,13 @@ def attach_jira_file_action(
         transport=transport,
         timeout_seconds=timeout_seconds,
     )
-    attachment = {"name": path.name, "path": str(path), "size_bytes": path.stat().st_size}
     common = _jira_action_common(
         action="attach-file",
         ticket=ticket,
         endpoint=endpoint,
         credentials=credentials,
         verification=verification,
+        network_confirmed=True,
         attachments=[attachment],
     )
     if not auto_confirm:
@@ -879,6 +1048,7 @@ def post_jira_comment(
     token_env: str = DEFAULT_TOKEN_ENV,
     api_version: str = DEFAULT_API_VERSION,
     confirm: bool = False,
+    confirm_network: bool = False,
     source: str = "",
     section: str = "",
     transport: Transport | None = None,
@@ -889,10 +1059,6 @@ def post_jira_comment(
         raise JiraPostError("Jira ticket key is required.")
     comment = _require_body(body)
     version = _normalize_api_version(api_version)
-    raw_base_url = str(base_url or os.environ.get(base_url_env, "")).strip()
-    configured_base_url = _require_https(raw_base_url) if raw_base_url else ""
-    configured_token = str(token or os.environ.get(token_env, "")).strip()
-    endpoint = _comment_endpoint(configured_base_url, ticket, version) if configured_base_url else ""
 
     common = {
         "ticket": ticket,
@@ -900,28 +1066,62 @@ def post_jira_comment(
         "posted": False,
         "dry_run": True,
         "confirm_required": True,
+        "confirm_network_required": True,
+        "network_confirmed": False,
         "note": JIRA_POSTING_BANNER,
-        "guard": "No Jira request was sent. Re-run with --confirm to post this exact comment.",
+        "guard": "No Jira credentials were loaded and no request was sent. Re-run with --confirm-network first.",
         "api_version": version,
         "base_url_env": base_url_env,
         "token_env": token_env,
-        "auth_configured": bool(configured_token),
-        "endpoint": endpoint,
+        "auth_configured": False,
+        "endpoint": "",
+        "credential": _unloaded_jira_credential(),
+        "verification": _jira_verification_not_run(ticket),
         "source": source,
         "section": section,
         "body": comment,
         "body_preview": _preview(comment),
         "body_length": len(comment),
     }
+    if confirm and not confirm_network:
+        raise JiraPostError("Jira write confirmation requires --confirm-network.")
+    if not confirm_network:
+        return common
+
+    raw_base_url = str(base_url or os.environ.get(base_url_env, "")).strip()
+    configured_base_url = _require_https(raw_base_url) if raw_base_url else ""
+    configured_token = str(token or os.environ.get(token_env, "")).strip()
+    if not configured_base_url:
+        raise JiraPostError(
+            f"Jira base URL is required for --confirm-network. Set {base_url_env} or pass --base-url."
+        )
+    if not configured_token:
+        raise JiraPostError(f"Jira PAT is required for --confirm-network. Set {token_env} or pass --token-env.")
+
+    endpoint = _comment_endpoint(configured_base_url, ticket, version)
+    credentials = {"jira_url": configured_base_url, "pat": configured_token, "path": ""}
+    verification = verify_jira_access(
+        ticket=ticket,
+        credentials=credentials,
+        api_version=version,
+        transport=transport,
+        timeout_seconds=timeout_seconds,
+    )
+    common.update(
+        {
+            "confirm_network_required": False,
+            "network_confirmed": True,
+            "guard": "Jira verification GET requests completed; no Jira write was sent.",
+            "auth_configured": True,
+            "endpoint": endpoint,
+            "credential": redact_jira_credentials(credentials),
+            "verification": verification,
+        }
+    )
     if not confirm:
         return common
 
-    if not configured_base_url:
-        raise JiraPostError(f"Jira base URL is required for --confirm. Set {base_url_env} or pass --base-url.")
-    if not configured_token:
-        raise JiraPostError(f"Jira PAT is required for --confirm. Set {token_env} or pass --token-env.")
-
-    endpoint = _comment_endpoint(configured_base_url, ticket, version)
+    _require_available_verification(verification)
     payload = _comment_payload(comment, version)
     request = urllib_request.Request(
         endpoint,
@@ -951,7 +1151,9 @@ def post_jira_comment(
             "posted": True,
             "dry_run": False,
             "confirm_required": False,
-            "guard": "Comment posted after explicit --confirm.",
+            "confirm_network_required": False,
+            "network_confirmed": True,
+            "guard": "Comment posted after explicit network and write confirmation.",
             "endpoint": endpoint,
             "http_status": http_status,
             "posted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -976,7 +1178,10 @@ def render_jira_post_text(payload: dict[str, Any]) -> str:
         suffix = f" section {section}" if section else ""
         lines.append(f"Source: {source}{suffix}")
     if payload.get("dry_run"):
-        lines.append("Dry run: no Jira request was sent.")
+        if payload.get("network_confirmed"):
+            lines.append("Dry run: Jira verification completed; no Jira write was sent.")
+        else:
+            lines.append("Dry run: no Jira request was sent.")
     else:
         lines.append(f"HTTP status: {payload.get('http_status', '')}")
     lines.extend(["", "Comment body:", str(payload.get("body") or "")])
@@ -1029,7 +1234,7 @@ def render_jira_action_text(payload: dict[str, Any]) -> str:
             lines.append(f"Ticket check: {ticket.get('status', '')}")
     confirmation = payload.get("confirmation", {})
     if isinstance(confirmation, dict):
-        lines.extend(["", "Post to Jira?"])
+        lines.extend(["", str(confirmation.get("title") or "Post to Jira?")])
         body_preview = str(confirmation.get("body_preview") or "")
         if body_preview:
             lines.append(f"Body preview: {body_preview}")
@@ -1042,7 +1247,10 @@ def render_jira_action_text(payload: dict[str, Any]) -> str:
             lines.append(f"Attachments: {names}")
         lines.append(str(confirmation.get("warning") or ""))
     if payload.get("dry_run"):
-        lines.append("No Jira request was sent.")
+        if payload.get("network_confirmed"):
+            lines.append("No Jira write request was sent.")
+        else:
+            lines.append("No Jira request was sent.")
     elif payload.get("http_status"):
         lines.append(f"HTTP status: {payload.get('http_status')}")
     return "\n".join(line for line in lines if line != "")
@@ -1273,24 +1481,29 @@ def _jira_action_common(
     action: str,
     ticket: str,
     endpoint: str,
-    credentials: dict[str, str],
-    verification: dict[str, Any],
+    credentials: dict[str, str] | None = None,
+    verification: dict[str, Any] | None = None,
+    network_confirmed: bool = False,
     body_preview: str = "",
     attachments: list[dict[str, Any]] | None = None,
     fields_preview: str = "",
     source: str = "",
     section: str = "",
 ) -> dict[str, Any]:
+    credential = redact_jira_credentials(credentials) if credentials else _unloaded_jira_credential()
+    verification_payload = verification or _jira_verification_not_run(ticket)
     return {
         "status": "skipped",
         "posted": False,
         "dry_run": True,
         "confirm_required": True,
+        "confirm_network_required": not network_confirmed,
+        "network_confirmed": network_confirmed,
         "ticket": ticket,
         "action": action,
         "endpoint": endpoint,
-        "credential": redact_jira_credentials(credentials),
-        "verification": verification,
+        "credential": credential,
+        "verification": verification_payload,
         "confirmation": {
             "title": "Post to Jira?",
             "ticket": ticket,
@@ -1300,13 +1513,24 @@ def _jira_action_common(
             "fields_preview": fields_preview,
             "endpoint": endpoint,
             "verified": [
-                {"label": "PAT loaded", "status": "available"},
-                {"label": "Connection successful", "status": verification.get("connection", {}).get("status", "unknown")},
-                {"label": "Ticket exists", "status": verification.get("ticket", {}).get("status", "unknown")},
+                {"label": "PAT loaded", "status": "available" if credential.get("pat_loaded") else "not_run"},
+                {
+                    "label": "Connection successful",
+                    "status": verification_payload.get("connection", {}).get("status", "unknown"),
+                },
+                {
+                    "label": "Ticket exists",
+                    "status": verification_payload.get("ticket", {}).get("status", "unknown"),
+                },
             ],
             "warning": "This is reversible only by another operator action.",
         },
-        "guard": "No Jira request was sent. Re-run with --auto-confirm only after reviewing this preview.",
+        "guard": (
+            "Jira verification GET requests completed; no Jira write was sent. Re-run with --confirm-network "
+            "and --auto-confirm only after reviewing this preview."
+            if network_confirmed
+            else "No Jira credentials were loaded and no request was sent. Re-run with --confirm-network first."
+        ),
         "source": source,
         "section": section,
         "body_preview": body_preview,
@@ -1324,7 +1548,9 @@ def _recorded_action_result(common: dict[str, Any], response: dict[str, Any]) ->
             "posted": True,
             "dry_run": False,
             "confirm_required": False,
-            "guard": "Jira action executed after explicit --auto-confirm.",
+            "confirm_network_required": False,
+            "network_confirmed": True,
+            "guard": "Jira action executed after explicit network and write confirmation.",
             "http_status": response.get("http_status", 0),
             "posted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "response": _response_summary(response.get("response")),

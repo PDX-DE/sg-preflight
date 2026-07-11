@@ -19,7 +19,11 @@ JIRA_CAVEAT = (
     "Starting point from Jira: tickets assigned to you and updated this week. "
     "Add tickets you worked on but are not currently assigned, and remove any that were only touched by someone else."
 )
-OFFLINE_BANNER = "Jira not connected - run `jira register` to auto-pull tickets; meanwhile use the SGFX activity below."
+JIRA_NOT_RUN_BANNER = "Jira lookup not run. Add --confirm-network to include assigned tickets."
+OFFLINE_BANNER = (
+    "Jira not connected - run `integration jira register --confirm-local-write` to auto-pull tickets; "
+    "meanwhile use the SGFX activity below."
+)
 JIRA_UNAVAILABLE_BANNER = (
     "Couldn't reach Jira just now - use the activity below as a starting point and try again once you're back online."
 )
@@ -29,6 +33,8 @@ _PART_B_EXCLUDED_SURFACES = frozenset({"digest weekly-tickets"})
 
 def _part_a_banner(jira_status: str) -> str:
     status = str(jira_status or "").strip().lower()
+    if status == "not_run":
+        return JIRA_NOT_RUN_BANNER
     if status == "missing":
         return OFFLINE_BANNER
     if status not in {"available", ""}:
@@ -40,12 +46,18 @@ def build_weekly_ticket_draft(
     *,
     since: str = "startOfWeek",
     workspace: Path | str | None = None,
+    confirm_network: bool = False,
     transport: Any | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     current = _coerce_now(now)
     root = Path(workspace).resolve() if workspace is not None else Path.cwd().resolve()
-    jira_payload = search_my_weekly_tickets(since=since, max_results=50, transport=transport)
+    jira_payload = search_my_weekly_tickets(
+        since=since,
+        max_results=50,
+        confirm_network=confirm_network,
+        transport=transport,
+    )
     tickets = [dict(item) for item in jira_payload.get("tickets", []) if isinstance(item, dict)]
     total_available = _total_available(jira_payload.get("total_available"))
     result_limit = _total_available(jira_payload.get("result_limit")) or 50
@@ -62,6 +74,14 @@ def build_weekly_ticket_draft(
         "jira_status": str(jira_payload.get("status", "unknown")),
         "jira_summary": str(jira_payload.get("summary", "")),
         "jira_jql": str(jira_payload.get("jql", "")),
+        "connection_status": str(jira_payload.get("connection_status", "not_run")),
+        "verification": jira_payload.get("verification", {}),
+        "network_confirmed": bool(jira_payload.get("network_confirmed", False)),
+        "confirm_network_required": bool(jira_payload.get("confirm_network_required", False)),
+        "dry_run": bool(jira_payload.get("dry_run", True)),
+        "ticket_count": int(jira_payload.get("ticket_count", len(tickets)) or 0),
+        "tickets": tickets,
+        "cache_status": str(jira_payload.get("cache_status", "skipped")),
         "total_available": total_available,
         "truncated": truncated,
         "truncation_note": truncation_note,

@@ -20,7 +20,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 - Operator-local template store: save, show, run, list, and delete local command templates without sharing them or posting them anywhere.
 - Clean dashboard mode: `python -m sg_preflight dashboard run --ui-mode clean` launches the neutral NiceGUI work view from source. Grafiks mode launches the experimental C++ cinematic shell if it is installed; otherwise it prints a WIP hint and tells the operator to use Clean for now. Both modes are local evidence views and do not change backend QA logic.
 - OpenHTF station MVP: local station surface for delivery documentation, screenshot test state, daily digest, and manual review companion phases. Internal OpenHTF execution state is evidence status only; manual review remains required.
-- Confirmation-gated Jira posting remains an optional CLI integration. The default dashboard and Quality-Hero report flow do not load Jira or offer report attachments.
+- Confirmation-gated Jira integration: optional advanced actions, including the weekly ticket draft, live under `integration jira`. The default dashboard and Quality-Hero report flow do not load Jira or offer report attachments.
 - Operator docs: concise CLI and JSON workflow guides are included under `docs/`.
 
 ## Included Files
@@ -93,10 +93,10 @@ Use these from the bundle root after the packaged executable is present:
 ```powershell
 .\dist\sgfx-preflight\sgfx-preflight.exe full-qa-pass run --profile G65 --workspace C:\repositories\trunk --format json
 .\dist\sgfx-preflight\sgfx-preflight.exe delivery-workbook trigger --profile F70 --workspace C:\repositories\trunk --format json
-.\dist\sgfx-preflight\sgfx-preflight.exe jira post-comment --ticket IDCEVODEV-1009239 --body "Local QA evidence is ready for review." --format json
+.\dist\sgfx-preflight\sgfx-preflight.exe integration jira post-comment --ticket IDCEVODEV-1009239 --body "Local QA evidence is ready for review." --format json
 ```
 
-The Jira example previews by default. Review the preview, then rerun the same command with `--auto-confirm` only when posting is intended.
+The Jira example is a pure preview: it does not load credentials or call Jira. Add `--confirm-network` to permit verification requests without writing. A post requires both `--confirm-network` and `--auto-confirm` on the same command.
 
 ## Building the Windows Executable
 
@@ -147,19 +147,19 @@ Jira REST access is opt-in and confirmation-gated. The operator-local config is 
 
 The personal access token is stored in the Windows Credential Manager and is never written to the JSON file.
 
-Check the local credential and ticket visibility with a read-only request:
+Preview a credential and ticket-visibility check without loading credentials or calling Jira:
 
 ```powershell
-python -m sg_preflight jira status --ticket IDCEVODEV-1009244 --format json
+python -m sg_preflight integration jira status --ticket IDCEVODEV-1009244 --format json
 ```
 
-Mutating commands preview first and do not send a Jira write request unless the operator reruns the exact action with `--auto-confirm`:
+Build the local weekly draft without loading credentials or calling Jira:
 
 ```powershell
-python -m sg_preflight jira post-comment --ticket IDCEVODEV-1009244 --body "Preview smoke." --format json
+python -m sg_preflight integration jira weekly-tickets --workspace C:\repositories\trunk --format markdown
 ```
 
-The legacy `jira post` dry-run command remains available for wording-file previews; new Jira write actions use `post-comment`, `update-issue`, and `attach-file`.
+Add `--confirm-network` to either read-only command to permit its GET requests. Mutating actions also preview first and require both the network gate and their named write confirmation before sending a write. Register credentials only with `integration jira register --confirm-local-write`.
 
 ## Tests
 
@@ -215,7 +215,7 @@ The default dashboard and evidence flows read operator-local files, render them 
 
 Where the tool surfaces "suggested" evidence — for example the per-step evidence hints in the Manual Review Companion — the suggestion comes from a deterministic local filesystem probe (file exists, directory has these files, workbook has these rows). The operator records every verdict; the tool never pre-decides.
 
-The separate Jira CLI is the explicit network boundary. It stays default-off behind an `--auto-confirm` flag; the default mode is dry-run. A real post additionally requires operator-provided Jira base URL and PAT.
+Advanced `integration jira` previews load no credentials and make no network request. `--confirm-network` permits Jira verification and weekly-ticket GETs. A Jira write also needs its action-specific confirmation.
 
 Manual review remains required. Decision: not approval — evidence only.
 BMW Git access is read-only. SGFX never modifies BMW source.

@@ -839,7 +839,7 @@ def _check_jira_pat() -> SetupDoctorItem:
             category="Optional",
             path=path,
             detail="Jira writeback and inline ticket cards stay optional.",
-            fix="Run sgfx-preflight.exe jira register only if you want Jira integration. The doctor checks the URL config path only; the PAT stays in the OS keychain.",
+            fix="Run sgfx-preflight.exe integration jira register --confirm-local-write only if you want Jira integration. The doctor checks the URL config path only; the PAT stays in the OS keychain.",
         )
     return _found_item(
         key="jira_pat",

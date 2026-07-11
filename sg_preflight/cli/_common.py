@@ -758,10 +758,18 @@ def _activity_verb(raw_args: list[str]) -> str:
     return "read"
 
 
+def _is_jira_integration_invocation(raw_args: list[str]) -> bool:
+    return len(raw_args) > 1 and raw_args[0:2] == ["integration", "jira"]
+
+
 def _record_cli_activity(raw_args: list[str], exit_code: int) -> None:
     # Skip self-recording for the observability surfaces themselves so they do
     # not pollute the very signal an operator is trying to inspect.
-    if not raw_args or raw_args[0] in {"activity-log", "live-state", "session-log"}:
+    if (
+        not raw_args
+        or raw_args[0] in {"activity-log", "live-state", "session-log"}
+        or _is_jira_integration_invocation(raw_args)
+    ):
         return
     import os
 
@@ -793,7 +801,7 @@ def _session_log_workspace(raw_args: list[str]) -> Path:
 
 
 def _start_cli_session_log(raw_args: list[str]) -> None:
-    if raw_args and raw_args[0] == "session-log":
+    if (raw_args and raw_args[0] == "session-log") or _is_jira_integration_invocation(raw_args):
         return
     try:
         from sg_preflight.session_log import event as session_event
@@ -814,7 +822,7 @@ def _start_cli_session_log(raw_args: list[str]) -> None:
 
 
 def _record_cli_session_event(raw_args: list[str], exit_code: int) -> None:
-    if raw_args and raw_args[0] == "session-log":
+    if (raw_args and raw_args[0] == "session-log") or _is_jira_integration_invocation(raw_args):
         return
     try:
         from sg_preflight.session_log import event as session_event
@@ -892,11 +900,6 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
         "quality-hero-report",
         "Generate Markdown or HTML review reports from local evidence.",
         r"sgfx-preflight.exe quality-hero-report generate --profile G70 --workspace C:\repositories\trunk --format html",
-    ),
-    (
-        "jira",
-        "Preview or confirmation-post Jira comments and attachments.",
-        'sgfx-preflight.exe jira post-comment --ticket IDCEVODEV-1009239 --body "Local QA evidence is ready for review." --format json',
     ),
     (
         "daily-digest",
@@ -1006,7 +1009,6 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
     ("screenshot-triage", "Run deterministic screenshot triage.", r"sgfx-preflight.exe screenshot-triage --profile F70 --workspace C:\repositories\trunk --json"),
     ("materialize", "Create a normalized validation bundle from SG-shaped inputs.", r"sgfx-preflight.exe materialize --output-bundle out\bundle --repo-root C:\repositories\trunk"),
     ("probe", "Discover SG-style repository roots and likely inputs.", r"sgfx-preflight.exe probe --search-root C:\repositories\trunk"),
-    ("digest", "Build copy-ready local digest drafts.", r"sgfx-preflight.exe digest weekly-tickets --workspace C:\repositories\trunk --format markdown"),
     # internal milestone: `demo-good`, `demo-broken`, `ui`, `retro-extract` subcommands stay
     # registered for backward compat but are hidden from the operator-facing
     # action map. They're dev / legacy entries that don't belong in the daily-
@@ -1014,57 +1016,67 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
 )
 
 
+_MAIN_ACTION_EXAMPLES = {command: example for command, _description, example in _MAIN_ACTION_MAP}
+
+
 _COMMAND_EXAMPLES: dict[str, tuple[str, ...]] = {
-    "full-qa-pass": (_MAIN_ACTION_MAP[0][2],),
-    "full-qa-pass run": (_MAIN_ACTION_MAP[0][2],),
-    "delivery-workbook": (_MAIN_ACTION_MAP[4][2],),
-    "delivery-workbook trigger": (_MAIN_ACTION_MAP[4][2],),
-    "delivery-documentation": (_MAIN_ACTION_MAP[5][2],),
-    "delivery-documentation read": (_MAIN_ACTION_MAP[5][2],),
-    "digest": (r"sgfx-preflight.exe digest weekly-tickets --workspace C:\repositories\trunk --format markdown",),
-    "digest weekly-tickets": (
-        r"sgfx-preflight.exe digest weekly-tickets --workspace C:\repositories\trunk --format markdown",
+    "full-qa-pass": (_MAIN_ACTION_EXAMPLES["full-qa-pass"],),
+    "full-qa-pass run": (_MAIN_ACTION_EXAMPLES["full-qa-pass"],),
+    "delivery-workbook": (_MAIN_ACTION_EXAMPLES["delivery-workbook"],),
+    "delivery-workbook trigger": (_MAIN_ACTION_EXAMPLES["delivery-workbook"],),
+    "delivery-documentation": (_MAIN_ACTION_EXAMPLES["delivery-documentation"],),
+    "delivery-documentation read": (_MAIN_ACTION_EXAMPLES["delivery-documentation"],),
+    "integration": (
+        "sgfx-preflight.exe integration jira status --format json",
     ),
-    "jira": (
-        "sgfx-preflight.exe jira status --ticket IDCEVODEV-1009244 --format json",
-        _MAIN_ACTION_MAP[8][2],
+    "integration jira": (
+        "sgfx-preflight.exe integration jira status --format json",
     ),
-    "jira post-comment": (_MAIN_ACTION_MAP[8][2],),
-    "jira status": ("sgfx-preflight.exe jira status --ticket IDCEVODEV-1009244 --format json",),
-    "jira register": (r"sgfx-preflight.exe jira register --jira-url https://jira.cc.bmwgroup.net --pat-file C:\secure\jira-pat.txt --format json",),
-    "jira update-issue": ('sgfx-preflight.exe jira update-issue --ticket IDCEVODEV-1009239 --fields "{""fields"":{""labels"":[""sgfx""]}}" --format json',),
-    "jira attach-file": (r"sgfx-preflight.exe jira attach-file --ticket IDCEVODEV-1009239 --file out\review.md --format json",),
-    "screenshot-review-viewer": (_MAIN_ACTION_MAP[3][2],),
-    "screenshot-review-viewer build": (_MAIN_ACTION_MAP[3][2],),
-    "dashboard": (_MAIN_ACTION_MAP[1][2], r"sgfx-preflight.exe dashboard run --workspace C:\repositories\trunk --ui-mode grafiks"),
-    "dashboard run": (_MAIN_ACTION_MAP[1][2],),
+    "integration jira weekly-tickets": (
+        r"sgfx-preflight.exe integration jira weekly-tickets --workspace C:\repositories\trunk --format markdown",
+    ),
+    "integration jira post-comment": (
+        'sgfx-preflight.exe integration jira post-comment --ticket IDCEVODEV-1009239 --body "Local QA evidence is ready for review." --format json',
+    ),
+    "integration jira status": (
+        "sgfx-preflight.exe integration jira status --ticket IDCEVODEV-1009244 --format json",
+    ),
+    "integration jira register": (
+        r"sgfx-preflight.exe integration jira register --jira-url https://jira.cc.bmwgroup.net --pat-file C:\secure\jira-pat.txt --confirm-local-write --format json",
+    ),
+    "integration jira update-issue": ('sgfx-preflight.exe integration jira update-issue --ticket IDCEVODEV-1009239 --fields "{""fields"":{""labels"":[""sgfx""]}}" --format json',),
+    "integration jira attach-file": (r"sgfx-preflight.exe integration jira attach-file --ticket IDCEVODEV-1009239 --file out\review.md --format json",),
+    "screenshot-review-viewer": (_MAIN_ACTION_EXAMPLES["screenshot-review-viewer"],),
+    "screenshot-review-viewer build": (_MAIN_ACTION_EXAMPLES["screenshot-review-viewer"],),
+    "dashboard": (_MAIN_ACTION_EXAMPLES["dashboard"], r"sgfx-preflight.exe dashboard run --workspace C:\repositories\trunk --ui-mode grafiks"),
+    "dashboard run": (_MAIN_ACTION_EXAMPLES["dashboard"],),
     "desktop-state": (r"sgfx-preflight.exe desktop-state overview --profile-id G65 --workspace C:\repositories\trunk --json",),
     "desktop-state overview": (r"sgfx-preflight.exe desktop-state overview --profile-id G65 --workspace C:\repositories\trunk --json",),
-    "quality-hero-report": (_MAIN_ACTION_MAP[7][2],),
-    "quality-hero-report generate": (_MAIN_ACTION_MAP[7][2],),
+    "quality-hero-report": (_MAIN_ACTION_EXAMPLES["quality-hero-report"],),
+    "quality-hero-report generate": (_MAIN_ACTION_EXAMPLES["quality-hero-report"],),
     "bmw-pipeline-diagnostics": (
         r"sgfx-preflight.exe bmw-pipeline-diagnostics missing-actuals --profile F70 --workspace C:\repositories\trunk --format json",
     ),
     "bmw-pipeline-diagnostics missing-actuals": (
         r"sgfx-preflight.exe bmw-pipeline-diagnostics missing-actuals --profile F70 --workspace C:\repositories\trunk --format json",
     ),
-    "template": (_MAIN_ACTION_MAP[19][2],),
+    "template": (_MAIN_ACTION_EXAMPLES["template"],),
     "template save": ('sgfx-preflight.exe template save f70-pass --command full-qa-pass --args "run --profile F70 --workspace C:\\repositories\\trunk" --json',),
     "template run": ("sgfx-preflight.exe template run f70-pass",),
-    "template list": (_MAIN_ACTION_MAP[19][2],),
+    "template list": (_MAIN_ACTION_EXAMPLES["template"],),
     "template show": ("sgfx-preflight.exe template show f70-pass --json",),
     "template delete": ("sgfx-preflight.exe template delete f70-pass --json",),
-    "manual-review": (_MAIN_ACTION_MAP[14][2],),
+    "manual-review": (_MAIN_ACTION_EXAMPLES["manual-review"],),
     "manual-review session": (r"sgfx-preflight.exe manual-review session --profile G65 --ticket IDCEVODEV-1009239 --workspace C:\repositories\trunk --format json",),
-    "manual-review assist": (_MAIN_ACTION_MAP[14][2],),
+    "manual-review assist": (_MAIN_ACTION_EXAMPLES["manual-review"],),
     "manual-review auto-checks": (r"sgfx-preflight.exe manual-review auto-checks --profile G65 --workspace C:\repositories\trunk --format markdown",),
     "manual-review templates": ("sgfx-preflight.exe manual-review templates --json",),
     "manual-review record-step": (r"sgfx-preflight.exe manual-review record-step out\session.json --step blender_visual_check --verdict incomplete --note ""Needs reviewer follow-up."" --json",),
     "manual-review summary": (r"sgfx-preflight.exe manual-review summary out\session.json --format markdown",),
     "manual-review open-raco": (r"sgfx-preflight.exe manual-review open-raco out\session.json --step blender_visual_check --json",),
     "manual-review open-blender": (r"sgfx-preflight.exe manual-review open-blender out\session.json --step blender_visual_check --json",),
-    "desktop-notification": (_MAIN_ACTION_MAP[21][2],),
-    "desktop-notification send": (_MAIN_ACTION_MAP[21][2],),
+    "desktop-notification": (_MAIN_ACTION_EXAMPLES["desktop-notification"],),
+    "desktop-notification send": (_MAIN_ACTION_EXAMPLES["desktop-notification"],),
 }
 
 
@@ -2291,9 +2303,11 @@ def build_parser() -> argparse.ArgumentParser:
     template_delete.add_argument("--workspace", help="Workspace root override")
     template_delete.add_argument("--json", action="store_true", help="Print deleted template metadata as JSON")
 
-    jira = sub.add_parser(
+    integration = sub.add_parser("integration", help="Preview optional external integrations")
+    integration_sub = integration.add_subparsers(dest="integration_command", required=True)
+    jira = integration_sub.add_parser(
         "jira",
-        help="Prepare or post Jira comments through confirmation-gated REST",
+        help="Preview confirmation-gated Jira REST actions",
         description=JIRA_POSTING_BANNER,
     )
     jira_sub = jira.add_subparsers(dest="jira_command", required=True)
@@ -2302,12 +2316,30 @@ def build_parser() -> argparse.ArgumentParser:
     jira_register.add_argument("--pat-file", help="Read the PAT from this local text file")
     jira_register.add_argument("--state-dir", help="Credential directory override; defaults to the operator profile")
     jira_register.add_argument("--force", action="store_true", help="Replace an existing credential file")
+    jira_register.add_argument(
+        "--confirm-local-write",
+        action="store_true",
+        help="Store the Jira URL and PAT in operator-local credential state",
+    )
     _add_render_options(jira_register, formats=("text", "json", "markdown"))
 
     jira_status_parser = jira_sub.add_parser("status", help="Verify operator-local Jira credentials and connection")
     jira_status_parser.add_argument("--ticket", default="", help="Optional Jira ticket key to verify with a GET")
     jira_status_parser.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
+    jira_status_parser.add_argument("--confirm-network", action="store_true", help="Permit Jira verification GET requests")
     _add_render_options(jira_status_parser, formats=("text", "json", "markdown"))
+
+    weekly_tickets = jira_sub.add_parser("weekly-tickets", help="Draft the weekly ticket status list")
+    weekly_tickets.add_argument("--workspace", help="Workspace root override")
+    weekly_tickets.add_argument(
+        "--since",
+        default="startOfWeek",
+        help="Jira updated window: startOfWeek or a relative day window like -7d",
+    )
+    weekly_tickets.add_argument("--confirm-network", action="store_true", help="Permit the Jira ticket search GET")
+    weekly_tickets.add_argument("--json", action="store_true", help="Print weekly ticket draft payload as JSON")
+    weekly_tickets.add_argument("--markdown", action="store_true", help="Print weekly ticket draft as Markdown")
+    _add_render_options(weekly_tickets)
 
     jira_post_comment = jira_sub.add_parser("post-comment", help="Preview or post one Jira comment")
     jira_post_comment.add_argument("--ticket", required=True, help="Jira ticket key such as IDCEVODEV-1009244")
@@ -2315,6 +2347,7 @@ def build_parser() -> argparse.ArgumentParser:
     jira_post_source.add_argument("--body", default="", help="Inline Jira comment body")
     jira_post_source.add_argument("--body-file", help="Read Jira comment body from this UTF-8 text file")
     jira_post_comment.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
+    jira_post_comment.add_argument("--confirm-network", action="store_true", help="Permit Jira verification GET requests")
     jira_post_comment.add_argument("--auto-confirm", action="store_true", help="Post after the preview contract has been satisfied")
     _add_render_options(jira_post_comment, formats=("text", "json", "markdown"))
 
@@ -2322,6 +2355,7 @@ def build_parser() -> argparse.ArgumentParser:
     jira_update_issue.add_argument("--ticket", required=True, help="Jira ticket key such as IDCEVODEV-1009244")
     jira_update_issue.add_argument("--fields", required=True, help="JSON object of issue fields or {'fields': ...}")
     jira_update_issue.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
+    jira_update_issue.add_argument("--confirm-network", action="store_true", help="Permit Jira verification GET requests")
     jira_update_issue.add_argument("--auto-confirm", action="store_true", help="Update after the preview contract has been satisfied")
     _add_render_options(jira_update_issue, formats=("text", "json", "markdown"))
 
@@ -2329,6 +2363,7 @@ def build_parser() -> argparse.ArgumentParser:
     jira_attach_file.add_argument("--ticket", required=True, help="Jira ticket key such as IDCEVODEV-1009244")
     jira_attach_file.add_argument("--file", required=True, help="Local file to attach")
     jira_attach_file.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
+    jira_attach_file.add_argument("--confirm-network", action="store_true", help="Permit Jira verification GET requests")
     jira_attach_file.add_argument("--auto-confirm", action="store_true", help="Attach after the preview contract has been satisfied")
     _add_render_options(jira_attach_file, formats=("text", "json", "markdown"))
 
@@ -2345,6 +2380,7 @@ def build_parser() -> argparse.ArgumentParser:
     jira_post.add_argument("--token-env", default=DEFAULT_TOKEN_ENV, help="Environment variable containing the Jira PAT")
     jira_post.add_argument("--api-version", choices=("2", "3"), default="2", help="Jira REST API version")
     jira_post.add_argument("--dry-run", action="store_true", help="Preview only; this is the default behavior")
+    jira_post.add_argument("--confirm-network", action="store_true", help="Permit Jira verification GET requests")
     jira_post.add_argument("--confirm", action="store_true", help="Actually post the comment; requires base URL and PAT")
     jira_post.add_argument("--json", action="store_true", help="Print Jira post payload as JSON")
     _add_render_options(jira_post)
@@ -2591,19 +2627,6 @@ def build_parser() -> argparse.ArgumentParser:
     daily_digest_latest.add_argument("--json", action="store_true", help="Print daily digest payload as JSON")
     daily_digest_latest.add_argument("--markdown", action="store_true", help="Print daily digest as Markdown")
     _add_render_options(daily_digest_latest)
-
-    digest = sub.add_parser("digest", help="Build copy-ready local digest drafts")
-    digest_sub = digest.add_subparsers(dest="digest_command", required=True)
-    weekly_tickets = digest_sub.add_parser("weekly-tickets", help="Draft the weekly ticket status list")
-    weekly_tickets.add_argument("--workspace", help="Workspace root override")
-    weekly_tickets.add_argument(
-        "--since",
-        default="startOfWeek",
-        help="Jira updated window: startOfWeek or a relative day window like -7d",
-    )
-    weekly_tickets.add_argument("--json", action="store_true", help="Print weekly ticket draft payload as JSON")
-    weekly_tickets.add_argument("--markdown", action="store_true", help="Print weekly ticket draft as Markdown")
-    _add_render_options(weekly_tickets)
 
     whats_new = sub.add_parser(
         "whats-new",
@@ -3071,49 +3094,46 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
+    normalized_args = _normalize_command_argv(raw_args)
+    normalized_args = _normalize_weekly_ticket_since_argv(normalized_args)
+    effective_args = list(normalized_args or [])
     exit_code = 1
-    _start_cli_session_log(raw_args)
+    _start_cli_session_log(effective_args)
     try:
-        exit_code = _main_impl(raw_args)
+        exit_code = _main_impl(effective_args)
         return exit_code
     finally:
-        _record_cli_session_event(raw_args, exit_code)
-        _record_cli_activity(raw_args, exit_code)
+        _record_cli_session_event(effective_args, exit_code)
+        _record_cli_activity(effective_args, exit_code)
 
 
 def _normalize_weekly_ticket_since_argv(argv: list[str] | None) -> list[str] | None:
-    if not argv or len(argv) < 4 or argv[0:2] != ["digest", "weekly-tickets"]:
+    if not argv or argv[:3] != ["integration", "jira", "weekly-tickets"]:
         return argv
-    normalized: list[str] = []
-    index = 0
-    while index < len(argv):
-        token = argv[index]
-        if (
-            token == "--since"
-            and index + 1 < len(argv)
-            and re.fullmatch(r"-[1-9][0-9]*[dD]", str(argv[index + 1]))
-        ):
-            normalized.append(f"--since={argv[index + 1]}")
-            index += 2
-            continue
-        normalized.append(token)
-        index += 1
+    normalized = list(argv)
+    for index, value in enumerate(normalized[:-1]):
+        if value == "--since" and re.fullmatch(r"-[1-9][0-9]*[dD]", normalized[index + 1]):
+            normalized[index : index + 2] = [f"--since={normalized[index + 1]}"]
+            break
     return normalized
 
 
 def _normalize_command_argv(argv: list[str] | None) -> list[str] | None:
-    normalized = _normalize_weekly_ticket_since_argv(argv)
-    if not normalized:
-        return normalized
-    normalized = list(normalized)
-    if normalized[0] == "delivery-checklist":
+    if argv is None:
+        return None
+    normalized = list(argv)
+    if normalized[:1] == ["delivery-checklist"]:
         normalized[0] = "delivery-documentation"
+    elif normalized[:2] == ["digest", "weekly-tickets"]:
+        normalized[:2] = ["integration", "jira", "weekly-tickets"]
+    elif normalized[:1] == ["jira"]:
+        normalized.insert(0, "integration")
     return normalized
 
 
 def _main_impl(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(_normalize_command_argv(argv))
+    args = parser.parse_args(argv)
 
     if args.command == "run":
         from sg_preflight.cli.dev import handle_dev_command
@@ -3199,7 +3219,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
 
         return handle_template_command(args, parser)
 
-    if args.command == "jira":
+    if args.command == "integration" and args.integration_command == "jira":
         from sg_preflight.cli.jira import handle_jira_command
 
         return handle_jira_command(args, parser)
@@ -3278,7 +3298,7 @@ def _main_impl(argv: list[str] | None = None) -> int:
 
         return handle_reviews_command(args, parser)
 
-    if args.command in {"daily-digest", "team-digest-board", "digest", "whats-new"}:
+    if args.command in {"daily-digest", "team-digest-board", "whats-new"}:
         from sg_preflight.cli.digest import handle_digest_command
 
         return handle_digest_command(args, parser)

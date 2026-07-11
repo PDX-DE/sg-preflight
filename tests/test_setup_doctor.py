@@ -104,6 +104,10 @@ class TestSetupDoctor(unittest.TestCase):
         self.assertIn("no pinned", items["blender"]["version_check_detail"].casefold())
         self.assertEqual(items["jira_pat"]["status"], "optional_missing")
         self.assertIn("OS keychain", items["jira_pat"]["fix"])
+        self.assertIn(
+            "sgfx-preflight.exe integration jira register --confirm-local-write",
+            items["jira_pat"]["fix"],
+        )
 
     def test_raco_drift_is_guidance_not_verdict_language(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

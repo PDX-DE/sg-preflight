@@ -878,6 +878,7 @@ class TestCLI(unittest.TestCase):
                     "--body",
                     "Status update",
                     "--confirm",
+                    "--confirm-network",
                 ]
             )
 
@@ -898,13 +899,96 @@ class TestCLI(unittest.TestCase):
         ) as status_mock:
             stdout = io.StringIO()
             with redirect_stdout(stdout):
-                result = main(["jira", "status", "--ticket", "IDCEVODEV-1009244", "--format", "json"])
+                result = main(
+                    [
+                        "jira",
+                        "status",
+                        "--ticket",
+                        "IDCEVODEV-1009244",
+                        "--confirm-network",
+                        "--format",
+                        "json",
+                    ]
+                )
 
         self.assertEqual(result, 0)
-        status_mock.assert_called_once_with(ticket="IDCEVODEV-1009244", api_version="2")
+        status_mock.assert_called_once_with(
+            ticket="IDCEVODEV-1009244",
+            api_version="2",
+            confirm_network=True,
+        )
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "available")
         self.assertNotIn("test-pat-placeholder-not-real", stdout.getvalue())
+
+    def test_integration_jira_status_previews_without_network(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch.dict("os.environ", {"SGFX_PREFLIGHT_WORKSPACE": temp_dir}):
+                with mock.patch(
+                    "sg_preflight.jira_client.load_jira_credentials",
+                    side_effect=AssertionError("credentials must stay unused"),
+                ) as credentials:
+                    with mock.patch(
+                        "sg_preflight.jira_client.urllib_request.urlopen",
+                        side_effect=AssertionError("transport must stay unused"),
+                    ) as transport:
+                        with redirect_stdout(stdout), redirect_stderr(stderr):
+                            try:
+                                result = main(["integration", "jira", "status", "--format", "json"])
+                            except SystemExit as exc:
+                                result = int(exc.code)
+
+        self.assertEqual(result, 0, msg=stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["dry_run"])
+        self.assertTrue(payload["confirm_network_required"])
+        credentials.assert_not_called()
+        transport.assert_not_called()
+
+    def test_integration_jira_register_preview_has_no_local_write(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / "state"
+            with mock.patch(
+                "sg_preflight.cli.jira.Path.read_text",
+                side_effect=AssertionError("PAT file must stay unread"),
+            ):
+                with mock.patch(
+                    "sg_preflight.cli.write_jira_credentials",
+                    side_effect=AssertionError("credentials must stay unwritten"),
+                ) as writer:
+                    with mock.patch.dict("os.environ", {"SGFX_PREFLIGHT_WORKSPACE": str(root)}):
+                        with redirect_stdout(stdout), redirect_stderr(stderr):
+                            try:
+                                result = main(
+                                    [
+                                        "integration",
+                                        "jira",
+                                        "register",
+                                        "--jira-url",
+                                        "https://jira.example/",
+                                        "--pat-file",
+                                        str(root / "pat.txt"),
+                                        "--state-dir",
+                                        str(state_dir),
+                                        "--format",
+                                        "json",
+                                    ]
+                                )
+                            except SystemExit as exc:
+                                result = int(exc.code)
+
+            self.assertFalse(state_dir.exists())
+
+        self.assertEqual(result, 0, msg=stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["dry_run"])
+        self.assertTrue(payload["confirm_local_write_required"])
+        writer.assert_not_called()
 
     def test_jira_post_comment_cli_uses_auto_confirm_gate(self) -> None:
         with mock.patch(
@@ -958,6 +1042,7 @@ class TestCLI(unittest.TestCase):
                             str(pat_file),
                             "--state-dir",
                             str(root / "state"),
+                            "--confirm-local-write",
                             "--format",
                             "json",
                         ]
@@ -1496,7 +1581,166 @@ class TestCLI(unittest.TestCase):
             self.assertIn("Manual review remains required", markdown)
             self.assertNotIn("approved", markdown.lower())
 
-    def test_digest_weekly_tickets_cli_returns_json_and_markdown(self) -> None:
+    def test_weekly_ticket_canonical_and_legacy_forms_are_offline_and_log_free(self) -> None:
+        variants = (
+            ("default text", "text", []),
+            ("legacy json flag", "json", ["--json"]),
+            ("legacy markdown flag", "markdown", ["--markdown"]),
+            ("format text", "text", ["--format", "text"]),
+            ("format json", "json", ["--format", "json"]),
+            ("format markdown", "markdown", ["--format", "markdown"]),
+        )
+
+        def invoke(argv: list[str]) -> tuple[int | None, str, str, BaseException | None]:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            caught: BaseException | None = None
+            try:
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    code = main(argv)
+            except SystemExit as exc:
+                code = int(exc.code)
+            except BaseException as exc:
+                code = None
+                caught = exc
+            return code, stdout.getvalue(), stderr.getvalue(), caught
+
+        def log_snapshot(root: Path) -> dict[str, bytes]:
+            operator_state = root / "operator_state"
+            if not operator_state.exists():
+                return {}
+            return {
+                str(path.relative_to(operator_state)): path.read_bytes()
+                for path in sorted(operator_state.rglob("*"))
+                if path.is_file()
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            activity_path = root / "operator_state" / "activity_log.jsonl"
+            session_path = root / "operator_state" / "sessions" / "existing.jsonl"
+            activity_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            activity_path.write_bytes(
+                b'{"note":"seed","outcome":"ok","profile":"G65","surface":"seed",'
+                b'"ts":"2020-01-01T00:00:00Z","verb":"read"}\n'
+            )
+            session_path.write_bytes(b'{"message":"seed session"}\n')
+            before = log_snapshot(root)
+
+            credentials = mock.Mock(side_effect=AssertionError("credentials must stay unused"))
+            transport = mock.Mock(side_effect=AssertionError("transport must stay unused"))
+            with mock.patch("sg_preflight.jira_client.load_jira_credentials", credentials):
+                with mock.patch("sg_preflight.jira_client.urllib_request.urlopen", transport):
+                    for label, output_format, format_args in variants:
+                        canonical = invoke(
+                            [
+                                "integration",
+                                "jira",
+                                "weekly-tickets",
+                                "--workspace",
+                                str(root),
+                                "--since",
+                                "-7d",
+                                *format_args,
+                            ]
+                        )
+                        legacy = invoke(
+                            [
+                                "digest",
+                                "weekly-tickets",
+                                "--workspace",
+                                str(root),
+                                "--since",
+                                "-7d",
+                                *format_args,
+                            ]
+                        )
+
+                        with self.subTest(label=label, form="canonical"):
+                            self.assertIsNone(canonical[3])
+                            self.assertEqual(canonical[0], 0, msg=canonical[2])
+                        with self.subTest(label=label, form="legacy"):
+                            self.assertIsNone(legacy[3])
+                            self.assertEqual(legacy[0], 0, msg=legacy[2])
+                        if canonical[0] == legacy[0] == 0 and canonical[3] is legacy[3] is None:
+                            with self.subTest(label=label, parity=True):
+                                self.assertEqual(canonical[1], legacy[1])
+                                self.assertEqual(canonical[2], legacy[2])
+                                if output_format == "json":
+                                    payload = json.loads(canonical[1])
+                                    self.assertEqual(payload["jira_status"], "not_run")
+                                    self.assertEqual(payload["tickets"], [])
+                                    self.assertFalse(payload["network_confirmed"])
+                                    self.assertTrue(payload["confirm_network_required"])
+                                    self.assertIn("updated >= -7d", payload["jira_jql"])
+                                elif output_format == "markdown":
+                                    self.assertIn(
+                                        "> Jira lookup not run. Add --confirm-network to include assigned tickets.",
+                                        canonical[1],
+                                    )
+                                else:
+                                    self.assertIn(
+                                        "Jira lookup not run. Add --confirm-network to include assigned tickets.",
+                                        canonical[1],
+                                    )
+
+            after = log_snapshot(root)
+
+        credentials.assert_not_called()
+        transport.assert_not_called()
+        self.assertEqual(after, before)
+
+    def test_weekly_ticket_since_negative_window_survives_normalization(self) -> None:
+        from sg_preflight.cli._common import _normalize_command_argv, _normalize_weekly_ticket_since_argv
+
+        canonical = ["integration", "jira", "weekly-tickets", "--since", "-7d", "--json"]
+        legacy = ["digest", "weekly-tickets", "--since", "-7d", "--json"]
+        expected = ["integration", "jira", "weekly-tickets", "--since=-7d", "--json"]
+
+        self.assertEqual(
+            _normalize_weekly_ticket_since_argv(_normalize_command_argv(canonical)),
+            expected,
+        )
+        self.assertEqual(
+            _normalize_weekly_ticket_since_argv(_normalize_command_argv(legacy)),
+            expected,
+        )
+
+    def test_weekly_ticket_help_exposes_only_canonical_integration_path(self) -> None:
+        def choices(parser):
+            action = next(
+                action
+                for action in parser._actions
+                if isinstance(action, __import__("argparse")._SubParsersAction)
+            )
+            return action.choices
+
+        parser = build_parser()
+        top_choices = choices(parser)
+        self.assertNotIn("digest", top_choices)
+        self.assertNotIn("jira", top_choices)
+        integration = top_choices["integration"]
+        integration_choices = choices(integration)
+        self.assertEqual(set(integration_choices), {"jira"})
+        jira = integration_choices["jira"]
+        jira_choices = choices(jira)
+        self.assertIn("weekly-tickets", jira_choices)
+        weekly = jira_choices["weekly-tickets"]
+
+        help_surfaces = (
+            parser.format_help(),
+            integration.format_help(),
+            jira.format_help(),
+            weekly.format_help(),
+        )
+        for help_text in help_surfaces:
+            self.assertNotIn("sgfx-preflight.exe digest weekly-tickets", help_text)
+        weekly_help = weekly.format_help()
+        for option in ("--workspace", "--since", "--confirm-network", "--json", "--markdown", "--format"):
+            self.assertIn(option, weekly_help)
+
+    def test_integration_jira_weekly_tickets_confirmed_returns_json_and_markdown(self) -> None:
         fake_keyring = _FakeKeyring()
         issues = [
             {
@@ -1532,12 +1776,14 @@ class TestCLI(unittest.TestCase):
                         with redirect_stdout(stdout):
                             result = main(
                                 [
-                                    "digest",
+                                    "integration",
+                                    "jira",
                                     "weekly-tickets",
                                     "--workspace",
                                     str(root),
                                     "--since",
                                     "-7d",
+                                    "--confirm-network",
                                     "--json",
                                 ]
                             )
@@ -1546,12 +1792,14 @@ class TestCLI(unittest.TestCase):
                         with redirect_stdout(markdown_stdout):
                             markdown_result = main(
                                 [
-                                    "digest",
+                                    "integration",
+                                    "jira",
                                     "weekly-tickets",
                                     "--workspace",
                                     str(root),
                                     "--since",
                                     "-7d",
+                                    "--confirm-network",
                                     "--markdown",
                                 ]
                             )
@@ -1616,15 +1864,51 @@ class TestCLI(unittest.TestCase):
         self.assertIn("- Welcome card link", markdown)
         self.assertNotIn("approved", markdown.lower())
 
-    def test_digest_weekly_tickets_rejects_bad_since_cleanly(self) -> None:
-        stderr = io.StringIO()
-        with redirect_stderr(stderr):
-            result = main(["digest", "weekly-tickets", "--since", "project = IDCEVODEV"])
+    def test_weekly_tickets_reject_bad_since_cleanly_for_canonical_and_legacy_forms(self) -> None:
+        def invoke(argv: list[str]) -> tuple[int, str]:
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                try:
+                    result = main(argv)
+                except SystemExit as exc:
+                    result = int(exc.code)
+            return result, stderr.getvalue()
 
-        self.assertEqual(result, 1)
-        self.assertIn("weekly-tickets failed", stderr.getvalue())
-        self.assertIn("--since", stderr.getvalue())
-        self.assertNotIn("Traceback", stderr.getvalue())
+        credentials = mock.Mock(side_effect=AssertionError("credentials must stay unused"))
+        transport = mock.Mock(side_effect=AssertionError("transport must stay unused"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("sg_preflight.jira_client.load_jira_credentials", credentials):
+                with mock.patch("sg_preflight.jira_client.urllib_request.urlopen", transport):
+                    canonical = invoke(
+                        [
+                            "integration",
+                            "jira",
+                            "weekly-tickets",
+                            "--workspace",
+                            temp_dir,
+                            "--since",
+                            "project = IDCEVODEV",
+                        ]
+                    )
+                    legacy = invoke(
+                        [
+                            "digest",
+                            "weekly-tickets",
+                            "--workspace",
+                            temp_dir,
+                            "--since",
+                            "project = IDCEVODEV",
+                        ]
+                    )
+
+        self.assertEqual(canonical[0], 1)
+        self.assertEqual(legacy[0], 1)
+        self.assertEqual(canonical[1], legacy[1])
+        self.assertIn("weekly-tickets failed", canonical[1])
+        self.assertIn("--since", canonical[1])
+        self.assertNotIn("Traceback", canonical[1])
+        credentials.assert_not_called()
+        transport.assert_not_called()
 
     def test_format_rejects_conflicting_legacy_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2098,9 +2382,26 @@ class TestCLI(unittest.TestCase):
             readme,
         )
         self.assertIn(
+            r".\dist\sgfx-preflight\sgfx-preflight.exe integration jira post-comment --ticket IDCEVODEV-1009239",
+            readme,
+        )
+        self.assertNotIn(
             r".\dist\sgfx-preflight\sgfx-preflight.exe jira post-comment --ticket IDCEVODEV-1009239",
             readme,
         )
+
+    def test_weekly_ticket_docs_use_canonical_offline_first_command(self) -> None:
+        documents = {
+            "README.md": (ROOT / "README.md").read_text(encoding="utf-8"),
+            "CHANGELOG.md": (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"),
+            "docs/cli-overview.md": (ROOT / "docs" / "cli-overview.md").read_text(encoding="utf-8"),
+        }
+
+        for name, content in documents.items():
+            with self.subTest(document=name):
+                self.assertIn("integration jira weekly-tickets", content)
+                self.assertIn("--confirm-network", content)
+                self.assertNotIn("digest weekly-tickets", content)
 
     def test_desktop_command_is_removed_from_cli(self) -> None:
         result = subprocess.run(

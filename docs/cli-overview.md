@@ -81,22 +81,20 @@ python -m sg_preflight qa-hero-readiness read --profile <profile> --format markd
 
 These readers are read-only. They do not run BMW tools, do not write SVN or BMW Git, and do not decide whether a car is approved.
 
-### Jira comment posting
+### Advanced Jira integration
 
 ```powershell
-python -m sg_preflight jira post --ticket IDCEVODEV-977874 --body-file out\jira-update.txt --format markdown
-python -m sg_preflight jira post --ticket IDCEVODEV-977874 --section 19 --wording-file HANDOVER_WORDING.md --format json
+python -m sg_preflight integration jira weekly-tickets --workspace C:\repositories\trunk --format markdown
+python -m sg_preflight integration jira post-comment --ticket IDCEVODEV-977874 --body-file out\jira-update.txt --format markdown
 ```
 
-The default is a dry run. It prints the ticket, endpoint preview, source, and comment body but sends no HTTP request. To post, set a base URL and PAT through environment variables and add `--confirm` to that single command:
+Both default invocations are pure previews. They do not load credentials or make a Jira request. Add `--confirm-network` to the weekly draft to include assigned tickets through a read-only GET. A comment write requires both the network gate and the named write confirmation:
 
 ```powershell
-$env:BMW_JIRA_BASE_URL="https://jira.example"
-$env:BMW_JIRA_PAT="<personal-access-token>"
-python -m sg_preflight jira post --ticket IDCEVODEV-977874 --body-file out\jira-update.txt --confirm
+python -m sg_preflight integration jira post-comment --ticket IDCEVODEV-977874 --body-file out\jira-update.txt --confirm-network --auto-confirm --format json
 ```
 
-Jira posting is opt-in and confirmation-gated. SGFX does not auto-post, does not transition issues, and does not mark QA approval.
+Jira access is opt-in and confirmation-gated. Register credentials with `integration jira register --confirm-local-write`; do not paste a PAT into a command. SGFX does not auto-post, transition issues, or mark QA approval.
 
 ### Manual review companion
 
