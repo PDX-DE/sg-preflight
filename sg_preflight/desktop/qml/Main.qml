@@ -12,6 +12,7 @@ ApplicationWindow {
     required property var surfaceModel
     required property var shellModel
     required property var desktopController
+    property var grafiksHost: null
     readonly property var navigationGroupTitles: shellModel.groupOrder
     readonly property var homeTileIds: {
         const ids = [];
@@ -210,6 +211,26 @@ ApplicationWindow {
                                 }
                             }
                         }
+                        Button {
+                            objectName: "grafiksLaunchControl"
+                            Layout.preferredHeight: 50
+                            text: {
+                                if (window.grafiksHost === null)
+                                    return "Grafiks unavailable";
+                                if (window.grafiksHost.state === "validating")
+                                    return "Checking Grafiks…";
+                                if (window.grafiksHost.state === "starting")
+                                    return "Starting Grafiks…";
+                                if (window.grafiksHost.state === "running")
+                                    return "Grafiks running";
+                                return "Open Grafiks";
+                            }
+                            enabled: window.grafiksHost !== null && window.grafiksHost.canLaunch && window.desktopController.currentProfileId.length > 0
+                            focusPolicy: Qt.StrongFocus
+                            Accessible.role: Accessible.Button
+                            Accessible.name: text
+                            onClicked: window.desktopController.launchGrafiks()
+                        }
                     }
 
                     Rectangle {
@@ -258,7 +279,13 @@ ApplicationWindow {
                         }
                         Label {
                             Layout.fillWidth: true
-                            text: "Read-only · Evidence only · Review stays manual"
+                            text: window.grafiksHost !== null && window.grafiksHost.errorSummary ? window.grafiksHost.errorSummary : "Read-only · Evidence only · Review stays manual"
+                            color: window.grafiksHost !== null && window.grafiksHost.errorSummary ? Theme.statusBad : Theme.muted
+                            font.pixelSize: 11
+                        }
+                        Label {
+                            visible: window.grafiksHost !== null && window.grafiksHost.state !== "idle"
+                            text: "Grafiks: " + (window.grafiksHost !== null ? window.grafiksHost.state : "unavailable")
                             color: Theme.muted
                             font.pixelSize: 11
                         }
@@ -327,6 +354,10 @@ ApplicationWindow {
                 }
                 Label {
                     text: "Error: " + (window.desktopController.errorCode || "none")
+                    color: Theme.text
+                }
+                Label {
+                    text: "Grafiks: " + (window.grafiksHost !== null ? window.grafiksHost.state : "unavailable")
                     color: Theme.text
                 }
                 Label {

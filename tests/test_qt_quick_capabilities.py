@@ -296,7 +296,7 @@ class TestCapabilityInputValidation(unittest.TestCase):
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
 class TestCapabilityControllerSurface(unittest.TestCase):
-    def test_controller_exposes_only_typed_task11_slots_and_keeps_grafiks_metadata_only(self) -> None:
+    def test_controller_exposes_only_typed_capability_slots(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import DesktopController
 
         meta = DesktopController.staticMetaObject
@@ -312,11 +312,11 @@ class TestCapabilityControllerSurface(unittest.TestCase):
             "revealArtifact(",
             "recordManualReview(",
             "recordOperatorHandoff(",
+            "launchGrafiks(",
         ):
             self.assertTrue(any(method.startswith(prefix) for method in methods), msg=prefix)
         rendered = "\n".join(sorted(methods)).casefold()
         for forbidden in (
-            "launchgrafiks",
             "command",
             "network",
             "setup",

@@ -63,6 +63,12 @@ class ShellLoader(Protocol):
     ) -> Mapping[str, Any]: ...
 
 
+class GrafiksHost(Protocol):
+    def launch(self, profile_id: str) -> bool: ...
+
+    def shutdown(self) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class UiError:
     code: str
@@ -315,6 +321,7 @@ class DesktopController(QObject):
         action_executor: Callable[..., object] | None = None,
         manual_review_recorder: Callable[..., object] | None = None,
         operator_handoff_recorder: Callable[..., object] | None = None,
+        grafiks_host: GrafiksHost | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -367,6 +374,7 @@ class DesktopController(QObject):
         self._action_executor = action_executor
         self._manual_review_recorder = manual_review_recorder
         self._operator_handoff_recorder = operator_handoff_recorder
+        self._grafiks_host = grafiks_host
         self._effect_generation = 0
         self._effect_context: _EffectContext | None = None
         self._effect_future: Future[object] | None = None
@@ -571,8 +579,30 @@ class DesktopController(QObject):
                 str(inputs.get("next_step", "")),
                 str(inputs.get("note", "")),
             )
+        if capability.capability_id == "grafiks.launch":
+            requested_profile = str(inputs.get("profile_id", "") or "").strip()
+            if requested_profile.casefold() != self._current_profile_id.casefold():
+                self._set_capability_error("The Grafiks profile selection is invalid.")
+                return False
+            return self.launchGrafiks()
         self._set_capability_error("This capability is not available yet.")
         return False
+
+    @Slot(result=bool)
+    def launchGrafiks(self) -> bool:
+        host = self._grafiks_host
+        if self._closed or host is None or not self._current_profile_id:
+            self._set_capability_error("Grafiks is unavailable in this installation.")
+            return False
+        try:
+            accepted = host.launch(self._current_profile_id)
+        except RuntimeError:
+            accepted = False
+        if not accepted:
+            self._set_capability_error("Grafiks could not be started.")
+            return False
+        self._set_capability_error("")
+        return True
 
     @Slot(str, "QVariantList", result=bool)
     def runDiagnostic(self, action_id: str, profile_ids: list[object]) -> bool:
@@ -752,6 +782,8 @@ class DesktopController(QObject):
         if self._closed:
             return
         self._closed = True
+        if self._grafiks_host is not None:
+            self._grafiks_host.shutdown()
         self._effect_generation += 1
         if self._effect_future is not None:
             self._effect_future.cancel()

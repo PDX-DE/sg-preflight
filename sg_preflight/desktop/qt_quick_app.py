@@ -18,6 +18,7 @@ except ImportError as exc:
 
 from sg_preflight.assets import runtime_asset_path
 from sg_preflight.desktop.qt_quick_controller import DesktopController
+from sg_preflight.desktop.qt_quick_grafiks import GrafiksHostAdapter
 from sg_preflight.desktop.shell_model import ShellRegistryModel
 from sg_preflight.desktop.surface_model import SurfaceRegistryModel
 from sg_preflight.desktop.task_pool import PageTaskCoordinator
@@ -37,6 +38,7 @@ class QtQuickRuntime:
     shell_model: ShellRegistryModel
     controller: DesktopController
     task_coordinator: PageTaskCoordinator
+    grafiks_host: GrafiksHostAdapter | None = None
     _closed: bool = False
 
     def close(self) -> None:
@@ -77,11 +79,29 @@ def _application(argv: Sequence[str] | None) -> QGuiApplication:
 def _shutdown_created(
     controller: DesktopController | None,
     task_coordinator: PageTaskCoordinator | None,
+    grafiks_host: GrafiksHostAdapter | None = None,
 ) -> None:
     if controller is not None:
         controller.shutdown()
+    elif grafiks_host is not None:
+        grafiks_host.shutdown()
     if task_coordinator is not None:
         task_coordinator.shutdown(timeout_ms=500)
+
+
+def _hide_qt_windows(engine: QQmlApplicationEngine) -> None:
+    for root in engine.rootObjects():
+        hide = getattr(root, "hide", None)
+        if callable(hide):
+            hide()
+
+
+def _restore_qt_windows(engine: QQmlApplicationEngine) -> None:
+    for root in engine.rootObjects():
+        for method_name in ("show", "raise_", "requestActivate"):
+            method = getattr(root, method_name, None)
+            if callable(method):
+                method()
 
 
 def create_qt_quick_runtime(
@@ -97,6 +117,7 @@ def create_qt_quick_runtime(
         raise RuntimeError("The Qt Quick interface files are unavailable.")
 
     task_coordinator: PageTaskCoordinator | None = None
+    grafiks_host: GrafiksHostAdapter | None = None
     controller: DesktopController | None = None
     try:
         application = _application(argv)
@@ -106,11 +127,18 @@ def create_qt_quick_runtime(
             qml_import_root = source.parent
         engine.addImportPath(str(qml_import_root.resolve()))
         task_coordinator = PageTaskCoordinator(parent=engine)
+        grafiks_host = GrafiksHostAdapter(
+            coordinator=task_coordinator,
+            workspace=workspace,
+            bmw_root=bmw_root,
+            parent=engine,
+        )
         controller = DesktopController(
             workspace=workspace,
             initial_profile_id=initial_profile_id,
             bmw_root=bmw_root,
             task_coordinator=task_coordinator,
+            grafiks_host=grafiks_host,
             parent=engine,
         )
         surface_model = SurfaceRegistryModel(parent=engine)
@@ -119,18 +147,22 @@ def create_qt_quick_runtime(
         context.setContextProperty("surfaceModel", surface_model)
         context.setContextProperty("shellModel", shell_model)
         context.setContextProperty("desktopController", controller)
+        context.setContextProperty("grafiksHost", grafiks_host)
         engine.setInitialProperties(
             {
                 "surfaceModel": surface_model,
                 "shellModel": shell_model,
                 "desktopController": controller,
+                "grafiksHost": grafiks_host,
             }
         )
         engine.load(QUrl.fromLocalFile(str(source.resolve())))
         if not engine.rootObjects():
             raise RuntimeError(_LOAD_ERROR)
+        grafiks_host.hideRequested.connect(lambda: _hide_qt_windows(engine))
+        grafiks_host.restoreRequested.connect(lambda: _restore_qt_windows(engine))
     except Exception:
-        _shutdown_created(controller, task_coordinator)
+        _shutdown_created(controller, task_coordinator, grafiks_host)
         raise RuntimeError(_LOAD_ERROR) from None
 
     return QtQuickRuntime(
@@ -140,6 +172,7 @@ def create_qt_quick_runtime(
         shell_model=shell_model,
         controller=controller,
         task_coordinator=task_coordinator,
+        grafiks_host=grafiks_host,
     )
 
 
