@@ -122,8 +122,6 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
         "--collect-all",
         "nicegui",
         "--collect-all",
-        "PySide6",
-        "--collect-all",
         "keyring",
         "--collect-all",
         "win32ctypes",
