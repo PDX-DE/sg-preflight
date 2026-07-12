@@ -984,6 +984,9 @@ class TestQtQuickHostRuntime(unittest.TestCase):
                 print(runtime.controller.parent() is runtime.engine)
                 print(runtime.task_coordinator.parent() is runtime.engine)
                 print(runtime.grafiks_host.parent() is runtime.engine)
+                print(runtime.preview_coordinator.parent() is runtime.engine)
+                print(runtime.preview_image_provider.token_count)
+                print(runtime.controller.previewState)
                 runtime.close()
                 """
             )
@@ -1006,6 +1009,9 @@ class TestQtQuickHostRuntime(unittest.TestCase):
                 "True",
                 "True",
                 "True",
+                "True",
+                "0",
+                "fallback",
             ],
         )
 
@@ -1062,19 +1068,28 @@ class TestQtQuickHostRuntime(unittest.TestCase):
             def processEvents(self) -> None:
                 events.append("application")
 
+        preview = Recorder("preview")
+
+        class Controller(Recorder):
+            def shutdown(self) -> None:
+                super().shutdown()
+                preview.shutdown()
+
         runtime = QtQuickRuntime(
             application=Application(),
             engine=Engine(),
             surface_model=object(),
             shell_model=object(),
-            controller=Recorder("controller"),
+            controller=Controller("controller"),
             task_coordinator=Recorder("coordinator"),
+            preview_coordinator=preview,
+            preview_image_provider=object(),
         )
 
         runtime.close()
         runtime.close()
 
-        self.assertEqual(events, ["controller", "coordinator", "root", "engine", "application"])
+        self.assertEqual(events, ["controller", "preview", "coordinator", "root", "engine", "application"])
 
     def test_existing_qml_without_a_root_cleans_controller_then_coordinator(self) -> None:
         from sg_preflight.desktop import qt_quick_app
@@ -1096,6 +1111,9 @@ class TestQtQuickHostRuntime(unittest.TestCase):
 
             def addImportPath(self, path: str) -> None:
                 self.import_path = path
+
+            def addImageProvider(self, name: str, provider: object) -> None:
+                self.image_provider = (name, provider)
 
             def setInitialProperties(self, properties: dict[str, object]) -> None:
                 initial_properties.update(properties)
@@ -1120,6 +1138,7 @@ class TestQtQuickHostRuntime(unittest.TestCase):
             def shutdown(self) -> None:
                 events.append("controller")
                 self.kwargs["grafiks_host"].shutdown()
+                self.kwargs["preview_coordinator"].shutdown()
 
         class GrafiksHost:
             def __init__(self, **kwargs: object) -> None:
@@ -1127,6 +1146,16 @@ class TestQtQuickHostRuntime(unittest.TestCase):
 
             def shutdown(self) -> None:
                 events.append("grafiks")
+
+        class PreviewProvider:
+            pass
+
+        class PreviewCoordinator:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+            def shutdown(self) -> None:
+                events.append("preview")
 
         class SurfaceModel:
             def __init__(self, *, parent: object) -> None:
@@ -1143,20 +1172,22 @@ class TestQtQuickHostRuntime(unittest.TestCase):
                 with mock.patch.object(qt_quick_app, "QQmlApplicationEngine", Engine):
                     with mock.patch.object(qt_quick_app, "PageTaskCoordinator", Coordinator):
                         with mock.patch.object(qt_quick_app, "GrafiksHostAdapter", GrafiksHost):
-                            with mock.patch.object(qt_quick_app, "DesktopController", Controller):
-                                with mock.patch.object(qt_quick_app, "SurfaceRegistryModel", SurfaceModel):
-                                    with mock.patch.object(qt_quick_app, "ShellRegistryModel", ShellModel):
-                                        with self.assertRaisesRegex(
-                                            RuntimeError,
-                                            "The Qt Quick interface could not be initialized.",
-                                        ):
-                                            qt_quick_app.create_qt_quick_runtime(
-                                                workspace=temp_dir,
-                                                qml_path=qml_path,
-                                                argv=["sgfx-test"],
-                                            )
+                            with mock.patch.object(qt_quick_app, "PreviewImageProvider", PreviewProvider):
+                                with mock.patch.object(qt_quick_app, "PreviewCoordinator", PreviewCoordinator):
+                                    with mock.patch.object(qt_quick_app, "DesktopController", Controller):
+                                        with mock.patch.object(qt_quick_app, "SurfaceRegistryModel", SurfaceModel):
+                                            with mock.patch.object(qt_quick_app, "ShellRegistryModel", ShellModel):
+                                                with self.assertRaisesRegex(
+                                                    RuntimeError,
+                                                    "The Qt Quick interface could not be initialized.",
+                                                ):
+                                                    qt_quick_app.create_qt_quick_runtime(
+                                                        workspace=temp_dir,
+                                                        qml_path=qml_path,
+                                                        argv=["sgfx-test"],
+                                                    )
 
-        self.assertEqual(events, ["load", "controller", "grafiks", "coordinator"])
+        self.assertEqual(events, ["load", "controller", "grafiks", "preview", "coordinator"])
         self.assertIs(context_bindings["surfaceModel"], initial_properties["surfaceModel"])
         self.assertIs(context_bindings["shellModel"], initial_properties["shellModel"])
         self.assertIs(context_bindings["desktopController"], initial_properties["desktopController"])
@@ -1170,6 +1201,9 @@ class TestQtQuickHostRuntime(unittest.TestCase):
         class Engine:
             def addImportPath(self, path: str) -> None:
                 self.import_path = path
+
+            def addImageProvider(self, name: str, provider: object) -> None:
+                self.image_provider = (name, provider)
 
         class Coordinator:
             def __init__(self, *, parent: object) -> None:
@@ -1185,6 +1219,7 @@ class TestQtQuickHostRuntime(unittest.TestCase):
             def shutdown(self) -> None:
                 events.append("controller")
                 self.kwargs["grafiks_host"].shutdown()
+                self.kwargs["preview_coordinator"].shutdown()
 
         class GrafiksHost:
             def __init__(self, **kwargs: object) -> None:
@@ -1193,6 +1228,16 @@ class TestQtQuickHostRuntime(unittest.TestCase):
             def shutdown(self) -> None:
                 events.append("grafiks")
 
+        class PreviewProvider:
+            pass
+
+        class PreviewCoordinator:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+            def shutdown(self) -> None:
+                events.append("preview")
+
         with tempfile.TemporaryDirectory() as temp_dir:
             qml_path = Path(temp_dir) / "Main.qml"
             qml_path.write_text("fixture\n", encoding="utf-8")
@@ -1200,24 +1245,26 @@ class TestQtQuickHostRuntime(unittest.TestCase):
                 with mock.patch.object(qt_quick_app, "QQmlApplicationEngine", Engine):
                     with mock.patch.object(qt_quick_app, "PageTaskCoordinator", Coordinator):
                         with mock.patch.object(qt_quick_app, "GrafiksHostAdapter", GrafiksHost):
-                            with mock.patch.object(qt_quick_app, "DesktopController", Controller):
-                                with mock.patch.object(
-                                    qt_quick_app,
-                                    "SurfaceRegistryModel",
-                                    side_effect=RuntimeError(r"C:\private\operator detail"),
-                                ):
-                                    with mock.patch.object(qt_quick_app, "ShellRegistryModel"):
-                                        with self.assertRaisesRegex(
-                                            RuntimeError,
-                                            "^The Qt Quick interface could not be initialized[.]$",
-                                        ) as captured:
-                                            qt_quick_app.create_qt_quick_runtime(
-                                                workspace=temp_dir,
-                                                qml_path=qml_path,
-                                                argv=["sgfx-test"],
-                                            )
+                            with mock.patch.object(qt_quick_app, "PreviewImageProvider", PreviewProvider):
+                                with mock.patch.object(qt_quick_app, "PreviewCoordinator", PreviewCoordinator):
+                                    with mock.patch.object(qt_quick_app, "DesktopController", Controller):
+                                        with mock.patch.object(
+                                            qt_quick_app,
+                                            "SurfaceRegistryModel",
+                                            side_effect=RuntimeError(r"C:\private\operator detail"),
+                                        ):
+                                            with mock.patch.object(qt_quick_app, "ShellRegistryModel"):
+                                                with self.assertRaisesRegex(
+                                                    RuntimeError,
+                                                    "^The Qt Quick interface could not be initialized[.]$",
+                                                ) as captured:
+                                                    qt_quick_app.create_qt_quick_runtime(
+                                                        workspace=temp_dir,
+                                                        qml_path=qml_path,
+                                                        argv=["sgfx-test"],
+                                                    )
 
-        self.assertEqual(events, ["controller", "grafiks", "coordinator"])
+        self.assertEqual(events, ["controller", "grafiks", "preview", "coordinator"])
         self.assertNotIn("private", str(captured.exception).casefold())
 
     def test_missing_qml_is_sanitized_before_runtime_construction(self) -> None:

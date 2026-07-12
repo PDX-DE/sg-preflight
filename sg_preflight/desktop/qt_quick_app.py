@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import sys
-from typing import Sequence
+from typing import Callable, Sequence
 
 try:
     from PySide6.QtCore import QCoreApplication, QUrl
@@ -17,16 +17,21 @@ except ImportError as exc:
     ) from exc
 
 from sg_preflight.assets import runtime_asset_path
+from sg_preflight.desktop.preview_coordinator import PreviewCoordinator
+from sg_preflight.desktop.preview_image_provider import PreviewImageProvider
 from sg_preflight.desktop.qt_quick_controller import DesktopController
 from sg_preflight.desktop.qt_quick_grafiks import GrafiksHostAdapter
 from sg_preflight.desktop.shell_model import ShellRegistryModel
 from sg_preflight.desktop.surface_model import SurfaceRegistryModel
 from sg_preflight.desktop.task_pool import PageTaskCoordinator
+from sg_preflight.profiles import RunProfile
 
 
 APPLICATION_NAME = "SGFX QA Preflight"
 APPLICATION_ORGANIZATION = "Paradox Cat"
 QML_ENTRY_POINT = "sg_preflight/desktop/qml/Main.qml"
+PREVIEW_HELPER_ASSET = "cpp/bin/sgfx_cine_ramses_preview_cli.exe"
+PREVIEW_PROVIDER_ID = "sgfx-preview"
 _LOAD_ERROR = "The Qt Quick interface could not be initialized."
 
 
@@ -38,6 +43,8 @@ class QtQuickRuntime:
     shell_model: ShellRegistryModel
     controller: DesktopController
     task_coordinator: PageTaskCoordinator
+    preview_coordinator: PreviewCoordinator
+    preview_image_provider: PreviewImageProvider
     grafiks_host: GrafiksHostAdapter | None = None
     _closed: bool = False
 
@@ -80,11 +87,15 @@ def _shutdown_created(
     controller: DesktopController | None,
     task_coordinator: PageTaskCoordinator | None,
     grafiks_host: GrafiksHostAdapter | None = None,
+    preview_coordinator: PreviewCoordinator | None = None,
 ) -> None:
     if controller is not None:
         controller.shutdown()
-    elif grafiks_host is not None:
-        grafiks_host.shutdown()
+    else:
+        if grafiks_host is not None:
+            grafiks_host.shutdown()
+        if preview_coordinator is not None:
+            preview_coordinator.shutdown()
     if task_coordinator is not None:
         task_coordinator.shutdown(timeout_ms=500)
 
@@ -104,6 +115,25 @@ def _restore_qt_windows(engine: QQmlApplicationEngine) -> None:
                 method()
 
 
+def _preview_profile_resolver(
+    workspace: Path,
+    bmw_root: Path | None,
+) -> Callable[[str], RunProfile | None]:
+    def resolve(profile_id: str) -> RunProfile | None:
+        from sg_preflight.profiles import list_run_profiles
+
+        try:
+            profiles = list_run_profiles(workspace, bmw_root=bmw_root)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        return next(
+            (profile for profile in profiles if profile.profile_id.casefold() == profile_id.casefold()),
+            None,
+        )
+
+    return resolve
+
+
 def create_qt_quick_runtime(
     *,
     workspace: Path | str,
@@ -118,6 +148,8 @@ def create_qt_quick_runtime(
 
     task_coordinator: PageTaskCoordinator | None = None
     grafiks_host: GrafiksHostAdapter | None = None
+    preview_coordinator: PreviewCoordinator | None = None
+    preview_image_provider: PreviewImageProvider | None = None
     controller: DesktopController | None = None
     try:
         application = _application(argv)
@@ -126,6 +158,17 @@ def create_qt_quick_runtime(
         if not qml_import_root.is_dir():
             qml_import_root = source.parent
         engine.addImportPath(str(qml_import_root.resolve()))
+        preview_image_provider = PreviewImageProvider()
+        engine.addImageProvider(PREVIEW_PROVIDER_ID, preview_image_provider)
+        workspace_path = Path(workspace).resolve()
+        bmw_root_path = Path(bmw_root).resolve() if bmw_root is not None else None
+        preview_coordinator = PreviewCoordinator(
+            cache_root=workspace_path / "out" / "preview-cache",
+            helper_path=runtime_asset_path(PREVIEW_HELPER_ASSET),
+            image_provider=preview_image_provider,
+            profile_resolver=_preview_profile_resolver(workspace_path, bmw_root_path),
+            parent=engine,
+        )
         task_coordinator = PageTaskCoordinator(parent=engine)
         grafiks_host = GrafiksHostAdapter(
             coordinator=task_coordinator,
@@ -139,6 +182,7 @@ def create_qt_quick_runtime(
             bmw_root=bmw_root,
             task_coordinator=task_coordinator,
             grafiks_host=grafiks_host,
+            preview_coordinator=preview_coordinator,
             parent=engine,
         )
         surface_model = SurfaceRegistryModel(parent=engine)
@@ -162,7 +206,7 @@ def create_qt_quick_runtime(
         grafiks_host.hideRequested.connect(lambda: _hide_qt_windows(engine))
         grafiks_host.restoreRequested.connect(lambda: _restore_qt_windows(engine))
     except Exception:
-        _shutdown_created(controller, task_coordinator, grafiks_host)
+        _shutdown_created(controller, task_coordinator, grafiks_host, preview_coordinator)
         raise RuntimeError(_LOAD_ERROR) from None
 
     return QtQuickRuntime(
@@ -172,6 +216,8 @@ def create_qt_quick_runtime(
         shell_model=shell_model,
         controller=controller,
         task_coordinator=task_coordinator,
+        preview_coordinator=preview_coordinator,
+        preview_image_provider=preview_image_provider,
         grafiks_host=grafiks_host,
     )
 

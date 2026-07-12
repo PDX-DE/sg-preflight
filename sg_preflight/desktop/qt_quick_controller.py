@@ -18,6 +18,7 @@ from sg_preflight.desktop.artifact_registry import (
 )
 from sg_preflight.desktop.page_presenter import PagePresentationError, present_page_payload
 from sg_preflight.desktop.payload_adapter import adapt_page_payload
+from sg_preflight.desktop.preview_coordinator import PreviewPublicState
 from sg_preflight.desktop.task_pool import PageTaskCoordinator, TaskFailure, TaskIdentity
 from sg_preflight.desktop.ui_capabilities import (
     CapabilityEffectExecutor,
@@ -31,6 +32,8 @@ from sg_preflight.surface_registry import get_surface_descriptor, is_registered_
 
 
 _PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_PREVIEW_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
+_PREVIEW_UNSAFE_LABEL = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://|[a-z]:[\\/]|\\\\[^\\/\s]+[\\/])")
 
 
 class PageLoader(Protocol):
@@ -342,6 +345,7 @@ class DesktopController(QObject):
     capabilityStateChanged = Signal()
     capabilityErrorChanged = Signal()
     diagnosticCanCancelChanged = Signal()
+    previewChanged = Signal()
     _effectStarted = Signal(int)
     _effectFinished = Signal(int, bool, object)
 
@@ -366,6 +370,7 @@ class DesktopController(QObject):
         manual_review_recorder: Callable[..., object] | None = None,
         operator_handoff_recorder: Callable[..., object] | None = None,
         grafiks_host: GrafiksHost | None = None,
+        preview_coordinator: object | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -422,6 +427,10 @@ class DesktopController(QObject):
         self._manual_review_recorder = manual_review_recorder
         self._operator_handoff_recorder = operator_handoff_recorder
         self._grafiks_host = grafiks_host
+        self._preview_coordinator = preview_coordinator
+        self._preview_state = PreviewPublicState()
+        self._preview_launch_allowed = False
+        self._preview_reduced_motion = False
         self._effect_generation = 0
         self._effect_context: _EffectContext | None = None
         self._effect_future: Future[object] | None = None
@@ -434,6 +443,9 @@ class DesktopController(QObject):
         self._task_coordinator.task_failed.connect(self._accept_failure)
         self._effectStarted.connect(self._accept_effect_started)
         self._effectFinished.connect(self._accept_effect_finished)
+        preview_signal = getattr(preview_coordinator, "state_changed", None)
+        if preview_signal is not None:
+            preview_signal.connect(self._accept_preview_state)
 
     @Property(str, notify=currentRouteChanged)
     def currentRouteId(self) -> str:
@@ -507,6 +519,26 @@ class DesktopController(QObject):
     def diagnosticCanCancel(self) -> bool:
         return self._diagnostic_can_cancel
 
+    @Property(str, notify=previewChanged)
+    def previewState(self) -> str:
+        return self._preview_state.state
+
+    @Property(str, notify=previewChanged)
+    def previewToken(self) -> str:
+        return self._preview_state.token
+
+    @Property(int, notify=previewChanged)
+    def previewFrameCount(self) -> int:
+        return self._preview_state.frame_count
+
+    @Property(int, notify=previewChanged)
+    def previewFrameIndex(self) -> int:
+        return self._preview_state.frame_index
+
+    @Property(str, notify=previewChanged)
+    def previewLabel(self) -> str:
+        return self._preview_state.label
+
     @Slot(str, result=bool)
     def navigate(self, route_id: str) -> bool:
         if self._closed:
@@ -517,6 +549,7 @@ class DesktopController(QObject):
             return False
         if candidate == HOME_ROUTE_ID:
             self._set_route(HOME_ROUTE_ID)
+            self._preview_launch_allowed = False
             return self._schedule_shell_context()
         if not self._current_profile_id:
             self.initialize()
@@ -524,6 +557,7 @@ class DesktopController(QObject):
         if candidate == self._current_route_id and self._page_state == "loading":
             return False
         self._set_route(candidate)
+        self._preempt_preview()
         cached = self._cache.get(self._cache_key())
         if cached is not None and candidate in {"full-qa-pass", "batch-full-qa-pass"}:
             return self._schedule_page("load")
@@ -556,9 +590,13 @@ class DesktopController(QObject):
             self._set_error(_ui_error("action_rejected"))
             return False
         if canonical == self._current_profile_id:
+            self._preview_launch_allowed = True
+            if self._current_route_id == HOME_ROUTE_ID and self._page_state == "ready":
+                self._request_preview()
             return True
         self._current_profile_id = canonical
         self.currentProfileChanged.emit()
+        self._preview_launch_allowed = True
         if self._current_route_id == HOME_ROUTE_ID:
             return self._schedule_shell_context()
         return self._schedule_page("load")
@@ -568,6 +606,7 @@ class DesktopController(QObject):
         if self._closed:
             return False
         if self._current_route_id == HOME_ROUTE_ID:
+            self._preview_launch_allowed = False
             return self._schedule_shell_context()
         if self._current_identity is not None:
             return False
@@ -733,6 +772,7 @@ class DesktopController(QObject):
         ):
             self._set_capability_error("This diagnostic is unavailable.")
             return False
+        self._preempt_preview()
         return self._submit_effect(
             "diagnostic.run",
             lambda: self._execute_diagnostic(action, read_only_roots, output_root),
@@ -750,6 +790,29 @@ class DesktopController(QObject):
         self._set_diagnostic_can_cancel(False)
         self._set_capability_state("cancelled")
         return True
+
+    @Slot(int, result=bool)
+    def selectPreviewFrame(self, frame_index: int) -> bool:
+        coordinator = self._preview_coordinator
+        if self._closed or coordinator is None:
+            return False
+        select_frame = getattr(coordinator, "select_frame", None)
+        if not callable(select_frame):
+            return False
+        try:
+            return bool(select_frame(int(frame_index)))
+        except (RuntimeError, ValueError):
+            return False
+
+    @Slot(bool)
+    def setPreviewReducedMotion(self, enabled: bool) -> None:
+        reduced_motion = bool(enabled)
+        if self._closed or reduced_motion == self._preview_reduced_motion:
+            return
+        self._preview_reduced_motion = reduced_motion
+        self._preview_launch_allowed = True
+        self._preempt_preview()
+        self._request_preview()
 
     @Slot(str, result=bool)
     def revealArtifact(self, artifact_id: str) -> bool:
@@ -845,6 +908,10 @@ class DesktopController(QObject):
         self._closed = True
         if self._grafiks_host is not None:
             self._grafiks_host.shutdown()
+        if self._preview_coordinator is not None:
+            shutdown = getattr(self._preview_coordinator, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
         self._effect_generation += 1
         if self._effect_future is not None:
             self._effect_future.cancel()
@@ -860,6 +927,7 @@ class DesktopController(QObject):
         self._set_profile_options([])
         self._set_error(EMPTY_UI_ERROR)
         self._set_state("idle")
+        self._set_preview_state(PreviewPublicState())
 
     def _get_operator_action(self, action_id: str) -> object:
         if self._action_getter is not None:
@@ -1043,6 +1111,11 @@ class DesktopController(QObject):
         )
 
     def _prepare_schedule(self, identity: TaskIdentity) -> None:
+        coordinator = self._preview_coordinator
+        if coordinator is not None:
+            invalidate = getattr(coordinator, "invalidate", None)
+            if callable(invalidate):
+                invalidate(generation=identity.generation)
         self._clear_artifacts()
         self._set_current_identity(identity)
         self._set_state("loading")
@@ -1317,6 +1390,8 @@ class DesktopController(QObject):
         self._set_payload(normalized)
         self._set_error(EMPTY_UI_ERROR)
         self._set_state("ready")
+        if self._current_route_id == HOME_ROUTE_ID:
+            self._request_preview()
 
     def _set_state(self, state: str) -> None:
         if state == self._page_state:
@@ -1387,6 +1462,72 @@ class DesktopController(QObject):
             return
         self._capability_state = state
         self.capabilityStateChanged.emit()
+
+    @Slot(object)
+    def _accept_preview_state(self, state: object) -> None:
+        if self._closed or not isinstance(state, PreviewPublicState):
+            return
+        label = state.label.strip()
+        if (
+            state.state not in {"fallback", "loading", "ready"}
+            or not label
+            or len(label) > 80
+            or any(ord(character) < 32 for character in label)
+            or _PREVIEW_UNSAFE_LABEL.search(label)
+        ):
+            return
+        if state.state == "ready":
+            if (
+                not _PREVIEW_TOKEN_PATTERN.fullmatch(state.token)
+                or not 1 <= state.frame_count <= 24
+                or not 0 <= state.frame_index < state.frame_count
+            ):
+                return
+        elif state.token or state.frame_count != 0 or state.frame_index != 0:
+            return
+        self._set_preview_state(state)
+
+    def _set_preview_state(self, state: PreviewPublicState) -> None:
+        if state == self._preview_state:
+            return
+        self._preview_state = state
+        self.previewChanged.emit()
+
+    def _request_preview(self) -> None:
+        coordinator = self._preview_coordinator
+        allow_launch = self._preview_launch_allowed
+        self._preview_launch_allowed = False
+        if (
+            coordinator is None
+            or self._closed
+            or self._current_route_id != HOME_ROUTE_ID
+            or self._page_state != "ready"
+            or not self._current_profile_id
+        ):
+            return
+        request_profile = getattr(coordinator, "request_profile", None)
+        if not callable(request_profile):
+            return
+        try:
+            request_profile(
+                self._current_profile_id,
+                generation=self._generation,
+                reduced_motion=self._preview_reduced_motion,
+                allow_launch=allow_launch,
+            )
+        except (RuntimeError, ValueError):
+            self._set_preview_state(PreviewPublicState())
+
+    def _preempt_preview(self) -> None:
+        coordinator = self._preview_coordinator
+        if coordinator is None:
+            return
+        preempt = getattr(coordinator, "preempt", None)
+        if callable(preempt):
+            try:
+                preempt()
+            except RuntimeError:
+                pass
 
     def _set_capability_error(self, error: str) -> None:
         if error == self._capability_error:

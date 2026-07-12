@@ -12,12 +12,18 @@ FocusScope {
     required property string pageState
     required property string capabilityState
     required property string capabilityError
+    required property string previewState
+    required property string previewToken
+    required property int previewFrameCount
+    required property int previewFrameIndex
+    required property string previewLabel
     required property bool reducedMotion
     signal profileRequested(string profileId)
     signal actionRequested(string capabilityId, var inputs)
     signal routeRequested(string routeId)
     signal gateSelected(string gateId)
     signal inspectionRequested
+    signal previewFrameRequested(int frameIndex)
     property var snapshot: ({})
     property var gates: []
     property var selectedProfile: ({})
@@ -170,8 +176,14 @@ FocusScope {
                     Layout.fillHeight: true
                     selectedProfile: root.selectedProfile
                     latestLocalRun: root.latestLocalRun
+                    previewState: root.previewState
+                    previewToken: root.previewToken
+                    previewFrameCount: root.previewFrameCount
+                    previewFrameIndex: root.previewFrameIndex
+                    previewLabel: root.previewLabel
                     reducedMotion: root.reducedMotion
                     onInspectionRequested: root.inspectionRequested()
+                    onPreviewFrameRequested: frameIndex => root.previewFrameRequested(frameIndex)
                 }
 
                 QaGateDetail {

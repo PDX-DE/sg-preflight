@@ -99,6 +99,10 @@ ApplicationWindow {
         }
     }
 
+    onReducedMotionChanged: desktopController.setPreviewReducedMotion(reducedMotion)
+
+    Component.onCompleted: desktopController.setPreviewReducedMotion(reducedMotion)
+
     Shortcut {
         sequence: "F1"
         onActivated: window.handleShortcut("F1")
@@ -285,6 +289,11 @@ ApplicationWindow {
                             pageState: window.desktopController.pageState
                             capabilityState: window.desktopController.capabilityState
                             capabilityError: window.desktopController.capabilityError
+                            previewState: window.desktopController.previewState
+                            previewToken: window.desktopController.previewToken
+                            previewFrameCount: window.desktopController.previewFrameCount
+                            previewFrameIndex: window.desktopController.previewFrameIndex
+                            previewLabel: window.desktopController.previewLabel
                             reducedMotion: window.reducedMotion
                             onProfileRequested: profileId => window.desktopController.selectProfile(profileId)
                             onActionRequested: (capabilityId, inputs) => window.desktopController.invokeCapability(capabilityId, inputs)
@@ -292,6 +301,7 @@ ApplicationWindow {
                             onInspectionRequested: window.desktopController.invokeCapability("grafiks.launch", {
                                 "profile_id": window.desktopController.currentProfileId
                             })
+                            onPreviewFrameRequested: frameIndex => window.desktopController.selectPreviewFrame(frameIndex)
                         }
 
                         Loader {

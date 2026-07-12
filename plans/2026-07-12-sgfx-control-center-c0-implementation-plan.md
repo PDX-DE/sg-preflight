@@ -980,7 +980,7 @@ git commit -m "feat(qt): add same-data presentation view"
 - Consumes: a canonical `RunProfile`, an internally resolved compatible `exported.ramses`, a fixed audited helper executable, controller generation, selected profile, reduced-motion flag, and diagnostic lifecycle.
 - Produces: controller properties `previewState`, `previewToken`, `previewFrameCount`, `previewFrameIndex`, `previewLabel`; slot `selectPreviewFrame(int) -> bool`; `image://sgfx-preview/<opaque-token>/<index>` only.
 
-- [ ] **Step 1: Write failing scheduling, cache, and secrecy tests**
+- [x] **Step 1: Write failing scheduling, cache, and secrecy tests**
 
 Create a fake helper that writes a manifest and tiny PNG fixtures beneath the supplied output directory. Cover success, missing scene, unsupported profile, timeout, oversized manifest, stale generation, stale profile, diagnostic pre-emption, hidden playback, and reduced motion.
 
@@ -1000,7 +1000,7 @@ def test_public_state_contains_no_path_or_command(self) -> None:
     self.assertNotIn(".exe", rendered)
 ```
 
-- [ ] **Step 2: Run preview tests and verify RED**
+- [x] **Step 2: Run preview tests and verify RED**
 
 Run:
 
@@ -1010,7 +1010,7 @@ Run:
 
 Expected: FAIL because the coordinator and provider do not exist.
 
-- [ ] **Step 3: Define a strict internal/public split**
+- [x] **Step 3: Define a strict internal/public split**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -1035,7 +1035,7 @@ class _PreviewRequest:
 
 Only `PreviewPublicState` crosses into controller properties. The request, path, command, process, manifest path, and cache entry remain private.
 
-- [ ] **Step 4: Implement one-worker scheduling and hard limits**
+- [x] **Step 4: Implement one-worker scheduling and hard limits**
 
 Use `ThreadPoolExecutor(max_workers=1, thread_name_prefix="sgfx-preview")`. Build the helper argument list internally from fixed flags. On Windows pass `CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS`. Enforce before publication:
 
@@ -1050,21 +1050,21 @@ if any(not frame.resolve().is_relative_to(request.output_root.resolve()) for fra
 
 Use `subprocess.run(..., timeout=30, check=False, capture_output=True, text=True)`; sanitize every failure to the generic fallback. Never expose stdout/stderr.
 
-- [ ] **Step 5: Implement the 256 MiB cache and opaque provider**
+- [x] **Step 5: Implement the 256 MiB cache and opaque provider**
 
 Cache key is SHA-256 over schema version, canonical profile, scene content hash, helper hash/version, frame limit, and reduced-motion mode. Reject links/reparse points. Evict least-recently-used completed entries until total accepted frame bytes are at most `256 * 1024 * 1024`.
 
 `PreviewImageProvider` maps a random controller-issued token to immutable accepted frame paths and returns a `QImage`; QML never receives the path. Invalidate token mappings on profile/generation change and shutdown.
 
-- [ ] **Step 6: Integrate lifecycle and diagnostic pre-emption**
+- [x] **Step 6: Integrate lifecycle and diagnostic pre-emption**
 
 Schedule only after an explicit profile selection and a ready current snapshot. Startup may reuse a valid cache but may not launch the helper. Before `diagnostic.run` becomes running, call `preview_coordinator.preempt()` and set playback inactive. A queued preview future may cancel; a running helper is terminated through the coordinator's owned process handle and returns to fallback.
 
-- [ ] **Step 7: Bind bounded QML playback**
+- [x] **Step 7: Bind bounded QML playback**
 
 `QaContextPreview.qml` plays one revolution only when visible, active, not reduced motion, and `frameCount > 1`. Its timer advances at a derived interval and stops permanently at the last frame. Scrubbing clamps to valid indices and calls `selectPreviewFrame`; it never constructs a filesystem URL.
 
-- [ ] **Step 8: Run preview, controller, and QML tests**
+- [x] **Step 8: Run preview, controller, and QML tests**
 
 Run:
 
@@ -1074,7 +1074,7 @@ Run:
 
 Expected: PASS; preview failure is quiet and cannot affect QA state, and no private input appears in controller/QML output.
 
-- [ ] **Step 9: Commit the bounded preview channel**
+- [x] **Step 9: Commit the bounded preview channel**
 
 ```powershell
 git add sg_preflight/desktop/preview_coordinator.py sg_preflight/desktop/preview_image_provider.py sg_preflight/desktop/qt_quick_controller.py sg_preflight/desktop/qt_quick_app.py sg_preflight/desktop/qml/components/QaContextPreview.qml tests/test_qt_quick_preview.py

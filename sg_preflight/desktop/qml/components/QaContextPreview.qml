@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import SGFX 1.0
 
 FocusScope {
@@ -10,12 +11,31 @@ FocusScope {
 
     required property var selectedProfile
     required property var latestLocalRun
+    required property string previewState
+    required property string previewToken
+    required property int previewFrameCount
+    required property int previewFrameIndex
+    required property string previewLabel
     required property bool reducedMotion
     signal inspectionRequested
+    signal previewFrameRequested(int frameIndex)
     readonly property bool hasSelection: Boolean(selectedProfile && selectedProfile.id)
+    readonly property bool previewReady: previewState === "ready" && previewToken.length > 0 && previewFrameCount > 0
+    readonly property bool playbackActive: root.visible && root.Window.window !== null && root.Window.window.active
+    property bool playbackComplete: false
 
     objectName: "qaContextPreview"
     activeFocusOnTab: root.hasSelection
+
+    function requestFrame(candidate: int) {
+        if (!root.previewReady)
+            return;
+        const bounded = Math.max(0, Math.min(root.previewFrameCount - 1, candidate));
+        root.previewFrameRequested(bounded);
+    }
+
+    onPreviewTokenChanged: playbackComplete = false
+    onPreviewFrameCountChanged: playbackComplete = false
 
     Rectangle {
         anchors.fill: parent
@@ -35,6 +55,24 @@ FocusScope {
             opacity: 0.75
         }
 
+        Image {
+            id: profilePreview
+
+            objectName: "profilePreviewImage"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.margins: Theme.space3
+            anchors.topMargin: 64
+            anchors.bottomMargin: 88
+            visible: root.previewReady
+            source: root.previewReady ? "image://sgfx-preview/" + root.previewToken + "/" + root.previewFrameIndex : ""
+            fillMode: Image.PreserveAspectFit
+            asynchronous: false
+            cache: true
+        }
+
         Item {
             id: vehicleFigure
 
@@ -43,6 +81,7 @@ FocusScope {
             anchors.verticalCenterOffset: -4
             width: Math.min(parent.width * 0.72, 250)
             height: 92
+            visible: !root.previewReady
             opacity: root.hasSelection ? 1 : 0.42
 
             Rectangle {
@@ -84,7 +123,7 @@ FocusScope {
             }
 
             SequentialAnimation on y {
-                running: root.hasSelection && !root.reducedMotion
+                running: root.hasSelection && !root.previewReady && !root.reducedMotion
                 loops: Animation.Infinite
                 NumberAnimation {
                     from: -2
@@ -98,6 +137,21 @@ FocusScope {
                     duration: 1200
                     easing.type: Easing.InOutSine
                 }
+            }
+        }
+
+        Timer {
+            id: previewPlayback
+
+            objectName: "previewPlayback"
+            interval: Math.max(80, Math.round(2400 / Math.max(1, root.previewFrameCount - 1)))
+            repeat: true
+            running: root.playbackActive && root.previewReady && !root.reducedMotion && root.previewFrameCount > 1 && !root.playbackComplete
+            onTriggered: {
+                const next = Math.min(root.previewFrameCount - 1, root.previewFrameIndex + 1);
+                root.requestFrame(next);
+                if (next >= root.previewFrameCount - 1)
+                    root.playbackComplete = true;
             }
         }
 
@@ -125,6 +179,26 @@ FocusScope {
             }
             Item {
                 Layout.fillHeight: true
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: root.previewReady
+                text: root.previewLabel + " · " + String(root.previewFrameIndex + 1) + "/" + String(root.previewFrameCount)
+                color: Theme.accent
+                font.family: Theme.operationalFont
+                font.pixelSize: 10
+                elide: Text.ElideRight
+            }
+            Slider {
+                objectName: "previewScrubber"
+                Layout.fillWidth: true
+                visible: root.previewReady && root.previewFrameCount > 1
+                from: 0
+                to: Math.max(0, root.previewFrameCount - 1)
+                stepSize: 1
+                value: root.previewFrameIndex
+                Accessible.name: "3D preview frame"
+                onMoved: root.requestFrame(Math.round(value))
             }
             Label {
                 Layout.fillWidth: true
