@@ -599,7 +599,11 @@ class DesktopController(QObject):
 
     @Slot(str, "QVariantList", result=bool)
     def runDiagnostic(self, action_id: str, profile_ids: list[object]) -> bool:
-        if self._closed or self._current_route_id not in {"full-qa-pass", "batch-full-qa-pass"}:
+        if self._closed or self._current_route_id not in {
+            HOME_ROUTE_ID,
+            "full-qa-pass",
+            "batch-full-qa-pass",
+        }:
             return False
         try:
             clean_action_id = validate_effect_text(action_id, required=True, max_length=128)
@@ -661,6 +665,8 @@ class DesktopController(QObject):
                 read_only_roots=read_only_roots,
                 output_root=output_root,
                 allowed_output_root=self._workspace / "out",
+                expected_profile_id=self._current_profile_id,
+                owning_page_id=self._current_route_id,
             )
         ):
             self._set_capability_error("This diagnostic is unavailable.")
@@ -948,14 +954,12 @@ class DesktopController(QObject):
             and context.profile_id == self._current_profile_id
             and context.page_id == self._current_route_id
         )
-        if (
-            succeeded
-            and is_current_page
-            and self._current_route_id != HOME_ROUTE_ID
-            and self._current_identity is None
-        ):
+        if succeeded and is_current_page and self._current_identity is None:
             self._clear_artifacts()
-            self.refresh()
+            if self._current_route_id == HOME_ROUTE_ID:
+                self._schedule_shell_context()
+            else:
+                self.refresh()
 
     def _cache_key(self) -> tuple[str, str]:
         return self._current_profile_id, self._current_route_id
@@ -991,6 +995,9 @@ class DesktopController(QObject):
         shell_loader = self._shell_loader
         workspace = self._workspace
         bmw_root = self._bmw_root
+        action_lister = self._action_lister
+        configured_diagnostic_read_roots = self._configured_diagnostic_read_roots
+        configured_diagnostic_output_root = self._configured_diagnostic_output_root
 
         def read_shell_context() -> dict[str, Any]:
             raw = shell_loader(
@@ -998,7 +1005,43 @@ class DesktopController(QObject):
                 profile_id=identity.profile_id,
                 bmw_root=bmw_root,
             )
-            return adapt_page_payload(raw, workspace=workspace)
+            adapted = adapt_page_payload(raw, workspace=workspace)
+            adapted["actions"] = []
+            selected_profile_id = str(adapted.get("selected_profile_id", "") or "").strip()
+            if not selected_profile_id:
+                return adapted
+            diagnostic_read_roots = _resolve_diagnostic_read_roots(
+                workspace,
+                configured_diagnostic_read_roots,
+            )
+            diagnostic_output_root = _resolve_diagnostic_output_root(
+                workspace,
+                configured_diagnostic_output_root,
+            )
+            if action_lister is None:
+                from sg_preflight.qa_operator_actions import list_sgfx_preflight_actions
+
+                raw_actions = list_sgfx_preflight_actions(workspace)
+            else:
+                raw_actions = action_lister(workspace)
+            if isinstance(raw_actions, (list, tuple)):
+                adapted["actions"] = [
+                    capability_descriptor(
+                        "diagnostic.run",
+                        label="Run local QA checks",
+                        action_id=str(getattr(action, "action_id", "")),
+                    )
+                    for action in raw_actions
+                    if audit_ui_diagnostic_action(
+                        action,
+                        read_only_roots=diagnostic_read_roots,
+                        output_root=diagnostic_output_root,
+                        allowed_output_root=workspace / "out",
+                        expected_profile_id=selected_profile_id,
+                        owning_page_id=HOME_ROUTE_ID,
+                    )
+                ]
+            return adapted
 
         return self._submit(identity, read_shell_context)
 
@@ -1063,6 +1106,8 @@ class DesktopController(QObject):
                             read_only_roots=diagnostic_read_roots,
                             output_root=diagnostic_output_root,
                             allowed_output_root=workspace / "out",
+                            expected_profile_id=identity.profile_id,
+                            owning_page_id=identity.page_id,
                         ):
                             accepted_actions.append(
                                 capability_descriptor(

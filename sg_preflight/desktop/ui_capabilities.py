@@ -115,7 +115,7 @@ UI_CAPABILITIES = (
     ),
     UiCapability(
         "diagnostic.run",
-        ("full-qa-pass", "batch-full-qa-pass"),
+        ("home", "full-qa-pass", "batch-full-qa-pass"),
         (
             InputField("action_id", "audited_action_id", max_length=128),
             InputField("profile_ids", "canonical_profile_id_list"),
@@ -174,13 +174,8 @@ def get_ui_capability(capability_id: str) -> UiCapability:
 
 ALLOWED_DIAGNOSTIC_KINDS = frozenset(
     {
-        "daily_live_matrix",
-        "profile_stack",
-        "repo_checker",
-        "unused_resources",
+        "sgfx_preflight",
         "delivery_checklist",
-        "scene_check",
-        "bmw_screenshot_smoke",
     }
 )
 
@@ -256,13 +251,31 @@ def audit_ui_diagnostic_action(
     read_only_roots: tuple[Path, ...],
     output_root: Path,
     allowed_output_root: Path,
+    expected_profile_id: str = "",
+    owning_page_id: str = "",
 ) -> bool:
-    if action.kind not in ALLOWED_DIAGNOSTIC_KINDS or action.kind != "delivery_checklist":
+    expected_profile = expected_profile_id.strip()
+    if action.kind not in ALLOWED_DIAGNOSTIC_KINDS:
         return False
     profile_id = action.profile_id.strip()
     if not _PROFILE_PATTERN.fullmatch(profile_id):
         return False
-    if action.action_id.casefold() != f"delivery_checklist__{profile_id.casefold()}":
+    if owning_page_id == "home":
+        if (
+            not _PROFILE_PATTERN.fullmatch(expected_profile)
+            or action.kind != "sgfx_preflight"
+            or action.action_id.casefold() != f"sgfx_preflight__{expected_profile.casefold()}"
+            or profile_id.casefold() != expected_profile.casefold()
+            or not action.ready
+        ):
+            return False
+    elif owning_page_id in {"full-qa-pass", "batch-full-qa-pass"}:
+        if (
+            action.kind != "delivery_checklist"
+            or action.action_id.casefold() != f"delivery_checklist__{profile_id.casefold()}"
+        ):
+            return False
+    else:
         return False
     if action.scope != "profile" or not action.project_root:
         return False

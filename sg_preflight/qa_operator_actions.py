@@ -119,6 +119,38 @@ def _bmw_smoke_blocker_message(status_map: dict[str, dict[str, str]], profile: R
         return f"No BMW screenshot-smoke target mapping is configured for {profile.profile_id} yet."
     return ""
 
+
+def _sgfx_preflight_action(profile: RunProfile) -> OperatorAction:
+    source_project_root = profile.source_project_root()
+    ready = source_project_root.exists() and profile.config_path.exists()
+    return OperatorAction(
+        action_id=f"sgfx_preflight__{profile.profile_id.lower()}",
+        label="Run local QA checks",
+        description=(
+            f"Run the four deterministic SGFX validation packs for {profile.profile_id} "
+            "without launching the broader QA stack or external tools."
+        ),
+        kind="sgfx_preflight",
+        scope="profile",
+        ready=ready,
+        blocker_message=(
+            "" if ready else f"The project root or config for {profile.profile_id} is missing."
+        ),
+        profile_id=profile.profile_id,
+        project_root=str(source_project_root),
+        command_preview="internal: run four deterministic SGFX packs",
+    )
+
+
+def list_sgfx_preflight_actions(
+    workspace: Path | None = None,
+    *,
+    profiles: list[RunProfile] | None = None,
+) -> list[OperatorAction]:
+    root = workspace_root(workspace)
+    live_profiles = profiles or list_run_profiles(root)
+    return [_sgfx_preflight_action(profile) for profile in live_profiles]
+
 def list_operator_actions(
     workspace: Path | None = None,
     *,
@@ -210,27 +242,7 @@ def list_operator_actions(
 
     for profile in live_profiles:
         source_project_root = profile.source_project_root()
-        actions.append(
-            OperatorAction(
-                action_id=f"sgfx_preflight__{profile.profile_id.lower()}",
-                label="Run local QA checks",
-                description=(
-                    f"Run the four deterministic SGFX validation packs for {profile.profile_id} "
-                    "without launching the broader QA stack or external tools."
-                ),
-                kind="sgfx_preflight",
-                scope="profile",
-                ready=source_project_root.exists() and profile.config_path.exists(),
-                blocker_message=(
-                    ""
-                    if source_project_root.exists() and profile.config_path.exists()
-                    else f"The project root or config for {profile.profile_id} is missing."
-                ),
-                profile_id=profile.profile_id,
-                project_root=str(source_project_root),
-                command_preview="internal: run four deterministic SGFX packs",
-            )
-        )
+        actions.append(_sgfx_preflight_action(profile))
         actions.append(
             OperatorAction(
                 action_id=f"qa_stack__{profile.profile_id.lower()}",

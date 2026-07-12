@@ -406,7 +406,7 @@ git commit -m "feat(qa): add isolated local preflight action"
 - Consumes: exact `OperatorAction`, current controller identity, configured read-only roots, and action output root.
 - Produces: `audit_ui_diagnostic_action(..., expected_profile_id: str = "", owning_page_id: str = "") -> bool`; one sanitized `diagnostic.run` descriptor inside the current Home payload.
 
-- [ ] **Step 1: Write the failing fail-closed audit matrix**
+- [x] **Step 1: Write the failing fail-closed audit matrix**
 
 Extend the inventory test to require `diagnostic.run.owning_pages == ("home", "full-qa-pass", "batch-full-qa-pass")` while `len(UI_CAPABILITIES) == 8`. Add table-driven negatives for `profile_stack`, repo checker, unused resources, scene check, BMW smoke, malformed ID, mismatched profile, workspace scope, missing project root, source escape, output escape, and reparse points.
 
@@ -424,7 +424,7 @@ self.assertTrue(accepted)
 
 Add controller tests proving no action is published while selection is empty and exactly `sgfx_preflight__g45` is published after selecting G45.
 
-- [ ] **Step 2: Run focused capability tests and verify RED**
+- [x] **Step 2: Run focused capability tests and verify RED**
 
 Run:
 
@@ -434,7 +434,7 @@ Run:
 
 Expected: FAIL because Home is not an owner, the audit only accepts delivery checklist, and shell-context reads publish no actions.
 
-- [ ] **Step 3: Implement the exact two-policy audit**
+- [x] **Step 3: Implement the exact two-policy audit**
 
 Keep delivery-checklist acceptance only for the two detailed Full QA pages. For Home, accept only this predicate:
 
@@ -454,7 +454,7 @@ if owning_page_id == "home":
 
 Every other Home kind returns `False`. Retain the existing exact delivery-checklist predicate for `full-qa-pass` and `batch-full-qa-pass`.
 
-- [ ] **Step 4: Discover Home actions inside the shell worker**
+- [x] **Step 4: Discover Home actions inside the shell worker**
 
 Inside `_schedule_shell_context`, after adapting the shell payload, read its canonical `selected_profile_id`; only when non-empty list operator actions and append the one accepted descriptor:
 
@@ -479,7 +479,7 @@ adapted["actions"] = [
 
 This remains off the GUI thread. Do not publish `command_preview`, paths, blocker detail, or action objects.
 
-- [ ] **Step 5: Extend invocation and current-completion refresh**
+- [x] **Step 5: Extend invocation and current-completion refresh**
 
 Allow `runDiagnostic` from `home`, `full-qa-pass`, and `batch-full-qa-pass`. Pass current page/profile into the audit. On a successful current Home completion, schedule a new shell-context read; on a stale completion, persist the backend record but change no route, selection, payload, or error state.
 
@@ -492,7 +492,7 @@ if succeeded and is_current_page and self._current_identity is None:
         self.refresh()
 ```
 
-- [ ] **Step 6: Run capability, source-mutation, output-containment, and stale-result tests**
+- [x] **Step 6: Run capability, source-mutation, output-containment, and stale-result tests**
 
 Run:
 
@@ -502,7 +502,7 @@ Run:
 
 Expected: PASS; inventory remains eight, only the exact Home action is enabled, source mutation and output escape fail, one effect runs at a time, queued cancellation stays truthful, and current completion refreshes Home.
 
-- [ ] **Step 7: Commit the Home capability boundary**
+- [x] **Step 7: Commit the Home capability boundary**
 
 ```powershell
 git add sg_preflight/desktop/ui_capabilities.py sg_preflight/desktop/qt_quick_controller.py tests/test_qt_quick_capabilities.py tests/test_qt_quick_core.py

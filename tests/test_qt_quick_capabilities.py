@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 import importlib.util
 import os
 from pathlib import Path
@@ -43,6 +43,10 @@ class TestUiCapabilityInventory(unittest.TestCase):
             get_ui_capability("artifact.reveal").owning_pages,
             ARTIFACT_REVEAL_SURFACE_IDS,
         )
+        self.assertEqual(
+            get_ui_capability("diagnostic.run").owning_pages,
+            ("home", "full-qa-pass", "batch-full-qa-pass"),
+        )
         self.assertEqual(len(UI_CAPABILITIES), 8)
         self.assertTrue(all(not hasattr(item, "__dict__") for item in UI_CAPABILITIES))
         with self.assertRaises(FrozenInstanceError):
@@ -50,7 +54,8 @@ class TestUiCapabilityInventory(unittest.TestCase):
         with self.assertRaises(KeyError):
             get_ui_capability("unknown.command")
 
-    def test_concrete_diagnostic_audit_exposes_only_delivery_checklist(self) -> None:
+    def test_concrete_diagnostic_audit_is_page_profile_and_path_exact(self) -> None:
+        from sg_preflight.desktop import ui_capabilities as capability_module
         from sg_preflight.desktop.ui_capabilities import (
             ALLOWED_DIAGNOSTIC_KINDS,
             audit_ui_diagnostic_action,
@@ -59,76 +64,245 @@ class TestUiCapabilityInventory(unittest.TestCase):
 
         self.assertEqual(
             ALLOWED_DIAGNOSTIC_KINDS,
-            frozenset(
-                {
-                    "daily_live_matrix",
-                    "profile_stack",
-                    "repo_checker",
-                    "unused_resources",
-                    "delivery_checklist",
-                    "scene_check",
-                    "bmw_screenshot_smoke",
-                }
-            ),
+            frozenset({"sgfx_preflight", "delivery_checklist"}),
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "source"
-            project = source / "Cars" / "G65"
+            project = source / "Cars" / "G45"
             output = root / "out" / "operator-ui" / "actions"
             project.mkdir(parents=True)
             output.mkdir(parents=True)
-            actions = [
+            preflight = OperatorAction(
+                action_id="sgfx_preflight__g45",
+                label="Run local QA checks",
+                description="Four deterministic packs",
+                kind="sgfx_preflight",
+                scope="profile",
+                ready=True,
+                profile_id="G45",
+                project_root=str(project),
+            )
+            delivery = OperatorAction(
+                action_id="delivery_checklist__g45",
+                label="Delivery readiness",
+                description="Local delivery readiness",
+                kind="delivery_checklist",
+                scope="profile",
+                ready=True,
+                profile_id="G45",
+                project_root=str(project),
+            )
+
+            self.assertTrue(
+                audit_ui_diagnostic_action(
+                    preflight,
+                    read_only_roots=(source,),
+                    output_root=output,
+                    allowed_output_root=root / "out",
+                    expected_profile_id="G45",
+                    owning_page_id="home",
+                )
+            )
+            for page_id in ("full-qa-pass", "batch-full-qa-pass"):
+                self.assertTrue(
+                    audit_ui_diagnostic_action(
+                        delivery,
+                        read_only_roots=(source,),
+                        output_root=output,
+                        allowed_output_root=root / "out",
+                        expected_profile_id="G45",
+                        owning_page_id=page_id,
+                    )
+                )
+            self.assertFalse(
+                audit_ui_diagnostic_action(
+                    delivery,
+                    read_only_roots=(source,),
+                    output_root=output,
+                    allowed_output_root=root / "out",
+                    expected_profile_id="G45",
+                    owning_page_id="home",
+                )
+            )
+            self.assertFalse(
+                audit_ui_diagnostic_action(
+                    preflight,
+                    read_only_roots=(source,),
+                    output_root=output,
+                    allowed_output_root=root / "out",
+                    expected_profile_id="G45",
+                    owning_page_id="full-qa-pass",
+                )
+            )
+
+            rejected = [
                 OperatorAction(
-                    action_id=f"{kind}__g65",
+                    action_id=f"{kind}__g45",
                     label=kind,
                     description=kind,
                     kind=kind,
                     scope="profile",
                     ready=True,
-                    profile_id="G65",
+                    profile_id="G45",
                     project_root=str(project),
                 )
-                for kind in sorted(ALLOWED_DIAGNOSTIC_KINDS)
-            ]
-
-            audited = {
-                action.kind: audit_ui_diagnostic_action(
-                    action,
-                    read_only_roots=(source,),
-                    output_root=output,
-                    allowed_output_root=root / "out",
+                for kind in (
+                    "profile_stack",
+                    "repo_checker",
+                    "unused_resources",
+                    "scene_check",
+                    "bmw_screenshot_smoke",
                 )
-                for action in actions
-            }
+            ]
+            rejected.extend(
+                [
+                    replace(preflight, action_id="sgfx_preflight__g45/escape"),
+                    replace(preflight, profile_id="../G45"),
+                    replace(preflight, profile_id="G65", action_id="sgfx_preflight__g65"),
+                    replace(preflight, scope="workspace"),
+                    replace(preflight, project_root=""),
+                    replace(preflight, project_root=str(root / "missing")),
+                    replace(preflight, ready=False),
+                ]
+            )
+            escaped_project = root / "sibling" / "G45"
+            escaped_project.mkdir(parents=True)
+            rejected.append(replace(preflight, project_root=str(escaped_project)))
 
-            self.assertEqual(
-                audited,
-                {
-                    "bmw_screenshot_smoke": False,
-                    "daily_live_matrix": False,
-                    "delivery_checklist": True,
-                    "profile_stack": False,
-                    "repo_checker": False,
-                    "scene_check": False,
-                    "unused_resources": False,
-                },
-            )
-            escaped = actions[2]
-            escaped = type(escaped)(
-                **{
-                    **escaped.__dict__,
-                    "project_root": str(root / "sibling"),
-                }
-            )
+            for action in rejected:
+                with self.subTest(action=action.action_id, kind=action.kind):
+                    self.assertFalse(
+                        audit_ui_diagnostic_action(
+                            action,
+                            read_only_roots=(source,),
+                            output_root=output,
+                            allowed_output_root=root / "out",
+                            expected_profile_id="G45",
+                            owning_page_id="home",
+                        )
+                    )
+
             self.assertFalse(
                 audit_ui_diagnostic_action(
-                    escaped,
+                    preflight,
                     read_only_roots=(source,),
-                    output_root=output,
+                    output_root=root / "escaped-output",
                     allowed_output_root=root / "out",
+                    expected_profile_id="G45",
+                    owning_page_id="home",
                 )
             )
+            with mock.patch.object(capability_module, "_is_reparse_or_link", return_value=True):
+                self.assertFalse(
+                    audit_ui_diagnostic_action(
+                        preflight,
+                        read_only_roots=(source,),
+                        output_root=output,
+                        allowed_output_root=root / "out",
+                        expected_profile_id="G45",
+                        owning_page_id="home",
+                    )
+                )
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_home_publishes_only_selected_profile_preflight(self) -> None:
+        from PySide6.QtCore import QCoreApplication
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.qa_operator_actions import OperatorAction
+        from tests.test_qt_quick_core import _FakeTaskCoordinator, _pump_until
+
+        application = QCoreApplication.instance() or QCoreApplication([])
+        self.assertIsNotNone(application)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            source = root / "source"
+            project = source / "Cars" / "G45"
+            output = workspace / "out" / "operator-ui" / "actions"
+            project.mkdir(parents=True)
+            preflight = OperatorAction(
+                action_id="sgfx_preflight__g45",
+                label="Run local QA checks",
+                description="Four deterministic packs",
+                kind="sgfx_preflight",
+                scope="profile",
+                ready=True,
+                profile_id="G45",
+                project_root=str(project),
+            )
+            broad = replace(
+                preflight,
+                action_id="qa_stack__g45",
+                label="Run recommended QA stack",
+                kind="profile_stack",
+            )
+            action_lister = mock.Mock(return_value=[preflight, broad])
+
+            class Record:
+                paths = {"summary": str(output / "run-1" / "summary.json")}
+
+            action_executor = mock.Mock(return_value=Record())
+
+            def shell_loader(*, profile_id: str, **_kwargs: object) -> dict[str, object]:
+                return {
+                    "status": "not_run",
+                    "summary": "No local activity recorded yet.",
+                    "profile_options": [{"id": "G45", "label": "G45 label"}],
+                    "selected_profile_id": profile_id,
+                }
+
+            coordinator = _FakeTaskCoordinator()
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="",
+                task_coordinator=coordinator,
+                shell_loader=shell_loader,
+                diagnostic_read_roots=(source,),
+                diagnostic_output_root=output,
+                action_lister=action_lister,
+                action_getter=lambda _action_id, _workspace: preflight,
+                action_executor=action_executor,
+            )
+            self.addCleanup(controller.shutdown)
+
+            self.assertTrue(controller.initialize())
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+            self.assertEqual(controller.currentPayload.get("actions", []), [])
+            action_lister.assert_not_called()
+
+            self.assertTrue(controller.selectProfile("G45"))
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+
+            self.assertIn("actions", controller.currentPayload)
+            actions = controller.currentPayload["actions"]
+            self.assertEqual(len(actions), 1)
+            self.assertEqual(
+                actions[0],
+                {
+                    "capabilityId": "diagnostic.run",
+                    "label": "Run local QA checks",
+                    "enabled": True,
+                    "actionId": "sgfx_preflight__g45",
+                    "effectClass": "tool_output_only",
+                },
+            )
+            self.assertNotIn(str(project), repr(actions))
+            self.assertNotIn(str(output), repr(actions))
+            action_lister.assert_called_once_with(workspace.resolve())
+
+            self.assertTrue(controller.runDiagnostic("sgfx_preflight__g45", ["G45"]))
+            self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
+            self.assertEqual(coordinator.requests[-1][0].operation, "shell_context")
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+            self.assertEqual(
+                [item["actionId"] for item in controller.currentPayload["actions"]],
+                ["sgfx_preflight__g45"],
+            )
+            action_executor.assert_called_once_with(preflight, workspace.resolve())
 
 
 class TestArtifactRegistry(unittest.TestCase):
