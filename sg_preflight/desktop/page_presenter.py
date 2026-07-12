@@ -38,6 +38,10 @@ _FORBIDDEN_INPUT_KEYS = frozenset(
         "url",
     }
 )
+_EVIDENCE_SUMMARY_MAX_LENGTH = 2_000
+_UNSAFE_EVIDENCE_SUMMARY = re.compile(
+    r"(?i)(?:[a-z][a-z0-9+.-]*://|[a-z]:[\\/]|\\\\[^\\/\s]+[\\/]|(?:^|\s)/(?:[^/\s]+/)+)"
+)
 _REQUIRED_FIELDS: dict[str, tuple[tuple[str, type], ...]] = {
     "full-qa-pass": (("progress", dict), ("steps", list)),
     "batch-full-qa-pass": (("progress", dict), ("results", list)),
@@ -125,6 +129,17 @@ def _text(value: object) -> str:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray, memoryview)):
         return ", ".join(part for part in (_text(item) for item in value) if part)
     return ""
+
+
+def _evidence_summary_text(value: object) -> str:
+    text = _text(value).strip()
+    if (
+        len(text) > _EVIDENCE_SUMMARY_MAX_LENGTH
+        or any(ord(character) < 32 and character not in {"\n", "\r", "\t"} for character in text)
+        or _UNSAFE_EVIDENCE_SUMMARY.search(text)
+    ):
+        _reject()
+    return text
 
 
 def _first(record: Mapping[str, Any], *keys: str) -> str:
@@ -218,7 +233,20 @@ def _surface_items(surface_id: str, payload: Mapping[str, Any]) -> tuple[list[di
                 detail_keys=("evidence", "note"),
             )
         )
-        return items, [_SectionSpec("progress", "Progress"), _SectionSpec("steps", "QA steps")]
+        specs = [_SectionSpec("progress", "Progress"), _SectionSpec("steps", "QA steps")]
+        evidence_summary = _evidence_summary_text(payload.get("evidence_summary", ""))
+        if evidence_summary:
+            items.append(
+                _item(
+                    "evidence-summary",
+                    0,
+                    label="Copy-ready Jira evidence",
+                    value=evidence_summary,
+                    status="local evidence",
+                )
+            )
+            specs.append(_SectionSpec("evidence-summary", "Copy-ready evidence"))
+        return items, specs
     if surface_id == "batch-full-qa-pass":
         items = [_progress_item("progress", _mapping(payload["progress"]))]
         items.extend(

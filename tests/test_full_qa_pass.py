@@ -23,7 +23,95 @@ def _payload(status: str = "available", **extra: object) -> dict[str, object]:
     }
 
 
+class _Board:
+    def to_dict(self) -> dict[str, object]:
+        return {"source_state": "ready"}
+
+
+def _gate(payload: dict[str, object], gate_id: str) -> dict[str, object]:
+    return next(step for step in payload["steps"] if step["id"] == gate_id)
+
+
+def _source(payload: dict[str, object], source_id: str) -> dict[str, object]:
+    return next(step for step in payload["source_evidence"] if step["id"] == source_id)
+
+
 class TestFullQaPass(unittest.TestCase):
+    def setUp(self) -> None:
+        for name in (
+            "build_api_version_coverage_board",
+            "build_country_variant_coverage_board",
+            "build_disabled_tests_board",
+            "build_export_size_trend_board",
+        ):
+            patcher = mock.patch(f"sg_preflight.full_qa_pass.{name}", return_value=_Board())
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        action_records_patcher = mock.patch(
+            "sg_preflight.full_qa_pass.list_recent_action_records",
+            return_value=[],
+        )
+        self.action_records_reader = action_records_patcher.start()
+        self.addCleanup(action_records_patcher.stop)
+        run_records_patcher = mock.patch(
+            "sg_preflight.full_qa_pass.list_recent_run_records",
+            return_value=[],
+        )
+        self.run_records_reader = run_records_patcher.start()
+        self.addCleanup(run_records_patcher.stop)
+
+    def test_full_qa_steps_are_exactly_the_seven_control_center_gates(self) -> None:
+        from sg_preflight.full_qa_pass import build_full_qa_pass
+
+        self.action_records_reader.return_value = [
+            {
+                "run_id": "action-001",
+                "action_id": "sgfx_preflight__g45",
+                "kind": "sgfx_preflight",
+                "profile_id": "G45",
+                "status": "completed",
+                "created_at_utc": "2026-07-12T20:00:00+00:00",
+                "completed_at_utc": "2026-07-12T20:01:00+00:00",
+                "summary": {
+                    "errors": 0,
+                    "warnings": 2,
+                    "info": 3,
+                    "child_run_id": "action-001-preflight",
+                },
+                "paths": {"summary": r"C:\private\operator\summary.json"},
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with (
+                mock.patch("sg_preflight.full_qa_pass.build_onboarding_guide", return_value=_payload("available", onboarding_status="available", operator_focus_steps=[])),
+                mock.patch("sg_preflight.full_qa_pass.read_delivery_checklist", return_value=_payload("available")),
+                mock.patch("sg_preflight.full_qa_pass.build_delivery_workbook_trigger", return_value=_payload("available", trigger_status="available", can_start=False, blockers=[])),
+                mock.patch("sg_preflight.full_qa_pass.read_bmw_screenshot_state", return_value=_payload("available")),
+                mock.patch("sg_preflight.full_qa_pass.read_per_car_risk_score", return_value=_payload("available", signals=[])),
+                mock.patch("sg_preflight.full_qa_pass.build_manual_review_assist", return_value=_payload("available", operator_focus_steps=[])),
+                mock.patch("sg_preflight.full_qa_pass.build_operator_handoff_snapshot", return_value=_payload("recorded")),
+            ):
+                payload = build_full_qa_pass("G45", workspace=root)
+
+        self.assertEqual(
+            [step["id"] for step in payload["steps"]],
+            ["context", "asset", "interface", "variants", "visual", "review", "delivery"],
+        )
+        rendered_steps = repr(payload["steps"]).casefold()
+        self.assertNotIn("onboarding", rendered_steps)
+        self.assertNotIn("comparison", rendered_steps)
+        self.assertNotIn("digest", rendered_steps)
+        self.assertIn("country-variant-coverage", rendered_steps)
+        self.assertIn("evidence_summary", payload)
+        self.assertIn("Profile: G45", payload["evidence_summary"])
+        self.assertIn("Local checks: 0 errors, 2 warnings, 3 info", payload["evidence_summary"])
+        self.assertIn("Provenance: Local SGFX action sgfx_preflight__g45", payload["evidence_summary"])
+        self.assertIn("Retest hash: action-001-preflight", payload["evidence_summary"])
+        self.assertNotIn(r"C:\private", payload["evidence_summary"])
+        self.assertNotIn("://", payload["evidence_summary"])
+        self.assertFalse(payload["is_approval"])
+
     def test_full_pass_does_not_invent_a_comparison_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             with mock.patch("sg_preflight.full_qa_pass._step_defs", return_value=[]):
@@ -53,23 +141,22 @@ class TestFullQaPass(unittest.TestCase):
                 ),
                 mock.patch("sg_preflight.full_qa_pass.read_bmw_screenshot_state", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.read_per_car_risk_score", return_value=_payload("available", signals=[])),
-                mock.patch("sg_preflight.full_qa_pass.build_cross_car_comparison", return_value=_payload("available")),
-                mock.patch("sg_preflight.full_qa_pass.build_team_daily_digest_board", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.build_manual_review_assist", return_value=_payload("available", operator_focus_steps=[])),
                 mock.patch("sg_preflight.full_qa_pass.build_operator_handoff_snapshot", return_value=_payload("recorded")),
             ]
-            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
                 payload = build_full_qa_pass("G70", workspace=root, trusted_tool_mode=False)
 
         self.assertEqual(payload["status"], "incomplete")
         self.assertFalse(payload["halted"])
-        self.assertEqual(payload["progress"]["completed_steps"], 8)
-        self.assertEqual(len(payload["steps"]), 9)
+        self.assertEqual(payload["progress"]["completed_steps"], 5)
+        self.assertEqual(len(payload["steps"]), 7)
         self.assertTrue(payload["operator_confirmation_required"])
         self.assertEqual(payload["confirmation_items"][0]["action_id"], "generate-delivery-workbook")
-        self.assertEqual(payload["steps"][2]["status"], "confirmation_pending")
-        self.assertEqual(payload["steps"][2]["inline_actions"][0]["id"], "generate-delivery-workbook")
-        self.assertEqual(payload["steps"][2]["inline_actions"][0]["typical_range"], "typical 1-10 min")
+        delivery = _gate(payload, "delivery")
+        self.assertEqual(delivery["status"], "confirmation_pending")
+        self.assertEqual(delivery["inline_actions"][0]["id"], "generate-delivery-workbook")
+        self.assertEqual(delivery["inline_actions"][0]["typical_range"], "typical 1-10 min")
         self.assertFalse(payload["records_operator_verdict"])
         self.assertFalse(payload["is_approval"])
         self.assertIn("Manual review remains required.", payload["guardrails"])
@@ -92,21 +179,19 @@ class TestFullQaPass(unittest.TestCase):
                 ),
                 mock.patch("sg_preflight.full_qa_pass.read_bmw_screenshot_state", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.read_per_car_risk_score", return_value=_payload("available", signals=[])),
-                mock.patch("sg_preflight.full_qa_pass.build_cross_car_comparison", return_value=_payload("available")),
-                mock.patch("sg_preflight.full_qa_pass.build_team_daily_digest_board", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.build_manual_review_assist", return_value=_payload("available", operator_focus_steps=[])),
                 mock.patch("sg_preflight.full_qa_pass.build_operator_handoff_snapshot", return_value=_payload("recorded")),
             ]
-            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
                 payload = build_full_qa_pass("G70", workspace=root, trusted_tool_mode=True)
 
-        self.assertEqual(payload["status"], "passed")
+        self.assertEqual(payload["status"], "incomplete")
         self.assertTrue(payload["trusted_tool_mode"])
         self.assertFalse(payload["operator_confirmation_required"])
         self.assertEqual(payload["confirmation_items"], [])
         self.assertEqual(payload["trusted_auto_actions"][0]["id"], "generate-delivery-workbook")
         self.assertIn("Jira REST and SVN gates still always prompt", payload["trusted_tool_mode_note"])
-        self.assertTrue(payload["steps"][2]["confluence_anchors"])
+        self.assertTrue(_gate(payload, "delivery")["confluence_anchors"])
         self.assertFalse(payload["records_operator_verdict"])
 
     def test_screenshot_zero_actuals_is_incomplete_with_capture_action(self) -> None:
@@ -139,8 +224,6 @@ class TestFullQaPass(unittest.TestCase):
                     },
                 ),
                 mock.patch("sg_preflight.full_qa_pass.read_per_car_risk_score", return_value=_payload("available", signals=[])),
-                mock.patch("sg_preflight.full_qa_pass.build_cross_car_comparison", return_value=_payload("available")),
-                mock.patch("sg_preflight.full_qa_pass.build_team_daily_digest_board", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.build_manual_review_assist", return_value=_payload("available", operator_focus_steps=[])),
                 mock.patch("sg_preflight.full_qa_pass.build_operator_handoff_snapshot", return_value=_payload("recorded")),
             ]
@@ -153,12 +236,10 @@ class TestFullQaPass(unittest.TestCase):
                 patches[5],
                 patches[6],
                 patches[7],
-                patches[8],
-                patches[9],
             ):
                 payload = build_full_qa_pass("F70", workspace=root, trusted_tool_mode=False)
 
-        screenshot_step = next(step for step in payload["steps"] if step["id"] == "screenshot-test-state")
+        screenshot_step = _source(payload, "screenshot-test-state")
         self.assertEqual(screenshot_step["status"], "confirmation_pending")
         self.assertEqual(screenshot_step["inline_actions"][0]["id"], "capture-screenshots")
         self.assertEqual(screenshot_step["inline_actions"][0]["typical_range"], "typical 2-10 min")
@@ -205,8 +286,6 @@ class TestFullQaPass(unittest.TestCase):
                     },
                 ),
                 mock.patch("sg_preflight.full_qa_pass.read_per_car_risk_score", return_value=_payload("available", signals=[])),
-                mock.patch("sg_preflight.full_qa_pass.build_cross_car_comparison", return_value=_payload("available")),
-                mock.patch("sg_preflight.full_qa_pass.build_team_daily_digest_board", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.build_manual_review_assist", return_value=_payload("available", operator_focus_steps=[])),
                 mock.patch("sg_preflight.full_qa_pass.build_operator_handoff_snapshot", return_value=_payload("recorded")),
             ]
@@ -220,12 +299,10 @@ class TestFullQaPass(unittest.TestCase):
                 patches[6],
                 patches[7],
                 patches[8],
-                patches[9],
-                patches[10],
             ):
                 payload = build_full_qa_pass("G70", workspace=root, trusted_tool_mode=False)
 
-        screenshot_step = next(step for step in payload["steps"] if step["id"] == "screenshot-test-state")
+        screenshot_step = _source(payload, "screenshot-test-state")
         action = screenshot_step["inline_actions"][0]
         self.assertEqual(action["id"], "capture-screenshots")
         self.assertEqual(action["label"], "Export then capture screenshots")
@@ -254,15 +331,13 @@ class TestFullQaPass(unittest.TestCase):
                 ),
                 mock.patch("sg_preflight.full_qa_pass.read_bmw_screenshot_state", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.read_per_car_risk_score", return_value=_payload("available", signals=[])),
-                mock.patch("sg_preflight.full_qa_pass.build_cross_car_comparison", return_value=_payload("available")),
-                mock.patch("sg_preflight.full_qa_pass.build_team_daily_digest_board", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.build_manual_review_assist", return_value=_payload("available", operator_focus_steps=[])),
                 mock.patch("sg_preflight.full_qa_pass.build_operator_handoff_snapshot", return_value=_payload("recorded")),
             ]
-            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
                 payload = build_full_qa_pass("NA0", workspace=root, trusted_tool_mode=True)
 
-        steps = {step["id"]: step for step in payload["steps"]}
+        steps = {step["id"]: step for step in payload["source_evidence"]}
         checklist_action = steps["delivery-checklist"]["inline_actions"][0]
         self.assertEqual(steps["delivery-checklist"]["id"], "delivery-checklist")
         self.assertEqual(steps["delivery-checklist"]["label"], "Delivery documentation")
@@ -298,15 +373,13 @@ class TestFullQaPass(unittest.TestCase):
                 ),
                 mock.patch("sg_preflight.full_qa_pass.read_bmw_screenshot_state", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.read_per_car_risk_score", return_value=_payload("available", signals=[])),
-                mock.patch("sg_preflight.full_qa_pass.build_cross_car_comparison", return_value=_payload("available")),
-                mock.patch("sg_preflight.full_qa_pass.build_team_daily_digest_board", return_value=_payload("available")),
                 mock.patch("sg_preflight.full_qa_pass.build_manual_review_assist", return_value=_payload("available", operator_focus_steps=[])),
                 mock.patch("sg_preflight.full_qa_pass.build_operator_handoff_snapshot", return_value=_payload("recorded")),
             ]
-            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
                 payload = build_full_qa_pass("NA0", workspace=root, trusted_tool_mode=False)
 
-        steps = {step["id"]: step for step in payload["steps"]}
+        steps = {step["id"]: step for step in payload["source_evidence"]}
         checklist_action = steps["delivery-checklist"]["inline_actions"][0]
         self.assertFalse(payload["halted"])
         self.assertEqual(steps["delivery-checklist"]["status"], "confirmation_pending")
@@ -328,7 +401,7 @@ class TestFullQaPass(unittest.TestCase):
         self.assertTrue(payload["halted"])
         self.assertEqual(payload["halted_step"], "Delivery documentation")
         self.assertIn("Halted at Delivery documentation", payload["summary"])
-        skipped = [step for step in payload["steps"] if step["status"] == "skipped"]
+        skipped = [step for step in payload["source_evidence"] if step["status"] == "skipped"]
         self.assertGreaterEqual(len(skipped), 1)
         self.assertIn("Delivery documentation", skipped[0]["summary"])
 
@@ -343,6 +416,7 @@ class TestFullQaPass(unittest.TestCase):
             "guardrails": ["Manual review remains required.", "Decision: not approval — evidence only."],
             "steps": [{"status": "passed", "label": "Risk score", "summary": "Risk score read locally."}],
             "confirmation_items": [{"status": "incomplete", "label": "Generate delivery workbook", "detail": "Confirm first."}],
+            "evidence_summary": "Profile: G70\nRetest hash: action-001-preflight",
         }
 
         text = render_full_qa_pass_text(payload)
@@ -351,9 +425,11 @@ class TestFullQaPass(unittest.TestCase):
         self.assertIn("Run full QA pass - G70", text)
         self.assertIn("Automatic mode: True", text)
         self.assertIn("Manual review remains required.", text)
+        self.assertIn("Copy-ready evidence:\nProfile: G70", text)
         self.assertIn("Automatic mode: `True`", markdown)
         self.assertIn("Manual review required: yes", markdown)
         self.assertIn("Decision: not approval", markdown)
+        self.assertIn("## Copy-ready Evidence\n\nProfile: G70", markdown)
         self.assertNotIn("records operator verdict", markdown.casefold())
 
 

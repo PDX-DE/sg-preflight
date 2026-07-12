@@ -803,7 +803,7 @@ git commit -m "feat(qt): build QA control center home"
 - Consumes: the exact seven `QA_GATES`, existing read-only page payloads, and the same audited local-preflight action descriptor.
 - Produces: `steps` in the seven-gate order; `evidence_summary` with profile, counts, provenance, owners, retest hash when recorded, and next safe action; no Jira transport.
 
-- [ ] **Step 1: Write failing gate-order and semantic tests**
+- [x] **Step 1: Write failing gate-order and semantic tests**
 
 ```python
 self.assertEqual(
@@ -818,7 +818,7 @@ self.assertFalse(payload["is_approval"])
 
 Assert the country-variant route appears under `variants`, risk/manual review precede delivery, and no load triggers the local action or BMW work.
 
-- [ ] **Step 2: Run Full QA and presenter tests and verify RED**
+- [x] **Step 2: Run Full QA and presenter tests and verify RED**
 
 Run:
 
@@ -828,7 +828,7 @@ Run:
 
 Expected: FAIL because the existing step model still mixes onboarding, comparison, and digest into QA semantics.
 
-- [ ] **Step 3: Rebuild the read-only step assembly around gate IDs**
+- [x] **Step 3: Rebuild the read-only step assembly around gate IDs**
 
 Use a single ordered tuple imported from `qa_hub`. Each step owns existing evidence only:
 
@@ -847,7 +847,7 @@ steps = [gate_payloads[definition.gate_id] for definition in QA_GATES]
 
 Keep onboarding as optional context copy outside `steps`; keep comparison and digest as separate routes only.
 
-- [ ] **Step 4: Add one copy-ready evidence summary**
+- [x] **Step 4: Add one copy-ready evidence summary**
 
 Build text exclusively from accepted fields:
 
@@ -866,7 +866,7 @@ evidence_summary = "\n".join(
 
 Do not include a readiness score, approval wording, a raw path, or a Jira call.
 
-- [ ] **Step 5: Run aligned Full QA, presenter, and QML tests**
+- [x] **Step 5: Run aligned Full QA, presenter, and QML tests**
 
 Run:
 
@@ -876,7 +876,7 @@ Run:
 
 Expected: PASS; Full QA and Home share gate order, detailed evidence remains read-only until explicit action, and all renderers preserve their stable keys.
 
-- [ ] **Step 6: Commit detailed evidence alignment**
+- [x] **Step 6: Commit detailed evidence alignment**
 
 ```powershell
 git add sg_preflight/full_qa_pass.py sg_preflight/desktop/page_presenter.py sg_preflight/desktop/qml/renderers/WorkflowRenderer.qml tests/test_full_qa_pass.py tests/test_qt_quick_presenters.py tests/test_qt_quick_host.py

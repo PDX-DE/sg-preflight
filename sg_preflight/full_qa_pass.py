@@ -4,18 +4,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from sg_preflight.api_version_coverage import build_api_version_coverage_board
 from sg_preflight.bmw_delivery import read_bmw_screenshot_state
 from sg_preflight.bmw_pipeline_auto_fix import MISSING_ACTUAL_DIAGNOSTIC_ACTION_ID
-from sg_preflight.cross_car_comparison import build_cross_car_comparison
+from sg_preflight.country_variant_coverage import build_country_variant_coverage_board
 from sg_preflight.delivery_checklist import read_delivery_checklist
 from sg_preflight.delivery_workbook_generation import (
     GENERATE_WORKBOOK_ACTION_ID,
     GENERATION_TYPICAL_RANGE_LABEL,
     build_delivery_workbook_trigger,
 )
+from sg_preflight.disabled_tests import build_disabled_tests_board
+from sg_preflight.export_size_trend import build_export_size_trend_board
 from sg_preflight.manual_review import build_manual_review_assist
 from sg_preflight.onboarding_assistant import build_onboarding_guide
 from sg_preflight.operator_handoff import build_operator_handoff_snapshot
+from sg_preflight.qa_action_persistence import list_recent_action_records
+from sg_preflight.qa_hub import QA_GATES, build_qa_hub_snapshot
 from sg_preflight.risk_scoring import read_per_car_risk_score
 from sg_preflight.screenshot_capture import (
     SCREENSHOT_CAPTURE_ACTION_ID,
@@ -24,7 +29,7 @@ from sg_preflight.screenshot_capture import (
     check_screenshot_capture_environment,
     check_screenshot_export_artifact,
 )
-from sg_preflight.team_digest_board import build_team_daily_digest_board
+from sg_preflight.services import list_recent_run_records
 
 
 FULL_QA_PASS_GUARDRAILS = (
@@ -63,7 +68,16 @@ FULL_QA_STEP_CONFLUENCE_ANCHORS = {
     "operator-handoff": (_SG_DAILY_ANCHOR,),
 }
 _BLOCKING_SOURCE_STATUSES = {"failed", "missing", "unavailable"}
-_INCOMPLETE_SOURCE_STATUSES = {"incomplete", "not_run", "pending", "not_available", "no_expected_baselines"}
+_INCOMPLETE_SOURCE_STATUSES = {
+    "findings",
+    "incomplete",
+    "not_run",
+    "pending",
+    "queued",
+    "running",
+    "not_available",
+    "no_expected_baselines",
+}
 FULL_QA_TRUSTED_MODE_NOTE = (
     "Automatic mode runs local tool actions when available. Jira REST and SVN gates still always prompt. "
     "Switch Automatic mode off for Manual mode."
@@ -487,6 +501,56 @@ def _skipped_step(step_id: str, label: str, halted_label: str) -> dict[str, Any]
     }
 
 
+def _board_payload(board: object, label: str) -> dict[str, Any]:
+    payload = board.to_dict() if hasattr(board, "to_dict") else {}
+    if not isinstance(payload, dict):
+        payload = {}
+    source_state = _status(payload.get("source_state", payload.get("status", "unknown")))
+    status = "available" if source_state in {"available", "ready"} else source_state
+    return {
+        **payload,
+        "status": status,
+        "summary": f"{label}: {source_state.replace('_', ' ')}.",
+    }
+
+
+def _local_preflight_payload(workspace: Path, profile_id: str) -> dict[str, Any]:
+    try:
+        action_records = list_recent_action_records(workspace, limit=12)
+    except (OSError, ValueError):
+        action_records = []
+    try:
+        run_records = list_recent_run_records(workspace, limit=12)
+    except (OSError, ValueError):
+        run_records = []
+    snapshot = build_qa_hub_snapshot(
+        workspace=workspace,
+        profile_options=[{"id": profile_id, "label": profile_id}],
+        selected_profile_id=profile_id,
+        actions=[],
+        action_records=action_records,
+        run_records=run_records,
+        activity=[],
+    )
+    asset = next(gate for gate in snapshot["gates"] if gate["id"] == "asset")
+    latest = snapshot.get("latestLocalRun", {})
+    state = str(asset.get("state", "not_run"))
+    status = "available" if state == "passed" else state
+    return {
+        "status": status,
+        "state": state,
+        "summary": str(asset.get("summary", "Local QA evidence is not recorded.")),
+        "errors": int(latest.get("errors", 0) or 0),
+        "warnings": int(latest.get("warnings", 0) or 0),
+        "info": int(latest.get("info", 0) or 0),
+        "action_id": str(latest.get("actionId", "")),
+        "run_id": str(latest.get("runId", "")),
+        "timestamp": str(latest.get("timestamp", "")),
+        "manual_review_required": True,
+        "is_approval": False,
+    }
+
+
 def _step_defs(
     profile_id: str,
     workspace: Path,
@@ -495,14 +559,113 @@ def _step_defs(
     trusted_tool_mode: bool,
 ) -> list[tuple[str, str, Callable[[], dict[str, Any]], bool, Callable[[dict[str, Any]], int], Callable[[dict[str, Any]], int], bool]]:
     profile = _clean_profile(profile_id)
-    compare = _clean_optional_profile(comparison_profile)
+    _ = _clean_optional_profile(comparison_profile)
     return [
         (
             "onboarding-guide",
-            "Onboarding guide",
+            "Profile and setup context",
             lambda: build_onboarding_guide(profile, workspace=workspace, bmw_root=bmw_root),
-            True,
+            False,
             lambda payload: len(payload.get("operator_focus_steps", [])) if _status(payload.get("onboarding_status")) != "available" else 0,
+            lambda _payload: 0,
+            False,
+        ),
+        (
+            "sgfx-preflight",
+            "Local QA checks",
+            lambda: _local_preflight_payload(workspace, profile),
+            False,
+            lambda _payload: 0,
+            lambda _payload: 0,
+            False,
+        ),
+        (
+            "api-version-coverage",
+            "API and interface coverage",
+            lambda: _board_payload(
+                build_api_version_coverage_board(
+                    workspace_root=workspace,
+                    bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
+                ),
+                "API and interface evidence",
+            ),
+            False,
+            lambda _payload: 0,
+            lambda _payload: 0,
+            False,
+        ),
+        (
+            "disabled-tests",
+            "Disabled tests",
+            lambda: _board_payload(
+                build_disabled_tests_board(
+                    workspace_root=workspace,
+                    bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
+                ),
+                "Disabled-test evidence",
+            ),
+            False,
+            lambda _payload: 0,
+            lambda _payload: 0,
+            False,
+        ),
+        (
+            "export-size-trend",
+            "Export size trend",
+            lambda: _board_payload(
+                build_export_size_trend_board(workspace_root=workspace),
+                "Export-size evidence",
+            ),
+            False,
+            lambda _payload: 0,
+            lambda _payload: 0,
+            False,
+        ),
+        (
+            "country-variant-coverage",
+            "Country and variant coverage",
+            lambda: _board_payload(
+                build_country_variant_coverage_board(
+                    workspace_root=workspace,
+                    bmw_repo_root=Path(bmw_root) if bmw_root is not None else None,
+                ),
+                "Country and variant evidence",
+            ),
+            False,
+            lambda _payload: 0,
+            lambda _payload: 0,
+            False,
+        ),
+        (
+            "screenshot-test-state",
+            "Screenshot test state",
+            lambda: read_bmw_screenshot_state(profile, workspace=workspace, bmw_root=bmw_root, sg_project_root=workspace),
+            False,
+            lambda _payload: 0,
+            lambda _payload: 0,
+            False,
+        ),
+        (
+            "risk-score",
+            "Risk score",
+            lambda: read_per_car_risk_score(profile, workspace=workspace, bmw_root=bmw_root),
+            False,
+            lambda payload: len(
+                [
+                    signal
+                    for signal in payload.get("signals", [])
+                    if isinstance(signal, dict) and int(signal.get("weight", 0) or 0) > 0
+                ]
+            ),
+            lambda _payload: 0,
+            False,
+        ),
+        (
+            "manual-review-assist",
+            "Manual review evidence",
+            lambda: build_manual_review_assist(profile, workspace=workspace),
+            False,
+            lambda payload: len(payload.get("operator_focus_steps", [])),
             lambda _payload: 0,
             False,
         ),
@@ -535,66 +698,6 @@ def _step_defs(
             True,
         ),
         (
-            "screenshot-test-state",
-            "Screenshot test state",
-            lambda: read_bmw_screenshot_state(profile, workspace=workspace, bmw_root=bmw_root, sg_project_root=workspace),
-            False,
-            lambda _payload: 0,
-            lambda _payload: 0,
-            False,
-        ),
-        (
-            "risk-score",
-            "Risk score",
-            lambda: read_per_car_risk_score(profile, workspace=workspace, bmw_root=bmw_root),
-            False,
-            lambda payload: len(
-                [
-                    signal
-                    for signal in payload.get("signals", [])
-                    if isinstance(signal, dict) and int(signal.get("weight", 0) or 0) > 0
-                ]
-            ),
-            lambda _payload: 0,
-            False,
-        ),
-        (
-            "cross-car-comparison",
-            "Cross-car comparison",
-            lambda: build_cross_car_comparison(
-                workspace=workspace,
-                bmw_root=bmw_root,
-                left_profile=profile,
-                right_profile=compare,
-            ),
-            False,
-            lambda _payload: 0,
-            lambda _payload: 0,
-            False,
-        ),
-        (
-            "team-digest-board",
-            "Team digest board",
-            lambda: build_team_daily_digest_board(
-                workspace=workspace,
-                bmw_root=bmw_root,
-                profiles=tuple(item for item in (profile, compare) if item),
-            ),
-            False,
-            lambda _payload: 0,
-            lambda _payload: 0,
-            False,
-        ),
-        (
-            "manual-review-assist",
-            "Manual review assist",
-            lambda: build_manual_review_assist(profile, workspace=workspace),
-            False,
-            lambda payload: len(payload.get("operator_focus_steps", [])),
-            lambda _payload: 0,
-            False,
-        ),
-        (
             "operator-handoff",
             "Operator handoff",
             lambda: build_operator_handoff_snapshot(workspace=workspace, profile_id=profile),
@@ -604,6 +707,119 @@ def _step_defs(
             False,
         ),
     ]
+
+
+_GATE_SOURCE_IDS = {
+    "context": ("onboarding-guide",),
+    "asset": ("sgfx-preflight",),
+    "interface": ("api-version-coverage", "disabled-tests", "export-size-trend"),
+    "variants": ("country-variant-coverage",),
+    "visual": ("screenshot-test-state",),
+    "review": ("risk-score", "manual-review-assist"),
+    "delivery": ("delivery-checklist", "delivery-workbook-trigger", "operator-handoff"),
+}
+
+
+def _gate_status(source_steps: list[dict[str, Any]]) -> str:
+    statuses = {str(step.get("status", "unknown")) for step in source_steps}
+    if statuses & {"failed", "unavailable"}:
+        return "failed"
+    if "confirmation_pending" in statuses:
+        return "confirmation_pending"
+    if statuses & {"incomplete", "skipped", "unknown"}:
+        return "incomplete"
+    return "passed" if source_steps and statuses == {"passed"} else "incomplete"
+
+
+def _gate_steps(source_steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    source_map = {str(step.get("id", "")): step for step in source_steps}
+    gates: list[dict[str, Any]] = []
+    for definition in QA_GATES:
+        members = [source_map[source_id] for source_id in _GATE_SOURCE_IDS[definition.gate_id] if source_id in source_map]
+        status = _gate_status(members)
+        passed = sum(str(member.get("status", "")) == "passed" for member in members)
+        confirmations = [
+            item
+            for member in members
+            for item in member.get("confirmation_items", [])
+            if isinstance(item, dict)
+        ]
+        actions = [
+            item
+            for member in members
+            for item in member.get("inline_actions", [])
+            if isinstance(item, dict)
+        ]
+        anchors = list(
+            dict.fromkeys(
+                str(anchor)
+                for member in members
+                for anchor in member.get("confluence_anchors", [])
+                if str(anchor).strip()
+            )
+        )
+        gates.append(
+            {
+                "id": definition.gate_id,
+                "label": definition.label,
+                "status": status,
+                "source_status": status,
+                "summary": f"{passed}/{len(members)} accepted evidence source(s) complete; owner: {definition.owner_label}.",
+                "owner": definition.owner_label,
+                "route_ids": list(definition.route_ids),
+                "evidence_source_count": len(members),
+                "operator_focus_count": sum(int(member.get("operator_focus_count", 0) or 0) for member in members),
+                "blocker_count": sum(int(member.get("blocker_count", 0) or 0) for member in members),
+                "delicate": any(bool(member.get("delicate", False)) for member in members),
+                "critical": any(bool(member.get("critical", False)) for member in members),
+                "operator_confirmation_required": bool(confirmations),
+                "confirmation_items": confirmations,
+                "inline_actions": actions,
+                "confluence_anchors": anchors,
+                "manual_review_required": True,
+                "records_operator_verdict": False,
+                "is_approval": False,
+            }
+        )
+    return gates
+
+
+def _copy_ready_evidence_summary(
+    profile: str,
+    gate_steps: list[dict[str, Any]],
+    source_steps: list[dict[str, Any]],
+) -> str:
+    source_map = {str(step.get("id", "")): step for step in source_steps}
+    preflight_payload = source_map.get("sgfx-preflight", {}).get("payload", {})
+    if not isinstance(preflight_payload, dict):
+        preflight_payload = {}
+    errors = _int_value(preflight_payload, "errors")
+    warnings = _int_value(preflight_payload, "warnings")
+    info = _int_value(preflight_payload, "info")
+    action_id = str(preflight_payload.get("action_id", "")).strip()
+    run_id = str(preflight_payload.get("run_id", "")).strip()
+    open_gate = next((gate for gate in gate_steps if str(gate.get("status", "")) != "passed"), None)
+    owner = str(open_gate.get("owner", "")) if isinstance(open_gate, dict) else ""
+    asset_status = next(
+        (str(gate.get("status", "")) for gate in gate_steps if gate.get("id") == "asset"),
+        "incomplete",
+    )
+    if asset_status == "failed":
+        next_action = "Retry local QA checks"
+    elif asset_status != "passed":
+        next_action = "Run or review local QA checks"
+    else:
+        next_action = "Continue with export and interface evidence"
+    return "\n".join(
+        [
+            f"Profile: {profile}",
+            f"Local checks: {errors} errors, {warnings} warnings, {info} info",
+            f"Provenance: {f'Local SGFX action {action_id}' if action_id else 'Not recorded'}",
+            f"Open owner: {owner or 'Not recorded'}",
+            f"Retest hash: {run_id or 'Not recorded'}",
+            f"Next action: {next_action}",
+        ]
+    )
 
 
 def build_full_qa_pass(
@@ -713,6 +929,8 @@ def build_full_qa_pass(
             halted_step = str(step.get("label", label))
             halt_reason = str(step.get("summary", "A blocking issue needs operator attention."))
 
+    source_steps = steps
+    steps = _gate_steps(source_steps)
     counts = {status: 0 for status in ("passed", "confirmation_pending", "incomplete", "failed", "skipped", "unavailable")}
     for step in steps:
         status = str(step.get("status", "unknown"))
@@ -727,9 +945,10 @@ def build_full_qa_pass(
         overall_status = "incomplete"
     progress_percent = int(round((completed_count / max(1, len(steps))) * 100))
     summary = (
-        f"Full QA pass prepared {completed_count}/{len(steps)} step(s) for {profile}; "
-        f"{focus_count} step(s) need operator focus and {len(confirmations)} confirmation item(s) are pending."
+        f"Full QA pass prepared {completed_count}/{len(steps)} gate(s) for {profile}; "
+        f"{focus_count} gate(s) need operator focus and {len(confirmations)} confirmation item(s) are pending."
     )
+    evidence_summary = _copy_ready_evidence_summary(profile, steps, source_steps)
     return {
         "schema_version": 1,
         "profile_id": profile,
@@ -750,6 +969,8 @@ def build_full_qa_pass(
         },
         "counts": counts,
         "steps": steps,
+        "source_evidence": source_steps,
+        "evidence_summary": evidence_summary,
         "confirmation_items": confirmations,
         "trusted_auto_actions": [
             action
@@ -788,6 +1009,9 @@ def render_full_qa_pass_text(payload: dict[str, Any]) -> str:
     for step in payload.get("steps", []):
         if isinstance(step, dict):
             lines.append(f"- [{step.get('status', 'unknown')}] {step.get('label', '')}: {step.get('summary', '')}")
+    evidence_summary = str(payload.get("evidence_summary", "")).strip()
+    if evidence_summary:
+        lines.extend(["", "Copy-ready evidence:", evidence_summary])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -813,6 +1037,9 @@ def render_full_qa_pass_markdown(payload: dict[str, Any]) -> str:
         if not isinstance(step, dict):
             continue
         lines.append(f"- `{step.get('status', 'unknown')}` **{step.get('label', '')}**: {step.get('summary', '')}")
+    evidence_summary = str(payload.get("evidence_summary", "")).strip()
+    if evidence_summary:
+        lines.extend(["", "## Copy-ready Evidence", "", evidence_summary])
     confirmations = [item for item in payload.get("confirmation_items", []) if isinstance(item, dict)]
     if confirmations:
         lines.extend(["", "## Confirmation Items"])

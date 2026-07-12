@@ -66,6 +66,14 @@ def _surface_field_cases() -> dict[str, dict[str, object]]:
             "payload": {
                 "progress": {"completed_steps": 1, "total_steps": 9, "percent": 11},
                 "steps": [_step("setup", "nested::full-qa-pass")],
+                "evidence_summary": (
+                    "Profile: G45\n"
+                    "Local checks: 0 errors, 2 warnings, 3 info\n"
+                    "Provenance: Local SGFX action sgfx_preflight__g45\n"
+                    "Open owner: Reviewer\n"
+                    "Retest hash: action-001-preflight\n"
+                    "Next action: Review local findings"
+                ),
             },
         },
         "batch-full-qa-pass": {
@@ -429,6 +437,28 @@ class TestQtQuickPresenters(unittest.TestCase):
         self.assertEqual(country_item["expected"], "baseline.png")
         self.assertEqual(country_item["actual"], "actual.png")
         self.assertEqual(country_item["diff"], "diff.png")
+
+    def test_full_qa_exposes_copy_ready_evidence_as_a_bounded_section(self) -> None:
+        api = _presenter_api()
+        presented = api.present_page_payload(
+            get_surface_descriptor("full-qa-pass"),
+            _page_for("full-qa-pass"),
+        )
+
+        evidence = next(
+            section for section in presented["sections"] if section["sectionId"] == "evidence-summary"
+        )
+        self.assertEqual(evidence["title"], "Copy-ready evidence")
+        self.assertEqual(len(evidence["items"]), 1)
+        self.assertIn("Profile: G45", evidence["items"][0]["value"])
+        self.assertIn("Retest hash: action-001-preflight", evidence["items"][0]["value"])
+        self.assertNotIn(":\\", evidence["items"][0]["value"])
+        self.assertNotIn("://", evidence["items"][0]["value"])
+
+        unsafe = _page_for("full-qa-pass")
+        unsafe["payload"]["evidence_summary"] = r"Profile: G45\nProvenance: C:\private\ticket.txt"
+        with self.assertRaises(api.PagePresentationError):
+            api.present_page_payload(get_surface_descriptor("full-qa-pass"), unsafe)
 
     def test_about_maps_version_placeholder_without_retaining_it(self) -> None:
         api = _presenter_api()
