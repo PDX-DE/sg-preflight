@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -86,6 +87,75 @@ def qml_package_inputs(qml_root: Path | None = None) -> tuple[Path, ...]:
     if not qml_files or not qmldir_files:
         raise RuntimeError("Qt Quick package inputs are incomplete.")
     return tuple(sorted(qml_files + qmldir_files))
+
+
+def _qml_cache_generator() -> Path:
+    candidates = (
+        Path(sys.executable).with_name("pyside6-qmlcachegen.exe"),
+        Path(sys.executable).with_name("pyside6-qmlcachegen"),
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    discovered = shutil.which("pyside6-qmlcachegen")
+    if discovered:
+        return Path(discovered).resolve()
+    raise RuntimeError("The QML cache generator is unavailable.")
+
+
+def compile_staged_qml_cache(
+    bundle_dir: Path,
+    *,
+    generator: Path | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+) -> tuple[Path, ...]:
+    bundle = Path(bundle_dir)
+    qml_root = bundle / "_internal" / "sg_preflight" / "desktop" / "qml"
+    qt_qml_root = bundle / "_internal" / "PySide6" / "qml"
+    executable = Path(generator) if generator is not None else _qml_cache_generator()
+    sources = tuple(sorted(qml_root.rglob("*.qml")))
+    if not executable.is_file() or not qml_root.is_dir() or not qt_qml_root.is_dir() or not sources:
+        raise RuntimeError("The staged QML cache inputs are unavailable.")
+    compiled: list[Path] = []
+    for source in sources:
+        output = source.with_suffix(source.suffix + "c")
+        command = [
+            str(executable),
+            "--only-bytecode",
+            "-I",
+            str(qml_root),
+            "-I",
+            str(qt_qml_root),
+            "-o",
+            str(output),
+            str(source),
+        ]
+        try:
+            completed = runner(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError("The staged QML cache could not be generated.") from exc
+        if completed.returncode != 0 or not output.is_file():
+            raise RuntimeError("The staged QML cache could not be generated.")
+        compiled.append(output)
+    private_paths = (str(ROOT.resolve()), str(bundle.resolve()))
+    for output in compiled:
+        payload = output.read_bytes()
+        variants = tuple(
+            value.encode(encoding)
+            for path in private_paths
+            for value in (path, path.replace("\\", "/"))
+            for encoding in ("utf-8", "utf-16-le")
+        )
+        if any(variant in payload for variant in variants):
+            raise RuntimeError("The staged QML cache contains a private build path.")
+    return tuple(compiled)
 
 
 def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
@@ -359,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
     PyInstaller.__main__.run(pyinstaller_args)
     staged_bundle = STAGING_DIST_PATH / "sgfx-preflight"
     qml_imports = scan_qml_imports(ROOT / "sg_preflight" / "desktop" / "qml")
+    compile_staged_qml_cache(staged_bundle)
     provenance = load_configured_grafiks_provenance()
     copied_operator = copy_operator_console_shell(staged_bundle, provenance)
     copied_runtime = [] if copied_operator is not None else copy_grafiks_runtime(staged_bundle, provenance)

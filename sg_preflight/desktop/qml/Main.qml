@@ -39,6 +39,7 @@ ApplicationWindow {
     property bool diagnosticsOpen: false
     property bool sidebarOpen: true
     property bool exitGuidanceVisible: false
+    property bool shellInitializationStarted: false
 
     function handleShortcut(key: string) {
         if (key === "F1") {
@@ -78,7 +79,12 @@ ApplicationWindow {
     title: "SGFX QA Preflight"
     color: Theme.canvas
 
-    Component.onCompleted: desktopController.initialize()
+    onFrameSwapped: {
+        if (!shellInitializationStarted) {
+            shellInitializationStarted = true;
+            Qt.callLater(desktopController.initialize);
+        }
+    }
 
     Shortcut {
         sequence: "F1"
@@ -255,18 +261,21 @@ ApplicationWindow {
                             onNavigateRequested: routeId => window.desktopController.navigate(routeId)
                         }
 
-                        Components.PageFrame {
+                        Loader {
                             id: pageContentHost
                             objectName: "pageContentHost"
                             anchors.fill: parent
                             anchors.margins: 24
-                            visible: window.desktopController.currentRouteId !== "home"
-                            pageState: window.desktopController.pageState
-                            page: window.desktopController.currentPayload
-                            errorCode: window.desktopController.errorCode
-                            errorSummary: window.desktopController.errorSummary
-                            reducedMotion: window.reducedMotion
-                            desktopController: window.desktopController
+                            active: window.desktopController.currentRouteId !== "home"
+                            sourceComponent: Components.PageFrame {
+                                anchors.fill: parent
+                                pageState: window.desktopController.pageState
+                                page: window.desktopController.currentPayload
+                                errorCode: window.desktopController.errorCode
+                                errorSummary: window.desktopController.errorSummary
+                                reducedMotion: window.reducedMotion
+                                desktopController: window.desktopController
+                            }
                         }
                     }
 
@@ -300,22 +309,29 @@ ApplicationWindow {
         }
     }
 
-    Components.JumpPalette {
-        id: jumpPalette
+    Loader {
         anchors.fill: parent
-        open: window.jumpOpen
-        routes: window.shellModel.routes
-        onCloseRequested: window.jumpOpen = false
-        onNavigateRequested: routeId => {
-            window.jumpOpen = false;
-            window.desktopController.navigate(routeId);
+        active: window.jumpOpen
+        sourceComponent: Components.JumpPalette {
+            anchors.fill: parent
+            open: window.jumpOpen
+            routes: window.shellModel.routes
+            onCloseRequested: window.jumpOpen = false
+            onNavigateRequested: routeId => {
+                window.jumpOpen = false;
+                window.desktopController.navigate(routeId);
+            }
         }
     }
-    Components.ShortcutHelp {
+    Loader {
         anchors.fill: parent
-        open: window.helpOpen
-        shortcuts: window.shellModel.shortcuts
-        onCloseRequested: window.helpOpen = false
+        active: window.helpOpen
+        sourceComponent: Components.ShortcutHelp {
+            anchors.fill: parent
+            open: window.helpOpen
+            shortcuts: window.shellModel.shortcuts
+            onCloseRequested: window.helpOpen = false
+        }
     }
     Rectangle {
         anchors.fill: parent

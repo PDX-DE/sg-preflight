@@ -124,6 +124,7 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("accept_grafiks_bundle", text)
         self.assertIn("load_grafiks_provenance", text)
         self.assertIn("scan_qml_imports", text)
+        self.assertIn("compile_staged_qml_cache", text)
         self.assertIn("write_bundle_manifest", text)
         self.assertIn("STAGING_DIST_PATH", text)
         self.assertIn("validate_staged_bundle", text)
@@ -162,6 +163,10 @@ class TestNativeScaffold(unittest.TestCase):
             text.index("staged_bundle = validate_staged_bundle("),
         )
         self.assertLess(
+            text.index("compile_staged_qml_cache(staged_bundle)"),
+            text.index("staged_bundle = validate_staged_bundle("),
+        )
+        self.assertLess(
             text.index("staged_bundle = validate_staged_bundle("),
             text.index("swap_staged_bundle(staged_bundle)"),
         )
@@ -183,6 +188,55 @@ class TestNativeScaffold(unittest.TestCase):
             "PySide6.QtQuickControls2",
         ):
             self.assertIn(required, arguments)
+
+    def test_staged_qml_cache_compiles_every_qml_without_mutating_source(self) -> None:
+        module = self._load_build_exe_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle = Path(temp_dir) / "bundle"
+            qml_root = bundle / "_internal" / "sg_preflight" / "desktop" / "qml"
+            qt_root = bundle / "_internal" / "PySide6" / "qml"
+            generator = Path(temp_dir) / "pyside6-qmlcachegen.exe"
+            sources = (qml_root / "Main.qml", qml_root / "components" / "Panel.qml")
+            qt_root.mkdir(parents=True)
+            generator.write_bytes(b"fixture")
+            for source in sources:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("import QtQuick\nItem {}\n", encoding="utf-8")
+            before = {source: source.read_bytes() for source in sources}
+
+            def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                output = Path(command[command.index("-o") + 1])
+                output.write_bytes(b"compiled")
+                return subprocess.CompletedProcess(command, 0)
+
+            runner = mock.Mock(side_effect=run)
+            compiled = module.compile_staged_qml_cache(
+                bundle,
+                generator=generator,
+                runner=runner,
+            )
+
+            self.assertEqual({path.name for path in compiled}, {"Main.qmlc", "Panel.qmlc"})
+            self.assertEqual({source: source.read_bytes() for source in sources}, before)
+            self.assertEqual(runner.call_count, 2)
+            for call in runner.call_args_list:
+                command = call.args[0]
+                self.assertEqual(command[0], str(generator))
+                self.assertIn("--only-bytecode", command)
+                self.assertEqual(command.count("-I"), 2)
+                self.assertNotIn("shell", call.kwargs)
+
+            def leak_path(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                output = Path(command[command.index("-o") + 1])
+                output.write_bytes(str(bundle.resolve()).encode("utf-8"))
+                return subprocess.CompletedProcess(command, 0)
+
+            with self.assertRaisesRegex(RuntimeError, "private build path"):
+                module.compile_staged_qml_cache(
+                    bundle,
+                    generator=generator,
+                    runner=leak_path,
+                )
 
     def test_grafiks_presence_alone_never_authorizes_a_runtime_copy(self) -> None:
         module = self._load_build_exe_module()

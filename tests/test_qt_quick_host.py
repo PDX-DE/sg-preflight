@@ -51,7 +51,13 @@ class TestQtQuickHostSource(unittest.TestCase):
         self.assertIn("desktopController.pageTitle", source)
         self.assertIn("desktopController.pageSubtitle", source)
         self.assertIn("desktopController.currentPayload", source)
-        self.assertIn("Component.onCompleted: desktopController.initialize()", source)
+        self.assertIn("onFrameSwapped:", source)
+        self.assertIn("Qt.callLater(desktopController.initialize)", source)
+        self.assertNotIn("Component.onCompleted: desktopController.initialize()", source)
+        self.assertIn("active: window.jumpOpen", source)
+        self.assertIn("active: window.helpOpen", source)
+        self.assertIn('active: window.desktopController.currentRouteId !== "home"', source)
+        self.assertIn('running: root.pageState !== "idle"', components)
         self.assertIn('objectName: "pageContentHost"', source)
         self.assertIn("NumberAnimation", shell_source)
         self.assertIn("ScrollView", shell_source)
@@ -619,8 +625,9 @@ class TestQtQuickShell(unittest.TestCase):
                 before = sorted(str(path.relative_to(workspace)) for path in workspace.rglob("*") if path.is_file())
                 runtime = create_qt_quick_runtime(workspace=workspace, initial_profile_id="G65", argv=["sgfx-test"])
                 root = runtime.engine.rootObjects()[0]
+                root.requestUpdate()
                 deadline = time.monotonic() + 5
-                while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
+                while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
                 invoked_f2 = QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "F2"))
@@ -732,8 +739,9 @@ Item {
                 from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
                 runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G70", argv=["sgfx-test"])
                 root = runtime.engine.rootObjects()[0]
+                root.requestUpdate()
                 deadline = time.monotonic() + 5
-                while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
+                while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
                 runtime.application.processEvents()
@@ -776,8 +784,10 @@ Item {
                 from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
 
                 runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-test"])
+                root = runtime.engine.rootObjects()[0]
+                root.requestUpdate()
                 deadline = time.monotonic() + 5
-                while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
+                while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
 

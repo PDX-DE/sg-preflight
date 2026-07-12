@@ -46,7 +46,7 @@ Item {
     Timer {
         interval: 16
         repeat: true
-        running: root.firstTileWidth === 0 || !root.tileLayoutValid
+        running: root.pageState !== "idle" && (root.firstTileWidth === 0 || !root.tileLayoutValid)
         onTriggered: root.updateTileMetrics()
     }
 
@@ -131,7 +131,7 @@ Item {
                             }
                         }
                         SequentialAnimation {
-                            running: true
+                            running: root.pageState !== "idle"
                             PauseAnimation {
                                 duration: Theme.stagger(tile.index, root.reducedMotion)
                             }
