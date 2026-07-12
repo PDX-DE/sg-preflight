@@ -171,7 +171,7 @@ class TestNativeScaffold(unittest.TestCase):
             text.index("swap_staged_bundle(staged_bundle)"),
         )
 
-    def test_windows_exe_build_does_not_collect_every_pyside_module(self) -> None:
+    def test_windows_exe_build_does_not_collect_entire_gui_packages(self) -> None:
         module = self._load_build_exe_module()
 
         arguments = module.build_pyinstaller_args()
@@ -182,6 +182,7 @@ class TestNativeScaffold(unittest.TestCase):
         }
 
         self.assertNotIn("PySide6", collected)
+        self.assertNotIn("nicegui", collected)
         for required in (
             "PySide6.QtQml",
             "PySide6.QtQuick",

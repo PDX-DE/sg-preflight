@@ -190,8 +190,6 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
         "--specpath",
         str(WORK_PATH),
         "--collect-all",
-        "nicegui",
-        "--collect-all",
         "keyring",
         "--collect-all",
         "win32ctypes",
