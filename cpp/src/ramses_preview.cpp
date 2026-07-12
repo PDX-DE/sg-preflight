@@ -1,0 +1,575 @@
+#include "sgfx/cine/ramses_preview.h"
+
+#include "ramses/client/Camera.h"
+#include "ramses/client/RenderPass.h"
+#include "ramses/client/Scene.h"
+#include "ramses/client/SceneConfig.h"
+#include "ramses/client/SceneMetadata.h"
+#include "ramses/client/SceneObjectIterator.h"
+#include "ramses/client/logic/LogicEngine.h"
+#include "ramses/client/logic/LuaInterface.h"
+#include "ramses/client/logic/LuaScript.h"
+#include "ramses/client/logic/Property.h"
+#include "ramses/client/ramses-client.h"
+#include "ramses/client/ramses-utils.h"
+#include "ramses/framework/RamsesFramework.h"
+#include "ramses/framework/RamsesFrameworkConfig.h"
+#include "ramses/framework/RamsesVersion.h"
+#include "ramses/renderer/DisplayConfig.h"
+#include "ramses/renderer/IRendererEventHandler.h"
+#include "ramses/renderer/IRendererSceneControlEventHandler.h"
+#include "ramses/renderer/RamsesRenderer.h"
+#include "ramses/renderer/RendererConfig.h"
+#include "ramses/renderer/RendererSceneControl.h"
+
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <iomanip>
+#include <initializer_list>
+#include <sstream>
+#include <stdexcept>
+#include <string_view>
+#include <thread>
+#include <utility>
+
+#if defined(_WIN32)
+#define NOMINMAX
+#include <Windows.h>
+#endif
+
+namespace sgfx::cine
+{
+namespace
+{
+namespace fs = std::filesystem;
+
+class PreviewFailure final : public std::runtime_error
+{
+public:
+    explicit PreviewFailure(std::string reason)
+        : std::runtime_error(reason)
+        , m_reason(std::move(reason))
+    {
+    }
+
+    const std::string& reason() const { return m_reason; }
+
+private:
+    std::string m_reason;
+};
+
+bool isLinked(const fs::path& path)
+{
+    std::error_code error;
+    const auto status = fs::symlink_status(path, error);
+    if (error || fs::is_symlink(status))
+        return true;
+#if defined(_WIN32)
+    const auto attributes = GetFileAttributesW(path.c_str());
+    return attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0u;
+#else
+    return false;
+#endif
+}
+
+void validateRequest(const RamsesPreviewRequest& request)
+{
+    if (request.width == 0u || request.width > 480u ||
+        request.height == 0u || request.height > 270u ||
+        request.frame_count == 0u || request.frame_count > 24u ||
+        (request.reduced_motion && request.frame_count != 1u))
+    {
+        throw PreviewFailure("request_out_of_bounds");
+    }
+
+    std::error_code error;
+    if (!fs::is_regular_file(request.scene_path, error) || error)
+        throw PreviewFailure("scene_unavailable");
+    if (isLinked(request.scene_path))
+        throw PreviewFailure("scene_linked");
+
+    error.clear();
+    if (!fs::is_directory(request.output_root, error) || error)
+        throw PreviewFailure("output_unavailable");
+    if (isLinked(request.output_root))
+        throw PreviewFailure("output_linked");
+
+    error.clear();
+    if (!fs::is_empty(request.output_root, error) || error)
+        throw PreviewFailure("output_not_empty");
+}
+
+class SdlGuard
+{
+public:
+    SdlGuard()
+    {
+        if (!SDL_Init(SDL_INIT_VIDEO))
+            throw PreviewFailure("renderer_unavailable");
+    }
+
+    ~SdlGuard() { SDL_Quit(); }
+};
+
+class HiddenWindow
+{
+public:
+    HiddenWindow(std::uint32_t width, std::uint32_t height)
+    {
+        m_window = SDL_CreateWindow(
+            "SGFX Ramses Preview",
+            static_cast<int>(width),
+            static_cast<int>(height),
+            SDL_WINDOW_HIDDEN);
+        if (!m_window)
+            throw PreviewFailure("renderer_unavailable");
+    }
+
+    ~HiddenWindow()
+    {
+        if (m_window)
+            SDL_DestroyWindow(m_window);
+    }
+
+    HiddenWindow(const HiddenWindow&) = delete;
+    HiddenWindow& operator=(const HiddenWindow&) = delete;
+
+    void* nativeHandle() const
+    {
+#if defined(_WIN32)
+        const SDL_PropertiesID properties = SDL_GetWindowProperties(m_window);
+        void* handle = SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+        if (!handle)
+            throw PreviewFailure("renderer_unavailable");
+        return handle;
+#else
+        throw PreviewFailure("renderer_unavailable");
+#endif
+    }
+
+private:
+    SDL_Window* m_window = nullptr;
+};
+
+class PreviewEventHandler final : public ramses::RendererEventHandlerEmpty,
+                                  public ramses::RendererSceneControlEventHandlerEmpty
+{
+public:
+    PreviewEventHandler(ramses::displayId_t display, ramses::sceneId_t scene, std::uint32_t width, std::uint32_t height)
+        : m_display(display)
+        , m_scene(scene)
+        , m_width(width)
+        , m_height(height)
+    {
+    }
+
+    void displayCreated(ramses::displayId_t display, ramses::ERendererEventResult result) override
+    {
+        if (display != m_display)
+            return;
+        m_displayCreated = result == ramses::ERendererEventResult::Ok;
+        m_failed = result == ramses::ERendererEventResult::Failed;
+    }
+
+    void offscreenBufferCreated(
+        ramses::displayId_t display,
+        ramses::displayBufferId_t buffer,
+        ramses::ERendererEventResult result) override
+    {
+        if (display != m_display || buffer != m_buffer)
+            return;
+        m_bufferCreated = result == ramses::ERendererEventResult::Ok;
+        m_failed = result == ramses::ERendererEventResult::Failed;
+    }
+
+    void sceneStateChanged(ramses::sceneId_t scene, ramses::RendererSceneState state) override
+    {
+        if (scene == m_scene)
+            m_sceneState = state;
+    }
+
+    void framebufferPixelsRead(
+        const std::uint8_t* data,
+        const std::uint32_t size,
+        ramses::displayId_t display,
+        ramses::displayBufferId_t buffer,
+        ramses::ERendererEventResult result) override
+    {
+        if (display != m_display || buffer != m_buffer)
+            return;
+        m_pixelsReceived = true;
+        const auto expected = static_cast<std::uint64_t>(m_width) * m_height * 4u;
+        if (result != ramses::ERendererEventResult::Ok || !data || size != expected)
+        {
+            m_failed = true;
+            return;
+        }
+        m_pixels.assign(data, data + size);
+    }
+
+    void setBuffer(ramses::displayBufferId_t buffer) { m_buffer = buffer; }
+
+    void resetPixels()
+    {
+        m_pixelsReceived = false;
+        m_pixels.clear();
+    }
+
+    bool displayReady() const { return m_displayCreated; }
+    bool bufferReady() const { return m_bufferCreated; }
+    bool failed() const { return m_failed; }
+    bool sceneAvailable() const { return m_sceneState == ramses::RendererSceneState::Available; }
+    bool sceneReady() const { return m_sceneState == ramses::RendererSceneState::Ready; }
+    bool sceneRendered() const { return m_sceneState == ramses::RendererSceneState::Rendered; }
+    bool pixelsReceived() const { return m_pixelsReceived; }
+    const std::vector<std::uint8_t>& pixels() const { return m_pixels; }
+
+private:
+    ramses::displayId_t m_display;
+    ramses::sceneId_t m_scene;
+    ramses::displayBufferId_t m_buffer = ramses::displayBufferId_t::Invalid();
+    std::uint32_t m_width;
+    std::uint32_t m_height;
+    bool m_displayCreated = false;
+    bool m_bufferCreated = false;
+    bool m_failed = false;
+    bool m_pixelsReceived = false;
+    ramses::RendererSceneState m_sceneState = ramses::RendererSceneState::Unavailable;
+    std::vector<std::uint8_t> m_pixels;
+};
+
+void pumpPlatformEvents()
+{
+    SDL_Event event;
+    while (SDL_PollEvent(&event))
+    {
+    }
+}
+
+void pumpRamses(
+    ramses::RamsesRenderer& renderer,
+    ramses::RendererSceneControl& sceneControl,
+    PreviewEventHandler& handler)
+{
+    pumpPlatformEvents();
+    renderer.doOneLoop();
+    renderer.dispatchEvents(handler);
+    sceneControl.dispatchEvents(handler);
+    renderer.flush();
+    sceneControl.flush();
+}
+
+template <typename Predicate, typename Tick>
+void waitFor(
+    ramses::RamsesRenderer& renderer,
+    ramses::RendererSceneControl& sceneControl,
+    PreviewEventHandler& handler,
+    Predicate predicate,
+    Tick tick,
+    std::chrono::steady_clock::time_point deadline)
+{
+    while (!predicate())
+    {
+        if (handler.failed() || std::chrono::steady_clock::now() >= deadline)
+            throw PreviewFailure("lifecycle_timeout");
+        tick();
+        pumpRamses(renderer, sceneControl, handler);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+}
+
+std::vector<ramses::LogicEngine*> collectLogicEngines(ramses::Scene& scene)
+{
+    std::vector<ramses::LogicEngine*> engines;
+    ramses::SceneObjectIterator iterator(scene, ramses::ERamsesObjectType::LogicEngine);
+    while (auto* object = iterator.getNext())
+    {
+        if (auto* engine = object->as<ramses::LogicEngine>())
+            engines.push_back(engine);
+    }
+    return engines;
+}
+
+ramses::Property* cameraCraneRoot(ramses::LogicNode& node)
+{
+    auto* inputs = node.getInputs();
+    if (!inputs)
+        return nullptr;
+    if (inputs->hasChild("Interface_CameraCrane"))
+        return inputs->getChild("Interface_CameraCrane");
+    if (inputs->hasChild("CraneGimbal"))
+        return inputs;
+    return nullptr;
+}
+
+std::vector<ramses::Property*> collectCameraCraneInputs(const std::vector<ramses::LogicEngine*>& engines)
+{
+    std::vector<ramses::Property*> inputs;
+    for (auto* engine : engines)
+    {
+        for (auto* interfaceNode : engine->getCollection<ramses::LuaInterface>())
+        {
+            if (auto* input = cameraCraneRoot(*interfaceNode))
+                inputs.push_back(input);
+        }
+    }
+    for (auto* engine : engines)
+    {
+        for (auto* script : engine->getCollection<ramses::LuaScript>())
+        {
+            if (auto* input = cameraCraneRoot(*script))
+                inputs.push_back(input);
+        }
+    }
+    return inputs;
+}
+
+template <typename T>
+bool setProperty(ramses::Property& root, std::initializer_list<std::string_view> path, T value)
+{
+    auto* property = &root;
+    for (const auto segment : path)
+    {
+        if (!property->hasChild(segment))
+            return false;
+        property = property->getChild(segment);
+    }
+    return property && property->set<T>(value);
+}
+
+std::vector<ramses::Property*> configureAuthoredCamera(
+    const std::vector<ramses::Property*>& inputs,
+    std::uint32_t width,
+    std::uint32_t height)
+{
+    std::vector<ramses::Property*> configuredInputs;
+    const auto aspect = static_cast<float>(width) / static_cast<float>(height);
+    for (auto* input : inputs)
+    {
+        const bool configured = input &&
+            setProperty<bool>(*input, {"AspectFromResolution_isEnabled"}, true) &&
+            setProperty<float>(*input, {"CraneGimbal", "Distance"}, 12.0f) &&
+            setProperty<float>(*input, {"CraneGimbal", "Pitch"}, 4.0f) &&
+            setProperty<float>(*input, {"CraneGimbal", "Roll"}, 0.0f) &&
+            setProperty<float>(*input, {"Frustum", "AspectRatio"}, aspect) &&
+            setProperty<float>(*input, {"Frustum", "FarPlane"}, 100.0f) &&
+            setProperty<float>(*input, {"Frustum", "HorizontalFOV"}, 43.0f) &&
+            setProperty<float>(*input, {"Frustum", "NearPlane"}, 0.5f) &&
+            setProperty<float>(*input, {"Scale"}, 1.0f) &&
+            setProperty<ramses::vec2i>(*input, {"ShiftXY"}, ramses::vec2i{0, 0}) &&
+            setProperty<ramses::vec3f>(*input, {"Origin"}, ramses::vec3f{0.0f, -0.123f, 0.0f}) &&
+            setProperty<std::int32_t>(*input, {"Viewport", "Height"}, static_cast<std::int32_t>(height)) &&
+            setProperty<std::int32_t>(*input, {"Viewport", "OffsetX"}, 0) &&
+            setProperty<std::int32_t>(*input, {"Viewport", "OffsetY"}, 0) &&
+            setProperty<std::int32_t>(*input, {"Viewport", "Width"}, static_cast<std::int32_t>(width));
+        if (configured)
+            configuredInputs.push_back(input);
+    }
+    if (configuredInputs.empty())
+        throw PreviewFailure("authored_camera_unavailable");
+    return configuredInputs;
+}
+
+void setAuthoredYaw(const std::vector<ramses::Property*>& inputs, float yaw)
+{
+    for (auto* input : inputs)
+    {
+        if (!input || !setProperty<float>(*input, {"CraneGimbal", "Yaw"}, yaw))
+            throw PreviewFailure("authored_camera_unavailable");
+    }
+}
+
+void updateLogic(const std::vector<ramses::LogicEngine*>& engines)
+{
+    for (auto* engine : engines)
+    {
+        if (!engine->update())
+            throw PreviewFailure("logic_update_failed");
+    }
+}
+
+bool hasVisiblePixels(const std::vector<std::uint8_t>& pixels)
+{
+    for (std::size_t index = 0u; index + 3u < pixels.size(); index += 4u)
+    {
+        const auto brightness = static_cast<unsigned>(pixels[index]) +
+                                static_cast<unsigned>(pixels[index + 1u]) +
+                                static_cast<unsigned>(pixels[index + 2u]);
+        if (brightness > 80u)
+            return true;
+    }
+    return false;
+}
+
+bool hasAuthoredFramebufferPass(ramses::Scene& scene)
+{
+    ramses::SceneObjectIterator iterator(scene, ramses::ERamsesObjectType::RenderPass);
+    while (auto* object = iterator.getNext())
+    {
+        auto* pass = object->as<ramses::RenderPass>();
+        if (pass && pass->isEnabled() && !pass->getRenderTarget() && pass->getCamera())
+            return true;
+    }
+    return false;
+}
+
+std::string frameName(std::uint32_t index)
+{
+    std::ostringstream stream;
+    stream << "frame-" << std::setw(3) << std::setfill('0') << index << ".png";
+    return stream.str();
+}
+
+void removeFrames(const std::vector<fs::path>& frames)
+{
+    for (const auto& frame : frames)
+    {
+        std::error_code error;
+        fs::remove(frame, error);
+    }
+}
+}
+
+RamsesPreviewResult render_ramses_preview(const RamsesPreviewRequest& request)
+{
+    RamsesPreviewResult result;
+    std::vector<fs::path> createdFrames;
+    try
+    {
+        validateRequest(request);
+        const auto metadata = ramses::RamsesClient::GetMetadataFromFile(request.scene_path.string());
+        if (!metadata)
+            throw PreviewFailure("scene_incompatible");
+
+        const auto linkedVersion = ramses::GetRamsesVersion();
+        result.ramses_version = linkedVersion.string;
+        result.feature_level = static_cast<std::uint32_t>(metadata->featureLevel);
+
+        SdlGuard sdl;
+        HiddenWindow window(request.width, request.height);
+
+        ramses::RamsesFrameworkConfig frameworkConfig{metadata->featureLevel};
+        frameworkConfig.setRequestedRamsesShellType(ramses::ERamsesShellType::None);
+        frameworkConfig.setLogLevel(ramses::ELogLevel::Off);
+        frameworkConfig.setLogLevelConsole(ramses::ELogLevel::Off);
+        ramses::RamsesFramework framework(frameworkConfig);
+        auto* client = framework.createClient("sgfx-ramses-preview-client");
+        ramses::RendererConfig rendererConfig;
+        auto* renderer = framework.createRenderer(rendererConfig);
+        if (!client || !renderer || !framework.connect())
+            throw PreviewFailure("renderer_unavailable");
+        auto* sceneControl = renderer->getSceneControlAPI();
+        if (!sceneControl)
+            throw PreviewFailure("renderer_unavailable");
+
+        ramses::SceneConfig sceneConfig{
+            ramses::sceneId_t{9701u},
+            ramses::EScenePublicationMode::LocalOnly,
+            ramses::ERenderBackendCompatibility::OpenGL};
+        auto* scene = client->loadSceneFromFile(request.scene_path.string(), sceneConfig);
+        if (!scene || !hasAuthoredFramebufferPass(*scene))
+            throw PreviewFailure("scene_incompatible");
+
+        const auto logicEngines = collectLogicEngines(*scene);
+        const auto cameraCandidates = collectCameraCraneInputs(logicEngines);
+        const auto cameraInputs = configureAuthoredCamera(cameraCandidates, request.width, request.height);
+
+        ramses::DisplayConfig displayConfig;
+        displayConfig.setWindowType(ramses::EWindowType::Windows);
+        displayConfig.setWindowsWindowHandle(window.nativeHandle());
+        displayConfig.setWindowRectangle(0, 0, request.width, request.height);
+        displayConfig.setWindowTitle("SGFX Ramses Preview");
+        const auto display = renderer->createDisplay(displayConfig);
+        if (!display.isValid())
+            throw PreviewFailure("renderer_unavailable");
+        renderer->setSkippingOfUnmodifiedBuffers(false);
+        renderer->flush();
+
+        const auto sceneId = scene->getSceneId();
+        PreviewEventHandler handler(display, sceneId, request.width, request.height);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+        waitFor(*renderer, *sceneControl, handler, [&] { return handler.displayReady(); }, [] {}, deadline);
+
+        const auto offscreen = renderer->createOffscreenBuffer(display, request.width, request.height);
+        if (!offscreen.isValid())
+            throw PreviewFailure("renderer_unavailable");
+        handler.setBuffer(offscreen);
+        renderer->setDisplayBufferClearColor(display, offscreen, ramses::vec4f{0.01f, 0.02f, 0.04f, 1.0f});
+        renderer->flush();
+        waitFor(*renderer, *sceneControl, handler, [&] { return handler.bufferReady(); }, [] {}, deadline);
+
+        setAuthoredYaw(cameraInputs, -45.0f);
+        updateLogic(logicEngines);
+        if (!scene->publish(ramses::EScenePublicationMode::LocalOnly))
+            throw PreviewFailure("lifecycle_rejected");
+        scene->flush();
+        waitFor(*renderer, *sceneControl, handler, [&] { return handler.sceneAvailable(); }, [&] { scene->flush(); }, deadline);
+
+        if (!sceneControl->setSceneMapping(sceneId, display) ||
+            !sceneControl->setSceneDisplayBufferAssignment(sceneId, offscreen, 0) ||
+            !sceneControl->setSceneState(sceneId, ramses::RendererSceneState::Ready))
+        {
+            throw PreviewFailure("lifecycle_rejected");
+        }
+        sceneControl->flush();
+        waitFor(*renderer, *sceneControl, handler, [&] { return handler.sceneReady(); }, [&] { scene->flush(); }, deadline);
+
+        if (!sceneControl->setSceneState(sceneId, ramses::RendererSceneState::Rendered))
+            throw PreviewFailure("lifecycle_rejected");
+        sceneControl->flush();
+        waitFor(*renderer, *sceneControl, handler, [&] { return handler.sceneRendered(); }, [&] { scene->flush(); }, deadline);
+
+        for (std::uint32_t index = 0u; index < request.frame_count; ++index)
+        {
+            const float yaw = request.reduced_motion
+                ? -45.0f
+                : -45.0f + static_cast<float>(index) * 360.0f / static_cast<float>(request.frame_count);
+            setAuthoredYaw(cameraInputs, yaw);
+            updateLogic(logicEngines);
+            scene->flush();
+            for (std::uint32_t settle = 0u; settle < 3u; ++settle)
+                pumpRamses(*renderer, *sceneControl, handler);
+
+            handler.resetPixels();
+            renderer->readPixels(display, offscreen, 0u, 0u, request.width, request.height);
+            renderer->flush();
+            waitFor(*renderer, *sceneControl, handler, [&] { return handler.pixelsReceived(); }, [&] { scene->flush(); }, deadline);
+            if (!hasVisiblePixels(handler.pixels()))
+                throw PreviewFailure("readback_failed");
+
+            const auto frame = request.output_root / frameName(index);
+            auto pixels = handler.pixels();
+            createdFrames.push_back(frame);
+            if (!ramses::RamsesUtils::SaveImageBufferToPng(frame.string(), pixels, request.width, request.height, true))
+                throw PreviewFailure("frame_write_failed");
+        }
+
+        sceneControl->setSceneState(sceneId, ramses::RendererSceneState::Unavailable);
+        sceneControl->flush();
+        scene->unpublish();
+        renderer->destroyOffscreenBuffer(display, offscreen);
+        renderer->destroyDisplay(display);
+        renderer->flush();
+        framework.disconnect();
+
+        result.rendered = true;
+        result.frames = createdFrames;
+        return result;
+    }
+    catch (const PreviewFailure& failure)
+    {
+        removeFrames(createdFrames);
+        result.safe_reason = failure.reason();
+        return result;
+    }
+    catch (...)
+    {
+        removeFrames(createdFrames);
+        result.safe_reason = "render_failed";
+        return result;
+    }
+}
+}

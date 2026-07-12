@@ -117,6 +117,7 @@ endif()
 
 add_library(sgfx_cine
   src/ramses_probe.cpp
+  src/ramses_preview.cpp
 )
 add_library(sgfx::cine ALIAS sgfx_cine)
 
@@ -129,6 +130,8 @@ target_include_directories(sgfx_cine
 target_link_libraries(sgfx_cine
   PUBLIC
     ramses::ramses
+  PRIVATE
+    ${SGFX_CINE_SDL3_TARGET}
 )
 
 add_executable(sgfx_cine_ramses_link_probe
@@ -179,6 +182,35 @@ function(sgfx_cine_copy_sdl_runtime_dll target_name)
 endfunction()
 
 sgfx_cine_copy_ramses_runtime_dlls(sgfx_cine_ramses_link_probe)
+
+add_executable(sgfx_cine_ramses_preview_cli
+  apps/ramses_preview_cli.cpp
+)
+
+target_link_libraries(sgfx_cine_ramses_preview_cli
+  PRIVATE
+    sgfx::cine
+    nlohmann_json::nlohmann_json
+)
+
+sgfx_cine_copy_ramses_runtime_dlls(sgfx_cine_ramses_preview_cli)
+sgfx_cine_copy_sdl_runtime_dll(sgfx_cine_ramses_preview_cli)
+
+set(SGFX_CINE_PREVIEW_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bin" CACHE PATH "Local SGFX preview-helper runtime directory")
+add_custom_command(TARGET sgfx_cine_ramses_preview_cli POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    ${SGFX_CINE_PREVIEW_RUNTIME_DIR}
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:sgfx_cine_ramses_preview_cli>
+    ${SGFX_CINE_PREVIEW_RUNTIME_DIR}
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${SGFX_CINE_RAMSES_RUNTIME_DLLS}
+    ${SGFX_CINE_PREVIEW_RUNTIME_DIR}
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:${SGFX_CINE_SDL3_TARGET}>
+    ${SGFX_CINE_PREVIEW_RUNTIME_DIR}
+  COMMAND_EXPAND_LISTS
+)
 
 add_executable(sgfx_cine_sdl_ramses_embed
   apps/ramses_sdl_embed.cpp
@@ -288,6 +320,23 @@ set_tests_properties(sgfx_cine_ramses_link_probe PROPERTIES
   PASS_REGULAR_EXPRESSION "Ramses linked OK"
 )
 
-install(TARGETS sgfx_cine sgfx_cine_ramses_link_probe sgfx_cine_sdl_ramses_embed sgfx_cine_ramses_real_scene sgfx_cine_ramses_shell_fusion_probe sgfx_cine_cinematic_shell)
+add_executable(sgfx_cine_ramses_preview_contract_test
+  tests/ramses_preview_contract_test.cpp
+)
+
+target_link_libraries(sgfx_cine_ramses_preview_contract_test
+  PRIVATE
+    sgfx::cine
+)
+
+sgfx_cine_copy_ramses_runtime_dlls(sgfx_cine_ramses_preview_contract_test)
+sgfx_cine_copy_sdl_runtime_dll(sgfx_cine_ramses_preview_contract_test)
+
+add_test(NAME sgfx_cine_ramses_preview_contract COMMAND sgfx_cine_ramses_preview_contract_test)
+set_tests_properties(sgfx_cine_ramses_preview_contract PROPERTIES
+  PASS_REGULAR_EXPRESSION "Ramses preview contract OK"
+)
+
+install(TARGETS sgfx_cine sgfx_cine_ramses_link_probe sgfx_cine_ramses_preview_cli sgfx_cine_sdl_ramses_embed sgfx_cine_ramses_real_scene sgfx_cine_ramses_shell_fusion_probe sgfx_cine_cinematic_shell)
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY assets/ DESTINATION assets)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -19,6 +21,115 @@ if PYSIDE_AVAILABLE:
     from PySide6.QtCore import QObject, QSize, Signal, QUrl
     from PySide6.QtGui import QColor, QImage
     from PySide6.QtQml import QQmlComponent
+
+
+class TestNativePreviewHelper(unittest.TestCase):
+    @staticmethod
+    def _helper() -> Path | None:
+        root = Path(__file__).resolve().parents[1]
+        candidates = (
+            root / "cpp" / "bin" / "sgfx_cine_ramses_preview_cli.exe",
+            root / "build" / "cine-c0" / "RelWithDebInfo" / "sgfx_cine_ramses_preview_cli.exe",
+        )
+        return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        helper = self._helper()
+        if helper is None:
+            self.skipTest("native preview helper has not been built")
+        return subprocess.run(
+            [str(helper), *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+    def test_cli_rejects_unknown_missing_and_out_of_bounds_requests_without_writes(self) -> None:
+        unknown = self._run("--unknown")
+        self.assertEqual(unknown.returncode, 2)
+        self.assertEqual(unknown.stdout, "")
+        self.assertEqual(unknown.stderr.strip().splitlines(), ["invalid_arguments"])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir)
+            request = (
+                "--scene", str(output / "missing.ramses"),
+                "--output-root", str(output),
+                "--width", "481",
+                "--height", "270",
+                "--frames", "1",
+            )
+            oversized = self._run(*request)
+            self.assertEqual(oversized.returncode, 1)
+            self.assertEqual(oversized.stdout, "")
+            self.assertEqual(oversized.stderr.strip().splitlines(), ["request_out_of_bounds"])
+            self.assertEqual(tuple(output.iterdir()), ())
+
+            reduced = self._run(
+                *request[:-6],
+                "--width", "480",
+                "--height", "270",
+                "--frames", "2",
+                "--reduced-motion",
+            )
+            self.assertEqual(reduced.returncode, 1)
+            self.assertEqual(reduced.stdout, "")
+            self.assertEqual(reduced.stderr.strip().splitlines(), ["request_out_of_bounds"])
+            self.assertEqual(tuple(output.iterdir()), ())
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_local_compatible_scene_round_trips_through_the_coordinator_when_available(self) -> None:
+        from sg_preflight.desktop.preview_coordinator import PreviewCoordinator
+        from sg_preflight.desktop.preview_image_provider import PreviewImageProvider
+        from sg_preflight.profiles import RunProfile
+
+        helper = self._helper()
+        scene = Path(os.environ.get("SGFX_CINE_PREVIEW_SCENE", ""))
+        if helper is None or not scene.is_file():
+            self.skipTest("compatible local preview inputs are unavailable")
+        project = scene.parents[1]
+        before = self._sha256(scene)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            provider = PreviewImageProvider()
+            coordinator = PreviewCoordinator(
+                cache_root=Path(temp_dir) / "cache",
+                helper_path=helper,
+                image_provider=provider,
+            )
+            try:
+                profile = RunProfile(
+                    profile_id="G45",
+                    label="BMW G45",
+                    repo_root=project.parents[2],
+                    project_root=project,
+                    project_relative=Path("cars/BMW/G45"),
+                    config_path=Path(temp_dir) / "config.json",
+                    reference_repo_root=Path(temp_dir) / "missing-reference",
+                )
+                coordinator.request(
+                    profile=profile,
+                    generation=1,
+                    reduced_motion=True,
+                )
+                self.assertTrue(coordinator.wait_for_idle(30))
+                state = coordinator.public_state()
+
+                self.assertEqual(state.state, "ready")
+                self.assertEqual(state.frame_count, 1)
+                self.assertRegex(state.token, re.compile(r"^[A-Za-z0-9_-]{16,}$"))
+                self.assertNotIn(str(scene), asdict(state).values())
+                self.assertEqual(self._sha256(scene), before)
+            finally:
+                coordinator.shutdown()
 
 
 @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")

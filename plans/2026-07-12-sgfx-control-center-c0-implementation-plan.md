@@ -1095,7 +1095,7 @@ git commit -m "feat(qt): add bounded profile preview channel"
 - Consumes: one local `.ramses` file, one contained output directory, maximum frame count/dimensions, timeout owned by the Python caller, and the authored camera-crane interface when compatible.
 - Produces: contained PNG frames plus `preview-manifest.json`; exit `0` only when the manifest is complete. It does not produce QA validation findings.
 
-- [ ] **Step 1: Write a C++ contract test before implementation**
+- [x] **Step 1: Write a C++ contract test before implementation**
 
 The header contract is exact:
 
@@ -1127,7 +1127,7 @@ RamsesPreviewResult render_ramses_preview(const RamsesPreviewRequest& request);
 
 Test request validation without loading BMW data: missing scene, non-directory output parent, width `481`, height `271`, frame count `25`, and linked output must all fail with safe enum-like reasons and no file write.
 
-- [ ] **Step 2: Configure and run the contract target to verify RED**
+- [x] **Step 2: Configure and run the contract target to verify RED**
 
 Run:
 
@@ -1139,17 +1139,17 @@ ctest --test-dir build\cine-c0 -C RelWithDebInfo -R sgfx_cine_ramses_preview_con
 
 Expected: build or test FAIL because the helper contract is absent.
 
-- [ ] **Step 3: Extract shared scene lifecycle from the proven viewer seam**
+- [x] **Step 3: Extract shared scene lifecycle from the proven viewer seam**
 
 Move only SGFX-authored reusable behavior from `cpp/apps/ramses_real_scene.cpp`/`cpp/apps/cinematic_shell.cpp` into `ramses_preview.cpp`: framework/client creation, scene load, renderer/display/offscreen buffer, scene mapping, flush, publish, subscribe, state transitions, authored render-pass preservation, camera-crane interface lookup, bounded logic updates, readPixels, and teardown. Do not copy SDK internals or proprietary project data.
 
 The helper must wait with explicit deadlines for `Ready`, `Available`, `Rendered`, and pixel-read completion. Any missing callback or incompatible authored interface returns a safe reason; it never waits indefinitely and never substitutes direct camera mutation.
 
-- [ ] **Step 4: Render a finite authored turntable**
+- [x] **Step 4: Render a finite authored turntable**
 
 For normal motion, set only the accepted authored camera-crane rotation input for `frame / frame_count * 360`. Run the necessary logic update, flush, render one frame, read pixels, encode PNG, then continue. For reduced motion, render one authored frame without rotation travel. After the final frame, stop and destroy all Ramses objects.
 
-- [ ] **Step 5: Emit the strict manifest from the CLI**
+- [x] **Step 5: Emit the strict manifest from the CLI**
 
 The CLI accepts only:
 
@@ -1174,7 +1174,7 @@ Write with `nlohmann_json`:
 
 Frame entries are relative filenames only. On failure, write no frames and print only one safe reason token to stderr.
 
-- [ ] **Step 6: Build and run helper contract tests**
+- [x] **Step 6: Build and run helper contract tests**
 
 Run:
 
@@ -1185,11 +1185,11 @@ ctest --test-dir build\cine-c0 -C RelWithDebInfo -R "sgfx_cine_(ramses_link_prob
 
 Expected: PASS; helper enforces all limits and the existing Ramses link probe remains green.
 
-- [ ] **Step 7: Run one compatible local-scene smoke without packaging its frames**
+- [x] **Step 7: Run one compatible local-scene smoke without packaging its frames**
 
 Use a locally resolved compatible `exported.ramses`, write only below a temporary SGFX output directory, hash the source tree before/after, then validate the manifest through `PreviewCoordinator`. Record only counts, dimensions, hashes, lifecycle states, and the temporary artifact location in the local verification log; do not commit or package the scene/frames.
 
-- [ ] **Step 8: Commit the authored preview helper**
+- [x] **Step 8: Commit the authored preview helper**
 
 ```powershell
 git add cpp/include/sgfx/cine/ramses_preview.h cpp/src/ramses_preview.cpp cpp/apps/ramses_preview_cli.cpp cpp/tests/ramses_preview_contract_test.cpp cpp/CMakeLists.txt tests/test_qt_quick_preview.py

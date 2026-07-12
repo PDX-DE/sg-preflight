@@ -35,6 +35,7 @@ operator_state/
 
 # C++ cinematic shell local build outputs
 /cpp/build/
+/cpp/bin/
 /cpp/external/*
 !/cpp/external/README.md
 /cpp/**/*.exe
