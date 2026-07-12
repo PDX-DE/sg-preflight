@@ -63,6 +63,7 @@ def _read_request(path: Path) -> dict[str, Any]:
     output_path = payload.get("output_path")
     workspace = payload.get("workspace")
     start_ns = payload.get("start_ns")
+    ready_path = payload.get("ready_path")
     if scenario not in _SCENARIOS:
         raise BenchmarkProbeError("The benchmark request is invalid.")
     if not isinstance(output_path, str) or not output_path:
@@ -71,24 +72,34 @@ def _read_request(path: Path) -> dict[str, Any]:
         raise BenchmarkProbeError("The benchmark request is invalid.")
     if type(start_ns) is not int or start_ns <= 0:
         raise BenchmarkProbeError("The benchmark request is invalid.")
+    if scenario == "reader-stress":
+        if not isinstance(ready_path, str) or not ready_path:
+            raise BenchmarkProbeError("The benchmark request is invalid.")
+    elif ready_path is not None:
+        raise BenchmarkProbeError("The benchmark request is invalid.")
     request_root = request_path.parent
     temp_root = Path(tempfile.gettempdir()).resolve()
     output = Path(output_path).resolve()
     workspace_path = Path(workspace).resolve()
+    ready = Path(ready_path).resolve() if isinstance(ready_path, str) else None
     if (
         not request_root.is_relative_to(temp_root)
         or request_root == temp_root
         or output.parent != request_root
         or workspace_path.parent != request_root
         or not workspace_path.is_dir()
+        or (ready is not None and (ready.parent != request_root or ready.exists()))
     ):
         raise BenchmarkProbeError("The benchmark request is outside its temporary boundary.")
-    return {
+    request = {
         "scenario": scenario,
         "output_path": output,
         "workspace": workspace_path,
         "start_ns": start_ns,
     }
+    if ready is not None:
+        request["ready_path"] = ready
+    return request
 
 
 def _write_response(path: Path, payload: Mapping[str, object]) -> None:
@@ -259,6 +270,13 @@ def _run_reader_stress(request: Mapping[str, Any]) -> dict[str, object]:
             or controller._task_coordinator.active_count != 2
         ):
             raise BenchmarkProbeError("The delayed benchmark readers could not be occupied.")
+        request["ready_path"].touch(exist_ok=False)
+        load_started = time.monotonic()
+        _process_until(
+            runtime.application,
+            lambda: time.monotonic() >= load_started + 0.5,
+            0.6,
+        )
         sys.setprofile(profiler)
         started = time.monotonic()
         for index in range(30):

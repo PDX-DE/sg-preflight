@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_REQUEST_ENV = "SGFX_QT_BENCHMARK_REQUEST"
 RENDERER_KINDS = ("overview", "matrix", "evidence", "workflow", "review", "about")
 SCENARIOS = ("warm-start", "first-run", "navigation", "reader-stress")
+READER_STRESS_ENVELOPE_SECONDS = 150
+READER_STRESS_LOAD_SECONDS = 75
+READER_STRESS_READY_ENV = "SGFX_READER_STRESS_READY_PATH"
 _FINGERPRINT_KEYS = frozenset(
     {
         "os",
@@ -526,12 +529,18 @@ def _run_benchmark_worker(
             "workspace": str(workspace),
             "start_ns": start_ns,
         }
+        ready_path = root / "stress-ready" if scenario == "reader-stress" else None
+        if ready_path is not None:
+            request["ready_path"] = str(ready_path)
         request_path.write_text(json.dumps(request, sort_keys=True), encoding="utf-8")
         environment = os.environ.copy()
         environment[BENCHMARK_REQUEST_ENV] = str(request_path)
         for key in ("QML2_IMPORT_PATH", "QML_IMPORT_PATH", "QT_PLUGIN_PATH", "PYTHONPATH"):
             environment.pop(key, None)
+        cpu_load: list[subprocess.Popen[bytes]] = []
         try:
+            if ready_path is not None:
+                cpu_load = _start_cpu_load(ready_path)
             completed = runner(
                 list(target.command),
                 cwd=target.working_directory,
@@ -540,11 +549,13 @@ def _run_benchmark_worker(
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
-                timeout=90,
+                timeout=READER_STRESS_ENVELOPE_SECONDS if scenario == "reader-stress" else 90,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise RuntimeError("The Qt Quick benchmark worker could not be completed.") from exc
+        finally:
+            _stop_cpu_load(cpu_load)
         if completed.returncode != 0 or not output_path.is_file():
             raise RuntimeError("The Qt Quick benchmark worker failed.")
         try:
@@ -556,10 +567,22 @@ def _run_benchmark_worker(
         return payload
 
 
-def _start_cpu_load(duration_s: int = 90) -> list[subprocess.Popen[bytes]]:
+def _start_cpu_load(
+    ready_path: Path,
+    duration_s: int = READER_STRESS_LOAD_SECONDS,
+) -> list[subprocess.Popen[bytes]]:
     worker_count = max(1, os.cpu_count() or 1)
+    environment = os.environ.copy()
+    environment[READER_STRESS_READY_ENV] = str(Path(ready_path).resolve())
     workload = (
-        "import time\n"
+        "import os,time\n"
+        "from pathlib import Path\n"
+        f"ready=Path(os.environ[{READER_STRESS_READY_ENV!r}])\n"
+        f"wait_deadline=time.perf_counter()+{READER_STRESS_ENVELOPE_SECONDS}\n"
+        "while not ready.is_file() and time.perf_counter()<wait_deadline:\n"
+        " time.sleep(0.01)\n"
+        "if not ready.is_file():\n"
+        " raise SystemExit(2)\n"
         f"deadline=time.perf_counter()+{int(duration_s)}\n"
         "value=1\n"
         "while time.perf_counter()<deadline:\n"
@@ -579,6 +602,7 @@ def _start_cpu_load(duration_s: int = 90) -> list[subprocess.Popen[bytes]]:
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    env=environment,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
             )
@@ -638,13 +662,7 @@ def collect_scenario(
                 shutil.rmtree(staged_bundle)
         return {"launches": launches}
     if scenario in {"navigation", "reader-stress"}:
-        cpu_load: list[subprocess.Popen[bytes]] = []
-        try:
-            if scenario == "reader-stress":
-                cpu_load = _start_cpu_load()
-            result = _run_benchmark_worker(scenario, target=selected, runner=runner)
-        finally:
-            _stop_cpu_load(cpu_load)
+        result = _run_benchmark_worker(scenario, target=selected, runner=runner)
         samples = result.get("raw_samples")
         if not isinstance(samples, Mapping):
             raise RuntimeError("The Qt Quick benchmark worker returned invalid samples.")

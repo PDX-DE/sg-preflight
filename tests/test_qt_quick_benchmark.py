@@ -45,6 +45,20 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
         )
         self.assertEqual(root.requestUpdate.call_count, len(expected_routes))
         self.assertEqual(waiter.call_count, len(expected_routes))
+        source = (ROOT / "sg_preflight" / "desktop" / "qt_quick_benchmark_probe.py").read_text(
+            encoding="utf-8"
+        )
+        stress_source = source[
+            source.index("def _run_reader_stress") : source.index("def run_benchmark_request")
+        ]
+        self.assertLess(
+            stress_source.index("_prepare_cached_routes(runtime, root, frames)"),
+            stress_source.index('request["ready_path"].touch(exist_ok=False)'),
+        )
+        self.assertLess(
+            stress_source.index('request["ready_path"].touch(exist_ok=False)'),
+            stress_source.index("sys.setprofile(profiler)"),
+        )
 
     def test_gui_profiler_records_desktop_callbacks_without_path_output(self) -> None:
         from sg_preflight.desktop.qt_quick_benchmark_probe import _GuiCallbackProfiler
@@ -78,6 +92,31 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            with self.assertRaises(BenchmarkProbeError):
+                _read_request(request)
+
+    def test_reader_stress_ready_signal_stays_inside_the_request_boundary(self) -> None:
+        from sg_preflight.desktop.qt_quick_benchmark_probe import BenchmarkProbeError, _read_request
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            request = root / "request.json"
+            payload = {
+                "scenario": "reader-stress",
+                "output_path": str(root / "result.json"),
+                "workspace": str(workspace),
+                "start_ns": 1,
+                "ready_path": str(root / "stress-ready"),
+            }
+            request.write_text(json.dumps(payload), encoding="utf-8")
+
+            parsed = _read_request(request)
+
+            self.assertEqual(parsed["ready_path"], (root / "stress-ready").resolve())
+            payload["ready_path"] = str(root.parent / "outside-ready")
+            request.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(BenchmarkProbeError):
                 _read_request(request)
 
@@ -325,6 +364,47 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
             for key in ("QML2_IMPORT_PATH", "QML_IMPORT_PATH", "QT_PLUGIN_PATH", "PYTHONPATH"):
                 self.assertNotIn(key, environment)
             self.assertEqual(item["request"]["scenario"], "startup")
+
+    def test_reader_stress_envelope_covers_preparation_and_sixty_second_run(self) -> None:
+        module = _load_script()
+        target = module.BenchmarkTarget(("bundle.exe",), Path("bundle"), Path("bundle"))
+        timeouts: list[int] = []
+        requests: list[dict[str, object]] = []
+
+        def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            request_path = Path(kwargs["env"][module.BENCHMARK_REQUEST_ENV])
+            request = json.loads(request_path.read_text(encoding="utf-8"))
+            Path(request["output_path"]).write_text(
+                json.dumps({"acknowledged": True, "raw_samples": {}}),
+                encoding="utf-8",
+            )
+            timeouts.append(kwargs["timeout"])
+            requests.append(request)
+            return subprocess.CompletedProcess(command, 0)
+
+        process = mock.Mock()
+        with mock.patch.object(module, "_start_cpu_load", return_value=[process]) as start_load:
+            with mock.patch.object(module, "_stop_cpu_load") as stop_load:
+                result = module._run_benchmark_worker("reader-stress", target=target, runner=run)
+
+        self.assertTrue(result["acknowledged"])
+        self.assertEqual(timeouts, [150])
+        ready_path = Path(requests[0]["ready_path"])
+        start_load.assert_called_once_with(ready_path)
+        stop_load.assert_called_once_with([process])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ready_path = Path(temp_dir) / "stress-ready"
+            with mock.patch.object(module.os, "cpu_count", return_value=1):
+                with mock.patch.object(module.subprocess, "Popen", return_value=process) as popen:
+                    workers = module._start_cpu_load(ready_path)
+        self.assertEqual(workers, [process])
+        workload = popen.call_args.args[0][3]
+        self.assertIn("while not ready.is_file()", workload)
+        self.assertIn("deadline=time.perf_counter()+75", workload)
+        self.assertEqual(
+            popen.call_args.kwargs["env"][module.READER_STRESS_READY_ENV],
+            str(ready_path.resolve()),
+        )
 
     def test_live_first_run_uses_five_unique_staged_bundle_directories(self) -> None:
         module = _load_script()
