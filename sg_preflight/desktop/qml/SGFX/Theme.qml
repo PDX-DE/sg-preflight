@@ -14,6 +14,17 @@ QtObject {
     readonly property color statusWarn: "#cca700"
     readonly property color statusGood: "#89d185"
     readonly property color statusNeutral: "#8b949e"
+    readonly property string operationalFont: "Inter"
+    readonly property string displayFont: "Fredoka"
+    readonly property int space1: 6
+    readonly property int space2: 10
+    readonly property int space3: 16
+    readonly property int space4: 24
+    readonly property int focusDuration: 160
+    readonly property int panelDuration: 280
+    readonly property int routeDuration: 500
+    readonly property int entranceLimit: 700
+    readonly property int entranceStagger: 55
     readonly property int motionMicro: 83
     readonly property int motionFeedback: 120
     readonly property int motionShort: 250

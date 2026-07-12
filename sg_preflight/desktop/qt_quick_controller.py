@@ -471,7 +471,7 @@ class DesktopController(QObject):
             return HOME_SUBTITLE
         return get_surface_descriptor(self._current_route_id).subtitle
 
-    @Property(object, notify=payloadChanged)
+    @Property("QVariantMap", notify=payloadChanged)
     def currentPayload(self) -> dict[str, Any]:
         return dict(self._payload)
 

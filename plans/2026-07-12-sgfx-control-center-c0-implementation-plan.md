@@ -675,7 +675,7 @@ git commit -m "feat(qa): add control center truth model"
 - Consumes: `DesktopController.currentPayload`, `capabilityState`, `capabilityError`, and only the descriptors already present in `payload.nextAction`/`payload.actions`.
 - Produces: QML signals `profileRequested(string)`, `actionRequested(string, var)`, `routeRequested(string)`, `gateSelected(string)`, and `inspectionRequested()`; no command construction.
 
-- [ ] **Step 1: Write failing source and headless runtime tests**
+- [x] **Step 1: Write failing source and headless runtime tests**
 
 Require the four component files, reject the old six-tile grid, and assert one primary action plus the seven exact gate IDs.
 
@@ -690,7 +690,7 @@ self.assertIn("Open 3D inspection", main_source)
 
 At runtime, inspect `pipelineGateIds`, `primaryActionLabel`, `selectedGateId`, and `visibleCheckRowCount` at both contract sizes. When selection is empty, expect `Choose profile` and `primaryActionEnabled == False`.
 
-- [ ] **Step 2: Run the Home contract and verify RED**
+- [x] **Step 2: Run the Home contract and verify RED**
 
 Run:
 
@@ -700,7 +700,7 @@ Run:
 
 Expected: FAIL because the old launcher grid is still present and the new components do not exist.
 
-- [ ] **Step 3: Add semantic visual and motion tokens**
+- [x] **Step 3: Add semantic visual and motion tokens**
 
 Extend `Theme.qml` with stable tokens rather than page-local numbers:
 
@@ -720,7 +720,7 @@ readonly property int entranceStagger: 55
 
 Keep all existing status colors and reduced-motion helpers.
 
-- [ ] **Step 4: Implement ordered gate selection in `QaPipelineSpine.qml`**
+- [x] **Step 4: Implement ordered gate selection in `QaPipelineSpine.qml`**
 
 The component must derive nothing beyond keyboard selection:
 
@@ -750,7 +750,7 @@ Item {
 
 Each delegate writes state as text, has an accessible name containing label and state, and shows focus with border plus shape/weight—not color alone.
 
-- [ ] **Step 5: Implement gate details and central Home composition**
+- [x] **Step 5: Implement gate details and central Home composition**
 
 `QaGateDetail.qml` renders at most four rows without changing their state and emits only registered `routeId`. `HomePage.qml` exposes exact test properties and delegates all actions upward:
 
@@ -767,11 +767,11 @@ readonly property bool primaryActionEnabled: Boolean(
 
 Clicking the primary action forwards its existing `capabilityId` and `actionId`; Home does not concatenate `sgfx_preflight__` itself.
 
-- [ ] **Step 6: Wire Main without exposing a second product mode**
+- [x] **Step 6: Wire Main without exposing a second product mode**
 
 Rename every product-facing Grafiks label to `Open 3D inspection` while retaining the internal capability and host object. Bind Home signals to typed controller calls. Keep all 19 sidebar routes and `/` jump entries.
 
-- [ ] **Step 7: Format QML and run rendered headless tests**
+- [x] **Step 7: Format QML and run rendered headless tests**
 
 Run:
 
@@ -782,7 +782,7 @@ Run:
 
 Expected: PASS with exact QML roots, no old tile grid, no raw action construction, seven keyboard-reachable gates, and no overflow at 1280 x 720 or 1024 x 640.
 
-- [ ] **Step 8: Commit the QA-first Home**
+- [x] **Step 8: Commit the QA-first Home**
 
 ```powershell
 git add sg_preflight/desktop/qml tests/test_qt_quick_host.py tests/test_qml_format.py

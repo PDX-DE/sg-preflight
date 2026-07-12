@@ -492,6 +492,9 @@ class TestQtQuickShell(unittest.TestCase):
             "Main.qml",
             "components/NavigationSidebar.qml",
             "components/HomePage.qml",
+            "components/QaPipelineSpine.qml",
+            "components/QaGateDetail.qml",
+            "components/QaContextPreview.qml",
             "components/JumpPalette.qml",
             "components/ShortcutHelp.qml",
             "components/StatusBadge.qml",
@@ -505,6 +508,7 @@ class TestQtQuickShell(unittest.TestCase):
             for path in sorted((qml_root / "components").glob("*.qml"))
         )
         theme = (qml_root / "SGFX" / "Theme.qml").read_text(encoding="utf-8")
+        home = (qml_root / "components" / "HomePage.qml").read_text(encoding="utf-8")
         qmldir = (qml_root / "SGFX" / "qmldir").read_text(encoding="utf-8")
         self.assertIn("import SGFX 1.0", main)
         self.assertIn("required property var shellModel", main)
@@ -514,10 +518,33 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertIn("activeFocus", combined)
         self.assertIn("ScrollView", combined)
         self.assertIn("profileOptions", main + combined)
+        self.assertNotIn("homeTileRepeater", home)
+        self.assertIn("QaPipelineSpine", home)
+        self.assertIn("QaGateDetail", home)
+        self.assertIn("QaContextPreview", home)
+        self.assertNotIn("Grafiks", main)
+        self.assertIn("Open 3D inspection", main)
+        self.assertIn("Inter.ttf", main)
+        self.assertIn("Fredoka.ttf", main)
+        self.assertNotIn(".replaceAll(", combined)
         self.assertNotIn("TextField", main.split("components.HomePage", 1)[0])
         for token in ("motionMicro", "motionFeedback", "motionShort", "motionStandard", "motionEmphasis", "motionStagger"):
             self.assertIn(token, theme)
         self.assertIn("readonly property int motionStagger: 70", theme)
+        for token in (
+            "operationalFont",
+            "displayFont",
+            "space1",
+            "space2",
+            "space3",
+            "space4",
+            "focusDuration",
+            "panelDuration",
+            "routeDuration",
+            "entranceLimit",
+            "entranceStagger",
+        ):
+            self.assertIn(token, theme)
         for color in ("#f14c4c", "#cca700", "#89d185", "#8b949e"):
             self.assertIn(color, theme)
         self.assertEqual(qmldir.splitlines(), ["module SGFX", "singleton Theme 1.0 Theme.qml"])
@@ -525,7 +552,7 @@ class TestQtQuickShell(unittest.TestCase):
             self.assertIn(shortcut, main)
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
-    def test_runtime_shell_has_exact_groups_tiles_geometry_and_overlay_precedence(self) -> None:
+    def test_runtime_shell_has_exact_groups_pipeline_geometry_and_overlay_precedence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             result = self._run_headless(
                 f"""
@@ -533,27 +560,29 @@ class TestQtQuickShell(unittest.TestCase):
                 from PySide6.QtCore import QMetaObject, Q_ARG
                 from PySide6.QtTest import QTest
                 from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
-                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-test"])
+                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="", argv=["sgfx-test"])
                 root = runtime.engine.rootObjects()[0]
-                runtime.application.processEvents()
-                QTest.qWait(50)
-                QMetaObject.invokeMethod(root, "updateHomeTileMetrics")
+                deadline = __import__("time").monotonic() + 5
+                while runtime.controller.pageState not in {{"ready", "error"}} and __import__("time").monotonic() < deadline:
+                    runtime.application.processEvents()
+                    QTest.qWait(5)
                 print(json.dumps({{
                     "groups": root.property("navigationGroupTitles"),
-                    "tiles": root.property("homeTileIds").toVariant(),
+                    "gates": root.property("pipelineGateIds").toVariant(),
                     "more": root.property("moreGroupVisible"),
                     "scale": root.property("referenceScale"),
                     "offsetX": root.property("referenceOffsetX"),
                     "offsetY": root.property("referenceOffsetY"),
-                    "targetWidth": root.property("firstHomeTileWidth"),
-                    "targetHeight": root.property("firstHomeTileHeight"),
-                    "layoutValid": root.property("homeTileLayoutValid"),
+                    "primaryActionLabel": root.property("primaryActionLabel"),
+                    "primaryActionEnabled": root.property("primaryActionEnabled"),
+                    "selectedGateId": root.property("selectedGateId"),
+                    "visibleCheckRowCount": root.property("visibleCheckRowCount"),
                     "reduced": [root.property("reducedMotionDuration"), root.property("reducedMotionTravel"), root.property("reducedMotionStagger")],
                 }}))
                 root.setWidth(1024)
                 root.setHeight(640)
                 runtime.application.processEvents()
-                print(root.property("referenceScale"), root.property("referenceOffsetY"))
+                print(root.property("referenceScale"), root.property("referenceOffsetY"), root.property("visibleCheckRowCount"))
                 for key in ("F1", "F12", "/", "Esc", "Esc", "Esc", "Esc", "Esc"):
                     QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, key))
                     runtime.application.processEvents()
@@ -566,16 +595,18 @@ class TestQtQuickShell(unittest.TestCase):
         lines = result.stdout.splitlines()
         payload = __import__("json").loads(lines[0])
         self.assertEqual(payload["groups"], ["Daily work", "Delivery", "Screenshots & coverage", "Reviews & digests", "Setup & help"])
-        self.assertEqual(payload["tiles"], list(("full-qa-pass", "delivery-checklist", "screenshot-test-state", "manual-review", "daily-digest", "setup-doctor")))
+        self.assertEqual(payload["gates"], ["context", "asset", "interface", "variants", "visual", "review", "delivery"])
         self.assertFalse(payload["more"])
         self.assertEqual((payload["scale"], payload["offsetX"], payload["offsetY"]), (1, 0, 0))
-        self.assertGreaterEqual(payload["targetWidth"], 50)
-        self.assertGreaterEqual(payload["targetHeight"], 50)
-        self.assertTrue(payload["layoutValid"])
+        self.assertEqual(payload["primaryActionLabel"], "Choose profile")
+        self.assertFalse(payload["primaryActionEnabled"])
+        self.assertEqual(payload["selectedGateId"], "context")
+        self.assertLessEqual(payload["visibleCheckRowCount"], 4)
         self.assertEqual(payload["reduced"], [120, 8, 0])
-        scale, offset = (float(value) for value in lines[1].split())
+        scale, offset, compact_rows = (float(value) for value in lines[1].split())
         self.assertAlmostEqual(scale, 0.8, places=3)
         self.assertAlmostEqual(offset, 32.0, places=3)
+        self.assertLessEqual(compact_rows, 4)
         self.assertEqual(lines[2], "False False False True")
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")

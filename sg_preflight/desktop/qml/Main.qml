@@ -14,19 +14,15 @@ ApplicationWindow {
     required property var desktopController
     property var grafiksHost: null
     readonly property var navigationGroupTitles: shellModel.groupOrder
-    readonly property var homeTileIds: {
-        const ids = [];
-        for (let index = 0; index < shellModel.homeTiles.length; ++index)
-            ids.push(shellModel.homeTiles[index].routeId);
-        return ids;
-    }
+    readonly property var pipelineGateIds: homePage.pipelineGateIds
     readonly property bool moreGroupVisible: shellModel.hasMore
     readonly property real referenceScale: Math.min(width / 1280, height / 720)
     readonly property real referenceOffsetX: (width - 1280 * referenceScale) / 2
     readonly property real referenceOffsetY: (height - 720 * referenceScale) / 2
-    readonly property real firstHomeTileWidth: homePage.firstTileWidth
-    readonly property real firstHomeTileHeight: homePage.firstTileHeight
-    readonly property bool homeTileLayoutValid: homePage.tileLayoutValid
+    readonly property string primaryActionLabel: homePage.primaryActionLabel
+    readonly property bool primaryActionEnabled: homePage.primaryActionEnabled
+    readonly property string selectedGateId: homePage.selectedGateId
+    readonly property int visibleCheckRowCount: homePage.visibleCheckRowCount
     readonly property int reducedMotionDuration: Theme.duration(Theme.motionEmphasis, true)
     readonly property int reducedMotionTravel: Theme.travel(16, true)
     readonly property int reducedMotionStagger: Theme.stagger(5, true)
@@ -66,10 +62,6 @@ ApplicationWindow {
         }
     }
 
-    function updateHomeTileMetrics() {
-        homePage.updateTileMetrics();
-    }
-
     objectName: "sgfxQtQuickWindow"
     width: 1280
     height: 720
@@ -78,6 +70,18 @@ ApplicationWindow {
     visible: true
     title: "SGFX QA Preflight"
     color: Theme.canvas
+
+    FontLoader {
+        id: operationalFontLoader
+
+        source: "../../../cpp/assets/fonts/Inter.ttf"
+    }
+
+    FontLoader {
+        id: displayFontLoader
+
+        source: "../../../cpp/assets/fonts/Fredoka.ttf"
+    }
 
     onFrameSwapped: {
         if (!shellInitializationStarted) {
@@ -222,20 +226,22 @@ ApplicationWindow {
                             Layout.preferredHeight: 50
                             text: {
                                 if (window.grafiksHost === null)
-                                    return "Grafiks unavailable";
+                                    return "3D inspection unavailable";
                                 if (window.grafiksHost.state === "validating")
-                                    return "Checking Grafiks…";
+                                    return "Checking 3D inspection…";
                                 if (window.grafiksHost.state === "starting")
-                                    return "Starting Grafiks…";
+                                    return "Starting 3D inspection…";
                                 if (window.grafiksHost.state === "running")
-                                    return "Grafiks running";
-                                return "Open Grafiks";
+                                    return "3D inspection running";
+                                return "Open 3D inspection";
                             }
                             enabled: window.grafiksHost !== null && window.grafiksHost.canLaunch && window.desktopController.currentProfileId.length > 0
                             focusPolicy: Qt.StrongFocus
                             Accessible.role: Accessible.Button
                             Accessible.name: text
-                            onClicked: window.desktopController.launchGrafiks()
+                            onClicked: window.desktopController.invokeCapability("grafiks.launch", {
+                                "profile_id": window.desktopController.currentProfileId
+                            })
                         }
                     }
 
@@ -253,12 +259,17 @@ ApplicationWindow {
                             id: homePage
                             anchors.fill: parent
                             visible: window.desktopController.currentRouteId === "home"
-                            homeTiles: window.shellModel.homeTiles
-                            homeTileCount: window.shellModel.homeTileCount
                             payload: window.desktopController.currentPayload
                             pageState: window.desktopController.pageState
+                            capabilityState: window.desktopController.capabilityState
+                            capabilityError: window.desktopController.capabilityError
                             reducedMotion: window.reducedMotion
-                            onNavigateRequested: routeId => window.desktopController.navigate(routeId)
+                            onProfileRequested: profileId => window.desktopController.selectProfile(profileId)
+                            onActionRequested: (capabilityId, inputs) => window.desktopController.invokeCapability(capabilityId, inputs)
+                            onRouteRequested: routeId => window.desktopController.navigate(routeId)
+                            onInspectionRequested: window.desktopController.invokeCapability("grafiks.launch", {
+                                "profile_id": window.desktopController.currentProfileId
+                            })
                         }
 
                         Loader {
@@ -294,7 +305,7 @@ ApplicationWindow {
                         }
                         Label {
                             visible: window.grafiksHost !== null && window.grafiksHost.state !== "idle"
-                            text: "Grafiks: " + (window.grafiksHost !== null ? window.grafiksHost.state : "unavailable")
+                            text: "3D inspection: " + (window.grafiksHost !== null ? window.grafiksHost.state : "unavailable")
                             color: Theme.muted
                             font.pixelSize: 11
                         }
@@ -373,7 +384,7 @@ ApplicationWindow {
                     color: Theme.text
                 }
                 Label {
-                    text: "Grafiks: " + (window.grafiksHost !== null ? window.grafiksHost.state : "unavailable")
+                    text: "3D inspection: " + (window.grafiksHost !== null ? window.grafiksHost.state : "unavailable")
                     color: Theme.text
                 }
                 Label {
