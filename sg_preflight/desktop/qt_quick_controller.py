@@ -218,9 +218,16 @@ def load_shell_context(
     *,
     bmw_root: Path | str | None = None,
     profile_resolver: ProfileResolver = resolve_dashboard_profile,
+    action_lister: Callable[..., object] | None = None,
+    diagnostic_read_roots: tuple[Path, ...] = (),
+    diagnostic_output_root: Path | None = None,
 ) -> Mapping[str, Any]:
     from sg_preflight.dashboard_preferences import dashboard_profile_options
     from sg_preflight.home_context import build_home_context
+    from sg_preflight.qa_action_persistence import list_recent_action_records
+    from sg_preflight.qa_hub import build_qa_hub_snapshot
+    from sg_preflight.qa_operator_actions import list_sgfx_preflight_actions
+    from sg_preflight.services import list_recent_run_records
 
     raw_options = dashboard_profile_options(bmw_root=bmw_root, profile_scope="all")
     options: list[dict[str, str]] = []
@@ -241,11 +248,55 @@ def load_shell_context(
             (option["id"] for option in options if option["id"].casefold() == resolved.casefold()),
             "",
         )
-    return {
-        **build_home_context(workspace),
-        "profile_options": options,
-        "selected_profile_id": selected,
-    }
+    root = Path(workspace).resolve()
+    home_context = build_home_context(root)
+    activity = home_context.get("activity", []) if isinstance(home_context, Mapping) else []
+    try:
+        action_records = list_recent_action_records(root, limit=12)
+    except (OSError, ValueError):
+        action_records = []
+    try:
+        run_records = list_recent_run_records(root, limit=12)
+    except (OSError, ValueError):
+        run_records = []
+
+    actions: list[dict[str, object]] = []
+    if selected:
+        resolved_read_roots = _resolve_diagnostic_read_roots(root, diagnostic_read_roots)
+        resolved_output_root = _resolve_diagnostic_output_root(root, diagnostic_output_root)
+        try:
+            raw_actions = (
+                list_sgfx_preflight_actions(root)
+                if action_lister is None
+                else action_lister(root)
+            )
+        except (OSError, ValueError):
+            raw_actions = []
+        actions = [
+            capability_descriptor(
+                "diagnostic.run",
+                label="Run local QA checks",
+                action_id=str(getattr(action, "action_id", "")),
+            )
+            for action in raw_actions
+            if audit_ui_diagnostic_action(
+                action,
+                read_only_roots=resolved_read_roots,
+                output_root=resolved_output_root,
+                allowed_output_root=root / "out",
+                expected_profile_id=selected,
+                owning_page_id=HOME_ROUTE_ID,
+            )
+        ]
+    return build_qa_hub_snapshot(
+        workspace=root,
+        profile_options=options,
+        selected_profile_id=selected,
+        actions=actions,
+        action_records=action_records,
+        run_records=run_records,
+        activity=activity if isinstance(activity, list) else [],
+    )
 
 
 def _resolve_diagnostic_read_roots(
@@ -337,9 +388,21 @@ class DesktopController(QObject):
         self._task_coordinator = task_coordinator or PageTaskCoordinator(parent=self)
         self._page_loader = page_loader or load_dashboard_surface
         self._profile_resolver = profile_resolver or resolve_dashboard_profile
+        self._configured_diagnostic_read_roots = tuple(
+            Path(root).resolve() for root in diagnostic_read_roots
+        )
+        self._configured_diagnostic_output_root = (
+            Path(diagnostic_output_root).absolute()
+            if diagnostic_output_root is not None
+            else None
+        )
+        self._action_lister = action_lister
         self._shell_loader = shell_loader or partial(
             load_shell_context,
             profile_resolver=self._profile_resolver,
+            action_lister=self._action_lister,
+            diagnostic_read_roots=self._configured_diagnostic_read_roots,
+            diagnostic_output_root=self._configured_diagnostic_output_root,
         )
         default_artifact_roots = (
             self._workspace / "out",
@@ -354,15 +417,6 @@ class DesktopController(QObject):
         self._artifact_roots = tuple(registry_arguments["approved_roots"])
         self._artifact_registry = ArtifactRegistry(**registry_arguments)
         self._effect_executor = effect_executor or CapabilityEffectExecutor()
-        self._configured_diagnostic_read_roots = tuple(
-            Path(root).resolve() for root in diagnostic_read_roots
-        )
-        self._configured_diagnostic_output_root = (
-            Path(diagnostic_output_root).absolute()
-            if diagnostic_output_root is not None
-            else None
-        )
-        self._action_lister = action_lister
         self._action_getter = action_getter
         self._action_executor = action_executor
         self._manual_review_recorder = manual_review_recorder
@@ -646,6 +700,14 @@ class DesktopController(QObject):
             and item.get("capabilityId") == "diagnostic.run"
             and bool(item.get("enabled", False))
         }
+        if self._current_route_id == HOME_ROUTE_ID:
+            next_action = self._payload.get("nextAction", {})
+            if (
+                isinstance(next_action, Mapping)
+                and next_action.get("capabilityId") == "diagnostic.run"
+                and next_action.get("actionId")
+            ):
+                current_action_ids.add(str(next_action["actionId"]))
         if clean_action_id not in current_action_ids:
             self._set_capability_error("This diagnostic is unavailable.")
             return False
@@ -1006,6 +1068,8 @@ class DesktopController(QObject):
                 bmw_root=bmw_root,
             )
             adapted = adapt_page_payload(raw, workspace=workspace)
+            if adapted.get("schemaVersion") == 1:
+                return adapted
             adapted["actions"] = []
             selected_profile_id = str(adapted.get("selected_profile_id", "") or "").strip()
             if not selected_profile_id:
@@ -1175,7 +1239,17 @@ class DesktopController(QObject):
         )
 
     def _accept_shell_profile(self, payload: Mapping[str, Any]) -> bool:
-        raw_options = payload.get("profile_options", [])
+        if payload.get("schemaVersion") == 1:
+            raw_options = payload.get("profileOptions", [])
+            raw_selected = payload.get("selectedProfile", {})
+            selected = (
+                str(raw_selected.get("id", "") or "").strip()
+                if isinstance(raw_selected, Mapping)
+                else ""
+            )
+        else:
+            raw_options = payload.get("profile_options", [])
+            selected = str(payload.get("selected_profile_id", "") or "").strip()
         if not isinstance(raw_options, list):
             return False
         options: list[dict[str, str]] = []
@@ -1190,7 +1264,6 @@ class DesktopController(QObject):
                 return False
             seen.add(folded)
             options.append({"id": profile_id, "label": label})
-        selected = str(payload.get("selected_profile_id", "") or "").strip()
         canonical = next(
             (option["id"] for option in options if option["id"].casefold() == selected.casefold()),
             "",

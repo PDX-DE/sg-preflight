@@ -1808,6 +1808,95 @@ class TestQtShellRoute(unittest.TestCase):
         )
         return controller, coordinator, shell_loader, page_loader
 
+    def test_shell_loader_builds_exact_bounded_qa_hub_snapshot(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import load_shell_context
+        from sg_preflight.qa_operator_actions import OperatorAction
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            source = workspace / "repositories" / "trunk"
+            project = source / "Cars" / "BMW" / "G45"
+            output = workspace / "out" / "operator-ui" / "actions"
+            project.mkdir(parents=True)
+            action = OperatorAction(
+                action_id="sgfx_preflight__g45",
+                label="Run local QA checks",
+                description="Four deterministic packs",
+                kind="sgfx_preflight",
+                scope="profile",
+                ready=True,
+                profile_id="G45",
+                project_root=str(project),
+            )
+            record = {
+                "run_id": "action-001",
+                "action_id": "sgfx_preflight__g45",
+                "kind": "sgfx_preflight",
+                "profile_id": "G45",
+                "status": "completed",
+                "created_at_utc": "2026-07-12T20:00:00+00:00",
+                "completed_at_utc": "2026-07-12T20:01:00+00:00",
+                "summary": {"errors": 0, "warnings": 1, "info": 2},
+            }
+            action_records = mock.Mock(return_value=[record])
+            run_records = mock.Mock(return_value=[])
+            with (
+                mock.patch(
+                    "sg_preflight.dashboard_preferences.dashboard_profile_options",
+                    return_value=[{"id": "G45", "label": "BMW G45"}],
+                ),
+                mock.patch(
+                    "sg_preflight.home_context.build_home_context",
+                    return_value={
+                        "activity": [
+                            {"label": "Recent", "status": "recorded", "detail": "Opened local QA"}
+                        ]
+                    },
+                ),
+                mock.patch(
+                    "sg_preflight.qa_operator_actions.list_sgfx_preflight_actions",
+                    return_value=[action],
+                ) as action_lister,
+                mock.patch(
+                    "sg_preflight.qa_action_persistence.list_recent_action_records",
+                    action_records,
+                ),
+                mock.patch(
+                    "sg_preflight.services.list_recent_run_records",
+                    run_records,
+                ),
+            ):
+                payload = load_shell_context(
+                    workspace=workspace,
+                    profile_id="G45",
+                    profile_resolver=lambda **_kwargs: "",
+                )
+
+        self.assertEqual(
+            set(payload),
+            {
+                "schemaVersion",
+                "scopeLabel",
+                "selectedProfile",
+                "profileOptions",
+                "contextFields",
+                "gates",
+                "selectedGateId",
+                "latestLocalRun",
+                "nextAction",
+                "activity",
+                "readOnly",
+                "isApproval",
+            },
+        )
+        self.assertEqual(payload["selectedProfile"], {"id": "G45", "label": "BMW G45"})
+        self.assertEqual(payload["nextAction"]["kind"], "review")
+        self.assertEqual(payload["nextAction"]["routeId"], "full-qa-pass")
+        self.assertEqual(payload["latestLocalRun"]["warnings"], 1)
+        action_records.assert_called_once_with(workspace.resolve(), limit=12)
+        run_records.assert_called_once_with(workspace.resolve(), limit=12)
+        action_lister.assert_called_once_with(workspace.resolve())
+
     def test_initial_home_submits_one_adapted_shell_context_and_stays_outside_surfaces(self) -> None:
         from sg_preflight.surface_registry import is_registered_surface
 

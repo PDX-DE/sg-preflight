@@ -523,7 +523,7 @@ git commit -m "feat(qt): expose audited home preflight"
 - Consumes: sanitized profile options, the selected profile ID, current capability descriptors, at most 12 `ActionRecord` values, at most 12 `RunRecord` values, and five activity rows.
 - Produces: `build_qa_hub_snapshot(...)-> dict[str, Any]` with exactly the approved top-level contract; `render_qa_evidence_summary(snapshot) -> str` for local copy-ready use.
 
-- [ ] **Step 1: Write reducer and contract tests first**
+- [x] **Step 1: Write reducer and contract tests first**
 
 Create `tests/test_qa_hub.py` with table cases for empty selection, action available, queued/running, completed zero findings, completed warnings, completed errors, execution failure, and malformed records. Assert all seven gates remain ordered and that human/external gates do not become passed.
 
@@ -557,7 +557,7 @@ def test_completed_warnings_are_findings_and_never_overall_green(self) -> None:
 
 Add a recursive safety assertion rejecting absolute paths, `://`, command keys, credential keys, and raw exceptions anywhere in the returned snapshot.
 
-- [ ] **Step 2: Run the new tests and verify RED**
+- [x] **Step 2: Run the new tests and verify RED**
 
 Run:
 
@@ -567,7 +567,7 @@ Run:
 
 Expected: FAIL because `sg_preflight.qa_hub` does not exist.
 
-- [ ] **Step 3: Implement immutable gate definitions and exact state reduction**
+- [x] **Step 3: Implement immutable gate definitions and exact state reduction**
 
 Use frozen, slotted definitions:
 
@@ -594,7 +594,7 @@ QA_GATES = (
 
 Accept an action record only when `kind == "sgfx_preflight"`, `profile_id` matches, and `action_id == f"sgfx_preflight__{profile.casefold()}"`. For a completed record, errors or warnings produce `findings`; only zero errors and zero warnings produce `passed`. Never infer freshness from wall-clock age.
 
-- [ ] **Step 4: Implement deterministic next-action priority**
+- [x] **Step 4: Implement deterministic next-action priority**
 
 ```python
 def _next_action(
@@ -617,7 +617,7 @@ def _next_action(
 
 No QML code may duplicate this priority.
 
-- [ ] **Step 5: Compose the bounded snapshot in the shell loader**
+- [x] **Step 5: Compose the bounded snapshot in the shell loader**
 
 Keep `build_home_context` unchanged except for explicitly limiting its responsibility to activity. In `load_shell_context`, call `list_recent_action_records(workspace, limit=12)` and `list_recent_run_records(workspace, limit=12)` under narrow exception handling, then build the snapshot. Merge profile options and `selected_profile_id` into the approved camel-case Qt projection only once.
 
@@ -642,7 +642,7 @@ The top-level result must contain exactly:
 
 Store copy-ready text inside `latestLocalRun["evidenceSummary"]`; do not add another top-level key.
 
-- [ ] **Step 6: Run reducer, shell, and bounded-read tests**
+- [x] **Step 6: Run reducer, shell, and bounded-read tests**
 
 Run:
 
@@ -652,7 +652,7 @@ Run:
 
 Expected: PASS; startup performs bounded record reads only, every state and priority is covered, and the snapshot contains no unsafe value.
 
-- [ ] **Step 7: Commit the QA truth model**
+- [x] **Step 7: Commit the QA truth model**
 
 ```powershell
 git add sg_preflight/qa_hub.py sg_preflight/home_context.py sg_preflight/desktop/qt_quick_controller.py tests/test_qa_hub.py tests/test_dashboard.py tests/test_qt_quick_core.py
