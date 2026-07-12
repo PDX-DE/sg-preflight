@@ -1,16 +1,16 @@
-# SGFX QA Control Center — Clean Mode Design
+# SGFX QA Control Center — Unified Product Design
 
 Status: approved direction; written-spec review required before implementation planning
 
 Date: 2026-07-12
 
-Design baseline: `feature/sgfx-v02-qt-integration-20260710@f99a321`
+Design baseline: `feature/sgfx-v02-qt-integration-20260710@0a26a2f`
 
-Production-code baseline: `a736826`; the later `f99a321` commit changed documentation only
+Production-code baseline: `a736826`; the later `0a26a2f` commit changed documentation only
 
 ## 1. Outcome
 
-Replace the equal-weight Home launcher and the superseded car-centered proposal with one QA Control Center: a calm, profile-scoped workspace that tells a Seriengrafik teammate what is being checked, which SGFX-owned checks can run safely, what evidence exists, which human or external gates remain, and what the next truthful action is.
+Replace the equal-weight Home launcher and the visible Clean-versus-Grafiks split with one SGFX QA Control Center: a calm, profile-scoped workspace that tells a Seriengrafik teammate what is being checked, which SGFX-owned checks can run safely, what evidence exists, which human or external gates remain, and what the next truthful action is.
 
 The first implementation slice must let a teammate:
 
@@ -20,10 +20,13 @@ The first implementation slice must let a teammate:
 4. understand the ordered QA pipeline without confusing order with completion;
 5. inspect the latest local result and route into the relevant evidence or review surface;
 6. see that manual, rack, performance, stakeholder, and delivery approval remain separately owned;
-7. reach all specialist tools through the existing navigation, All tools, and `/`; and
-8. close the tool without changing BMW, Jira, SVN, source repositories, or external systems.
+7. reach all specialist tools through the existing navigation, All tools, and `/`;
+8. inspect a real selected-profile car preview when the approved local renderer and source are available, without making that preview a QA result; and
+9. close the tool without changing BMW, Jira, SVN, source repositories, or external systems.
 
-The car preview is an optional contextual accent for 3D-car scope. It is not the organizing principle, a readiness indicator, a substitute for evidence, or a required dependency.
+The car preview is an optional contextual accent for 3D-car scope. When available, it is rendered from the real selected profile's resolved local Ramses export and shown as a bounded turntable. It is not the organizing principle, a readiness indicator, a substitute for evidence, a reason to select a default model, or a required dependency.
+
+There is one product and one state model. `Presentation view` removes secondary chrome from the same selected profile, gate, evidence, and capability set. `Open 3D inspection` is a focused drill-down backed by the existing external-process capability, not a second mode or alternate QA truth.
 
 ## 2. Evidence foundation and authority
 
@@ -66,6 +69,22 @@ The dump itself remains local research material and is not copied into this repo
 
 Meeting notes, backlog pages, and WIP documents establish observed pain or intent, not automatic acceptance criteria. Current source code and explicit process pages take priority where they disagree.
 
+### Pre-SGFX process coverage
+
+The central path covers the documented work that existed before SGFX without turning every document into another Home surface:
+
+| Documented work before SGFX | Control Center gate | Direct operator answer | Truth boundary |
+|---|---|---|---|
+| Identify the intended product, source, interface, retarget, and prerequisites. | Context | `Am I checking the intended profile and is its local source available?` | Missing hashes, variants, or source context remain `Not recorded`. |
+| Compare Blender/raw content and review anchors, constants, carpaints, and project structure. | Asset integrity | `Which deterministic SGFX checks found what, and where is the evidence?` | The four SGFX packs do not replace visual Blender/RaCo review. |
+| Export, execute automated tests, reconcile interfaces and disabled tests, and inspect package size. | Export & interface | `Which export/interface evidence exists, what is absent, and who owns the next step?` | Home never starts RaCo, BMW export, screenshots, or delivery commands implicitly. |
+| Exercise country, trimline, drivetrain, equipment, roof, lighting, and effect combinations. | Variant coverage | `Which combinations are evidenced, missing, or outside the accepted reader?` | A single rendered view never implies variant coverage. |
+| Produce and review expected, actual, diff, TAA, animation, and capture provenance. | Visual evidence | `What differs, under which capture conditions, and what needs human review?` | No universal comparator threshold or automatic visual approval is invented. |
+| Perform Quality-Hero cross-tool review, product/LightFX review, rack/in-car testing, performance review, and exception handling. | Manual/runtime review | `Which named human or external review remains, and what evidence supports it?` | Activity, document presence, and local preflight never become approval. |
+| Assemble documentation, integration provenance, retest hash, stakeholder state, and handoff. | Delivery & handoff | `What can be handed to BMW now, what is still open, and who owns it?` | SGFX prepares evidence and copy-ready handoff material; Jira posting and approval stay outside the main path. |
+
+Every central item must reduce a real lookup, duplicate entry, ambiguous ownership handoff, or evidence-reconstruction step. If it cannot answer `what failed`, `where is the proof`, `who owns it`, or `what is the next safe action`, it stays in a specialist surface or out of the product.
+
 ## 3. Current SGFX reality
 
 ### What already exists
@@ -73,6 +92,8 @@ Meeting notes, backlog pages, and WIP documents establish observed pain or inten
 - `services.execute_profile_run` resolves and materializes a selected profile, runs `anchors`, `constants`, `carpaints`, and `project_sanity`, then writes JSON, HTML, Markdown, and a run record.
 - `RunProfile` already carries a safe subset of context: profile ID/label, brand, lane, build/retarget type, optional interface version, retarget target, active-build state, and registry source.
 - The Qt Quick shell already owns Home, profile selection, route validation, reduced motion, five navigation groups, all 19 surface descriptors, one maximum-two-reader coordinator, stale-result rejection, an exact eight-capability inventory, a dedicated effect worker, and opaque artifact handling.
+- The existing SGFX C++ viewer resolves a selected profile to an available `exported.ramses`, preserves the authored Ramses pass graph, drives the exported camera-crane interface for QA perspectives and orbit, and can read back a real rendered frame. The cinematic proof already uses a render-on-demand local texture cache rather than a perpetual shell-frame readback.
+- The repository already carries Inter and Fredoka font files with SIL Open Font License 1.1 texts. The local Unleashed font files are not part of this product boundary and are not distributable through SGFX without separate proven licensing.
 - Local action records and run records already provide bounded persisted history.
 - Existing specialist surfaces cover setup, disabled tests, API version, country variants, size, screenshot evidence, risk, manual review, handoff, delivery documentation, workflow guidance, and digests.
 
@@ -95,9 +116,19 @@ Home centers one selected scope, one safe local action, the ordered QA gates, th
 
 This direction matches the real process, is understandable without command-line knowledge, preserves specialist depth, and can be implemented through the existing registry/controller/capability architecture.
 
+### Selected: one product with presentation and inspection drill-downs
+
+There is no visible Clean/Grafiks mode choice. Grafiks' strongest original SGFX interaction work—spatial focus, decisive selection feedback, depth, scene-like transitions, contextual vehicle presentation, and restrained motion—is independently carried into the Qt/QML product. Presentation view is the same data with less chrome. Full 3D inspection is an explicit focused destination using the same canonical profile; returning restores the same QA context.
+
+The existing external Grafiks/cinematic executable remains preserved as R&D/reference until its migration ledger classifies each part as original product contract, independently portable interaction behavior, or provenance-sensitive reference-only material. The product-facing inspector may reuse only the audited SGFX-owned Ramses viewer core, SGFX brand assets, and license-cleared dependencies.
+
 ### Rejected: car-first showroom or launcher
 
-A large rotating car is visually attractive but spends the most valuable space on an object that does not explain source correctness, failures, evidence, ownership, or the next QA action. A compact preview remains allowed only as selected-scope context.
+A large car-first showroom spends the most valuable space on an object that does not explain source correctness, failures, evidence, ownership, or the next QA action. A compact real-car turntable is retained only as selected-scope context and must yield space to the action and pipeline.
+
+### Rejected: two visible UI modes
+
+Two modes teach occasional operators that there may be two workflows or two truths, duplicate polish work, and make Grafiks look like an optional novelty. Presentation and 3D inspection are destinations inside one product, not alternate shells the operator must choose between.
 
 ### Rejected: dense enterprise dashboard
 
@@ -123,6 +154,8 @@ The current stack crosses the safe boundary into optional external executables a
 8. **No surprise external work.** BMW export, screenshot, RaCo, rack, Jira, SVN, and delivery actions require separate explicit contracts and confirmation.
 9. **Local-first startup.** Home performs bounded local reads only and starts no expensive checker.
 10. **One shared model.** Occasional users, reviewers, and developers see different depth over the same state—not separate truths.
+11. **Reduce work, not merely clicks.** Central surfaces collapse evidence lookup, duplicate entry, ownership discovery, and handoff reconstruction without hiding missing evidence.
+12. **Presentation never changes truth.** Reduced chrome, motion, and the real-car preview may improve focus, but cannot change capabilities, gate state, or evidence.
 
 ## 6. Personas and jobs
 
@@ -149,7 +182,7 @@ All three use the same `QaHubSnapshot`; the UI changes density, not meaning.
 - If there is no valid explicit preference, Home starts with no selected profile and asks the operator to choose one.
 - Registry order must never select a model implicitly.
 - Selecting a profile invalidates the previous snapshot, action descriptor, run presentation, and gate detail before new state is accepted.
-- Grafiks and profile-scoped routes remain unavailable until a canonical profile is selected.
+- Full 3D inspection and profile-scoped routes remain unavailable until a canonical profile is selected.
 
 ### Safe context projection
 
@@ -188,6 +221,21 @@ The seven gates are ordered, selectable, keyboard navigable, and backed by stabl
 The first implementation slice provides a real automated state only for `context` and `asset`. Other gates truthfully show `Evidence required`, `Human review`, `Not recorded`, or an explicit persisted state already owned by an accepted reader. Opening a page, viewing a document, or recording activity never upgrades a gate to passed.
 
 Onboarding and daily/team digests remain supporting context, not QA gates. Cross-car comparison is a specialist tool and never a required pipeline step.
+
+### Operator-value contract
+
+The Control Center produces one concise, copy-ready evidence summary over the seven gates. It contains the canonical profile, accepted source fingerprint when available, latest deterministic findings, evidence provenance, named owners for open human/external gates, retest hash when recorded, and the exact next safe action. It contains no synthetic readiness score and does not post to Jira.
+
+The first teammate pilot records a before/after baseline without telemetry or invented targets:
+
+- time from usable app shell to the first intended QA action;
+- time from a completed local preflight to the first actionable finding;
+- number of separate surfaces or manual searches needed for the standard profile check;
+- duplicate values manually re-entered while preparing a delivery/handoff note;
+- presence of profile/source identity, finding, provenance, owner, and next-action fields in the resulting evidence summary; and
+- elapsed operator time to prepare copy-ready BMW ticket or handoff material.
+
+Measurements are local and opt-in or observed during the team pilot. SGFX may claim reduced workload, cognitive load, or ticket-preparation time only after the pilot demonstrates it; the design intent itself is not proof of improvement.
 
 ## 9. State semantics
 
@@ -236,9 +284,8 @@ The next action is deterministic from the snapshot and capability state. QML doe
 - SGFX product mark and `QA Control Center` label;
 - scope label such as `3D Car`;
 - profile selector showing `Choose profile` when empty;
-- Clean mode state;
 - Help and All tools access; and
-- optional Grafiks control, secondary to QA and governed by the existing host validation.
+- optional `Presentation view`, which changes chrome only and is governed by the same controller state.
 
 ### Primary focus
 
@@ -248,7 +295,23 @@ The next action is deterministic from the snapshot and capability state. QML doe
 - one secondary `How this works` action; and
 - a compact contextual preview area.
 
-The first slice uses an original generic vector silhouette. Loading an approved profile asset is a later separately reviewed slice. The preview has no readiness color, copied BMW or game asset, model-specific fallback, or interaction required for QA. Subtle ambient movement is optional; reduced motion makes it static.
+Before selection, or whenever the audited renderer or readable source is unavailable, the preview uses an original generic vector silhouette. After an explicit profile selection and after the QA snapshot is ready, a separate below-normal-priority preview worker may render a bounded turntable from that profile's real local `exported.ramses`. A restored startup preference may reuse an already valid cache but must not start a new renderer during startup.
+
+The turntable contract is deliberately finite:
+
+- preserve the authored Ramses pass graph and use the exported camera-crane interface;
+- render at most 24 low-resolution frames at no more than 480 × 270;
+- play one approximately four-second revolution, then stop on the canonical three-quarter frame;
+- replay only after explicit preview focus/activation, and allow Left/Right or pointer drag to scrub frames;
+- show only the static canonical frame when reduced motion is active;
+- pause frame playback while the preview is hidden, the window is inactive, or a diagnostic starts; and
+- never use direct camera mutation as a Home fallback; if the authored interface or compatible scene is unavailable, show the generic static fallback.
+
+The worker resolves the canonical profile through Python-owned registry logic. QML receives only an opaque preview token, safe state, frame count, and human-readable label. It never receives the scene path, source root, helper command, process handle, or unrestricted image location. Profile-generation checks reject stale frames before display.
+
+The Ramses scene stays read-only and is never copied into SGFX. Derived preview frames live only in a size-capped local SGFX cache beneath the approved output root, remain untracked and undistributed, are excluded from evidence bundles and exports, and are invalidated by the scene fingerprint. One preview job may exist at a time; it is cancelled or discarded on profile change, diagnostic start, timeout, shutdown, or renderer failure. Failure is quiet and local: the generic silhouette returns with `Real preview unavailable`, while all QA actions remain usable.
+
+The preview has no readiness color, no copied BMW or game asset in the package, no model-specific fallback, and no interaction required to complete QA. Its render success, frame count, freshness, or absence never changes a gate or next action.
 
 ### Pipeline Spine and gate detail
 
@@ -268,7 +331,9 @@ The first slice uses an original generic vector silhouette. Loading an approved 
 
 ### Navigation
 
-The sidebar retains Home and the existing five navigation groups: Daily work, Delivery, Screenshots & coverage, Reviews & digests, and Setup & help. All tools and Grafiks remain separate shell controls. The implementation does not create mockup-only `Runs`, `Evidence`, or `Review` routes and does not add a twentieth operational surface. All 19 descriptors remain reachable through the sidebar and `/`.
+The sidebar retains Home and the existing five navigation groups: Daily work, Delivery, Screenshots & coverage, Reviews & digests, and Setup & help. All tools remains a shell control. `Open 3D inspection` is a contextual preview drill-down and the product-facing label for the existing internal `grafiks.launch` capability; it is not a mode toggle, navigation group, or twentieth operational surface. All 19 descriptors remain reachable through the sidebar and `/`.
+
+Presentation view hides the sidebar and compresses the context rail while keeping the same selected profile, selected gate, evidence, actions, and capability permissions. Esc restores normal chrome and focus. Entering or leaving Presentation view never reloads data or starts a renderer.
 
 ## 12. Safe local execution contract
 
@@ -341,7 +406,9 @@ isApproval
 
 Each gate contains only stable IDs, labels, plain summaries, safe state, related registered route IDs, and check-row presentation. `latestLocalRun` contains action/run ID, timestamp, lifecycle state, and numeric errors/warnings/info where available.
 
-Home receives no raw path, command preview, subprocess output, exception text, credential state, URL, network client, source object, or unrestricted controller reference. Generated artifacts remain protected by the existing opaque-handle flow on the detailed run surface; the first Home slice navigates to that surface rather than revealing paths directly.
+Preview presentation is not part of QA state. A separate controller-owned channel may expose only `previewState`, an opaque current-generation image-provider token, bounded frame count, selected frame index, and safe label. None of those fields can reduce a gate or participate in the next-action reducer.
+
+Home receives no raw path, command preview, subprocess output, exception text, credential state, external or filesystem URL, network client, source object, or unrestricted controller reference. Generated artifacts remain protected by the existing opaque-handle flow on the detailed run surface; the first Home slice navigates to that surface rather than revealing paths directly. Internal `image://` provider keys are controller-issued opaque presentation tokens, not artifact paths.
 
 Snapshot reads are bounded to:
 
@@ -399,10 +466,12 @@ Changing profile registry order must not change an empty selection, comparison t
 - `HomePage.qml` owns composition only.
 - A small `QaPipelineSpine.qml` owns gate selection and keyboard traversal.
 - A small `QaGateDetail.qml` owns check rows and route requests.
-- A small contextual-preview component owns decorative scope art and reduced-motion behavior.
+- A small `QaContextPreview.qml` owns generic scope art, opaque preview-frame playback, scrub input, visibility pausing, and reduced-motion behavior.
+- A Python-side `PreviewCoordinator` owns canonical profile resolution, one below-normal-priority worker, scene fingerprinting, stale-generation rejection, cache limits, timeout, and diagnostic pre-emption. It exposes no path or process to QML.
+- A narrow C++ preview helper is extracted from the existing SGFX Ramses viewer core. It preserves the authored pass graph and camera-crane interface and emits only bounded local turntable frames plus a machine-readable manifest beneath the approved cache root.
 - `Main.qml` owns shell chrome, overlays, profile selection, controller invocation, and registered navigation.
 - The existing presenter/renderers own the detailed Full QA page.
-- `Theme.qml` owns the minimal tokens required by the design.
+- `Theme.qml` owns the minimal color, type, spacing, motion, and reduced-motion tokens required by the design.
 
 QML emits stable route/action IDs upward. It never constructs an action ID from arbitrary text, opens a path, starts a process, or receives a command.
 
@@ -417,6 +486,8 @@ QML emits stable route/action IDs upward. It never constructs an action ID from 
 7. Lifecycle signals update queued/running/completed/failed presentation.
 8. A current successful completion reloads the snapshot; stale results are ignored by UI identity checks.
 9. Gate and check-row navigation emits only registered route IDs.
+10. An explicit profile selection may schedule preview work only after the current snapshot is ready; restored startup state may read a valid cache but does not start the renderer.
+11. Starting a diagnostic cancels or pre-empts preview generation and stops preview playback before the diagnostic enters `running`.
 
 Malformed snapshot fields fail to a neutral `Local QA state unavailable` view while navigation and profile selection remain usable. Raw exception messages, paths, and commands never become Home copy.
 
@@ -424,7 +495,7 @@ A validator finding is not an application crash. Execution failure, deterministi
 
 ## 18. Visual language
 
-Clean remains a professional daily driver, not a second Grafiks skin.
+SGFX has one professional daily-driver visual system. It combines the Control Center's calm information density with independently implemented cinematic focus, depth, and transition qualities from the strongest Grafiks work.
 
 - graphite canvas with layered neutral panels;
 - mint/aqua for focus, selection, and the safe primary action;
@@ -433,10 +504,13 @@ Clean remains a professional daily driver, not a second Grafiks skin.
 - green only for a completed zero-error/zero-warning SGFX deterministic result;
 - strong type hierarchy, thin structural lines, calm spacing, and short copy;
 - no fake telemetry, completion rings, decorative percentages, or marketing badges;
-- no new font, image pack, icon dependency, shader, web asset, or production dependency; and
+- Inter for operational text and data, with Fredoka restricted to the product mark, major profile/scene labels, and short display accents; both come from the repository's existing SIL Open Font License 1.1 assets;
+- no network font, restricted local DynaFont, game font, new image pack, copied icon set, shader, web asset, or unreviewed production dependency; and
 - no copied BMW infotainment, Nintendo, SEGA, Valve, Sonic, or other third-party layout or asset.
 
-Game-menu and in-car influence is limited to abstract interaction qualities: one central focus, decisive selection feedback, spatially stable navigation, readable hierarchy, and a compact command guide.
+Game-menu and in-car influence is limited to abstract interaction qualities: one central focus, decisive selection feedback, spatially stable navigation, readable hierarchy, layered depth, and a compact command guide.
+
+The local Unleashed installer implementation is a behavior reference only. SGFX independently implements the general choreography of structure first, focus/title second, and content third. No installer code, exact coordinate system, shader, artwork, sound, music, restricted font, or proprietary game asset enters SGFX. GPL-licensed reference code is not copied into the proprietary/internal product.
 
 ## 19. Motion, input, and accessibility
 
@@ -448,6 +522,11 @@ Game-menu and in-car influence is limited to abstract interaction qualities: one
 - F1, F2, F5, F12, `/`, and Esc retain their current meanings.
 - Reduced motion removes car movement, entrance stagger, and nonessential travel while retaining immediate focus and state feedback.
 - Motion never delays action availability or changes semantic state.
+- The shell is usable on its first stable frame; there is no non-skippable splash or installation-style wait in the daily tool.
+- Initial structure/focus/content staging completes within 700 ms with a 45–70 ms item stagger. Focus and selection feedback use 120–180 ms; local panel changes use 220–320 ms; route and Presentation transitions use 420–560 ms.
+- Refreshing evidence in place does not replay the full entrance. Major route, Presentation, and 3D-inspection transitions may use the longer token once per navigation event.
+- Progress animation follows actual queued/running/completed state or a real backend progress value. Spinner, pulse, or sweep motion appears only while work is active; no fake percentage or timer-driven progress is permitted.
+- The real-car turntable is the only allowed idle scene motion, runs for one revolution, then freezes. It does not loop continuously.
 
 ## 20. Responsive behavior
 
@@ -474,11 +553,15 @@ Profile popovers render above the workspace stacking boundary. Geometry tests mu
 - No operational page is eagerly materialized.
 - Snapshot reads are bounded and off the GUI thread.
 - Only one effect executes at a time.
+- Preview work uses a separate one-job below-normal-priority worker, starts only after an explicit selection and ready snapshot, and yields to diagnostics.
+- Preview output is capped at 24 frames, 480 × 270 per frame, and a 256 MiB least-recently-used cache under the allowed SGFX output root. A 30-second generation timeout fails to the static fallback.
+- The renderer process exits after generation; the Home page never performs continuous Ramses readback or keeps a hidden renderer alive for decoration.
+- Preview playback stops when hidden or inactive, and reduced motion loads one frame only.
 - Source roots are verified unchanged around the safe diagnostic.
 - Output remains under the allowed SGFX output root.
 - Home profile selection remains session state in this slice and adds no preference write.
 - No Jira/network action, SVN mutation, BMW-source write, Git push, package publish, delivery, or external approval is introduced.
-- Grafiks remains optional and provenance-gated.
+- The internal `grafiks.launch` capability remains optional and provenance-gated, but its product-facing label is `Open 3D inspection`; no visible mode toggle remains.
 - The exact warm-start and first-run acceptance remains OPEN under the director's loaded-laptop waiver; this design may continue but may not claim a performance pass.
 - The packaged no-argument default remains unchanged until the separate Task 14 review/cutover gates pass.
 
@@ -492,8 +575,14 @@ This written design covers one cohesive implementation plan:
 4. the bounded QA snapshot and next-action reducer;
 5. QA Control Center QML components;
 6. detailed Full QA ordering/presentation alignment;
-7. rendered interaction/accessibility verification; and
-8. exact-tree source, package, and performance regression gates.
+7. one-product shell copy plus same-data Presentation view;
+8. the render-on-demand real-car preview adapter, bounded cache, and generic fallback;
+9. the audited `Open 3D inspection` drill-down over the existing external-process capability;
+10. clean-room motion tokens and the existing OFL typography assets;
+11. rendered interaction/accessibility verification; and
+12. exact-tree source, package, cache, provenance, and performance regression gates.
+
+The implementation plan keeps the QA truth path independently shippable: profile neutrality, safe preflight, snapshot, and gate presentation must be GREEN before preview generation is enabled. Preview or inspector failure cannot delay or roll back the QA-first slice.
 
 It does not implement these BMW-evidence gaps yet:
 
@@ -504,7 +593,7 @@ It does not implement these BMW-evidence gaps yet:
 - live rack, car, Artifactory, CI, Gerrit/CCB, Jira, or stakeholder integrations;
 - explicit per-role PM, LightFX, TA, Design, Wombat, or CCB signoff records;
 - new MINI/Rolls-Royce profile creation where source coverage is not locally proven; or
-- a real-time 3D renderer or copied infotainment UI.
+- a continuous real-time renderer inside Home, an unbounded animated preview, or copied infotainment/game UI.
 
 Those are evidence-backed follow-on slices. Home may expose their absence and route to existing evidence, but it may not fabricate implementation or completion.
 
@@ -514,7 +603,7 @@ Implementation follows RED → minimal implementation → GREEN → rendered int
 
 Acceptance requires:
 
-1. Home visibly centers QA context, one safe local action, seven ordered gates, latest local evidence, and the next truthful action.
+1. One SGFX product visibly centers QA context, one safe local action, seven ordered gates, latest local evidence, and the next truthful action; no Clean/Grafiks mode choice remains.
 2. No model is selected without a valid explicit local preference or operator selection.
 3. The generic UI and runtime paths touched by the slice contain no implicit G65/G70 default or comparison pair.
 4. `sgfx_preflight__<profile>` runs exactly the four deterministic packs and writes only inside the allowed output root.
@@ -533,7 +622,17 @@ Acceptance requires:
 17. Focused Home, hub reducer, actions, capability, controller, presenter, registry, Grafiks, and package tests pass.
 18. Full discovery, exact bundle checks, navigation, and reader-stress gates pass before any later default-cutover decision.
 19. Warm-start and first-run evidence is rerun when the workstation is reference-ready and reported as passed or OPEN, never inferred.
-20. The final diff contains no unrelated cleanup, new dependency, prohibited attribution, confidential dump content, absolute private path, or third-party asset.
+20. The final diff contains no unrelated cleanup, unapproved mandatory dependency, prohibited attribution, confidential dump content, absolute private path, or third-party asset.
+21. Presentation view retains the exact profile, gate, evidence, action descriptors, and permissions; entering or leaving it performs no data reload or renderer launch.
+22. A selected profile with a compatible resolved local scene can produce a real Ramses turntable through the authored pass graph and camera-crane interface; an unselected, unsupported, missing, timed-out, or failed scene shows the generic fallback without affecting QA.
+23. QML receives no BMW scene/cache path or helper command. Preview tokens are current-generation and opaque; stale-profile frames are rejected.
+24. The preview reads BMW source only, writes derived frames only beneath the bounded SGFX cache, never packages, exports, bundles, or commits the scene or frames, and proves the source tree unchanged.
+25. Preview tests enforce one worker, below-normal execution, diagnostic pre-emption, 24-frame/480 × 270/256 MiB/30-second limits, process exit after generation, and quiet fallback.
+26. Normal motion performs one finite turntable revolution and then freezes; reduced motion uses one static frame; hidden or inactive presentation performs no playback work.
+27. Operational copy uses Inter and display accents use the existing OFL Fredoka asset. Package/provenance scans reject restricted DynaFont, game fonts, copied installer/game assets, external web assets, and unaudited Grafiks material.
+28. Motion tests enforce the defined focus, panel, route, staging, reduced-motion, and real-progress contracts without delaying action availability.
+29. `Open 3D inspection` retains the internal `grafiks.launch` capability ID and exact canonical profile input, restores the prior QA context on return, and exposes no second state model.
+30. The teammate pilot records the local before/after operator-value measures and reports them as observed evidence; no productivity or ticket-speed claim is emitted from design intent alone.
 
 ## 24. Explicit open evidence boundaries
 
@@ -543,5 +642,8 @@ Acceptance requires:
 - Current performance pages establish what to measure, not one universal pass threshold.
 - Warm and first-run acceptance on the exact current tree remains open under workstation load.
 - External approvals remain outside SGFX until separately designed, authorized, and evidenced.
+- The real-car preview is proven for compatible locally available Ramses exports, not every present or future profile; unsupported profiles retain the generic fallback.
+- The local Unleashed installer and restricted font files are reference material, not product dependencies or redistributable assets.
+- The operator-value baseline has not yet been measured with the Seriengrafik team; reduced workload, cognitive load, and BMW ticket-preparation time remain hypotheses until that pilot.
 
 These OPEN items are acceptance constraints, not placeholders. No unresolved design choice blocks the written-spec review.
