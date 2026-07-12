@@ -149,7 +149,7 @@ FocusScope {
                     id: primaryAction
 
                     objectName: "qaPrimaryAction"
-                    Layout.preferredWidth: 222
+                    Layout.preferredWidth: 276
                     Layout.preferredHeight: 48
                     text: root.primaryActionLabel || "Choose profile"
                     enabled: root.primaryActionEnabled

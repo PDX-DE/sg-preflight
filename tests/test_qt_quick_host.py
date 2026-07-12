@@ -524,6 +524,9 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertIn("QaContextPreview", home)
         self.assertNotIn("Grafiks", main)
         self.assertIn("Open 3D inspection", main)
+        self.assertIn('objectName: "presentationViewControl"', main)
+        self.assertIn("property bool presentationView: false", main)
+        self.assertIn("function setPresentation(enabled: bool)", main)
         self.assertIn("Inter.ttf", main)
         self.assertIn("Fredoka.ttf", main)
         self.assertNotIn(".replaceAll(", combined)
@@ -608,6 +611,79 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertAlmostEqual(offset, 32.0, places=3)
         self.assertLessEqual(compact_rows, 4)
         self.assertEqual(lines[2], "False False False True")
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_presentation_view_preserves_the_exact_qa_truth_and_starts_no_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self._run_headless(
+                f"""
+                import json
+                import time
+                from PySide6.QtCore import QMetaObject, Q_ARG, QObject
+                from sg_preflight.desktop.qt_quick_app import (
+                    _hide_qt_windows,
+                    _restore_qt_windows,
+                    create_qt_quick_runtime,
+                )
+                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-test"])
+                root = runtime.engine.rootObjects()[0]
+                deadline = time.monotonic() + 5
+                while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
+                    runtime.application.processEvents()
+                    time.sleep(0.005)
+                home = root.findChild(QObject, "qaControlCenterHome")
+                home.setProperty("selectedGateOverride", "visual")
+                runtime.application.processEvents()
+
+                def truth():
+                    payload = runtime.controller.currentPayload
+                    return [
+                        runtime.controller.currentProfileId,
+                        runtime.controller.currentRouteId,
+                        root.property("selectedGateId"),
+                        json.dumps(payload.get("gates", []), sort_keys=True),
+                        json.dumps(payload.get("actions", []), sort_keys=True),
+                    ]
+
+                before = truth()
+                generation = runtime.controller._generation
+                inspection_generation = runtime.grafiks_host._generation
+                active_count = runtime.task_coordinator.active_count
+                invoked_on = QMetaObject.invokeMethod(root, "setPresentation", Q_ARG(bool, True))
+                runtime.application.processEvents()
+                during = truth()
+                presentation_state = [root.property("presentationView"), root.property("sidebarOpen")]
+                invoked_off = QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "Esc"))
+                runtime.application.processEvents()
+                after = truth()
+                restored_state = [root.property("presentationView"), root.property("sidebarOpen")]
+                _hide_qt_windows(runtime.engine)
+                _restore_qt_windows(runtime.engine)
+                runtime.application.processEvents()
+                after_inspection = truth()
+                print(json.dumps({{
+                    "invoked": [invoked_on, invoked_off],
+                    "truth": [before, during, after, after_inspection],
+                    "presentationState": presentation_state,
+                    "restoredState": restored_state,
+                    "generation": [generation, runtime.controller._generation],
+                    "inspectionGeneration": [inspection_generation, runtime.grafiks_host._generation],
+                    "activeCount": [active_count, runtime.task_coordinator.active_count],
+                }}))
+                runtime.close()
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = __import__("json").loads(result.stdout)
+        self.assertEqual(payload["invoked"], [True, True])
+        self.assertEqual(payload["truth"], [payload["truth"][0]] * 4)
+        self.assertEqual(payload["truth"][0][2], "visual")
+        self.assertEqual(payload["presentationState"], [True, False])
+        self.assertEqual(payload["restoredState"], [False, True])
+        self.assertEqual(payload["generation"][0], payload["generation"][1])
+        self.assertEqual(payload["inspectionGeneration"][0], payload["inspectionGeneration"][1])
+        self.assertEqual(payload["activeCount"][0], payload["activeCount"][1])
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_sgfx_singleton_loads_with_developer_import_paths_cleared_outside_checkout(self) -> None:

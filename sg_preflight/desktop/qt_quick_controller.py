@@ -133,26 +133,26 @@ UI_ERROR_DEFINITIONS = {
         "dismiss",
     ),
     "grafiks_missing": (
-        "Grafiks unavailable",
-        "Grafiks is unavailable in this installation.",
+        "3D inspection unavailable",
+        "3D inspection is unavailable in this installation.",
         False,
         "stay_clean",
     ),
     "grafiks_runtime_invalid": (
-        "Grafiks unavailable",
-        "The Grafiks runtime is incomplete.",
+        "3D inspection unavailable",
+        "The 3D inspection runtime is incomplete.",
         False,
         "stay_clean",
     ),
     "grafiks_spawn_failed": (
-        "Grafiks unavailable",
-        "Grafiks could not be started.",
+        "3D inspection unavailable",
+        "3D inspection could not be started.",
         True,
         "retry",
     ),
     "grafiks_early_exit": (
-        "Grafiks unavailable",
-        "Grafiks stopped during startup.",
+        "3D inspection unavailable",
+        "3D inspection stopped during startup.",
         True,
         "retry",
     ),
@@ -629,7 +629,7 @@ class DesktopController(QObject):
         if capability.capability_id == "grafiks.launch":
             requested_profile = str(inputs.get("profile_id", "") or "").strip()
             if requested_profile.casefold() != self._current_profile_id.casefold():
-                self._set_capability_error("The Grafiks profile selection is invalid.")
+                self._set_capability_error("The 3D inspection profile selection is invalid.")
                 return False
             return self.launchGrafiks()
         self._set_capability_error("This capability is not available yet.")
@@ -639,14 +639,14 @@ class DesktopController(QObject):
     def launchGrafiks(self) -> bool:
         host = self._grafiks_host
         if self._closed or host is None or not self._current_profile_id:
-            self._set_capability_error("Grafiks is unavailable in this installation.")
+            self._set_capability_error("3D inspection is unavailable in this installation.")
             return False
         try:
             accepted = host.launch(self._current_profile_id)
         except RuntimeError:
             accepted = False
         if not accepted:
-            self._set_capability_error("Grafiks could not be started.")
+            self._set_capability_error("3D inspection could not be started.")
             return False
         self._set_capability_error("")
         return True

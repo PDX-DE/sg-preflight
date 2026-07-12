@@ -16,10 +16,10 @@ from sg_preflight.desktop.task_pool import PageTaskCoordinator, TaskIdentity
 
 
 _PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-_MISSING_DETAIL = "Grafiks is unavailable in this installation."
-_RUNTIME_DETAIL = "The Grafiks runtime is incomplete."
-_SPAWN_DETAIL = "Grafiks could not be started."
-_EARLY_EXIT_DETAIL = "Grafiks stopped during startup."
+_MISSING_DETAIL = "3D inspection is unavailable in this installation."
+_RUNTIME_DETAIL = "The 3D inspection runtime is incomplete."
+_SPAWN_DETAIL = "3D inspection could not be started."
+_EARLY_EXIT_DETAIL = "3D inspection stopped during startup."
 
 
 class _Process(Protocol):

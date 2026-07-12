@@ -376,8 +376,10 @@ class TestGrafiksControllerAndHostBindings(unittest.TestCase):
         )
 
         self.assertFalse(controller.invokeCapability("grafiks.launch", {"profile_id": "G70"}))
+        self.assertEqual(controller.capabilityError, "The 3D inspection profile selection is invalid.")
         host.launch.assert_not_called()
         self.assertTrue(controller.invokeCapability("grafiks.launch", {"profile_id": "g65"}))
+        self.assertEqual(controller.capabilityError, "")
         host.launch.assert_called_once_with("G65")
         controller.shutdown()
 
@@ -417,11 +419,26 @@ class TestGrafiksControllerAndHostBindings(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('objectName: "grafiksLaunchControl"', qml)
-        self.assertIn("desktopController.launchGrafiks", qml)
+        self.assertIn('desktopController.invokeCapability("grafiks.launch"', qml)
+        self.assertNotIn("desktopController.launchGrafiks", qml)
         self.assertIn("grafiksHost.state", qml)
         self.assertIn("grafiksHost.errorSummary", qml)
         self.assertNotIn("grafiksHost.executable", qml)
         self.assertNotIn("grafiksHost.process", qml)
+
+    def test_operator_copy_uses_3d_inspection_while_internal_ids_remain_stable(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        main = (root / "sg_preflight" / "desktop" / "qml" / "Main.qml").read_text(encoding="utf-8")
+        home = (root / "sg_preflight" / "desktop" / "qml" / "components" / "HomePage.qml").read_text(encoding="utf-8")
+        controller = (root / "sg_preflight" / "desktop" / "qt_quick_controller.py").read_text(encoding="utf-8")
+        adapter = (root / "sg_preflight" / "desktop" / "qt_quick_grafiks.py").read_text(encoding="utf-8")
+
+        self.assertIn("Open 3D inspection", main + home)
+        self.assertIn('"grafiks.launch"', main + controller)
+        self.assertIn("GrafiksHostAdapter", adapter)
+        for source in (main, home, controller, adapter):
+            self.assertNotIn('"Grafiks', source)
+            self.assertNotIn("'Grafiks", source)
 
     def test_host_window_helpers_hide_only_on_request_and_restore_fully(self) -> None:
         from sg_preflight.desktop.qt_quick_app import _hide_qt_windows, _restore_qt_windows
@@ -437,6 +454,12 @@ class TestGrafiksControllerAndHostBindings(unittest.TestCase):
         root.show.assert_called_once_with()
         root.raise_.assert_called_once_with()
         root.requestActivate.assert_called_once_with()
+
+        self.assertIs(engine.rootObjects.return_value[0], root)
+        root.refresh.assert_not_called()
+        root.initialize.assert_not_called()
+        root.navigate.assert_not_called()
+        root.selectProfile.assert_not_called()
 
     def test_adapter_source_has_no_blocking_wait_or_poll_loop(self) -> None:
         source_path = (

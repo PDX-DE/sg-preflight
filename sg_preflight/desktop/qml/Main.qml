@@ -30,12 +30,19 @@ ApplicationWindow {
     readonly property bool profileSelectorFocused: profileSelector.activeFocus
     readonly property string selectedProfileValue: profileSelector.currentValue || ""
     property bool reducedMotion: false
+    property bool presentationView: false
     property bool jumpOpen: false
     property bool helpOpen: false
     property bool diagnosticsOpen: false
     property bool sidebarOpen: true
     property bool exitGuidanceVisible: false
     property bool shellInitializationStarted: false
+
+    function setPresentation(enabled: bool) {
+        presentationView = enabled;
+        sidebarOpen = !enabled;
+        Qt.callLater(homePage.restoreFocus);
+    }
 
     function handleShortcut(key: string) {
         if (key === "F1") {
@@ -55,6 +62,8 @@ ApplicationWindow {
                 helpOpen = false;
             else if (diagnosticsOpen)
                 diagnosticsOpen = false;
+            else if (presentationView)
+                setPresentation(false);
             else if (sidebarOpen)
                 sidebarOpen = false;
             else
@@ -131,13 +140,13 @@ ApplicationWindow {
             Components.NavigationSidebar {
                 id: navigationSidebar
                 objectName: "navigationSidebar"
-                Layout.preferredWidth: window.sidebarOpen ? 292 : 0
+                Layout.preferredWidth: window.sidebarOpen && !window.presentationView ? 292 : 0
                 Layout.fillHeight: true
                 shellModel: window.shellModel
                 currentRouteId: window.desktopController.currentRouteId
                 currentProfileId: window.desktopController.currentProfileId
                 reducedMotion: window.reducedMotion
-                visible: window.sidebarOpen
+                visible: window.sidebarOpen && !window.presentationView
                 onNavigateRequested: routeId => window.desktopController.navigate(routeId)
                 onJumpRequested: window.handleShortcut("/")
             }
@@ -149,14 +158,18 @@ ApplicationWindow {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 36
-                    anchors.rightMargin: 36
-                    anchors.topMargin: 28
-                    anchors.bottomMargin: 24
-                    spacing: 18
+                    anchors.leftMargin: window.presentationView ? 18 : 36
+                    anchors.rightMargin: window.presentationView ? 18 : 36
+                    anchors.topMargin: window.presentationView ? 18 : 28
+                    anchors.bottomMargin: window.presentationView ? 18 : 24
+                    spacing: window.presentationView ? 0 : 18
 
                     RowLayout {
+                        id: headerChrome
+
+                        objectName: "headerChrome"
                         Layout.fillWidth: true
+                        visible: !window.presentationView
                         spacing: 18
 
                         ColumnLayout {
@@ -178,6 +191,15 @@ ApplicationWindow {
                                 font.pixelSize: 14
                                 wrapMode: Text.WordWrap
                             }
+                        }
+                        Button {
+                            objectName: "presentationViewControl"
+                            Layout.preferredHeight: 50
+                            text: "Presentation view"
+                            focusPolicy: Qt.StrongFocus
+                            Accessible.role: Accessible.Button
+                            Accessible.name: text
+                            onClicked: window.setPresentation(true)
                         }
 
                         ComboBox {
@@ -250,7 +272,7 @@ ApplicationWindow {
                         objectName: "pageFrame"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        radius: 14
+                        radius: window.presentationView ? 20 : 14
                         color: Theme.panel
                         border.color: Theme.border
                         border.width: 1
@@ -288,10 +310,46 @@ ApplicationWindow {
                                 desktopController: window.desktopController
                             }
                         }
+
+                        Button {
+                            id: exitPresentation
+
+                            objectName: "exitPresentationControl"
+                            anchors.bottom: parent.bottom
+                            anchors.right: parent.right
+                            anchors.margins: 14
+                            z: 4
+                            visible: window.presentationView
+                            text: "Esc · Exit presentation"
+                            focusPolicy: Qt.StrongFocus
+                            Accessible.role: Accessible.Button
+                            Accessible.name: text
+                            onClicked: window.setPresentation(false)
+
+                            background: Rectangle {
+                                radius: 8
+                                color: Theme.raised
+                                border.color: exitPresentation.activeFocus ? Theme.accent : Theme.border
+                                border.width: exitPresentation.activeFocus ? 2 : 1
+                            }
+
+                            contentItem: Label {
+                                text: exitPresentation.text
+                                color: Theme.muted
+                                font.family: Theme.operationalFont
+                                font.pixelSize: 11
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
                     }
 
                     RowLayout {
+                        id: footerChrome
+
+                        objectName: "footerChrome"
                         Layout.fillWidth: true
+                        visible: !window.presentationView
 
                         Components.StatusBadge {
                             objectName: "shellStatus"
@@ -310,7 +368,7 @@ ApplicationWindow {
                             font.pixelSize: 11
                         }
                         Label {
-                            text: "/ Jump · F1 Help · F12 Diagnostics · Esc Back"
+                            text: "/ Jump · F1 Help · F12 Diagnostics · Esc Back · Presentation uses Esc"
                             color: Theme.muted
                             font.pixelSize: 11
                         }

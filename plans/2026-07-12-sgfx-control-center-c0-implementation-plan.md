@@ -895,7 +895,7 @@ git commit -m "feat(qa): align full QA evidence gates"
 - Consumes: the current controller payload, current profile, selected gate, and existing `grafiks.launch` host/capability.
 - Produces: QML-only `presentationView: bool`; exact QA context survives both chrome changes and a 3D-inspection round trip.
 
-- [ ] **Step 1: Write failing same-data and naming tests**
+- [x] **Step 1: Write failing same-data and naming tests**
 
 At runtime capture this tuple before, during, and after Presentation view:
 
@@ -910,7 +910,7 @@ truth = (
 
 Assert the tuple never changes, the controller generation does not advance, no shell/page loader is called, and no preview request begins merely from entering Presentation. Update Grafiks tests so only internal IDs retain `grafiks`; user-facing QML copy says `Open 3D inspection`.
 
-- [ ] **Step 2: Run host and inspection tests and verify RED**
+- [x] **Step 2: Run host and inspection tests and verify RED**
 
 Run:
 
@@ -920,7 +920,7 @@ Run:
 
 Expected: FAIL because Presentation view does not exist and visible Grafiks copy remains.
 
-- [ ] **Step 3: Implement Presentation as chrome state only**
+- [x] **Step 3: Implement Presentation as chrome state only**
 
 Add to `Main.qml`:
 
@@ -936,7 +936,7 @@ function setPresentation(enabled) {
 
 The Presentation control calls `setPresentation(true)`. Esc first exits overlays, then Presentation, then follows existing back/exit guidance. Bind widths and visibility only; do not call `refresh`, `initialize`, `navigate`, `selectProfile`, or any preview method.
 
-- [ ] **Step 4: Rename only the product-facing inspection surface**
+- [x] **Step 4: Rename only the product-facing inspection surface**
 
 Keep `grafiks.launch`, `GrafiksHostAdapter`, provenance checks, and internal object names. Change visible labels and safe errors to `3D inspection`. The launch input remains exactly:
 
@@ -949,7 +949,7 @@ window.desktopController.invokeCapability(
 
 The existing external host hides and restores the same Qt root; add a test proving current profile, selected gate, payload, and route are unchanged after restoration.
 
-- [ ] **Step 5: Run same-data, keyboard, and host-restoration tests**
+- [x] **Step 5: Run same-data, keyboard, and host-restoration tests**
 
 Run:
 
@@ -959,7 +959,7 @@ Run:
 
 Expected: PASS; Presentation and inspection are destinations inside one product, not alternate QA state models.
 
-- [ ] **Step 6: Commit presentation and inspection polish**
+- [x] **Step 6: Commit presentation and inspection polish**
 
 ```powershell
 git add sg_preflight/desktop/qml/Main.qml sg_preflight/desktop/qml/components/HomePage.qml tests/test_qt_quick_host.py tests/test_qt_quick_grafiks.py
