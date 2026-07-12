@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from typing import Callable
+from typing import Callable, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -101,6 +101,45 @@ def _qml_cache_generator() -> Path:
     if discovered:
         return Path(discovered).resolve()
     raise RuntimeError("The QML cache generator is unavailable.")
+
+
+def prune_staged_qml_roots(
+    bundle_dir: Path,
+    qml_imports: Sequence[QmlImport],
+) -> tuple[str, ...]:
+    bundle = Path(bundle_dir).resolve()
+    qml_root = bundle / "_internal" / "PySide6" / "qml"
+    if (
+        not qml_root.is_dir()
+        or qml_root.is_symlink()
+        or getattr(qml_root, "is_junction", lambda: False)()
+        or not qml_imports
+        or any(not isinstance(item, QmlImport) for item in qml_imports)
+    ):
+        raise RuntimeError("The staged Qt QML roots are unavailable.")
+    allowed_roots = {
+        item.module.split(".", 1)[0]
+        for item in qml_imports
+        if item.module not in {"QML", "SGFX"}
+    }
+    if not allowed_roots or any(not (qml_root / name).is_dir() for name in allowed_roots):
+        raise RuntimeError("The staged Qt QML roots are unavailable.")
+    candidates = tuple(
+        sorted(
+            (path for path in qml_root.iterdir() if path.is_dir() and path.name not in allowed_roots),
+            key=lambda path: path.name,
+        )
+    )
+    for candidate in candidates:
+        if (
+            candidate.is_symlink()
+            or getattr(candidate, "is_junction", lambda: False)()
+            or not candidate.resolve().is_relative_to(qml_root)
+        ):
+            raise RuntimeError("The staged Qt QML roots are unavailable.")
+    for candidate in candidates:
+        shutil.rmtree(candidate)
+    return tuple(path.name for path in candidates)
 
 
 def compile_staged_qml_cache(
@@ -427,6 +466,7 @@ def main(argv: list[str] | None = None) -> int:
     PyInstaller.__main__.run(pyinstaller_args)
     staged_bundle = STAGING_DIST_PATH / "sgfx-preflight"
     qml_imports = scan_qml_imports(ROOT / "sg_preflight" / "desktop" / "qml")
+    prune_staged_qml_roots(staged_bundle, qml_imports)
     compile_staged_qml_cache(staged_bundle)
     provenance = load_configured_grafiks_provenance()
     copied_operator = copy_operator_console_shell(staged_bundle, provenance)

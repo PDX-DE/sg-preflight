@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -124,6 +125,7 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertIn("accept_grafiks_bundle", text)
         self.assertIn("load_grafiks_provenance", text)
         self.assertIn("scan_qml_imports", text)
+        self.assertIn("prune_staged_qml_roots", text)
         self.assertIn("compile_staged_qml_cache", text)
         self.assertIn("write_bundle_manifest", text)
         self.assertIn("STAGING_DIST_PATH", text)
@@ -161,6 +163,10 @@ class TestNativeScaffold(unittest.TestCase):
         self.assertLess(
             text.index("write_bundle_manifest(staged_bundle"),
             text.index("staged_bundle = validate_staged_bundle("),
+        )
+        self.assertLess(
+            text.index("prune_staged_qml_roots(staged_bundle, qml_imports)"),
+            text.index("compile_staged_qml_cache(staged_bundle)"),
         )
         self.assertLess(
             text.index("compile_staged_qml_cache(staged_bundle)"),
@@ -238,6 +244,36 @@ class TestNativeScaffold(unittest.TestCase):
                     generator=generator,
                     runner=leak_path,
                 )
+
+    def test_staged_qml_pruning_keeps_only_scanned_qt_roots_and_fails_closed(self) -> None:
+        module = self._load_build_exe_module()
+        qml_import = module.QmlImport
+        imports = (
+            qml_import("QML"),
+            qml_import("QtQml", "qmlplugin"),
+            qml_import("QtQuick", "qtquick2plugin"),
+            qml_import("QtQuick.Controls", "qtquickcontrols2plugin"),
+            qml_import("SGFX"),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle = Path(temp_dir) / "bundle"
+            qml_root = bundle / "_internal" / "PySide6" / "qml"
+            for name in ("QtQml", "QtQuick", "QtQuick3D", "QtCharts"):
+                module_root = qml_root / name
+                module_root.mkdir(parents=True)
+                (module_root / "qmldir").write_text(f"module {name}\n", encoding="utf-8")
+
+            removed = module.prune_staged_qml_roots(bundle, imports)
+
+            self.assertEqual(removed, ("QtCharts", "QtQuick3D"))
+            self.assertEqual(
+                {path.name for path in qml_root.iterdir() if path.is_dir()},
+                {"QtQml", "QtQuick"},
+            )
+
+            shutil.rmtree(qml_root / "QtQml")
+            with self.assertRaisesRegex(RuntimeError, "staged Qt QML roots"):
+                module.prune_staged_qml_roots(bundle, imports)
 
     def test_grafiks_presence_alone_never_authorizes_a_runtime_copy(self) -> None:
         module = self._load_build_exe_module()
