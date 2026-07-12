@@ -4,9 +4,9 @@ Status: approved direction; written-spec review required before implementation p
 
 Date: 2026-07-12
 
-Design baseline: `feature/sgfx-v02-qt-integration-20260710@0a26a2f`
+Design baseline: `feature/sgfx-v02-qt-integration-20260710@6600f93`
 
-Production-code baseline: `a736826`; the later `0a26a2f` commit changed documentation only
+Production-code baseline: `a736826`; all later commits through this design beat changed documentation only
 
 ## 1. Outcome
 
@@ -21,12 +21,15 @@ The first implementation slice must let a teammate:
 5. inspect the latest local result and route into the relevant evidence or review surface;
 6. see that manual, rack, performance, stakeholder, and delivery approval remain separately owned;
 7. reach all specialist tools through the existing navigation, All tools, and `/`;
-8. inspect a real selected-profile car preview when the approved local renderer and source are available, without making that preview a QA result; and
-9. close the tool without changing BMW, Jira, SVN, source repositories, or external systems.
+8. inspect a real selected-profile car preview when the approved local renderer and source are available, without making that preview a QA result;
+9. expose an extraction-compatible evidence seam for the separately governed Ramses QA Observatory without starting that probe at C0 startup or broadening the Home capability surface; and
+10. close the tool without changing BMW, Jira, SVN, source repositories, or external systems.
 
 The car preview is an optional contextual accent for 3D-car scope. When available, it is rendered from the real selected profile's resolved local Ramses export and shown as a bounded turntable. It is not the organizing principle, a readiness indicator, a substitute for evidence, a reason to select a default model, or a required dependency.
 
 There is one product and one state model. `Presentation view` removes secondary chrome from the same selected profile, gate, evidence, and capability set. `Open 3D inspection` is a focused drill-down backed by the existing external-process capability, not a second mode or alternate QA truth.
+
+The approved Ramses-native program is specified separately in `plans/2026-07-12-sgfx-ramses-qa-observatory-design.md`. This Control Center slice establishes the safe truth path first. Ramses R0 follows as an independently gated implementation and later joins the same explicit one-button action only after its standalone evidence, isolation, package, and performance contracts pass.
 
 ## 2. Evidence foundation and authority
 
@@ -93,6 +96,8 @@ Every central item must reduce a real lookup, duplicate entry, ambiguous ownersh
 - `RunProfile` already carries a safe subset of context: profile ID/label, brand, lane, build/retarget type, optional interface version, retarget target, active-build state, and registry source.
 - The Qt Quick shell already owns Home, profile selection, route validation, reduced motion, five navigation groups, all 19 surface descriptors, one maximum-two-reader coordinator, stale-result rejection, an exact eight-capability inventory, a dedicated effect worker, and opaque artifact handling.
 - The existing SGFX C++ viewer resolves a selected profile to an available `exported.ramses`, preserves the authored Ramses pass graph, drives the exported camera-crane interface for QA perspectives and orbit, and can read back a real rendered frame. The cinematic proof already uses a render-on-demand local texture cache rather than a perpetual shell-frame readback.
+- The current `sgfx::cine` library contains a small Ramses link probe, while the proven metadata, inventory, logic, lifecycle, and readback logic still lives in the real-scene and cinematic app files. The companion Ramses design grows that existing boundary by extraction; it does not create another renderer.
+- The local C++ track pins Ramses 28.16.0 and has loaded a real Ramses 28.15.1/exporter 2.9.0/feature-level-2 scene. That is evidence for the current profile only, not a universal compatibility promise.
 - The repository already carries Inter and Fredoka font files with SIL Open Font License 1.1 texts. The local Unleashed font files are not part of this product boundary and are not distributable through SGFX without separate proven licensing.
 - Local action records and run records already provide bounded persisted history.
 - Existing specialist surfaces cover setup, disabled tests, API version, country variants, size, screenshot evidence, risk, manual review, handoff, delivery documentation, workflow guidance, and digests.
@@ -121,6 +126,12 @@ This direction matches the real process, is understandable without command-line 
 There is no visible Clean/Grafiks mode choice. Grafiks' strongest original SGFX interaction work—spatial focus, decisive selection feedback, depth, scene-like transitions, contextual vehicle presentation, and restrained motion—is independently carried into the Qt/QML product. Presentation view is the same data with less chrome. Full 3D inspection is an explicit focused destination using the same canonical profile; returning restores the same QA context.
 
 The existing external Grafiks/cinematic executable remains preserved as R&D/reference until its migration ledger classifies each part as original product contract, independently portable interaction behavior, or provenance-sensitive reference-only material. The product-facing inspector may reuse only the audited SGFX-owned Ramses viewer core, SGFX brand assets, and license-cleared dependencies.
+
+### Selected: hybrid Ramses-native observatory behind the same evidence model
+
+SGFX will use a narrow public-API C++ probe for structured scene/logic/renderer evidence, Python for canonical profile resolution and evidence normalization, and official RaCo/viewer/GPU tools only in separately gated specialist phases. The current Control Center plan supplies the integration seam; the companion design owns R0–R5 scope and graduation.
+
+This avoids fragile log-only wrappers without duplicating Ramses. It also keeps deep diagnostics out of startup and Home until a specific finding or explicit operator action needs them.
 
 ### Rejected: car-first showroom or launcher
 
@@ -156,6 +167,8 @@ The current stack crosses the safe boundary into optional external executables a
 10. **One shared model.** Occasional users, reviewers, and developers see different depth over the same state—not separate truths.
 11. **Reduce work, not merely clicks.** Central surfaces collapse evidence lookup, duplicate entry, ownership discovery, and handoff reconstruction without hiding missing evidence.
 12. **Presentation never changes truth.** Reduced chrome, motion, and the real-car preview may improve focus, but cannot change capabilities, gate state, or evidence.
+13. **Layered provenance.** Documented requirements, SDK-native opportunities, and research candidates are labelled separately and never presented as equivalent authority.
+14. **Deep diagnostics are earned.** A candidate enters the daily one-button plan only after read-only isolation, false-positive, performance, and operator-value gates pass.
 
 ## 6. Personas and jobs
 
@@ -248,9 +261,9 @@ The safe state vocabulary is closed and tested:
 | `not_checked` | No accepted persisted result exists for this profile. | Local history absence |
 | `queued` | The safe local action is accepted but has not started. | Capability lifecycle |
 | `running` | The safe local action is executing. | Capability lifecycle |
-| `passed` | The completed deterministic SGFX preflight has zero errors and zero warnings. | Exact four-pack summary only |
-| `findings` | The deterministic run completed with warnings and no errors. | Exact four-pack summary only |
-| `failed` | A deterministic pack reported errors or the action failed to execute. | Run/action record |
+| `passed` | An exact deterministic SGFX check completed with zero errors and zero warnings inside its named scope. | Exact accepted check summary |
+| `findings` | An exact deterministic SGFX check completed with warnings and no errors inside its named scope. | Exact accepted check summary |
+| `failed` | An exact deterministic check reported errors or its action failed to execute. | Run/action record |
 | `blocked` | Required local source/config or execution prerequisite is unavailable. | Audited action readiness |
 | `evidence_required` | This gate needs an artifact or result SGFX has not accepted. | Gate contract |
 | `human_required` | This gate requires a named human or external decision. | Gate contract or explicit review record |
@@ -260,7 +273,7 @@ The safe state vocabulary is closed and tested:
 
 Clock age alone does not create `stale` in this slice because no accepted universal freshness threshold exists. Until an exact fingerprint is available, Home shows the run timestamp without inferring staleness.
 
-`passed` is never an overall profile, delivery, screenshot, manual-review, rack, or stakeholder verdict. The hub has no overall green state and no completion percentage.
+`passed` is never an overall profile, delivery, screenshot, manual-review, rack, or stakeholder verdict. In C0 only the exact four-pack summary can produce `passed` or `findings`; a later accepted R0 integration may use the same vocabulary only on its exact named check rows. The hub has no overall green state and no completion percentage.
 
 ## 10. Next-safe-action rules
 
@@ -379,6 +392,8 @@ The audit must require all of the following:
 
 The existing delivery-checklist audit remains available only where already accepted. `profile_stack`, BMW smoke, scene checks, repo checkers, and other kinds remain rejected by the Qt Home audit.
 
+The companion Ramses R0 work does not alter this C0 contract. `sgfx_preflight` stays exactly four-pack until the standalone R0 probe and its separate integration slice pass. That later slice may add a conditional, SGFX-owned `ramses_r0` child stage under the same parent action without adding a capability or Home control; it may not relabel the existing external RaCo `scene_check` as safe.
+
 Queued cancellation remains truthful: cancellation is offered only while the future can actually be cancelled. Once execution starts, the UI must not claim an in-process cancel that the current executor cannot provide.
 
 After a successful current-page execution, Home schedules a fresh shell-context read. A stale completion may persist its output record but may not overwrite the newly selected profile or current UI.
@@ -469,6 +484,7 @@ Changing profile registry order must not change an empty selection, comparison t
 - A small `QaContextPreview.qml` owns generic scope art, opaque preview-frame playback, scrub input, visibility pausing, and reduced-motion behavior.
 - A Python-side `PreviewCoordinator` owns canonical profile resolution, one below-normal-priority worker, scene fingerprinting, stale-generation rejection, cache limits, timeout, and diagnostic pre-emption. It exposes no path or process to QML.
 - A narrow C++ preview helper is extracted from the existing SGFX Ramses viewer core. It preserves the authored pass graph and camera-crane interface and emits only bounded local turntable frames plus a machine-readable manifest beneath the approved cache root.
+- The extraction keeps metadata, lifecycle, and frame-production units compatible with the companion R0 probe contract, but C0 emits preview presentation only and does not claim Ramses QA validation.
 - `Main.qml` owns shell chrome, overlays, profile selection, controller invocation, and registered navigation.
 - The existing presenter/renderers own the detailed Full QA page.
 - `Theme.qml` owns the minimal color, type, spacing, motion, and reduced-motion tokens required by the design.
@@ -584,6 +600,19 @@ This written design covers one cohesive implementation plan:
 
 The implementation plan keeps the QA truth path independently shippable: profile neutrality, safe preflight, snapshot, and gate presentation must be GREEN before preview generation is enabled. Preview or inspector failure cannot delay or roll back the QA-first slice.
 
+### Ramses program handoff
+
+C0 does not implement or auto-run the Ramses R0 validator. It establishes:
+
+- one canonical profile and source identity;
+- one parent action/lifecycle model;
+- protected output and artifact-handle boundaries;
+- an extraction-compatible preview helper;
+- exact gate/check-row slots for future accepted Ramses evidence; and
+- a UI that can display `unavailable`, `findings`, or evidence without inventing an overall verdict.
+
+R0 is the immediate next implementation cycle under `plans/2026-07-12-sgfx-ramses-qa-observatory-design.md`. Once R0 passes standalone gates, its integration slice may run it as a conditional SGFX-owned child of the same explicit action. R1–R5 each retain separate specification, planning, and graduation gates.
+
 It does not implement these BMW-evidence gaps yet:
 
 - a generalized trimline/drivetrain/equipment/roof/light variant matrix;
@@ -633,6 +662,7 @@ Acceptance requires:
 28. Motion tests enforce the defined focus, panel, route, staging, reduced-motion, and real-progress contracts without delaying action availability.
 29. `Open 3D inspection` retains the internal `grafiks.launch` capability ID and exact canonical profile input, restores the prior QA context on return, and exposes no second state model.
 30. The teammate pilot records the local before/after operator-value measures and reports them as observed evidence; no productivity or ticket-speed claim is emitted from design intent alone.
+31. C0 contains no Ramses R0 auto-run, RaCo invocation, cross-backend comparison, validation-layer activation, RenderDoc capture, performance capture, or research-candidate execution; the exact four-pack action remains mechanically provable until the companion R0 integration is separately accepted.
 
 ## 24. Explicit open evidence boundaries
 
@@ -645,5 +675,6 @@ Acceptance requires:
 - The real-car preview is proven for compatible locally available Ramses exports, not every present or future profile; unsupported profiles retain the generic fallback.
 - The local Unleashed installer and restricted font files are reference material, not product dependencies or redistributable assets.
 - The operator-value baseline has not yet been measured with the Seriengrafik team; reduced workload, cognitive load, and BMW ticket-preparation time remain hypotheses until that pilot.
+- The companion Ramses program is approved as a direction, but R0–R5 remain separate implementation claims. This document cannot be cited as evidence that any Ramses validator, cross-backend check, performance fingerprint, guided review, or GPU diagnostic already exists.
 
 These OPEN items are acceptance constraints, not placeholders. No unresolved design choice blocks the written-spec review.
