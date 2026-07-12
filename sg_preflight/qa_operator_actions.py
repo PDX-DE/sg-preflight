@@ -9,6 +9,9 @@ from sg_preflight.bmw_process import bmw_interface_smoke_commands
 from sg_preflight.profiles import RunProfile, list_run_profiles, resolve_source_repo_root
 from sg_preflight.services import prerequisite_status, workspace_root
 
+
+SAFE_PREFLIGHT_PACKS = ("anchors", "constants", "carpaints", "project_sanity")
+
 def operator_ui_actions_root(explicit_root: Path | None = None) -> Path:
     return workspace_root(explicit_root) / "out" / "operator-ui" / "actions"
 
@@ -207,6 +210,27 @@ def list_operator_actions(
 
     for profile in live_profiles:
         source_project_root = profile.source_project_root()
+        actions.append(
+            OperatorAction(
+                action_id=f"sgfx_preflight__{profile.profile_id.lower()}",
+                label="Run local QA checks",
+                description=(
+                    f"Run the four deterministic SGFX validation packs for {profile.profile_id} "
+                    "without launching the broader QA stack or external tools."
+                ),
+                kind="sgfx_preflight",
+                scope="profile",
+                ready=source_project_root.exists() and profile.config_path.exists(),
+                blocker_message=(
+                    ""
+                    if source_project_root.exists() and profile.config_path.exists()
+                    else f"The project root or config for {profile.profile_id} is missing."
+                ),
+                profile_id=profile.profile_id,
+                project_root=str(source_project_root),
+                command_preview="internal: run four deterministic SGFX packs",
+            )
+        )
         actions.append(
             OperatorAction(
                 action_id=f"qa_stack__{profile.profile_id.lower()}",

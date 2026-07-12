@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 import unittest
@@ -56,6 +57,93 @@ def _missing_bmw_repo_env(root: Path) -> dict[str, str]:
 
 
 class TestQaActions(unittest.TestCase):
+    def test_sgfx_preflight_action_is_exact_profile_scoped_and_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            actions = {item.action_id: item for item in list_operator_actions(root, profiles=[profile])}
+            self.assertIn("sgfx_preflight__g65", actions)
+            action = actions["sgfx_preflight__g65"]
+
+        self.assertEqual(action.action_id, "sgfx_preflight__g65")
+        self.assertEqual(action.label, "Run local QA checks")
+        self.assertEqual(action.kind, "sgfx_preflight")
+        self.assertEqual(action.scope, "profile")
+        self.assertEqual(action.profile_id, "G65")
+        self.assertTrue(action.ready)
+        self.assertEqual(action.command_preview, "internal: run four deterministic SGFX packs")
+
+    def test_execute_sgfx_preflight_calls_only_the_four_pack_service(self) -> None:
+        from sg_preflight.services import RunRequest, build_run_record
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            actions = {item.action_id: item for item in list_operator_actions(root, profiles=[profile])}
+            self.assertIn("sgfx_preflight__g65", actions)
+            action = actions["sgfx_preflight__g65"]
+            parent = build_action_record(action, root)
+            child_output = Path(parent.paths["output_root"]) / "preflight"
+            child = build_run_record(
+                profile,
+                RunRequest(
+                    profile_id=profile.profile_id,
+                    packs=["anchors", "constants", "carpaints", "project_sanity"],
+                    fail_on="never",
+                    output_root=child_output,
+                    run_id=f"{parent.run_id}-preflight",
+                ),
+                root,
+            )
+            child.status = "completed"
+            child.exit_code = 0
+            child.summary = {"errors": 0, "warnings": 1, "info": 2}
+            for key in ("html_report", "markdown_report", "json_report", "run_record"):
+                write_text(Path(child.paths[key]), f"fixture {key}\n")
+
+            forbidden = (
+                "_execute_profile_stack",
+                "_execute_repo_checker",
+                "_execute_unused_resources",
+                "_execute_scene_check",
+                "_execute_delivery_checklist",
+                "_execute_bmw_screenshot_smoke",
+                "_visual_review_prep_entries",
+            )
+            patches = [
+                mock.patch(
+                    f"sg_preflight.qa_actions.{name}",
+                    side_effect=AssertionError(f"{name} must not run"),
+                )
+                for name in forbidden
+            ]
+            with ExitStack() as stack:
+                execute = stack.enter_context(
+                    mock.patch(
+                        "sg_preflight.qa_actions.execute_profile_run",
+                        return_value=child,
+                    )
+                )
+                for patcher in patches:
+                    stack.enter_context(patcher)
+                record = execute_operator_action(action, root, record=parent)
+
+        request = execute.call_args.args[1]
+        self.assertEqual(request.packs, ["anchors", "constants", "carpaints", "project_sanity"])
+        self.assertEqual(Path(request.output_root), child_output)
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(record.summary["errors"], 0)
+        self.assertEqual(record.summary["warnings"], 1)
+        self.assertEqual(record.summary["info"], 2)
+        self.assertEqual(record.summary["packs"], request.packs)
+        self.assertTrue(
+            all(
+                Path(value).resolve().is_relative_to(Path(record.paths["output_root"]).resolve())
+                for value in record.paths.values()
+                if str(value).strip()
+            )
+        )
+
     def test_action_registry_marks_repo_checker_ready_and_scene_check_blocked_without_raco(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

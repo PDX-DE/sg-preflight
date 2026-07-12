@@ -245,7 +245,7 @@ git commit -m "fix(qt): require explicit profile selection"
 - Consumes: `services.execute_profile_run(profile, RunRequest, repo_root) -> RunRecord`, `VALID_PACKS`, and existing action persistence.
 - Produces: `SAFE_PREFLIGHT_PACKS: tuple[str, ...]`; `OperatorAction(kind="sgfx_preflight")`; `_execute_sgfx_preflight(record, root) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]`.
 
-- [ ] **Step 1: Write failing registry and isolation tests**
+- [x] **Step 1: Write failing registry and isolation tests**
 
 Add tests that assert the exact action contract and patch every forbidden executor seam to fail if touched:
 
@@ -281,7 +281,7 @@ def test_execute_sgfx_preflight_calls_only_the_four_pack_service(self) -> None:
 
 The fixture `_completed_profile_run` must return a real `RunRecord` with report paths beneath the supplied action output root and summary counts `errors=0`, `warnings=1`, `info=2`.
 
-- [ ] **Step 2: Run action tests and verify RED**
+- [x] **Step 2: Run action tests and verify RED**
 
 Run:
 
@@ -291,7 +291,7 @@ Run:
 
 Expected: FAIL because no `sgfx_preflight` action or executor branch exists.
 
-- [ ] **Step 3: Declare the narrow action and progress plan**
+- [x] **Step 3: Declare the narrow action and progress plan**
 
 Add:
 
@@ -322,7 +322,7 @@ OperatorAction(
 
 Add an `ACTION_PROGRESS_PLANS["sgfx_preflight"]` sequence containing only `queued`, `preflight`, and `finalize`.
 
-- [ ] **Step 4: Implement the minimal isolated executor**
+- [x] **Step 4: Implement the minimal isolated executor**
 
 ```python
 def _execute_sgfx_preflight(
@@ -377,7 +377,7 @@ def _execute_sgfx_preflight(
 
 Dispatch this branch before `profile_stack`. Do not call `_visual_review_prep_entries` for `sgfx_preflight`; it can reference sources outside the bounded action output. Preserve visual-review prep for existing action kinds.
 
-- [ ] **Step 5: Run action isolation and persistence tests**
+- [x] **Step 5: Run action isolation and persistence tests**
 
 Run:
 
@@ -387,7 +387,7 @@ Run:
 
 Expected: PASS; the new action returns only four-pack evidence, while existing action kinds remain unchanged.
 
-- [ ] **Step 6: Commit the four-pack backend**
+- [x] **Step 6: Commit the four-pack backend**
 
 ```powershell
 git add sg_preflight/qa_operator_actions.py sg_preflight/qa_action_persistence.py sg_preflight/qa_actions.py tests/test_qa_actions.py

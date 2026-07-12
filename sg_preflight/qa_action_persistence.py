@@ -13,6 +13,11 @@ from sg_preflight.qa_operator_actions import OperatorAction, operator_ui_actions
 from sg_preflight.services import build_progress_payload, utc_now, workspace_root, write_json_file
 
 ACTION_PROGRESS_PLANS: dict[str, tuple[tuple[str, str], ...]] = {
+    "sgfx_preflight": (
+        ("queued", "Queued"),
+        ("preflight", "Run local QA checks"),
+        ("finalize", "Finalize action record"),
+    ),
     "daily_live_matrix": (
         ("queued", "Queued"),
         ("profiles", "Run live profiles"),

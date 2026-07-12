@@ -57,6 +57,7 @@ from sg_preflight.qa_action_persistence import (
 )
 from sg_preflight.qa_operator_actions import (
     OperatorAction,
+    SAFE_PREFLIGHT_PACKS,
     _bmw_smoke_blocker_message,
     _bmw_smoke_script_path,
     _delivery_checklist_command_preview,
@@ -848,6 +849,64 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
     return summary, artifacts, notes
 
 
+def _execute_sgfx_preflight(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
+    profile = next(
+        candidate
+        for candidate in list_run_profiles(root)
+        if candidate.profile_id.lower() == record.profile_id.lower()
+    )
+    child_run_id = f"{record.run_id}-preflight"
+    child_output = Path(record.paths["output_root"]) / "preflight"
+    _set_action_progress(
+        record,
+        step_key="preflight",
+        percent=20,
+        label="Running local QA checks",
+        detail=f"Running four deterministic SGFX validation packs for {profile.profile_id}.",
+        meta={"profile_id": profile.profile_id, "child_run_id": child_run_id},
+    )
+    child = execute_profile_run(
+        profile,
+        RunRequest(
+            profile_id=profile.profile_id,
+            packs=list(SAFE_PREFLIGHT_PACKS),
+            fail_on="never",
+            output_root=child_output,
+            run_id=child_run_id,
+        ),
+        root,
+    )
+    for key, value in child.paths.items():
+        record.paths[f"preflight_{key}"] = value
+
+    child_summary = child.summary or {}
+    packs = list(SAFE_PREFLIGHT_PACKS)
+    errors = int(child_summary.get("errors", 0) or 0)
+    warnings = int(child_summary.get("warnings", 0) or 0)
+    info = int(child_summary.get("info", 0) or 0)
+    summary = {
+        "title": f"Local QA Checks - {profile.profile_id}",
+        "lines": [
+            f"Profile: {profile.profile_id}",
+            f"Packs: {', '.join(packs)}",
+            f"Result: {errors} errors, {warnings} warnings, {info} info",
+        ],
+        "profile_id": profile.profile_id,
+        "packs": packs,
+        "errors": errors,
+        "warnings": warnings,
+        "info": info,
+        "child_run_id": child.run_id,
+    }
+    artifacts = [
+        _artifact("Local QA HTML report", Path(child.paths["html_report"])),
+        _artifact("Local QA Markdown report", Path(child.paths["markdown_report"])),
+        _artifact("Local QA JSON report", Path(child.paths["json_report"])),
+        _artifact("Local QA run record", Path(child.paths["run_record"])),
+    ]
+    return summary, artifacts, list(child.notes[:3])
+
+
 def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     mirror_root = root / "repositories" / "trunk"
     source_root = resolve_source_repo_root(root)
@@ -1445,6 +1504,8 @@ def execute_operator_action(
     try:
         if action.kind == "daily_live_matrix":
             summary, artifacts, notes = _execute_daily_live_matrix(record, root)
+        elif action.kind == "sgfx_preflight":
+            summary, artifacts, notes = _execute_sgfx_preflight(record, root)
         elif action.kind == "profile_stack":
             summary, artifacts, notes = _execute_profile_stack(record, root)
         elif action.kind == "repo_checker":
@@ -1460,11 +1521,12 @@ def execute_operator_action(
         else:
             raise ValueError(f"Unsupported action kind: {action.kind}")
 
-        review_artifacts, review_notes = _visual_review_prep_entries(record, root)
-        if review_artifacts:
-            artifacts.extend(review_artifacts)
-        if review_notes:
-            notes.extend(review_notes)
+        if action.kind != "sgfx_preflight":
+            review_artifacts, review_notes = _visual_review_prep_entries(record, root)
+            if review_artifacts:
+                artifacts.extend(review_artifacts)
+            if review_notes:
+                notes.extend(review_notes)
 
         record.summary = summary
         record.artifacts = artifacts
