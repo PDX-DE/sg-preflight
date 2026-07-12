@@ -24,6 +24,14 @@ def _payload(status: str = "available", **extra: object) -> dict[str, object]:
 
 
 class TestFullQaPass(unittest.TestCase):
+    def test_full_pass_does_not_invent_a_comparison_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("sg_preflight.full_qa_pass._step_defs", return_value=[]):
+                payload = build_full_qa_pass("G70", workspace=Path(temp_dir))
+
+        self.assertEqual(payload["profile_id"], "G70")
+        self.assertEqual(payload["comparison_profile"], "")
+
     def test_full_pass_chains_components_and_surfaces_confirmations(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -172,6 +172,40 @@ class TestDesktopEvidenceModel(unittest.TestCase):
         self.assertTrue(all(str(root.resolve()) not in item.summary for item in surfaces))
         self.assertFalse(any(item.summary.startswith("{") for item in surfaces))
 
+    def test_desktop_surface_items_use_only_the_explicit_profile_scope(self) -> None:
+        comparison_payload = {
+            "status": "not_recorded",
+            "data_available": False,
+            "summary": "Choose two profiles to compare.",
+        }
+        digest_payload = {
+            "status": "available",
+            "data_available": True,
+            "summary": "One explicit profile.",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                mock.patch(
+                    "sg_preflight.desktop.evidence_model.build_cross_car_comparison",
+                    return_value=comparison_payload,
+                ) as comparison,
+                mock.patch(
+                    "sg_preflight.desktop.evidence_model.build_team_daily_digest_board",
+                    return_value=digest_payload,
+                ) as digest,
+            ):
+                desktop_surface_items("F70", Path(temp_dir))
+
+        comparison.assert_called_once_with(
+            workspace=Path(temp_dir).resolve(),
+            left_profile="",
+            right_profile="",
+        )
+        digest.assert_called_once_with(
+            workspace=Path(temp_dir).resolve(),
+            profiles=("F70",),
+        )
+
     def test_desktop_profiles_show_real_svn_slices_without_bundle_config(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

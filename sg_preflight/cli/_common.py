@@ -1671,7 +1671,7 @@ def build_parser() -> argparse.ArgumentParser:
     full_qa_pass_run.add_argument("--workspace", help="Workspace root override")
     full_qa_pass_run.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
     full_qa_pass_run.add_argument("--profile", required=True, help="Profile id such as G70")
-    full_qa_pass_run.add_argument("--comparison-profile", default="G65", help="Comparison profile id such as G65")
+    full_qa_pass_run.add_argument("--comparison-profile", default="", help="Optional explicit comparison profile id")
     full_qa_pass_run.add_argument(
         "--automatic-mode",
         dest="trusted_tool_mode",
@@ -1884,8 +1884,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cross_car_snapshot.add_argument("--workspace", help="Workspace root override")
     cross_car_snapshot.add_argument("--bmw-root", help="Explicit digital-3d-car-models checkout path")
-    cross_car_snapshot.add_argument("--left-profile", default="G70", help="Left profile id such as G70")
-    cross_car_snapshot.add_argument("--right-profile", default="G65", help="Right profile id such as G65")
+    cross_car_snapshot.add_argument("--left-profile", default="", help="Explicit left profile id")
+    cross_car_snapshot.add_argument("--right-profile", default="", help="Explicit right profile id")
     cross_car_snapshot.add_argument("--json", action="store_true", help="Print comparison as JSON")
     cross_car_snapshot.add_argument("--markdown", action="store_true", help="Print comparison as Markdown")
     _add_render_options(cross_car_snapshot)
@@ -2650,7 +2650,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         action="append",
         default=[],
-        help="Profile id to include on the board, repeatable (defaults to G70,G65)",
+        help="Profile id to include on the board, repeatable; no profile is implied",
     )
     team_digest_board_snapshot.add_argument("--json", action="store_true", help="Print board as JSON")
     team_digest_board_snapshot.add_argument("--markdown", action="store_true", help="Print board as Markdown")

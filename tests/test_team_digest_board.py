@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from sg_preflight.team_digest_board import (
     build_team_daily_digest_board,
@@ -20,6 +21,23 @@ def _write_screenshot_fixture(root: Path, profile_id: str) -> None:
 
 
 class TeamDigestBoardTests(unittest.TestCase):
+    def test_board_keeps_an_absent_profile_list_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch(
+                "sg_preflight.team_digest_board.read_per_car_risk_score",
+                side_effect=AssertionError("no risk profile may load without explicit scope"),
+            ):
+                board = build_team_daily_digest_board(
+                    workspace=Path(temp_dir),
+                    profiles=None,
+                )
+
+        self.assertEqual(board["profiles"], [])
+        self.assertEqual(board["sections"]["risk_by_profile"]["items"], [])
+        self.assertIn("0 profile(s)", board["summary"])
+        self.assertTrue(board["manual_review_required"])
+        self.assertFalse(board["is_approval"])
+
     def test_board_chooses_local_snapshot_and_surfaces_tradeoffs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

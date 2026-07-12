@@ -554,7 +554,7 @@ RISK_SCORE_EMPTY_NOTE = (
     "No prior manual-review session or screenshot evidence was found for this profile. Start with evidence capture and review recording."
 )
 CROSS_CAR_COMPARISON_EMPTY_NOTE = (
-    "No cross-car comparison rows were generated yet. Build local evidence for G70 and G65, then refresh this page."
+    "No cross-car comparison rows were generated yet. Choose two profiles with local evidence, then refresh this page."
 )
 DAILY_DIGEST_EMPTY_NOTE = (
     "No review package on this workspace yet. Click Build to generate one for the active ticket."
@@ -2642,8 +2642,8 @@ def _render_risk_score_panel(ui: Any, snapshot: dict[str, Any]) -> None:
 def _render_cross_car_comparison_panel(ui: Any, snapshot: dict[str, Any]) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "cross-car-comparison")
     payload = page.get("payload", {}) if isinstance(page.get("payload"), dict) else {}
-    left_profile = str(payload.get("left_profile", "G70"))
-    right_profile = str(payload.get("right_profile", "G65"))
+    left_profile = str(payload.get("left_profile", ""))
+    right_profile = str(payload.get("right_profile", ""))
     with ui.column().classes("sgfx-page-panel"):
         with ui.row().classes("items-center justify-between full-width"):
             ui.label(str(page["title"])).classes("sgfx-panel-title")

@@ -24,16 +24,16 @@ TEAM_DIGEST_BOARD_CONFLUENCE_ANCHORS = (
     + "GFX/016_Project-Management/024_How-to...-Seriesgraphics/043_Project-Setup-122025/044_Topic-Owner-TO/page.txt",
     "PDX_" + "SER" + "GFX/139_3D-Car/298_Quality-Hero-How-to-review-the-3D-car/page.txt",
 )
-DEFAULT_TEAM_PROFILES = ("G70", "G65")
+DEFAULT_TEAM_PROFILES: tuple[str, ...] = ()
 
 
 def _unique_profiles(values: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
     result: list[str] = []
-    for raw in values or DEFAULT_TEAM_PROFILES:
+    for raw in values or ():
         profile = str(raw or "").strip().upper()
         if profile and profile.casefold() not in {item.casefold() for item in result}:
             result.append(profile)
-    return tuple(result or DEFAULT_TEAM_PROFILES)
+    return tuple(result)
 
 
 def _section(heading: str, items: list[dict[str, Any]], empty_message: str) -> dict[str, Any]:

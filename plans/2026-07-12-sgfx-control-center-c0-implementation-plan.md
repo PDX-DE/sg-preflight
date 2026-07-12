@@ -102,7 +102,7 @@
 - Consumes: `dashboard_profile_options(*, bmw_root, profile_scope)` and local operator-state JSON readers.
 - Produces: `resolve_explicit_dashboard_profile(*, workspace, bmw_root) -> str`; `load_shell_context(...)["selected_profile_id"]` may be `""`; `DesktopController.currentProfileId` remains `""` until an explicit valid choice exists.
 
-- [ ] **Step 1: Write failing explicit-selection tests**
+- [x] **Step 1: Write failing explicit-selection tests**
 
 Add tests that distinguish an absent preference, a valid persisted preference, an invalid persisted preference, and an explicit runtime argument:
 
@@ -135,7 +135,7 @@ def test_shell_context_accepts_only_a_canonical_explicit_profile(self) -> None:
 
 Update the headless host test so an omitted profile remains empty and no file is written; keep the existing explicit `G70` selection test.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -145,7 +145,7 @@ Run:
 
 Expected: FAIL because `load_shell_context` currently falls back to `options[0]` and the host resolves an omitted profile.
 
-- [ ] **Step 3: Add an explicit-preference-only reader**
+- [x] **Step 3: Add an explicit-preference-only reader**
 
 Keep `_resolve_dashboard_profile_id` unchanged for the NiceGUI surfaces and add this narrow public function:
 
@@ -176,7 +176,7 @@ if not selected and not requested:
 
 Allow `_accept_shell_profile` to accept `selected_profile_id == ""`; reject only a non-empty noncanonical selection. Update options first, then emit `currentProfileChanged` only when the canonical or empty value actually differs.
 
-- [ ] **Step 4: Run the profile-neutral gates and verify GREEN**
+- [x] **Step 4: Run the profile-neutral gates and verify GREEN**
 
 Run:
 
@@ -186,7 +186,7 @@ Run:
 
 Expected: PASS; omitted selection is empty, explicit selection remains canonical, reads remain off-thread, and no preference file is written.
 
-- [ ] **Step 5: Write failing generic-default regression tests**
+- [x] **Step 5: Write failing generic-default regression tests**
 
 Require cross-car comparison to return `status="not_recorded"` and `summary="Choose two profiles to compare."` until two distinct explicit profiles are supplied. Require an absent Team Digest profile list to remain empty. Require Full QA's comparison profile default and the three CLI parser defaults to be empty strings/tuples. Scan generic runtime/QML copy touched by C0 for an implicit G65/G70 pair while allowing profile registry definitions and explicitly labelled CLI examples.
 
@@ -200,7 +200,7 @@ def test_generic_surfaces_do_not_invent_a_profile_pair(self) -> None:
     self.assertEqual(digest["risk_items"], [])
 ```
 
-- [ ] **Step 6: Run the generic-default tests and verify RED**
+- [x] **Step 6: Run the generic-default tests and verify RED**
 
 Run:
 
@@ -210,13 +210,13 @@ Run:
 
 Expected: FAIL because the current cross-car, Team Digest, Full QA comparison, desktop convenience readers, and CLI parsers inject G70/G65.
 
-- [ ] **Step 7: Remove implicit profile pairs without deleting real profile definitions**
+- [x] **Step 7: Remove implicit profile pairs without deleting real profile definitions**
 
 Set comparison defaults and `DEFAULT_TEAM_PROFILES` to empty values. `_profile_pair` returns `("", "")` unless both distinct explicit inputs are present. `build_cross_car_comparison` returns a neutral no-data payload before calling any risk reader when that contract is unmet. `_unique_profiles(None)` returns `()` rather than restoring a pair. Make the Cross-Car subtitle model-neutral, pass explicit selected/configured profiles from callers, set Full QA's `comparison_profile` default to `""`, and change CLI defaults to empty while retaining clearly labelled examples in help text.
 
 Do not remove `G65`, `G70`, or any other genuine profile from `profiles.py`, BMW target maps, evidence fixtures, or focused example tests.
 
-- [ ] **Step 8: Run profile-neutral product regressions**
+- [x] **Step 8: Run profile-neutral product regressions**
 
 Run:
 
@@ -226,7 +226,7 @@ Run:
 
 Expected: PASS; explicit profile examples still work, but no generic default or registry ordering chooses G65/G70.
 
-- [ ] **Step 9: Commit the neutral-selection boundary**
+- [x] **Step 9: Commit the neutral-selection boundary**
 
 ```powershell
 git add sg_preflight/dashboard_preferences.py sg_preflight/desktop/qt_quick_controller.py sg_preflight/desktop/qt_quick_app.py sg_preflight/cross_car_comparison.py sg_preflight/team_digest_board.py sg_preflight/dashboard_pages_config.py sg_preflight/dashboard/main.py sg_preflight/desktop/evidence_model.py sg_preflight/full_qa_pass.py sg_preflight/cli/_common.py tests/test_qt_quick_core.py tests/test_qt_quick_host.py tests/test_cross_car_comparison.py tests/test_team_digest_board.py tests/test_full_qa_pass.py tests/test_cli.py

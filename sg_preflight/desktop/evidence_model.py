@@ -1081,7 +1081,7 @@ def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> lis
         _safe_item(
             "cross-car-comparison",
             "Cross-Car Comparison",
-            lambda: build_cross_car_comparison(workspace=root, left_profile="G70", right_profile="G65"),
+            lambda: build_cross_car_comparison(workspace=root, left_profile="", right_profile=""),
         ),
         _safe_item(
             "daily-digest",
@@ -1091,7 +1091,7 @@ def desktop_surface_items(profile_id: str, workspace: Path | None = None) -> lis
         _safe_item(
             "team-digest-board",
             "Team Digest Board",
-            lambda: build_team_daily_digest_board(workspace=root, profiles=(normalized_profile, "G70", "G65")),
+            lambda: build_team_daily_digest_board(workspace=root, profiles=(normalized_profile,)),
         ),
         _safe_item(
             "operator-handoff",

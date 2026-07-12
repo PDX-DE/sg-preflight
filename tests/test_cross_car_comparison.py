@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from sg_preflight.cross_car_comparison import (
     build_cross_car_comparison,
@@ -23,6 +24,27 @@ def _write_screenshot_fixture(root: Path, profile_id: str, *, expected: int, act
 
 
 class CrossCarComparisonTests(unittest.TestCase):
+    def test_comparison_requires_two_explicit_distinct_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch(
+                "sg_preflight.cross_car_comparison.read_per_car_risk_score",
+                side_effect=AssertionError("no profile evidence may load without an explicit pair"),
+            ):
+                payload = build_cross_car_comparison(
+                    workspace=Path(temp_dir),
+                    left_profile="",
+                    right_profile="",
+                )
+
+        self.assertEqual(payload["status"], "not_recorded")
+        self.assertFalse(payload["data_available"])
+        self.assertEqual((payload["left_profile"], payload["right_profile"]), ("", ""))
+        self.assertEqual(payload["profiles"], [])
+        self.assertEqual(payload["comparison_rows"], [])
+        self.assertEqual(payload["summary"], "Choose two profiles to compare.")
+        self.assertTrue(payload["manual_review_required"])
+        self.assertFalse(payload["is_approval"])
+
     def test_comparison_puts_g70_and_g65_risk_widget_side_by_side(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

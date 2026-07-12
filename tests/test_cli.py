@@ -210,6 +210,18 @@ def _write_qa_hero_readiness_state(root: Path) -> None:
 
 
 class TestCLI(unittest.TestCase):
+    def test_generic_profile_pair_cli_defaults_are_empty(self) -> None:
+        from sg_preflight.cli._common import build_parser
+
+        parser = build_parser()
+        full_qa = parser.parse_args(["full-qa-pass", "run", "--profile", "G70"])
+        comparison = parser.parse_args(["cross-car-comparison", "snapshot"])
+        digest = parser.parse_args(["team-digest-board", "snapshot"])
+
+        self.assertEqual(full_qa.comparison_profile, "")
+        self.assertEqual((comparison.left_profile, comparison.right_profile), ("", ""))
+        self.assertEqual(digest.profile, [])
+
     def test_frozen_exe_entry_defaults_to_clean_dashboard_when_double_clicked(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 

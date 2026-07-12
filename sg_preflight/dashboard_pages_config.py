@@ -976,12 +976,12 @@ def _cross_car_comparison_page(
     page = _reader_page(
         page_id="cross-car-comparison",
         title="Cross-Car Comparison",
-        tagline="G70 vs G65 risk-score widget side by side.",
+        tagline="Choose two profiles to compare their risk-score evidence side by side.",
         reader=lambda: build_cross_car_comparison(
             workspace=workspace,
             bmw_root=bmw_root,
-            left_profile="G70",
-            right_profile="G65",
+            left_profile="",
+            right_profile="",
         ),
         workspace=workspace,
         ownership_note="Read-only comparison of local risk-score evidence; no BMW source or network writes.",
@@ -1336,7 +1336,7 @@ def _team_digest_board_page(
         board = build_team_daily_digest_board(
             workspace=workspace,
             bmw_root=bmw_root,
-            profiles=(profile_id, "G70", "G65"),
+            profiles=(profile_id,) if profile_id else (),
             ticket_id=_dashboard_active_ticket_id(workspace),
         )
         sections = board.get("sections", {}) if isinstance(board.get("sections"), dict) else {}

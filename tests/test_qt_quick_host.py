@@ -902,29 +902,32 @@ class TestQtQuickHostRuntime(unittest.TestCase):
             ],
         )
 
-    def test_runtime_resolves_an_omitted_profile_after_qml_completion_without_writing_state(self) -> None:
+    def test_runtime_keeps_an_omitted_profile_empty_after_qml_completion_without_writing_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             result = self._run_headless(
                 f"""
+                import json
                 from pathlib import Path
                 import time
                 from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
                 workspace = Path({temp_dir!r})
                 runtime = create_qt_quick_runtime(workspace=workspace, argv=["sgfx-test"])
                 deadline = time.monotonic() + 5
-                while not runtime.controller.currentProfileId and time.monotonic() < deadline:
+                while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
-                print(runtime.controller.currentProfileId)
-                print(sum(1 for path in workspace.rglob("*") if path.is_file()))
+                print(json.dumps({{
+                    "profile": runtime.controller.currentProfileId,
+                    "state": runtime.controller.pageState,
+                    "files": sum(1 for path in workspace.rglob("*") if path.is_file()),
+                }}))
                 runtime.close()
                 """
             )
 
         self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
-        profile_id, file_count = result.stdout.splitlines()
-        self.assertRegex(profile_id, r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-        self.assertEqual(file_count, "0")
+        payload = __import__("json").loads(result.stdout)
+        self.assertEqual(payload, {"profile": "", "state": "ready", "files": 0})
 
     def test_runtime_close_has_exact_order_and_is_idempotent(self) -> None:
         from sg_preflight.desktop.qt_quick_app import QtQuickRuntime

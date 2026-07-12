@@ -1794,7 +1794,7 @@ class TestQtShellRoute(unittest.TestCase):
                     {"id": "G65", "label": "G65 label"},
                     {"id": "G70", "label": "G70 label"},
                 ],
-                "selected_profile_id": initial_profile_id or "G65",
+                "selected_profile_id": initial_profile_id,
                 "unsafe": {"command": ["secret"], "path": r"C:\private\activity.jsonl"},
             }
         )
@@ -1844,7 +1844,7 @@ class TestQtShellRoute(unittest.TestCase):
         self.assertNotIn("private", rendered)
         self.assertFalse(is_registered_surface("home"))
 
-    def test_no_profile_resolves_inside_exactly_one_shell_context(self) -> None:
+    def test_no_profile_stays_empty_inside_exactly_one_shell_context(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             controller, coordinator, _shell_loader, _page_loader = self._controller(
                 Path(temp_dir), initial_profile_id=""
@@ -1855,7 +1855,9 @@ class TestQtShellRoute(unittest.TestCase):
             coordinator.succeed(identity, operation())
 
         self.assertEqual(len(coordinator.requests), 1)
-        self.assertEqual(controller.currentProfileId, "G65")
+        self.assertEqual(controller.currentProfileId, "")
+        self.assertEqual(controller.pageState, "ready")
+        self.assertEqual(controller.errorCode, "")
 
     def test_unknown_route_preserves_route_payload_and_work_and_sets_atomic_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2005,7 +2007,7 @@ class TestQtShellRoute(unittest.TestCase):
                 workspace=workspace,
                 initial_profile_id="",
                 task_coordinator=coordinator,
-                profile_resolver=lambda **_kwargs: "G65",
+                profile_resolver=lambda **_kwargs: "",
             )
             before = tuple(path.relative_to(workspace) for path in workspace.rglob("*") if path.is_file())
             with mock.patch(
@@ -2014,11 +2016,13 @@ class TestQtShellRoute(unittest.TestCase):
             ):
                 self.assertTrue(controller.initialize())
                 self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
+                initial_profile_id = controller.currentProfileId
                 self.assertTrue(controller.selectProfile("g70"))
                 self.assertTrue(_pump_until(lambda: controller.pageState != "loading"))
             after = tuple(path.relative_to(workspace) for path in workspace.rglob("*") if path.is_file())
             coordinator.shutdown(timeout_ms=1000)
 
+        self.assertEqual(initial_profile_id, "")
         self.assertEqual(controller.currentProfileId, "G70")
         self.assertEqual(
             controller.profileOptions,
@@ -2104,20 +2108,18 @@ class TestQtPageReadSafety(unittest.TestCase):
 
     def test_profile_resolver_uses_direct_read_only_profile_options_by_keyword(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import resolve_dashboard_profile
-        from sg_preflight.profiles import PROFILE_SCOPE_DEFAULT
 
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
-            default_options = [{"id": "G65"}]
             all_options = [{"id": "G65"}, {"id": "G70"}]
             with (
                 mock.patch(
                     "sg_preflight.dashboard_preferences.dashboard_profile_options",
-                    side_effect=(default_options, all_options),
+                    return_value=all_options,
                 ) as profile_options,
                 mock.patch(
-                    "sg_preflight.dashboard_preferences._resolve_dashboard_profile_id",
-                    return_value="G70",
+                    "sg_preflight.dashboard_preferences.resolve_explicit_dashboard_profile",
+                    return_value="",
                 ) as profile_resolver,
                 mock.patch(
                     "sg_preflight.dashboard.main.build_dashboard_snapshot",
@@ -2126,19 +2128,14 @@ class TestQtPageReadSafety(unittest.TestCase):
             ):
                 profile_id = resolve_dashboard_profile(workspace=workspace, bmw_root=None)
 
-        self.assertEqual(profile_id, "G70")
+        self.assertEqual(profile_id, "")
         self.assertEqual(
             profile_options.call_args_list,
-            [
-                mock.call(bmw_root=None, profile_scope=PROFILE_SCOPE_DEFAULT),
-                mock.call(bmw_root=None, profile_scope="all"),
-            ],
+            [mock.call(bmw_root=None, profile_scope="all")],
         )
         profile_resolver.assert_called_once_with(
-            "",
-            all_options,
             workspace=workspace.resolve(),
-            fallback_options=default_options,
+            options=all_options,
         )
         snapshot_builder.assert_not_called()
 

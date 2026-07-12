@@ -201,21 +201,14 @@ def resolve_dashboard_profile(
     bmw_root: Path | str | None = None,
 ) -> str:
     from sg_preflight.dashboard_preferences import (
-        _resolve_dashboard_profile_id,
         dashboard_profile_options,
+        resolve_explicit_dashboard_profile,
     )
-    from sg_preflight.profiles import PROFILE_SCOPE_DEFAULT
 
-    default_options = dashboard_profile_options(
-        bmw_root=bmw_root,
-        profile_scope=PROFILE_SCOPE_DEFAULT,
-    )
     all_options = dashboard_profile_options(bmw_root=bmw_root, profile_scope="all")
-    return _resolve_dashboard_profile_id(
-        "",
-        all_options,
+    return resolve_explicit_dashboard_profile(
         workspace=Path(workspace).resolve(),
-        fallback_options=default_options,
+        options=all_options,
     )
 
 
@@ -242,11 +235,11 @@ def load_shell_context(
         (option["id"] for option in options if option["id"].casefold() == requested.casefold()),
         "",
     )
-    if not selected:
+    if not selected and not requested:
         resolved = profile_resolver(workspace=Path(workspace).resolve(), bmw_root=bmw_root)
         selected = next(
             (option["id"] for option in options if option["id"].casefold() == resolved.casefold()),
-            options[0]["id"] if options else "",
+            "",
         )
     return {
         **build_home_context(workspace),
@@ -1157,7 +1150,9 @@ class DesktopController(QObject):
             (option["id"] for option in options if option["id"].casefold() == selected.casefold()),
             "",
         )
-        if not canonical:
+        if selected and not canonical:
+            return False
+        if not selected and self._current_profile_id:
             return False
         self._set_profile_options(options)
         if canonical != self._current_profile_id:

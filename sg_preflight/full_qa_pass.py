@@ -78,6 +78,10 @@ def _clean_profile(profile_id: str) -> str:
     return str(profile_id or "").strip().upper() or "PROFILE"
 
 
+def _clean_optional_profile(profile_id: str) -> str:
+    return str(profile_id or "").strip().upper()
+
+
 def _status(value: object, default: str = "unknown") -> str:
     text = str(value or "").strip().casefold()
     return text or default
@@ -491,7 +495,7 @@ def _step_defs(
     trusted_tool_mode: bool,
 ) -> list[tuple[str, str, Callable[[], dict[str, Any]], bool, Callable[[dict[str, Any]], int], Callable[[dict[str, Any]], int], bool]]:
     profile = _clean_profile(profile_id)
-    compare = _clean_profile(comparison_profile)
+    compare = _clean_optional_profile(comparison_profile)
     return [
         (
             "onboarding-guide",
@@ -574,7 +578,7 @@ def _step_defs(
             lambda: build_team_daily_digest_board(
                 workspace=workspace,
                 bmw_root=bmw_root,
-                profiles=(profile, compare),
+                profiles=tuple(item for item in (profile, compare) if item),
             ),
             False,
             lambda _payload: 0,
@@ -607,7 +611,7 @@ def build_full_qa_pass(
     *,
     workspace: Path | str | None = None,
     bmw_root: Path | str | None = None,
-    comparison_profile: str = "G65",
+    comparison_profile: str = "",
     trusted_tool_mode: bool = True,
     halt_on_flagged_issue: bool = True,
 ) -> dict[str, Any]:
@@ -729,7 +733,7 @@ def build_full_qa_pass(
     return {
         "schema_version": 1,
         "profile_id": profile,
-        "comparison_profile": _clean_profile(comparison_profile),
+        "comparison_profile": _clean_optional_profile(comparison_profile),
         "workspace": str(root),
         "started_at_utc": _utc_now(),
         "status": overall_status,

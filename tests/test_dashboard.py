@@ -48,6 +48,59 @@ EXPECTED_HOME_TILE_IDS = (
 
 
 class TestHomeContext(unittest.TestCase):
+    def test_generic_comparison_and_digest_pages_do_not_inject_named_profiles(self) -> None:
+        from sg_preflight.dashboard_pages_config import (
+            _cross_car_comparison_page,
+            _team_digest_board_page,
+        )
+
+        comparison_payload = {
+            "status": "not_recorded",
+            "data_available": False,
+            "summary": "Choose two profiles to compare.",
+            "comparison_rows": [],
+        }
+        digest_payload = {
+            "status": "available",
+            "data_available": True,
+            "summary": "One explicit profile.",
+            "sections": {},
+            "share_decision": {"status": "available", "selected_model": "local_snapshot"},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            with (
+                mock.patch(
+                    "sg_preflight.dashboard.main.build_cross_car_comparison",
+                    return_value=comparison_payload,
+                ) as comparison,
+                mock.patch(
+                    "sg_preflight.dashboard.main.build_team_daily_digest_board",
+                    return_value=digest_payload,
+                ) as digest,
+                mock.patch(
+                    "sg_preflight.dashboard.main._dashboard_active_ticket_id",
+                    return_value="",
+                ),
+            ):
+                comparison_page = _cross_car_comparison_page(workspace)
+                _team_digest_board_page(workspace, "F70")
+
+        comparison.assert_called_once_with(
+            workspace=workspace,
+            bmw_root=None,
+            left_profile="",
+            right_profile="",
+        )
+        digest.assert_called_once_with(
+            workspace=workspace,
+            bmw_root=None,
+            profiles=("F70",),
+            ticket_id="",
+        )
+        self.assertNotIn("G70", comparison_page["tagline"])
+        self.assertNotIn("G65", comparison_page["tagline"])
+
     def test_latest_five_all_time_entries_are_newest_first_and_frontend_neutral(self) -> None:
         from sg_preflight.activity_log import append_activity_entry
         from sg_preflight.home_context import build_home_context

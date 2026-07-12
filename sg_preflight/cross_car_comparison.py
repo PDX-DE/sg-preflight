@@ -16,20 +16,19 @@ CROSS_CAR_COMPARISON_GUARDRAILS = (
     "BMW Git access is read-only. SGFX never modifies BMW source.",
     "Activity log is local-only — never posted to Jira, SVN, or BMW Git.",
 )
-DEFAULT_LEFT_PROFILE = "G70"
-DEFAULT_RIGHT_PROFILE = "G65"
+DEFAULT_LEFT_PROFILE = ""
+DEFAULT_RIGHT_PROFILE = ""
 
 
-def _clean_profile(value: str | None, fallback: str) -> str:
-    profile = str(value or "").strip().upper()
-    return profile or fallback
+def _clean_profile(value: str | None) -> str:
+    return str(value or "").strip().upper()
 
 
 def _profile_pair(left_profile: str | None, right_profile: str | None) -> tuple[str, str]:
-    left = _clean_profile(left_profile, DEFAULT_LEFT_PROFILE)
-    right = _clean_profile(right_profile, DEFAULT_RIGHT_PROFILE)
+    left = _clean_profile(left_profile)
+    right = _clean_profile(right_profile)
     if left.casefold() == right.casefold():
-        right = DEFAULT_RIGHT_PROFILE if left.casefold() != DEFAULT_RIGHT_PROFILE.casefold() else DEFAULT_LEFT_PROFILE
+        right = ""
     return left, right
 
 
@@ -251,6 +250,29 @@ def build_cross_car_comparison(
 ) -> dict[str, Any]:
     root = Path(workspace).resolve() if workspace is not None else Path.cwd()
     left, right = _profile_pair(left_profile, right_profile)
+    if not left or not right:
+        payload = {
+            "title": CROSS_CAR_COMPARISON_TITLE,
+            "status": "not_recorded",
+            "data_available": False,
+            "workspace": str(root),
+            "comparison_axis": "risk-score",
+            "widget_label": "Risk Score",
+            "left_profile": left,
+            "right_profile": right,
+            "profiles": [profile for profile in (left, right) if profile],
+            "profile_payloads": {},
+            "comparison_rows": [],
+            "summary": "Choose two profiles to compare.",
+            "guardrails": list(CROSS_CAR_COMPARISON_GUARDRAILS),
+            "confluence_anchors": list(RISK_SCORE_CONFLUENCE_ANCHORS),
+            "manual_review_required": True,
+            "is_approval": False,
+            "note": CROSS_CAR_COMPARISON_NOTE,
+        }
+        payload["text"] = render_cross_car_comparison_text(payload)
+        payload["markdown"] = render_cross_car_comparison_markdown(payload)
+        return payload
     left_payload = _safe_risk_score(left, root, bmw_root)
     right_payload = _safe_risk_score(right, root, bmw_root)
     rows = _comparison_rows(

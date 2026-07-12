@@ -437,6 +437,14 @@ def _dashboard_preferred_profile_id(workspace: Path | str | None, options: list[
     return ""
 
 
+def resolve_explicit_dashboard_profile(
+    *,
+    workspace: Path | str,
+    options: list[dict[str, str]],
+) -> str:
+    return _dashboard_preferred_profile_id(workspace, options)
+
+
 def _write_dashboard_profile_preference(workspace: Path | str, profile_id: str) -> dict[str, Any]:
     return save_dashboard_settings(workspace, profile_id=profile_id)
 

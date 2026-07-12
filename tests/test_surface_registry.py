@@ -33,7 +33,7 @@ EXPECTED_SURFACES = (
     ("bmw-process", "BMW Process", "Read-only workflow contracts for BMW interface, triage, and visual review paths.", "Setup & help", "workflow", True),
     ("screenshot-test-state", "Screenshot Test State", "BMW + MINI baseline / actual / diff counts per brand.", "Screenshots & coverage", "matrix", True),
     ("risk-score", "Risk Score", "Per-car review focus signal with delta since latest local manual review.", "Screenshots & coverage", "evidence", True),
-    ("cross-car-comparison", "Cross-Car Comparison", "G70 vs G65 risk-score widget side by side.", "Screenshots & coverage", "matrix", True),
+    ("cross-car-comparison", "Cross-Car Comparison", "Choose two profiles to compare their risk-score evidence side by side.", "Screenshots & coverage", "matrix", True),
     ("daily-digest", "Daily Digest", "Morning status snapshot for the SG Daily standup.", "Reviews & digests", "overview", True),
     ("team-digest-board", "Team Digest Board", "Local snapshot for standup review across selected car profiles.", "Reviews & digests", "overview", True),
     ("operator-handoff", "Operator Handoff", "Record the stopping point before a shift handoff.", "Reviews & digests", "workflow", True),

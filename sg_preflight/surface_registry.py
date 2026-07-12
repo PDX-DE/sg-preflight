@@ -111,7 +111,7 @@ SURFACE_DESCRIPTORS = (
     SurfaceDescriptor(
         "cross-car-comparison",
         "Cross-Car Comparison",
-        "G70 vs G65 risk-score widget side by side.",
+        "Choose two profiles to compare their risk-score evidence side by side.",
         "Screenshots & coverage",
         "matrix",
     ),
