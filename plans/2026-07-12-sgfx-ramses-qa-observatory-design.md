@@ -1,6 +1,6 @@
 # SGFX Ramses QA Observatory — Program Design
 
-Status: approved direction; written-spec review required before implementation planning
+Status: approved by the user on 2026-07-12; R0 planning follows the independently accepted C0 truth path
 
 Date: 2026-07-12
 
