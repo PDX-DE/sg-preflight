@@ -527,8 +527,8 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertIn('objectName: "presentationViewControl"', main)
         self.assertIn("property bool presentationView: false", main)
         self.assertIn("function setPresentation(enabled: bool)", main)
-        self.assertIn("Inter.ttf", main)
-        self.assertIn("Fredoka.ttf", main)
+        self.assertNotIn("FontLoader", main)
+        self.assertIn("sgfxProductFonts", theme)
         self.assertNotIn(".replaceAll(", combined)
         self.assertNotIn("TextField", main.split("components.HomePage", 1)[0])
         for token in ("motionMicro", "motionFeedback", "motionShort", "motionStandard", "motionEmphasis", "motionStagger"):
@@ -553,6 +553,166 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertEqual(qmldir.splitlines(), ["module SGFX", "singleton Theme 1.0 Theme.qml"])
         for shortcut in ("F1", "F2", "F5", "F12", "Esc", 'sequence: "/"'):
             self.assertIn(shortcut, main)
+
+    def test_control_center_uses_host_registered_fonts_and_finite_accessible_motion(self) -> None:
+        app = (ROOT / "sg_preflight" / "desktop" / "qt_quick_app.py").read_text(encoding="utf-8")
+        qml_root = ROOT / "sg_preflight" / "desktop" / "qml"
+        main = (qml_root / "Main.qml").read_text(encoding="utf-8")
+        home = (qml_root / "components" / "HomePage.qml").read_text(encoding="utf-8")
+        preview = (qml_root / "components" / "QaContextPreview.qml").read_text(encoding="utf-8")
+        combined = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                qml_root / "Main.qml",
+                qml_root / "components" / "HomePage.qml",
+                qml_root / "components" / "QaPipelineSpine.qml",
+                qml_root / "components" / "QaGateDetail.qml",
+                qml_root / "components" / "QaContextPreview.qml",
+            )
+        )
+
+        self.assertIn("QFontDatabase", app)
+        self.assertIn("def _load_product_fonts() -> dict[str, str]:", app)
+        self.assertIn('context.setContextProperty("sgfxProductFonts"', app)
+        self.assertNotIn("FontLoader", main)
+        self.assertNotIn(".ttf", main)
+        self.assertNotIn("Animation.Infinite", combined)
+        self.assertNotRegex(combined, r"loops\s*:\s*-1")
+        self.assertIn("focusProductStart", main)
+        self.assertIn("focusPrimaryAction", home)
+        self.assertIn("focusFirstCheck", combined)
+        self.assertIn("focusFirstAction", preview)
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_control_center_viewports_accessibility_fonts_and_focus_order(self) -> None:
+        checks = [
+            {
+                "id": f"check-{index}",
+                "label": f"Check {index + 1}",
+                "summary": "Recorded local evidence",
+                "state": "not_recorded",
+                "routeId": "risk-score" if index == 0 else "",
+            }
+            for index in range(4)
+        ]
+        gates = [
+            {
+                "id": gate_id,
+                "label": label,
+                "state": "not_recorded",
+                "summary": "No local evidence recorded.",
+                "ownerLabel": "Operator",
+                "checks": checks,
+            }
+            for gate_id, label in (
+                ("context", "Context"),
+                ("asset", "Asset"),
+                ("interface", "Interface"),
+                ("variants", "Variants"),
+                ("visual", "Visual"),
+                ("review", "Review"),
+                ("delivery", "Delivery"),
+            )
+        ]
+        snapshot = {
+            "schemaVersion": 1,
+            "scopeLabel": "BMW G45",
+            "selectedProfile": {"id": "G45", "label": "BMW G45"},
+            "gates": gates,
+            "selectedGateId": "context",
+            "latestLocalRun": {},
+            "nextAction": {
+                "capabilityId": "diagnostic.run",
+                "actionId": "sgfx_preflight__g45",
+                "label": "Run local QA",
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self._run_headless(
+                f"""
+                import json
+                import time
+                from PySide6.QtCore import QMetaObject, QObject, Qt
+                from PySide6.QtTest import QTest
+                from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
+                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G45", argv=["sgfx-task10-test"])
+                root = runtime.engine.rootObjects()[0]
+                deadline = time.monotonic() + 5
+                while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
+                    runtime.application.processEvents()
+                    QTest.qWait(5)
+                home = root.findChild(QObject, "qaControlCenterHome")
+                home.setProperty("payload", {snapshot!r})
+                runtime.application.processEvents()
+
+                QMetaObject.invokeMethod(root, "focusProductStart")
+                runtime.application.processEvents()
+                focus_order = []
+                for _index in range(9):
+                    focused = runtime.application.focusObject()
+                    focus_order.append(focused.objectName() if focused is not None else "")
+                    QTest.keyClick(root, Qt.Key_Tab)
+                    runtime.application.processEvents()
+
+                viewports = []
+                for width, height in ((1280, 720), (1024, 640)):
+                    root.setWidth(width)
+                    root.setHeight(height)
+                    QMetaObject.invokeMethod(root, "openProfilePopover")
+                    runtime.application.processEvents()
+                    viewports.append({{
+                        "size": [width, height],
+                        "gateCount": root.property("gateCount"),
+                        "allAccessibleNamesPresent": root.property("allAccessibleNamesPresent"),
+                        "primaryActionVisible": root.property("primaryActionVisible"),
+                        "layoutWithinViewport": root.property("layoutWithinViewport"),
+                        "profilePopoverOpen": root.property("profilePopoverOpen"),
+                        "visibleCheckRowCount": root.property("visibleCheckRowCount"),
+                        "entranceDuration": root.property("entranceDuration"),
+                        "reducedTravel": root.property("reducedMotionTravel"),
+                        "reducedStagger": root.property("reducedMotionStagger"),
+                    }})
+                    QMetaObject.invokeMethod(root, "closeProfilePopover")
+                fonts = root.property("productFontFamilies")
+                if hasattr(fonts, "toVariant"):
+                    fonts = fonts.toVariant()
+                print(json.dumps({{
+                    "fonts": fonts,
+                    "focusOrder": focus_order,
+                    "viewports": viewports,
+                }}))
+                runtime.close()
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = __import__("json").loads(result.stdout)
+        self.assertTrue(payload["fonts"]["operational"])
+        self.assertTrue(payload["fonts"]["display"])
+        self.assertEqual(
+            payload["focusOrder"],
+            [
+                "profileSelector",
+                "qaPrimaryAction",
+                "qaPipelineSpine",
+                "qaCheckRow0",
+                "qaCheckRow1",
+                "qaCheckRow2",
+                "qaCheckRow3",
+                "qaInspectionAction",
+                "navigationJumpAction",
+            ],
+        )
+        for viewport in payload["viewports"]:
+            self.assertEqual(viewport["gateCount"], 7)
+            self.assertTrue(viewport["allAccessibleNamesPresent"])
+            self.assertTrue(viewport["primaryActionVisible"])
+            self.assertTrue(viewport["layoutWithinViewport"])
+            self.assertTrue(viewport["profilePopoverOpen"])
+            self.assertEqual(viewport["visibleCheckRowCount"], 4)
+            self.assertLessEqual(viewport["entranceDuration"], 700)
+            self.assertEqual(viewport["reducedTravel"], 8)
+            self.assertEqual(viewport["reducedStagger"], 0)
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_runtime_shell_has_exact_groups_pipeline_geometry_and_overlay_precedence(self) -> None:

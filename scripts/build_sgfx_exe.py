@@ -59,6 +59,13 @@ OPERATOR_CONSOLE_DIST_ENV = "SGFX_GRAFIKS_OPERATOR_CONSOLE_DIST"
 OPERATOR_CONSOLE_DIST_SOURCE = Path(r"C:\swardbuild\sgfx_ui\dist")
 OPERATOR_CONSOLE_SHELL_EXE_NAME = "sgfx_screens.exe"
 GRAFIKS_BUNDLED_SHELL_DIR_NAME = "grafiks_shell"
+PRODUCT_FONT_SHA256 = {
+    "Fredoka.ttf": "2ba02e68b152868aef9ba28e24b3648c7d457fe6f25c761f2c2c53fb61a73fc8",
+    "Inter.ttf": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031",
+    "OFL-Fredoka.txt": "c4ae95e05c7ef05a3a749aad4a6a8feba31dcd17bc198f828768366ad7da770b",
+    "OFL-Inter.txt": "d7cee39dfa656bffe74385c76debffe635788a83c00ce4370718c99d4c2650ff",
+}
+PROTECTED_FONT_TOKENS = ("dynafont", "rodin", "sonic", "sega", "gamefont")
 
 
 def _data_arg(source: str, destination: str) -> str:
@@ -87,6 +94,29 @@ def qml_package_inputs(qml_root: Path | None = None) -> tuple[Path, ...]:
     if not qml_files or not qmldir_files:
         raise RuntimeError("Qt Quick package inputs are incomplete.")
     return tuple(sorted(qml_files + qmldir_files))
+
+
+def product_font_package_inputs(font_root: Path | None = None) -> tuple[Path, ...]:
+    root = font_root or ROOT / "cpp" / "assets" / "fonts"
+    if not root.is_dir() or root.is_symlink() or getattr(root, "is_junction", lambda: False)():
+        raise RuntimeError("The audited product font directory is unavailable.")
+    files = tuple(sorted(root.iterdir()))
+    if tuple(path.name for path in files) != tuple(PRODUCT_FONT_SHA256) or any(
+        not path.is_file() for path in files
+    ):
+        raise RuntimeError("The product font directory contains an unaudited asset set.")
+    for path in files:
+        if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+            raise RuntimeError("A product font asset is linked.")
+        if any(token in path.name.casefold() for token in PROTECTED_FONT_TOKENS):
+            raise RuntimeError("A protected font asset is not permitted.")
+        if sha256_file(path).casefold() != PRODUCT_FONT_SHA256[path.name]:
+            raise RuntimeError("A product font asset failed its audit digest.")
+    for license_name in ("OFL-Fredoka.txt", "OFL-Inter.txt"):
+        license_text = (root / license_name).read_text(encoding="utf-8")
+        if "SIL OPEN FONT LICENSE Version 1.1" not in license_text:
+            raise RuntimeError("A product font OFL record is invalid.")
+    return files
 
 
 def _qml_cache_generator() -> Path:
@@ -199,6 +229,7 @@ def compile_staged_qml_cache(
 
 def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
     qml_package_inputs()
+    product_fonts = product_font_package_inputs()
     data_files = (
         ("sgfx_icon.png", "."),
         ("framework_sgfx_logo.png", "."),
@@ -212,6 +243,9 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
         ("sg_preflight/dashboard", "sg_preflight/dashboard"),
         ("sg_preflight/data", "sg_preflight/data"),
         ("sg_preflight/desktop/qml", "sg_preflight/desktop/qml"),
+    ) + tuple(
+        (path.relative_to(ROOT).as_posix(), "cpp/assets/fonts")
+        for path in product_fonts
     )
     args = [
         "--noconfirm",

@@ -1,11 +1,26 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
 from unittest import mock
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_build_script():
+    path = ROOT / "scripts" / "build_sgfx_exe.py"
+    spec = importlib.util.spec_from_file_location("build_sgfx_exe_task10_test", path)
+    if spec is None or spec.loader is None:
+        raise AssertionError("build_sgfx_exe.py could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class TestQmlImportScanner(unittest.TestCase):
@@ -111,6 +126,29 @@ class TestQmlImportScanner(unittest.TestCase):
 
 
 class TestBundleManifest(unittest.TestCase):
+    def test_product_fonts_are_exact_audited_assets_with_both_ofl_records(self) -> None:
+        module = _load_build_script()
+        approved = module.product_font_package_inputs()
+        self.assertEqual(
+            [path.name for path in approved],
+            ["Fredoka.ttf", "Inter.ttf", "OFL-Fredoka.txt", "OFL-Inter.txt"],
+        )
+        arguments = module.build_pyinstaller_args()
+        rendered = "\n".join(arguments)
+        for name in ("Fredoka.ttf", "Inter.ttf", "OFL-Fredoka.txt", "OFL-Inter.txt"):
+            self.assertIn(name, rendered)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            font_root = Path(temp_dir) / "fonts"
+            shutil.copytree(ROOT / "cpp" / "assets" / "fonts", font_root)
+            (font_root / "Sonic-Rodin.ttf").write_bytes(b"protected font")
+            with self.assertRaises(RuntimeError):
+                module.product_font_package_inputs(font_root)
+            (font_root / "Sonic-Rodin.ttf").unlink()
+            (font_root / "Inter.ttf").write_bytes(b"changed font")
+            with self.assertRaises(RuntimeError):
+                module.product_font_package_inputs(font_root)
+
     def test_source_commit_requires_an_exact_clean_worktree(self) -> None:
         from sg_preflight.bundle_manifest import BundleManifestError, source_commit
 

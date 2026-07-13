@@ -24,6 +24,7 @@ FocusScope {
     signal gateSelected(string gateId)
     signal inspectionRequested
     signal previewFrameRequested(int frameIndex)
+    signal focusNavigationRequested
     property var snapshot: ({})
     property var gates: []
     property var selectedProfile: ({})
@@ -53,7 +54,10 @@ FocusScope {
     readonly property string primaryActionLabel: nextActionLabel
     readonly property bool capabilityBusy: capabilityState === "queued" || capabilityState === "running"
     readonly property bool primaryActionEnabled: Boolean(selectedProfile && selectedProfile.id && nextCapabilityId && pageState === "ready" && !capabilityBusy)
+    readonly property bool primaryActionVisible: primaryAction.visible
     readonly property int visibleCheckRowCount: gateDetail.visibleCheckRowCount
+    readonly property bool allAccessibleNamesPresent: primaryAction.Accessible.name.length > 0 && pipeline.allAccessibleNamesPresent && gateDetail.allAccessibleNamesPresent && contextPreview.allAccessibleNamesPresent
+    property alias primaryActionItem: primaryAction
 
     objectName: "qaControlCenterHome"
 
@@ -101,6 +105,10 @@ FocusScope {
 
     function restoreFocus() {
         pipeline.forceActiveFocus();
+    }
+
+    function focusPrimaryAction() {
+        primaryAction.forceActiveFocus();
     }
 
     onPayloadChanged: acceptPayload(root.payload)
@@ -162,6 +170,10 @@ FocusScope {
                     focusPolicy: Qt.StrongFocus
                     Accessible.role: Accessible.Button
                     Accessible.name: text
+                    Keys.onTabPressed: event => {
+                        pipeline.forceActiveFocus();
+                        event.accepted = true;
+                    }
                     onClicked: root.requestPrimaryAction()
                 }
             }
@@ -172,6 +184,8 @@ FocusScope {
                 spacing: Theme.space3
 
                 QaContextPreview {
+                    id: contextPreview
+
                     Layout.preferredWidth: 318
                     Layout.fillHeight: true
                     selectedProfile: root.selectedProfile
@@ -184,6 +198,7 @@ FocusScope {
                     reducedMotion: root.reducedMotion
                     onInspectionRequested: root.inspectionRequested()
                     onPreviewFrameRequested: frameIndex => root.previewFrameRequested(frameIndex)
+                    onFocusNavigationRequested: root.focusNavigationRequested()
                 }
 
                 QaGateDetail {
@@ -194,6 +209,7 @@ FocusScope {
                     gate: root.selectedGate
                     reducedMotion: root.reducedMotion
                     onRouteRequested: routeId => root.routeRequested(routeId)
+                    onFocusContextRequested: contextPreview.focusFirstAction()
                 }
             }
 
@@ -205,6 +221,10 @@ FocusScope {
                 gates: root.gates
                 selectedGateId: root.selectedGateId
                 reducedMotion: root.reducedMotion
+                onFocusChecksRequested: {
+                    if (!gateDetail.focusFirstCheck())
+                        contextPreview.focusFirstAction();
+                }
                 onGateSelected: gateId => {
                     root.selectedGateOverride = gateId;
                     root.gateSelected(gateId);

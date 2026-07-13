@@ -22,6 +22,22 @@ def _load_script():
 
 
 class TestQmlFormatCheck(unittest.TestCase):
+    def test_control_center_qml_has_no_infinite_or_protected_asset_motion(self) -> None:
+        qml_root = ROOT / "sg_preflight" / "desktop" / "qml"
+        source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(qml_root.rglob("*.qml"))
+        )
+        lowered = source.casefold()
+
+        self.assertNotIn("animation.infinite", lowered)
+        self.assertNotRegex(lowered, r"loops\s*:\s*-1")
+        self.assertNotIn("fontloader", lowered)
+        self.assertNotIn("http://", lowered)
+        self.assertNotIn("https://", lowered)
+        for token in ("dynafont", "rodin", "sonic", "sega"):
+            self.assertNotIn(token, lowered)
+
     def test_each_qml_file_is_checked_without_inplace_mutation_and_newlines_are_normalized(self) -> None:
         module = _load_script()
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1215,7 +1215,7 @@ git commit -m "feat(ramses): add bounded authored preview helper"
 - Consumes: repository assets `cpp/assets/fonts/Inter.ttf`, `cpp/assets/fonts/Fredoka.ttf`, and their OFL texts; the established reduced-motion flag and real lifecycle states.
 - Produces: registered font-family names, bounded transition tokens, accessible traversal, and valid geometry at both contract viewports.
 
-- [ ] **Step 1: Write failing font, motion, accessibility, and geometry tests**
+- [x] **Step 1: Write failing font, motion, accessibility, and geometry tests**
 
 Require font registration success or a safe system fallback, but never a network or protected font. Reject any QML animation tied to a fake percentage or an infinite loop. At runtime:
 
@@ -1231,7 +1231,7 @@ self.assertEqual(payload["reducedStagger"], 0)
 
 Run these assertions at 1280 x 720 and 1024 x 640 with the profile popover open and four detail rows present.
 
-- [ ] **Step 2: Run visual-contract tests and verify RED**
+- [x] **Step 2: Run visual-contract tests and verify RED**
 
 Run:
 
@@ -1241,7 +1241,7 @@ Run:
 
 Expected: FAIL until font assets, final focus behavior, and the new component geometry are packaged and tested.
 
-- [ ] **Step 3: Register the two audited fonts before QML load**
+- [x] **Step 3: Register the two audited fonts before QML load**
 
 In `qt_quick_app.py`:
 
@@ -1260,19 +1260,19 @@ def _load_product_fonts() -> dict[str, str]:
 
 Expose only family names, never asset paths. Operational labels fall back to the platform sans family; display accents fall back to operational.
 
-- [ ] **Step 4: Apply finite, semantic motion**
+- [x] **Step 4: Apply finite, semantic motion**
 
 Use structure -> focus/title -> content staging once per route/Presentation event. Keep the action enabled from the first stable frame. Use only real `queued`, `running`, `completed`, or backend progress values for active motion. The preview animation has `loops: 1`; all other decorative loops are forbidden.
 
-- [ ] **Step 5: Complete keyboard and screen-reader behavior**
+- [x] **Step 5: Complete keyboard and screen-reader behavior**
 
 Tab order is profile, primary action, gates, check rows, context actions, then navigation. Left/Right changes gate; Enter/Return/Space activates. Focus is indicated by border and scale/weight. Every status is text. Esc follows overlay -> Presentation -> navigation/back -> exit-guidance priority.
 
-- [ ] **Step 6: Package fonts plus OFL texts and scan provenance**
+- [x] **Step 6: Package fonts plus OFL texts and scan provenance**
 
 Add all four exact files to the PyInstaller data inputs. Extend the manifest/provenance scan to require both OFL texts and reject filenames or hashes associated with DynaFont, Sonic/game fonts, copied installer resources, URLs, and unaudited external assets.
 
-- [ ] **Step 7: Format QML and run interaction gates**
+- [x] **Step 7: Format QML and run interaction gates**
 
 Run:
 
@@ -1283,7 +1283,7 @@ Run:
 
 Expected: PASS; focus, reduced motion, semantic color/text, finite animation, viewports, fonts, and provenance are all covered.
 
-- [ ] **Step 8: Commit interaction and typography**
+- [x] **Step 8: Commit interaction and typography**
 
 ```powershell
 git add sg_preflight/desktop/qt_quick_app.py sg_preflight/desktop/qml scripts/build_sgfx_exe.py tests/test_qt_quick_host.py tests/test_bundle_manifest.py tests/test_qml_format.py

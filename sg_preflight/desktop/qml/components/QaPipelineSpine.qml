@@ -11,11 +11,19 @@ FocusScope {
     required property string selectedGateId
     required property bool reducedMotion
     signal gateSelected(string gateId)
+    signal focusChecksRequested
     readonly property var gateIds: {
         const ids = [];
         for (let index = 0; index < gates.length; ++index)
             ids.push(gates[index].id);
         return ids;
+    }
+    readonly property bool allAccessibleNamesPresent: {
+        for (let index = 0; index < gates.length; ++index) {
+            if (!gates[index].label || !gates[index].state)
+                return false;
+        }
+        return true;
     }
 
     function move(delta) {
@@ -28,8 +36,17 @@ FocusScope {
     objectName: "qaPipelineSpine"
     implicitHeight: 108
     activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: "QA gates, " + String(gates.length) + " stages"
+    Keys.onReturnPressed: gateSelected(selectedGateId)
+    Keys.onEnterPressed: gateSelected(selectedGateId)
+    Keys.onSpacePressed: gateSelected(selectedGateId)
     Keys.onLeftPressed: move(-1)
     Keys.onRightPressed: move(1)
+    Keys.onTabPressed: event => {
+        root.focusChecksRequested();
+        event.accepted = true;
+    }
 
     ListView {
         id: gateList
@@ -52,7 +69,7 @@ FocusScope {
             objectName: "qaGate" + gateItem.index
             width: Math.max(104, (gateList.width - Theme.space2 * 6) / 7)
             height: gateList.height
-            activeFocusOnTab: true
+            activeFocusOnTab: false
             Accessible.role: Accessible.Button
             Accessible.name: gateItem.modelData.label + ", " + gateItem.modelData.state
             Keys.onReturnPressed: root.gateSelected(gateItem.modelData.id)
@@ -60,6 +77,13 @@ FocusScope {
             Keys.onSpacePressed: root.gateSelected(gateItem.modelData.id)
             Keys.onLeftPressed: root.move(-1)
             Keys.onRightPressed: root.move(1)
+            scale: gateItem.selected && root.activeFocus ? 1.02 : 1
+
+            Behavior on scale {
+                NumberAnimation {
+                    duration: Theme.duration(Theme.focusDuration, root.reducedMotion)
+                }
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -112,7 +136,7 @@ FocusScope {
                 anchors.fill: parent
                 hoverEnabled: true
                 onClicked: {
-                    gateItem.forceActiveFocus();
+                    root.forceActiveFocus();
                     root.gateSelected(gateItem.modelData.id);
                 }
             }

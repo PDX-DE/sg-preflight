@@ -19,19 +19,28 @@ FocusScope {
     required property bool reducedMotion
     signal inspectionRequested
     signal previewFrameRequested(int frameIndex)
+    signal focusNavigationRequested
     readonly property bool hasSelection: Boolean(selectedProfile && selectedProfile.id)
     readonly property bool previewReady: previewState === "ready" && previewToken.length > 0 && previewFrameCount > 0
     readonly property bool playbackActive: root.visible && root.Window.window !== null && root.Window.window.active
+    readonly property bool allAccessibleNamesPresent: inspectionAction.Accessible.name.length > 0 && (!previewScrubber.visible || previewScrubber.Accessible.name.length > 0)
     property bool playbackComplete: false
 
     objectName: "qaContextPreview"
-    activeFocusOnTab: root.hasSelection
+    activeFocusOnTab: false
 
     function requestFrame(candidate: int) {
         if (!root.previewReady)
             return;
         const bounded = Math.max(0, Math.min(root.previewFrameCount - 1, candidate));
         root.previewFrameRequested(bounded);
+    }
+
+    function focusFirstAction() {
+        if (previewScrubber.visible)
+            previewScrubber.forceActiveFocus();
+        else
+            inspectionAction.forceActiveFocus();
     }
 
     onPreviewTokenChanged: playbackComplete = false
@@ -121,23 +130,6 @@ FocusScope {
                     border.width: 3
                 }
             }
-
-            SequentialAnimation on y {
-                running: root.hasSelection && !root.previewReady && !root.reducedMotion
-                loops: Animation.Infinite
-                NumberAnimation {
-                    from: -2
-                    to: 2
-                    duration: 1200
-                    easing.type: Easing.InOutSine
-                }
-                NumberAnimation {
-                    from: 2
-                    to: -2
-                    duration: 1200
-                    easing.type: Easing.InOutSine
-                }
-            }
         }
 
         Timer {
@@ -190,6 +182,8 @@ FocusScope {
                 elide: Text.ElideRight
             }
             Slider {
+                id: previewScrubber
+
                 objectName: "previewScrubber"
                 Layout.fillWidth: true
                 visible: root.previewReady && root.previewFrameCount > 1
@@ -197,7 +191,12 @@ FocusScope {
                 to: Math.max(0, root.previewFrameCount - 1)
                 stepSize: 1
                 value: root.previewFrameIndex
+                focusPolicy: Qt.StrongFocus
                 Accessible.name: "3D preview frame"
+                Keys.onTabPressed: event => {
+                    inspectionAction.forceActiveFocus();
+                    event.accepted = true;
+                }
                 onMoved: root.requestFrame(Math.round(value))
             }
             Label {
@@ -209,12 +208,19 @@ FocusScope {
                 elide: Text.ElideRight
             }
             Button {
+                id: inspectionAction
+
+                objectName: "qaInspectionAction"
                 Layout.fillWidth: true
                 text: "Open 3D inspection"
                 enabled: root.hasSelection
                 focusPolicy: Qt.StrongFocus
                 Accessible.role: Accessible.Button
                 Accessible.name: text
+                Keys.onTabPressed: event => {
+                    root.focusNavigationRequested();
+                    event.accepted = true;
+                }
                 onClicked: root.inspectionRequested()
             }
         }

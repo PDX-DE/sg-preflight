@@ -14,8 +14,8 @@ QtObject {
     readonly property color statusWarn: "#cca700"
     readonly property color statusGood: "#89d185"
     readonly property color statusNeutral: "#8b949e"
-    readonly property string operationalFont: "Inter"
-    readonly property string displayFont: "Fredoka"
+    readonly property string operationalFont: typeof sgfxProductFonts !== "undefined" && sgfxProductFonts.operational ? sgfxProductFonts.operational : "sans-serif"
+    readonly property string displayFont: typeof sgfxProductFonts !== "undefined" && sgfxProductFonts.display ? sgfxProductFonts.display : operationalFont
     readonly property int space1: 6
     readonly property int space2: 10
     readonly property int space3: 16

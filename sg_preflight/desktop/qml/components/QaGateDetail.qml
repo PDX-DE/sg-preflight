@@ -11,11 +11,34 @@ FocusScope {
     required property var gate
     required property bool reducedMotion
     signal routeRequested(string routeId)
+    signal focusContextRequested
     readonly property var checks: gate && gate.checks ? gate.checks : []
     readonly property int visibleCheckRowCount: Math.min(4, checks.length)
+    readonly property bool allAccessibleNamesPresent: {
+        for (let index = 0; index < visibleCheckRowCount; ++index) {
+            if (!checks[index].label || !checks[index].state)
+                return false;
+        }
+        return true;
+    }
+
+    function focusFirstCheck() {
+        if (checkRows.count < 1)
+            return false;
+        checkRows.itemAt(0).forceActiveFocus();
+        return true;
+    }
+
+    function focusNextCheck(index: int) {
+        if (index + 1 < checkRows.count) {
+            checkRows.itemAt(index + 1).forceActiveFocus();
+            return;
+        }
+        root.focusContextRequested();
+    }
 
     objectName: "qaGateDetail"
-    activeFocusOnTab: true
+    activeFocusOnTab: false
 
     Rectangle {
         anchors.fill: parent
@@ -70,6 +93,8 @@ FocusScope {
         }
 
         Repeater {
+            id: checkRows
+
             model: root.visibleCheckRowCount
 
             delegate: FocusScope {
@@ -81,7 +106,7 @@ FocusScope {
                 objectName: "qaCheckRow" + checkRow.index
                 Layout.fillWidth: true
                 Layout.minimumHeight: 48
-                activeFocusOnTab: Boolean(checkRow.checkData.routeId)
+                activeFocusOnTab: true
                 Accessible.role: Accessible.Button
                 Accessible.name: checkRow.checkData.label + ", " + checkRow.checkData.state
                 Keys.onReturnPressed: {
@@ -91,6 +116,14 @@ FocusScope {
                 Keys.onEnterPressed: {
                     if (checkRow.checkData.routeId)
                         root.routeRequested(checkRow.checkData.routeId);
+                }
+                Keys.onSpacePressed: {
+                    if (checkRow.checkData.routeId)
+                        root.routeRequested(checkRow.checkData.routeId);
+                }
+                Keys.onTabPressed: event => {
+                    root.focusNextCheck(checkRow.index);
+                    event.accepted = true;
                 }
 
                 Rectangle {

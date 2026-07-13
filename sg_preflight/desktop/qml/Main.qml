@@ -23,12 +23,19 @@ ApplicationWindow {
     readonly property bool primaryActionEnabled: homePage.primaryActionEnabled
     readonly property string selectedGateId: homePage.selectedGateId
     readonly property int visibleCheckRowCount: homePage.visibleCheckRowCount
+    readonly property int gateCount: homePage.pipelineGateIds.length
+    readonly property int entranceDuration: Theme.entranceLimit
     readonly property int reducedMotionDuration: Theme.duration(Theme.motionEmphasis, true)
     readonly property int reducedMotionTravel: Theme.travel(16, true)
     readonly property int reducedMotionStagger: Theme.stagger(5, true)
     readonly property string activeNavigationRouteId: navigationSidebar.currentRouteId
     readonly property bool profileSelectorFocused: profileSelector.activeFocus
+    readonly property bool profilePopoverOpen: profileSelector.popup.visible
     readonly property string selectedProfileValue: profileSelector.currentValue || ""
+    readonly property var productFontFamilies: sgfxProductFonts
+    readonly property bool primaryActionVisible: homePage.primaryActionVisible
+    readonly property bool layoutWithinViewport: referenceSurface.x >= -0.5 && referenceSurface.y >= -0.5 && referenceSurface.x + referenceSurface.width * referenceSurface.scale <= width + 0.5 && referenceSurface.y + referenceSurface.height * referenceSurface.scale <= height + 0.5
+    readonly property bool allAccessibleNamesPresent: profileSelector.Accessible.name.length > 0 && presentationViewControl.Accessible.name.length > 0 && grafiksLaunchControl.Accessible.name.length > 0 && homePage.allAccessibleNamesPresent && navigationSidebar.allAccessibleNamesPresent
     property bool reducedMotion: false
     property bool presentationView: false
     property bool jumpOpen: false
@@ -42,6 +49,18 @@ ApplicationWindow {
         presentationView = enabled;
         sidebarOpen = !enabled;
         Qt.callLater(homePage.restoreFocus);
+    }
+
+    function focusProductStart() {
+        profileSelector.forceActiveFocus();
+    }
+
+    function openProfilePopover() {
+        profileSelector.popup.open();
+    }
+
+    function closeProfilePopover() {
+        profileSelector.popup.close();
     }
 
     function handleShortcut(key: string) {
@@ -80,18 +99,6 @@ ApplicationWindow {
     title: "SGFX QA Preflight"
     color: Theme.canvas
 
-    FontLoader {
-        id: operationalFontLoader
-
-        source: "../../../cpp/assets/fonts/Inter.ttf"
-    }
-
-    FontLoader {
-        id: displayFontLoader
-
-        source: "../../../cpp/assets/fonts/Fredoka.ttf"
-    }
-
     onFrameSwapped: {
         if (!shellInitializationStarted) {
             shellInitializationStarted = true;
@@ -101,7 +108,10 @@ ApplicationWindow {
 
     onReducedMotionChanged: desktopController.setPreviewReducedMotion(reducedMotion)
 
-    Component.onCompleted: desktopController.setPreviewReducedMotion(reducedMotion)
+    Component.onCompleted: {
+        desktopController.setPreviewReducedMotion(reducedMotion);
+        Qt.callLater(window.focusProductStart);
+    }
 
     Shortcut {
         sequence: "F1"
@@ -196,16 +206,6 @@ ApplicationWindow {
                                 wrapMode: Text.WordWrap
                             }
                         }
-                        Button {
-                            objectName: "presentationViewControl"
-                            Layout.preferredHeight: 50
-                            text: "Presentation view"
-                            focusPolicy: Qt.StrongFocus
-                            Accessible.role: Accessible.Button
-                            Accessible.name: text
-                            onClicked: window.setPresentation(true)
-                        }
-
                         ComboBox {
                             id: profileSelector
 
@@ -230,6 +230,7 @@ ApplicationWindow {
                             focusPolicy: Qt.StrongFocus
                             Accessible.role: Accessible.ComboBox
                             Accessible.name: "Selected car profile"
+                            KeyNavigation.tab: homePage.primaryActionItem
                             onActivated: window.desktopController.selectProfile(currentValue)
                             onCountChanged: Qt.callLater(syncProfileIndex)
 
@@ -248,6 +249,19 @@ ApplicationWindow {
                             }
                         }
                         Button {
+                            id: presentationViewControl
+
+                            objectName: "presentationViewControl"
+                            Layout.preferredHeight: 50
+                            text: "Presentation view"
+                            focusPolicy: Qt.StrongFocus
+                            Accessible.role: Accessible.Button
+                            Accessible.name: text
+                            onClicked: window.setPresentation(true)
+                        }
+                        Button {
+                            id: grafiksLaunchControl
+
                             objectName: "grafiksLaunchControl"
                             Layout.preferredHeight: 50
                             text: {
@@ -302,6 +316,7 @@ ApplicationWindow {
                                 "profile_id": window.desktopController.currentProfileId
                             })
                             onPreviewFrameRequested: frameIndex => window.desktopController.selectPreviewFrame(frameIndex)
+                            onFocusNavigationRequested: navigationSidebar.focusFirst()
                         }
 
                         Loader {

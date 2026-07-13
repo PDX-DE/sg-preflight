@@ -7,7 +7,7 @@ from typing import Callable, Sequence
 
 try:
     from PySide6.QtCore import QCoreApplication, QUrl
-    from PySide6.QtGui import QGuiApplication, QIcon
+    from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuickControls2 import QQuickStyle
 except ImportError as exc:
@@ -83,6 +83,23 @@ def _application(argv: Sequence[str] | None) -> QGuiApplication:
     return application
 
 
+def _load_product_fonts() -> dict[str, str]:
+    fallback = "sans-serif"
+    if not isinstance(QCoreApplication.instance(), QGuiApplication):
+        return {"operational": fallback, "display": fallback}
+    families: dict[str, str] = {}
+    for key, relative in (
+        ("operational", "cpp/assets/fonts/Inter.ttf"),
+        ("display", "cpp/assets/fonts/Fredoka.ttf"),
+    ):
+        font_id = QFontDatabase.addApplicationFont(str(runtime_asset_path(relative)))
+        names = QFontDatabase.applicationFontFamilies(font_id) if font_id >= 0 else []
+        families[key] = names[0] if names else ""
+    families["operational"] = families["operational"] or fallback
+    families["display"] = families["display"] or families["operational"]
+    return families
+
+
 def _shutdown_created(
     controller: DesktopController | None,
     task_coordinator: PageTaskCoordinator | None,
@@ -153,6 +170,7 @@ def create_qt_quick_runtime(
     controller: DesktopController | None = None
     try:
         application = _application(argv)
+        product_fonts = _load_product_fonts()
         engine = QQmlApplicationEngine()
         qml_import_root = runtime_asset_path("sg_preflight/desktop/qml")
         if not qml_import_root.is_dir():
@@ -192,6 +210,7 @@ def create_qt_quick_runtime(
         context.setContextProperty("shellModel", shell_model)
         context.setContextProperty("desktopController", controller)
         context.setContextProperty("grafiksHost", grafiks_host)
+        context.setContextProperty("sgfxProductFonts", product_fonts)
         engine.setInitialProperties(
             {
                 "surfaceModel": surface_model,

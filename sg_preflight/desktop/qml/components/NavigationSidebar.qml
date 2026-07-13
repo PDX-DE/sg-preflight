@@ -14,6 +14,11 @@ Rectangle {
     required property bool reducedMotion
     signal navigateRequested(string routeId)
     signal jumpRequested
+    readonly property bool allAccessibleNamesPresent: jumpButton.Accessible.name.length > 0
+
+    function focusFirst() {
+        jumpButton.forceActiveFocus();
+    }
 
     color: Theme.panel
     border.color: Theme.border
@@ -38,6 +43,9 @@ Rectangle {
             font.pixelSize: 12
         }
         Button {
+            id: jumpButton
+
+            objectName: "navigationJumpAction"
             Layout.fillWidth: true
             Layout.minimumHeight: 50
             text: "Jump to page  /"
