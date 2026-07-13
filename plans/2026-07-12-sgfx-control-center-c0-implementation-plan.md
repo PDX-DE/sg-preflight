@@ -1351,7 +1351,7 @@ Validate the Control Center QML components, font/license files, optional audited
 
 It must stop on a failed gate and must never call Jira, Clockodo, SVN, Git push, BMW export, screenshot capture, rack, or vehicle commands.
 
-- [ ] **Step 5: Run the package verifier from the exact tree**
+- [x] **Step 5: Run the package verifier from the exact tree**
 
 Run:
 
@@ -1361,7 +1361,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_control_center_c0.ps1
 
 Expected: all deterministic gates PASS; preview is PASS or explicit `UNAVAILABLE`; loaded-laptop timing is PASS or explicit `OPEN_LOADED_WORKSTATION`; no source mutation and no forbidden bundled content.
 
-- [ ] **Step 6: Run the broad Python suite and existing smoke gates**
+- [x] **Step 6: Run the broad Python suite and existing smoke gates**
 
 Run:
 
@@ -1372,7 +1372,9 @@ powershell -ExecutionPolicy Bypass -File scripts\run_smoke_test.ps1
 
 Expected: PASS. If the full suite exceeds its accepted execution window, preserve the log, report the exact last completed test, and run all affected modules explicitly; do not claim full discovery passed.
 
-- [ ] **Step 7: Review the complete diff for hard-lock violations**
+Execution evidence: full discovery exceeded the 904.6-second window after 262 completed tests with no failure/error line and no suite footer. The explicit affected-module matrix passed 198 tests in 163.238 seconds. The existing smoke wrapper's demo-good and demo-broken report stages passed; its duplicate full-discovery stage was stopped after the second accepted-window overrun and remains explicitly OPEN rather than being claimed as passed.
+
+- [x] **Step 7: Review the complete diff for hard-lock violations**
 
 Run:
 
@@ -1385,7 +1387,7 @@ rg -n -i "co-authored-by|generated with|written by ai|assistant|clockodo|jira.*p
 
 Expected: clean whitespace; no attribution; Clockodo appears only in the local worklog documentation; Jira appears only as copy-ready evidence or existing explicit integrations, never a new automatic Home action.
 
-- [ ] **Step 8: Commit package and verification gates**
+- [x] **Step 8: Commit package and verification gates**
 
 ```powershell
 git add sg_preflight/bundle_manifest.py scripts/build_sgfx_exe.py scripts/benchmark_qt_quick.py scripts/verify_control_center_c0.ps1 tests/test_bundle_manifest.py tests/test_qt_quick_benchmark.py tests/test_qt_quick_preview.py
@@ -1406,7 +1408,7 @@ git commit -m "build: verify QA control center bundle"
 - Consumes: accepted commits, test commands/results, verification JSON/Markdown, artifact hashes, actual local timestamps, and explicit OPEN items.
 - Produces: copy-ready Jira ticket text and manual Clockodo entry rows. It performs no network call and records no guessed time.
 
-- [ ] **Step 1: Create the Jira-ready ticket record from verified evidence**
+- [x] **Step 1: Create the Jira-ready ticket record from verified evidence**
 
 Use this exact structure and source every populated line from the accepted implementation commits and verification artifacts:
 
@@ -1437,7 +1439,7 @@ Write four short paragraphs derived from the sections above: delivered behavior;
 
 Do not include confidential Confluence text, secrets, absolute private paths, unsupported productivity claims, or approval language.
 
-- [ ] **Step 2: Create the Clockodo-friendly work ledger using actual timestamps**
+- [x] **Step 2: Create the Clockodo-friendly work ledger using actual timestamps**
 
 Use one row per implementation beat:
 
@@ -1450,15 +1452,15 @@ Use one row per implementation beat:
 
 Populate the first row from the planning beat's recorded start/end timestamps and plan commit. Populate later rows only when their durable handoff or verification log contains both endpoints. Calculate elapsed from those values, round only according to the user's Clockodo practice, and keep the unrounded timestamps in the ledger. Do not infer time for frozen windows, idle periods, or earlier chats without durable timestamps.
 
-- [ ] **Step 3: Update the changelog from shipped behavior only**
+- [x] **Step 3: Update the changelog from shipped behavior only**
 
 Create the opt-in teammate-pilot worksheet before updating the changelog. It records, for both the pre-C0 path and C0 path: time from usable shell to intended QA action; time from completed local preflight to first actionable finding; number of separate surfaces/manual searches; duplicate values re-entered for handoff; presence of profile/source/finding/provenance/owner/next-action fields; and elapsed time to prepare copy-ready BMW ticket/handoff material. Each observation includes participant role, profile, local timestamp, observation method, and consent/opt-in state. It defines no target and emits no improvement claim until paired observations exist.
 
-- [ ] **Step 4: Update the changelog from shipped behavior only**
+- [x] **Step 4: Update the changelog from shipped behavior only**
 
 Add concise bullets for explicit selection, local QA action, seven-gate Control Center, Presentation, bounded preview/fallback, and inspection naming. Keep preview or performance claims marked unavailable/open when their gates did not pass.
 
-- [ ] **Step 5: Verify documentation against code and logs**
+- [x] **Step 5: Verify documentation against code and logs**
 
 Run:
 
@@ -1471,14 +1473,14 @@ git show --check --oneline HEAD
 
 Expected: no template markers remain, every PASS has a concrete command/result, every duration has real timestamps, and every OPEN item remains explicit.
 
-- [ ] **Step 6: Commit the delivery record**
+- [x] **Step 6: Commit the delivery record**
 
 ```powershell
 git add docs/tickets/sgfx-control-center-c0.md docs/worklogs/sgfx-control-center-c0.md docs/pilots/sgfx-control-center-c0-pilot.md CHANGELOG.md
 git commit -m "docs: record control center delivery evidence"
 ```
 
-- [ ] **Step 7: Update durable recovery files after the commit**
+- [x] **Step 7: Update durable recovery files after the commit**
 
 Append a physically-last beat to the main checkout's `out/agent-control/STATE.md` and `out/agent-handoffs/codex_to_claude.md` with:
 

@@ -7,6 +7,12 @@ outside this bundle.
 ## [Unreleased - local alpha]
 
 ### Added
+- Profile-neutral QA Control Center startup with explicit operator selection instead of an invented default profile.
+- One selected-profile local preflight action limited to Anchors, Constants, Carpaints, and Project Sanity.
+- Seven truthful Home and Full QA gates with bounded copy-ready evidence and a deterministic next safe action.
+- Same-data Presentation mode that changes chrome without changing the selected profile, evidence, action, or inspection identity.
+- Bounded selected-profile Ramses turntable preview with an opaque cache channel and an honest generic fallback when the compatible scene or helper is unavailable.
+- Product-facing `Open 3D inspection` naming while the internal typed Grafiks capability remains unchanged.
 - Native operator observability: read-only overview panel sourced from the Python `desktop-state overview` endpoint.
 - Screenshot review prioritization: P0-P3 suggested review order for screenshot candidates. This is guidance, not a verdict.
 - Daily / morning QA digest: JSON, text, and Markdown status summaries with evidence, blockers, manual-review pending, waiting-owner, and suggested-review-order sections.
@@ -59,6 +65,8 @@ outside this bundle.
 - Dependency auto-onboarding fast-path now writes detected install paths immediately so setup and pre-flight surfaces agree.
 
 ### Known limitations
+- The C0 Ramses preview is a finite rendered turntable sequence, not a continuously interactive embedded real-time viewport.
+- Warm-start and first-run Control Center timing remain open until measured on a reference-ready workstation.
 - Local alpha for teammate review and SGFX workflow support.
 - Manual RaCo, Blender, emulator, screenshot, and delivery review remain required.
 - `review-board latest --json` requires a generated or copied review package.
