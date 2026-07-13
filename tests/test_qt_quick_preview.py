@@ -88,15 +88,17 @@ class TestNativePreviewHelper(unittest.TestCase):
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_local_compatible_scene_round_trips_through_the_coordinator_when_available(self) -> None:
+        from sg_preflight.desktop.qt_quick_app import _preview_profile_resolver
         from sg_preflight.desktop.preview_coordinator import PreviewCoordinator
         from sg_preflight.desktop.preview_image_provider import PreviewImageProvider
-        from sg_preflight.profiles import RunProfile
 
         helper = self._helper()
         scene = Path(os.environ.get("SGFX_CINE_PREVIEW_SCENE", ""))
         if helper is None or not scene.is_file():
             self.skipTest("compatible local preview inputs are unavailable")
-        project = scene.parents[1]
+        bmw_root = scene.parents[4]
+        expected_scene = bmw_root / "Cars" / "BMW" / "G45" / "export" / "exported.ramses"
+        self.assertEqual(scene.resolve(), expected_scene.resolve())
         before = self._sha256(scene)
         with tempfile.TemporaryDirectory() as temp_dir:
             provider = PreviewImageProvider()
@@ -104,27 +106,20 @@ class TestNativePreviewHelper(unittest.TestCase):
                 cache_root=Path(temp_dir) / "cache",
                 helper_path=helper,
                 image_provider=provider,
+                profile_resolver=_preview_profile_resolver(Path(temp_dir), bmw_root),
             )
             try:
-                profile = RunProfile(
-                    profile_id="G45",
-                    label="BMW G45",
-                    repo_root=project.parents[2],
-                    project_root=project,
-                    project_relative=Path("cars/BMW/G45"),
-                    config_path=Path(temp_dir) / "config.json",
-                    reference_repo_root=Path(temp_dir) / "missing-reference",
-                )
-                coordinator.request(
-                    profile=profile,
+                coordinator.request_profile(
+                    "G45",
                     generation=1,
-                    reduced_motion=True,
+                    reduced_motion=False,
+                    allow_launch=True,
                 )
                 self.assertTrue(coordinator.wait_for_idle(30))
                 state = coordinator.public_state()
 
                 self.assertEqual(state.state, "ready")
-                self.assertEqual(state.frame_count, 1)
+                self.assertEqual(state.frame_count, 24)
                 self.assertRegex(state.token, re.compile(r"^[A-Za-z0-9_-]{16,}$"))
                 self.assertNotIn(str(scene), asdict(state).values())
                 self.assertEqual(self._sha256(scene), before)

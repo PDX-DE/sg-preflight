@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import sys
 from typing import Callable, Sequence
@@ -137,15 +137,32 @@ def _preview_profile_resolver(
     bmw_root: Path | None,
 ) -> Callable[[str], RunProfile | None]:
     def resolve(profile_id: str) -> RunProfile | None:
+        from sg_preflight.bmw_delivery import discover_bmw_models_repo
         from sg_preflight.profiles import list_run_profiles
 
         try:
             profiles = list_run_profiles(workspace, bmw_root=bmw_root)
         except (OSError, RuntimeError, ValueError):
             return None
-        return next(
+        profile = next(
             (profile for profile in profiles if profile.profile_id.casefold() == profile_id.casefold()),
             None,
+        )
+        if profile is None:
+            return None
+        source_root = (
+            bmw_root
+            if bmw_root is not None
+            else discover_bmw_models_repo(workspace)
+        ).absolute()
+        project_root = source_root / profile.project_relative
+        if not (project_root / "export" / "exported.ramses").is_file():
+            return profile
+        return replace(
+            profile,
+            repo_root=source_root,
+            project_root=project_root,
+            reference_repo_root=source_root,
         )
 
     return resolve
