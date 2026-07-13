@@ -494,8 +494,8 @@ def environment_fingerprint(
     return sanitize_environment_fingerprint(fingerprint)
 
 
-def benchmark_target() -> BenchmarkTarget:
-    bundle = ROOT / "dist" / "sgfx-preflight"
+def benchmark_target(bundle_directory: Path | None = None) -> BenchmarkTarget:
+    bundle = Path(bundle_directory) if bundle_directory is not None else ROOT / "dist" / "sgfx-preflight"
     executable = bundle / "sgfx-preflight.exe"
     manifest = bundle / "bundle-manifest.json"
     if executable.exists() or manifest.exists():
@@ -680,14 +680,29 @@ def _load_samples(path: Path) -> Mapping[str, object]:
     return payload
 
 
+def control_center_timing_gate(reference_ready: bool) -> dict[str, object]:
+    return {
+        "state": "REFERENCE_READY" if reference_ready else "OPEN_LOADED_WORKSTATION",
+        "required_scenarios": ["warm-start", "first-run"],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate repeatable Qt Quick performance evidence.")
-    parser.add_argument("--scenario", choices=SCENARIOS, required=True)
+    parser.add_argument("--scenario", choices=SCENARIOS)
     parser.add_argument("--format", choices=("json",), default="json")
     parser.add_argument("--samples", type=Path)
+    parser.add_argument("--bundle", type=Path)
+    parser.add_argument("--control-center-status", action="store_true")
+    parser.add_argument("--reference-ready", action="store_true")
     args = parser.parse_args(argv)
+    if args.control_center_status:
+        print(json.dumps(control_center_timing_gate(args.reference_ready), sort_keys=True))
+        return 0
+    if args.scenario is None:
+        parser.error("--scenario is required unless --control-center-status is used")
     try:
-        target = None if args.samples is not None else benchmark_target()
+        target = None if args.samples is not None else benchmark_target(args.bundle)
         raw_samples = (
             _load_samples(args.samples)
             if args.samples is not None

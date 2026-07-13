@@ -1305,7 +1305,7 @@ git commit -m "feat(qt): finish control center interaction"
 - Consumes: staged PyInstaller bundle, helper executable/DLLs, QML tree, font assets/licenses, preview cache, and read-only source roots.
 - Produces: machine-readable `control-center-c0-verification.json` with commit, package hashes, capability/surface counts, viewport results, startup samples, cache totals, source before/after hashes, and explicit OPEN fields.
 
-- [ ] **Step 1: Write failing manifest and verifier tests**
+- [x] **Step 1: Write failing manifest and verifier tests**
 
 Require these manifest facts without private absolute paths:
 
@@ -1320,7 +1320,7 @@ self.assertIn(manifest["ramses_preview_helper"], {"included", "unavailable"})
 
 If the helper is unavailable, package must retain the generic fallback and state `unavailable`; it must not fail the independently green QA truth path.
 
-- [ ] **Step 2: Run bundle and benchmark tests and verify RED**
+- [x] **Step 2: Run bundle and benchmark tests and verify RED**
 
 Run:
 
@@ -1330,11 +1330,11 @@ Run:
 
 Expected: FAIL until C0 metadata and exact cache/source invariants are recorded.
 
-- [ ] **Step 3: Extend staged-bundle validation**
+- [x] **Step 3: Extend staged-bundle validation**
 
 Validate the Control Center QML components, font/license files, optional audited preview helper and runtime DLLs, and exact `QtQml`/`QtQuick` module envelope. Reject repository mirrors, generated evidence, preview frames, BMW scenes, source roots, credentials, and private path strings.
 
-- [ ] **Step 4: Add the deterministic verification script**
+- [x] **Step 4: Add the deterministic verification script**
 
 `scripts/verify_control_center_c0.ps1` must:
 

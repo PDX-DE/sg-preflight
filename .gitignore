@@ -9,6 +9,7 @@ dist/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.superpowers/
 imgui.ini
 /out/
 /external/

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import platform
@@ -21,6 +22,26 @@ _PLUGIN_PATTERN = re.compile(r"^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*)?$")
 _VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$")
 _COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+_PREVIEW_HELPER_STATES = frozenset({"included", "unavailable"})
+PRODUCT_FONT_SHA256 = {
+    "Fredoka.ttf": "2ba02e68b152868aef9ba28e24b3648c7d457fe6f25c761f2c2c53fb61a73fc8",
+    "Inter.ttf": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031",
+    "OFL-Fredoka.txt": "c4ae95e05c7ef05a3a749aad4a6a8feba31dcd17bc198f828768366ad7da770b",
+    "OFL-Inter.txt": "d7cee39dfa656bffe74385c76debffe635788a83c00ce4370718c99d4c2650ff",
+}
+CONTROL_CENTER_QML_FILES = (
+    "HomePage.qml",
+    "QaContextPreview.qml",
+    "QaGateDetail.qml",
+    "QaPipelineSpine.qml",
+)
+PREVIEW_RUNTIME_FILES = (
+    "SDL3.dll",
+    "ramses-shared-lib-headless.dll",
+    "ramses-shared-lib-renderer.dll",
+    "ramses-shared-lib.dll",
+    "sgfx_cine_ramses_preview_cli.exe",
+)
 _GRAFIKS_REFERENCE_KEYS = frozenset(
     {
         "sha256",
@@ -167,11 +188,18 @@ def create_bundle_manifest(
     qt_version: str,
     qml_imports: Sequence[QmlImport],
     grafiks_reference: Mapping[str, str] | None = None,
+    ramses_preview_helper: str = "unavailable",
 ) -> dict[str, Any]:
     if not isinstance(source_commit, str) or _COMMIT_PATTERN.fullmatch(source_commit) is None:
         raise BundleManifestError("The source commit is invalid.")
     imports = _validated_imports(qml_imports)
     grafiks = _validated_grafiks_reference(grafiks_reference)
+    if ramses_preview_helper not in _PREVIEW_HELPER_STATES:
+        raise BundleManifestError("The Ramses preview helper state is invalid.")
+    from sg_preflight.desktop.ui_capabilities import UI_CAPABILITIES
+    from sg_preflight.qa_hub import QA_HUB_SCHEMA_VERSION
+    from sg_preflight.surface_registry import SURFACE_DESCRIPTORS
+
     modes = ["clean", "qt-quick"]
     if grafiks is not None:
         modes.append("grafiks")
@@ -183,6 +211,12 @@ def create_bundle_manifest(
         "pyside6_version": _validated_version("PySide6", pyside6_version),
         "qt_version": _validated_version("Qt", qt_version),
         "qml_contract_version": QML_CONTRACT_VERSION,
+        "ui_capability_count": len(UI_CAPABILITIES),
+        "surface_descriptor_count": len(SURFACE_DESCRIPTORS),
+        "qa_hub_schema_version": QA_HUB_SCHEMA_VERSION,
+        "control_center_qml_present": True,
+        "product_fonts_licensed": True,
+        "ramses_preview_helper": ramses_preview_helper,
         "presentation_modes": sorted(modes),
         "qml_imports": [item.as_manifest_entry() for item in imports],
     }
@@ -240,6 +274,7 @@ def create_current_bundle_manifest(
     qml_imports: Sequence[QmlImport],
     *,
     grafiks_reference: Mapping[str, str] | None = None,
+    ramses_preview_helper: str = "unavailable",
 ) -> dict[str, Any]:
     try:
         import PySide6
@@ -256,6 +291,7 @@ def create_current_bundle_manifest(
         qt_version=qVersion(),
         qml_imports=qml_imports,
         grafiks_reference=grafiks_reference,
+        ramses_preview_helper=ramses_preview_helper,
     )
 
 
@@ -285,6 +321,55 @@ def _bundle_file_parts(bundle_dir: Path) -> tuple[tuple[str, ...], ...]:
         for path in Path(bundle_dir).rglob("*")
         if path.is_file()
     )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _suffix_files(bundle: Path, suffix: Sequence[str]) -> tuple[Path, ...]:
+    expected = tuple(part.casefold() for part in suffix)
+    return tuple(
+        path
+        for path in bundle.rglob("*")
+        if path.is_file()
+        and len(path.parts) >= len(expected)
+        and tuple(part.casefold() for part in path.parts[-len(expected) :]) == expected
+    )
+
+
+def _reject_forbidden_bundle_content(bundle: Path) -> None:
+    forbidden_parts = {
+        ".git",
+        ".svn",
+        "digital-3d-car-models",
+        "preview-cache",
+        "control-center-c0",
+    }
+    private_markers = (b"c:\\users\\", b"/home/", b"/users/")
+    for path in bundle.rglob("*"):
+        if not path.is_file():
+            continue
+        folded_parts = {part.casefold() for part in path.relative_to(bundle).parts}
+        folded_name = path.name.casefold()
+        if (
+            folded_parts & forbidden_parts
+            or folded_name.endswith(".ramses")
+            or re.fullmatch(r"frame-[0-9]{3}\.png", folded_name)
+            or folded_name in {".env", "credentials.json", "id_rsa", "id_ed25519"}
+        ):
+            raise BundleManifestError("The staged bundle contains forbidden content.")
+        if path.suffix.casefold() in {".json", ".md", ".qml", ".txt"} and path.stat().st_size <= 5 * 1024 * 1024:
+            try:
+                payload = path.read_bytes().lower()
+            except OSError as exc:
+                raise BundleManifestError("The staged bundle could not be inspected.") from exc
+            if any(marker in payload for marker in private_markers):
+                raise BundleManifestError("The staged bundle contains a private path string.")
 
 
 def _has_file_suffix(file_parts: Sequence[tuple[str, ...]], suffix: Sequence[str]) -> bool:
@@ -345,8 +430,48 @@ def validate_staged_bundle_contents(bundle_dir: Path, qml_imports: Sequence[QmlI
         raise BundleManifestError("The staged bundle is missing required Qt runtime files.")
     if not _has_file_suffix(file_parts, ("sg_preflight", "desktop", "qml", "Main.qml")):
         raise BundleManifestError("The staged bundle is missing the application QML tree.")
+    for name in CONTROL_CENTER_QML_FILES:
+        if not _has_file_suffix(file_parts, ("sg_preflight", "desktop", "qml", "components", name)):
+            raise BundleManifestError("The staged bundle is missing the Control Center QML tree.")
+    font_matches = {
+        name: _suffix_files(bundle, ("cpp", "assets", "fonts", name))
+        for name in PRODUCT_FONT_SHA256
+    }
+    font_directories = {
+        paths[0].parent
+        for paths in font_matches.values()
+        if len(paths) == 1
+    }
+    if (
+        len(font_directories) != 1
+        or {path.name for path in next(iter(font_directories)).iterdir()} != set(PRODUCT_FONT_SHA256)
+        or any(not path.is_file() for path in next(iter(font_directories)).iterdir())
+    ):
+        raise BundleManifestError("The staged bundle product-font evidence is invalid.")
+    for name, expected_sha256 in PRODUCT_FONT_SHA256.items():
+        matches = font_matches[name]
+        if len(matches) != 1 or _sha256_file(matches[0]) != expected_sha256:
+            raise BundleManifestError("The staged bundle product-font evidence is invalid.")
+    helper_state = manifest.get("ramses_preview_helper")
+    if helper_state not in _PREVIEW_HELPER_STATES:
+        raise BundleManifestError("The staged bundle preview-helper state is invalid.")
+    preview_runtime = tuple(
+        path
+        for path in bundle.rglob("*")
+        if path.is_file()
+        and path.parent.name.casefold() == "bin"
+        and path.parent.parent.name.casefold() == "cpp"
+    )
+    if helper_state == "included" and (
+        len(preview_runtime) != len(PREVIEW_RUNTIME_FILES)
+        or {path.name for path in preview_runtime} != set(PREVIEW_RUNTIME_FILES)
+    ):
+        raise BundleManifestError("The staged bundle preview runtime is incomplete.")
+    if helper_state == "unavailable" and preview_runtime:
+        raise BundleManifestError("The staged bundle preview runtime contradicts its manifest.")
     for item in imports:
         if not _module_is_staged(file_parts, item.module):
             raise BundleManifestError(f"The staged bundle is missing QML module {item.module}.")
         if not _plugin_is_staged(file_parts, item.module, item.plugin):
             raise BundleManifestError(f"The staged bundle is missing QML plugin for {item.module}.")
+    _reject_forbidden_bundle_content(bundle)

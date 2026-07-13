@@ -318,6 +318,31 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     module.benchmark_target()
 
+    def test_explicit_bundle_target_uses_the_staged_bundle_without_default_swap(self) -> None:
+        module = _load_script()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle = Path(temp_dir) / "staged"
+            bundle.mkdir()
+            executable = bundle / "sgfx-preflight.exe"
+            executable.write_bytes(b"fixture")
+            manifest = {
+                "schema_version": 1,
+                "source_commit": "a" * 40,
+                "python_version": "3.13.12",
+                "pyside6_version": "6.9.0",
+                "qt_version": "6.9.0",
+                "qml_contract_version": 1,
+                "presentation_modes": ["clean", "qt-quick"],
+                "qml_imports": [{"module": "QtQuick", "plugin": "qtquick2plugin"}],
+            }
+            (bundle / "bundle-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+            target = module.benchmark_target(bundle)
+
+        self.assertEqual(target.command, (str(executable),))
+        self.assertEqual(target.working_directory, bundle)
+        self.assertEqual(target.bundle_directory, bundle)
+
     def test_json_cli_uses_supplied_samples_without_dropping_failures(self) -> None:
         module = _load_script()
         raw = {"priming_ms": 1.0, "launch_ms": [3000.0] * 20}
@@ -336,6 +361,28 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
         self.assertFalse(evidence["passed"])
         self.assertEqual(evidence["raw_samples"]["launch_ms"], raw["launch_ms"])
         self.assertGreater(evidence["failure_count"], 0)
+
+    def test_control_center_timing_gate_is_open_until_reference_ready_is_explicit(self) -> None:
+        module = _load_script()
+        self.assertEqual(
+            module.control_center_timing_gate(False),
+            {
+                "state": "OPEN_LOADED_WORKSTATION",
+                "required_scenarios": ["warm-start", "first-run"],
+            },
+        )
+        self.assertEqual(
+            module.control_center_timing_gate(True),
+            {
+                "state": "REFERENCE_READY",
+                "required_scenarios": ["warm-start", "first-run"],
+            },
+        )
+        stdout = io.StringIO()
+        with mock.patch("sys.stdout", stdout):
+            exit_code = module.main(["--control-center-status"])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["state"], "OPEN_LOADED_WORKSTATION")
 
     def test_live_warm_collection_runs_one_priming_plus_twenty_measured_workers(self) -> None:
         module = _load_script()

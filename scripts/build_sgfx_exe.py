@@ -14,6 +14,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sg_preflight.bundle_manifest import (
+    PREVIEW_RUNTIME_FILES,
+    PRODUCT_FONT_SHA256,
     QmlImport,
     create_current_bundle_manifest,
     scan_qml_imports,
@@ -59,13 +61,8 @@ OPERATOR_CONSOLE_DIST_ENV = "SGFX_GRAFIKS_OPERATOR_CONSOLE_DIST"
 OPERATOR_CONSOLE_DIST_SOURCE = Path(r"C:\swardbuild\sgfx_ui\dist")
 OPERATOR_CONSOLE_SHELL_EXE_NAME = "sgfx_screens.exe"
 GRAFIKS_BUNDLED_SHELL_DIR_NAME = "grafiks_shell"
-PRODUCT_FONT_SHA256 = {
-    "Fredoka.ttf": "2ba02e68b152868aef9ba28e24b3648c7d457fe6f25c761f2c2c53fb61a73fc8",
-    "Inter.ttf": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031",
-    "OFL-Fredoka.txt": "c4ae95e05c7ef05a3a749aad4a6a8feba31dcd17bc198f828768366ad7da770b",
-    "OFL-Inter.txt": "d7cee39dfa656bffe74385c76debffe635788a83c00ce4370718c99d4c2650ff",
-}
 PROTECTED_FONT_TOKENS = ("dynafont", "rodin", "sonic", "sega", "gamefont")
+PREVIEW_RUNTIME_SOURCE = ROOT / "cpp" / "bin"
 
 
 def _data_arg(source: str, destination: str) -> str:
@@ -117,6 +114,44 @@ def product_font_package_inputs(font_root: Path | None = None) -> tuple[Path, ..
         if "SIL OPEN FONT LICENSE Version 1.1" not in license_text:
             raise RuntimeError("A product font OFL record is invalid.")
     return files
+
+
+def copy_preview_runtime(
+    bundle_dir: Path,
+    source_dir: Path = PREVIEW_RUNTIME_SOURCE,
+) -> bool:
+    target = Path(bundle_dir) / "_internal" / "cpp" / "bin"
+    if target.exists():
+        shutil.rmtree(target)
+    source = Path(source_dir)
+    if not source.is_dir() or source.is_symlink() or getattr(source, "is_junction", lambda: False)():
+        return False
+    entries = tuple(sorted(source.iterdir()))
+    if {path.name for path in entries} != set(PREVIEW_RUNTIME_FILES) or any(
+        not path.is_file()
+        or path.is_symlink()
+        or getattr(path, "is_junction", lambda: False)()
+        for path in entries
+    ):
+        return False
+    source_hashes = {path.name: sha256_file(path) for path in entries}
+    target.mkdir(parents=True)
+    for path in entries:
+        shutil.copy2(path, target / path.name)
+    if any(sha256_file(target / name) != digest for name, digest in source_hashes.items()):
+        shutil.rmtree(target)
+        return False
+    return True
+
+
+def remove_private_install_metadata(bundle_dir: Path) -> tuple[Path, ...]:
+    bundle = Path(bundle_dir)
+    removed: list[Path] = []
+    for path in bundle.rglob("direct_url.json"):
+        if path.is_file() and path.parent.name.casefold().endswith(".dist-info"):
+            path.unlink()
+            removed.append(path)
+    return tuple(sorted(removed))
 
 
 def _qml_cache_generator() -> Path:
@@ -482,6 +517,7 @@ def swap_staged_bundle(staged_bundle: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build the SGFX Preflight Windows executable.")
     parser.add_argument("--print-args", action="store_true", help="Print PyInstaller arguments without building")
+    parser.add_argument("--staged-only", action="store_true", help="Validate the staged bundle without swapping the accepted default")
     args = parser.parse_args(argv)
 
     pyinstaller_args = build_pyinstaller_args(dist_path=STAGING_DIST_PATH)
@@ -499,12 +535,14 @@ def main(argv: list[str] | None = None) -> int:
     clean_staging_outputs()
     PyInstaller.__main__.run(pyinstaller_args)
     staged_bundle = STAGING_DIST_PATH / "sgfx-preflight"
+    remove_private_install_metadata(staged_bundle)
     qml_imports = scan_qml_imports(ROOT / "sg_preflight" / "desktop" / "qml")
     prune_staged_qml_roots(staged_bundle, qml_imports)
     compile_staged_qml_cache(staged_bundle)
     provenance = load_configured_grafiks_provenance()
     copied_operator = copy_operator_console_shell(staged_bundle, provenance)
     copied_runtime = [] if copied_operator is not None else copy_grafiks_runtime(staged_bundle, provenance)
+    preview_included = copy_preview_runtime(staged_bundle)
     accepted_provenance = provenance if copied_operator is not None or copied_runtime else None
     manifest = create_current_bundle_manifest(
         ROOT,
@@ -514,10 +552,14 @@ def main(argv: list[str] | None = None) -> int:
             if accepted_provenance is not None
             else None
         ),
+        ramses_preview_helper="included" if preview_included else "unavailable",
     )
     write_bundle_manifest(staged_bundle, manifest)
     staged_bundle = validate_staged_bundle(qml_imports)
-    swap_staged_bundle(staged_bundle)
+    if not args.staged_only:
+        swap_staged_bundle(staged_bundle)
+    else:
+        print(staged_bundle)
     return 0
 
 

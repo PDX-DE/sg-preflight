@@ -16,6 +16,7 @@ _POSIX_PATH_PATTERN = re.compile(r"(?:^|\s)/(?:[^/\s]+/)*[^\s]*")
 _CREDENTIAL_PATTERN = re.compile(
     r"(?i)(?:\bbearer\s+\S+|\b(?:token|password|secret|pat|api[_-]?key|authorization)\s*[:=])"
 )
+QA_HUB_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,7 +464,7 @@ def build_qa_hub_snapshot(
         {"id": "scope", "label": "Scope", "value": "3D Car QA"},
     ]
     snapshot: dict[str, Any] = {
-        "schemaVersion": 1,
+        "schemaVersion": QA_HUB_SCHEMA_VERSION,
         "scopeLabel": "3D Car QA",
         "selectedProfile": dict(selected) if selected is not None else {},
         "profileOptions": options,

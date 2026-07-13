@@ -206,11 +206,18 @@ class TestBundleManifest(unittest.TestCase):
             qt_version="6.9.1",
             qml_imports=imports,
             grafiks_reference=grafiks,
+            ramses_preview_helper="included",
         )
 
         self.assertEqual(manifest["schema_version"], 1)
         self.assertEqual(manifest["source_commit"], "1" * 40)
         self.assertEqual(manifest["qml_contract_version"], 1)
+        self.assertEqual(manifest["ui_capability_count"], 8)
+        self.assertEqual(manifest["surface_descriptor_count"], 19)
+        self.assertEqual(manifest["qa_hub_schema_version"], 1)
+        self.assertTrue(manifest["control_center_qml_present"])
+        self.assertTrue(manifest["product_fonts_licensed"])
+        self.assertEqual(manifest["ramses_preview_helper"], "included")
         self.assertEqual(manifest["presentation_modes"], ["clean", "grafiks", "qt-quick"])
         self.assertEqual(manifest["qml_imports"][0], {"module": "QtQml", "plugin": "qmlplugin"})
         self.assertEqual(manifest["grafiks"], grafiks)
@@ -228,6 +235,81 @@ class TestBundleManifest(unittest.TestCase):
         )
         self.assertEqual(without_grafiks["presentation_modes"], ["clean", "qt-quick"])
         self.assertNotIn("grafiks", without_grafiks)
+        self.assertEqual(without_grafiks["ramses_preview_helper"], "unavailable")
+
+    def test_optional_preview_runtime_copy_is_all_or_nothing(self) -> None:
+        module = _load_build_script()
+        runtime_names = (
+            "ramses-shared-lib-headless.dll",
+            "ramses-shared-lib-renderer.dll",
+            "ramses-shared-lib.dll",
+            "SDL3.dll",
+            "sgfx_cine_ramses_preview_cli.exe",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            bundle = root / "bundle"
+            source.mkdir()
+            bundle.mkdir()
+            self.assertFalse(module.copy_preview_runtime(bundle, source))
+            self.assertFalse((bundle / "_internal" / "cpp" / "bin").exists())
+
+            for name in runtime_names:
+                (source / name).write_bytes((name + " fixture").encode("utf-8"))
+            self.assertTrue(module.copy_preview_runtime(bundle, source))
+            target = bundle / "_internal" / "cpp" / "bin"
+            self.assertEqual(tuple(sorted(path.name for path in target.iterdir())), tuple(sorted(runtime_names)))
+
+            (source / "unexpected.dll").write_bytes(b"not audited")
+            self.assertFalse(module.copy_preview_runtime(bundle, source))
+            self.assertFalse(target.exists())
+
+    def test_private_editable_install_metadata_is_removed_only_from_dist_info(self) -> None:
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle = Path(temp_dir) / "bundle"
+            private_metadata = bundle / "_internal" / "sg_preflight-0.1.0.dist-info" / "direct_url.json"
+            unrelated = bundle / "_internal" / "application" / "direct_url.json"
+            private_metadata.parent.mkdir(parents=True)
+            unrelated.parent.mkdir(parents=True)
+            private_metadata.write_text('{"url":"file:///Users/private/source"}', encoding="utf-8")
+            unrelated.write_text("{}", encoding="utf-8")
+
+            removed = module.remove_private_install_metadata(bundle)
+
+            self.assertEqual(removed, (private_metadata,))
+            self.assertFalse(private_metadata.exists())
+            self.assertTrue(unrelated.is_file())
+
+    def test_control_center_verifier_is_bounded_machine_readable_and_external_write_free(self) -> None:
+        script = ROOT / "scripts" / "verify_control_center_c0.ps1"
+        self.assertTrue(script.is_file())
+        source = script.read_text(encoding="utf-8")
+        lowered = source.casefold()
+
+        for token in (
+            "control-center-c0-verification.json",
+            "control-center-c0-verification.md",
+            "--staged-only",
+            "1280",
+            "720",
+            "1024",
+            "640",
+            "OPEN_LOADED_WORKSTATION",
+            "Get-TrackedFingerprint",
+            "256 * 1024 * 1024",
+            "frame-*.png",
+        ):
+            self.assertIn(token.casefold(), lowered)
+        for forbidden in (
+            "invoke-restmethod",
+            "invoke-webrequest",
+            "start-bitstransfer",
+            "svn commit",
+            "git push",
+        ):
+            self.assertNotIn(forbidden, lowered)
 
     def test_manifest_rejects_noncanonical_values_and_writes_stable_json(self) -> None:
         from sg_preflight.bundle_manifest import (
@@ -246,6 +328,7 @@ class TestBundleManifest(unittest.TestCase):
             {"source_commit": r"C:\private\commit"},
             {"sgfx_version": r"C:\private\version"},
             {"python_version": "3.13\nsecret"},
+            {"ramses_preview_helper": "unknown"},
         )
         defaults = {
             "source_commit": "1" * 40,
@@ -275,6 +358,8 @@ class TestBundleManifest(unittest.TestCase):
     def test_staged_content_validation_requires_every_runtime_module_and_plugin(self) -> None:
         from sg_preflight.bundle_manifest import (
             BundleManifestError,
+            CONTROL_CENTER_QML_FILES,
+            PRODUCT_FONT_SHA256,
             QmlImport,
             create_bundle_manifest,
             validate_staged_bundle_contents,
@@ -297,6 +382,16 @@ class TestBundleManifest(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             bundle = Path(temp_dir) / "sgfx-preflight"
+            controls_plugin = (
+                bundle
+                / "_internal"
+                / "PySide6"
+                / "Qt"
+                / "qml"
+                / "QtQuick"
+                / "Controls"
+                / "qtquickcontrols2plugin.dll"
+            )
             files = (
                 bundle / "sgfx-preflight.exe",
                 bundle / "_internal" / "PySide6" / "Qt" / "bin" / "Qt6Qml.dll",
@@ -308,23 +403,53 @@ class TestBundleManifest(unittest.TestCase):
                 bundle / "_internal" / "PySide6" / "Qt" / "qml" / "QtQuick" / "qmldir",
                 bundle / "_internal" / "PySide6" / "Qt" / "qml" / "QtQuick" / "qtquick2plugin.dll",
                 bundle / "_internal" / "PySide6" / "Qt" / "qml" / "QtQuick" / "Controls" / "qmldir",
-                bundle
-                / "_internal"
-                / "PySide6"
-                / "Qt"
-                / "qml"
-                / "QtQuick"
-                / "Controls"
-                / "qtquickcontrols2plugin.dll",
+                controls_plugin,
                 bundle / "_internal" / "sg_preflight" / "desktop" / "qml" / "SGFX" / "qmldir",
             )
             for path in files:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"fixture")
+            qml_components = (
+                bundle / "_internal" / "sg_preflight" / "desktop" / "qml" / "components"
+            )
+            for name in CONTROL_CENTER_QML_FILES:
+                target = qml_components / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"fixture")
+            packaged_fonts = bundle / "_internal" / "cpp" / "assets" / "fonts"
+            packaged_fonts.mkdir(parents=True, exist_ok=True)
+            source_fonts = ROOT / "cpp" / "assets" / "fonts"
+            for name in PRODUCT_FONT_SHA256:
+                shutil.copy2(source_fonts / name, packaged_fonts / name)
             write_bundle_manifest(bundle, manifest)
 
             validate_staged_bundle_contents(bundle, imports)
-            missing = files[-2]
+            included_manifest = create_bundle_manifest(
+                source_commit="1" * 40,
+                sgfx_version="0.1.1",
+                python_version="3.13.13",
+                pyside6_version="6.9.1",
+                qt_version="6.9.1",
+                qml_imports=imports,
+                ramses_preview_helper="included",
+            )
+            write_bundle_manifest(bundle, included_manifest)
+            with self.assertRaises(BundleManifestError):
+                validate_staged_bundle_contents(bundle, imports)
+            write_bundle_manifest(bundle, manifest)
+            forbidden_frame = bundle / "_internal" / "preview-cache" / "frame-000.png"
+            forbidden_frame.parent.mkdir(parents=True)
+            forbidden_frame.write_bytes(b"fixture")
+            with self.assertRaises(BundleManifestError):
+                validate_staged_bundle_contents(bundle, imports)
+            forbidden_frame.unlink()
+            unexpected_runtime = bundle / "_internal" / "cpp" / "bin" / "unexpected.dll"
+            unexpected_runtime.parent.mkdir(parents=True)
+            unexpected_runtime.write_bytes(b"fixture")
+            with self.assertRaises(BundleManifestError):
+                validate_staged_bundle_contents(bundle, imports)
+            unexpected_runtime.unlink()
+            missing = controls_plugin
             decoy = bundle / "unrelated" / missing.name
             decoy.parent.mkdir()
             decoy.write_bytes(b"fixture")
