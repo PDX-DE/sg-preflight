@@ -7,6 +7,7 @@ outside this bundle.
 ## [Unreleased - local alpha]
 
 ### Added
+- The C0 Control Center entries describe a staged local candidate; the installed/default double-click path remains Clean pending a separately approved default-cutover plan.
 - Profile-neutral QA Control Center startup with explicit operator selection instead of an invented default profile.
 - One selected-profile local preflight action limited to Anchors, Constants, Carpaints, and Project Sanity.
 - Seven truthful Home and Full QA gates with bounded copy-ready evidence and a deterministic next safe action.

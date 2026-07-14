@@ -579,7 +579,7 @@ Profile popovers render above the workspace stacking boundary. Geometry tests mu
 - No Jira/network action, SVN mutation, BMW-source write, Git push, package publish, delivery, or external approval is introduced.
 - The internal `grafiks.launch` capability remains optional and provenance-gated, but its product-facing label is `Open 3D inspection`; no visible mode toggle remains.
 - The exact warm-start and first-run acceptance remains OPEN under the director's loaded-laptop waiver; this design may continue but may not claim a performance pass.
-- The packaged no-argument default remains unchanged until the separate Task 14 review/cutover gates pass.
+- The packaged no-argument default remains unchanged until a separately approved current-tree default-cutover plan and its review, rebuild, and regression gates pass.
 
 ## 22. Implementation boundary
 

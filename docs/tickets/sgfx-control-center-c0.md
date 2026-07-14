@@ -90,8 +90,8 @@ Provide one profile-neutral QA workspace with a four-pack-only local action and 
 
 C0 delivers a profile-neutral QA Control Center with explicit selection, one isolated four-pack local action, seven truthful gates, same-data Presentation, and a bounded selected-profile preview with an honest generic fallback.
 
-The deterministic verifier passed focused tests, QML formatting, staged package validation, both headless viewport contracts, compatible selected-profile preview, cache bounds, and source-integrity checks. The accepted executable SHA-256 is `350b29a6d83119531e4c0850668d8cec248fc294418f918072e0a1b140e454d6`.
+The deterministic verifier passed focused tests, QML formatting, staged package validation, both headless viewport contracts, compatible selected-profile preview, cache bounds, and source-integrity checks. The staged candidate executable SHA-256 is `350b29a6d83119531e4c0850668d8cec248fc294418f918072e0a1b140e454d6`.
 
-The release keeps eight UI capabilities and 19 registered surfaces. Local preflight and preview do not mutate source roots, and no automatic Jira, SVN, BMW, delivery, rack, or vehicle action was added.
+The staged C0 candidate preserves eight UI capabilities and 19 registered surfaces. It has not replaced the installed/default bundle; no-argument launch remains the Clean dashboard pending a separately approved default-cutover plan. Local preflight and preview do not mutate source roots, and no automatic Jira, SVN, BMW, delivery, rack, or vehicle action was added.
 
 Loaded-workstation timing remains OPEN as `OPEN_LOADED_WORKSTATION`; no warm-start or first-run performance claim is made from this run.
