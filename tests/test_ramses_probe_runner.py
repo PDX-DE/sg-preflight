@@ -145,6 +145,13 @@ class RamsesProbeRunnerValidationTests(unittest.TestCase):
                    "file": r"..\evil.png", "drivenInputs": 1})
         self.assertIn("escaped_path", self._rejections(report))
 
+    def test_non_object_frame_fails_closed(self) -> None:
+        report = _native_report(profile="G45", scene_path=self.scene_path)
+        report["frame"] = "i-am-not-a-dict-or-null"
+        self.assertIn("malformed_report", self._rejections(report))
+        report["frame"] = ["outcome_list_smuggle"]
+        self.assertIn("malformed_report", self._rejections(report))
+
     def test_unknown_frame_outcome_fails_closed(self) -> None:
         report = _native_report(
             profile="G45", scene_path=self.scene_path,
@@ -369,6 +376,35 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         evidence = json.loads(
             (self.output_root / EVIDENCE_FILE_NAME).read_text(encoding="utf-8"))
         self.assertIn("worktreeStatusBefore", evidence["digests"])
+
+    def test_output_inside_scene_repo_does_not_self_trigger_worktree_guard(self) -> None:
+        import subprocess as sp
+        worktree = self.root / "wt2"
+        worktree.mkdir()
+        sp.run(["git", "init", "-q"], cwd=worktree, check=False, capture_output=True)
+        scene = worktree / "export" / "exported.ramses"
+        _write_text(scene, "worktree-scene-bytes")
+        output_root = worktree / "probe-out"
+        output_root.mkdir()
+
+        report = _native_report(profile="G45", scene_path=str(scene))
+        fixture = self.root / "wt2-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        body = (
+            "@echo off\r\n"
+            f'copy /Y "{fixture}" "{output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=scene,
+            output_root=output_root,
+            helper_path=helper,
+            helper_sha256=digest,
+        )
+        result = run_probe(request)
+        self.assertEqual(result.outcome, "completed")
 
     def test_scene_inside_output_root_is_rejected(self) -> None:
         helper, digest = self._success_helper()

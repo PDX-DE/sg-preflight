@@ -63,7 +63,14 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _worktree_status(anchor: Path) -> str | None:
+def _porcelain_path(line: str) -> str:
+    path = line[3:]
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    return path.strip().strip('"')
+
+
+def _worktree_status(anchor: Path, exclude: Path | None = None) -> str | None:
     git = shutil.which("git")
     if git is None:
         return None
@@ -78,9 +85,22 @@ def _worktree_status(anchor: Path) -> str | None:
             capture_output=True, text=True, timeout=60, check=False)
         if status.returncode != 0:
             return None
-        return status.stdout
     except (OSError, subprocess.TimeoutExpired):
         return None
+    lines = status.stdout.splitlines()
+    if exclude is not None:
+        # The probe's own sanctioned writes must not count as a source-worktree mutation.
+        try:
+            prefix = exclude.resolve().relative_to(Path(toplevel.stdout.strip()).resolve()).as_posix()
+        except (OSError, ValueError):
+            prefix = ""
+        if prefix and prefix != ".":
+            lines = [
+                line for line in lines
+                if not _porcelain_path(line).startswith(prefix + "/")
+                and _porcelain_path(line).rstrip("/") != prefix
+            ]
+    return "\n".join(lines)
 
 
 def build_helper_arguments(request: ProbeRunRequest) -> list[str]:
@@ -141,6 +161,8 @@ def validate_native_report(report: object, *, expected_profile: str,
         frame_file = frame.get("file")
         if frame_file is not None and frame_file != "first-frame.png":
             rejections.append("escaped_path")
+    elif frame is not None:
+        rejections.append("malformed_report")
 
     return rejections
 
@@ -234,7 +256,7 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
     scene_before = sha256_file(request.scene_path)
     if request.perspective_path is not None and request.perspective_path.is_file():
         perspective_digest = sha256_file(request.perspective_path)
-    worktree_before = _worktree_status(request.scene_path.parent)
+    worktree_before = _worktree_status(request.scene_path.parent, exclude=request.output_root)
 
     def persist_console(stream_name: str, payload: bytes | None) -> None:
         target = request.output_root / stream_name
@@ -280,7 +302,7 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
         rejections.append("source_mutated")
         return finish("source_mutated")
     if worktree_before is not None:
-        worktree_after = _worktree_status(request.scene_path.parent)
+        worktree_after = _worktree_status(request.scene_path.parent, exclude=request.output_root)
         if worktree_after != worktree_before:
             rejections.append("worktree_status_changed")
             return finish("worktree_status_changed")
