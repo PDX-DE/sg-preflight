@@ -46,18 +46,18 @@
 
 ## Task 4 — Python runner and final report
 
-- [ ] Step 1: RED: `tests/test_ramses_probe_runner.py` — request construction; helper launch; fail-closed native-report validation; rejection matrix for malformed, partial, stale-generation, mismatched-profile, mismatched-source, untrusted-helper, and escaped-path reports (req 17); helper-crash vs validation-finding separation (req 12); before/after digest proof (req 16); final `ramses-r0-evidence.json` + `RamsesProbeReport` schema.
-- [ ] Step 2: GREEN: implement `sg_preflight/ramses_probe_runner.py` (standard library only), runnable via `scripts/run_sgfx_python.ps1 -m sg_preflight.ramses_probe_runner`.
-- [ ] Step 3: Commit.
+- [x] Step 1: RED: `tests/test_ramses_probe_runner.py` — request construction; helper launch; fail-closed native-report validation; rejection matrix for malformed, partial, stale-generation, mismatched-profile, mismatched-source, untrusted-helper, and escaped-path reports (req 17); helper-crash vs validation-finding separation (req 12); before/after digest proof (req 16); final `ramses-r0-evidence.json` + `RamsesProbeReport` schema. 23 tests.
+- [x] Step 2: GREEN: `sg_preflight/ramses_probe_runner.py` (standard library only), runnable via `scripts/run_sgfx_python.ps1 -m sg_preflight.ramses_probe_runner`; helper console streams retained as `stdout.log`/`stderr.log` (256 KiB caps).
+- [x] Step 3: Committed (`248e388`, `a18f170`).
 
 ## Task 5 — Synthetic end-to-end and package/process gates
 
-- [ ] Step 1: Synthetic scene end-to-end: native synthetic tests plus runner-level runs against generated fixtures; no fabricated real/receipt evidence; fixtures BMW-free (req 24).
+- [x] Step 1: Synthetic scene end-to-end: native suite drives a saved synthetic scene through every phase including a real-renderer black frame; runner suite drives a fake helper through success/crash/classified/mutation paths; fixtures BMW-free (req 24).
 - [ ] Step 2: Package/process/exact-tree gates: unittest aggregate for the touched modules, process-lifecycle check (no orphan helper), `git diff --check`, diff review confirming no unrelated cinematic/UI refactor and no new mandatory dependency (req 28, 25).
 - [ ] Step 3: Commit.
 
 ## Task 6 — Real local smoke and acceptance
 
-- [ ] Step 1: Approved real local smoke on the existing resolved `exported.ramses`: reaches the expected phase or produces a truthful classified failure; historical logs are insufficient (req 26). Record measured 60/30-second budget results as OPEN evidence (req 27).
+- [x] Step 1: Real local smoke DONE against two real staging exports (G50, G78) with the real `perspectives_CID_2to1.json` view `CID_CCM_FRONT`: all eight phases completed with truthful evidence (72/68 real findings, full inventories, executed logic, complete lifecycles ~2-2.9 s, frames classified black — a documented scene-state diagnostic, not visual approval). One G78 helper crash under concurrent load was classified truthfully and did not reproduce (OPEN flake). Budgets measured, remain OPEN (req 27). Evidence under `out/r0-smoke/`.
 - [ ] Step 2: Walk all 28 section-24 requirements with an evidence row each; independent review of the full diff; resolve findings.
 - [ ] Step 3: Ledger checkpoint, changelog note, final commit. Standalone Acceptance Gate passes; the separate one-button integration slice may then be planned.
