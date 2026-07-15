@@ -8,14 +8,17 @@
 #include <ramses/client/logic/LogicEngine.h>
 #include <ramses/client/logic/LuaScript.h>
 #include <ramses/client/logic/Property.h>
-
-#include <algorithm>
-#include <chrono>
 #include <ramses/framework/EFeatureLevel.h>
 #include <ramses/framework/RamsesFramework.h>
 #include <ramses/framework/RamsesFrameworkConfig.h>
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <string>
@@ -23,6 +26,40 @@
 
 namespace
 {
+namespace fs = std::filesystem;
+
+class TemporaryDirectory
+{
+public:
+    TemporaryDirectory()
+    {
+        const auto base = fs::temp_directory_path();
+        for (unsigned attempt = 0u; attempt < 100u; ++attempt)
+        {
+            const auto seed = std::chrono::steady_clock::now().time_since_epoch().count();
+            m_path = base / ("sgfx-ramses-probe-units-" + std::to_string(seed) + "-" + std::to_string(attempt));
+            std::error_code error;
+            if (fs::create_directory(m_path, error))
+                return;
+        }
+        throw std::runtime_error("could not create probe-units temp directory");
+    }
+
+    ~TemporaryDirectory()
+    {
+        std::error_code error;
+        fs::remove_all(m_path, error);
+    }
+
+    TemporaryDirectory(const TemporaryDirectory&) = delete;
+    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
+
+    const fs::path& path() const { return m_path; }
+
+private:
+    fs::path m_path;
+};
+
 bool expectMetadataFacts()
 {
     const auto metadata = sgfx::cine::collect_ramses_probe_metadata();
@@ -539,6 +576,261 @@ bool expectLifecycleContract()
     }
     return true;
 }
+
+const std::set<std::string> kReportTopLevelKeys = {
+    "schemaVersion", "probeVersion", "profile",   "backend", "scenePath", "metadata", "phases",
+    "failure",       "findings",     "inventory", "logic",   "lifecycle", "frame"};
+
+bool expectReportSerializationContract()
+{
+    sgfx::cine::RamsesProbeNativeReport report;
+    report.profile = "G45";
+    report.backend = "opengl";
+    report.scene_path = R"(C:\evidence\exported.ramses)";
+    report.metadata_collected = true;
+    report.metadata.version_string = "28.16.0";
+    report.metadata.version_major = 28;
+    report.metadata.version_minor = 16;
+    report.metadata.version_patch = 0;
+    report.metadata.feature_level = 1u;
+    for (const auto* phase : {"arguments", "metadata", "scene_load", "validation", "inventory", "logic"})
+        report.phases.push_back({phase, "completed"});
+    sgfx::cine::RamsesProbeFinding finding;
+    finding.severity = "warning";
+    finding.message = "renderpass has clear flags enabled";
+    finding.object_type = "RenderPass";
+    finding.object_id = 2u;
+    finding.object_name = "probe-pass";
+    finding.source_class = "scene";
+    report.findings.push_back(finding);
+    report.inventory.push_back({"RenderPass", 1u});
+    sgfx::cine::RamsesLogicUpdateEvidence logic;
+    logic.engine_name = "probe-logic";
+    logic.update_succeeded = true;
+    logic.executed_nodes = {"forward-script"};
+    logic.total_update_microseconds = 5;
+    logic.topology_sort_microseconds = 1;
+    report.logic.push_back(logic);
+
+    const auto serialized = sgfx::cine::serialize_probe_report(report);
+    const auto parsed = nlohmann::json::parse(serialized, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object())
+    {
+        std::cerr << "serialized report is not valid JSON\n";
+        return false;
+    }
+    std::set<std::string> keys;
+    for (const auto& item : parsed.items())
+        keys.insert(item.key());
+    if (keys != kReportTopLevelKeys)
+    {
+        std::cerr << "report top-level key set is not exact\n";
+        return false;
+    }
+    if (parsed["schemaVersion"] != 1 || parsed["probeVersion"] != "0.1.0" || !parsed["failure"].is_null() ||
+        !parsed["lifecycle"].is_null() || !parsed["frame"].is_null())
+    {
+        std::cerr << "report version/reserved fields wrong\n";
+        return false;
+    }
+    if (parsed["metadata"]["versionMajor"] != 28 || parsed["phases"][0]["phase"] != "arguments" ||
+        parsed["phases"][5]["status"] != "completed")
+    {
+        std::cerr << "report metadata/phase records wrong\n";
+        return false;
+    }
+    const auto& findingJson = parsed["findings"][0];
+    if (findingJson["severity"] != "warning" || findingJson["objectType"] != "RenderPass" ||
+        findingJson["objectId"] != 2 || findingJson["sourceClass"] != "scene" ||
+        findingJson["identity"] != sgfx::cine::probe_finding_identity(finding))
+    {
+        std::cerr << "report finding record wrong\n";
+        return false;
+    }
+    if (parsed["logic"][0]["engine"] != "probe-logic" || parsed["logic"][0]["updateSucceeded"] != true ||
+        parsed["inventory"][0]["count"] != 1)
+    {
+        std::cerr << "report logic/inventory records wrong\n";
+        return false;
+    }
+
+    sgfx::cine::RamsesProbeNativeReport failed;
+    failed.profile = "G45";
+    failed.backend = "opengl";
+    failed.scene_path = R"(C:\evidence\missing.ramses)";
+    failed.failure_phase = "scene_load";
+    failed.failure_reason = "scene_unavailable";
+    const auto failedParsed = nlohmann::json::parse(sgfx::cine::serialize_probe_report(failed));
+    if (!failedParsed["metadata"].is_null() || failedParsed["failure"]["phase"] != "scene_load" ||
+        failedParsed["failure"]["reason"] != "scene_unavailable")
+    {
+        std::cerr << "failure report shape wrong\n";
+        return false;
+    }
+    return true;
+}
+
+bool expectReportWriterContract()
+{
+    TemporaryDirectory root;
+    const std::string payload = R"({"schemaVersion":1})";
+    const auto written = sgfx::cine::write_probe_report_atomically(root.path(), payload);
+    if (!written.written || !written.rejection.empty() ||
+        written.report_path != root.path() / "ramses-probe-native.json" || !fs::exists(written.report_path))
+    {
+        std::cerr << "atomic write must create exactly ramses-probe-native.json\n";
+        return false;
+    }
+    std::ifstream stream(written.report_path, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    if (content != payload || fs::exists(written.report_path.string() + ".tmp"))
+    {
+        std::cerr << "written content must match and leave no temp file\n";
+        return false;
+    }
+
+    const auto duplicate = sgfx::cine::write_probe_report_atomically(root.path(), payload);
+    if (duplicate.written || duplicate.rejection != "report_exists")
+    {
+        std::cerr << "existing report must be rejected, not replaced\n";
+        return false;
+    }
+
+    TemporaryDirectory oversizeRoot;
+    const std::string oversize(2u * 1024u * 1024u + 1u, 'x');
+    const auto tooLarge = sgfx::cine::write_probe_report_atomically(oversizeRoot.path(), oversize);
+    if (tooLarge.written || tooLarge.rejection != "report_too_large" ||
+        fs::exists(oversizeRoot.path() / "ramses-probe-native.json"))
+    {
+        std::cerr << "oversize report must be rejected without writing\n";
+        return false;
+    }
+
+    const auto missingRoot =
+        sgfx::cine::write_probe_report_atomically(root.path() / "does-not-exist", payload);
+    if (missingRoot.written || missingRoot.rejection != "output_unavailable")
+    {
+        std::cerr << "missing output root must be rejected\n";
+        return false;
+    }
+    return true;
+}
+
+bool expectExecuteProbeContract()
+{
+    TemporaryDirectory sceneDir;
+    const auto scenePath = sceneDir.path() / "synthetic.ramses";
+    {
+        ramses::RamsesFrameworkConfig config{ramses::EFeatureLevel_01};
+        ramses::RamsesFramework framework{config};
+        auto* client = framework.createClient("sgfx-probe-save");
+        auto* scene = client->createScene(ramses::sceneId_t{2028u}, "probe-save-scene");
+        auto* camera = scene->createPerspectiveCamera("probe-camera");
+        camera->setFrustum(19.0f, 480.0f / 270.0f, 0.1f, 100.0f);
+        camera->setViewport(0, 0, 480u, 270u);
+        auto* pass = scene->createRenderPass("probe-pass");
+        pass->setCamera(*camera);
+        auto* group = scene->createRenderGroup("probe-group");
+        pass->addRenderGroup(*group);
+        auto* engine = scene->createLogicEngine("probe-logic");
+        constexpr std::string_view forwardSource = R"(
+            function interface(IN,OUT)
+                IN.value = Type:Int32()
+                OUT.value = Type:Int32()
+            end
+            function run(IN,OUT)
+                OUT.value = IN.value
+            end
+        )";
+        if (engine->createLuaScript(forwardSource, {}, "forward-script") == nullptr || !scene->flush() ||
+            !scene->saveToFile(scenePath.string()))
+        {
+            std::cerr << "could not save the synthetic probe scene\n";
+            return false;
+        }
+    }
+
+    TemporaryDirectory outputRoot;
+    sgfx::cine::RamsesProbeCliRequest request;
+    request.profile = "G45";
+    request.backend = "opengl";
+    request.scene_path = scenePath;
+    request.output_root = outputRoot.path();
+
+    const auto outcome = sgfx::cine::execute_probe_request(request);
+    if (outcome.exit_code != sgfx::cine::kProbeExitOk || outcome.classification != "completed" ||
+        !fs::exists(outcome.report_path))
+    {
+        std::cerr << "probe execution against the synthetic scene must complete: " << outcome.classification
+                  << " exit " << outcome.exit_code << "\n";
+        return false;
+    }
+    std::ifstream stream(outcome.report_path, std::ios::binary);
+    const auto report = nlohmann::json::parse(std::string((std::istreambuf_iterator<char>(stream)),
+                                                          std::istreambuf_iterator<char>()));
+    bool renderPassFinding = false;
+    for (const auto& finding : report["findings"])
+        if (finding["objectType"] == "RenderPass")
+            renderPassFinding = true;
+    std::size_t renderPassCount = 0u;
+    std::size_t logicEngineCount = 0u;
+    for (const auto& entry : report["inventory"])
+    {
+        if (entry["objectType"] == "RenderPass")
+            renderPassCount = entry["count"].get<std::size_t>();
+        if (entry["objectType"] == "LogicEngine")
+            logicEngineCount = entry["count"].get<std::size_t>();
+    }
+    bool forwardExecuted = false;
+    for (const auto& node : report["logic"][0]["executedNodes"])
+        if (node == "forward-script")
+            forwardExecuted = true;
+    if (!report["failure"].is_null() || report["metadata"]["versionMajor"] != 28 || !renderPassFinding ||
+        renderPassCount != 1u || logicEngineCount != 1u || report["logic"][0]["engine"] != "probe-logic" ||
+        report["logic"][0]["updateSucceeded"] != true || !forwardExecuted)
+    {
+        std::cerr << "probe report content wrong for the synthetic scene\n";
+        return false;
+    }
+    for (const auto& phase : report["phases"])
+        if (phase["status"] != "completed")
+        {
+            std::cerr << "all phases must be completed on success\n";
+            return false;
+        }
+
+    TemporaryDirectory missingOutputRoot;
+    sgfx::cine::RamsesProbeCliRequest missingScene = request;
+    missingScene.scene_path = sceneDir.path() / "missing.ramses";
+    missingScene.output_root = missingOutputRoot.path();
+    const auto failedOutcome = sgfx::cine::execute_probe_request(missingScene);
+    if (failedOutcome.exit_code != sgfx::cine::kProbeExitData ||
+        failedOutcome.classification != "scene_unavailable" || !fs::exists(failedOutcome.report_path))
+    {
+        std::cerr << "missing scene must produce a truthful classified failure report\n";
+        return false;
+    }
+    std::ifstream failedStream(failedOutcome.report_path, std::ios::binary);
+    const auto failedReport = nlohmann::json::parse(std::string(
+        (std::istreambuf_iterator<char>(failedStream)), std::istreambuf_iterator<char>()));
+    bool sceneLoadFailed = false;
+    bool validationNotRun = false;
+    for (const auto& phase : failedReport["phases"])
+    {
+        if (phase["phase"] == "scene_load" && phase["status"] == "failed")
+            sceneLoadFailed = true;
+        if (phase["phase"] == "validation" && phase["status"] == "not_run")
+            validationNotRun = true;
+    }
+    if (failedReport["failure"]["phase"] != "scene_load" ||
+        failedReport["failure"]["reason"] != "scene_unavailable" || !sceneLoadFailed || !validationNotRun ||
+        !failedReport["findings"].empty() || !failedReport["logic"].empty())
+    {
+        std::cerr << "classified failure report shape wrong\n";
+        return false;
+    }
+    return true;
+}
 }
 
 int main()
@@ -556,6 +848,12 @@ int main()
     if (!expectLifecycleContract())
         return 1;
     if (!expectArgumentContract())
+        return 1;
+    if (!expectReportSerializationContract())
+        return 1;
+    if (!expectReportWriterContract())
+        return 1;
+    if (!expectExecuteProbeContract())
         return 1;
 
     std::cout << "Ramses probe units OK\n";

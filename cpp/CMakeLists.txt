@@ -131,6 +131,7 @@ target_link_libraries(sgfx_cine
   PUBLIC
     ramses::ramses
   PRIVATE
+    nlohmann_json::nlohmann_json
     ${SGFX_CINE_SDL3_TARGET}
 )
 
@@ -344,6 +345,7 @@ add_executable(sgfx_cine_ramses_probe_units_test
 target_link_libraries(sgfx_cine_ramses_probe_units_test
   PRIVATE
     sgfx::cine
+    nlohmann_json::nlohmann_json
 )
 
 sgfx_cine_copy_ramses_runtime_dlls(sgfx_cine_ramses_probe_units_test)
@@ -353,6 +355,17 @@ set_tests_properties(sgfx_cine_ramses_probe_units PROPERTIES
   PASS_REGULAR_EXPRESSION "Ramses probe units OK"
 )
 
-install(TARGETS sgfx_cine sgfx_cine_ramses_link_probe sgfx_cine_ramses_preview_cli sgfx_cine_sdl_ramses_embed sgfx_cine_ramses_real_scene sgfx_cine_ramses_shell_fusion_probe sgfx_cine_cinematic_shell)
+add_executable(sgfx_cine_ramses_probe
+  apps/ramses_probe_main.cpp
+)
+
+target_link_libraries(sgfx_cine_ramses_probe
+  PRIVATE
+    sgfx::cine
+)
+
+sgfx_cine_copy_ramses_runtime_dlls(sgfx_cine_ramses_probe)
+
+install(TARGETS sgfx_cine sgfx_cine_ramses_link_probe sgfx_cine_ramses_preview_cli sgfx_cine_sdl_ramses_embed sgfx_cine_ramses_real_scene sgfx_cine_ramses_shell_fusion_probe sgfx_cine_cinematic_shell sgfx_cine_ramses_probe)
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY assets/ DESTINATION assets)

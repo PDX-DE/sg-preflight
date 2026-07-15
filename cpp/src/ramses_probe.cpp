@@ -1,6 +1,9 @@
 #include "sgfx/cine/ramses_probe.h"
 
+#include <ramses/client/RamsesClient.h>
 #include <ramses/client/Scene.h>
+#include <ramses/client/SceneConfig.h>
+#include <ramses/client/SceneMetadata.h>
 #include <ramses/client/SceneObject.h>
 #include <ramses/client/SceneObjectIterator.h>
 #include <ramses/client/logic/LogicEngine.h>
@@ -12,9 +15,12 @@
 #include <ramses/framework/RamsesVersion.h>
 #include <ramses/framework/ValidationReport.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <fstream>
 #include <map>
 #include <sstream>
 
@@ -192,6 +198,7 @@ RamsesLogicUpdateEvidence collect_logic_update_evidence(ramses::RamsesFramework&
     engine.enableUpdateReport(true);
 
     RamsesLogicUpdateEvidence evidence;
+    evidence.engine_name = std::string{engine.getName()};
     evidence.update_succeeded = engine.update();
     if (!evidence.update_succeeded)
     {
@@ -361,5 +368,224 @@ RamsesProbeCliParse parse_probe_arguments(const std::vector<std::string>& argume
     parse.request.output_root = outputRoot;
     parse.accepted = true;
     return parse;
+}
+
+std::string serialize_probe_report(const RamsesProbeNativeReport& report)
+{
+    nlohmann::json json;
+    json["schemaVersion"] = 1;
+    json["probeVersion"] = "0.1.0";
+    json["profile"] = report.profile;
+    json["backend"] = report.backend;
+    json["scenePath"] = report.scene_path;
+    if (report.metadata_collected)
+    {
+        json["metadata"] = {
+            {"versionString", report.metadata.version_string},
+            {"versionMajor", report.metadata.version_major},
+            {"versionMinor", report.metadata.version_minor},
+            {"versionPatch", report.metadata.version_patch},
+            {"featureLevel", report.metadata.feature_level},
+        };
+    }
+    else
+    {
+        json["metadata"] = nullptr;
+    }
+    json["phases"] = nlohmann::json::array();
+    for (const auto& record : report.phases)
+        json["phases"].push_back({{"phase", record.phase}, {"status", record.status}});
+    if (report.failure_phase.empty())
+        json["failure"] = nullptr;
+    else
+        json["failure"] = {{"phase", report.failure_phase}, {"reason", report.failure_reason}};
+    json["findings"] = nlohmann::json::array();
+    for (const auto& finding : report.findings)
+    {
+        json["findings"].push_back({
+            {"severity", finding.severity},
+            {"message", finding.message},
+            {"objectType", finding.object_type},
+            {"objectId", finding.object_id},
+            {"objectName", finding.object_name},
+            {"sourceClass", finding.source_class},
+            {"identity", probe_finding_identity(finding)},
+        });
+    }
+    json["inventory"] = nlohmann::json::array();
+    for (const auto& entry : report.inventory)
+        json["inventory"].push_back({{"objectType", entry.object_type}, {"count", entry.count}});
+    json["logic"] = nlohmann::json::array();
+    for (const auto& evidence : report.logic)
+    {
+        json["logic"].push_back({
+            {"engine", evidence.engine_name},
+            {"updateSucceeded", evidence.update_succeeded},
+            {"errorMessage", evidence.error_message},
+            {"executedNodes", evidence.executed_nodes},
+            {"skippedNodes", evidence.skipped_nodes},
+            {"totalUpdateMicroseconds", evidence.total_update_microseconds},
+            {"topologySortMicroseconds", evidence.topology_sort_microseconds},
+        });
+    }
+    json["lifecycle"] = nullptr;
+    json["frame"] = nullptr;
+    return json.dump();
+}
+
+RamsesProbeWriteResult write_probe_report_atomically(const std::filesystem::path& output_root,
+                                                     const std::string& report_json)
+{
+    RamsesProbeWriteResult result;
+    std::error_code error;
+    if (!std::filesystem::is_directory(output_root, error) || error)
+    {
+        result.rejection = "output_unavailable";
+        return result;
+    }
+    if (report_json.size() > 2u * 1024u * 1024u)
+    {
+        result.rejection = "report_too_large";
+        return result;
+    }
+    const auto target = output_root / "ramses-probe-native.json";
+    if (std::filesystem::exists(target, error) || error)
+    {
+        result.rejection = "report_exists";
+        return result;
+    }
+    const auto temporary = output_root / "ramses-probe-native.json.tmp";
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        stream.write(report_json.data(), static_cast<std::streamsize>(report_json.size()));
+        stream.flush();
+        if (!stream.good())
+        {
+            stream.close();
+            std::filesystem::remove(temporary, error);
+            result.rejection = "report_write_failed";
+            return result;
+        }
+    }
+    std::filesystem::rename(temporary, target, error);
+    if (error)
+    {
+        std::filesystem::remove(temporary, error);
+        result.rejection = "report_write_failed";
+        return result;
+    }
+    result.written = true;
+    result.report_path = target;
+    return result;
+}
+
+namespace
+{
+constexpr std::array<const char*, 6> kProbePhases = {"arguments", "metadata",  "scene_load",
+                                                     "validation", "inventory", "logic"};
+}
+
+RamsesProbeRunOutcome execute_probe_request(const RamsesProbeCliRequest& request)
+{
+    RamsesProbeRunOutcome outcome;
+    RamsesProbeNativeReport report;
+    report.profile = request.profile;
+    report.backend = request.backend;
+    report.scene_path = request.scene_path.string();
+
+    std::size_t completed = 1u;
+    bool failed = false;
+    const auto fail = [&report, &failed](const char* phase, const char* reason) {
+        report.failure_phase = phase;
+        report.failure_reason = reason;
+        failed = true;
+    };
+
+    try
+    {
+        report.metadata = collect_ramses_probe_metadata();
+        report.metadata_collected = true;
+        ++completed;
+
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(request.scene_path, error) || error)
+        {
+            fail("scene_load", "scene_unavailable");
+        }
+        else
+        {
+            const auto sceneMetadata = ramses::RamsesClient::GetMetadataFromFile(request.scene_path.string());
+            if (!sceneMetadata)
+            {
+                fail("scene_load", "scene_incompatible");
+            }
+            else
+            {
+                ramses::RamsesFrameworkConfig frameworkConfig{sceneMetadata->featureLevel};
+                frameworkConfig.setRequestedRamsesShellType(ramses::ERamsesShellType::None);
+                frameworkConfig.setLogLevel(ramses::ELogLevel::Off);
+                frameworkConfig.setLogLevelConsole(ramses::ELogLevel::Off);
+                ramses::RamsesFramework framework{frameworkConfig};
+                auto* client = framework.createClient("sgfx-ramses-probe");
+                ramses::SceneConfig sceneConfig{ramses::sceneId_t{9702u},
+                                                ramses::EScenePublicationMode::LocalOnly,
+                                                ramses::ERenderBackendCompatibility::OpenGL};
+                auto* scene =
+                    client ? client->loadSceneFromFile(request.scene_path.string(), sceneConfig) : nullptr;
+                if (scene == nullptr)
+                {
+                    fail("scene_load", "scene_incompatible");
+                }
+                else
+                {
+                    ++completed;
+                    report.findings = collect_validation_findings(*scene);
+                    ++completed;
+                    report.inventory = collect_scene_inventory(*scene);
+                    ++completed;
+                    ramses::SceneObjectIterator iterator(*scene, ramses::ERamsesObjectType::LogicEngine);
+                    while (auto* object = iterator.getNext())
+                    {
+                        if (auto* engine = object->as<ramses::LogicEngine>())
+                            report.logic.push_back(collect_logic_update_evidence(framework, *engine));
+                    }
+                    ++completed;
+                }
+            }
+        }
+    }
+    catch (...)
+    {
+        if (report.failure_phase.empty())
+            fail(completed < kProbePhases.size() ? kProbePhases[completed] : "logic", "unexpected_exception");
+    }
+
+    for (std::size_t index = 0u; index < kProbePhases.size(); ++index)
+    {
+        std::string status = "not_run";
+        if (index < completed)
+            status = "completed";
+        else if (failed && index == completed)
+            status = "failed";
+        report.phases.push_back({kProbePhases[index], status});
+    }
+
+    const auto written = write_probe_report_atomically(request.output_root, serialize_probe_report(report));
+    if (!written.written)
+    {
+        outcome.exit_code = kProbeExitIo;
+        outcome.classification = written.rejection;
+        return outcome;
+    }
+    outcome.report_path = written.report_path;
+    if (failed)
+    {
+        outcome.exit_code = kProbeExitData;
+        outcome.classification = report.failure_reason;
+        return outcome;
+    }
+    outcome.exit_code = kProbeExitOk;
+    outcome.classification = "completed";
+    return outcome;
 }
 }

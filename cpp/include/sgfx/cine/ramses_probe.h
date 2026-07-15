@@ -70,6 +70,7 @@ std::vector<RamsesProbeInventoryEntry> collect_scene_inventory(const ramses::Sce
 
 struct RamsesLogicUpdateEvidence
 {
+    std::string engine_name;
     bool update_succeeded{false};
     std::string error_message;
     std::vector<std::string> executed_nodes;
@@ -121,4 +122,51 @@ struct RamsesProbeCliParse
 };
 
 RamsesProbeCliParse parse_probe_arguments(const std::vector<std::string>& arguments);
+
+inline constexpr int kProbeExitOk = 0;
+inline constexpr int kProbeExitUsage = 64;
+inline constexpr int kProbeExitData = 65;
+inline constexpr int kProbeExitIo = 74;
+
+struct RamsesProbePhaseRecord
+{
+    std::string phase;
+    std::string status;
+};
+
+struct RamsesProbeNativeReport
+{
+    std::string profile;
+    std::string backend;
+    std::string scene_path;
+    bool metadata_collected{false};
+    RamsesProbeMetadata metadata;
+    std::vector<RamsesProbePhaseRecord> phases;
+    std::string failure_phase;
+    std::string failure_reason;
+    std::vector<RamsesProbeFinding> findings;
+    std::vector<RamsesProbeInventoryEntry> inventory;
+    std::vector<RamsesLogicUpdateEvidence> logic;
+};
+
+std::string serialize_probe_report(const RamsesProbeNativeReport& report);
+
+struct RamsesProbeWriteResult
+{
+    bool written{false};
+    std::string rejection;
+    std::filesystem::path report_path;
+};
+
+RamsesProbeWriteResult write_probe_report_atomically(const std::filesystem::path& output_root,
+                                                     const std::string& report_json);
+
+struct RamsesProbeRunOutcome
+{
+    int exit_code{kProbeExitIo};
+    std::string classification;
+    std::filesystem::path report_path;
+};
+
+RamsesProbeRunOutcome execute_probe_request(const RamsesProbeCliRequest& request);
 }
