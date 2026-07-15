@@ -9,11 +9,20 @@
 #include <ramses/client/logic/LogicEngine.h>
 #include <ramses/client/logic/LogicEngineReport.h>
 #include <ramses/client/logic/LogicNode.h>
+#include <ramses/client/logic/LuaInterface.h>
+#include <ramses/client/logic/LuaScript.h>
+#include <ramses/client/logic/Property.h>
+#include <ramses/client/ramses-utils.h>
+#include <ramses/framework/DataTypes.h>
 #include <ramses/framework/EFeatureLevel.h>
 #include <ramses/framework/RamsesFramework.h>
 #include <ramses/framework/RamsesFrameworkConfig.h>
 #include <ramses/framework/RamsesVersion.h>
 #include <ramses/framework/ValidationReport.h>
+#include <ramses/renderer/DisplayConfig.h>
+#include <ramses/renderer/RendererConfig.h>
+
+#include "ramses_render_support.h"
 
 #include <nlohmann/json.hpp>
 
@@ -22,8 +31,12 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <initializer_list>
 #include <map>
 #include <sstream>
+#include <stdexcept>
+#include <string_view>
+#include <thread>
 
 namespace sgfx::cine
 {
@@ -429,8 +442,38 @@ std::string serialize_probe_report(const RamsesProbeNativeReport& report)
             {"topologySortMicroseconds", evidence.topology_sort_microseconds},
         });
     }
-    json["lifecycle"] = nullptr;
-    json["frame"] = nullptr;
+    if (report.lifecycle_recorded)
+    {
+        json["lifecycle"] = {
+            {"completed", report.lifecycle.completed},
+            {"failurePhase", report.lifecycle.failure_phase},
+            {"reachedPhases", report.lifecycle.reached_phases},
+            {"elapsedMicroseconds", report.lifecycle.elapsed_microseconds},
+        };
+    }
+    else
+    {
+        json["lifecycle"] = nullptr;
+    }
+    if (report.frame_recorded)
+    {
+        nlohmann::json frame;
+        frame["outcome"] = report.frame_outcome;
+        if (report.frame_classification.empty())
+            frame["classification"] = nullptr;
+        else
+            frame["classification"] = report.frame_classification;
+        if (report.frame_file.empty())
+            frame["file"] = nullptr;
+        else
+            frame["file"] = report.frame_file;
+        frame["drivenInputs"] = report.frame_driven_inputs;
+        json["frame"] = frame;
+    }
+    else
+    {
+        json["frame"] = nullptr;
+    }
     return json.dump();
 }
 
@@ -482,8 +525,330 @@ RamsesProbeWriteResult write_probe_report_atomically(const std::filesystem::path
 
 namespace
 {
-constexpr std::array<const char*, 6> kProbePhases = {"arguments", "metadata",  "scene_load",
-                                                     "validation", "inventory", "logic"};
+constexpr std::array<const char*, 8> kProbePhases = {"arguments",  "metadata", "scene_load", "validation",
+                                                     "inventory",  "logic",    "perspective", "frame"};
+constexpr std::uint32_t kProbeFrameWidth = 480u;
+constexpr std::uint32_t kProbeFrameHeight = 270u;
+
+std::vector<ramses::LogicEngine*> collectProbeLogicEngines(ramses::Scene& scene)
+{
+    std::vector<ramses::LogicEngine*> engines;
+    ramses::SceneObjectIterator iterator(scene, ramses::ERamsesObjectType::LogicEngine);
+    while (auto* object = iterator.getNext())
+    {
+        if (auto* engine = object->as<ramses::LogicEngine>())
+            engines.push_back(engine);
+    }
+    return engines;
+}
+
+ramses::Property* probeCameraCraneRoot(ramses::LogicNode& node)
+{
+    auto* inputs = node.getInputs();
+    if (!inputs)
+        return nullptr;
+    if (inputs->hasChild("Interface_CameraCrane"))
+        return inputs->getChild("Interface_CameraCrane");
+    if (inputs->hasChild("CraneGimbal") && inputs->hasChild("Frustum") && inputs->hasChild("Viewport"))
+        return inputs;
+    return nullptr;
+}
+
+std::vector<ramses::Property*> collectProbeCraneRoots(const std::vector<ramses::LogicEngine*>& engines)
+{
+    std::vector<ramses::Property*> roots;
+    for (auto* engine : engines)
+    {
+        for (auto* interfaceNode : engine->getCollection<ramses::LuaInterface>())
+        {
+            if (auto* root = probeCameraCraneRoot(*interfaceNode))
+                roots.push_back(root);
+        }
+    }
+    if (roots.empty())
+    {
+        for (auto* engine : engines)
+        {
+            for (auto* script : engine->getCollection<ramses::LuaScript>())
+            {
+                if (auto* root = probeCameraCraneRoot(*script))
+                    roots.push_back(root);
+            }
+        }
+    }
+    return roots;
+}
+
+template <typename T>
+bool setProbeProperty(ramses::Property& root, std::initializer_list<std::string_view> path, T value)
+{
+    auto* property = &root;
+    for (const auto segment : path)
+    {
+        if (!property->hasChild(segment))
+            return false;
+        property = property->getChild(segment);
+    }
+    return property && property->set<T>(value);
+}
+
+bool applyProbePerspective(ramses::Property& root, const RamsesProbePerspective& perspective,
+                           std::uint32_t width, std::uint32_t height)
+{
+    // Viewport targets the readback buffer; every other value comes from the authored perspective.
+    bool ok = true;
+    ok &= setProbeProperty<bool>(root, {"AutoAspect"}, perspective.aspect_from_resolution);
+    ok &= setProbeProperty<float>(root, {"CraneGimbal", "Distance"}, perspective.distance);
+    ok &= setProbeProperty<float>(root, {"CraneGimbal", "Pitch"}, perspective.pitch);
+    ok &= setProbeProperty<float>(root, {"CraneGimbal", "Roll"}, perspective.roll);
+    ok &= setProbeProperty<float>(root, {"CraneGimbal", "Yaw"}, perspective.yaw);
+    ok &= setProbeProperty<float>(root, {"Frustum", "AspectRatio"}, perspective.aspect_ratio);
+    ok &= setProbeProperty<float>(root, {"Frustum", "FarPlane"}, perspective.far_plane);
+    ok &= setProbeProperty<float>(root, {"Frustum", "HorizontalFOV"}, perspective.horizontal_fov);
+    ok &= setProbeProperty<float>(root, {"Frustum", "NearPlane"}, perspective.near_plane);
+    ok &= setProbeProperty<float>(root, {"Scale"}, perspective.scale);
+    ok &= setProbeProperty<ramses::vec2i>(root, {"ShiftXY"},
+                                          ramses::vec2i{perspective.shift[0], perspective.shift[1]});
+    ok &= setProbeProperty<ramses::vec3f>(
+        root, {"Origin"},
+        ramses::vec3f{perspective.origin[0], perspective.origin[1], perspective.origin[2]});
+    ok &= setProbeProperty<std::int32_t>(root, {"Viewport", "Height"}, static_cast<std::int32_t>(height));
+    ok &= setProbeProperty<std::int32_t>(root, {"Viewport", "OffsetX"}, 0);
+    ok &= setProbeProperty<std::int32_t>(root, {"Viewport", "OffsetY"}, 0);
+    ok &= setProbeProperty<std::int32_t>(root, {"Viewport", "Width"}, static_cast<std::int32_t>(width));
+    return ok;
+}
+
+bool sceneHasCameraCraneContract(ramses::Scene& scene)
+{
+    const auto engines = collectProbeLogicEngines(scene);
+    return !collectProbeCraneRoots(engines).empty();
+}
+
+struct ProbeFrameLaneResult
+{
+    std::string outcome{"renderer_unavailable"};
+    std::string classification;
+    std::string file;
+    std::size_t driven{0};
+    bool lifecycle_recorded{false};
+    RamsesLifecycleEvidence lifecycle;
+};
+
+ProbeFrameLaneResult runProbeFrameLane(const std::filesystem::path& scenePath,
+                                       const RamsesProbePerspective& perspective,
+                                       const std::filesystem::path& outputRoot)
+{
+    ProbeFrameLaneResult result;
+    const auto metadata = ramses::RamsesClient::GetMetadataFromFile(scenePath.string());
+    if (!metadata)
+    {
+        result.outcome = "scene_incompatible";
+        return result;
+    }
+
+    render_support::SdlGuard sdl;
+    if (!sdl.initialized())
+        return result;
+    render_support::HiddenWindow window(kProbeFrameWidth, kProbeFrameHeight);
+    if (!window.valid())
+        return result;
+    void* nativeHandle = window.nativeHandle();
+    if (!nativeHandle)
+        return result;
+
+    ramses::RamsesFrameworkConfig frameworkConfig{metadata->featureLevel};
+    frameworkConfig.setRequestedRamsesShellType(ramses::ERamsesShellType::None);
+    frameworkConfig.setLogLevel(ramses::ELogLevel::Off);
+    frameworkConfig.setLogLevelConsole(ramses::ELogLevel::Off);
+    ramses::RamsesFramework framework{frameworkConfig};
+    auto* client = framework.createClient("sgfx-ramses-probe-frame");
+    ramses::RendererConfig rendererConfig;
+    auto* renderer = framework.createRenderer(rendererConfig);
+    if (!client || !renderer || !framework.connect())
+        return result;
+    auto* sceneControl = renderer->getSceneControlAPI();
+    if (!sceneControl)
+        return result;
+
+    ramses::SceneConfig sceneConfig{ramses::sceneId_t{9703u}, ramses::EScenePublicationMode::LocalOnly,
+                                    ramses::ERenderBackendCompatibility::OpenGL};
+    auto* scene = client->loadSceneFromFile(scenePath.string(), sceneConfig);
+    if (!scene)
+    {
+        result.outcome = "scene_incompatible";
+        return result;
+    }
+
+    const auto engines = collectProbeLogicEngines(*scene);
+    const auto craneRoots = collectProbeCraneRoots(engines);
+    if (craneRoots.empty())
+    {
+        result.outcome = "missing_contract";
+        return result;
+    }
+    for (auto* root : craneRoots)
+    {
+        if (applyProbePerspective(*root, perspective, kProbeFrameWidth, kProbeFrameHeight))
+            ++result.driven;
+    }
+    if (result.driven == 0u)
+    {
+        result.outcome = "missing_contract";
+        return result;
+    }
+    for (auto* engine : engines)
+    {
+        if (!engine->update())
+        {
+            result.outcome = "logic_update_failed";
+            return result;
+        }
+    }
+
+    ramses::DisplayConfig displayConfig;
+    displayConfig.setWindowType(ramses::EWindowType::Windows);
+    displayConfig.setWindowsWindowHandle(nativeHandle);
+    displayConfig.setWindowRectangle(0, 0, kProbeFrameWidth, kProbeFrameHeight);
+    displayConfig.setWindowTitle("SGFX Ramses Probe");
+    const auto display = renderer->createDisplay(displayConfig);
+    if (!display.isValid())
+        return result;
+    renderer->setSkippingOfUnmodifiedBuffers(false);
+    renderer->flush();
+
+    const auto sceneId = scene->getSceneId();
+    render_support::RenderEventHandler handler(display, sceneId, kProbeFrameWidth, kProbeFrameHeight);
+
+    const auto setupDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    const auto waitUntil = [&](auto&& predicate) {
+        while (!predicate())
+        {
+            if (handler.failed() || std::chrono::steady_clock::now() >= setupDeadline)
+                return false;
+            render_support::pumpRamses(*renderer, *sceneControl, handler);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return true;
+    };
+
+    if (!waitUntil([&] { return handler.displayReady(); }))
+        return result;
+    const auto offscreen = renderer->createOffscreenBuffer(display, kProbeFrameWidth, kProbeFrameHeight);
+    if (!offscreen.isValid())
+        return result;
+    handler.setBuffer(offscreen);
+    renderer->setDisplayBufferClearColor(display, offscreen, ramses::vec4f{0.0f, 0.0f, 0.0f, 1.0f});
+    renderer->flush();
+    if (!waitUntil([&] { return handler.bufferReady(); }))
+        return result;
+
+    if (!scene->publish(ramses::EScenePublicationMode::LocalOnly))
+    {
+        result.outcome = "lifecycle_rejected";
+        return result;
+    }
+    scene->flush();
+
+    bool mappingRequested = false;
+    bool renderRequested = false;
+    bool readRequested = false;
+    bool transitionRejected = false;
+    const auto phaseReached = [&](ProbeLifecyclePhase phase) {
+        switch (phase)
+        {
+        case ProbeLifecyclePhase::Available:
+            return handler.sceneAvailable() || handler.sceneReady() || handler.sceneRendered();
+        case ProbeLifecyclePhase::Ready:
+            if (!mappingRequested)
+            {
+                mappingRequested = true;
+                if (!sceneControl->setSceneMapping(sceneId, display) ||
+                    !sceneControl->setSceneDisplayBufferAssignment(sceneId, offscreen, 0) ||
+                    !sceneControl->setSceneState(sceneId, ramses::RendererSceneState::Ready))
+                    transitionRejected = true;
+                sceneControl->flush();
+            }
+            return handler.sceneReady() || handler.sceneRendered();
+        case ProbeLifecyclePhase::Rendered:
+            if (!renderRequested)
+            {
+                renderRequested = true;
+                if (!sceneControl->setSceneState(sceneId, ramses::RendererSceneState::Rendered))
+                    transitionRejected = true;
+                sceneControl->flush();
+            }
+            return handler.sceneRendered();
+        case ProbeLifecyclePhase::Readback:
+            if (!readRequested)
+            {
+                readRequested = true;
+                for (unsigned settle = 0u; settle < 3u; ++settle)
+                    render_support::pumpRamses(*renderer, *sceneControl, handler);
+                handler.resetPixels();
+                renderer->readPixels(display, offscreen, 0u, 0u, kProbeFrameWidth, kProbeFrameHeight);
+                renderer->flush();
+            }
+            return handler.pixelsReceived();
+        }
+        return false;
+    };
+    const auto pump = [&] {
+        if (handler.failed() || transitionRejected)
+            throw std::runtime_error("render_event_failed");
+        render_support::pumpRamses(*renderer, *sceneControl, handler);
+        scene->flush();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    };
+
+    try
+    {
+        result.lifecycle = drive_probe_lifecycle(phaseReached, pump, std::chrono::milliseconds{30000});
+        result.lifecycle_recorded = true;
+    }
+    catch (const std::runtime_error&)
+    {
+        result.outcome = transitionRejected ? "lifecycle_rejected" : "renderer_unavailable";
+        return result;
+    }
+    if (!result.lifecycle.completed)
+    {
+        result.outcome = "lifecycle_timeout";
+        return result;
+    }
+
+    result.classification = frame_classification_code(
+        classify_frame_rgba8(handler.pixels(), kProbeFrameWidth, kProbeFrameHeight));
+
+    const auto framePath = outputRoot / "first-frame.png";
+    auto pixels = handler.pixels();
+    if (!ramses::RamsesUtils::SaveImageBufferToPng(framePath.string(), pixels, kProbeFrameWidth,
+                                                   kProbeFrameHeight, true))
+    {
+        result.outcome = "frame_write_failed";
+        return result;
+    }
+    std::error_code sizeError;
+    const auto frameSize = std::filesystem::file_size(framePath, sizeError);
+    if (sizeError || frameSize > 1024u * 1024u)
+    {
+        std::filesystem::remove(framePath, sizeError);
+        result.outcome = "frame_too_large";
+        return result;
+    }
+    result.file = "first-frame.png";
+
+    sceneControl->setSceneState(sceneId, ramses::RendererSceneState::Unavailable);
+    sceneControl->flush();
+    scene->unpublish();
+    renderer->destroyOffscreenBuffer(display, offscreen);
+    renderer->destroyDisplay(display);
+    renderer->flush();
+    framework.disconnect();
+
+    result.outcome = "readback_complete";
+    return result;
+}
 }
 
 RamsesProbeRunOutcome execute_probe_request(const RamsesProbeCliRequest& request)
@@ -494,9 +859,13 @@ RamsesProbeRunOutcome execute_probe_request(const RamsesProbeCliRequest& request
     report.backend = request.backend;
     report.scene_path = request.scene_path.string();
 
+    const bool laneRequested = !request.perspective_path.empty();
+    bool laneReady = false;
+    RamsesProbePerspective perspective;
+
     std::size_t completed = 1u;
     bool failed = false;
-    const auto fail = [&report, &failed](const char* phase, const char* reason) {
+    const auto fail = [&report, &failed](const char* phase, const std::string& reason) {
         report.failure_phase = phase;
         report.failure_reason = reason;
         failed = true;
@@ -544,13 +913,33 @@ RamsesProbeRunOutcome execute_probe_request(const RamsesProbeCliRequest& request
                     ++completed;
                     report.inventory = collect_scene_inventory(*scene);
                     ++completed;
-                    ramses::SceneObjectIterator iterator(*scene, ramses::ERamsesObjectType::LogicEngine);
-                    while (auto* object = iterator.getNext())
-                    {
-                        if (auto* engine = object->as<ramses::LogicEngine>())
-                            report.logic.push_back(collect_logic_update_evidence(framework, *engine));
-                    }
+                    for (auto* engine : collectProbeLogicEngines(*scene))
+                        report.logic.push_back(collect_logic_update_evidence(framework, *engine));
                     ++completed;
+                    if (laneRequested)
+                    {
+                        const auto perspectiveParse =
+                            parse_probe_perspective(request.perspective_path, request.perspective_id);
+                        if (!perspectiveParse.accepted)
+                        {
+                            fail("perspective", perspectiveParse.rejection);
+                        }
+                        else
+                        {
+                            ++completed;
+                            perspective = perspectiveParse.perspective;
+                            if (!sceneHasCameraCraneContract(*scene))
+                            {
+                                report.frame_recorded = true;
+                                report.frame_outcome = "missing_contract";
+                                ++completed;
+                            }
+                            else
+                            {
+                                laneReady = true;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -558,13 +947,43 @@ RamsesProbeRunOutcome execute_probe_request(const RamsesProbeCliRequest& request
     catch (...)
     {
         if (report.failure_phase.empty())
-            fail(completed < kProbePhases.size() ? kProbePhases[completed] : "logic", "unexpected_exception");
+            fail(completed < kProbePhases.size() ? kProbePhases[completed] : "frame",
+                 "unexpected_exception");
+    }
+
+    if (laneReady && !failed)
+    {
+        // The validation framework above is destroyed before the render framework starts.
+        try
+        {
+            const auto lane = runProbeFrameLane(request.scene_path, perspective, request.output_root);
+            report.frame_recorded = true;
+            report.frame_outcome = lane.outcome;
+            report.frame_classification = lane.classification;
+            report.frame_file = lane.file;
+            report.frame_driven_inputs = lane.driven;
+            if (lane.lifecycle_recorded)
+            {
+                report.lifecycle_recorded = true;
+                report.lifecycle = lane.lifecycle;
+            }
+            if (lane.outcome == "readback_complete" || lane.outcome == "missing_contract")
+                ++completed;
+            else
+                fail("frame", lane.outcome);
+        }
+        catch (...)
+        {
+            fail("frame", "unexpected_exception");
+        }
     }
 
     for (std::size_t index = 0u; index < kProbePhases.size(); ++index)
     {
         std::string status = "not_run";
-        if (index < completed)
+        if (!laneRequested && index >= 6u)
+            status = "not_requested";
+        else if (index < completed)
             status = "completed";
         else if (failed && index == completed)
             status = "failed";

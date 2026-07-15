@@ -654,6 +654,27 @@ bool expectReportSerializationContract()
         return false;
     }
 
+    sgfx::cine::RamsesProbeNativeReport withLane = report;
+    withLane.frame_recorded = true;
+    withLane.frame_outcome = "readback_complete";
+    withLane.frame_classification = "black";
+    withLane.frame_file = "first-frame.png";
+    withLane.frame_driven_inputs = 1u;
+    withLane.lifecycle_recorded = true;
+    withLane.lifecycle.completed = true;
+    withLane.lifecycle.reached_phases = {"available", "ready", "rendered", "readback"};
+    withLane.lifecycle.elapsed_microseconds = 1234;
+    const auto laneParsed = nlohmann::json::parse(sgfx::cine::serialize_probe_report(withLane));
+    if (laneParsed["frame"]["outcome"] != "readback_complete" ||
+        laneParsed["frame"]["classification"] != "black" || laneParsed["frame"]["file"] != "first-frame.png" ||
+        laneParsed["frame"]["drivenInputs"] != 1 || laneParsed["lifecycle"]["completed"] != true ||
+        laneParsed["lifecycle"]["reachedPhases"].size() != 4u ||
+        laneParsed["lifecycle"]["elapsedMicroseconds"] != 1234)
+    {
+        std::cerr << "recorded frame/lifecycle report shape wrong\n";
+        return false;
+    }
+
     sgfx::cine::RamsesProbeNativeReport failed;
     failed.profile = "G45";
     failed.backend = "opengl";
@@ -882,12 +903,23 @@ bool expectExecuteProbeContract()
         std::cerr << "probe report content wrong for the synthetic scene\n";
         return false;
     }
-    for (const auto& phase : report["phases"])
-        if (phase["status"] != "completed")
+    if (report["phases"].size() != 8u)
+    {
+        std::cerr << "report must carry exactly eight ordered phases\n";
+        return false;
+    }
+    for (std::size_t index = 0u; index < 6u; ++index)
+        if (report["phases"][index]["status"] != "completed")
         {
-            std::cerr << "all phases must be completed on success\n";
+            std::cerr << "headless phases must be completed on success\n";
             return false;
         }
+    if (report["phases"][6]["phase"] != "perspective" || report["phases"][6]["status"] != "not_requested" ||
+        report["phases"][7]["phase"] != "frame" || report["phases"][7]["status"] != "not_requested")
+    {
+        std::cerr << "unrequested frame lane must be reported as not_requested\n";
+        return false;
+    }
 
     TemporaryDirectory missingOutputRoot;
     sgfx::cine::RamsesProbeCliRequest missingScene = request;
@@ -919,6 +951,136 @@ bool expectExecuteProbeContract()
         std::cerr << "classified failure report shape wrong\n";
         return false;
     }
+
+    TemporaryDirectory perspectiveDir;
+    const auto perspectiveFile = perspectiveDir.path() / "perspectives_probe.json";
+    if (!writeTextFile(perspectiveFile, validPerspectiveJson()))
+        return false;
+    TemporaryDirectory missingContractRoot;
+    sgfx::cine::RamsesProbeCliRequest contractRequest = request;
+    contractRequest.output_root = missingContractRoot.path();
+    contractRequest.perspective_path = perspectiveFile;
+    contractRequest.perspective_id = "CID_CARHUB_ALL_GOOD";
+    const auto contractOutcome = sgfx::cine::execute_probe_request(contractRequest);
+    if (contractOutcome.exit_code != sgfx::cine::kProbeExitOk ||
+        contractOutcome.classification != "completed" || !fs::exists(contractOutcome.report_path))
+    {
+        std::cerr << "missing camera-crane contract must be an explicit result, not a failure: "
+                  << contractOutcome.classification << " exit " << contractOutcome.exit_code << "\n";
+        return false;
+    }
+    std::ifstream contractStream(contractOutcome.report_path, std::ios::binary);
+    const auto contractReport = nlohmann::json::parse(std::string(
+        (std::istreambuf_iterator<char>(contractStream)), std::istreambuf_iterator<char>()));
+    if (contractReport["frame"]["outcome"] != "missing_contract" ||
+        !contractReport["frame"]["classification"].is_null() || !contractReport["frame"]["file"].is_null() ||
+        !contractReport["lifecycle"].is_null() ||
+        contractReport["phases"][6]["status"] != "completed" ||
+        contractReport["phases"][7]["status"] != "completed" || !contractReport["failure"].is_null())
+    {
+        std::cerr << "missing-contract report shape wrong\n";
+        return false;
+    }
+    return true;
+}
+
+bool expectRenderedFrameContract()
+{
+    TemporaryDirectory sceneDir;
+    const auto scenePath = sceneDir.path() / "crane.ramses";
+    {
+        ramses::RamsesFrameworkConfig config{ramses::EFeatureLevel_01};
+        ramses::RamsesFramework framework{config};
+        auto* client = framework.createClient("sgfx-probe-crane-save");
+        auto* scene = client->createScene(ramses::sceneId_t{2029u}, "probe-crane-scene");
+        auto* camera = scene->createPerspectiveCamera("probe-camera");
+        camera->setFrustum(19.0f, 480.0f / 270.0f, 0.1f, 100.0f);
+        camera->setViewport(0, 0, 480u, 270u);
+        auto* pass = scene->createRenderPass("probe-pass");
+        pass->setCamera(*camera);
+        auto* group = scene->createRenderGroup("probe-group");
+        pass->addRenderGroup(*group);
+        auto* engine = scene->createLogicEngine("probe-crane-logic");
+        constexpr std::string_view craneInterfaceSource = R"(
+            function interface(inout)
+                inout.AutoAspect = Type:Bool()
+                inout.Scale = Type:Float()
+                inout.Origin = Type:Vec3f()
+                inout.ShiftXY = Type:Vec2i()
+                inout.CraneGimbal = {
+                    Distance = Type:Float(),
+                    Yaw = Type:Float(),
+                    Pitch = Type:Float(),
+                    Roll = Type:Float()
+                }
+                inout.Frustum = {
+                    HorizontalFOV = Type:Float(),
+                    AspectRatio = Type:Float(),
+                    NearPlane = Type:Float(),
+                    FarPlane = Type:Float()
+                }
+                inout.Viewport = {
+                    OffsetX = Type:Int32(),
+                    OffsetY = Type:Int32(),
+                    Width = Type:Int32(),
+                    Height = Type:Int32()
+                }
+            end
+        )";
+        if (engine->createLuaInterface(craneInterfaceSource, "Interface_CameraCrane") == nullptr ||
+            !scene->flush() || !scene->saveToFile(scenePath.string()))
+        {
+            std::cerr << "could not save the camera-crane probe scene\n";
+            return false;
+        }
+    }
+
+    TemporaryDirectory perspectiveDir;
+    const auto perspectiveFile = perspectiveDir.path() / "perspectives_probe.json";
+    if (!writeTextFile(perspectiveFile, validPerspectiveJson()))
+        return false;
+
+    TemporaryDirectory outputRoot;
+    sgfx::cine::RamsesProbeCliRequest request;
+    request.profile = "G45";
+    request.backend = "opengl";
+    request.scene_path = scenePath;
+    request.output_root = outputRoot.path();
+    request.perspective_path = perspectiveFile;
+    request.perspective_id = "CID_CARHUB_ALL_GOOD";
+
+    const auto outcome = sgfx::cine::execute_probe_request(request);
+    if (outcome.exit_code != sgfx::cine::kProbeExitOk || outcome.classification != "completed")
+    {
+        std::cerr << "rendered frame lane must complete: " << outcome.classification << " exit "
+                  << outcome.exit_code << "\n";
+        return false;
+    }
+    std::ifstream stream(outcome.report_path, std::ios::binary);
+    const auto report = nlohmann::json::parse(std::string((std::istreambuf_iterator<char>(stream)),
+                                                          std::istreambuf_iterator<char>()));
+    if (report["frame"]["outcome"] != "readback_complete" || report["frame"]["classification"] != "black" ||
+        report["frame"]["file"] != "first-frame.png" || report["frame"]["drivenInputs"].get<int>() < 1 ||
+        report["lifecycle"]["completed"] != true || report["lifecycle"]["reachedPhases"].size() != 4u ||
+        report["lifecycle"]["elapsedMicroseconds"].get<std::int64_t>() < 0)
+    {
+        std::cerr << "rendered frame report shape wrong\n";
+        return false;
+    }
+    for (const auto& phase : report["phases"])
+        if (phase["status"] != "completed")
+        {
+            std::cerr << "all eight phases must complete on a rendered run\n";
+            return false;
+        }
+    const auto framePath = outputRoot.path() / "first-frame.png";
+    std::error_code sizeError;
+    const auto frameSize = fs::file_size(framePath, sizeError);
+    if (sizeError || frameSize == 0u || frameSize > 1024u * 1024u)
+    {
+        std::cerr << "first-frame.png missing or out of bounds\n";
+        return false;
+    }
     return true;
 }
 }
@@ -946,6 +1108,8 @@ int main()
     if (!expectPerspectiveContract())
         return 1;
     if (!expectExecuteProbeContract())
+        return 1;
+    if (!expectRenderedFrameContract())
         return 1;
 
     std::cout << "Ramses probe units OK\n";

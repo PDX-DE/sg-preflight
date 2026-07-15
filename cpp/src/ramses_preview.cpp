@@ -16,13 +16,11 @@
 #include "ramses/framework/RamsesFrameworkConfig.h"
 #include "ramses/framework/RamsesVersion.h"
 #include "ramses/renderer/DisplayConfig.h"
-#include "ramses/renderer/IRendererEventHandler.h"
-#include "ramses/renderer/IRendererSceneControlEventHandler.h"
 #include "ramses/renderer/RamsesRenderer.h"
 #include "ramses/renderer/RendererConfig.h"
 #include "ramses/renderer/RendererSceneControl.h"
 
-#include <SDL3/SDL.h>
+#include "ramses_render_support.h"
 
 #include <algorithm>
 #include <chrono>
@@ -102,171 +100,11 @@ void validateRequest(const RamsesPreviewRequest& request)
         throw PreviewFailure("output_not_empty");
 }
 
-class SdlGuard
-{
-public:
-    SdlGuard()
-    {
-        if (!SDL_Init(SDL_INIT_VIDEO))
-            throw PreviewFailure("renderer_unavailable");
-    }
-
-    ~SdlGuard() { SDL_Quit(); }
-};
-
-class HiddenWindow
-{
-public:
-    HiddenWindow(std::uint32_t width, std::uint32_t height)
-    {
-        m_window = SDL_CreateWindow(
-            "SGFX Ramses Preview",
-            static_cast<int>(width),
-            static_cast<int>(height),
-            SDL_WINDOW_HIDDEN);
-        if (!m_window)
-            throw PreviewFailure("renderer_unavailable");
-    }
-
-    ~HiddenWindow()
-    {
-        if (m_window)
-            SDL_DestroyWindow(m_window);
-    }
-
-    HiddenWindow(const HiddenWindow&) = delete;
-    HiddenWindow& operator=(const HiddenWindow&) = delete;
-
-    void* nativeHandle() const
-    {
-#if defined(_WIN32)
-        const SDL_PropertiesID properties = SDL_GetWindowProperties(m_window);
-        void* handle = SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
-        if (!handle)
-            throw PreviewFailure("renderer_unavailable");
-        return handle;
-#else
-        throw PreviewFailure("renderer_unavailable");
-#endif
-    }
-
-private:
-    SDL_Window* m_window = nullptr;
-};
-
-class PreviewEventHandler final : public ramses::RendererEventHandlerEmpty,
-                                  public ramses::RendererSceneControlEventHandlerEmpty
-{
-public:
-    PreviewEventHandler(ramses::displayId_t display, ramses::sceneId_t scene, std::uint32_t width, std::uint32_t height)
-        : m_display(display)
-        , m_scene(scene)
-        , m_width(width)
-        , m_height(height)
-    {
-    }
-
-    void displayCreated(ramses::displayId_t display, ramses::ERendererEventResult result) override
-    {
-        if (display != m_display)
-            return;
-        m_displayCreated = result == ramses::ERendererEventResult::Ok;
-        m_failed = result == ramses::ERendererEventResult::Failed;
-    }
-
-    void offscreenBufferCreated(
-        ramses::displayId_t display,
-        ramses::displayBufferId_t buffer,
-        ramses::ERendererEventResult result) override
-    {
-        if (display != m_display || buffer != m_buffer)
-            return;
-        m_bufferCreated = result == ramses::ERendererEventResult::Ok;
-        m_failed = result == ramses::ERendererEventResult::Failed;
-    }
-
-    void sceneStateChanged(ramses::sceneId_t scene, ramses::RendererSceneState state) override
-    {
-        if (scene == m_scene)
-            m_sceneState = state;
-    }
-
-    void framebufferPixelsRead(
-        const std::uint8_t* data,
-        const std::uint32_t size,
-        ramses::displayId_t display,
-        ramses::displayBufferId_t buffer,
-        ramses::ERendererEventResult result) override
-    {
-        if (display != m_display || buffer != m_buffer)
-            return;
-        m_pixelsReceived = true;
-        const auto expected = static_cast<std::uint64_t>(m_width) * m_height * 4u;
-        if (result != ramses::ERendererEventResult::Ok || !data || size != expected)
-        {
-            m_failed = true;
-            return;
-        }
-        m_pixels.assign(data, data + size);
-    }
-
-    void setBuffer(ramses::displayBufferId_t buffer) { m_buffer = buffer; }
-
-    void resetPixels()
-    {
-        m_pixelsReceived = false;
-        m_pixels.clear();
-    }
-
-    bool displayReady() const { return m_displayCreated; }
-    bool bufferReady() const { return m_bufferCreated; }
-    bool failed() const { return m_failed; }
-    bool sceneAvailable() const { return m_sceneState == ramses::RendererSceneState::Available; }
-    bool sceneReady() const { return m_sceneState == ramses::RendererSceneState::Ready; }
-    bool sceneRendered() const { return m_sceneState == ramses::RendererSceneState::Rendered; }
-    bool pixelsReceived() const { return m_pixelsReceived; }
-    const std::vector<std::uint8_t>& pixels() const { return m_pixels; }
-
-private:
-    ramses::displayId_t m_display;
-    ramses::sceneId_t m_scene;
-    ramses::displayBufferId_t m_buffer = ramses::displayBufferId_t::Invalid();
-    std::uint32_t m_width;
-    std::uint32_t m_height;
-    bool m_displayCreated = false;
-    bool m_bufferCreated = false;
-    bool m_failed = false;
-    bool m_pixelsReceived = false;
-    ramses::RendererSceneState m_sceneState = ramses::RendererSceneState::Unavailable;
-    std::vector<std::uint8_t> m_pixels;
-};
-
-void pumpPlatformEvents()
-{
-    SDL_Event event;
-    while (SDL_PollEvent(&event))
-    {
-    }
-}
-
-void pumpRamses(
-    ramses::RamsesRenderer& renderer,
-    ramses::RendererSceneControl& sceneControl,
-    PreviewEventHandler& handler)
-{
-    pumpPlatformEvents();
-    renderer.doOneLoop();
-    renderer.dispatchEvents(handler);
-    sceneControl.dispatchEvents(handler);
-    renderer.flush();
-    sceneControl.flush();
-}
-
 template <typename Predicate, typename Tick>
 void waitFor(
     ramses::RamsesRenderer& renderer,
     ramses::RendererSceneControl& sceneControl,
-    PreviewEventHandler& handler,
+    render_support::RenderEventHandler& handler,
     Predicate predicate,
     Tick tick,
     std::chrono::steady_clock::time_point deadline)
@@ -276,7 +114,7 @@ void waitFor(
         if (handler.failed() || std::chrono::steady_clock::now() >= deadline)
             throw PreviewFailure("lifecycle_timeout");
         tick();
-        pumpRamses(renderer, sceneControl, handler);
+        render_support::pumpRamses(renderer, sceneControl, handler);
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 }
@@ -448,8 +286,12 @@ RamsesPreviewResult render_ramses_preview(const RamsesPreviewRequest& request)
         result.ramses_version = linkedVersion.string;
         result.feature_level = static_cast<std::uint32_t>(metadata->featureLevel);
 
-        SdlGuard sdl;
-        HiddenWindow window(request.width, request.height);
+        render_support::SdlGuard sdl;
+        if (!sdl.initialized())
+            throw PreviewFailure("renderer_unavailable");
+        render_support::HiddenWindow window(request.width, request.height);
+        if (!window.valid())
+            throw PreviewFailure("renderer_unavailable");
 
         ramses::RamsesFrameworkConfig frameworkConfig{metadata->featureLevel};
         frameworkConfig.setRequestedRamsesShellType(ramses::ERamsesShellType::None);
@@ -479,7 +321,10 @@ RamsesPreviewResult render_ramses_preview(const RamsesPreviewRequest& request)
 
         ramses::DisplayConfig displayConfig;
         displayConfig.setWindowType(ramses::EWindowType::Windows);
-        displayConfig.setWindowsWindowHandle(window.nativeHandle());
+        void* nativeHandle = window.nativeHandle();
+        if (!nativeHandle)
+            throw PreviewFailure("renderer_unavailable");
+        displayConfig.setWindowsWindowHandle(nativeHandle);
         displayConfig.setWindowRectangle(0, 0, request.width, request.height);
         displayConfig.setWindowTitle("SGFX Ramses Preview");
         const auto display = renderer->createDisplay(displayConfig);
@@ -489,7 +334,7 @@ RamsesPreviewResult render_ramses_preview(const RamsesPreviewRequest& request)
         renderer->flush();
 
         const auto sceneId = scene->getSceneId();
-        PreviewEventHandler handler(display, sceneId, request.width, request.height);
+        render_support::RenderEventHandler handler(display, sceneId, request.width, request.height);
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
         waitFor(*renderer, *sceneControl, handler, [&] { return handler.displayReady(); }, [] {}, deadline);
 

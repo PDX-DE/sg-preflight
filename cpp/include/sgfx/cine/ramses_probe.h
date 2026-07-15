@@ -148,6 +148,13 @@ struct RamsesProbeNativeReport
     std::vector<RamsesProbeFinding> findings;
     std::vector<RamsesProbeInventoryEntry> inventory;
     std::vector<RamsesLogicUpdateEvidence> logic;
+    bool lifecycle_recorded{false};
+    RamsesLifecycleEvidence lifecycle;
+    bool frame_recorded{false};
+    std::string frame_outcome;
+    std::string frame_classification;
+    std::string frame_file;
+    std::size_t frame_driven_inputs{0};
 };
 
 std::string serialize_probe_report(const RamsesProbeNativeReport& report);
