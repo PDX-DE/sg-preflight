@@ -1,0 +1,300 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+from sg_preflight.ramses_probe_runner import (
+    EVIDENCE_FILE_NAME,
+    NATIVE_REPORT_NAME,
+    ProbeRunRequest,
+    build_helper_arguments,
+    run_probe,
+    sha256_file,
+    validate_native_report,
+)
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _native_report(*, profile: str, scene_path: str, failure: dict | None = None,
+                   frame: dict | None = None) -> dict[str, object]:
+    phase_names = ("arguments", "metadata", "scene_load", "validation", "inventory", "logic",
+                   "perspective", "frame")
+    statuses = ["completed"] * 6 + ["not_requested", "not_requested"]
+    if failure is not None:
+        failed_index = phase_names.index(failure["phase"])
+        statuses = ["completed"] * failed_index + ["failed"] + ["not_run"] * (7 - failed_index)
+    return {
+        "schemaVersion": 1,
+        "probeVersion": "0.1.0",
+        "profile": profile,
+        "backend": "opengl",
+        "scenePath": scene_path,
+        "metadata": {
+            "versionString": "28.16.0",
+            "versionMajor": 28,
+            "versionMinor": 16,
+            "versionPatch": 0,
+            "featureLevel": 1,
+        },
+        "phases": [
+            {"phase": name, "status": status}
+            for name, status in zip(phase_names, statuses)
+        ],
+        "failure": failure,
+        "findings": [],
+        "inventory": [],
+        "logic": [],
+        "lifecycle": None,
+        "frame": frame,
+    }
+
+
+class RamsesProbeRunnerRequestTests(unittest.TestCase):
+    def test_build_helper_arguments_matches_probe_grammar(self) -> None:
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=Path(r"C:\evidence\exported.ramses"),
+            output_root=Path(r"C:\evidence\out"),
+            helper_path=Path(r"C:\tools\sgfx_cine_ramses_probe.exe"),
+            helper_sha256="0" * 64,
+        )
+        arguments = build_helper_arguments(request)
+        self.assertEqual(
+            arguments,
+            [
+                "--scene", r"C:\evidence\exported.ramses",
+                "--output-root", r"C:\evidence\out",
+                "--profile", "G45",
+                "--backend", "opengl",
+            ],
+        )
+
+    def test_build_helper_arguments_appends_perspective_pair(self) -> None:
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=Path(r"C:\evidence\exported.ramses"),
+            output_root=Path(r"C:\evidence\out"),
+            helper_path=Path(r"C:\tools\probe.exe"),
+            helper_sha256="0" * 64,
+            perspective_path=Path(r"C:\evidence\perspectives.json"),
+            perspective_id="CID_CARHUB_ALL_GOOD",
+        )
+        arguments = build_helper_arguments(request)
+        self.assertEqual(arguments[-4:], ["--perspective", r"C:\evidence\perspectives.json",
+                                          "--perspective-id", "CID_CARHUB_ALL_GOOD"])
+
+
+class RamsesProbeRunnerValidationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.scene_path = r"C:\evidence\exported.ramses"
+        self.report = _native_report(profile="G45", scene_path=self.scene_path)
+
+    def _rejections(self, report: object) -> list[str]:
+        return validate_native_report(report, expected_profile="G45",
+                                      expected_scene_path=self.scene_path)
+
+    def test_valid_report_is_accepted(self) -> None:
+        self.assertEqual(self._rejections(self.report), [])
+
+    def test_non_object_report_is_malformed(self) -> None:
+        self.assertIn("malformed_report", self._rejections(["not", "a", "report"]))
+
+    def test_unknown_top_level_key_is_malformed(self) -> None:
+        self.report["extraKey"] = True
+        self.assertIn("malformed_report", self._rejections(self.report))
+
+    def test_missing_top_level_key_is_malformed(self) -> None:
+        del self.report["inventory"]
+        self.assertIn("malformed_report", self._rejections(self.report))
+
+    def test_wrong_schema_version_is_malformed(self) -> None:
+        self.report["schemaVersion"] = 2
+        self.assertIn("malformed_report", self._rejections(self.report))
+
+    def test_wrong_phase_order_is_partial(self) -> None:
+        self.report["phases"][0], self.report["phases"][1] = (
+            self.report["phases"][1], self.report["phases"][0])
+        self.assertIn("partial_report", self._rejections(self.report))
+
+    def test_unknown_phase_status_is_partial(self) -> None:
+        self.report["phases"][2]["status"] = "sort_of_done"
+        self.assertIn("partial_report", self._rejections(self.report))
+
+    def test_failed_phase_without_failure_record_is_partial(self) -> None:
+        self.report["phases"][2]["status"] = "failed"
+        self.assertIn("partial_report", self._rejections(self.report))
+
+    def test_mismatched_profile_is_rejected(self) -> None:
+        self.report["profile"] = "G70"
+        self.assertIn("mismatched_profile", self._rejections(self.report))
+
+    def test_mismatched_source_is_rejected(self) -> None:
+        self.report["scenePath"] = r"C:\somewhere\else.ramses"
+        self.assertIn("mismatched_source", self._rejections(self.report))
+
+    def test_escaped_frame_path_is_rejected(self) -> None:
+        report = _native_report(
+            profile="G45", scene_path=self.scene_path,
+            frame={"outcome": "readback_complete", "classification": "black",
+                   "file": r"..\evil.png", "drivenInputs": 1})
+        self.assertIn("escaped_path", self._rejections(report))
+
+
+class RamsesProbeRunnerLaunchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.root = Path(self._temp.name)
+        self.scene = self.root / "exported.ramses"
+        _write_text(self.scene, "synthetic-scene-bytes")
+        self.output_root = self.root / "out"
+        self.output_root.mkdir()
+
+    def _helper(self, body: str) -> tuple[Path, str]:
+        helper = self.root / "fake_probe.bat"
+        helper.write_text(body, encoding="ascii")
+        return helper, sha256_file(helper)
+
+    def _request(self, helper: Path, digest: str) -> ProbeRunRequest:
+        return ProbeRunRequest(
+            profile="G45",
+            scene_path=self.scene,
+            output_root=self.output_root,
+            helper_path=helper,
+            helper_sha256=digest,
+        )
+
+    def _success_helper(self) -> tuple[Path, str]:
+        report = _native_report(profile="G45", scene_path=str(self.scene))
+        fixture = self.root / "report-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        body = (
+            "@echo off\r\n"
+            f'copy /Y "{fixture}" "{self.output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            f'echo %* > "{self.root / "captured-args.txt"}"\r\n'
+            "exit /b 0\r\n"
+        )
+        return self._helper(body)
+
+    def test_untrusted_helper_never_launches(self) -> None:
+        helper, _ = self._success_helper()
+        result = run_probe(self._request(helper, "f" * 64))
+        self.assertEqual(result.outcome, "untrusted_helper")
+        self.assertFalse((self.root / "captured-args.txt").exists())
+        self.assertIsNone(result.native_report)
+
+    def test_stale_report_blocks_launch(self) -> None:
+        helper, digest = self._success_helper()
+        _write_text(self.output_root / NATIVE_REPORT_NAME, "{}")
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "stale_report")
+        self.assertFalse((self.root / "captured-args.txt").exists())
+
+    def test_successful_run_produces_completed_evidence(self) -> None:
+        helper, digest = self._success_helper()
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "completed")
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.rejections, ())
+        captured = (self.root / "captured-args.txt").read_text(encoding="ascii")
+        self.assertIn("--profile G45", captured)
+        self.assertIn("--backend opengl", captured)
+        evidence = json.loads(
+            (self.output_root / EVIDENCE_FILE_NAME).read_text(encoding="utf-8"))
+        self.assertEqual(evidence["schemaVersion"], 1)
+        self.assertEqual(evidence["outcome"], "completed")
+        self.assertEqual(evidence["digests"]["sceneBefore"], evidence["digests"]["sceneAfter"])
+        self.assertEqual(evidence["nativeReport"]["profile"], "G45")
+        self.assertEqual(
+            set(evidence.keys()),
+            {"schemaVersion", "banner", "request", "helper", "digests", "helperExitCode",
+             "outcome", "rejections", "nativeReport"},
+        )
+
+    def test_helper_crash_is_not_a_validation_finding(self) -> None:
+        helper, digest = self._helper("@echo off\r\nexit /b 3\r\n")
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "helper_crash")
+        self.assertEqual(result.exit_code, 3)
+        evidence = json.loads(
+            (self.output_root / EVIDENCE_FILE_NAME).read_text(encoding="utf-8"))
+        self.assertEqual(evidence["outcome"], "helper_crash")
+        self.assertIsNone(evidence["nativeReport"])
+
+    def test_classified_failure_is_not_a_helper_crash(self) -> None:
+        report = _native_report(
+            profile="G45", scene_path=str(self.scene),
+            failure={"phase": "scene_load", "reason": "scene_unavailable"})
+        fixture = self.root / "failure-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        body = (
+            "@echo off\r\n"
+            f'copy /Y "{fixture}" "{self.output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            "exit /b 65\r\n"
+        )
+        helper, digest = self._helper(body)
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "scene_unavailable")
+        self.assertNotEqual(result.outcome, "helper_crash")
+        self.assertEqual(result.exit_code, 65)
+
+    def test_findings_with_exit_zero_stay_completed(self) -> None:
+        report = _native_report(profile="G45", scene_path=str(self.scene))
+        report["findings"] = [{
+            "severity": "error", "message": "meshnode does not have an appearance set",
+            "objectType": "MeshNode", "objectId": 7, "objectName": "",
+            "sourceClass": "scene", "identity": "MeshNode#7|scene|error|38:meshnode",
+        }]
+        fixture = self.root / "findings-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        body = (
+            "@echo off\r\n"
+            f'copy /Y "{fixture}" "{self.output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "completed")
+
+    def test_source_mutation_is_rejected(self) -> None:
+        report = _native_report(profile="G45", scene_path=str(self.scene))
+        fixture = self.root / "mutation-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        body = (
+            "@echo off\r\n"
+            f'copy /Y "{fixture}" "{self.output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            f'echo mutated >> "{self.scene}"\r\n'
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "source_mutated")
+        self.assertIn("source_mutated", result.rejections)
+
+    def test_mismatched_report_profile_is_rejected_end_to_end(self) -> None:
+        report = _native_report(profile="G70", scene_path=str(self.scene))
+        fixture = self.root / "wrong-profile-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        body = (
+            "@echo off\r\n"
+            f'copy /Y "{fixture}" "{self.output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "mismatched_profile")
+
+    def test_missing_report_with_exit_zero_is_helper_crash(self) -> None:
+        helper, digest = self._helper("@echo off\r\nexit /b 0\r\n")
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "helper_crash")
+
+
+if __name__ == "__main__":
+    unittest.main()
