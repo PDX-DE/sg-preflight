@@ -816,6 +816,12 @@ ProbeFrameLaneResult runProbeFrameLane(const std::filesystem::path& scenePath,
         result.outcome = "lifecycle_timeout";
         return result;
     }
+    // pixelsReceived also fires for a failed read; only nonempty pixels prove a usable readback.
+    if (handler.failed() || handler.pixels().empty())
+    {
+        result.outcome = "readback_failed";
+        return result;
+    }
 
     result.classification = frame_classification_code(
         classify_frame_rgba8(handler.pixels(), kProbeFrameWidth, kProbeFrameHeight));
@@ -902,7 +908,11 @@ RamsesProbeRunOutcome execute_probe_request(const RamsesProbeCliRequest& request
                                                 ramses::ERenderBackendCompatibility::OpenGL};
                 auto* scene =
                     client ? client->loadSceneFromFile(request.scene_path.string(), sceneConfig) : nullptr;
-                if (scene == nullptr)
+                if (client == nullptr)
+                {
+                    fail("scene_load", "framework_unavailable");
+                }
+                else if (scene == nullptr)
                 {
                     fail("scene_load", "scene_incompatible");
                 }

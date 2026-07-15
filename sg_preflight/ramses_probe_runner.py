@@ -27,6 +27,10 @@ _REPORT_TOP_LEVEL_KEYS = {
 _PHASE_NAMES = ("arguments", "metadata", "scene_load", "validation", "inventory", "logic",
                 "perspective", "frame")
 _PHASE_STATUSES = {"completed", "failed", "not_run", "not_requested"}
+_FRAME_OUTCOMES = {"readback_complete", "missing_contract", "renderer_unavailable",
+                   "scene_incompatible", "logic_update_failed", "lifecycle_rejected",
+                   "lifecycle_timeout", "readback_failed", "frame_write_failed", "frame_too_large"}
+_FRAME_CLASSIFICATIONS = {"content", "black", "undetermined"}
 
 
 @dataclass(frozen=True)
@@ -129,6 +133,11 @@ def validate_native_report(report: object, *, expected_profile: str,
 
     frame = report["frame"]
     if isinstance(frame, dict):
+        if frame.get("outcome") not in _FRAME_OUTCOMES:
+            rejections.append("malformed_report")
+        classification = frame.get("classification")
+        if classification is not None and classification not in _FRAME_CLASSIFICATIONS:
+            rejections.append("malformed_report")
         frame_file = frame.get("file")
         if frame_file is not None and frame_file != "first-frame.png":
             rejections.append("escaped_path")

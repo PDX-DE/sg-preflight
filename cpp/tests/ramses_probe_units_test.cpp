@@ -1,5 +1,7 @@
 #include "sgfx/cine/ramses_probe.h"
 
+#include "test_support.h"
+
 #include <ramses/client/PerspectiveCamera.h>
 #include <ramses/client/RamsesClient.h>
 #include <ramses/client/RenderGroup.h>
@@ -28,37 +30,7 @@ namespace
 {
 namespace fs = std::filesystem;
 
-class TemporaryDirectory
-{
-public:
-    TemporaryDirectory()
-    {
-        const auto base = fs::temp_directory_path();
-        for (unsigned attempt = 0u; attempt < 100u; ++attempt)
-        {
-            const auto seed = std::chrono::steady_clock::now().time_since_epoch().count();
-            m_path = base / ("sgfx-ramses-probe-units-" + std::to_string(seed) + "-" + std::to_string(attempt));
-            std::error_code error;
-            if (fs::create_directory(m_path, error))
-                return;
-        }
-        throw std::runtime_error("could not create probe-units temp directory");
-    }
-
-    ~TemporaryDirectory()
-    {
-        std::error_code error;
-        fs::remove_all(m_path, error);
-    }
-
-    TemporaryDirectory(const TemporaryDirectory&) = delete;
-    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
-
-    const fs::path& path() const { return m_path; }
-
-private:
-    fs::path m_path;
-};
+using sgfx_cine_tests::TemporaryDirectory;
 
 bool expectMetadataFacts()
 {

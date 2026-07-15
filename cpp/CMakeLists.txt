@@ -349,6 +349,7 @@ target_link_libraries(sgfx_cine_ramses_probe_units_test
 )
 
 sgfx_cine_copy_ramses_runtime_dlls(sgfx_cine_ramses_probe_units_test)
+sgfx_cine_copy_sdl_runtime_dll(sgfx_cine_ramses_probe_units_test)
 
 add_test(NAME sgfx_cine_ramses_probe_units COMMAND sgfx_cine_ramses_probe_units_test)
 set_tests_properties(sgfx_cine_ramses_probe_units PROPERTIES
@@ -365,6 +366,7 @@ target_link_libraries(sgfx_cine_ramses_probe
 )
 
 sgfx_cine_copy_ramses_runtime_dlls(sgfx_cine_ramses_probe)
+sgfx_cine_copy_sdl_runtime_dll(sgfx_cine_ramses_probe)
 
 install(TARGETS sgfx_cine sgfx_cine_ramses_link_probe sgfx_cine_ramses_preview_cli sgfx_cine_sdl_ramses_embed sgfx_cine_ramses_real_scene sgfx_cine_ramses_shell_fusion_probe sgfx_cine_cinematic_shell sgfx_cine_ramses_probe)
 install(DIRECTORY include/ DESTINATION include)

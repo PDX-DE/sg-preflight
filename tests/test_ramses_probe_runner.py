@@ -145,6 +145,20 @@ class RamsesProbeRunnerValidationTests(unittest.TestCase):
                    "file": r"..\evil.png", "drivenInputs": 1})
         self.assertIn("escaped_path", self._rejections(report))
 
+    def test_unknown_frame_outcome_fails_closed(self) -> None:
+        report = _native_report(
+            profile="G45", scene_path=self.scene_path,
+            frame={"outcome": "sort_of_rendered", "classification": "black",
+                   "file": "first-frame.png", "drivenInputs": 1})
+        self.assertIn("malformed_report", self._rejections(report))
+
+    def test_unknown_frame_classification_fails_closed(self) -> None:
+        report = _native_report(
+            profile="G45", scene_path=self.scene_path,
+            frame={"outcome": "readback_complete", "classification": "greenish",
+                   "file": "first-frame.png", "drivenInputs": 1})
+        self.assertIn("malformed_report", self._rejections(report))
+
 
 class RamsesProbeRunnerLaunchTests(unittest.TestCase):
     def setUp(self) -> None:
