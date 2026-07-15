@@ -9,6 +9,8 @@
 
 namespace ramses
 {
+class LogicEngine;
+class RamsesFramework;
 class Scene;
 }
 
@@ -62,4 +64,17 @@ struct RamsesProbeInventoryEntry
 };
 
 std::vector<RamsesProbeInventoryEntry> collect_scene_inventory(const ramses::Scene& scene);
+
+struct RamsesLogicUpdateEvidence
+{
+    bool update_succeeded{false};
+    std::string error_message;
+    std::vector<std::string> executed_nodes;
+    std::vector<std::string> skipped_nodes;
+    std::int64_t total_update_microseconds{-1};
+    std::int64_t topology_sort_microseconds{-1};
+};
+
+RamsesLogicUpdateEvidence collect_logic_update_evidence(ramses::RamsesFramework& framework,
+                                                        ramses::LogicEngine& engine);
 }

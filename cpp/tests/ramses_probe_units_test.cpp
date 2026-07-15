@@ -5,6 +5,11 @@
 #include <ramses/client/RenderGroup.h>
 #include <ramses/client/RenderPass.h>
 #include <ramses/client/Scene.h>
+#include <ramses/client/logic/LogicEngine.h>
+#include <ramses/client/logic/LuaScript.h>
+#include <ramses/client/logic/Property.h>
+
+#include <algorithm>
 #include <ramses/framework/EFeatureLevel.h>
 #include <ramses/framework/RamsesFramework.h>
 #include <ramses/framework/RamsesFrameworkConfig.h>
@@ -269,6 +274,123 @@ bool expectValidationAndInventoryContract()
     }
     return true;
 }
+
+bool containsNode(const std::vector<std::string>& nodes, const std::string& name)
+{
+    return std::find(nodes.begin(), nodes.end(), name) != nodes.end();
+}
+
+bool expectLogicUpdateContract()
+{
+    ramses::RamsesFrameworkConfig config{ramses::EFeatureLevel_01};
+    ramses::RamsesFramework framework{config};
+    auto* client = framework.createClient("sgfx-probe-logic");
+    auto* scene = client->createScene(ramses::sceneId_t{2027u}, "probe-logic-scene");
+    auto* engine = scene->createLogicEngine("probe-logic");
+    if (engine == nullptr)
+    {
+        std::cerr << "could not create logic engine\n";
+        return false;
+    }
+
+    constexpr std::string_view forwardSource = R"(
+        function interface(IN,OUT)
+            IN.value = Type:Int32()
+            OUT.value = Type:Int32()
+        end
+        function run(IN,OUT)
+            OUT.value = IN.value
+        end
+    )";
+    auto* forward = engine->createLuaScript(forwardSource, {}, "forward-script");
+    if (forward == nullptr)
+    {
+        std::cerr << "could not create forward script\n";
+        return false;
+    }
+
+    const auto first = sgfx::cine::collect_logic_update_evidence(framework, *engine);
+    if (!first.update_succeeded || !first.error_message.empty() ||
+        !containsNode(first.executed_nodes, "forward-script") || first.total_update_microseconds < 0 ||
+        first.topology_sort_microseconds < 0)
+    {
+        std::cerr << "first logic update must succeed, execute the script, and carry timing evidence\n";
+        return false;
+    }
+
+    const auto second = sgfx::cine::collect_logic_update_evidence(framework, *engine);
+    if (!second.update_succeeded || !containsNode(second.skipped_nodes, "forward-script") ||
+        containsNode(second.executed_nodes, "forward-script"))
+    {
+        std::cerr << "unchanged inputs must be reported as skipped, not executed\n";
+        return false;
+    }
+
+    if (!forward->getInputs()->getChild("value")->set<int32_t>(7))
+    {
+        std::cerr << "could not set script input\n";
+        return false;
+    }
+    const auto third = sgfx::cine::collect_logic_update_evidence(framework, *engine);
+    if (!third.update_succeeded || !containsNode(third.executed_nodes, "forward-script"))
+    {
+        std::cerr << "dirty input must re-execute the script\n";
+        return false;
+    }
+
+    constexpr std::string_view failingSource = R"(
+        function interface(IN,OUT)
+        end
+        function run(IN,OUT)
+            error("probe runtime failure")
+        end
+    )";
+    if (engine->createLuaScript(failingSource, {}, "failing-script") == nullptr)
+    {
+        std::cerr << "could not create failing script\n";
+        return false;
+    }
+    const auto failed = sgfx::cine::collect_logic_update_evidence(framework, *engine);
+    if (failed.update_succeeded || failed.error_message.empty())
+    {
+        std::cerr << "runtime failure must be reported with a nonempty error\n";
+        return false;
+    }
+
+    auto* cycleEngine = scene->createLogicEngine("probe-cycle");
+    auto* cycleA = cycleEngine->createLuaScript(forwardSource, {}, "cycle-a");
+    auto* cycleB = cycleEngine->createLuaScript(forwardSource, {}, "cycle-b");
+    if (cycleA == nullptr || cycleB == nullptr)
+    {
+        std::cerr << "could not create cycle scripts\n";
+        return false;
+    }
+    if (!cycleEngine->link(*cycleA->getOutputs()->getChild("value"), *cycleB->getInputs()->getChild("value")))
+    {
+        std::cerr << "could not create forward link\n";
+        return false;
+    }
+    bool cycleSurfaced = false;
+    std::string cycleError;
+    if (cycleEngine->link(*cycleB->getOutputs()->getChild("value"), *cycleA->getInputs()->getChild("value")))
+    {
+        const auto cycle = sgfx::cine::collect_logic_update_evidence(framework, *cycleEngine);
+        cycleSurfaced = !cycle.update_succeeded;
+        cycleError = cycle.error_message;
+    }
+    else
+    {
+        const auto issue = framework.getLastError();
+        cycleSurfaced = true;
+        cycleError = issue ? issue->message : "";
+    }
+    if (!cycleSurfaced || cycleError.empty())
+    {
+        std::cerr << "logic cycle must surface a classified failure with a nonempty error\n";
+        return false;
+    }
+    return true;
+}
 }
 
 int main()
@@ -280,6 +402,8 @@ int main()
     if (!expectFindingIdentityContract())
         return 1;
     if (!expectValidationAndInventoryContract())
+        return 1;
+    if (!expectLogicUpdateContract())
         return 1;
 
     std::cout << "Ramses probe units OK\n";

@@ -3,6 +3,9 @@
 #include <ramses/client/Scene.h>
 #include <ramses/client/SceneObject.h>
 #include <ramses/client/SceneObjectIterator.h>
+#include <ramses/client/logic/LogicEngine.h>
+#include <ramses/client/logic/LogicEngineReport.h>
+#include <ramses/client/logic/LogicNode.h>
 #include <ramses/framework/EFeatureLevel.h>
 #include <ramses/framework/RamsesFramework.h>
 #include <ramses/framework/RamsesFrameworkConfig.h>
@@ -178,5 +181,33 @@ std::vector<RamsesProbeInventoryEntry> collect_scene_inventory(const ramses::Sce
         inventory.push_back(std::move(entry));
     }
     return inventory;
+}
+
+RamsesLogicUpdateEvidence collect_logic_update_evidence(ramses::RamsesFramework& framework,
+                                                        ramses::LogicEngine& engine)
+{
+    engine.enableUpdateReport(true);
+
+    RamsesLogicUpdateEvidence evidence;
+    evidence.update_succeeded = engine.update();
+    if (!evidence.update_succeeded)
+    {
+        const auto issue = framework.getLastError();
+        evidence.error_message = issue ? issue->message : "logic update failed without a framework error";
+        return evidence;
+    }
+
+    // Report contents are undefined when update fails, so they are read only on success.
+    const auto report = engine.getLastUpdateReport();
+    for (const auto& [node, duration] : report.getNodesExecuted())
+    {
+        (void)duration;
+        evidence.executed_nodes.emplace_back(node->getName());
+    }
+    for (const auto* node : report.getNodesSkippedExecution())
+        evidence.skipped_nodes.emplace_back(node->getName());
+    evidence.total_update_microseconds = report.getTotalUpdateExecutionTime().count();
+    evidence.topology_sort_microseconds = report.getTopologySortExecutionTime().count();
+    return evidence;
 }
 }
