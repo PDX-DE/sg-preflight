@@ -33,10 +33,16 @@ IDCevo turntables, proven on the real G50 export).
 
 - [ ] Step 1: Full unittest discovery to a COMPLETE footer on the candidate head (attempt 3 in flight);
       focused aggregate for the C0/R0-touched modules; record both footers under `out/control-center-c0/`.
-- [ ] Step 2: Offline CLI safety matrix (multi-format read probes; Jira preview stays credential
-      `not_loaded`, dry-run true, zero network).
-- [ ] Step 3: Recursive QML format/lint (`qmllint -I sg_preflight\desktop\qml`), Python compilation,
-      `git diff --check`, attribution/path/credential scans.
+- [x] Step 2: Offline CLI safety matrix — all nine multi-format smokes exit 0 (2026-07-15 evening).
+      Contract note: `delivery-documentation read` now requires an explicit `--profile` (C0
+      profile-neutrality working as designed); Jira probes report `connection_status: not_run`,
+      `network_confirmed: false`, zero transport.
+- [x] Step 3: `tests.test_qml_format` 4/4; `pyside6-qmllint` over all 17 QML files — five
+      `unqualified` warnings, all on the Python-injected `sgfxProductFonts` context property (invisible
+      to static analysis by nature, guarded at use sites, pre-existing C0 code) — accepted with
+      rationale, flagged for the Task 4 reviews; `compileall` clean over `sg_preflight`/`scripts`/`tests`;
+      `git diff --check` clean across the whole R0 range; attribution/codename/private-path/credential
+      scans clean (all hits inspected: legitimate domain text and regex-pattern definitions).
 
 ## Task 2 — Exact bundle
 

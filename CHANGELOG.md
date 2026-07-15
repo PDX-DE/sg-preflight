@@ -7,6 +7,8 @@ outside this bundle.
 ## [Unreleased - local alpha]
 
 ### Added
+- Standalone Ramses R0 probe: a noninteractive native helper plus Python runner that records scene metadata, native validation findings, structural inventory, logic-update evidence, renderer lifecycle timing, and at most one 480x270 authored-frame readback with an honest content/black/undetermined classification. Evidence only - it never approves anything; runs are local, read-only against the source scene, and hash-verified end to end.
+- Pinned Python launcher (`scripts/run_sgfx_python.ps1`) so test and evidence commands always run on the intended local interpreter.
 - The C0 Control Center entries describe a staged local candidate; the installed/default double-click path remains Clean pending a separately approved default-cutover plan.
 - Profile-neutral QA Control Center startup with explicit operator selection instead of an invented default profile.
 - One selected-profile local preflight action limited to Anchors, Constants, Carpaints, and Project Sanity.
@@ -51,6 +53,8 @@ outside this bundle.
 - Advanced `integration jira` previews load no credentials and make no network request. `--confirm-network` permits Jira verification and weekly-ticket GETs; a Jira write also needs its action-specific confirmation.
 
 ### Fixed
+- The selected-profile 3D turntable preview now works with current-generation IDCevo exports as well as older ones: the camera interface accepts both authored aspect-property generations, verified against a real staged export.
+- A 3D shell that closes immediately after launch is now always reported as a failed launch, even when it exits with code 0, so the operator sees an honest fallback message instead of a silent no-op.
 - Kept dashboard/profile evidence local and current: stale page or refresh completions are ignored, profile summaries do not run Jira lookup, legacy Jira credential reads remain non-mutating, and dependency registrations use atomic cross-process transactions.
 - Focused the default Clean shell on Home, 18 operational evidence surfaces, and nav-only About. Personal-ticket, duplicate readiness, parked analysis, settings, automatic Jira lookup, and dashboard report-attachment controls are no longer registered on the default path.
 - Moved the weekly ticket draft to `integration jira weekly-tickets`; its default preview is log-free, leaves credential and cache state untouched, and keeps the former command only as hidden argv compatibility.
