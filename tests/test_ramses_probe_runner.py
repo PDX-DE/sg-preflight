@@ -218,7 +218,8 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         )
 
     def test_helper_crash_is_not_a_validation_finding(self) -> None:
-        helper, digest = self._helper("@echo off\r\nexit /b 3\r\n")
+        helper, digest = self._helper(
+            "@echo off\r\necho probing >&2\r\necho phase metadata\r\nexit /b 3\r\n")
         result = run_probe(self._request(helper, digest))
         self.assertEqual(result.outcome, "helper_crash")
         self.assertEqual(result.exit_code, 3)
@@ -226,6 +227,18 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
             (self.output_root / EVIDENCE_FILE_NAME).read_text(encoding="utf-8"))
         self.assertEqual(evidence["outcome"], "helper_crash")
         self.assertIsNone(evidence["nativeReport"])
+        stdout_log = (self.output_root / "stdout.log").read_text(encoding="utf-8", errors="replace")
+        stderr_log = (self.output_root / "stderr.log").read_text(encoding="utf-8", errors="replace")
+        self.assertIn("phase metadata", stdout_log)
+        self.assertIn("probing", stderr_log)
+
+    def test_console_streams_are_capped(self) -> None:
+        helper, digest = self._helper(
+            "@echo off\r\nfor /l %%i in (1,1,9000) do echo the quick brown fox pads the console stream\r\n"
+            "exit /b 3\r\n")
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "helper_crash")
+        self.assertLessEqual((self.output_root / "stdout.log").stat().st_size, 256 * 1024)
 
     def test_classified_failure_is_not_a_helper_crash(self) -> None:
         report = _native_report(

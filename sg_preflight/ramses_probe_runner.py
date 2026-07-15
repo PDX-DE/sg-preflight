@@ -18,6 +18,7 @@ NATIVE_REPORT_NAME = "ramses-probe-native.json"
 EVIDENCE_FILE_NAME = "ramses-r0-evidence.json"
 
 _EVIDENCE_MAX_BYTES = 4 * 1024 * 1024
+_CONSOLE_STREAM_MAX_BYTES = 256 * 1024
 _REPORT_TOP_LEVEL_KEYS = {
     "schemaVersion", "probeVersion", "profile", "backend", "scenePath", "metadata", "phases",
     "failure", "findings", "inventory", "logic", "lifecycle", "frame",
@@ -195,6 +196,10 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
     if request.perspective_path is not None and request.perspective_path.is_file():
         perspective_digest = sha256_file(request.perspective_path)
 
+    def persist_console(stream_name: str, payload: bytes | None) -> None:
+        target = request.output_root / stream_name
+        target.write_bytes((payload or b"")[:_CONSOLE_STREAM_MAX_BYTES])
+
     try:
         completed = subprocess.run(
             [str(request.helper_path), *build_helper_arguments(request)],
@@ -203,7 +208,11 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
             check=False,
         )
         exit_code = completed.returncode
-    except subprocess.TimeoutExpired:
+        persist_console("stdout.log", completed.stdout)
+        persist_console("stderr.log", completed.stderr)
+    except subprocess.TimeoutExpired as expired:
+        persist_console("stdout.log", expired.stdout)
+        persist_console("stderr.log", expired.stderr)
         rejections.append("helper_timeout")
         return finish("helper_timeout")
 
