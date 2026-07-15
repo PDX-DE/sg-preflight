@@ -8,7 +8,7 @@ anything below CPython 3.10, prints the resolved interpreter to stderr as
 evidence, and forwards the remaining arguments with -B so no bytecode is
 written into source or bundle trees.
 #>
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$Python,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
