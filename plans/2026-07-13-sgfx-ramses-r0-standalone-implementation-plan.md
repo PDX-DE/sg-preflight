@@ -1,5 +1,8 @@
 # SGFX Ramses R0 Standalone Probe Implementation Plan
 
+> **Status (2026-07-15): SUPERSEDED by `plans/2026-07-15-sgfx-ramses-r0-execplan.md`.**
+> The probe deliverables and the design's section-24 acceptance bar carry over unchanged. This plan's isolated-Python trust-anchor and journaled recovery scaffolding were retired unimplemented: after two full working days Task 1 Step 1 stood at 0/8 accepted steps (0/76 overall), the four draft files had grown to about 21,000 lines, and each review cycle opened new blocking findings. None of the 28 acceptance requirements in `plans/2026-07-12-sgfx-ramses-qa-observatory-design.md` section 24 requires that scaffolding, and it conflicts with the standing simplification directive. The draft files are preserved untracked under `.superpowers/parked/r0-trust-anchor-2026-07-14/`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (\`- [ ]\`) syntax for tracking.
 
 **Goal:** Build and accept a standalone, noninteractive Ramses R0 probe that produces bounded metadata, validation, inventory, logic, lifecycle, authored-frame, and classified non-render evidence without changing the existing four-pack action, Control Center truth, packaged default, or external systems.

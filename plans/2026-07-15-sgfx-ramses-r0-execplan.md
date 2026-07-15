@@ -1,0 +1,61 @@
+# SGFX Ramses R0 ExecPlan (right-sized)
+
+> **For agentic workers:** Use superpowers:executing-plans with superpowers:test-driven-development. Steps use checkbox (`- [ ]`) syntax for tracking. RED tests come first in every task.
+
+**Status:** ACTIVE. Supersedes `plans/2026-07-13-sgfx-ramses-r0-standalone-implementation-plan.md` (see its banner). The acceptance bar is unchanged: all 28 requirements in `plans/2026-07-12-sgfx-ramses-qa-observatory-design.md` section 24, plus the section 26 evidence boundaries.
+
+**Goal:** Build and accept the standalone, noninteractive Ramses R0 probe: bounded metadata, native validation, structural inventory, one default-state logic update, lifecycle evidence (Available → Ready → Rendered), at most one 480×270 authored-frame readback, stable black/non-render classification, before/after source-mutation proof, and a versioned JSON report — without changing the four-pack action, Control Center truth, packaged default, or external systems.
+
+**Architecture:** `sgfx::cine` (`cpp/CMakeLists.txt` target `sgfx_cine`) remains the only Ramses implementation boundary. Probe logic is extracted into focused library units beside the accepted authored preview renderer/lifecycle path (`cpp/src/ramses_preview.cpp`); `cpp/src/ramses_probe.cpp` grows from its existing stub. A new `sgfx_cine_ramses_probe` executable only parses strict typed arguments and writes an atomic native report. Python (`sg_preflight/ramses_probe_runner.py`) resolves inputs, launches the helper, validates the native report fail-closed, and publishes the final evidence bundle. No second renderer or scene parser is created (req 3).
+
+**Tech stack:** C++17, CMake/CTest (configured tree `build/cine-c0`), Ramses 28.16.0 public SDK, SDL3, existing nlohmann_json 3.12.0, Python 3.13 (repo venv) standard library, unittest, PowerShell. No new production dependency (req 28).
+
+## Global constraints
+
+- Worktree `C:\Users\DavidErikGarciaArena\Downloads\sg-preflight-v02-qt-integration`, branch `feature/sgfx-v02-qt-integration-20260710`. Local commits only; no push, no SVN.
+- All acceptance Python commands run through `scripts/run_sgfx_python.ps1` (pinned interpreter: `SGFX_PYTHON` or repo `.venv`, refuses the WindowsApps store stub, enforces CPython ≥ 3.10, runs `-B` with `PYTHONDONTWRITEBYTECODE=1` and prints the resolved interpreter as evidence).
+- One backend only: CLI token `opengl`, mapped exactly to the proven `EDeviceType::GLES_3_0` path. GL 4.x / Vulkan comparison belongs to R2.
+- At most one 480×270 authored-frame readback per run; it is evidence, never visual approval (req 13). R0 never creates or mutates a camera, render pass, source scene, perspective, or baseline.
+- Drive only the exported `Interface_CameraCrane` contract when a validated perspective file and ID are supplied; JSON key `AspectFromResolution_isEnabled` maps only to runtime property `AutoAspect`, with no alias or C0-prototype fallback (req 14). Missing input/root/property tree ⇒ explicit missing-contract result, and metadata/validation lanes continue.
+- Output caps: native JSON ≤ 2 MiB, final report ≤ 4 MiB, PNG ≤ 1 MiB, each retained console stream ≤ 256 KiB. The helper writes atomically and only beneath the supplied output root (req 15); output and source roots are disjoint; every passed scene/perspective input has an identical before/after SHA-256 (req 16).
+- Native report and final `RamsesProbeReport` are separately versioned schema 1; probe version 0.1.0. Unknown fields, enum values, phase order, output files, helper names, profile identities, or artifact paths fail closed (reqs 8, 17).
+- The standalone slice touches no QML, no capability, no `sg_preflight/qa_actions.py`, no `sg_preflight/qa_hub.py` (reqs 1, 2, 18, 19, 20). One-button `ramses_r0` integration is a separate later plan gated on standalone acceptance (req 21).
+- Synthetic fixtures contain no BMW data or private absolute paths (req 24). Real exports are consumed read-only from their existing locations.
+- Timing budgets (60 s probe / 30 s readback) are measured and reported; they remain OPEN rather than silently normalized (req 27).
+
+## Task 1 — Pinned Python launcher
+
+- [x] Step 1: Add `scripts/run_sgfx_python.ps1` (small, reviewable): resolve interpreter from `-Python` / `SGFX_PYTHON` / repo `.venv`; reject missing interpreter and the store stub with a clear message; probe and enforce CPython ≥ 3.10; forward remaining arguments with `-B`; propagate the child exit code.
+- [x] Step 2: Smoke: launcher runs `-c` one-liners under PowerShell 7 and Windows PowerShell 5.1; missing-interpreter and stub paths exit nonzero without launching anything.
+- [x] Step 3: Commit.
+
+## Task 2 — Native probe units (RED first)
+
+- [ ] Step 1: RED: add `cpp/tests/ramses_probe_units_test.cpp` (CTest) covering: metadata/compatibility facts collection; validation-finding capture preserving severity, message, object type/id/name-when-available, and source class (req 6); duplicate/empty names not colliding finding identity (req 7); structural/resource inventory counts; logic-update success, cycle/runtime failure, executed/skipped nodes, and timing evidence (req 9); frame classification covering every stable black/non-render code plus the undetermined fallback (req 11); helper-crash vs validation-finding separation (req 12).
+- [ ] Step 2: GREEN: extract/implement the units in `cpp/src/ramses_probe.cpp` + `cpp/include/sgfx/cine/…`, reusing the preview renderer/lifecycle path; metadata-only lanes never initialize the renderer (req 5).
+- [ ] Step 3: Lifecycle tests: success plus missing Available, Ready, Rendered, and readback events, each with bounded termination (req 10).
+- [ ] Step 4: Build + run in `build/cine-c0`; commit.
+
+## Task 3 — `sgfx_cine_ramses_probe` executable
+
+- [ ] Step 1: RED: argument/contract tests — accepts only validated typed arguments; rejects unknown options, output escape, invalid profile identity, unsupported backend (req 4).
+- [ ] Step 2: GREEN: strict argv parsing, phase orchestration, atomic `ramses-probe-native.json` (+ `first-frame.png` only after successful readback), deterministic exit codes, caps enforced.
+- [ ] Step 3: Build + CTest; commit.
+
+## Task 4 — Python runner and final report
+
+- [ ] Step 1: RED: `tests/test_ramses_probe_runner.py` — request construction; helper launch; fail-closed native-report validation; rejection matrix for malformed, partial, stale-generation, mismatched-profile, mismatched-source, untrusted-helper, and escaped-path reports (req 17); before/after digest proof (req 16); final `ramses-r0-evidence.json` + `RamsesProbeReport` schema.
+- [ ] Step 2: GREEN: implement `sg_preflight/ramses_probe_runner.py` (standard library only), runnable via `scripts/run_sgfx_python.ps1 -m sg_preflight.ramses_probe_runner`.
+- [ ] Step 3: Commit.
+
+## Task 5 — Synthetic end-to-end and package/process gates
+
+- [ ] Step 1: Synthetic scene end-to-end: native synthetic tests plus runner-level runs against generated fixtures; no fabricated real/receipt evidence; fixtures BMW-free (req 24).
+- [ ] Step 2: Package/process/exact-tree gates: unittest aggregate for the touched modules, process-lifecycle check (no orphan helper), `git diff --check`, diff review confirming no unrelated cinematic/UI refactor and no new mandatory dependency (req 28, 25).
+- [ ] Step 3: Commit.
+
+## Task 6 — Real local smoke and acceptance
+
+- [ ] Step 1: Approved real local smoke on the existing resolved `exported.ramses`: reaches the expected phase or produces a truthful classified failure; historical logs are insufficient (req 26). Record measured 60/30-second budget results as OPEN evidence (req 27).
+- [ ] Step 2: Walk all 28 section-24 requirements with an evidence row each; independent review of the full diff; resolve findings.
+- [ ] Step 3: Ledger checkpoint, changelog note, final commit. Standalone Acceptance Gate passes; the separate one-button integration slice may then be planned.
