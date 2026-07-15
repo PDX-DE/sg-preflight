@@ -674,3 +674,37 @@ class TestGrafiksProvenance(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestHeldStagingDirectories(unittest.TestCase):
+    def test_held_but_empty_directory_skeleton_is_tolerated(self) -> None:
+        import ctypes
+
+        module = _load_build_script()
+        kernel32 = ctypes.windll.kernel32
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "staging"
+            held = root / "sgfx-preflight"
+            held.mkdir(parents=True)
+            (held / "artifact.txt").write_text("stale", encoding="utf-8")
+            # GENERIC_READ, FILE_SHARE_READ only (no FILE_SHARE_DELETE), OPEN_EXISTING,
+            # FILE_FLAG_BACKUP_SEMANTICS - the exact Explorer-style hold that blocks rmdir.
+            handle = kernel32.CreateFileW(str(held), 0x80000000, 0x1, None, 3, 0x02000000, None)
+            self.assertNotEqual(handle, -1)
+            try:
+                module._rmtree_tolerating_held_dirs(root)
+                self.assertTrue(held.exists())
+                self.assertEqual(list(held.iterdir()), [])
+            finally:
+                kernel32.CloseHandle(handle)
+
+    def test_undeletable_file_still_fails_the_clean(self) -> None:
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "staging"
+            held = root / "sgfx-preflight"
+            held.mkdir(parents=True)
+            blocker = held / "locked.bin"
+            blocker.write_text("held", encoding="utf-8")
+            with blocker.open("rb"):
+                with self.assertRaises(OSError):
+                    module._rmtree_tolerating_held_dirs(root)

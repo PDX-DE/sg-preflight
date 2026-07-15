@@ -316,9 +316,34 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
     return args
 
 
+def _is_directory_skeleton(path: Path) -> bool:
+    return all(entry.is_dir() and not entry.is_symlink() for entry in path.rglob("*"))
+
+
+def _rmtree_tolerating_held_dirs(root: Path) -> None:
+    # A Windows Explorer/terminal handle on a directory blocks its rmdir but not writes into it,
+    # and PyInstaller runs with --noconfirm. Every file must still be removable; only empty
+    # directory skeletons may survive.
+    for path in sorted(root.rglob("*"), key=lambda entry: len(entry.parts), reverse=True):
+        try:
+            if path.is_dir() and not path.is_symlink():
+                path.rmdir()
+            else:
+                path.unlink()
+        except OSError:
+            if path.is_dir() and _is_directory_skeleton(path):
+                continue
+            raise
+    try:
+        root.rmdir()
+    except OSError:
+        if not _is_directory_skeleton(root):
+            raise
+
+
 def clean_staging_outputs() -> None:
     if STAGING_DIST_PATH.exists():
-        shutil.rmtree(STAGING_DIST_PATH)
+        _rmtree_tolerating_held_dirs(STAGING_DIST_PATH)
 
 
 def _grafiks_runtime_source() -> Path | None:
