@@ -1,5 +1,14 @@
 #include "sgfx/cine/ramses_probe.h"
 
+#include <ramses/client/PerspectiveCamera.h>
+#include <ramses/client/RamsesClient.h>
+#include <ramses/client/RenderGroup.h>
+#include <ramses/client/RenderPass.h>
+#include <ramses/client/Scene.h>
+#include <ramses/framework/EFeatureLevel.h>
+#include <ramses/framework/RamsesFramework.h>
+#include <ramses/framework/RamsesFrameworkConfig.h>
+
 #include <cstdint>
 #include <iostream>
 #include <set>
@@ -139,6 +148,127 @@ bool expectFindingIdentityContract()
     }
     return true;
 }
+
+bool expectValidationAndInventoryContract()
+{
+    ramses::RamsesFrameworkConfig config{ramses::EFeatureLevel_01};
+    ramses::RamsesFramework framework{config};
+    auto* client = framework.createClient("sgfx-probe-units");
+    if (client == nullptr)
+    {
+        std::cerr << "could not create Ramses client\n";
+        return false;
+    }
+    auto* scene = client->createScene(ramses::sceneId_t{2026u}, "probe-units-scene");
+    if (scene == nullptr)
+    {
+        std::cerr << "could not create synthetic scene\n";
+        return false;
+    }
+
+    auto* camera = scene->createPerspectiveCamera("probe-camera");
+    camera->setFrustum(19.0f, 480.0f / 270.0f, 0.1f, 100.0f);
+    camera->setViewport(0, 0, 480u, 270u);
+    auto* pass = scene->createRenderPass("probe-pass");
+    pass->setCamera(*camera);
+    auto* emptyGroup = scene->createRenderGroup("empty-group");
+    pass->addRenderGroup(*emptyGroup);
+
+    if (!scene->flush())
+    {
+        std::cerr << "synthetic scene must stay flushable\n";
+        return false;
+    }
+
+    const auto findings = sgfx::cine::collect_validation_findings(*scene);
+    if (findings.empty())
+    {
+        std::cerr << "synthetic scene with clear flags and no render target produced no validation findings\n";
+        return false;
+    }
+    bool foundPassFinding = false;
+    std::set<std::string> identities;
+    for (const auto& finding : findings)
+    {
+        if (finding.severity != "error" && finding.severity != "warning")
+        {
+            std::cerr << "finding severity not preserved: '" << finding.severity << "'\n";
+            return false;
+        }
+        if (finding.message.empty() || finding.object_type.empty() || finding.source_class != "scene")
+        {
+            std::cerr << "finding message/type/source class not preserved\n";
+            return false;
+        }
+        identities.insert(sgfx::cine::probe_finding_identity(finding));
+        if (finding.object_type == "RenderPass" && finding.object_id == pass->getSceneObjectId().getValue())
+            foundPassFinding = true;
+    }
+    if (!foundPassFinding)
+    {
+        std::cerr << "render pass finding missing or lost object identity\n";
+        return false;
+    }
+    if (identities.size() != findings.size())
+    {
+        std::cerr << "validation finding identities collide\n";
+        return false;
+    }
+
+    scene->createMeshNode("duplicate-name");
+    scene->createMeshNode("duplicate-name");
+    scene->createMeshNode("");
+
+    const auto inventory = sgfx::cine::collect_scene_inventory(*scene);
+    if (inventory.empty())
+    {
+        std::cerr << "scene inventory is empty\n";
+        return false;
+    }
+    std::set<std::string> categories;
+    std::size_t meshNodes = 0u;
+    std::size_t renderPasses = 0u;
+    std::size_t perspectiveCameras = 0u;
+    std::size_t orthographicCameras = 0u;
+    bool sawOrthographicCategory = false;
+    for (const auto& entry : inventory)
+    {
+        if (entry.object_type.empty())
+        {
+            std::cerr << "inventory entry with empty type name\n";
+            return false;
+        }
+        categories.insert(entry.object_type);
+        if (entry.object_type == "MeshNode")
+            meshNodes = entry.count;
+        if (entry.object_type == "RenderPass")
+            renderPasses = entry.count;
+        if (entry.object_type == "PerspectiveCamera")
+            perspectiveCameras = entry.count;
+        if (entry.object_type == "OrthographicCamera")
+        {
+            sawOrthographicCategory = true;
+            orthographicCameras = entry.count;
+        }
+    }
+    if (categories.size() != inventory.size())
+    {
+        std::cerr << "inventory categories are not unique\n";
+        return false;
+    }
+    if (meshNodes != 3u || renderPasses != 1u || perspectiveCameras != 1u)
+    {
+        std::cerr << "inventory counts wrong: mesh " << meshNodes << " pass " << renderPasses << " camera "
+                  << perspectiveCameras << "\n";
+        return false;
+    }
+    if (!sawOrthographicCategory || orthographicCameras != 0u)
+    {
+        std::cerr << "empty categories must still be reported with zero counts\n";
+        return false;
+    }
+    return true;
+}
 }
 
 int main()
@@ -148,6 +278,8 @@ int main()
     if (!expectFrameClassificationContract())
         return 1;
     if (!expectFindingIdentityContract())
+        return 1;
+    if (!expectValidationAndInventoryContract())
         return 1;
 
     std::cout << "Ramses probe units OK\n";

@@ -1,9 +1,16 @@
 #pragma once
 
+#include <ramses/framework/RamsesObjectTypes.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
+
+namespace ramses
+{
+class Scene;
+}
 
 namespace sgfx::cine
 {
@@ -43,4 +50,16 @@ struct RamsesProbeFinding
 };
 
 std::string probe_finding_identity(const RamsesProbeFinding& finding);
+
+std::string ramses_object_type_name(ramses::ERamsesObjectType type);
+
+std::vector<RamsesProbeFinding> collect_validation_findings(const ramses::Scene& scene);
+
+struct RamsesProbeInventoryEntry
+{
+    std::string object_type;
+    std::size_t count{0};
+};
+
+std::vector<RamsesProbeInventoryEntry> collect_scene_inventory(const ramses::Scene& scene);
 }
