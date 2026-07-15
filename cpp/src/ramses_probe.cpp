@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -587,5 +588,126 @@ RamsesProbeRunOutcome execute_probe_request(const RamsesProbeCliRequest& request
     outcome.exit_code = kProbeExitOk;
     outcome.classification = "completed";
     return outcome;
+}
+
+namespace
+{
+const nlohmann::json* jsonField(const nlohmann::json& object, const char* key)
+{
+    const auto found = object.find(key);
+    return found == object.end() ? nullptr : &*found;
+}
+
+bool readNumberField(const nlohmann::json& object, const char* key, float& target)
+{
+    const auto* field = jsonField(object, key);
+    if (field == nullptr || !field->is_number())
+        return false;
+    target = static_cast<float>(field->get<double>());
+    return true;
+}
+
+bool readRoundedField(const nlohmann::json& object, const char* key, std::int32_t& target)
+{
+    const auto* field = jsonField(object, key);
+    if (field == nullptr || !field->is_number())
+        return false;
+    target = static_cast<std::int32_t>(std::lround(field->get<double>()));
+    return true;
+}
+}
+
+RamsesProbePerspectiveParse parse_probe_perspective(const std::filesystem::path& file,
+                                                    const std::string& perspective_id)
+{
+    RamsesProbePerspectiveParse parse;
+
+    std::ifstream stream(file, std::ios::binary);
+    if (!stream.good())
+    {
+        parse.rejection = "perspective_unreadable";
+        return parse;
+    }
+    const std::string text((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+
+    const auto root = nlohmann::json::parse(text, nullptr, false);
+    if (root.is_discarded() || !root.is_object())
+    {
+        parse.rejection = "perspective_malformed";
+        return parse;
+    }
+    const auto* view = jsonField(root, perspective_id.c_str());
+    if (view == nullptr)
+    {
+        parse.rejection = "perspective_id_missing";
+        return parse;
+    }
+
+    const auto malformed = [&parse] {
+        parse.rejection = "perspective_malformed";
+        return parse;
+    };
+    if (!view->is_object())
+        return malformed();
+    const auto* aspect = jsonField(*view, "AspectFromResolution_isEnabled");
+    const auto* crane = jsonField(*view, "CraneGimbal");
+    const auto* frustum = jsonField(*view, "Frustum");
+    const auto* viewport = jsonField(*view, "Viewport");
+    const auto* origin = jsonField(*view, "Origin");
+    const auto* shift = jsonField(*view, "ShiftXY");
+    if (aspect == nullptr || !aspect->is_boolean() || crane == nullptr || !crane->is_object() ||
+        frustum == nullptr || !frustum->is_object() || viewport == nullptr || !viewport->is_object() ||
+        origin == nullptr || !origin->is_array() || origin->size() != 3u || shift == nullptr ||
+        !shift->is_array() || shift->size() != 2u)
+    {
+        return malformed();
+    }
+    for (const auto& element : *origin)
+        if (!element.is_number())
+            return malformed();
+    for (const auto& element : *shift)
+        if (!element.is_number())
+            return malformed();
+
+    RamsesProbePerspective perspective;
+    perspective.id = perspective_id;
+    perspective.aspect_from_resolution = aspect->get<bool>();
+    std::int32_t viewportWidth = 0;
+    std::int32_t viewportHeight = 0;
+    if (!readNumberField(*crane, "Distance", perspective.distance) ||
+        !readNumberField(*crane, "Yaw", perspective.yaw) ||
+        !readNumberField(*crane, "Pitch", perspective.pitch) ||
+        !readNumberField(*crane, "Roll", perspective.roll) ||
+        !readNumberField(*frustum, "HorizontalFOV", perspective.horizontal_fov) ||
+        !readNumberField(*frustum, "AspectRatio", perspective.aspect_ratio) ||
+        !readNumberField(*frustum, "NearPlane", perspective.near_plane) ||
+        !readNumberField(*frustum, "FarPlane", perspective.far_plane) ||
+        !readNumberField(*view, "Scale", perspective.scale) ||
+        !readRoundedField(*viewport, "OffsetX", perspective.viewport_offset_x) ||
+        !readRoundedField(*viewport, "OffsetY", perspective.viewport_offset_y) ||
+        !readRoundedField(*viewport, "Width", viewportWidth) ||
+        !readRoundedField(*viewport, "Height", viewportHeight))
+    {
+        return malformed();
+    }
+    for (std::size_t index = 0u; index < 3u; ++index)
+        perspective.origin[index] = static_cast<float>((*origin)[index].get<double>());
+    for (std::size_t index = 0u; index < 2u; ++index)
+        perspective.shift[index] = static_cast<std::int32_t>(std::lround((*shift)[index].get<double>()));
+
+    if (perspective.distance <= 0.0f || perspective.horizontal_fov <= 0.0f ||
+        perspective.aspect_ratio <= 0.0f || perspective.near_plane <= 0.0f ||
+        perspective.far_plane <= perspective.near_plane || perspective.scale <= 0.0f ||
+        viewportWidth <= 0 || viewportHeight <= 0)
+    {
+        parse.rejection = "perspective_values_invalid";
+        return parse;
+    }
+    perspective.viewport_width = static_cast<std::uint32_t>(viewportWidth);
+    perspective.viewport_height = static_cast<std::uint32_t>(viewportHeight);
+
+    parse.perspective = perspective;
+    parse.accepted = true;
+    return parse;
 }
 }

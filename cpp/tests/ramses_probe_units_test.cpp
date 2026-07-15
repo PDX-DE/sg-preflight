@@ -716,6 +716,96 @@ bool expectReportWriterContract()
     return true;
 }
 
+std::string validPerspectiveJson()
+{
+    return R"({
+        "CID_CARHUB_ALL_GOOD": {
+            "AspectFromResolution_isEnabled": true,
+            "CraneGimbal": {"Distance": 12.5, "Yaw": -45.0, "Pitch": 4.0, "Roll": 0.0},
+            "Frustum": {"HorizontalFOV": 43.0, "AspectRatio": 1.7777, "NearPlane": 0.5, "FarPlane": 100.0},
+            "Viewport": {"OffsetX": 0, "OffsetY": 0, "Width": 480, "Height": 270},
+            "Origin": [0.0, -0.123, 0.0],
+            "ShiftXY": [0, 0],
+            "Scale": 1.0
+        }
+    })";
+}
+
+bool writeTextFile(const fs::path& path, const std::string& text)
+{
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    stream << text;
+    return stream.good();
+}
+
+bool expectPerspectiveRejected(const fs::path& file, const std::string& id, const std::string& rejection)
+{
+    const auto parse = sgfx::cine::parse_probe_perspective(file, id);
+    if (parse.accepted || parse.rejection != rejection)
+    {
+        std::cerr << "expected perspective rejection " << rejection << ", received "
+                  << (parse.accepted ? "accepted" : parse.rejection) << "\n";
+        return false;
+    }
+    return true;
+}
+
+bool expectPerspectiveContract()
+{
+    TemporaryDirectory root;
+    const auto validFile = root.path() / "perspectives_probe.json";
+    if (!writeTextFile(validFile, validPerspectiveJson()))
+    {
+        std::cerr << "could not write perspective fixture\n";
+        return false;
+    }
+
+    const auto parsed = sgfx::cine::parse_probe_perspective(validFile, "CID_CARHUB_ALL_GOOD");
+    if (!parsed.accepted || !parsed.rejection.empty() || parsed.perspective.id != "CID_CARHUB_ALL_GOOD" ||
+        !parsed.perspective.aspect_from_resolution || parsed.perspective.distance != 12.5f ||
+        parsed.perspective.yaw != -45.0f || parsed.perspective.horizontal_fov != 43.0f ||
+        parsed.perspective.near_plane != 0.5f || parsed.perspective.far_plane != 100.0f ||
+        parsed.perspective.scale != 1.0f || parsed.perspective.origin[1] != -0.123f ||
+        parsed.perspective.viewport_width != 480u || parsed.perspective.viewport_height != 270u)
+    {
+        std::cerr << "valid perspective must parse with exact typed values\n";
+        return false;
+    }
+
+    if (!expectPerspectiveRejected(root.path() / "absent.json", "CID_CARHUB_ALL_GOOD",
+                                   "perspective_unreadable"))
+        return false;
+
+    const auto malformedFile = root.path() / "malformed.json";
+    if (!writeTextFile(malformedFile, "{ not json"))
+        return false;
+    if (!expectPerspectiveRejected(malformedFile, "CID_CARHUB_ALL_GOOD", "perspective_malformed"))
+        return false;
+
+    if (!expectPerspectiveRejected(validFile, "CID_DOES_NOT_EXIST", "perspective_id_missing"))
+        return false;
+
+    auto missingField = validPerspectiveJson();
+    const auto craneAt = missingField.find("\"Distance\"");
+    missingField.replace(craneAt, 10u, "\"Renamed\"");
+    const auto missingFieldFile = root.path() / "missing-field.json";
+    if (!writeTextFile(missingFieldFile, missingField))
+        return false;
+    if (!expectPerspectiveRejected(missingFieldFile, "CID_CARHUB_ALL_GOOD", "perspective_malformed"))
+        return false;
+
+    auto badBounds = validPerspectiveJson();
+    const auto farAt = badBounds.find("\"FarPlane\": 100.0");
+    badBounds.replace(farAt, std::string("\"FarPlane\": 100.0").size(), "\"FarPlane\": 0.1");
+    const auto badBoundsFile = root.path() / "bad-bounds.json";
+    if (!writeTextFile(badBoundsFile, badBounds))
+        return false;
+    if (!expectPerspectiveRejected(badBoundsFile, "CID_CARHUB_ALL_GOOD", "perspective_values_invalid"))
+        return false;
+
+    return true;
+}
+
 bool expectExecuteProbeContract()
 {
     TemporaryDirectory sceneDir;
@@ -852,6 +942,8 @@ int main()
     if (!expectReportSerializationContract())
         return 1;
     if (!expectReportWriterContract())
+        return 1;
+    if (!expectPerspectiveContract())
         return 1;
     if (!expectExecuteProbeContract())
         return 1;

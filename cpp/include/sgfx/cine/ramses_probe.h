@@ -2,6 +2,7 @@
 
 #include <ramses/framework/RamsesObjectTypes.h>
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -169,4 +170,35 @@ struct RamsesProbeRunOutcome
 };
 
 RamsesProbeRunOutcome execute_probe_request(const RamsesProbeCliRequest& request);
+
+struct RamsesProbePerspective
+{
+    std::string id;
+    bool aspect_from_resolution{true};
+    float distance{0.0f};
+    float yaw{0.0f};
+    float pitch{0.0f};
+    float roll{0.0f};
+    float horizontal_fov{0.0f};
+    float aspect_ratio{0.0f};
+    float near_plane{0.0f};
+    float far_plane{0.0f};
+    float scale{1.0f};
+    std::array<float, 3> origin{};
+    std::array<std::int32_t, 2> shift{};
+    std::int32_t viewport_offset_x{0};
+    std::int32_t viewport_offset_y{0};
+    std::uint32_t viewport_width{0};
+    std::uint32_t viewport_height{0};
+};
+
+struct RamsesProbePerspectiveParse
+{
+    bool accepted{false};
+    std::string rejection;
+    RamsesProbePerspective perspective;
+};
+
+RamsesProbePerspectiveParse parse_probe_perspective(const std::filesystem::path& file,
+                                                    const std::string& perspective_id);
 }
