@@ -187,6 +187,11 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
     if not request.output_root.is_dir():
         rejections.append("output_unavailable")
         return finish("output_unavailable")
+    output_root = request.output_root.resolve()
+    source_root = request.scene_path.resolve().parent
+    if output_root.is_relative_to(source_root) or source_root.is_relative_to(output_root):
+        rejections.append("roots_not_disjoint")
+        return finish("roots_not_disjoint")
     report_path = request.output_root / NATIVE_REPORT_NAME
     if report_path.exists():
         rejections.append("stale_report")

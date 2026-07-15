@@ -151,7 +151,7 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         self._temp = tempfile.TemporaryDirectory()
         self.addCleanup(self._temp.cleanup)
         self.root = Path(self._temp.name)
-        self.scene = self.root / "exported.ramses"
+        self.scene = self.root / "source" / "export" / "exported.ramses"
         _write_text(self.scene, "synthetic-scene-bytes")
         self.output_root = self.root / "out"
         self.output_root.mkdir()
@@ -307,6 +307,35 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         helper, digest = self._helper("@echo off\r\nexit /b 0\r\n")
         result = run_probe(self._request(helper, digest))
         self.assertEqual(result.outcome, "helper_crash")
+
+    def test_output_root_inside_source_tree_is_rejected(self) -> None:
+        helper, digest = self._success_helper()
+        nested_output = self.scene.parent / "nested-out"
+        nested_output.mkdir()
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=self.scene,
+            output_root=nested_output,
+            helper_path=helper,
+            helper_sha256=digest,
+        )
+        result = run_probe(request)
+        self.assertEqual(result.outcome, "roots_not_disjoint")
+        self.assertFalse((self.root / "captured-args.txt").exists())
+
+    def test_scene_inside_output_root_is_rejected(self) -> None:
+        helper, digest = self._success_helper()
+        nested_scene = self.output_root / "exported.ramses"
+        _write_text(nested_scene, "scene-inside-output")
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=nested_scene,
+            output_root=self.output_root,
+            helper_path=helper,
+            helper_sha256=digest,
+        )
+        result = run_probe(request)
+        self.assertEqual(result.outcome, "roots_not_disjoint")
 
 
 if __name__ == "__main__":
