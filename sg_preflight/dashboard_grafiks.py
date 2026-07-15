@@ -254,8 +254,7 @@ def run_grafiks_mode(
         append_startup_log(f"Grafiks fallback=clean category=spawn_failed error={type(exc).__name__}")
         print("Grafiks could not start. Clean mode remains active.", file=sys.stderr)
         return GRAFIKS_SPAWN_FAILURE_EXIT_CODE
-    if exit_code == 0:
-        return 0
+    # An exit inside the wait window is an early exit even with code 0 - the shell never stayed up.
     append_startup_log(f"Grafiks fallback=clean category=early_exit exit_code={int(exit_code)}")
     print(f"Grafiks exited early with code {exit_code}. Clean mode remains active.", file=sys.stderr)
-    return int(exit_code)
+    return int(exit_code) or GRAFIKS_SPAWN_FAILURE_EXIT_CODE

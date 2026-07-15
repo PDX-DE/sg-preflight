@@ -3154,6 +3154,29 @@ class DashboardDualModeLaunchTests(unittest.TestCase):
             self.assertNotIn("private", stderr.getvalue())
             self.assertNotIn(str(exe), stderr.getvalue())
 
+    def test_grafiks_immediate_zero_exit_is_an_early_exit(self) -> None:
+        from sg_preflight import dashboard_grafiks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exe = root / "sgfx_screens.exe"
+            exe.write_bytes(b"fixture")
+            process = mock.Mock()
+            process.wait.return_value = 0
+            stderr = io.StringIO()
+            with mock.patch.object(dashboard_grafiks, "_resolve_grafiks_shell_exe", return_value=exe):
+                with mock.patch.object(dashboard_grafiks.subprocess, "Popen", return_value=process):
+                    with mock.patch.object(dashboard_grafiks, "append_startup_log") as startup_log:
+                        with redirect_stderr(stderr):
+                            result = dashboard_grafiks.run_grafiks_mode(profile_id="G65", workspace=root)
+
+            log_text = "\n".join(str(call.args[0]) for call in startup_log.call_args_list)
+            self.assertEqual(result, dashboard_grafiks.GRAFIKS_SPAWN_FAILURE_EXIT_CODE)
+            self.assertIn("category=early_exit", log_text)
+            self.assertIn("exit_code=0", log_text)
+            self.assertNotIn(str(exe), log_text)
+            self.assertNotIn(str(exe), stderr.getvalue())
+
     def test_grafiks_immediate_nonzero_exit_is_preserved_and_logged(self) -> None:
         from sg_preflight import dashboard_grafiks
 
