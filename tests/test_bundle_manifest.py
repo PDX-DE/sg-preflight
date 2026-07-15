@@ -708,3 +708,55 @@ class TestHeldStagingDirectories(unittest.TestCase):
             with blocker.open("rb"):
                 with self.assertRaises(OSError):
                     module._rmtree_tolerating_held_dirs(root)
+
+    def test_fresh_bundle_relocates_into_held_destination(self) -> None:
+        import ctypes
+
+        module = _load_build_script()
+        kernel32 = ctypes.windll.kernel32
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "fresh" / "sgfx-preflight"
+            (source / "_internal").mkdir(parents=True)
+            (source / "sgfx-preflight.exe").write_text("exe", encoding="utf-8")
+            (source / "_internal" / "base_library.zip").write_text("zip", encoding="utf-8")
+            dest = root / "b" / "sgfx-preflight"
+            dest.mkdir(parents=True)
+            handle = kernel32.CreateFileW(str(dest), 0x80000000, 0x1, None, 3, 0x02000000, None)
+            self.assertNotEqual(handle, -1)
+            try:
+                result = module.relocate_fresh_bundle(source, dest)
+                self.assertEqual(result, dest)
+                self.assertTrue((dest / "sgfx-preflight.exe").is_file())
+                self.assertTrue((dest / "_internal" / "base_library.zip").is_file())
+                # The destination directory itself is reused, so its contents must not nest under
+                # a second sgfx-preflight/.
+                self.assertFalse((dest / "sgfx-preflight").exists())
+                # The helper moves contents; the emptied source directory is the caller's to remove.
+                self.assertEqual(list(source.iterdir()), [])
+            finally:
+                kernel32.CloseHandle(handle)
+
+    def test_fresh_bundle_merges_into_held_nested_subdirectory(self) -> None:
+        import ctypes
+
+        module = _load_build_script()
+        kernel32 = ctypes.windll.kernel32
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "fresh" / "sgfx-preflight"
+            (source / "_internal").mkdir(parents=True)
+            (source / "_internal" / "base_library.zip").write_text("zip", encoding="utf-8")
+            dest = root / "b" / "sgfx-preflight"
+            (dest / "_internal").mkdir(parents=True)
+            handle = kernel32.CreateFileW(
+                str(dest / "_internal"), 0x80000000, 0x1, None, 3, 0x02000000, None
+            )
+            self.assertNotEqual(handle, -1)
+            try:
+                module.relocate_fresh_bundle(source, dest)
+                self.assertTrue((dest / "_internal" / "base_library.zip").is_file())
+                # A held destination subdirectory is merged into, not nested under.
+                self.assertFalse((dest / "_internal" / "_internal").exists())
+            finally:
+                kernel32.CloseHandle(handle)

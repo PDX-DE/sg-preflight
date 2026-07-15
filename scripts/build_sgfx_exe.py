@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Callable, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -346,6 +347,38 @@ def clean_staging_outputs() -> None:
         _rmtree_tolerating_held_dirs(STAGING_DIST_PATH)
 
 
+def _merge_move_into_held(source: Path, dest: Path) -> None:
+    # Move the *contents* of source into dest. dest may already exist and carry an external
+    # directory handle that blocks its own removal but still permits writes into it; a same-named
+    # held subdirectory is merged into rather than replaced, so a nested hold never nests the tree.
+    dest.mkdir(parents=True, exist_ok=True)
+    for child in sorted(source.iterdir()):
+        target = dest / child.name
+        if child.is_dir() and not child.is_symlink():
+            if target.exists():
+                _merge_move_into_held(child, target)
+                try:
+                    child.rmdir()
+                except OSError:
+                    if not _is_directory_skeleton(child):
+                        raise
+            else:
+                shutil.move(str(child), str(target))
+        else:
+            if target.exists() or target.is_symlink():
+                target.unlink()
+            shutil.move(str(child), str(target))
+
+
+def relocate_fresh_bundle(source_bundle: Path, dest_bundle: Path) -> Path:
+    # PyInstaller assembles into a fresh, unheld distpath because its own --noconfirm cleanup
+    # rmtrees the output directory before assembling, and an Explorer-style handle on the canonical
+    # staging directory makes that rmtree fail. Move the finished bundle into the canonical path,
+    # which may survive from a prior run only as a held-but-empty skeleton.
+    _merge_move_into_held(source_bundle, dest_bundle)
+    return dest_bundle
+
+
 def _grafiks_runtime_source() -> Path | None:
     configured = os.environ.get(GRAFIKS_RUNTIME_ENV, "").strip()
     candidates = [Path(configured)] if configured else []
@@ -545,9 +578,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--staged-only", action="store_true", help="Validate the staged bundle without swapping the accepted default")
     args = parser.parse_args(argv)
 
-    pyinstaller_args = build_pyinstaller_args(dist_path=STAGING_DIST_PATH)
     if args.print_args:
-        for item in pyinstaller_args:
+        for item in build_pyinstaller_args(dist_path=STAGING_DIST_PATH):
             print(item)
         return 0
 
@@ -558,8 +590,16 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("PyInstaller is required. Install with `pip install -e .[packaging]`.") from exc
 
     clean_staging_outputs()
-    PyInstaller.__main__.run(pyinstaller_args)
-    staged_bundle = STAGING_DIST_PATH / "sgfx-preflight"
+    STAGING_DIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fresh_dist = Path(tempfile.mkdtemp(prefix="sgfx-stage-", dir=str(STAGING_DIST_PATH.parent)))
+    try:
+        PyInstaller.__main__.run(build_pyinstaller_args(dist_path=fresh_dist))
+        staged_bundle = relocate_fresh_bundle(
+            fresh_dist / "sgfx-preflight", STAGING_DIST_PATH / "sgfx-preflight"
+        )
+    finally:
+        if fresh_dist.exists():
+            _rmtree_tolerating_held_dirs(fresh_dist)
     remove_private_install_metadata(staged_bundle)
     qml_imports = scan_qml_imports(ROOT / "sg_preflight" / "desktop" / "qml")
     prune_staged_qml_roots(staged_bundle, qml_imports)
