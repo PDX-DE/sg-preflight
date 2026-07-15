@@ -32,10 +32,10 @@
 
 ## Task 2 — Native probe units (RED first)
 
-- [ ] Step 1: RED: add `cpp/tests/ramses_probe_units_test.cpp` (CTest) covering: metadata/compatibility facts collection; validation-finding capture preserving severity, message, object type/id/name-when-available, and source class (req 6); duplicate/empty names not colliding finding identity (req 7); structural/resource inventory counts; logic-update success, cycle/runtime failure, executed/skipped nodes, and timing evidence (req 9); frame classification covering every stable black/non-render code plus the undetermined fallback (req 11); helper-crash vs validation-finding separation (req 12).
-- [ ] Step 2: GREEN: extract/implement the units in `cpp/src/ramses_probe.cpp` + `cpp/include/sgfx/cine/…`, reusing the preview renderer/lifecycle path; metadata-only lanes never initialize the renderer (req 5).
-- [ ] Step 3: Lifecycle tests: success plus missing Available, Ready, Rendered, and readback events, each with bounded termination (req 10).
-- [ ] Step 4: Build + run in `build/cine-c0`; commit.
+- [x] Step 1: RED: add `cpp/tests/ramses_probe_units_test.cpp` (CTest) covering: metadata/compatibility facts collection; validation-finding capture preserving severity, message, object type/id/name-when-available, and source class (req 6); duplicate/empty names not colliding finding identity (req 7); structural/resource inventory counts; logic-update success, cycle/runtime failure, executed/skipped nodes, and timing evidence (req 9); frame classification covering every stable black/non-render code plus the undetermined fallback (req 11). Helper-crash vs validation-finding separation (req 12) is covered at the runner layer in Task 4.
+- [x] Step 2: GREEN: extract/implement the units in `cpp/src/ramses_probe.cpp` + `cpp/include/sgfx/cine/…`, reusing the preview renderer/lifecycle path; metadata-only lanes never initialize the renderer (req 5).
+- [x] Step 3: Lifecycle tests: success plus missing Available, Ready, Rendered, and readback events, each with bounded termination (req 10) — deterministic `drive_probe_lifecycle` driver with one shared budget, mirroring the accepted preview `waitFor` semantics.
+- [x] Step 4: Build + run in `build/cine-c0` (Release); commit.
 
 ## Task 3 — `sgfx_cine_ramses_probe` executable
 
@@ -45,7 +45,7 @@
 
 ## Task 4 — Python runner and final report
 
-- [ ] Step 1: RED: `tests/test_ramses_probe_runner.py` — request construction; helper launch; fail-closed native-report validation; rejection matrix for malformed, partial, stale-generation, mismatched-profile, mismatched-source, untrusted-helper, and escaped-path reports (req 17); before/after digest proof (req 16); final `ramses-r0-evidence.json` + `RamsesProbeReport` schema.
+- [ ] Step 1: RED: `tests/test_ramses_probe_runner.py` — request construction; helper launch; fail-closed native-report validation; rejection matrix for malformed, partial, stale-generation, mismatched-profile, mismatched-source, untrusted-helper, and escaped-path reports (req 17); helper-crash vs validation-finding separation (req 12); before/after digest proof (req 16); final `ramses-r0-evidence.json` + `RamsesProbeReport` schema.
 - [ ] Step 2: GREEN: implement `sg_preflight/ramses_probe_runner.py` (standard library only), runnable via `scripts/run_sgfx_python.ps1 -m sg_preflight.ramses_probe_runner`.
 - [ ] Step 3: Commit.
 
