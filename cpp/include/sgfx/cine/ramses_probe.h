@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
@@ -101,4 +102,23 @@ struct RamsesLifecycleEvidence
 RamsesLifecycleEvidence drive_probe_lifecycle(const std::function<bool(ProbeLifecyclePhase)>& phase_reached,
                                               const std::function<void()>& pump,
                                               std::chrono::milliseconds budget);
+
+struct RamsesProbeCliRequest
+{
+    std::string profile;
+    std::string backend;
+    std::filesystem::path scene_path;
+    std::filesystem::path output_root;
+    std::filesystem::path perspective_path;
+    std::string perspective_id;
+};
+
+struct RamsesProbeCliParse
+{
+    bool accepted{false};
+    std::string rejection;
+    RamsesProbeCliRequest request;
+};
+
+RamsesProbeCliParse parse_probe_arguments(const std::vector<std::string>& arguments);
 }

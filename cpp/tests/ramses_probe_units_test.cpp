@@ -393,6 +393,103 @@ bool expectLogicUpdateContract()
     return true;
 }
 
+bool expectParseRejected(const std::vector<std::string>& arguments, const std::string& rejection)
+{
+    const auto parse = sgfx::cine::parse_probe_arguments(arguments);
+    if (parse.accepted || parse.rejection != rejection)
+    {
+        std::cerr << "expected rejection " << rejection << ", received "
+                  << (parse.accepted ? "accepted" : parse.rejection) << "\n";
+        return false;
+    }
+    return true;
+}
+
+bool expectArgumentContract()
+{
+    const std::vector<std::string> valid{
+        "--scene",       R"(C:\evidence\exported.ramses)", "--output-root", R"(C:\evidence\out)",
+        "--profile",     "G45",                            "--backend",     "opengl",
+    };
+    const auto accepted = sgfx::cine::parse_probe_arguments(valid);
+    if (!accepted.accepted || !accepted.rejection.empty() || accepted.request.profile != "G45" ||
+        accepted.request.backend != "opengl" || accepted.request.scene_path.empty() ||
+        accepted.request.output_root.empty() || !accepted.request.perspective_path.empty() ||
+        !accepted.request.perspective_id.empty())
+    {
+        std::cerr << "valid argument set must be accepted with exact typed values\n";
+        return false;
+    }
+
+    auto withPerspective = valid;
+    withPerspective.insert(withPerspective.end(),
+                           {"--perspective", R"(C:\evidence\perspective.json)", "--perspective-id", "P01"});
+    const auto perspective = sgfx::cine::parse_probe_arguments(withPerspective);
+    if (!perspective.accepted || perspective.request.perspective_id != "P01" ||
+        perspective.request.perspective_path.empty())
+    {
+        std::cerr << "perspective pair must be accepted together\n";
+        return false;
+    }
+
+    auto unknown = valid;
+    unknown.push_back("--verbose");
+    if (!expectParseRejected(unknown, "unknown_option"))
+        return false;
+
+    auto positional = valid;
+    positional.push_back("stray");
+    if (!expectParseRejected(positional, "unknown_option"))
+        return false;
+
+    auto duplicate = valid;
+    duplicate.insert(duplicate.end(), {"--profile", "G45"});
+    if (!expectParseRejected(duplicate, "duplicate_option"))
+        return false;
+
+    if (!expectParseRejected({"--scene", R"(C:\evidence\exported.ramses)", "--output-root", R"(C:\evidence\out)",
+                              "--profile", "G45"},
+                             "missing_required"))
+        return false;
+
+    auto danglingValue = valid;
+    danglingValue.pop_back();
+    if (!expectParseRejected(danglingValue, "missing_value"))
+        return false;
+
+    auto badBackend = valid;
+    badBackend[7] = "vulkan";
+    if (!expectParseRejected(badBackend, "unsupported_backend"))
+        return false;
+
+    auto badProfile = valid;
+    badProfile[5] = "../G45";
+    if (!expectParseRejected(badProfile, "invalid_profile"))
+        return false;
+
+    auto emptyProfile = valid;
+    emptyProfile[5] = "";
+    if (!expectParseRejected(emptyProfile, "invalid_profile"))
+        return false;
+
+    auto relativeOutput = valid;
+    relativeOutput[3] = R"(..\out)";
+    if (!expectParseRejected(relativeOutput, "relative_path"))
+        return false;
+
+    auto relativeScene = valid;
+    relativeScene[1] = "exported.ramses";
+    if (!expectParseRejected(relativeScene, "relative_path"))
+        return false;
+
+    auto lonePerspective = valid;
+    lonePerspective.insert(lonePerspective.end(), {"--perspective", R"(C:\evidence\perspective.json)"});
+    if (!expectParseRejected(lonePerspective, "incomplete_perspective"))
+        return false;
+
+    return true;
+}
+
 bool expectLifecycleContract()
 {
     using sgfx::cine::ProbeLifecyclePhase;
@@ -457,6 +554,8 @@ int main()
     if (!expectLogicUpdateContract())
         return 1;
     if (!expectLifecycleContract())
+        return 1;
+    if (!expectArgumentContract())
         return 1;
 
     std::cout << "Ramses probe units OK\n";

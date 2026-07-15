@@ -12,7 +12,10 @@
 #include <ramses/framework/RamsesVersion.h>
 #include <ramses/framework/ValidationReport.h>
 
+#include <algorithm>
 #include <array>
+#include <cctype>
+#include <map>
 #include <sstream>
 
 namespace sgfx::cine
@@ -258,5 +261,105 @@ RamsesLifecycleEvidence drive_probe_lifecycle(const std::function<bool(ProbeLife
     evidence.completed = true;
     evidence.elapsed_microseconds = elapsed();
     return evidence;
+}
+
+namespace
+{
+bool validIdentityToken(const std::string& value)
+{
+    if (value.empty() || value.size() > 64u || !std::isalnum(static_cast<unsigned char>(value.front())))
+        return false;
+    return std::all_of(value.begin(), value.end(), [](char character) {
+        const auto unsignedCharacter = static_cast<unsigned char>(character);
+        return std::isalnum(unsignedCharacter) != 0 || character == '_' || character == '-';
+    });
+}
+}
+
+RamsesProbeCliParse parse_probe_arguments(const std::vector<std::string>& arguments)
+{
+    RamsesProbeCliParse parse;
+
+    const std::array<std::string, 6> knownOptions = {"--scene",       "--output-root", "--profile",
+                                                     "--backend",     "--perspective", "--perspective-id"};
+    std::map<std::string, std::string> values;
+    for (std::size_t index = 0u; index < arguments.size(); index += 2u)
+    {
+        const auto& option = arguments[index];
+        if (std::find(knownOptions.begin(), knownOptions.end(), option) == knownOptions.end())
+        {
+            parse.rejection = "unknown_option";
+            return parse;
+        }
+        if (index + 1u >= arguments.size() || arguments[index + 1u].rfind("--", 0u) == 0u)
+        {
+            parse.rejection = "missing_value";
+            return parse;
+        }
+        if (values.count(option) != 0u)
+        {
+            parse.rejection = "duplicate_option";
+            return parse;
+        }
+        values[option] = arguments[index + 1u];
+    }
+
+    for (const auto& required : {"--scene", "--output-root", "--profile", "--backend"})
+    {
+        if (values.count(required) == 0u)
+        {
+            parse.rejection = "missing_required";
+            return parse;
+        }
+    }
+    if (values["--backend"] != "opengl")
+    {
+        parse.rejection = "unsupported_backend";
+        return parse;
+    }
+    if (!validIdentityToken(values["--profile"]))
+    {
+        parse.rejection = "invalid_profile";
+        return parse;
+    }
+
+    const std::filesystem::path scenePath{values["--scene"]};
+    const std::filesystem::path outputRoot{values["--output-root"]};
+    if (!scenePath.is_absolute() || !outputRoot.is_absolute())
+    {
+        parse.rejection = "relative_path";
+        return parse;
+    }
+
+    const bool hasPerspective = values.count("--perspective") != 0u;
+    const bool hasPerspectiveId = values.count("--perspective-id") != 0u;
+    if (hasPerspective != hasPerspectiveId)
+    {
+        parse.rejection = "incomplete_perspective";
+        return parse;
+    }
+    if (hasPerspective)
+    {
+        const std::filesystem::path perspectivePath{values["--perspective"]};
+        if (!perspectivePath.is_absolute())
+        {
+            parse.rejection = "relative_path";
+            return parse;
+        }
+        if (!validIdentityToken(values["--perspective-id"]))
+        {
+            parse.rejection = "invalid_perspective_id";
+            return parse;
+        }
+        parse.request.perspective_path = perspectivePath;
+        parse.request.perspective_id = values["--perspective-id"];
+    }
+
+    parse.request.profile = values["--profile"];
+    parse.request.backend = values["--backend"];
+    parse.request.scene_path = scenePath;
+    parse.request.output_root = outputRoot;
+    parse.accepted = true;
+    return parse;
 }
 }
