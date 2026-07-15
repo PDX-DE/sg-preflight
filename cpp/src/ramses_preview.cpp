@@ -187,8 +187,11 @@ std::vector<ramses::Property*> configureAuthoredCamera(
     const auto aspect = static_cast<float>(width) / static_cast<float>(height);
     for (auto* input : inputs)
     {
-        const bool configured = input &&
-            setProperty<bool>(*input, {"AspectFromResolution_isEnabled"}, true) &&
+        // Current exports expose AutoAspect; older exports use the prototype spelling.
+        const bool aspectConfigured = input &&
+            (setProperty<bool>(*input, {"AutoAspect"}, true) ||
+             setProperty<bool>(*input, {"AspectFromResolution_isEnabled"}, true));
+        const bool configured = aspectConfigured &&
             setProperty<float>(*input, {"CraneGimbal", "Distance"}, 12.0f) &&
             setProperty<float>(*input, {"CraneGimbal", "Pitch"}, 4.0f) &&
             setProperty<float>(*input, {"CraneGimbal", "Roll"}, 0.0f) &&

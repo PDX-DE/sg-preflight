@@ -2,6 +2,16 @@
 
 #include "test_support.h"
 
+#include <ramses/client/PerspectiveCamera.h>
+#include <ramses/client/RamsesClient.h>
+#include <ramses/client/RenderGroup.h>
+#include <ramses/client/RenderPass.h>
+#include <ramses/client/Scene.h>
+#include <ramses/client/logic/LogicEngine.h>
+#include <ramses/framework/EFeatureLevel.h>
+#include <ramses/framework/RamsesFramework.h>
+#include <ramses/framework/RamsesFrameworkConfig.h>
+
 #include <array>
 #include <chrono>
 #include <cstring>
@@ -101,6 +111,86 @@ bool createDirectoryLink(const fs::path& link, const fs::path& target)
     return false;
 #endif
 }
+
+constexpr std::string_view kAutoAspectInterfaceSource = R"(
+    function interface(inout)
+        inout.AutoAspect = Type:Bool()
+        inout.Scale = Type:Float()
+        inout.Origin = Type:Vec3f()
+        inout.ShiftXY = Type:Vec2i()
+        inout.CraneGimbal = {
+            Distance = Type:Float(), Yaw = Type:Float(), Pitch = Type:Float(), Roll = Type:Float()
+        }
+        inout.Frustum = {
+            HorizontalFOV = Type:Float(), AspectRatio = Type:Float(),
+            NearPlane = Type:Float(), FarPlane = Type:Float()
+        }
+        inout.Viewport = {
+            OffsetX = Type:Int32(), OffsetY = Type:Int32(), Width = Type:Int32(), Height = Type:Int32()
+        }
+    end
+)";
+
+constexpr std::string_view kLegacyAspectInterfaceSource = R"(
+    function interface(inout)
+        inout.AspectFromResolution_isEnabled = Type:Bool()
+        inout.Scale = Type:Float()
+        inout.Origin = Type:Vec3f()
+        inout.ShiftXY = Type:Vec2i()
+        inout.CraneGimbal = {
+            Distance = Type:Float(), Yaw = Type:Float(), Pitch = Type:Float(), Roll = Type:Float()
+        }
+        inout.Frustum = {
+            HorizontalFOV = Type:Float(), AspectRatio = Type:Float(),
+            NearPlane = Type:Float(), FarPlane = Type:Float()
+        }
+        inout.Viewport = {
+            OffsetX = Type:Int32(), OffsetY = Type:Int32(), Width = Type:Int32(), Height = Type:Int32()
+        }
+    end
+)";
+
+bool expectAuthoredGenerationReachesReadback(const fs::path& sceneDir, const fs::path& outputDir,
+                                             std::string_view interfaceSource, const char* label)
+{
+    const auto scenePath = sceneDir / (std::string(label) + ".ramses");
+    {
+        ramses::RamsesFrameworkConfig config{ramses::EFeatureLevel_01};
+        ramses::RamsesFramework framework{config};
+        auto* client = framework.createClient("sgfx-preview-contract-save");
+        auto* scene = client->createScene(ramses::sceneId_t{2030u}, "preview-crane-scene");
+        auto* camera = scene->createPerspectiveCamera("preview-camera");
+        camera->setFrustum(19.0f, 480.0f / 270.0f, 0.1f, 100.0f);
+        camera->setViewport(0, 0, 480u, 270u);
+        auto* pass = scene->createRenderPass("preview-pass");
+        pass->setCamera(*camera);
+        auto* group = scene->createRenderGroup("preview-group");
+        pass->addRenderGroup(*group);
+        auto* engine = scene->createLogicEngine("preview-crane-logic");
+        if (engine->createLuaInterface(interfaceSource, "Interface_CameraCrane") == nullptr ||
+            !scene->flush() || !scene->saveToFile(scenePath.string()))
+        {
+            std::cerr << label << ": could not save the synthetic camera-crane scene\n";
+            return false;
+        }
+    }
+
+    sgfx::cine::RamsesPreviewRequest request;
+    request.scene_path = scenePath;
+    request.output_root = outputDir;
+    request.width = 480u;
+    request.height = 270u;
+    request.frame_count = 1u;
+    request.reduced_motion = true;
+    const auto result = sgfx::cine::render_ramses_preview(request);
+    if (result.rendered || result.safe_reason != "readback_failed")
+    {
+        std::cerr << label << ": expected readback_failed after camera configuration, received "
+                  << (result.rendered ? std::string("rendered") : result.safe_reason) << "\n";
+        return false;
+    }
+    return true;
+}
 }
 
 int main()
@@ -161,6 +251,22 @@ int main()
             std::cerr << "invalid requests wrote output\n";
             return 1;
         }
+
+        const auto autoAspectOutput = temporary.path() / "auto-aspect-output";
+        const auto legacyOutput = temporary.path() / "legacy-aspect-output";
+        std::error_code generationError;
+        if (!fs::create_directory(autoAspectOutput, generationError) ||
+            !fs::create_directory(legacyOutput, generationError))
+        {
+            std::cerr << "could not create generation output roots\n";
+            return 1;
+        }
+        if (!expectAuthoredGenerationReachesReadback(temporary.path(), autoAspectOutput,
+                                                     kAutoAspectInterfaceSource, "auto-aspect-generation"))
+            return 1;
+        if (!expectAuthoredGenerationReachesReadback(temporary.path(), legacyOutput,
+                                                     kLegacyAspectInterfaceSource, "legacy-aspect-generation"))
+            return 1;
 
         std::cout << "Ramses preview contract OK\n";
         return 0;
