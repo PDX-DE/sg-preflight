@@ -556,6 +556,8 @@ ramses::Property* probeCameraCraneRoot(ramses::LogicNode& node)
 
 std::vector<ramses::Property*> collectProbeCraneRoots(const std::vector<ramses::LogicEngine*>& engines)
 {
+    // Drive interface AND script crane roots: real exports may keep the interface unlinked, with the
+    // camera actually fed by a script's own crane inputs (proven by the accepted preview path on G50).
     std::vector<ramses::Property*> roots;
     for (auto* engine : engines)
     {
@@ -565,15 +567,12 @@ std::vector<ramses::Property*> collectProbeCraneRoots(const std::vector<ramses::
                 roots.push_back(root);
         }
     }
-    if (roots.empty())
+    for (auto* engine : engines)
     {
-        for (auto* engine : engines)
+        for (auto* script : engine->getCollection<ramses::LuaScript>())
         {
-            for (auto* script : engine->getCollection<ramses::LuaScript>())
-            {
-                if (auto* root = probeCameraCraneRoot(*script))
-                    roots.push_back(root);
-            }
+            if (auto* root = probeCameraCraneRoot(*script))
+                roots.push_back(root);
         }
     }
     return roots;
