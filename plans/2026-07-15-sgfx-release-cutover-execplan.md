@@ -31,8 +31,11 @@ IDCevo turntables, proven on the real G50 export).
 
 ## Task 1 — Candidate evidence on the exact tree
 
-- [ ] Step 1: Full unittest discovery to a COMPLETE footer on the candidate head (attempt 3 in flight);
-      focused aggregate for the C0/R0-touched modules; record both footers under `out/control-center-c0/`.
+- [ ] Step 1: Full unittest discovery to a COMPLETE footer on the candidate head (attempt 3 in flight,
+      process verified alive). Focused aggregate DONE: `tests.test_bundle_manifest` +
+      `test_qt_quick_benchmark` + `test_qt_quick_preview` + `test_surface_registry` +
+      `test_ramses_probe_runner` — **Ran 85, OK (1 skip), 74.7 s**, complete footer at
+      `out/control-center-c0/focused-aggregate-2026-07-15.log`.
 - [x] Step 2: Offline CLI safety matrix — all nine multi-format smokes exit 0 (2026-07-15 evening).
       Contract note: `delivery-documentation read` now requires an explicit `--profile` (C0
       profile-neutrality working as designed); Jira probes report `connection_status: not_run`,
