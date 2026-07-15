@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 from typing import Any
 
@@ -56,6 +57,26 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _worktree_status(anchor: Path) -> str | None:
+    git = shutil.which("git")
+    if git is None:
+        return None
+    try:
+        toplevel = subprocess.run(
+            [git, "-C", str(anchor), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=30, check=False)
+        if toplevel.returncode != 0:
+            return None
+        status = subprocess.run(
+            [git, "-C", str(anchor), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=60, check=False)
+        if status.returncode != 0:
+            return None
+        return status.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def build_helper_arguments(request: ProbeRunRequest) -> list[str]:
@@ -134,6 +155,8 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
     scene_before = ""
     scene_after = ""
     perspective_digest = ""
+    worktree_before: str | None = None
+    worktree_after: str | None = None
 
     def finish(outcome: str) -> ProbeRunResult:
         evidence = {
@@ -156,6 +179,8 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
                 "sceneBefore": scene_before,
                 "sceneAfter": scene_after,
                 "perspective": perspective_digest or None,
+                "worktreeStatusBefore": worktree_before,
+                "worktreeStatusAfter": worktree_after,
             },
             "helperExitCode": exit_code,
             "outcome": outcome,
@@ -200,6 +225,7 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
     scene_before = sha256_file(request.scene_path)
     if request.perspective_path is not None and request.perspective_path.is_file():
         perspective_digest = sha256_file(request.perspective_path)
+    worktree_before = _worktree_status(request.scene_path.parent)
 
     def persist_console(stream_name: str, payload: bytes | None) -> None:
         target = request.output_root / stream_name
@@ -244,6 +270,11 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
             sha256_file(request.perspective_path) != perspective_digest:
         rejections.append("source_mutated")
         return finish("source_mutated")
+    if worktree_before is not None:
+        worktree_after = _worktree_status(request.scene_path.parent)
+        if worktree_after != worktree_before:
+            rejections.append("worktree_status_changed")
+            return finish("worktree_status_changed")
 
     if exit_code == 0:
         return finish("completed")

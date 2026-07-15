@@ -323,6 +323,39 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         self.assertEqual(result.outcome, "roots_not_disjoint")
         self.assertFalse((self.root / "captured-args.txt").exists())
 
+    def test_worktree_status_mutation_is_rejected(self) -> None:
+        import subprocess as sp
+        worktree = self.root / "wt"
+        worktree.mkdir()
+        for command in (["git", "init", "-q"], ["git", "add", "-A"]):
+            sp.run(command, cwd=worktree, check=False, capture_output=True)
+        scene = worktree / "export" / "exported.ramses"
+        _write_text(scene, "worktree-scene-bytes")
+
+        report = _native_report(profile="G45", scene_path=str(scene))
+        fixture = self.root / "wt-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        sibling = worktree / "untracked-sibling.txt"
+        body = (
+            "@echo off\r\n"
+            f'copy /Y "{fixture}" "{self.output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            f'echo dirty > "{sibling}"\r\n'
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=scene,
+            output_root=self.output_root,
+            helper_path=helper,
+            helper_sha256=digest,
+        )
+        result = run_probe(request)
+        self.assertEqual(result.outcome, "worktree_status_changed")
+        evidence = json.loads(
+            (self.output_root / EVIDENCE_FILE_NAME).read_text(encoding="utf-8"))
+        self.assertIn("worktreeStatusBefore", evidence["digests"])
+
     def test_scene_inside_output_root_is_rejected(self) -> None:
         helper, digest = self._success_helper()
         nested_scene = self.output_root / "exported.ramses"
