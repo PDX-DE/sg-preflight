@@ -2,8 +2,10 @@
 
 #include <ramses/framework/RamsesObjectTypes.h>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -77,4 +79,26 @@ struct RamsesLogicUpdateEvidence
 
 RamsesLogicUpdateEvidence collect_logic_update_evidence(ramses::RamsesFramework& framework,
                                                         ramses::LogicEngine& engine);
+
+enum class ProbeLifecyclePhase
+{
+    Available = 0,
+    Ready = 1,
+    Rendered = 2,
+    Readback = 3,
+};
+
+std::string probe_lifecycle_phase_code(ProbeLifecyclePhase phase);
+
+struct RamsesLifecycleEvidence
+{
+    bool completed{false};
+    std::string failure_phase;
+    std::vector<std::string> reached_phases;
+    std::int64_t elapsed_microseconds{-1};
+};
+
+RamsesLifecycleEvidence drive_probe_lifecycle(const std::function<bool(ProbeLifecyclePhase)>& phase_reached,
+                                              const std::function<void()>& pump,
+                                              std::chrono::milliseconds budget);
 }

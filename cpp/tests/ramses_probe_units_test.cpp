@@ -10,6 +10,7 @@
 #include <ramses/client/logic/Property.h>
 
 #include <algorithm>
+#include <chrono>
 #include <ramses/framework/EFeatureLevel.h>
 #include <ramses/framework/RamsesFramework.h>
 #include <ramses/framework/RamsesFrameworkConfig.h>
@@ -391,6 +392,56 @@ bool expectLogicUpdateContract()
     }
     return true;
 }
+
+bool expectLifecycleContract()
+{
+    using sgfx::cine::ProbeLifecyclePhase;
+
+    const auto phases = {ProbeLifecyclePhase::Available, ProbeLifecyclePhase::Ready,
+                         ProbeLifecyclePhase::Rendered, ProbeLifecyclePhase::Readback};
+    std::set<std::string> codes;
+    for (const auto phase : phases)
+        codes.insert(sgfx::cine::probe_lifecycle_phase_code(phase));
+    if (codes.size() != 4u || codes.count("available") != 1u || codes.count("ready") != 1u ||
+        codes.count("rendered") != 1u || codes.count("readback") != 1u)
+    {
+        std::cerr << "lifecycle phase codes are not the four stable strings\n";
+        return false;
+    }
+
+    unsigned pumps = 0u;
+    const auto success = sgfx::cine::drive_probe_lifecycle(
+        [&](ProbeLifecyclePhase phase) { return pumps >= static_cast<unsigned>(phase) + 1u; },
+        [&] { ++pumps; }, std::chrono::milliseconds{1000});
+    if (!success.completed || !success.failure_phase.empty() || success.elapsed_microseconds < 0)
+    {
+        std::cerr << "successful lifecycle must complete with timing evidence\n";
+        return false;
+    }
+    const std::vector<std::string> expectedOrder{"available", "ready", "rendered", "readback"};
+    if (success.reached_phases != expectedOrder)
+    {
+        std::cerr << "successful lifecycle must record all four phases in order\n";
+        return false;
+    }
+
+    for (int blockedPhase = 0; blockedPhase < 4; ++blockedPhase)
+    {
+        const auto blocked = sgfx::cine::drive_probe_lifecycle(
+            [&](ProbeLifecyclePhase phase) { return static_cast<int>(phase) < blockedPhase; }, [] {},
+            std::chrono::milliseconds{30});
+        const auto expectedCode = sgfx::cine::probe_lifecycle_phase_code(
+            static_cast<ProbeLifecyclePhase>(blockedPhase));
+        if (blocked.completed || blocked.failure_phase != expectedCode ||
+            blocked.reached_phases.size() != static_cast<std::size_t>(blockedPhase) ||
+            blocked.elapsed_microseconds < 0)
+        {
+            std::cerr << "missing " << expectedCode << " event must terminate bounded with that failure phase\n";
+            return false;
+        }
+    }
+    return true;
+}
 }
 
 int main()
@@ -404,6 +455,8 @@ int main()
     if (!expectValidationAndInventoryContract())
         return 1;
     if (!expectLogicUpdateContract())
+        return 1;
+    if (!expectLifecycleContract())
         return 1;
 
     std::cout << "Ramses probe units OK\n";

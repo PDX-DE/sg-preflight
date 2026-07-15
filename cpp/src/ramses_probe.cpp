@@ -210,4 +210,53 @@ RamsesLogicUpdateEvidence collect_logic_update_evidence(ramses::RamsesFramework&
     evidence.topology_sort_microseconds = report.getTopologySortExecutionTime().count();
     return evidence;
 }
+
+std::string probe_lifecycle_phase_code(ProbeLifecyclePhase phase)
+{
+    switch (phase)
+    {
+    case ProbeLifecyclePhase::Available:
+        return "available";
+    case ProbeLifecyclePhase::Ready:
+        return "ready";
+    case ProbeLifecyclePhase::Rendered:
+        return "rendered";
+    case ProbeLifecyclePhase::Readback:
+        break;
+    }
+    return "readback";
+}
+
+RamsesLifecycleEvidence drive_probe_lifecycle(const std::function<bool(ProbeLifecyclePhase)>& phase_reached,
+                                              const std::function<void()>& pump,
+                                              std::chrono::milliseconds budget)
+{
+    RamsesLifecycleEvidence evidence;
+    const auto start = std::chrono::steady_clock::now();
+    const auto deadline = start + budget;
+    const auto elapsed = [&start] {
+        return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start)
+            .count();
+    };
+
+    constexpr std::array phases = {ProbeLifecyclePhase::Available, ProbeLifecyclePhase::Ready,
+                                   ProbeLifecyclePhase::Rendered, ProbeLifecyclePhase::Readback};
+    for (const auto phase : phases)
+    {
+        while (!phase_reached(phase))
+        {
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                evidence.failure_phase = probe_lifecycle_phase_code(phase);
+                evidence.elapsed_microseconds = elapsed();
+                return evidence;
+            }
+            pump();
+        }
+        evidence.reached_phases.push_back(probe_lifecycle_phase_code(phase));
+    }
+    evidence.completed = true;
+    evidence.elapsed_microseconds = elapsed();
+    return evidence;
+}
 }
