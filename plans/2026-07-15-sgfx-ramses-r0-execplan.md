@@ -39,9 +39,10 @@
 
 ## Task 3 — `sgfx_cine_ramses_probe` executable
 
-- [ ] Step 1: RED: argument/contract tests — accepts only validated typed arguments; rejects unknown options, output escape, invalid profile identity, unsupported backend (req 4).
-- [ ] Step 2: GREEN: strict argv parsing, phase orchestration, atomic `ramses-probe-native.json` (+ `first-frame.png` only after successful readback), deterministic exit codes, caps enforced.
-- [ ] Step 3: Build + CTest; commit.
+- [x] Step 1: RED: argument/contract tests — accepts only validated typed arguments; rejects unknown options, output escape, invalid profile identity, unsupported backend (req 4).
+- [x] Step 2: GREEN (no-renderer lanes): strict argv parsing; phase orchestration (arguments → metadata → scene_load → validation → inventory → logic, exact order with completed/failed/not_run statuses); versioned native report (schema 1, probe 0.1.0, exact top-level key set with reserved `lifecycle`/`frame` nulls); atomic confined `ramses-probe-native.json` writer (2 MiB cap, no-replace, tmp+rename); deterministic exit codes 0/64/65/74; truthful classified failure reports.
+- [x] Step 3: Build + CTest (Release) + real-binary smoke (usage → 64, missing scene → 65 with failure report); commit.
+- [ ] Step 4: Authored-frame/lifecycle lane (`--perspective` + `--perspective-id`): reuse the accepted preview renderer path for at most one 480×270 readback driven by the exported `Interface_CameraCrane` contract (`AspectFromResolution_isEnabled` → `AutoAspect` only); record lifecycle evidence into the reserved `lifecycle` key, classify the frame into `frame`, write `first-frame.png` only after successful readback (1 MiB cap); explicit missing-contract result when the perspective input/root/property tree is absent (req 14).
 
 ## Task 4 — Python runner and final report
 
