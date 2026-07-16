@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Callable, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -347,11 +348,20 @@ def clean_staging_outputs() -> None:
     if STAGING_DIST_PATH.exists():
         _rmtree_tolerating_held_dirs(STAGING_DIST_PATH)
     # Failed builds deliberately leave their fresh distpath behind (so a partial relocate never
-    # destroys assembled output); sweep those leftovers here instead of letting them accumulate.
+    # destroys assembled output); sweep only stale leftovers so a concurrently running build's
+    # live distpath survives, and never let an undeletable leftover block a build that does not
+    # need it removed.
     if STAGING_DIST_PATH.parent.is_dir():
+        cutoff = time.time() - 2.0 * 3600.0
         for leftover in STAGING_DIST_PATH.parent.glob(f"{FRESH_DISTPATH_PREFIX}*"):
-            if leftover.is_dir() and not leftover.is_symlink():
+            try:
+                if not leftover.is_dir() or leftover.is_symlink():
+                    continue
+                if leftover.stat().st_mtime > cutoff:
+                    continue
                 _rmtree_tolerating_held_dirs(leftover)
+            except OSError:
+                continue
 
 
 def _merge_move_into_held(source: Path, dest: Path) -> None:
@@ -579,45 +589,48 @@ def swap_staged_bundle(staged_bundle: Path) -> None:
     backup_bundle = BACKUP_BUNDLE_PATH
     backup_single_file = BACKUP_SINGLE_FILE_PATH
 
+    # Self-heal a previously interrupted swap: the backup is the last known good bundle and is
+    # only redundant while the canonical bundle exists, so restore it before clearing anything.
+    if not final_bundle.exists() and backup_bundle.exists():
+        _rename_existing(backup_bundle, final_bundle)
+    if not final_single_file.exists() and backup_single_file.exists():
+        _rename_existing(backup_single_file, final_single_file)
     _remove_existing(backup_bundle)
     _remove_existing(backup_single_file)
 
+    # Copy first: reading the staged bundle succeeds even when an external handle blocks moves
+    # out of it, and a failed copy leaves every original untouched. The swap itself then commits
+    # through whole-directory renames, so the canonical path never holds a partial bundle and no
+    # failure path ever deletes the only copy of anything.
+    staged_copy = DIST_PATH / "sgfx-preflight.new"
+    if staged_copy.exists():
+        _rmtree_tolerating_held_dirs(staged_copy)
     moved_bundle = False
     moved_single_file = False
     try:
+        shutil.copytree(staged_bundle, staged_copy, dirs_exist_ok=True)
         if final_bundle.exists():
             _rename_existing(final_bundle, backup_bundle)
             moved_bundle = True
         if final_single_file.exists():
             _rename_existing(final_single_file, backup_single_file)
             moved_single_file = True
-        # Move the staged bundle's *contents* into the destination rather than renaming the staged
-        # directory itself, so an external handle held on the staged directory cannot block the swap
-        # with the same access-denied error the fresh-distpath assembly already works around.
-        relocate_fresh_bundle(staged_bundle, final_bundle)
-        # The staged directory is now empty; remove it, tolerating an external hold that can only
-        # leave behind an empty skeleton.
-        if staged_bundle.exists():
-            _rmtree_tolerating_held_dirs(staged_bundle)
+        staged_copy.rename(final_bundle)
     except Exception:
-        # The merge is per-child, so a mid-swap failure can leave fresh content split across both
-        # directories. Move what already migrated back into the staged bundle so a transient lock
-        # costs a retry, not a rebuild; only a fully emptied destination is removed.
-        restored = False
-        try:
-            if final_bundle.exists():
-                _merge_move_into_held(final_bundle, staged_bundle)
-                _rmtree_tolerating_held_dirs(final_bundle)
-            restored = not final_bundle.exists()
-        except OSError:
-            pass
-        if restored and moved_bundle and backup_bundle.exists():
+        if moved_bundle and backup_bundle.exists() and not final_bundle.exists():
             _rename_existing(backup_bundle, final_bundle)
         if moved_single_file and backup_single_file.exists() and not final_single_file.exists():
             _rename_existing(backup_single_file, final_single_file)
+        if staged_copy.exists():
+            _rmtree_tolerating_held_dirs(staged_copy)
         raise
     _remove_existing(backup_bundle)
     _remove_existing(backup_single_file)
+    # Post-commit cleanup only: a held staging directory must not fail a completed swap.
+    try:
+        _rmtree_tolerating_held_dirs(staged_bundle)
+    except OSError:
+        print("The staged bundle directory is still held; the swap itself completed.")
 
 
 def main(argv: list[str] | None = None) -> int:

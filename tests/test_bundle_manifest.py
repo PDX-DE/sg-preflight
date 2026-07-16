@@ -792,26 +792,60 @@ class TestHeldStagingDirectories(unittest.TestCase):
         finally:
             distpath.rmdir()
 
-    def test_clean_staging_outputs_sweeps_leftover_fresh_distpaths(self) -> None:
+    def test_clean_staging_outputs_sweeps_only_stale_leftover_fresh_distpaths(self) -> None:
+        import os as os_module
+        import time as time_module
+
         module = _load_build_script()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             saved = module.STAGING_DIST_PATH
             module.STAGING_DIST_PATH = root / "b"
             try:
-                leftover = root / f"{module.FRESH_DISTPATH_PREFIX}old1234"
-                (leftover / "sgfx-preflight").mkdir(parents=True)
-                (leftover / "sgfx-preflight" / "stale.dll").write_text("x", encoding="utf-8")
+                stale = root / f"{module.FRESH_DISTPATH_PREFIX}old1234"
+                (stale / "sgfx-preflight").mkdir(parents=True)
+                (stale / "sgfx-preflight" / "stale.dll").write_text("x", encoding="utf-8")
+                three_hours_ago = time_module.time() - 3.0 * 3600.0
+                os_module.utime(stale, (three_hours_ago, three_hours_ago))
+                # A fresh sibling models a concurrently running build's live distpath.
+                live = root / f"{module.FRESH_DISTPATH_PREFIX}live5678"
+                (live / "sgfx-preflight").mkdir(parents=True)
+                (live / "sgfx-preflight" / "inflight.dll").write_text("y", encoding="utf-8")
                 unrelated = root / "cine-c0"
                 unrelated.mkdir()
                 (unrelated / "keep.txt").write_text("keep", encoding="utf-8")
                 module.clean_staging_outputs()
-                self.assertFalse(leftover.exists())
+                self.assertFalse(stale.exists())
+                self.assertTrue((live / "sgfx-preflight" / "inflight.dll").is_file())
                 self.assertTrue((unrelated / "keep.txt").is_file())
             finally:
                 module.STAGING_DIST_PATH = saved
 
-    def test_swap_failure_recovers_migrated_content_and_old_bundle(self) -> None:
+    def test_clean_staging_outputs_skips_an_undeletable_stale_leftover(self) -> None:
+        import os as os_module
+        import time as time_module
+
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            saved = module.STAGING_DIST_PATH
+            module.STAGING_DIST_PATH = root / "b"
+            try:
+                stale = root / f"{module.FRESH_DISTPATH_PREFIX}held9999"
+                stale.mkdir(parents=True)
+                blocker = stale / "held.dll"
+                blocker.write_text("held", encoding="utf-8")
+                three_hours_ago = time_module.time() - 3.0 * 3600.0
+                os_module.utime(stale, (three_hours_ago, three_hours_ago))
+                # An open file makes the leftover undeletable; the sweep must skip it rather than
+                # abort a build that does not need the old leftover removed.
+                with blocker.open("rb"):
+                    module.clean_staging_outputs()
+                self.assertTrue(blocker.is_file())
+            finally:
+                module.STAGING_DIST_PATH = saved
+
+    def test_swap_succeeds_when_a_staged_file_is_read_locked(self) -> None:
         import ctypes
 
         module = _load_build_script()
@@ -821,8 +855,6 @@ class TestHeldStagingDirectories(unittest.TestCase):
             staged = root / "b" / "sgfx-preflight"
             (staged / "_internal").mkdir(parents=True)
             (staged / "_internal" / "new.dll").write_text("fresh build content", encoding="utf-8")
-            # 'zz-locked.exe' sorts after '_internal' so the directory migrates first, then the
-            # locked file fails the merge partway through.
             locked = staged / "zz-locked.exe"
             locked.write_text("exe", encoding="utf-8")
             saved = (module.DIST_PATH, module.WORK_PATH,
@@ -834,20 +866,88 @@ class TestHeldStagingDirectories(unittest.TestCase):
             old_bundle = root / "dist" / "sgfx-preflight"
             old_bundle.mkdir(parents=True)
             (old_bundle / "old.txt").write_text("accepted bundle", encoding="utf-8")
-            # No FILE_SHARE_DELETE: the file can be read but not moved/deleted.
+            # No FILE_SHARE_DELETE: the file can be read but not moved/deleted. The copy-based
+            # swap only reads the staged bundle, so this must not fail the swap at all.
             handle = kernel32.CreateFileW(str(locked), 0x80000000, 0x1, None, 3, 0x80, None)
+            self.assertNotEqual(handle, -1)
+            try:
+                module.swap_staged_bundle(staged)
+                final = root / "dist" / "sgfx-preflight"
+                self.assertTrue((final / "_internal" / "new.dll").is_file())
+                self.assertTrue((final / "zz-locked.exe").is_file())
+                self.assertFalse((final / "old.txt").exists())
+                self.assertFalse((root / "p").exists())
+                self.assertFalse((root / "dist" / "sgfx-preflight.new").exists())
+            finally:
+                kernel32.CloseHandle(handle)
+                (module.DIST_PATH, module.WORK_PATH,
+                 module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH) = saved
+
+    def test_swap_aborts_cleanly_when_the_final_bundle_is_held(self) -> None:
+        import ctypes
+
+        module = _load_build_script()
+        kernel32 = ctypes.windll.kernel32
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staged = root / "b" / "sgfx-preflight"
+            staged.mkdir(parents=True)
+            (staged / "sgfx-preflight.exe").write_text("fresh exe", encoding="utf-8")
+            saved = (module.DIST_PATH, module.WORK_PATH,
+                     module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH)
+            module.DIST_PATH = root / "dist"
+            module.WORK_PATH = root / "work"
+            module.BACKUP_BUNDLE_PATH = root / "p"
+            module.BACKUP_SINGLE_FILE_PATH = root / "p.exe"
+            old_bundle = root / "dist" / "sgfx-preflight"
+            old_bundle.mkdir(parents=True)
+            (old_bundle / "sgfx-preflight.exe").write_text("old exe", encoding="utf-8")
+            # A handle on the canonical bundle blocks its rename-to-backup; the swap must abort
+            # without touching the old bundle, the staged bundle, or leaving a copy behind.
+            handle = kernel32.CreateFileW(str(old_bundle), 0x80000000, 0x1, None, 3, 0x02000000, None)
             self.assertNotEqual(handle, -1)
             try:
                 with self.assertRaises(OSError):
                     module.swap_staged_bundle(staged)
-                # The already-migrated fresh content must be recoverable in the staged bundle,
-                # and the previously accepted bundle must survive (in place or at the backup).
-                self.assertTrue((staged / "_internal" / "new.dll").is_file())
-                old_recovered = (old_bundle / "old.txt").is_file() or \
-                    (root / "p" / "old.txt").is_file()
-                self.assertTrue(old_recovered)
+                self.assertEqual((old_bundle / "sgfx-preflight.exe").read_text(encoding="utf-8"),
+                                 "old exe")
+                self.assertEqual((staged / "sgfx-preflight.exe").read_text(encoding="utf-8"),
+                                 "fresh exe")
+                copy_dir = root / "dist" / "sgfx-preflight.new"
+                leftover_files = [p for p in copy_dir.rglob("*") if p.is_file()] \
+                    if copy_dir.exists() else []
+                self.assertEqual(leftover_files, [])
+                self.assertFalse((root / "p").exists())
             finally:
                 kernel32.CloseHandle(handle)
+                (module.DIST_PATH, module.WORK_PATH,
+                 module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH) = saved
+
+    def test_swap_self_heals_a_missing_final_bundle_from_the_backup(self) -> None:
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staged = root / "b" / "sgfx-preflight"
+            staged.mkdir(parents=True)
+            (staged / "sgfx-preflight.exe").write_text("fresh exe", encoding="utf-8")
+            saved = (module.DIST_PATH, module.WORK_PATH,
+                     module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH)
+            module.DIST_PATH = root / "dist"
+            module.WORK_PATH = root / "work"
+            module.BACKUP_BUNDLE_PATH = root / "p"
+            module.BACKUP_SINGLE_FILE_PATH = root / "p.exe"
+            # A previously interrupted swap: the canonical bundle is gone and the last known good
+            # bundle sits at the backup path. The swap must not discard that backup unconsumed.
+            backup = root / "p"
+            backup.mkdir(parents=True)
+            (backup / "sgfx-preflight.exe").write_text("last known good", encoding="utf-8")
+            try:
+                module.swap_staged_bundle(staged)
+                final = root / "dist" / "sgfx-preflight"
+                self.assertEqual((final / "sgfx-preflight.exe").read_text(encoding="utf-8"),
+                                 "fresh exe")
+                self.assertFalse(backup.exists())
+            finally:
                 (module.DIST_PATH, module.WORK_PATH,
                  module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH) = saved
 

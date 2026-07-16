@@ -723,7 +723,7 @@ class TestNativeScaffold(unittest.TestCase):
             (staged_bundle / "sgfx-preflight.exe").write_text("new", encoding="utf-8")
             (final_bundle / "sgfx-preflight.exe").write_text("old", encoding="utf-8")
 
-            with mock.patch.object(module.shutil, "move", side_effect=RuntimeError("swap failed")):
+            with mock.patch.object(module.shutil, "copytree", side_effect=RuntimeError("swap failed")):
                 with self.assertRaisesRegex(RuntimeError, "swap failed"):
                     module.swap_staged_bundle(staged_bundle)
 
