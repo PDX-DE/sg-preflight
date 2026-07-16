@@ -62,18 +62,29 @@
 
 ## Task 3 — Check rows and gate projection
 
-- [ ] Step 1: RED: probe evidence projects to exact Ramses check rows (metadata, validation, inventory,
-      logic, lifecycle, frame) with the scoped-`passed` rule; next-action ordering; generation counter so a
-      stale completion is discarded (req 23); Delivery/Handoff provably unaffected in every case.
-- [ ] Step 2: GREEN in the evidence/presenter layer using the existing safe-projection contract; the frame
-      artifact travels as an opaque handle (reqs 18/19).
+- [x] Step 1: RED DONE (`d62f531`): probe evidence projects to exact Ramses rows — `ramses-validation`
+      on Export & interface (scoped `passed` when clean, `findings` with counts, `failed` on execution
+      failure) and `ramses-logic` on Review (`recorded`); gate states are computed before the rows are
+      appended so no gate verdict can change; Delivery/Handoff and the four-pack Asset gate proven
+      byte-identical with and without probe data; `unavailable` adds nothing; the probe payload travels
+      inside the same record snapshot as the core verdict, so a stale completion can never pair old rows
+      with a newer core result (req 23). Scoped notes: lifecycle/frame rows join when the frame lane is
+      explicitly configured (stage currently runs the headless lanes); next-action ordering deliberately
+      unchanged (permitted by section 13's "may").
+- [x] Step 2: GREEN DONE in the hub's safe-projection layer: every row field passes the bounded-text
+      sanitizers, `latestLocalRun` keeps its exact key set, no path or raw native error can reach QML
+      (reqs 18/19; the evidence artifact continues through the existing opaque artifact registry).
+      Suites: hub 13/13, presenters+capabilities 35/35, ui 22/22.
 
 ## Task 4 — Concurrency interlock and Qt wiring
 
-- [ ] Step 1: RED: the preview coordinator and the R0 stage share one exclusive render slot — starting one
-      pre-empts/queues the other (req 22, and the recorded G78 crash-under-load rationale); Home audit
-      tests prove no new capability/action/page appeared (the frozen eight-capability inventory holds).
-- [ ] Step 2: GREEN; focused Qt host/presenter suites.
+- [x] Step 1: RED DONE (`eb4469a`): one exclusive render slot — starting a diagnostic pre-empts the
+      preview (pre-existing, test kept), and a preview requested while an effect holds the slot is
+      queued with its launch permission preserved and started when the effect finishes (req 22; the
+      recorded G78 crash-under-concurrent-render rationale). Home audit: the frozen eight-capability
+      inventory test and the full capabilities suite pass unchanged — no new capability, action, page,
+      button, or toggle.
+- [x] Step 2: GREEN; focused suites: preview 17/17, core+capabilities 87/87, hub 13/13, ui 22/22.
 
 ## Task 5 — Gates and acceptance
 
