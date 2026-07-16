@@ -357,11 +357,24 @@ def clean_staging_outputs() -> None:
             try:
                 if not leftover.is_dir() or leftover.is_symlink():
                     continue
-                if leftover.stat().st_mtime > cutoff:
+                if _tree_newest_mtime(leftover) > cutoff:
                     continue
                 _rmtree_tolerating_held_dirs(leftover)
             except OSError:
                 continue
+
+
+def _tree_newest_mtime(root: Path) -> float:
+    # NTFS freezes a directory's own mtime once its direct-child listing stops changing, so a
+    # live build writing deep inside a distpath keeps only nested timestamps fresh. Staleness
+    # must therefore consider every entry in the tree.
+    newest = root.stat().st_mtime
+    for path in root.rglob("*"):
+        try:
+            newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            continue
+    return newest
 
 
 def _merge_move_into_held(source: Path, dest: Path) -> None:

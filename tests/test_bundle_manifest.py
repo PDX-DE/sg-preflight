@@ -806,17 +806,21 @@ class TestHeldStagingDirectories(unittest.TestCase):
                 (stale / "sgfx-preflight").mkdir(parents=True)
                 (stale / "sgfx-preflight" / "stale.dll").write_text("x", encoding="utf-8")
                 three_hours_ago = time_module.time() - 3.0 * 3600.0
-                os_module.utime(stale, (three_hours_ago, three_hours_ago))
-                # A fresh sibling models a concurrently running build's live distpath.
+                for path in (stale, stale / "sgfx-preflight", stale / "sgfx-preflight" / "stale.dll"):
+                    os_module.utime(path, (three_hours_ago, three_hours_ago))
+                # A live concurrent build: NTFS freezes the TOP directory's mtime once its single
+                # child exists, while PyInstaller keeps writing deeper inside — staleness must be
+                # judged by the newest file anywhere in the tree, not the top directory.
                 live = root / f"{module.FRESH_DISTPATH_PREFIX}live5678"
-                (live / "sgfx-preflight").mkdir(parents=True)
-                (live / "sgfx-preflight" / "inflight.dll").write_text("y", encoding="utf-8")
+                (live / "sgfx-preflight" / "_internal").mkdir(parents=True)
+                (live / "sgfx-preflight" / "_internal" / "inflight.dll").write_text("y", encoding="utf-8")
+                os_module.utime(live, (three_hours_ago, three_hours_ago))
                 unrelated = root / "cine-c0"
                 unrelated.mkdir()
                 (unrelated / "keep.txt").write_text("keep", encoding="utf-8")
                 module.clean_staging_outputs()
                 self.assertFalse(stale.exists())
-                self.assertTrue((live / "sgfx-preflight" / "inflight.dll").is_file())
+                self.assertTrue((live / "sgfx-preflight" / "_internal" / "inflight.dll").is_file())
                 self.assertTrue((unrelated / "keep.txt").is_file())
             finally:
                 module.STAGING_DIST_PATH = saved
@@ -836,7 +840,8 @@ class TestHeldStagingDirectories(unittest.TestCase):
                 blocker = stale / "held.dll"
                 blocker.write_text("held", encoding="utf-8")
                 three_hours_ago = time_module.time() - 3.0 * 3600.0
-                os_module.utime(stale, (three_hours_ago, three_hours_ago))
+                for path in (stale, blocker):
+                    os_module.utime(path, (three_hours_ago, three_hours_ago))
                 # An open file makes the leftover undeletable; the sweep must skip it rather than
                 # abort a build that does not need the old leftover removed.
                 with blocker.open("rb"):
