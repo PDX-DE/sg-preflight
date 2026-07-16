@@ -319,15 +319,39 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
     return args
 
 
+def _is_link(path: Path) -> bool:
+    # NTFS junctions report is_dir() true and is_symlink() FALSE, so both spellings are needed
+    # before any tree walk may descend; following a junction can cycle or escape the tree.
+    return path.is_symlink() or getattr(path, "is_junction", lambda: False)()
+
+
+def _iter_tree(root: Path):
+    # Every entry beneath root, never descending into symlinks or junctions.
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            children = list(directory.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            yield child
+            try:
+                if child.is_dir() and not _is_link(child):
+                    pending.append(child)
+            except OSError:
+                continue
+
+
 def _is_directory_skeleton(path: Path) -> bool:
-    return all(entry.is_dir() and not entry.is_symlink() for entry in path.rglob("*"))
+    return all(entry.is_dir() and not _is_link(entry) for entry in _iter_tree(path))
 
 
 def _rmtree_tolerating_held_dirs(root: Path) -> None:
     # A Windows Explorer/terminal handle on a directory blocks its rmdir but not writes into it,
     # and PyInstaller runs with --noconfirm. Every file must still be removable; only empty
-    # directory skeletons may survive.
-    for path in sorted(root.rglob("*"), key=lambda entry: len(entry.parts), reverse=True):
+    # directory skeletons may survive. Junctions are removed as reparse points, never entered.
+    for path in sorted(_iter_tree(root), key=lambda entry: len(entry.parts), reverse=True):
         try:
             if path.is_dir() and not path.is_symlink():
                 path.rmdir()
@@ -369,8 +393,11 @@ def _tree_newest_mtime(root: Path) -> float:
     # live build writing deep inside a distpath keeps only nested timestamps fresh. Staleness
     # must therefore consider every entry in the tree.
     newest = root.stat().st_mtime
-    for path in root.rglob("*"):
+    for path in _iter_tree(root):
         try:
+            # Links are not build outputs and their targets are not part of this tree.
+            if _is_link(path):
+                continue
             newest = max(newest, path.stat().st_mtime)
         except OSError:
             continue

@@ -825,6 +825,43 @@ class TestHeldStagingDirectories(unittest.TestCase):
             finally:
                 module.STAGING_DIST_PATH = saved
 
+    def test_sweep_never_descends_into_junctions(self) -> None:
+        import os as os_module
+        import subprocess as subprocess_module
+        import time as time_module
+
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            saved = module.STAGING_DIST_PATH
+            module.STAGING_DIST_PATH = root / "b"
+            try:
+                victim = root / "victim"
+                victim.mkdir()
+                (victim / "precious.txt").write_text("must survive", encoding="utf-8")
+                stale = root / f"{module.FRESH_DISTPATH_PREFIX}junc0001"
+                stale.mkdir(parents=True)
+                (stale / "stale.dll").write_text("x", encoding="utf-8")
+                outward = stale / "outward"
+                cycle = stale / "cycle"
+                for junction, target in ((outward, victim), (cycle, stale)):
+                    completed = subprocess_module.run(
+                        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+                        capture_output=True, check=False)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                three_hours_ago = time_module.time() - 3.0 * 3600.0
+                # The junction reparse points keep their fresh creation stamps; the sweep must
+                # judge staleness from real entries only.
+                for path in (stale, stale / "stale.dll"):
+                    os_module.utime(path, (three_hours_ago, three_hours_ago))
+                module.clean_staging_outputs()
+                # The junctions themselves go with the leftover; their targets stay untouched.
+                self.assertFalse(stale.exists())
+                self.assertEqual((victim / "precious.txt").read_text(encoding="utf-8"),
+                                 "must survive")
+            finally:
+                module.STAGING_DIST_PATH = saved
+
     def test_clean_staging_outputs_skips_an_undeletable_stale_leftover(self) -> None:
         import os as os_module
         import time as time_module
