@@ -10,6 +10,7 @@ from sg_preflight.ramses_probe_runner import (
     NATIVE_REPORT_NAME,
     ProbeRunRequest,
     build_helper_arguments,
+    resolve_packaged_probe_helper,
     run_probe,
     sha256_file,
     validate_native_report,
@@ -557,6 +558,67 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         self.assertEqual(result.outcome, "completed")
         self.assertTrue(marker.is_file())
         self.assertEqual(marker.read_text(encoding="ascii").strip(), "done")
+
+
+class PackagedProbeHelperReadinessTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.bundle = Path(self._temp.name)
+        self.helper = self.bundle / "_internal" / "cpp" / "bin" / "sgfx_cine_ramses_probe.exe"
+
+    def _write_manifest(self, *, state: str = "included", sha256: str | None = None) -> None:
+        digest = sha256 if sha256 is not None else sha256_file(self.helper)
+        (self.bundle / "bundle-manifest.json").write_text(
+            json.dumps({
+                "schema_version": 1,
+                "ramses_probe_helper": state,
+                "ramses_probe_helper_sha256": digest if state == "included" else "",
+            }),
+            encoding="utf-8",
+        )
+
+    def test_ready_helper_returns_path_and_digest(self) -> None:
+        _write_text(self.helper, "packaged probe helper bytes")
+        self._write_manifest()
+        readiness = resolve_packaged_probe_helper(self.bundle)
+        self.assertTrue(readiness.ready)
+        self.assertEqual(readiness.reason, "")
+        self.assertEqual(readiness.helper_path, self.helper)
+        self.assertEqual(readiness.helper_sha256, sha256_file(self.helper))
+
+    def test_each_missing_prerequisite_is_named_exactly(self) -> None:
+        readiness = resolve_packaged_probe_helper(self.bundle)
+        self.assertFalse(readiness.ready)
+        self.assertEqual(readiness.reason, "manifest_unavailable")
+
+        (self.bundle / "bundle-manifest.json").write_text("{ not json", encoding="utf-8")
+        self.assertEqual(resolve_packaged_probe_helper(self.bundle).reason, "manifest_malformed")
+
+        _write_text(self.helper, "packaged probe helper bytes")
+        self._write_manifest(state="unavailable")
+        self.assertEqual(resolve_packaged_probe_helper(self.bundle).reason, "helper_not_packaged")
+
+        self._write_manifest()
+        self.helper.unlink()
+        self.assertEqual(resolve_packaged_probe_helper(self.bundle).reason, "helper_missing")
+
+        _write_text(self.helper, "packaged probe helper bytes")
+        self._write_manifest(sha256="f" * 64)
+        self.assertEqual(
+            resolve_packaged_probe_helper(self.bundle).reason, "helper_digest_mismatch")
+
+    def test_malformed_manifest_fields_fail_closed(self) -> None:
+        _write_text(self.helper, "packaged probe helper bytes")
+        (self.bundle / "bundle-manifest.json").write_text(
+            json.dumps({"schema_version": 1, "ramses_probe_helper": "included",
+                        "ramses_probe_helper_sha256": 1234}),
+            encoding="utf-8",
+        )
+        self.assertEqual(resolve_packaged_probe_helper(self.bundle).reason, "manifest_malformed")
+        (self.bundle / "bundle-manifest.json").write_text(
+            json.dumps({"schema_version": 1}), encoding="utf-8")
+        self.assertEqual(resolve_packaged_probe_helper(self.bundle).reason, "manifest_malformed")
 
 
 if __name__ == "__main__":

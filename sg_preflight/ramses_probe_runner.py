@@ -75,6 +75,52 @@ class ProbeRunResult:
     native_report: dict[str, Any] | None
 
 
+_PROBE_HELPER_BUNDLE_RELATIVE = Path("_internal") / "cpp" / "bin" / "sgfx_cine_ramses_probe.exe"
+_BUNDLE_MANIFEST_NAME = "bundle-manifest.json"
+_SHA256_HEX = 64
+
+
+@dataclass(frozen=True)
+class ProbeHelperReadiness:
+    ready: bool
+    reason: str
+    helper_path: Path | None
+    helper_sha256: str
+
+
+def resolve_packaged_probe_helper(bundle_root: Path) -> ProbeHelperReadiness:
+    # Fail closed with the exact missing prerequisite: a missing helper must surface as
+    # unavailable to the caller, never as a preflight failure (design section 13).
+    def unavailable(reason: str) -> ProbeHelperReadiness:
+        return ProbeHelperReadiness(ready=False, reason=reason, helper_path=None,
+                                    helper_sha256="")
+
+    manifest_path = Path(bundle_root) / _BUNDLE_MANIFEST_NAME
+    if not manifest_path.is_file():
+        return unavailable("manifest_unavailable")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return unavailable("manifest_malformed")
+    if not isinstance(manifest, dict):
+        return unavailable("manifest_malformed")
+    state = manifest.get("ramses_probe_helper")
+    digest = manifest.get("ramses_probe_helper_sha256")
+    if state not in {"included", "unavailable"} or not isinstance(digest, str):
+        return unavailable("manifest_malformed")
+    if state == "unavailable":
+        return unavailable("helper_not_packaged")
+    if len(digest) != _SHA256_HEX or any(c not in "0123456789abcdef" for c in digest):
+        return unavailable("manifest_malformed")
+    helper_path = Path(bundle_root) / _PROBE_HELPER_BUNDLE_RELATIVE
+    if not helper_path.is_file():
+        return unavailable("helper_missing")
+    if sha256_file(helper_path) != digest:
+        return unavailable("helper_digest_mismatch")
+    return ProbeHelperReadiness(ready=True, reason="", helper_path=helper_path,
+                                helper_sha256=digest)
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:

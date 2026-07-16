@@ -42,6 +42,8 @@ PREVIEW_RUNTIME_FILES = (
     "ramses-shared-lib.dll",
     "sgfx_cine_ramses_preview_cli.exe",
 )
+PROBE_HELPER_FILE = "sgfx_cine_ramses_probe.exe"
+_PROBE_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _GRAFIKS_REFERENCE_KEYS = frozenset(
     {
         "sha256",
@@ -189,6 +191,8 @@ def create_bundle_manifest(
     qml_imports: Sequence[QmlImport],
     grafiks_reference: Mapping[str, str] | None = None,
     ramses_preview_helper: str = "unavailable",
+    ramses_probe_helper: str = "unavailable",
+    ramses_probe_helper_sha256: str = "",
 ) -> dict[str, Any]:
     if not isinstance(source_commit, str) or _COMMIT_PATTERN.fullmatch(source_commit) is None:
         raise BundleManifestError("The source commit is invalid.")
@@ -196,6 +200,18 @@ def create_bundle_manifest(
     grafiks = _validated_grafiks_reference(grafiks_reference)
     if ramses_preview_helper not in _PREVIEW_HELPER_STATES:
         raise BundleManifestError("The Ramses preview helper state is invalid.")
+    if ramses_probe_helper not in _PREVIEW_HELPER_STATES:
+        raise BundleManifestError("The Ramses probe helper state is invalid.")
+    if ramses_probe_helper == "included":
+        # The probe helper shares the preview runtime's libraries and cannot ship without them,
+        # and its digest is recorded at build time so the runtime can verify what it launches.
+        if ramses_preview_helper != "included":
+            raise BundleManifestError("The Ramses probe helper requires the preview runtime.")
+        if not isinstance(ramses_probe_helper_sha256, str) or \
+                _PROBE_SHA256_PATTERN.fullmatch(ramses_probe_helper_sha256) is None:
+            raise BundleManifestError("The Ramses probe helper digest is invalid.")
+    elif ramses_probe_helper_sha256 != "":
+        raise BundleManifestError("The Ramses probe helper digest contradicts its state.")
     from sg_preflight.desktop.ui_capabilities import UI_CAPABILITIES
     from sg_preflight.qa_hub import QA_HUB_SCHEMA_VERSION
     from sg_preflight.surface_registry import SURFACE_DESCRIPTORS
@@ -217,6 +233,8 @@ def create_bundle_manifest(
         "control_center_qml_present": True,
         "product_fonts_licensed": True,
         "ramses_preview_helper": ramses_preview_helper,
+        "ramses_probe_helper": ramses_probe_helper,
+        "ramses_probe_helper_sha256": ramses_probe_helper_sha256,
         "presentation_modes": sorted(modes),
         "qml_imports": [item.as_manifest_entry() for item in imports],
     }
@@ -275,6 +293,8 @@ def create_current_bundle_manifest(
     *,
     grafiks_reference: Mapping[str, str] | None = None,
     ramses_preview_helper: str = "unavailable",
+    ramses_probe_helper: str = "unavailable",
+    ramses_probe_helper_sha256: str = "",
 ) -> dict[str, Any]:
     try:
         import PySide6
@@ -292,6 +312,8 @@ def create_current_bundle_manifest(
         qml_imports=qml_imports,
         grafiks_reference=grafiks_reference,
         ramses_preview_helper=ramses_preview_helper,
+        ramses_probe_helper=ramses_probe_helper,
+        ramses_probe_helper_sha256=ramses_probe_helper_sha256,
     )
 
 
@@ -455,6 +477,12 @@ def validate_staged_bundle_contents(bundle_dir: Path, qml_imports: Sequence[QmlI
     helper_state = manifest.get("ramses_preview_helper")
     if helper_state not in _PREVIEW_HELPER_STATES:
         raise BundleManifestError("The staged bundle preview-helper state is invalid.")
+    probe_state = manifest.get("ramses_probe_helper", "unavailable")
+    probe_sha256 = manifest.get("ramses_probe_helper_sha256", "")
+    if probe_state not in _PREVIEW_HELPER_STATES:
+        raise BundleManifestError("The staged bundle probe-helper state is invalid.")
+    if probe_state == "included" and helper_state != "included":
+        raise BundleManifestError("The staged bundle probe helper lacks its runtime.")
     preview_runtime = tuple(
         path
         for path in bundle.rglob("*")
@@ -462,13 +490,21 @@ def validate_staged_bundle_contents(bundle_dir: Path, qml_imports: Sequence[QmlI
         and path.parent.name.casefold() == "bin"
         and path.parent.parent.name.casefold() == "cpp"
     )
+    expected_runtime = set(PREVIEW_RUNTIME_FILES)
+    if probe_state == "included":
+        expected_runtime.add(PROBE_HELPER_FILE)
     if helper_state == "included" and (
-        len(preview_runtime) != len(PREVIEW_RUNTIME_FILES)
-        or {path.name for path in preview_runtime} != set(PREVIEW_RUNTIME_FILES)
+        len(preview_runtime) != len(expected_runtime)
+        or {path.name for path in preview_runtime} != expected_runtime
     ):
         raise BundleManifestError("The staged bundle preview runtime is incomplete.")
     if helper_state == "unavailable" and preview_runtime:
         raise BundleManifestError("The staged bundle preview runtime contradicts its manifest.")
+    if probe_state == "included":
+        probe_matches = [path for path in preview_runtime if path.name == PROBE_HELPER_FILE]
+        if len(probe_matches) != 1 or not isinstance(probe_sha256, str) or \
+                _sha256_file(probe_matches[0]) != probe_sha256:
+            raise BundleManifestError("The staged bundle probe helper failed its digest.")
     for item in imports:
         if not _module_is_staged(file_parts, item.module):
             raise BundleManifestError(f"The staged bundle is missing QML module {item.module}.")

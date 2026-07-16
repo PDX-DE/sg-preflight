@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 
 from sg_preflight.bundle_manifest import (
     PREVIEW_RUNTIME_FILES,
+    PROBE_HELPER_FILE,
     PRODUCT_FONT_SHA256,
     QmlImport,
     create_current_bundle_manifest,
@@ -131,18 +132,49 @@ def copy_preview_runtime(
     if not source.is_dir() or _is_link(source):
         return False
     entries = tuple(sorted(source.iterdir()))
-    if {path.name for path in entries} != set(PREVIEW_RUNTIME_FILES) or any(
+    names = {path.name for path in entries}
+    # The optional probe helper may sit beside the audited preview runtime; anything else fails
+    # the copy closed. Only the preview files are copied here - the probe ships separately with
+    # its digest recorded in the manifest.
+    if not set(PREVIEW_RUNTIME_FILES) <= names or \
+            names - set(PREVIEW_RUNTIME_FILES) - {PROBE_HELPER_FILE} or any(
         not path.is_file() or _is_link(path) for path in entries
     ):
         return False
-    source_hashes = {path.name: sha256_file(path) for path in entries}
+    preview_entries = tuple(path for path in entries if path.name in set(PREVIEW_RUNTIME_FILES))
+    source_hashes = {path.name: sha256_file(path) for path in preview_entries}
     target.mkdir(parents=True)
-    for path in entries:
+    for path in preview_entries:
         shutil.copy2(path, target / path.name)
     if any(sha256_file(target / name) != digest for name, digest in source_hashes.items()):
         shutil.rmtree(target)
         return False
     return True
+
+
+def copy_probe_helper(
+    bundle_dir: Path,
+    source_dir: Path = PREVIEW_RUNTIME_SOURCE,
+) -> str | None:
+    # Ships the accepted Release probe helper next to the preview runtime it shares its Ramses
+    # and SDL libraries with, and returns the digest recorded in the bundle manifest. A missing
+    # helper is a deterministic recorded skip, never a packaging failure.
+    target_dir = Path(bundle_dir) / "_internal" / "cpp" / "bin"
+    source = Path(source_dir) / PROBE_HELPER_FILE
+    if not target_dir.is_dir():
+        print("The preview runtime is not staged; omitting the optional Ramses probe helper.")
+        return None
+    if not source.is_file() or _is_link(source):
+        print("The Ramses probe helper is not built; omitting it from the bundle.")
+        return None
+    digest = sha256_file(source)
+    shipped = target_dir / PROBE_HELPER_FILE
+    shutil.copy2(source, shipped)
+    if sha256_file(shipped) != digest:
+        shipped.unlink()
+        print("The copied Ramses probe helper changed; omitting it.")
+        return None
+    return digest
 
 
 def remove_private_install_metadata(bundle_dir: Path) -> tuple[Path, ...]:
@@ -737,6 +769,7 @@ def main(argv: list[str] | None = None) -> int:
     copied_operator = copy_operator_console_shell(staged_bundle, provenance)
     copied_runtime = [] if copied_operator is not None else copy_grafiks_runtime(staged_bundle, provenance)
     preview_included = copy_preview_runtime(staged_bundle)
+    probe_sha256 = copy_probe_helper(staged_bundle) if preview_included else None
     accepted_provenance = provenance if copied_operator is not None or copied_runtime else None
     manifest = create_current_bundle_manifest(
         ROOT,
@@ -747,6 +780,8 @@ def main(argv: list[str] | None = None) -> int:
             else None
         ),
         ramses_preview_helper="included" if preview_included else "unavailable",
+        ramses_probe_helper="included" if probe_sha256 else "unavailable",
+        ramses_probe_helper_sha256=probe_sha256 or "",
     )
     write_bundle_manifest(staged_bundle, manifest)
     staged_bundle = validate_staged_bundle(qml_imports)

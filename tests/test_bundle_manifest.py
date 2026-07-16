@@ -265,6 +265,105 @@ class TestBundleManifest(unittest.TestCase):
             self.assertFalse(module.copy_preview_runtime(bundle, source))
             self.assertFalse(target.exists())
 
+    def test_probe_helper_manifest_fields_are_validated(self) -> None:
+        from sg_preflight.bundle_manifest import (
+            BundleManifestError,
+            QmlImport,
+            create_bundle_manifest,
+        )
+
+        imports = (
+            QmlImport("QtQml", "qmlplugin"),
+            QmlImport("QtQuick", "qtquick2plugin"),
+            QmlImport("QtQuick.Controls", "qtquickcontrols2plugin"),
+            QmlImport("SGFX", ""),
+        )
+        manifest = create_bundle_manifest(
+            source_commit="3" * 40,
+            sgfx_version="0.1.1",
+            python_version="3.13.13",
+            pyside6_version="6.9.1",
+            qt_version="6.9.1",
+            qml_imports=imports,
+            ramses_preview_helper="included",
+            ramses_probe_helper="included",
+            ramses_probe_helper_sha256="e" * 64,
+        )
+        self.assertEqual(manifest["ramses_probe_helper"], "included")
+        self.assertEqual(manifest["ramses_probe_helper_sha256"], "e" * 64)
+
+        default = create_bundle_manifest(
+            source_commit="3" * 40,
+            sgfx_version="0.1.1",
+            python_version="3.13.13",
+            pyside6_version="6.9.1",
+            qt_version="6.9.1",
+            qml_imports=imports,
+        )
+        self.assertEqual(default["ramses_probe_helper"], "unavailable")
+        self.assertEqual(default["ramses_probe_helper_sha256"], "")
+
+        common = dict(
+            source_commit="3" * 40, sgfx_version="0.1.1", python_version="3.13.13",
+            pyside6_version="6.9.1", qt_version="6.9.1", qml_imports=imports)
+        with self.assertRaises(BundleManifestError):
+            create_bundle_manifest(**common, ramses_probe_helper="sort-of")
+        with self.assertRaises(BundleManifestError):
+            create_bundle_manifest(**common, ramses_preview_helper="included",
+                                   ramses_probe_helper="included",
+                                   ramses_probe_helper_sha256="")
+        with self.assertRaises(BundleManifestError):
+            create_bundle_manifest(**common, ramses_preview_helper="included",
+                                   ramses_probe_helper="included",
+                                   ramses_probe_helper_sha256="not-hex")
+        with self.assertRaises(BundleManifestError):
+            create_bundle_manifest(**common, ramses_probe_helper="unavailable",
+                                   ramses_probe_helper_sha256="e" * 64)
+        # The probe helper shares the preview runtime's libraries; it cannot ship without them.
+        with self.assertRaises(BundleManifestError):
+            create_bundle_manifest(**common, ramses_preview_helper="unavailable",
+                                   ramses_probe_helper="included",
+                                   ramses_probe_helper_sha256="e" * 64)
+
+    def test_probe_helper_copy_is_hash_recorded_and_skips_deterministically(self) -> None:
+        module = _load_build_script()
+        runtime_names = (
+            "ramses-shared-lib-headless.dll",
+            "ramses-shared-lib-renderer.dll",
+            "ramses-shared-lib.dll",
+            "SDL3.dll",
+            "sgfx_cine_ramses_preview_cli.exe",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            bundle = root / "bundle"
+            source.mkdir()
+            bundle.mkdir()
+            for name in runtime_names:
+                (source / name).write_bytes((name + " fixture").encode("utf-8"))
+            # No built probe helper: the preview runtime still ships and the probe copy is a
+            # deterministic recorded skip, never a failure.
+            self.assertTrue(module.copy_preview_runtime(bundle, source))
+            self.assertIsNone(module.copy_probe_helper(bundle, source))
+            target = bundle / "_internal" / "cpp" / "bin"
+            self.assertFalse((target / "sgfx_cine_ramses_probe.exe").exists())
+
+            # With the built helper present the preview copy tolerates it, and the probe copy
+            # ships it under the fixed relative path with its digest returned for the manifest.
+            probe_source = source / "sgfx_cine_ramses_probe.exe"
+            probe_source.write_bytes(b"probe helper fixture")
+            self.assertTrue(module.copy_preview_runtime(bundle, source))
+            digest = module.copy_probe_helper(bundle, source)
+            self.assertIsNotNone(digest)
+            shipped = target / "sgfx_cine_ramses_probe.exe"
+            self.assertTrue(shipped.is_file())
+            self.assertEqual(module.sha256_file(shipped), digest)
+            self.assertEqual(module.sha256_file(probe_source), digest)
+            # Anything else unexpected still fails the preview copy closed.
+            (source / "unexpected.dll").write_bytes(b"not audited")
+            self.assertFalse(module.copy_preview_runtime(bundle, source))
+
     def test_private_editable_install_metadata_is_removed_only_from_dist_info(self) -> None:
         module = _load_build_script()
         with tempfile.TemporaryDirectory() as temp_dir:
