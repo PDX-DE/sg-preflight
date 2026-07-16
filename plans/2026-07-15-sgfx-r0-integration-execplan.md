@@ -45,13 +45,20 @@
 
 ## Task 2 — Two-stage action plan (runner side)
 
-- [ ] Step 1: RED: `sgfx_core` runs exactly as today and its verdict is computed before and independently
-      of R0; `ramses_r0` stage invokes `sg_preflight.ramses_probe_runner.run_probe` with the resolved
-      helper/scene/perspective; every runner outcome maps to exactly one of finding-evidence /
-      execution-failure / unavailable; core success + R0 unavailable is a successful preflight.
-- [ ] Step 2: GREEN inside the existing action executor seam (`services.execute_profile_run` boundary);
-      one run directory per attempt beneath the allowed SGFX output root; timeout terminates the helper and
-      names the last proven phase.
+- [x] Step 1: RED DONE: four executor tests prove `sgfx_core` unchanged (the pre-existing
+      core-only test passes unmodified; verdict sealed before the stage), the probe launches with
+      the resolved helper/scene, every outcome maps to exactly one family (evidence /
+      execution_failure / unavailable — matrix-tested incl. helper_crash, worktree_status_changed,
+      scene_incompatible, scene_unavailable), core success + R0 unavailable = successful preflight,
+      and a missing scene never launches the helper.
+- [x] Step 2: GREEN DONE (`5d3c089`): `_execute_ramses_r0_stage` at the existing
+      `_execute_sgfx_preflight` seam; per-attempt run directory `<record output root>/ramses-r0`;
+      the runner's terminating timeout applies (helper killed, `helper_timeout` execution failure —
+      console streams stay protected under the run root); scene resolution mirrors the accepted
+      preview (source checkout first, local project fallback); stage is wrapped and structurally
+      non-fatal. Scoped note: the frame/perspective lane stays `not_requested` in this stage — the
+      authored-frame evidence row joins via Task 3's projection with an explicitly configured
+      perspective. Suites: qa_actions + qa_hub + services + runner 69/69.
 
 ## Task 3 — Check rows and gate projection
 
