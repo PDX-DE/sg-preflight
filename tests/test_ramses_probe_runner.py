@@ -567,6 +567,46 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
             (self.output_root / EVIDENCE_FILE_NAME).read_text(encoding="utf-8"))
         self.assertEqual(evidence["outcome"], "helper_timeout")
 
+    def test_denied_tree_kill_still_reaps_the_direct_child(self) -> None:
+        from unittest import mock
+
+        import sg_preflight.ramses_probe_runner as runner_module
+
+        body = (
+            "@echo off\r\n"
+            "ping -n 30 127.0.0.1 >nul\r\n"
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=self.scene,
+            output_root=self.output_root,
+            helper_path=helper,
+            helper_sha256=digest,
+            timeout_seconds=2,
+        )
+        real_run = runner_module.subprocess.run
+
+        def deny_taskkill(command, *args, **kwargs):
+            if command and command[0] == "taskkill":
+                class _Denied:
+                    returncode = 1
+                    stdout = b""
+                    stderr = b"Access is denied."
+                return _Denied()
+            return real_run(command, *args, **kwargs)
+
+        import time as time_module
+        started = time_module.monotonic()
+        with mock.patch.object(runner_module.subprocess, "run", side_effect=deny_taskkill):
+            result = run_probe(request)
+        elapsed = time_module.monotonic() - started
+        # The classification stays truthful and the function returns bounded even when the
+        # tree kill is denied; the direct child is killed and reaped unconditionally.
+        self.assertEqual(result.outcome, "helper_timeout")
+        self.assertLess(elapsed, 30.0)
+
     def test_helper_is_fully_awaited_no_detached_child(self) -> None:
         marker = self.root / "helper-finished.marker"
         report = _native_report(profile="G45", scene_path=str(self.scene))

@@ -362,12 +362,18 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
         if os.name == "nt":
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
                            capture_output=True, check=False)
-        else:
-            process.kill()
+        # Tree termination can be denied (permissions, endpoint protection); the direct child is
+        # killed and reaped unconditionally so no probe process can leak past this function.
+        # A helper-spawned grandchild surviving a denied tree kill is an accepted OS constraint.
+        process.kill()
         try:
             stdout_bytes, stderr_bytes = process.communicate(timeout=15)
         except subprocess.TimeoutExpired:
             stdout_bytes, stderr_bytes = b"", b""
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
         persist_console("stdout.log", stdout_bytes)
         persist_console("stderr.log", stderr_bytes)
         rejections.append("helper_timeout")
