@@ -222,6 +222,26 @@ class TestQaHubSnapshot(unittest.TestCase):
         self.assertEqual(row["state"], "failed")
         self.assertNotIn("see the probe evidence", row["summary"])
 
+    def test_completed_probe_without_retained_evidence_claims_none(self) -> None:
+        record = self._record()
+        record["summary"]["ramses_r0"] = self._r0_stage(errors=1, warnings=0, recorded=False)
+        gates = self._gates(self._snapshot(action_records=[record]))
+        row = next(c for c in gates["interface"]["checks"] if c["id"] == "ramses-validation")
+        self.assertEqual(row["state"], "findings")
+        self.assertIn("could not be retained", row["summary"])
+        self.assertNotIn("Evidence only", row["summary"])
+        logic_rows = [c for c in gates["review"]["checks"] if c["id"] == "ramses-logic"]
+        self.assertEqual(logic_rows, [])
+
+    def test_execution_failure_with_retained_evidence_points_at_it(self) -> None:
+        record = self._record()
+        record["summary"]["ramses_r0"] = self._r0_stage(
+            family="execution_failure", outcome="untrusted_helper", recorded=True)
+        gates = self._gates(self._snapshot(action_records=[record]))
+        row = next(c for c in gates["interface"]["checks"] if c["id"] == "ramses-validation")
+        self.assertEqual(row["state"], "failed")
+        self.assertIn("see the probe evidence", row["summary"])
+
     def test_an_unreadable_newest_record_never_surfaces_an_older_one(self) -> None:
         newest = self._record()
         newest["summary"] = {"errors": "corrupted"}

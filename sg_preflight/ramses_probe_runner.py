@@ -257,8 +257,13 @@ def _write_evidence_atomically(output_root: Path, payload: dict[str, Any]) -> Pa
         return None
     target = output_root / EVIDENCE_FILE_NAME
     temporary = output_root / (EVIDENCE_FILE_NAME + ".tmp")
-    temporary.write_text(text, encoding="utf-8")
-    os.replace(temporary, target)
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, target)
+    except OSError:
+        # An output root that became unwritable mid-run must not change the classification;
+        # the result simply reports that no evidence file was retained.
+        return None
     return target
 
 
@@ -344,7 +349,11 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
 
     def persist_console(stream_name: str, payload: bytes | None) -> None:
         target = request.output_root / stream_name
-        target.write_bytes((payload or b"")[:_CONSOLE_STREAM_MAX_BYTES])
+        try:
+            target.write_bytes((payload or b"")[:_CONSOLE_STREAM_MAX_BYTES])
+        except OSError:
+            # Console retention is best-effort; a write failure must never change the outcome.
+            pass
 
     process = subprocess.Popen(
         [str(request.helper_path), *build_helper_arguments(request)],

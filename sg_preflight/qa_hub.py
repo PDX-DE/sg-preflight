@@ -321,12 +321,18 @@ def _ramses_check_rows(
     if not isinstance(probe, Mapping) or probe.get("family") == "unavailable":
         return [], []
     if probe.get("family") == "execution_failure":
+        summary = "The scene probe did not complete; the local QA result stands on its own."
+        if probe.get("recorded"):
+            summary = (
+                "The scene probe did not complete; see the probe evidence. "
+                "The local QA result stands on its own."
+            )
         return [
             {
                 "id": "ramses-validation",
                 "label": "Ramses scene probe",
                 "state": "failed",
-                "summary": "The scene probe did not complete; the local QA result stands on its own.",
+                "summary": summary,
                 "routeId": "api-version-coverage",
             }
         ], []
@@ -351,6 +357,20 @@ def _ramses_check_rows(
     errors = int(probe.get("errors", 0))
     warnings = int(probe.get("warnings", 0))
     state = "findings" if errors or warnings else "passed"
+    if not probe.get("recorded"):
+        # The validation result is real, but without a retained evidence file there is nothing
+        # recorded for a reviewer to open: say so, and claim no recorded logic evidence at all.
+        interface_row = {
+            "id": "ramses-validation",
+            "label": "Ramses scene validation",
+            "state": state,
+            "summary": (
+                f"Scene validation found {errors} errors, {warnings} warnings; "
+                "the evidence file could not be retained."
+            ),
+            "routeId": "api-version-coverage",
+        }
+        return [interface_row], []
     interface_row = {
         "id": "ramses-validation",
         "label": "Ramses scene validation",

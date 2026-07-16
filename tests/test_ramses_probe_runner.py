@@ -614,6 +614,66 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         process = captured["process"]
         self.assertIsNotNone(process.poll())
 
+    def test_os_denied_direct_kill_still_returns_bounded_and_classified(self) -> None:
+        from unittest import mock
+
+        import sg_preflight.ramses_probe_runner as runner_module
+
+        body = (
+            "@echo off\r\n"
+            "ping -n 30 127.0.0.1 >nul\r\n"
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=self.scene,
+            output_root=self.output_root,
+            helper_path=helper,
+            helper_sha256=digest,
+            timeout_seconds=2,
+        )
+        real_run = runner_module.subprocess.run
+        real_popen = runner_module.subprocess.Popen
+        captured: dict[str, object] = {}
+
+        def deny_taskkill(command, *args, **kwargs):
+            if command and command[0] == "taskkill":
+                raise FileNotFoundError("taskkill launch blocked")
+            return real_run(command, *args, **kwargs)
+
+        def capturing_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            captured["process"] = process
+            captured["real_kill"] = process.kill
+
+            def denied_kill() -> None:
+                raise PermissionError("TerminateProcess denied")
+
+            process.kill = denied_kill
+            return process
+
+        import time as time_module
+        started = time_module.monotonic()
+        try:
+            with mock.patch.object(runner_module.subprocess, "run", side_effect=deny_taskkill), \
+                    mock.patch.object(runner_module.subprocess, "Popen",
+                                      side_effect=capturing_popen):
+                result = run_probe(request)
+        finally:
+            real_kill = captured.get("real_kill")
+            if callable(real_kill):
+                try:
+                    real_kill()
+                    captured["process"].wait(timeout=10)
+                except OSError:
+                    pass
+        elapsed = time_module.monotonic() - started
+        # When the OS denies every termination, the drain and wait stay bounded and the run is
+        # still classified truthfully instead of raising out of the runner.
+        self.assertEqual(result.outcome, "helper_timeout")
+        self.assertLess(elapsed, 40.0)
+
     def test_helper_is_fully_awaited_no_detached_child(self) -> None:
         marker = self.root / "helper-finished.marker"
         report = _native_report(profile="G45", scene_path=str(self.scene))

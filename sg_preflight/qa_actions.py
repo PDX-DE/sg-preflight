@@ -968,7 +968,8 @@ def _execute_ramses_r0_stage(
                 "could not be retained."
             )
         else:
-            notes.append(f"Ramses probe {stage['family']}: {result.outcome}.")
+            pointer = " Probe evidence retained." if stage["evidence_recorded"] else ""
+            notes.append(f"Ramses probe {stage['family']}: {result.outcome}.{pointer}")
         return stage, artifacts, notes
     except Exception as exc:
         stage["family"] = "execution_failure"
