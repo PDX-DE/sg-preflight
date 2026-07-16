@@ -368,8 +368,13 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
                 pass
         # Tree termination can be denied (permissions, endpoint protection); the direct child is
         # killed and reaped unconditionally so no probe process can leak past this function.
-        # A helper-spawned grandchild surviving a denied tree kill is an accepted OS constraint.
-        process.kill()
+        # When the OS denies even the direct kill, the drain and wait below stay bounded and the
+        # run is still classified truthfully - a process the OS refuses to terminate is the one
+        # leak no user-mode caller can close. Grandchildren surviving a denied tree kill likewise.
+        try:
+            process.kill()
+        except OSError:
+            pass
         try:
             stdout_bytes, stderr_bytes = process.communicate(timeout=15)
         except subprocess.TimeoutExpired:

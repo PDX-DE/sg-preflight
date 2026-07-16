@@ -948,10 +948,13 @@ def _execute_ramses_r0_stage(
                 record.paths[f"ramses_r0_{stream_name}"] = str(stream_path)
         if stage["family"] == "evidence" and result.outcome != "completed":
             # A classified diagnostic is honest evidence of a scene that could not be validated;
-            # the note must never read like a validated run (mirrors the hub row rendering).
+            # the note must never read like a validated run (mirrors the hub row rendering), and
+            # it only points at the evidence when the evidence file was actually retained.
+            pointer = "; see the probe evidence." if stage["evidence_recorded"] else \
+                "; the evidence file could not be retained."
             notes.append(
                 f"Ramses probe could not validate the scene for {profile.profile_id} "
-                f"({result.outcome}); see the probe evidence."
+                f"({result.outcome}){pointer}"
             )
         elif stage["family"] == "evidence" and stage["evidence_recorded"]:
             notes.append(

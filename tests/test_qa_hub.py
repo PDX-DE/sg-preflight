@@ -211,8 +211,16 @@ class TestQaHubSnapshot(unittest.TestCase):
         gates = self._gates(self._snapshot(action_records=[record]))
         row = next(c for c in gates["interface"]["checks"] if c["id"] == "ramses-validation")
         self.assertEqual(row["state"], "failed")
+        self.assertIn("see the probe evidence", row["summary"])
         logic_rows = [c for c in gates["review"]["checks"] if c["id"] == "ramses-logic"]
         self.assertEqual(logic_rows, [])
+        # Without retained evidence the row must not point the operator at a nonexistent file.
+        record["summary"]["ramses_r0"] = self._r0_stage(
+            outcome="scene_incompatible", errors=0, warnings=0, recorded=False)
+        gates = self._gates(self._snapshot(action_records=[record]))
+        row = next(c for c in gates["interface"]["checks"] if c["id"] == "ramses-validation")
+        self.assertEqual(row["state"], "failed")
+        self.assertNotIn("see the probe evidence", row["summary"])
 
     def test_an_unreadable_newest_record_never_surfaces_an_older_one(self) -> None:
         newest = self._record()

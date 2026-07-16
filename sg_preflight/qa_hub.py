@@ -332,13 +332,19 @@ def _ramses_check_rows(
         ], []
     if probe.get("outcome") != "completed":
         # A classified diagnostic (for example an incompatible scene) is honest evidence of a
-        # scene that could not be validated - it must never read like a validated clean scene.
+        # scene that could not be validated - it must never read like a validated clean scene,
+        # and it only points at evidence that was actually retained.
+        summary = (
+            "The scene could not be validated; see the probe evidence."
+            if probe.get("recorded")
+            else "The scene could not be validated."
+        )
         return [
             {
                 "id": "ramses-validation",
                 "label": "Ramses scene validation",
                 "state": "failed",
-                "summary": "The scene could not be validated; see the probe evidence.",
+                "summary": summary,
                 "routeId": "api-version-coverage",
             }
         ], []

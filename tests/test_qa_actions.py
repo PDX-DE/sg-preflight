@@ -282,6 +282,34 @@ class TestQaActions(unittest.TestCase):
             self.assertFalse(any("evidence recorded for" in note for note in record.notes))
             self.assertFalse(any("completed for" in note for note in record.notes))
             self.assertTrue(any("could not validate" in note for note in record.notes))
+            self.assertTrue(any("see the probe evidence" in note for note in record.notes))
+
+    def test_classified_failure_without_evidence_never_points_at_it(self) -> None:
+        from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile, scene, action, parent, child = self._two_stage_fixture(root)
+            helper = root / "bundle" / "_internal" / "cpp" / "bin" / "probe.exe"
+            write_text(helper, "helper bytes")
+            classified = ProbeRunResult(
+                outcome="scene_incompatible", exit_code=65, rejections=(),
+                evidence_path=None, native_report={"findings": []})
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.execute_profile_run", return_value=child))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.profiles.configured_reference_repo_root",
+                    return_value=root / "repositories" / "trunk"))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.resolve_packaged_probe_helper",
+                    return_value=ProbeHelperReadiness(
+                        ready=True, reason="", helper_path=helper, helper_sha256="a" * 64)))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.run_probe", return_value=classified))
+                record = execute_operator_action(action, root, record=parent)
+            self.assertTrue(any("could not validate" in note for note in record.notes))
+            self.assertFalse(any("see the probe evidence" in note for note in record.notes))
 
     def test_unretained_evidence_is_never_reported_as_recorded(self) -> None:
         from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult
