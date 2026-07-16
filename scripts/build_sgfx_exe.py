@@ -150,8 +150,10 @@ def copy_preview_runtime(
 def remove_private_install_metadata(bundle_dir: Path) -> tuple[Path, ...]:
     bundle = Path(bundle_dir)
     removed: list[Path] = []
-    for path in bundle.rglob("direct_url.json"):
-        if path.is_file() and path.parent.name.casefold().endswith(".dist-info"):
+    # rglob follows junctions; the guarded walk keeps the unlink inside the bundle.
+    for path in _iter_tree(bundle):
+        if path.name == "direct_url.json" and path.is_file() and \
+                path.parent.name.casefold().endswith(".dist-info"):
             path.unlink()
             removed.append(path)
     return tuple(sorted(removed))
@@ -220,7 +222,8 @@ def compile_staged_qml_cache(
     qml_root = bundle / "_internal" / "sg_preflight" / "desktop" / "qml"
     qt_qml_root = bundle / "_internal" / "PySide6" / "qml"
     executable = Path(generator) if generator is not None else _qml_cache_generator()
-    sources = tuple(sorted(qml_root.rglob("*.qml")))
+    sources = tuple(sorted(
+        path for path in _iter_tree(qml_root) if path.suffix == ".qml" and path.is_file()))
     if not executable.is_file() or not qml_root.is_dir() or not qt_qml_root.is_dir() or not sources:
         raise RuntimeError("The staged QML cache inputs are unavailable.")
     compiled: list[Path] = []
@@ -550,12 +553,16 @@ def copy_operator_console_shell(
     if dist_dir is None:
         print("Grafiks operator console dist not found; skipping optional copy.")
         return None
+    if _is_link(dist_dir) or any(_is_link(path) for path in _iter_tree(dist_dir)):
+        # copytree recurses into junctions and would materialize foreign content in the bundle.
+        print("The Grafiks operator console dist contains links; omitting the optional operator console.")
+        return None
     executable = dist_dir / OPERATOR_CONSOLE_SHELL_EXE_NAME
     if provenance is None or not accept_grafiks_bundle(executable, provenance):
         print("Grafiks provenance is absent or does not match; omitting the optional operator console.")
         return None
     relative_files = tuple(
-        sorted(path.relative_to(dist_dir).as_posix() for path in dist_dir.rglob("*") if path.is_file())
+        sorted(path.relative_to(dist_dir).as_posix() for path in _iter_tree(dist_dir) if path.is_file())
     )
     if not license_manifest_covers_files(
         Path(provenance.license_manifest_path),
@@ -657,6 +664,10 @@ def swap_staged_bundle(staged_bundle: Path) -> None:
     # out of it, and a failed copy leaves every original untouched. The swap itself then commits
     # through whole-directory renames, so the canonical path never holds a partial bundle and no
     # failure path ever deletes the only copy of anything.
+    # Ship gate: copytree recurses into junctions, so a link anywhere in the staged bundle
+    # would bake foreign content into the delivered product. Nothing legitimate puts one there.
+    if _is_link(staged_bundle) or any(_is_link(path) for path in _iter_tree(staged_bundle)):
+        raise OSError("the staged bundle contains links; refusing to ship it")
     staged_copy = DIST_PATH / "sgfx-preflight.new"
     if staged_copy.exists():
         _rmtree_tolerating_held_dirs(staged_copy)

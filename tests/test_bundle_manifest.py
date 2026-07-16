@@ -862,6 +862,131 @@ class TestHeldStagingDirectories(unittest.TestCase):
             finally:
                 module.STAGING_DIST_PATH = saved
 
+    def test_metadata_removal_never_unlinks_through_a_junction(self) -> None:
+        import subprocess as subprocess_module
+
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "victim" / "some.dist-info"
+            victim.mkdir(parents=True)
+            (victim / "direct_url.json").write_text("{}", encoding="utf-8")
+            bundle = root / "bundle"
+            legit = bundle / "_internal" / "pkg.dist-info"
+            legit.mkdir(parents=True)
+            (legit / "direct_url.json").write_text("{}", encoding="utf-8")
+            completed = subprocess_module.run(
+                ["cmd", "/c", "mklink", "/J", str(bundle / "_internal" / "stray"),
+                 str(root / "victim")],
+                capture_output=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            removed = module.remove_private_install_metadata(bundle)
+            self.assertEqual(removed, (legit / "direct_url.json",))
+            self.assertTrue((victim / "direct_url.json").is_file())
+
+    def test_qml_cache_never_compiles_through_a_junction(self) -> None:
+        import subprocess as subprocess_module
+
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "victim"
+            victim.mkdir()
+            (victim / "Foreign.qml").write_text("import QtQuick\nItem {}\n", encoding="utf-8")
+            bundle = root / "bundle"
+            qml_root = bundle / "_internal" / "sg_preflight" / "desktop" / "qml"
+            qml_root.mkdir(parents=True)
+            (qml_root / "Home.qml").write_text("import QtQuick\nItem {}\n", encoding="utf-8")
+            (bundle / "_internal" / "PySide6" / "qml").mkdir(parents=True)
+            completed = subprocess_module.run(
+                ["cmd", "/c", "mklink", "/J", str(qml_root / "linked"), str(victim)],
+                capture_output=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            generator = root / "qmlcachegen.exe"
+            generator.write_text("fake", encoding="utf-8")
+            commands: list[list[str]] = []
+
+            def runner(command, **kwargs):
+                commands.append(list(command))
+                Path(command[command.index("-o") + 1]).write_text("qmlc", encoding="utf-8")
+
+                class _Done:
+                    returncode = 0
+                return _Done()
+
+            module.compile_staged_qml_cache(bundle, generator=generator, runner=runner)
+            compiled_sources = [command[-1] for command in commands]
+            self.assertEqual(compiled_sources, [str(qml_root / "Home.qml")])
+
+    def test_operator_console_with_links_is_omitted(self) -> None:
+        import contextlib
+        import io
+        import os as os_module
+        import subprocess as subprocess_module
+
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "victim"
+            victim.mkdir()
+            (victim / "secret.txt").write_text("foreign", encoding="utf-8")
+            dist = root / "operator-dist"
+            dist.mkdir()
+            (dist / module.OPERATOR_CONSOLE_SHELL_EXE_NAME).write_text("exe", encoding="utf-8")
+            completed = subprocess_module.run(
+                ["cmd", "/c", "mklink", "/J", str(dist / "nested_link"), str(victim)],
+                capture_output=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            bundle = root / "bundle"
+            bundle.mkdir()
+            saved_env = os_module.environ.get(module.OPERATOR_CONSOLE_DIST_ENV)
+            os_module.environ[module.OPERATOR_CONSOLE_DIST_ENV] = str(dist)
+            try:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    result = module.copy_operator_console_shell(bundle, None)
+                self.assertIsNone(result)
+                self.assertIn("links", output.getvalue())
+                self.assertFalse(
+                    (bundle / "_internal" / module.GRAFIKS_BUNDLED_SHELL_DIR_NAME).exists())
+            finally:
+                if saved_env is None:
+                    os_module.environ.pop(module.OPERATOR_CONSOLE_DIST_ENV, None)
+                else:
+                    os_module.environ[module.OPERATOR_CONSOLE_DIST_ENV] = saved_env
+
+    def test_swap_refuses_a_staged_bundle_containing_links(self) -> None:
+        import subprocess as subprocess_module
+
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "victim"
+            victim.mkdir()
+            (victim / "secret.txt").write_text("foreign", encoding="utf-8")
+            staged = root / "b" / "sgfx-preflight"
+            staged.mkdir(parents=True)
+            (staged / "sgfx-preflight.exe").write_text("exe", encoding="utf-8")
+            completed = subprocess_module.run(
+                ["cmd", "/c", "mklink", "/J", str(staged / "linked"), str(victim)],
+                capture_output=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            saved = (module.DIST_PATH, module.WORK_PATH,
+                     module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH)
+            module.DIST_PATH = root / "dist"
+            module.WORK_PATH = root / "work"
+            module.BACKUP_BUNDLE_PATH = root / "p"
+            module.BACKUP_SINGLE_FILE_PATH = root / "p.exe"
+            try:
+                with self.assertRaises(OSError):
+                    module.swap_staged_bundle(staged)
+                # Nothing was shipped and no foreign content was materialized anywhere.
+                self.assertFalse((root / "dist" / "sgfx-preflight").exists())
+                self.assertTrue((victim / "secret.txt").is_file())
+            finally:
+                (module.DIST_PATH, module.WORK_PATH,
+                 module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH) = saved
+
     def test_merge_refuses_source_links_and_never_moves_foreign_content(self) -> None:
         import subprocess as subprocess_module
 
