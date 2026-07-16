@@ -122,6 +122,106 @@ class TestQaHubSnapshot(unittest.TestCase):
 
         visit(value)
 
+    @staticmethod
+    def _r0_stage(
+        *,
+        family: str = "evidence",
+        outcome: str = "completed",
+        reason: str = "",
+        errors: int = 0,
+        warnings: int = 0,
+        recorded: bool = True,
+    ) -> dict[str, object]:
+        return {
+            "stage": "ramses_r0",
+            "family": family,
+            "outcome": outcome,
+            "reason": reason,
+            "helper_exit_code": 0,
+            "finding_errors": errors,
+            "finding_warnings": warnings,
+            "evidence_recorded": recorded,
+        }
+
+    def _gates(self, snapshot: dict[str, object]) -> dict[str, dict[str, object]]:
+        return {gate["id"]: gate for gate in snapshot["gates"]}
+
+    def test_probe_evidence_projects_to_exact_ramses_rows(self) -> None:
+        record = self._record()
+        record["summary"]["ramses_r0"] = self._r0_stage(errors=2, warnings=1)
+        baseline = self._gates(self._snapshot(action_records=[self._record()]))
+        snapshot = self._snapshot(action_records=[record])
+        gates = self._gates(snapshot)
+
+        interface = gates["interface"]
+        row = next(c for c in interface["checks"] if c["id"] == "ramses-validation")
+        self.assertEqual(row["state"], "findings")
+        self.assertIn("2 errors", row["summary"])
+        # The row is scoped: the containing gate state never changes from probe evidence.
+        self.assertEqual(interface["state"], "external")
+        review = gates["review"]
+        logic_row = next(c for c in review["checks"] if c["id"] == "ramses-logic")
+        self.assertEqual(logic_row["state"], "recorded")
+        self.assertEqual(review["state"], "human_review")
+        # Delivery/handoff and the four-pack asset gate are provably unaffected.
+        self.assertEqual(gates["delivery"], baseline["delivery"])
+        self.assertEqual(gates["asset"], baseline["asset"])
+        self.assertSafe(snapshot)
+
+    def test_clean_probe_row_is_scoped_passed_only(self) -> None:
+        record = self._record()
+        record["summary"]["ramses_r0"] = self._r0_stage()
+        snapshot = self._snapshot(action_records=[record])
+        gates = self._gates(snapshot)
+        row = next(c for c in gates["interface"]["checks"] if c["id"] == "ramses-validation")
+        self.assertEqual(row["state"], "passed")
+        self.assertEqual(gates["interface"]["state"], "external")
+        self.assertEqual(gates["delivery"]["state"], "human_review")
+
+    def test_probe_execution_failure_marks_only_the_ramses_row(self) -> None:
+        record = self._record()
+        record["summary"]["ramses_r0"] = self._r0_stage(
+            family="execution_failure", outcome="helper_crash", recorded=False)
+        baseline = self._gates(self._snapshot(action_records=[self._record()]))
+        snapshot = self._snapshot(action_records=[record])
+        gates = self._gates(snapshot)
+        row = next(c for c in gates["interface"]["checks"] if c["id"] == "ramses-validation")
+        self.assertEqual(row["state"], "failed")
+        self.assertEqual(gates["interface"]["state"], "external")
+        self.assertEqual(gates["asset"], baseline["asset"])
+        self.assertEqual(gates["delivery"], baseline["delivery"])
+        self.assertSafe(snapshot)
+
+    def test_unavailable_probe_adds_no_rows(self) -> None:
+        record = self._record()
+        record["summary"]["ramses_r0"] = self._r0_stage(
+            family="unavailable", outcome="", reason="helper_not_packaged", recorded=False)
+        baseline = self._gates(self._snapshot(action_records=[self._record()]))
+        snapshot = self._snapshot(action_records=[record])
+        gates = self._gates(snapshot)
+        for gate in gates.values():
+            for check in gate["checks"]:
+                self.assertFalse(str(check["id"]).startswith("ramses-"), check["id"])
+        self.assertEqual(gates, baseline)
+
+    def test_malformed_probe_summary_never_reaches_the_rows(self) -> None:
+        record = self._record()
+        record["summary"]["ramses_r0"] = {
+            "family": "evidence",
+            "outcome": r"C:\evil\path.exe",
+            "reason": "http://leak.example",
+            "finding_errors": "not-a-number",
+            "finding_warnings": -3,
+            "evidence_recorded": True,
+        }
+        snapshot = self._snapshot(action_records=[record])
+        self.assertSafe(snapshot)
+        record["summary"]["ramses_r0"] = {"family": "sort-of-new-family"}
+        gates = self._gates(self._snapshot(action_records=[record]))
+        for gate in gates.values():
+            for check in gate["checks"]:
+                self.assertFalse(str(check["id"]).startswith("ramses-"), check["id"])
+
     def test_empty_selection_has_exact_contract_and_no_runnable_action(self) -> None:
         snapshot = self._snapshot(selected="", actions=[], activity=[])
 

@@ -177,6 +177,21 @@ def _matching_action_record(action_records: Sequence[object], profile_id: str) -
             or _timestamp(_value(record, "started_at_utc", ""))
             or _timestamp(_value(record, "created_at_utc", ""))
         )
+        # The probe stage travels inside the same record snapshot as the core result, so a stale
+        # completion can never pair old probe rows with a newer core verdict (req 23).
+        probe: dict[str, Any] | None = None
+        stage = summary.get("ramses_r0") if isinstance(summary, Mapping) else None
+        if isinstance(stage, Mapping):
+            family = str(stage.get("family", ""))
+            if family in {"evidence", "execution_failure", "unavailable"}:
+                probe = {
+                    "family": family,
+                    "outcome": _identifier(stage.get("outcome", "")),
+                    "reason": _identifier(stage.get("reason", "")),
+                    "errors": _count(stage, "finding_errors") or 0,
+                    "warnings": _count(stage, "finding_warnings") or 0,
+                    "recorded": stage.get("evidence_recorded", False) is True,
+                }
         return {
             "actionId": expected_action_id,
             "actionRunId": _identifier(_value(record, "run_id", "")),
@@ -186,6 +201,7 @@ def _matching_action_record(action_records: Sequence[object], profile_id: str) -
             "errors": errors or 0,
             "warnings": warnings or 0,
             "info": info or 0,
+            "ramsesProbe": probe,
         }
     return None
 
@@ -292,11 +308,52 @@ def _asset_summary(state: str, record: Mapping[str, Any] | None) -> str:
     return f"Local QA result: {errors} errors, {warnings} warnings, {info} info."
 
 
+def _ramses_check_rows(
+    record: Mapping[str, Any] | None,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    # Design section 13: probe results touch only exact Ramses check rows. Export & interface
+    # carries the validation evidence, review carries the logic evidence; a clean row may read
+    # scoped `passed` while its gate, the profile, and delivery stay independent; unavailable
+    # adds nothing at all.
+    probe = record.get("ramsesProbe") if isinstance(record, Mapping) else None
+    if not isinstance(probe, Mapping) or probe.get("family") == "unavailable":
+        return [], []
+    if probe.get("family") == "execution_failure":
+        return [
+            {
+                "id": "ramses-validation",
+                "label": "Ramses scene probe",
+                "state": "failed",
+                "summary": "The scene probe did not complete; the local QA result stands on its own.",
+                "routeId": "api-version-coverage",
+            }
+        ], []
+    errors = int(probe.get("errors", 0))
+    warnings = int(probe.get("warnings", 0))
+    state = "findings" if errors or warnings else "passed"
+    interface_row = {
+        "id": "ramses-validation",
+        "label": "Ramses scene validation",
+        "state": state,
+        "summary": f"Scene validation recorded {errors} errors, {warnings} warnings. Evidence only.",
+        "routeId": "api-version-coverage",
+    }
+    review_row = {
+        "id": "ramses-logic",
+        "label": "Ramses logic evidence",
+        "state": "recorded",
+        "summary": "Default logic update evidence recorded; manual review remains required.",
+        "routeId": "risk-score",
+    }
+    return [interface_row], [review_row]
+
+
 def _gate_payloads(
     selected_profile_id: str,
     asset_state: str,
     record: Mapping[str, Any] | None,
 ) -> list[dict[str, Any]]:
+    interface_rows, review_rows = _ramses_check_rows(record)
     gates: list[dict[str, Any]] = []
     for definition in QA_GATES:
         state = definition.default_state
@@ -364,6 +421,10 @@ def _gate_payloads(
                         },
                     ]
                 )
+        if definition.gate_id == "interface":
+            checks = checks + interface_rows
+        elif definition.gate_id == "review":
+            checks = checks + review_rows
         gates.append(
             {
                 "id": definition.gate_id,
