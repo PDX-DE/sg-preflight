@@ -29,11 +29,19 @@
 
 ## Task 1 — Packaged helper readiness
 
-- [ ] Step 1: RED: bundling tests — the Release `sgfx_cine_ramses_probe.exe` (+ its Ramses/SDL runtime
-      DLLs) ships inside the bundle under a fixed relative path with a build-recorded SHA-256 in the bundle
-      manifest; absence of the built helper makes packaging skip it deterministically (recorded), not fail.
-- [ ] Step 2: GREEN in `scripts/build_sgfx_exe.py` + manifest schema; readiness resolver in Python returns
-      helper path+digest or `unavailable` with the exact missing prerequisite.
+- [x] Step 1: RED bundling tests DONE: probe helper ships beside the preview runtime (shared
+      Ramses/SDL DLLs, byte-parity verified against the Release tree) under
+      `_internal/cpp/bin/sgfx_cine_ramses_probe.exe` with a build-recorded SHA-256
+      (`ramses_probe_helper` / `ramses_probe_helper_sha256` manifest fields); missing helper is a
+      deterministic recorded skip; probe-without-runtime rejected; staged validation verifies the
+      shipped digest.
+- [x] Step 2: GREEN DONE (`69e18b2`): `copy_probe_helper` + manifest schema + staged validation;
+      `resolve_packaged_probe_helper` returns path+digest or the exact missing prerequisite
+      (manifest_unavailable / manifest_malformed / helper_not_packaged / helper_missing /
+      helper_digest_mismatch). Suites 113/113. REAL proof: freshly rebuilt Release helper accepted
+      into `cpp/bin` (usage smoke exit 64, CTest 3/3); real `--staged-only` build exit 0 with
+      `included` + digest in the manifest; resolver ready against the real bundle; the PACKAGED
+      helper ran the real G45 export end-to-end (completed, exit 0, six phases, evidence written).
 
 ## Task 2 — Two-stage action plan (runner side)
 
