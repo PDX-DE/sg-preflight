@@ -95,9 +95,16 @@
 
 ## Task 5 — Gates and acceptance
 
-- [ ] Step 1: Focused aggregates for every touched module + the Home/capability boundary audit; full
-      discovery footer on the integrated tree.
-- [ ] Step 2: Independent adversarial review (fresh fleet, zero Critical/Important); real one-button run on
-      a real export producing core verdicts plus R0 evidence rows end-to-end.
-- [ ] Step 3: Ledger, changelog, STATE; the reqs 18/19/22/23 rows in the acceptance walk flip from
-      N/A-standalone to PASS with evidence.
+- [x] Step 1: DONE — touched-suite aggregates 173/173 at the final tree (qa_actions, qa_hub,
+      runner 51, bundle-manifest, native-scaffold, preview); Home/capability boundary audit via the
+      unchanged capabilities suite; exclusive integrated-tree footer **Ran 1171, OK (8 skips),
+      DISCOVERY_EXIT=0 at `f310cd3`**.
+- [x] Step 2: DONE — independent adversarial review `wf_f876765c` (fresh 16-agent fleet): 10
+      confirmed, ZERO Critical, all resolved (`86ad3ba`); the verification loop then ran to closure
+      (10 → 1 → 3 → 2 → 4 → 7 → 1 → 2 → 0 across nine rounds, both final lenses empty), landing the
+      structural `environment_error` mechanism, the tree-kill/reap hardening, and the atomic
+      evidence-claim consistency across every surface. Real one-button run at the final tree on the
+      real G45 export: core verdicts sealed + R0 evidence rows end to end
+      (`out/r0-smoke/onebutton-final-rhm_deig`).
+- [x] Step 3: DONE — ledger beat, changelog entry, STATE; acceptance-walk rows 18/19/22/23 flipped
+      to PASS with evidence. **ONE-BUTTON INTEGRATION GATES PASSED 2026-07-16 19:55 +02:00.**

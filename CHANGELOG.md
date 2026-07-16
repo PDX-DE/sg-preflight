@@ -8,6 +8,7 @@ outside this bundle.
 
 ### Added
 - Standalone Ramses R0 probe: a noninteractive native helper plus Python runner that records scene metadata, native validation findings, structural inventory, logic-update evidence, renderer lifecycle timing, and at most one 480x270 authored-frame readback with an honest content/black/undetermined classification. Evidence only - it never approves anything; runs are local, read-only against the source scene, and hash-verified end to end.
+- The one-button profile preflight now runs the packaged Ramses scene probe as a second stage when its pinned helper and the resolved scene are available: validation, structure, and logic evidence appear as scoped check rows next to the existing gates, and a missing helper simply reports as unavailable without affecting the local QA result.
 - Pinned Python launcher (`scripts/run_sgfx_python.ps1`) so test and evidence commands always run on the intended local interpreter.
 - The C0 Control Center entries describe a staged local candidate; the installed/default double-click path remains Clean pending a separately approved default-cutover plan.
 - Profile-neutral QA Control Center startup with explicit operator selection instead of an invented default profile.
