@@ -360,8 +360,12 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
         # Killing only the direct child leaves any helper-spawned process holding the console
         # pipes open, which blocks the drain until it exits on its own; terminate the tree.
         if os.name == "nt":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
-                           capture_output=True, check=False)
+            try:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                               capture_output=True, check=False)
+            except OSError:
+                # Even launching taskkill can be blocked; the direct-child reap below still runs.
+                pass
         # Tree termination can be denied (permissions, endpoint protection); the direct child is
         # killed and reaped unconditionally so no probe process can leak past this function.
         # A helper-spawned grandchild surviving a denied tree kill is an accepted OS constraint.

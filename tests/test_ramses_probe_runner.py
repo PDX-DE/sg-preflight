@@ -587,25 +587,32 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
             timeout_seconds=2,
         )
         real_run = runner_module.subprocess.run
+        real_popen = runner_module.subprocess.Popen
+        captured: dict[str, object] = {}
 
         def deny_taskkill(command, *args, **kwargs):
             if command and command[0] == "taskkill":
-                class _Denied:
-                    returncode = 1
-                    stdout = b""
-                    stderr = b"Access is denied."
-                return _Denied()
+                # Launch failures are a real denial mode too (AppLocker, stripped images).
+                raise FileNotFoundError("taskkill launch blocked")
             return real_run(command, *args, **kwargs)
+
+        def capturing_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            captured["process"] = process
+            return process
 
         import time as time_module
         started = time_module.monotonic()
-        with mock.patch.object(runner_module.subprocess, "run", side_effect=deny_taskkill):
+        with mock.patch.object(runner_module.subprocess, "run", side_effect=deny_taskkill), \
+                mock.patch.object(runner_module.subprocess, "Popen", side_effect=capturing_popen):
             result = run_probe(request)
         elapsed = time_module.monotonic() - started
-        # The classification stays truthful and the function returns bounded even when the
-        # tree kill is denied; the direct child is killed and reaped unconditionally.
+        # The classification stays truthful, the function returns bounded, and the DIRECT child
+        # is provably dead and reaped even when the tree kill cannot even be launched.
         self.assertEqual(result.outcome, "helper_timeout")
         self.assertLess(elapsed, 30.0)
+        process = captured["process"]
+        self.assertIsNotNone(process.poll())
 
     def test_helper_is_fully_awaited_no_detached_child(self) -> None:
         marker = self.root / "helper-finished.marker"

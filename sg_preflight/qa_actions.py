@@ -946,7 +946,14 @@ def _execute_ramses_r0_stage(
             stream_path = run_dir / f"{stream_name}.log"
             if stream_path.is_file():
                 record.paths[f"ramses_r0_{stream_name}"] = str(stream_path)
-        if stage["family"] == "evidence" and stage["evidence_recorded"]:
+        if stage["family"] == "evidence" and result.outcome != "completed":
+            # A classified diagnostic is honest evidence of a scene that could not be validated;
+            # the note must never read like a validated run (mirrors the hub row rendering).
+            notes.append(
+                f"Ramses probe could not validate the scene for {profile.profile_id} "
+                f"({result.outcome}); see the probe evidence."
+            )
+        elif stage["family"] == "evidence" and stage["evidence_recorded"]:
             notes.append(
                 f"Ramses probe evidence recorded for {profile.profile_id} "
                 f"({stage['finding_errors']} errors, {stage['finding_warnings']} warnings); "
