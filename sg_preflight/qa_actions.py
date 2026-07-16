@@ -22,6 +22,11 @@ from sg_preflight.checker_evidence import (
 )
 from sg_preflight.io_utils import write_text as _write_text
 from sg_preflight.profiles import RunProfile, list_run_profiles, resolve_source_repo_root
+from sg_preflight.ramses_probe_runner import (
+    ProbeRunRequest,
+    resolve_packaged_probe_helper,
+    run_probe,
+)
 import sg_preflight.qa_operator_actions as _qa_operator_actions
 from sg_preflight.services import (
     RunRequest,
@@ -849,6 +854,102 @@ def _execute_profile_stack(record: ActionRecord, root: Path) -> tuple[dict[str, 
     return summary, artifacts, notes
 
 
+# Design section 13: the probe's classified results are findings evidence; crashes, timeouts,
+# and every report rejection are execution failures; missing prerequisites are unavailable.
+# The three families never blur, and none of them may fail the core preflight.
+_R0_UNAVAILABLE_OUTCOMES = frozenset({"scene_unavailable", "output_unavailable"})
+_R0_EXECUTION_FAILURES = frozenset({
+    "untrusted_helper", "malformed_report", "partial_report", "mismatched_profile",
+    "mismatched_source", "escaped_path", "stale_report", "source_mutated",
+    "worktree_status_changed", "roots_not_disjoint", "helper_crash", "helper_timeout",
+})
+
+
+def _default_probe_bundle_root() -> Path:
+    return Path(sys.executable).resolve().parent
+
+
+def _classify_probe_outcome(outcome: str) -> str:
+    if outcome in _R0_UNAVAILABLE_OUTCOMES:
+        return "unavailable"
+    if outcome in _R0_EXECUTION_FAILURES:
+        return "execution_failure"
+    return "evidence"
+
+
+def _execute_ramses_r0_stage(
+    record: ActionRecord,
+    profile: RunProfile,
+) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
+    stage: dict[str, Any] = {
+        "stage": "ramses_r0",
+        "family": "unavailable",
+        "outcome": "",
+        "reason": "",
+        "helper_exit_code": None,
+        "finding_errors": 0,
+        "finding_warnings": 0,
+        "evidence_recorded": False,
+    }
+    try:
+        readiness = resolve_packaged_probe_helper(_default_probe_bundle_root())
+        if not readiness.ready:
+            stage["reason"] = readiness.reason
+            return stage, [], []
+        # Same resolution as the accepted preview path: prefer the source checkout's export and
+        # fall back to the local project export when the reference does not carry one.
+        scene = profile.source_project_root() / "export" / "exported.ramses"
+        if not scene.is_file():
+            scene = profile.project_root.resolve() / "export" / "exported.ramses"
+        if not scene.is_file():
+            stage["reason"] = "scene_unavailable"
+            return stage, [], []
+        _set_action_progress(
+            record,
+            step_key="ramses_r0",
+            percent=70,
+            label="Recording Ramses scene evidence",
+            detail=f"Running the packaged scene probe for {profile.profile_id}.",
+            meta={"profile_id": profile.profile_id},
+        )
+        run_dir = Path(record.paths["output_root"]) / "ramses-r0"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        result = run_probe(ProbeRunRequest(
+            profile=profile.profile_id,
+            scene_path=scene,
+            output_root=run_dir,
+            helper_path=readiness.helper_path,
+            helper_sha256=readiness.helper_sha256,
+        ))
+        stage["outcome"] = result.outcome
+        stage["helper_exit_code"] = result.exit_code
+        stage["family"] = _classify_probe_outcome(result.outcome)
+        findings = (result.native_report or {}).get("findings", []) or []
+        stage["finding_errors"] = sum(
+            1 for item in findings if isinstance(item, dict) and item.get("severity") == "error")
+        stage["finding_warnings"] = sum(
+            1 for item in findings if isinstance(item, dict) and item.get("severity") == "warning")
+        artifacts: list[dict[str, str]] = []
+        notes: list[str] = []
+        if result.evidence_path is not None:
+            stage["evidence_recorded"] = True
+            artifacts.append(_artifact("Ramses probe evidence", Path(result.evidence_path)))
+        if stage["family"] == "evidence":
+            notes.append(
+                f"Ramses probe evidence recorded for {profile.profile_id} "
+                f"({stage['finding_errors']} errors, {stage['finding_warnings']} warnings); "
+                "manual review remains required."
+            )
+        else:
+            notes.append(f"Ramses probe {stage['family']}: {result.outcome}.")
+        return stage, artifacts, notes
+    except Exception as exc:
+        stage["family"] = "execution_failure"
+        stage["outcome"] = "stage_error"
+        stage["reason"] = type(exc).__name__
+        return stage, [], []
+
+
 def _execute_sgfx_preflight(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
     profile = next(
         candidate
@@ -904,7 +1005,14 @@ def _execute_sgfx_preflight(record: ActionRecord, root: Path) -> tuple[dict[str,
         _artifact("Local QA JSON report", Path(child.paths["json_report"])),
         _artifact("Local QA run record", Path(child.paths["run_record"])),
     ]
-    return summary, artifacts, list(child.notes[:3])
+    notes = list(child.notes[:3])
+    # The core verdict above is final before the probe stage starts; the probe adds evidence,
+    # an execution failure, or unavailable - never a change to the four-pack result.
+    r0_stage, r0_artifacts, r0_notes = _execute_ramses_r0_stage(record, profile)
+    summary["ramses_r0"] = r0_stage
+    artifacts.extend(r0_artifacts)
+    notes.extend(r0_notes)
+    return summary, artifacts, notes
 
 
 def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:

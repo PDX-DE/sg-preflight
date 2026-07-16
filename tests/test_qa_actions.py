@@ -144,6 +144,172 @@ class TestQaActions(unittest.TestCase):
             )
         )
 
+    def _two_stage_fixture(self, root: Path):
+        from sg_preflight.services import RunRequest, build_run_record
+
+        profile = create_temp_g65_profile(root)
+        # Keep every path inside the temp root: the machine-wide reference checkout must never
+        # be read from or written to by these tests.
+        scene = profile.project_root / "export" / "exported.ramses"
+        write_text(scene, "synthetic scene bytes")
+        actions = {item.action_id: item for item in list_operator_actions(root, profiles=[profile])}
+        action = actions["sgfx_preflight__g65"]
+        parent = build_action_record(action, root)
+        child = build_run_record(
+            profile,
+            RunRequest(
+                profile_id=profile.profile_id,
+                packs=["anchors", "constants", "carpaints", "project_sanity"],
+                fail_on="never",
+                output_root=Path(parent.paths["output_root"]) / "preflight",
+                run_id=f"{parent.run_id}-preflight",
+            ),
+            root,
+        )
+        child.status = "completed"
+        child.exit_code = 0
+        child.summary = {"errors": 0, "warnings": 1, "info": 2}
+        for key in ("html_report", "markdown_report", "json_report", "run_record"):
+            write_text(Path(child.paths[key]), f"fixture {key}\n")
+        return profile, scene, action, parent, child
+
+    def test_preflight_reports_r0_unavailable_without_breaking_core(self) -> None:
+        from sg_preflight.ramses_probe_runner import ProbeHelperReadiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile, scene, action, parent, child = self._two_stage_fixture(root)
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.execute_profile_run", return_value=child))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.profiles.configured_reference_repo_root",
+                    return_value=root / "repositories" / "trunk"))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.resolve_packaged_probe_helper",
+                    return_value=ProbeHelperReadiness(
+                        ready=False, reason="helper_not_packaged",
+                        helper_path=None, helper_sha256="")))
+                probe = stack.enter_context(mock.patch("sg_preflight.qa_actions.run_probe"))
+                record = execute_operator_action(action, root, record=parent)
+            probe.assert_not_called()
+            self.assertEqual(record.status, "completed")
+            self.assertEqual(record.summary["errors"], 0)
+            self.assertEqual(record.summary["warnings"], 1)
+            stage = record.summary["ramses_r0"]
+            self.assertEqual(stage["family"], "unavailable")
+            self.assertEqual(stage["reason"], "helper_not_packaged")
+
+    def test_preflight_runs_the_packaged_probe_when_ready(self) -> None:
+        from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile, scene, action, parent, child = self._two_stage_fixture(root)
+            helper = root / "bundle" / "_internal" / "cpp" / "bin" / "sgfx_cine_ramses_probe.exe"
+            write_text(helper, "helper bytes")
+
+            def fake_run_probe(request):
+                evidence = Path(request.output_root) / "ramses-r0-evidence.json"
+                write_text(evidence, "{}")
+                return ProbeRunResult(
+                    outcome="completed", exit_code=0, rejections=(),
+                    evidence_path=evidence,
+                    native_report={"findings": [{"severity": "error"}, {"severity": "warning"}]},
+                )
+
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.execute_profile_run", return_value=child))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.profiles.configured_reference_repo_root",
+                    return_value=root / "repositories" / "trunk"))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.resolve_packaged_probe_helper",
+                    return_value=ProbeHelperReadiness(
+                        ready=True, reason="", helper_path=helper, helper_sha256="a" * 64)))
+                probe = stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.run_probe", side_effect=fake_run_probe))
+                record = execute_operator_action(action, root, record=parent)
+
+            request = probe.call_args.args[0]
+            self.assertEqual(Path(request.scene_path).resolve(), scene.resolve())
+            self.assertEqual(request.profile, "G65")
+            self.assertEqual(request.helper_path, helper)
+            run_dir = Path(request.output_root)
+            self.assertTrue(run_dir.resolve().is_relative_to(
+                Path(record.paths["output_root"]).resolve()))
+            self.assertEqual(record.status, "completed")
+            self.assertEqual(record.summary["errors"], 0)
+            stage = record.summary["ramses_r0"]
+            self.assertEqual(stage["family"], "evidence")
+            self.assertEqual(stage["outcome"], "completed")
+            self.assertEqual(stage["finding_errors"], 1)
+            self.assertEqual(stage["finding_warnings"], 1)
+            labels = [item.get("label", "") for item in record.artifacts]
+            self.assertIn("Ramses probe evidence", labels)
+
+    def test_probe_failure_never_fails_the_core_preflight(self) -> None:
+        from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult
+
+        cases = (
+            ("helper_crash", 3, "execution_failure"),
+            ("worktree_status_changed", 0, "execution_failure"),
+            ("scene_incompatible", 65, "evidence"),
+            ("scene_unavailable", 65, "unavailable"),
+        )
+        for outcome, exit_code, family in cases:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                profile, scene, action, parent, child = self._two_stage_fixture(root)
+                helper = root / "bundle" / "_internal" / "cpp" / "bin" / "probe.exe"
+                write_text(helper, "helper bytes")
+                result = ProbeRunResult(
+                    outcome=outcome, exit_code=exit_code,
+                    rejections=(outcome,) if family == "execution_failure" else (),
+                    evidence_path=None, native_report=None)
+                with ExitStack() as stack:
+                    stack.enter_context(mock.patch(
+                        "sg_preflight.qa_actions.execute_profile_run", return_value=child))
+                    stack.enter_context(mock.patch(
+                        "sg_preflight.qa_actions.resolve_packaged_probe_helper",
+                        return_value=ProbeHelperReadiness(
+                            ready=True, reason="", helper_path=helper, helper_sha256="a" * 64)))
+                    stack.enter_context(mock.patch(
+                        "sg_preflight.qa_actions.run_probe", return_value=result))
+                    record = execute_operator_action(action, root, record=parent)
+                self.assertEqual(record.status, "completed", outcome)
+                self.assertEqual(record.summary["errors"], 0, outcome)
+                self.assertEqual(record.summary["ramses_r0"]["family"], family, outcome)
+                self.assertEqual(record.summary["ramses_r0"]["outcome"], outcome, outcome)
+
+    def test_missing_scene_is_unavailable_and_probe_never_launches(self) -> None:
+        from sg_preflight.ramses_probe_runner import ProbeHelperReadiness
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile, scene, action, parent, child = self._two_stage_fixture(root)
+            scene.unlink()
+            helper = root / "bundle" / "_internal" / "cpp" / "bin" / "probe.exe"
+            write_text(helper, "helper bytes")
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.execute_profile_run", return_value=child))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.profiles.configured_reference_repo_root",
+                    return_value=root / "repositories" / "trunk"))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.resolve_packaged_probe_helper",
+                    return_value=ProbeHelperReadiness(
+                        ready=True, reason="", helper_path=helper, helper_sha256="a" * 64)))
+                probe = stack.enter_context(mock.patch("sg_preflight.qa_actions.run_probe"))
+                record = execute_operator_action(action, root, record=parent)
+            probe.assert_not_called()
+            self.assertEqual(record.status, "completed")
+            stage = record.summary["ramses_r0"]
+            self.assertEqual(stage["family"], "unavailable")
+            self.assertEqual(stage["reason"], "scene_unavailable")
+
     def test_action_registry_marks_repo_checker_ready_and_scene_check_blocked_without_raco(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
