@@ -445,11 +445,13 @@ def _run_probe_inner(request: ProbeRunRequest) -> ProbeRunResult:
             pass
         try:
             stdout_bytes, stderr_bytes = process.communicate(timeout=15)
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, OSError):
+            # Draining a force-killed process can also fail on an already-invalidated pipe
+            # handle; the confirmed timeout classification must survive either way.
             stdout_bytes, stderr_bytes = b"", b""
         try:
             process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, OSError):
             pass
         persist_console("stdout.log", stdout_bytes)
         persist_console("stderr.log", stderr_bytes)

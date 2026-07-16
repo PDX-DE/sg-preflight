@@ -635,6 +635,48 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         missing_root = self.root / "does-not-exist"
         self.assertIsNone(_write_evidence_atomically(missing_root, {"schemaVersion": 1}))
 
+    def test_broken_pipe_during_post_kill_drain_keeps_the_timeout_classification(self) -> None:
+        from unittest import mock
+
+        import sg_preflight.ramses_probe_runner as runner_module
+
+        body = (
+            "@echo off\r\n"
+            "ping -n 30 127.0.0.1 >nul\r\n"
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=self.scene,
+            output_root=self.output_root,
+            helper_path=helper,
+            helper_sha256=digest,
+            timeout_seconds=2,
+        )
+        real_popen = runner_module.subprocess.Popen
+
+        def wrapping_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            real_communicate = process.communicate
+            calls = {"count": 0}
+
+            def flaky_communicate(*c_args, **c_kwargs):
+                calls["count"] += 1
+                if calls["count"] >= 2:
+                    raise OSError(6, "The handle is invalid")
+                return real_communicate(*c_args, **c_kwargs)
+
+            process.communicate = flaky_communicate
+            return process
+
+        with mock.patch.object(runner_module.subprocess, "Popen", side_effect=wrapping_popen):
+            result = run_probe(request)
+        # An invalidated pipe during the post-kill drain must not downgrade the confirmed
+        # timeout into a generic environmental failure.
+        self.assertEqual(result.outcome, "helper_timeout")
+        self.assertIn("helper_timeout", result.rejections)
+
     def test_os_denied_direct_kill_still_returns_bounded_and_classified(self) -> None:
         from unittest import mock
 
