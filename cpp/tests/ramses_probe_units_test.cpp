@@ -796,6 +796,16 @@ bool expectPerspectiveContract()
     if (!expectPerspectiveRejected(badBoundsFile, "CID_CARHUB_ALL_GOOD", "perspective_values_invalid"))
         return false;
 
+    const auto oversizedFile = root.path() / "oversized.json";
+    {
+        std::ofstream stream(oversizedFile, std::ios::binary | std::ios::trunc);
+        const std::string filler(64u * 1024u, 'x');
+        for (int block = 0; block < 20; ++block)
+            stream << filler;  // ~1.25 MiB, above the 1 MiB perspective cap
+    }
+    if (!expectPerspectiveRejected(oversizedFile, "CID_CARHUB_ALL_GOOD", "perspective_too_large"))
+        return false;
+
     return true;
 }
 
@@ -1055,6 +1065,89 @@ bool expectRenderedFrameContract()
     }
     return true;
 }
+
+bool expectLegacyAspectCraneIsDriven()
+{
+    TemporaryDirectory sceneDir;
+    const auto scenePath = sceneDir.path() / "legacy-crane.ramses";
+    {
+        ramses::RamsesFrameworkConfig config{ramses::EFeatureLevel_01};
+        ramses::RamsesFramework framework{config};
+        auto* client = framework.createClient("sgfx-probe-legacy-crane-save");
+        auto* scene = client->createScene(ramses::sceneId_t{2031u}, "probe-legacy-crane-scene");
+        auto* camera = scene->createPerspectiveCamera("probe-camera");
+        camera->setFrustum(19.0f, 480.0f / 270.0f, 0.1f, 100.0f);
+        camera->setViewport(0, 0, 480u, 270u);
+        auto* pass = scene->createRenderPass("probe-pass");
+        pass->setCamera(*camera);
+        auto* group = scene->createRenderGroup("probe-group");
+        pass->addRenderGroup(*group);
+        auto* engine = scene->createLogicEngine("probe-legacy-crane-logic");
+        // The crane exposes the legacy prototype spelling AspectFromResolution_isEnabled instead of
+        // the modern AutoAspect; the probe must still drive it (real IDCevo exports vary here).
+        constexpr std::string_view craneInterfaceSource = R"(
+            function interface(inout)
+                inout.AspectFromResolution_isEnabled = Type:Bool()
+                inout.Scale = Type:Float()
+                inout.Origin = Type:Vec3f()
+                inout.ShiftXY = Type:Vec2i()
+                inout.CraneGimbal = {
+                    Distance = Type:Float(),
+                    Yaw = Type:Float(),
+                    Pitch = Type:Float(),
+                    Roll = Type:Float()
+                }
+                inout.Frustum = {
+                    HorizontalFOV = Type:Float(),
+                    AspectRatio = Type:Float(),
+                    NearPlane = Type:Float(),
+                    FarPlane = Type:Float()
+                }
+                inout.Viewport = {
+                    OffsetX = Type:Int32(),
+                    OffsetY = Type:Int32(),
+                    Width = Type:Int32(),
+                    Height = Type:Int32()
+                }
+            end
+        )";
+        if (engine->createLuaInterface(craneInterfaceSource, "Interface_CameraCrane") == nullptr ||
+            !scene->flush() || !scene->saveToFile(scenePath.string()))
+        {
+            std::cerr << "could not save the legacy-spelling camera-crane probe scene\n";
+            return false;
+        }
+    }
+
+    TemporaryDirectory perspectiveDir;
+    const auto perspectiveFile = perspectiveDir.path() / "perspectives_probe.json";
+    if (!writeTextFile(perspectiveFile, validPerspectiveJson()))
+        return false;
+
+    TemporaryDirectory outputRoot;
+    sgfx::cine::RamsesProbeCliRequest request;
+    request.profile = "G45";
+    request.backend = "opengl";
+    request.scene_path = scenePath;
+    request.output_root = outputRoot.path();
+    request.perspective_path = perspectiveFile;
+    request.perspective_id = "CID_CARHUB_ALL_GOOD";
+
+    const auto outcome = sgfx::cine::execute_probe_request(request);
+    std::ifstream stream(outcome.report_path, std::ios::binary);
+    const auto report = nlohmann::json::parse(std::string((std::istreambuf_iterator<char>(stream)),
+                                                          std::istreambuf_iterator<char>()));
+    // The legacy crane root must be driven (real render outcome + at least one driven input),
+    // not silently reported as missing_contract with no frame.
+    if (report["frame"]["outcome"] != "readback_complete" ||
+        report["frame"]["drivenInputs"].get<int>() < 1)
+    {
+        std::cerr << "legacy AspectFromResolution crane was not driven: "
+                  << report["frame"]["outcome"] << "\n";
+        return false;
+    }
+    return true;
+}
 }
 
 int main()
@@ -1082,6 +1175,8 @@ int main()
     if (!expectExecuteProbeContract())
         return 1;
     if (!expectRenderedFrameContract())
+        return 1;
+    if (!expectLegacyAspectCraneIsDriven())
         return 1;
 
     std::cout << "Ramses probe units OK\n";

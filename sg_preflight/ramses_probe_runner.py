@@ -31,6 +31,9 @@ _FRAME_OUTCOMES = {"readback_complete", "missing_contract", "renderer_unavailabl
                    "scene_incompatible", "logic_update_failed", "lifecycle_rejected",
                    "lifecycle_timeout", "readback_failed", "frame_write_failed", "frame_too_large"}
 _FRAME_CLASSIFICATIONS = {"content", "black", "undetermined"}
+_FRAME_KEYS = {"outcome", "classification", "file", "drivenInputs"}
+_FAILURE_REASONS = {"scene_unavailable", "scene_incompatible", "framework_unavailable",
+                    "unexpected_exception"}
 
 
 @dataclass(frozen=True)
@@ -63,11 +66,13 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _porcelain_path(line: str) -> str:
-    path = line[3:]
-    if " -> " in path:
-        path = path.split(" -> ", 1)[1]
-    return path.strip().strip('"')
+def _porcelain_paths(line: str) -> list[str]:
+    # A porcelain status line references one path, or two for a rename/copy ("old -> new").
+    body = line[3:]
+    if " -> " in body:
+        old, new = body.split(" -> ", 1)
+        return [old.strip().strip('"'), new.strip().strip('"')]
+    return [body.strip().strip('"')]
 
 
 def _worktree_status(anchor: Path, exclude: Path | None = None) -> str | None:
@@ -95,10 +100,15 @@ def _worktree_status(anchor: Path, exclude: Path | None = None) -> str | None:
         except (OSError, ValueError):
             prefix = ""
         if prefix and prefix != ".":
+            def _under_output(path: str) -> bool:
+                return path.startswith(prefix + "/") or path.rstrip("/") == prefix
+
+            # Drop a line only when every path it names lives under the probe's own output root.
+            # A rename that moves a tracked source file OUT of the tree into the output root keeps
+            # the line (its source side is outside the prefix), so the mutation is still caught.
             lines = [
                 line for line in lines
-                if not _porcelain_path(line).startswith(prefix + "/")
-                and _porcelain_path(line).rstrip("/") != prefix
+                if not all(_under_output(path) for path in _porcelain_paths(line))
             ]
     return "\n".join(lines)
 
@@ -142,7 +152,8 @@ def validate_native_report(report: object, *, expected_profile: str,
         has_failed_phase = any(record["status"] == "failed" for record in phases)
         failure = report["failure"]
         failure_valid = failure is None or (
-            isinstance(failure, dict) and set(failure.keys()) == {"phase", "reason"})
+            isinstance(failure, dict) and set(failure.keys()) == {"phase", "reason"}
+            and failure["phase"] in _PHASE_NAMES and failure["reason"] in _FAILURE_REASONS)
         if not failure_valid or has_failed_phase != (failure is not None):
             rejections.append("partial_report")
 
@@ -153,6 +164,8 @@ def validate_native_report(report: object, *, expected_profile: str,
 
     frame = report["frame"]
     if isinstance(frame, dict):
+        if set(frame.keys()) - _FRAME_KEYS:
+            rejections.append("malformed_report")
         if frame.get("outcome") not in _FRAME_OUTCOMES:
             rejections.append("malformed_report")
         classification = frame.get("classification")
@@ -277,6 +290,14 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
         persist_console("stderr.log", expired.stderr)
         rejections.append("helper_timeout")
         return finish("helper_timeout")
+
+    # Re-verify the helper against its pin after execution: a same-machine writer could have
+    # swapped the binary (or a symlink/junction in its path) in the window between the pre-launch
+    # hash and the exec, so the digest that ran must still match what was vetted.
+    if not request.helper_path.is_file() or \
+            sha256_file(request.helper_path).lower() != request.helper_sha256.lower():
+        rejections.append("untrusted_helper")
+        return finish("untrusted_helper")
 
     if not report_path.is_file():
         return finish("helper_crash")

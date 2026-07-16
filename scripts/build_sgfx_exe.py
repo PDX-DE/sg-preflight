@@ -351,21 +351,34 @@ def _merge_move_into_held(source: Path, dest: Path) -> None:
     # Move the *contents* of source into dest. dest may already exist and carry an external
     # directory handle that blocks its own removal but still permits writes into it; a same-named
     # held subdirectory is merged into rather than replaced, so a nested hold never nests the tree.
+    # The freshly built source is authoritative: if a stale destination entry has the wrong type
+    # (a file where a directory belongs, or vice versa), it is cleared rather than crashing the swap.
     dest.mkdir(parents=True, exist_ok=True)
     for child in sorted(source.iterdir()):
         target = dest / child.name
-        if child.is_dir() and not child.is_symlink():
-            if target.exists():
+        child_is_dir = child.is_dir() and not child.is_symlink()
+        target_exists = target.exists() or target.is_symlink()
+        target_is_dir = target_exists and target.is_dir() and not target.is_symlink()
+        if child_is_dir:
+            if target_exists and not target_is_dir:
+                target.unlink()
+                target_exists = False
+            if not target_exists:
+                shutil.move(str(child), str(target))
+            else:
                 _merge_move_into_held(child, target)
                 try:
                     child.rmdir()
                 except OSError:
                     if not _is_directory_skeleton(child):
                         raise
-            else:
-                shutil.move(str(child), str(target))
         else:
-            if target.exists() or target.is_symlink():
+            if target_is_dir:
+                _rmtree_tolerating_held_dirs(target)
+                if target.exists():
+                    raise OSError(
+                        f"cannot place file {child} over a held directory at {target}")
+            elif target_exists:
                 target.unlink()
             shutil.move(str(child), str(target))
 
@@ -377,6 +390,15 @@ def relocate_fresh_bundle(source_bundle: Path, dest_bundle: Path) -> Path:
     # which may survive from a prior run only as a held-but-empty skeleton.
     _merge_move_into_held(source_bundle, dest_bundle)
     return dest_bundle
+
+
+def _fresh_staging_distpath() -> Path:
+    # A never-before-used distpath so PyInstaller's own --noconfirm rmtree never has to touch a
+    # held canonical output directory. Kept as short as an 8-character unique name allows, because
+    # the entire bundle (including the deep QtQuick QML assets) is assembled beneath it and Windows
+    # still caps most build tools near MAX_PATH.
+    STAGING_DIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="", dir=str(STAGING_DIST_PATH.parent)))
 
 
 def _grafiks_runtime_source() -> Path | None:
@@ -561,11 +583,19 @@ def swap_staged_bundle(staged_bundle: Path) -> None:
         if final_single_file.exists():
             _rename_existing(final_single_file, backup_single_file)
             moved_single_file = True
-        shutil.move(str(staged_bundle), str(final_bundle))
+        # Move the staged bundle's *contents* into the destination rather than renaming the staged
+        # directory itself, so an external handle held on the staged directory cannot block the swap
+        # with the same access-denied error the fresh-distpath assembly already works around.
+        relocate_fresh_bundle(staged_bundle, final_bundle)
+        # The staged directory is now empty; remove it, tolerating an external hold that can only
+        # leave behind an empty skeleton.
+        if staged_bundle.exists():
+            _rmtree_tolerating_held_dirs(staged_bundle)
     except Exception:
-        if moved_bundle and backup_bundle.exists() and not final_bundle.exists():
+        _remove_existing(final_bundle)
+        if moved_bundle and backup_bundle.exists():
             _rename_existing(backup_bundle, final_bundle)
-        if moved_single_file and backup_single_file.exists() and not final_single_file.exists():
+        if moved_single_file and backup_single_file.exists():
             _rename_existing(backup_single_file, final_single_file)
         raise
     _remove_existing(backup_bundle)
@@ -590,16 +620,15 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("PyInstaller is required. Install with `pip install -e .[packaging]`.") from exc
 
     clean_staging_outputs()
-    STAGING_DIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fresh_dist = Path(tempfile.mkdtemp(prefix="sgfx-stage-", dir=str(STAGING_DIST_PATH.parent)))
-    try:
-        PyInstaller.__main__.run(build_pyinstaller_args(dist_path=fresh_dist))
-        staged_bundle = relocate_fresh_bundle(
-            fresh_dist / "sgfx-preflight", STAGING_DIST_PATH / "sgfx-preflight"
-        )
-    finally:
-        if fresh_dist.exists():
-            _rmtree_tolerating_held_dirs(fresh_dist)
+    fresh_dist = _fresh_staging_distpath()
+    PyInstaller.__main__.run(build_pyinstaller_args(dist_path=fresh_dist))
+    staged_bundle = relocate_fresh_bundle(
+        fresh_dist / "sgfx-preflight", STAGING_DIST_PATH / "sgfx-preflight"
+    )
+    # Remove the fresh distpath only after a successful relocate; on any failure above it is left
+    # intact so a partial move never destroys freshly assembled output that had not yet been moved.
+    if fresh_dist.exists():
+        _rmtree_tolerating_held_dirs(fresh_dist)
     remove_private_install_metadata(staged_bundle)
     qml_imports = scan_qml_imports(ROOT / "sg_preflight" / "desktop" / "qml")
     prune_staged_qml_roots(staged_bundle, qml_imports)

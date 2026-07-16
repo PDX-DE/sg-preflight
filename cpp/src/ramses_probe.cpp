@@ -596,7 +596,11 @@ bool applyProbePerspective(ramses::Property& root, const RamsesProbePerspective&
 {
     // Viewport targets the readback buffer; every other value comes from the authored perspective.
     bool ok = true;
-    ok &= setProbeProperty<bool>(root, {"AutoAspect"}, perspective.aspect_from_resolution);
+    // Accept both crane generations: the modern AutoAspect spelling and the legacy prototype
+    // AspectFromResolution_isEnabled that real IDCevo exports may still carry (mirrors the preview).
+    ok &= (setProbeProperty<bool>(root, {"AutoAspect"}, perspective.aspect_from_resolution)
+           || setProbeProperty<bool>(root, {"AspectFromResolution_isEnabled"},
+                                     perspective.aspect_from_resolution));
     ok &= setProbeProperty<float>(root, {"CraneGimbal", "Distance"}, perspective.distance);
     ok &= setProbeProperty<float>(root, {"CraneGimbal", "Pitch"}, perspective.pitch);
     ok &= setProbeProperty<float>(root, {"CraneGimbal", "Roll"}, perspective.roll);
@@ -1054,6 +1058,15 @@ RamsesProbePerspectiveParse parse_probe_perspective(const std::filesystem::path&
     if (!stream.good())
     {
         parse.rejection = "perspective_unreadable";
+        return parse;
+    }
+    // Bound the read like the report (2 MiB) and frame (1 MiB) paths so an oversized or corrupt
+    // --perspective file fails fast and classified instead of slurping arbitrary memory.
+    std::error_code sizeError;
+    const auto fileSize = std::filesystem::file_size(file, sizeError);
+    if (sizeError || fileSize > 1024u * 1024u)
+    {
+        parse.rejection = "perspective_too_large";
         return parse;
     }
     const std::string text((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());

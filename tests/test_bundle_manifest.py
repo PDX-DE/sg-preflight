@@ -760,3 +760,62 @@ class TestHeldStagingDirectories(unittest.TestCase):
                 self.assertFalse((dest / "_internal" / "_internal").exists())
             finally:
                 kernel32.CloseHandle(handle)
+
+    def test_merge_move_resolves_file_vs_directory_type_mismatch(self) -> None:
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src"
+            (source / "widget").mkdir(parents=True)
+            (source / "widget" / "inner.txt").write_text("fresh-dir", encoding="utf-8")
+            (source / "plain.txt").write_text("fresh-file", encoding="utf-8")
+            dest = root / "dst"
+            dest.mkdir()
+            (dest / "widget").write_text("stale-file-where-dir-belongs", encoding="utf-8")
+            (dest / "plain.txt").mkdir()  # stale dir where a file belongs
+            (dest / "plain.txt" / "leftover.txt").write_text("stale", encoding="utf-8")
+            # The fresh build output is authoritative; both mismatches resolve without crashing.
+            module.relocate_fresh_bundle(source, dest)
+            self.assertTrue((dest / "widget" / "inner.txt").is_file())
+            self.assertTrue((dest / "plain.txt").is_file())
+            self.assertEqual((dest / "plain.txt").read_text(encoding="utf-8"), "fresh-file")
+
+    def test_fresh_staging_distpath_stays_short(self) -> None:
+        module = _load_build_script()
+        distpath = module._fresh_staging_distpath()
+        try:
+            # Much shorter than the earlier 19-char "sgfx-stage-<8 random>" name, preserving
+            # Windows MAX_PATH headroom during the PyInstaller assembly phase.
+            self.assertLessEqual(len(distpath.name), 10)
+            self.assertTrue(distpath.is_dir())
+        finally:
+            distpath.rmdir()
+
+    def test_swap_staged_bundle_tolerates_held_staged_source(self) -> None:
+        import ctypes
+
+        module = _load_build_script()
+        kernel32 = ctypes.windll.kernel32
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staged = root / "b" / "sgfx-preflight"
+            (staged / "_internal").mkdir(parents=True)
+            (staged / "sgfx-preflight.exe").write_text("exe", encoding="utf-8")
+            (staged / "_internal" / "base_library.zip").write_text("zip", encoding="utf-8")
+            saved = (module.DIST_PATH, module.WORK_PATH,
+                     module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH)
+            module.DIST_PATH = root / "dist"
+            module.WORK_PATH = root / "work"
+            module.BACKUP_BUNDLE_PATH = root / "p"
+            module.BACKUP_SINGLE_FILE_PATH = root / "p.exe"
+            handle = kernel32.CreateFileW(str(staged), 0x80000000, 0x1, None, 3, 0x02000000, None)
+            self.assertNotEqual(handle, -1)
+            try:
+                module.swap_staged_bundle(staged)
+                final = root / "dist" / "sgfx-preflight"
+                self.assertTrue((final / "sgfx-preflight.exe").is_file())
+                self.assertTrue((final / "_internal" / "base_library.zip").is_file())
+            finally:
+                kernel32.CloseHandle(handle)
+                (module.DIST_PATH, module.WORK_PATH,
+                 module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH) = saved

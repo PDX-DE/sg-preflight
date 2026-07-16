@@ -166,6 +166,33 @@ class RamsesProbeRunnerValidationTests(unittest.TestCase):
                    "file": "first-frame.png", "drivenInputs": 1})
         self.assertIn("malformed_report", self._rejections(report))
 
+    def test_frame_with_unknown_key_fails_closed(self) -> None:
+        report = _native_report(
+            profile="G45", scene_path=self.scene_path,
+            frame={"outcome": "readback_complete", "classification": "content",
+                   "file": "first-frame.png", "drivenInputs": 1,
+                   "smuggled_payload": {"anything": [1, 2, 3]}})
+        self.assertIn("malformed_report", self._rejections(report))
+
+    def test_failure_reason_cannot_spoof_a_reserved_outcome(self) -> None:
+        report = _native_report(
+            profile="G45", scene_path=self.scene_path,
+            failure={"phase": "scene_load", "reason": "completed"})
+        self.assertIn("partial_report", self._rejections(report))
+
+    def test_failure_reason_outside_whitelist_is_rejected(self) -> None:
+        report = _native_report(
+            profile="G45", scene_path=self.scene_path,
+            failure={"phase": "scene_load", "reason": "totally_made_up_reason"})
+        self.assertIn("partial_report", self._rejections(report))
+
+    def test_failure_phase_outside_whitelist_is_rejected(self) -> None:
+        report = _native_report(
+            profile="G45", scene_path=self.scene_path,
+            failure={"phase": "scene_load", "reason": "scene_unavailable"})
+        report["failure"]["phase"] = "not_a_real_phase"
+        self.assertIn("partial_report", self._rejections(report))
+
 
 class RamsesProbeRunnerLaunchTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -419,6 +446,84 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         )
         result = run_probe(request)
         self.assertEqual(result.outcome, "roots_not_disjoint")
+
+    def test_helper_renaming_tracked_source_into_output_root_is_caught(self) -> None:
+        import subprocess as sp
+        worktree = self.root / "wt3"
+        worktree.mkdir()
+        sp.run(["git", "init", "-q"], cwd=worktree, check=False, capture_output=True)
+        sp.run(["git", "config", "user.email", "t@example.com"], cwd=worktree,
+               check=False, capture_output=True)
+        sp.run(["git", "config", "user.name", "Test"], cwd=worktree,
+               check=False, capture_output=True)
+        scene = worktree / "export" / "exported.ramses"
+        _write_text(scene, "worktree-scene-bytes")
+        secret = worktree / "export" / "secret_source.txt"
+        _write_text(secret, "a tracked source file that must not disappear silently")
+        output_root = worktree / "probe-out"
+        output_root.mkdir()
+        sp.run(["git", "add", "-A"], cwd=worktree, check=False, capture_output=True)
+        sp.run(["git", "commit", "-q", "-m", "seed"], cwd=worktree, check=False, capture_output=True)
+
+        report = _native_report(profile="G45", scene_path=str(scene))
+        fixture = self.root / "wt3-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        # The helper moves a tracked source file OUT of the source tree into the probe output
+        # root and stages it, producing a single `R export/... -> probe-out/...` rename line.
+        body = (
+            "@echo off\r\n"
+            f'copy /Y "{fixture}" "{output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            f'git -C "{worktree}" mv export/secret_source.txt probe-out/secret_source.txt\r\n'
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=scene,
+            output_root=output_root,
+            helper_path=helper,
+            helper_sha256=digest,
+        )
+        result = run_probe(request)
+        self.assertEqual(result.outcome, "worktree_status_changed")
+        self.assertFalse(secret.exists())
+
+    def test_helper_swapped_after_hash_check_is_rejected(self) -> None:
+        report = _native_report(profile="G45", scene_path=str(self.scene))
+        fixture = self.root / "swap-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        # The helper writes a valid report, then rewrites its own on-disk bytes before exiting,
+        # so its digest no longer matches the pinned hash that was verified before launch.
+        body = (
+            "@echo off\r\n"
+            f'copy /Y "{fixture}" "{self.output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            'echo tampered-after-launch >> "%~f0"\r\n'
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "untrusted_helper")
+
+    def test_helper_is_fully_awaited_no_detached_child(self) -> None:
+        marker = self.root / "helper-finished.marker"
+        report = _native_report(profile="G45", scene_path=str(self.scene))
+        fixture = self.root / "await-fixture.json"
+        _write_text(fixture, json.dumps(report))
+        # The helper sleeps, then writes a completion marker as its final action. Because the
+        # runner must block on the child (no detach/orphan), the marker is always present by
+        # the time run_probe returns.
+        body = (
+            "@echo off\r\n"
+            "ping -n 2 127.0.0.1 >nul\r\n"
+            f'copy /Y "{fixture}" "{self.output_root / NATIVE_REPORT_NAME}" >nul\r\n'
+            f'echo done > "{marker}"\r\n'
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        result = run_probe(self._request(helper, digest))
+        self.assertEqual(result.outcome, "completed")
+        self.assertTrue(marker.is_file())
+        self.assertEqual(marker.read_text(encoding="ascii").strip(), "done")
 
 
 if __name__ == "__main__":
