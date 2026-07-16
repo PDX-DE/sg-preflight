@@ -950,8 +950,11 @@ def _execute_ramses_r0_stage(
         # runner may have written stays on disk under the run root but is not surfaced. The
         # recorded flag is set only after the bookkeeping it describes has actually succeeded.
         if result.evidence_path is not None and stage["family"] != "unavailable":
-            artifacts.append(_artifact("Ramses probe evidence", Path(result.evidence_path)))
+            # The fallible call happens first; the remaining commits cannot raise, so the flag,
+            # the path, and the artifact always appear together or not at all.
+            evidence_artifact = _artifact("Ramses probe evidence", Path(result.evidence_path))
             record.paths["ramses_r0_evidence"] = str(result.evidence_path)
+            artifacts.append(evidence_artifact)
             stage["evidence_recorded"] = True
         # Console streams stay protected under the run root: recorded as paths for the operator,
         # never as reveal artifacts, so raw native output cannot reach the shell (reqs 18/19).
