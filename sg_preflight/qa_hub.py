@@ -162,15 +162,17 @@ def _matching_action_record(action_records: Sequence[object], profile_id: str) -
             or str(_value(record, "action_id", "")).casefold() != expected_action_id
         ):
             continue
+        # This is the newest matching run. If it is unreadable, report no local run at all
+        # rather than falling through to an older record and presenting stale results as current.
         status = str(_value(record, "status", "")).strip().lower()
         if status not in {"queued", "running", "completed", "failed"}:
-            continue
+            return None
         summary = _value(record, "summary", None)
         errors = _count(summary, "errors")
         warnings = _count(summary, "warnings")
         info = _count(summary, "info")
         if status == "completed" and None in {errors, warnings, info}:
-            continue
+            return None
         child_run_id = _identifier(summary.get("child_run_id", "")) if isinstance(summary, Mapping) else ""
         timestamp = (
             _timestamp(_value(record, "completed_at_utc", ""))
@@ -325,6 +327,18 @@ def _ramses_check_rows(
                 "label": "Ramses scene probe",
                 "state": "failed",
                 "summary": "The scene probe did not complete; the local QA result stands on its own.",
+                "routeId": "api-version-coverage",
+            }
+        ], []
+    if probe.get("outcome") != "completed":
+        # A classified diagnostic (for example an incompatible scene) is honest evidence of a
+        # scene that could not be validated - it must never read like a validated clean scene.
+        return [
+            {
+                "id": "ramses-validation",
+                "label": "Ramses scene validation",
+                "state": "failed",
+                "summary": "The scene could not be validated; see the probe evidence.",
                 "routeId": "api-version-coverage",
             }
         ], []

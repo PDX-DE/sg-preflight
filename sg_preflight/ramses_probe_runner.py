@@ -78,6 +78,10 @@ class ProbeRunResult:
 _PROBE_HELPER_BUNDLE_RELATIVE = Path("_internal") / "cpp" / "bin" / "sgfx_cine_ramses_probe.exe"
 _BUNDLE_MANIFEST_NAME = "bundle-manifest.json"
 _SHA256_HEX = 64
+# The probe executable loads these at start; a missing one dies as an opaque process crash, so
+# readiness must name the prerequisite instead (mirrors PREVIEW_RUNTIME_FILES minus the CLI).
+_PROBE_RUNTIME_DLLS = ("SDL3.dll", "ramses-shared-lib-headless.dll",
+                       "ramses-shared-lib-renderer.dll", "ramses-shared-lib.dll")
 
 
 @dataclass(frozen=True)
@@ -112,9 +116,13 @@ def resolve_packaged_probe_helper(bundle_root: Path) -> ProbeHelperReadiness:
         return unavailable("helper_not_packaged")
     if len(digest) != _SHA256_HEX or any(c not in "0123456789abcdef" for c in digest):
         return unavailable("manifest_malformed")
+    if manifest.get("ramses_preview_helper") != "included":
+        return unavailable("runtime_not_packaged")
     helper_path = Path(bundle_root) / _PROBE_HELPER_BUNDLE_RELATIVE
     if not helper_path.is_file():
         return unavailable("helper_missing")
+    if any(not (helper_path.parent / name).is_file() for name in _PROBE_RUNTIME_DLLS):
+        return unavailable("runtime_missing")
     if sha256_file(helper_path) != digest:
         return unavailable("helper_digest_mismatch")
     return ProbeHelperReadiness(ready=True, reason="", helper_path=helper_path,
@@ -338,19 +346,30 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
         target = request.output_root / stream_name
         target.write_bytes((payload or b"")[:_CONSOLE_STREAM_MAX_BYTES])
 
+    process = subprocess.Popen(
+        [str(request.helper_path), *build_helper_arguments(request)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     try:
-        completed = subprocess.run(
-            [str(request.helper_path), *build_helper_arguments(request)],
-            capture_output=True,
-            timeout=request.timeout_seconds,
-            check=False,
-        )
-        exit_code = completed.returncode
-        persist_console("stdout.log", completed.stdout)
-        persist_console("stderr.log", completed.stderr)
-    except subprocess.TimeoutExpired as expired:
-        persist_console("stdout.log", expired.stdout)
-        persist_console("stderr.log", expired.stderr)
+        stdout_bytes, stderr_bytes = process.communicate(timeout=request.timeout_seconds)
+        exit_code = process.returncode
+        persist_console("stdout.log", stdout_bytes)
+        persist_console("stderr.log", stderr_bytes)
+    except subprocess.TimeoutExpired:
+        # Killing only the direct child leaves any helper-spawned process holding the console
+        # pipes open, which blocks the drain until it exits on its own; terminate the tree.
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                           capture_output=True, check=False)
+        else:
+            process.kill()
+        try:
+            stdout_bytes, stderr_bytes = process.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            stdout_bytes, stderr_bytes = b"", b""
+        persist_console("stdout.log", stdout_bytes)
+        persist_console("stderr.log", stderr_bytes)
         rejections.append("helper_timeout")
         return finish("helper_timeout")
 

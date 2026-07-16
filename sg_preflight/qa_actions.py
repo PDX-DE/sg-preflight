@@ -897,12 +897,17 @@ def _execute_ramses_r0_stage(
             stage["reason"] = readiness.reason
             return stage, [], []
         # Same resolution as the accepted preview path: prefer the source checkout's export and
-        # fall back to the local project export when the reference does not carry one.
+        # fall back to the local project export when the reference does not carry one. Which tree
+        # actually supplied the scene is recorded, because the four packs validated the source
+        # tree and the evidence must say when the probe read a different export.
         scene = profile.source_project_root() / "export" / "exported.ramses"
+        stage["scene_source"] = "reference"
         if not scene.is_file():
             scene = profile.project_root.resolve() / "export" / "exported.ramses"
+            stage["scene_source"] = "local_export"
         if not scene.is_file():
             stage["reason"] = "scene_unavailable"
+            stage["scene_source"] = ""
             return stage, [], []
         _set_action_progress(
             record,
@@ -934,11 +939,23 @@ def _execute_ramses_r0_stage(
         if result.evidence_path is not None:
             stage["evidence_recorded"] = True
             artifacts.append(_artifact("Ramses probe evidence", Path(result.evidence_path)))
-        if stage["family"] == "evidence":
+            record.paths["ramses_r0_evidence"] = str(result.evidence_path)
+        # Console streams stay protected under the run root: recorded as paths for the operator,
+        # never as reveal artifacts, so raw native output cannot reach the shell (reqs 18/19).
+        for stream_name in ("stdout", "stderr"):
+            stream_path = run_dir / f"{stream_name}.log"
+            if stream_path.is_file():
+                record.paths[f"ramses_r0_{stream_name}"] = str(stream_path)
+        if stage["family"] == "evidence" and stage["evidence_recorded"]:
             notes.append(
                 f"Ramses probe evidence recorded for {profile.profile_id} "
                 f"({stage['finding_errors']} errors, {stage['finding_warnings']} warnings); "
                 "manual review remains required."
+            )
+        elif stage["family"] == "evidence":
+            notes.append(
+                f"Ramses probe completed for {profile.profile_id}, but the evidence file "
+                "could not be retained."
             )
         else:
             notes.append(f"Ramses probe {stage['family']}: {result.outcome}.")
@@ -947,6 +964,7 @@ def _execute_ramses_r0_stage(
         stage["family"] = "execution_failure"
         stage["outcome"] = "stage_error"
         stage["reason"] = type(exc).__name__
+        stage["detail"] = str(exc)[:160]
         return stage, [], []
 
 

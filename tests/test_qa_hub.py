@@ -204,6 +204,29 @@ class TestQaHubSnapshot(unittest.TestCase):
                 self.assertFalse(str(check["id"]).startswith("ramses-"), check["id"])
         self.assertEqual(gates, baseline)
 
+    def test_classified_scene_failure_never_reads_passed(self) -> None:
+        record = self._record()
+        record["summary"]["ramses_r0"] = self._r0_stage(
+            outcome="scene_incompatible", errors=0, warnings=0)
+        gates = self._gates(self._snapshot(action_records=[record]))
+        row = next(c for c in gates["interface"]["checks"] if c["id"] == "ramses-validation")
+        self.assertEqual(row["state"], "failed")
+        logic_rows = [c for c in gates["review"]["checks"] if c["id"] == "ramses-logic"]
+        self.assertEqual(logic_rows, [])
+
+    def test_an_unreadable_newest_record_never_surfaces_an_older_one(self) -> None:
+        newest = self._record()
+        newest["summary"] = {"errors": "corrupted"}
+        older = self._record()
+        older["run_id"] = "action-000"
+        older["summary"]["ramses_r0"] = self._r0_stage(errors=5)
+        snapshot = self._snapshot(action_records=[newest, older])
+        self.assertEqual(snapshot["latestLocalRun"], {})
+        gates = self._gates(snapshot)
+        for gate in gates.values():
+            for check in gate["checks"]:
+                self.assertFalse(str(check["id"]).startswith("ramses-"), check["id"])
+
     def test_malformed_probe_summary_never_reaches_the_rows(self) -> None:
         record = self._record()
         record["summary"]["ramses_r0"] = {

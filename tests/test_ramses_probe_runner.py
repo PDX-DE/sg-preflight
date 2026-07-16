@@ -538,6 +538,35 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         result = run_probe(self._request(helper, digest))
         self.assertEqual(result.outcome, "untrusted_helper")
 
+    def test_helper_timeout_kills_and_classifies(self) -> None:
+        # The helper outlives the request budget; the runner must terminate it, classify the
+        # run as helper_timeout, and keep whatever console output was captured under the root.
+        body = (
+            "@echo off\r\n"
+            "echo phase metadata\r\n"
+            "ping -n 30 127.0.0.1 >nul\r\n"
+            "exit /b 0\r\n"
+        )
+        helper, digest = self._helper(body)
+        request = ProbeRunRequest(
+            profile="G45",
+            scene_path=self.scene,
+            output_root=self.output_root,
+            helper_path=helper,
+            helper_sha256=digest,
+            timeout_seconds=2,
+        )
+        import time as time_module
+        started = time_module.monotonic()
+        result = run_probe(request)
+        elapsed = time_module.monotonic() - started
+        self.assertEqual(result.outcome, "helper_timeout")
+        self.assertIn("helper_timeout", result.rejections)
+        self.assertLess(elapsed, 20.0)
+        evidence = json.loads(
+            (self.output_root / EVIDENCE_FILE_NAME).read_text(encoding="utf-8"))
+        self.assertEqual(evidence["outcome"], "helper_timeout")
+
     def test_helper_is_fully_awaited_no_detached_child(self) -> None:
         marker = self.root / "helper-finished.marker"
         report = _native_report(profile="G45", scene_path=str(self.scene))
@@ -566,17 +595,31 @@ class PackagedProbeHelperReadinessTests(unittest.TestCase):
         self.addCleanup(self._temp.cleanup)
         self.bundle = Path(self._temp.name)
         self.helper = self.bundle / "_internal" / "cpp" / "bin" / "sgfx_cine_ramses_probe.exe"
+        for name in ("SDL3.dll", "ramses-shared-lib-headless.dll",
+                     "ramses-shared-lib-renderer.dll", "ramses-shared-lib.dll"):
+            _write_text(self.helper.parent / name, f"{name} fixture")
 
-    def _write_manifest(self, *, state: str = "included", sha256: str | None = None) -> None:
+    def _write_manifest(self, *, state: str = "included", sha256: str | None = None,
+                        preview: str = "included") -> None:
         digest = sha256 if sha256 is not None else sha256_file(self.helper)
         (self.bundle / "bundle-manifest.json").write_text(
             json.dumps({
                 "schema_version": 1,
+                "ramses_preview_helper": preview,
                 "ramses_probe_helper": state,
                 "ramses_probe_helper_sha256": digest if state == "included" else "",
             }),
             encoding="utf-8",
         )
+
+    def test_missing_runtime_is_an_exact_prerequisite_not_a_crash(self) -> None:
+        _write_text(self.helper, "packaged probe helper bytes")
+        self._write_manifest(preview="unavailable")
+        self.assertEqual(resolve_packaged_probe_helper(self.bundle).reason,
+                         "runtime_not_packaged")
+        self._write_manifest()
+        (self.helper.parent / "ramses-shared-lib.dll").unlink()
+        self.assertEqual(resolve_packaged_probe_helper(self.bundle).reason, "runtime_missing")
 
     def test_ready_helper_returns_path_and_digest(self) -> None:
         _write_text(self.helper, "packaged probe helper bytes")

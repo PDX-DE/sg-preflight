@@ -246,8 +246,42 @@ class TestQaActions(unittest.TestCase):
             self.assertEqual(stage["outcome"], "completed")
             self.assertEqual(stage["finding_errors"], 1)
             self.assertEqual(stage["finding_warnings"], 1)
+            # Under the pinned reference the source checkout and the local project coincide.
+            self.assertEqual(stage["scene_source"], "reference")
             labels = [item.get("label", "") for item in record.artifacts]
             self.assertIn("Ramses probe evidence", labels)
+            self.assertIn("ramses_r0_evidence", record.paths)
+
+    def test_unretained_evidence_is_never_reported_as_recorded(self) -> None:
+        from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile, scene, action, parent, child = self._two_stage_fixture(root)
+            helper = root / "bundle" / "_internal" / "cpp" / "bin" / "probe.exe"
+            write_text(helper, "helper bytes")
+            oversized = ProbeRunResult(
+                outcome="completed", exit_code=0, rejections=(),
+                evidence_path=None, native_report={"findings": []})
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.execute_profile_run", return_value=child))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.profiles.configured_reference_repo_root",
+                    return_value=root / "repositories" / "trunk"))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.resolve_packaged_probe_helper",
+                    return_value=ProbeHelperReadiness(
+                        ready=True, reason="", helper_path=helper, helper_sha256="a" * 64)))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.run_probe", return_value=oversized))
+                record = execute_operator_action(action, root, record=parent)
+            stage = record.summary["ramses_r0"]
+            self.assertEqual(stage["family"], "evidence")
+            self.assertFalse(stage["evidence_recorded"])
+            self.assertNotIn("ramses_r0_evidence", record.paths)
+            self.assertFalse(any("recorded for" in note for note in record.notes))
+            self.assertTrue(any("could not be retained" in note for note in record.notes))
 
     def test_probe_failure_never_fails_the_core_preflight(self) -> None:
         from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult

@@ -73,17 +73,24 @@
       unchanged (permitted by section 13's "may").
 - [x] Step 2: GREEN DONE in the hub's safe-projection layer: every row field passes the bounded-text
       sanitizers, `latestLocalRun` keeps its exact key set, no path or raw native error can reach QML
-      (reqs 18/19; the evidence artifact continues through the existing opaque artifact registry).
-      Suites: hub 13/13, presenters+capabilities 35/35, ui 22/22.
+      (reqs 18/19). The evidence file is recorded in the action record's artifacts and paths
+      (`ramses_r0_evidence`, plus protected `ramses_r0_stdout`/`ramses_r0_stderr` console paths that
+      are never exposed as reveal artifacts); wiring probe artifacts into the QML opaque-handle
+      registry joins the frame-lane slice, which is when a visual artifact first exists.
+      Suites: hub 15/15, presenters+capabilities 35/35, ui 22/22.
 
 ## Task 4 — Concurrency interlock and Qt wiring
 
 - [x] Step 1: RED DONE (`eb4469a`): one exclusive render slot — starting a diagnostic pre-empts the
       preview (pre-existing, test kept), and a preview requested while an effect holds the slot is
       queued with its launch permission preserved and started when the effect finishes (req 22; the
-      recorded G78 crash-under-concurrent-render rationale). Home audit: the frozen eight-capability
-      inventory test and the full capabilities suite pass unchanged — no new capability, action, page,
-      button, or toggle.
+      recorded G78 crash-under-concurrent-render rationale). Honest scope: the interlock test drives
+      the slot with a stand-in long-running effect — the guarantee holds for ANY effect (the slot is
+      capability-generic, so the probe-carrying preflight is covered by the same code path), and the
+      real probe-in-action case is exercised end to end by the real one-button run; reqs 22/23 flip in
+      the acceptance walk on that combined evidence, not on the stand-in test alone. Home audit: the
+      frozen eight-capability inventory test and the full capabilities suite pass unchanged — no new
+      capability, action, page, button, or toggle.
 - [x] Step 2: GREEN; focused suites: preview 17/17, core+capabilities 87/87, hub 13/13, ui 22/22.
 
 ## Task 5 — Gates and acceptance
