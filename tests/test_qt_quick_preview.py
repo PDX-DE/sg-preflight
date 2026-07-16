@@ -654,6 +654,96 @@ class TestPreviewControllerAndQml(unittest.TestCase):
             self.assertEqual(preview.preemptions, 1)
             controller.shutdown()
 
+    def test_preview_requests_defer_while_the_render_slot_is_held(self) -> None:
+        import threading
+
+        from PySide6.QtCore import QCoreApplication
+        from PySide6.QtGui import QGuiApplication
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.qa_operator_actions import OperatorAction
+        from tests.test_qt_quick_core import _FakeTaskCoordinator, _pump_until
+
+        application = QCoreApplication.instance() or QGuiApplication(["sgfx-interlock-test"])
+        self.assertIsNotNone(application)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            source = root / "source"
+            project = source / "Cars" / "G45"
+            output = workspace / "out" / "operator-ui" / "actions"
+            project.mkdir(parents=True)
+            action = OperatorAction(
+                action_id="sgfx_preflight__g45",
+                label="Run local QA checks",
+                description="Four deterministic packs",
+                kind="sgfx_preflight",
+                scope="profile",
+                ready=True,
+                profile_id="G45",
+                project_root=str(project),
+            )
+
+            class Record:
+                paths = {"summary": str(output / "run-1" / "summary.json")}
+
+            release = threading.Event()
+
+            def slow_executor(_action: object, _workspace: object) -> object:
+                release.wait(timeout=10)
+                return Record()
+
+            preview = self.FakePreviewCoordinator()
+            coordinator = _FakeTaskCoordinator()
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G45",
+                task_coordinator=coordinator,
+                shell_loader=lambda **_kwargs: {
+                    "schemaVersion": 1,
+                    "profileOptions": [{"id": "G45", "label": "BMW G45"}],
+                    "selectedProfile": {"id": "G45", "label": "BMW G45"},
+                    "gates": [],
+                    "selectedGateId": "asset",
+                    "latestLocalRun": {},
+                    "nextAction": {
+                        "capabilityId": "diagnostic.run",
+                        "actionId": action.action_id,
+                        "label": action.label,
+                    },
+                    "activity": [],
+                    "readOnly": True,
+                    "isApproval": False,
+                },
+                diagnostic_read_roots=(source,),
+                diagnostic_output_root=output,
+                action_getter=lambda _action_id, _workspace: action,
+                action_executor=slow_executor,
+                preview_coordinator=preview,
+            )
+            try:
+                controller.initialize()
+                identity, operation = coordinator.requests[-1]
+                coordinator.succeed(identity, operation())
+
+                self.assertTrue(controller.runDiagnostic(action.action_id, ["G45"]))
+                self.assertTrue(_pump_until(lambda: controller.capabilityState == "running"))
+                requests_before = len(preview.requests)
+                # A profile page refresh while the effect holds the render slot must queue the
+                # preview instead of racing a second renderer next to the probe (req 22).
+                self.assertTrue(controller.selectProfile("G45"))
+                identity, operation = coordinator.requests[-1]
+                coordinator.succeed(identity, operation())
+                self.assertEqual(len(preview.requests), requests_before)
+
+                release.set()
+                self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
+                self.assertTrue(_pump_until(lambda: len(preview.requests) > requests_before))
+                self.assertTrue(preview.requests[-1]["allow_launch"])
+            finally:
+                release.set()
+                controller.shutdown()
+
     def test_qml_uses_only_opaque_provider_urls_and_bounded_one_revolution_playback(self) -> None:
         root = Path(__file__).resolve().parents[1]
         qml = (

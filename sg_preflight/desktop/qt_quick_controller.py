@@ -430,6 +430,7 @@ class DesktopController(QObject):
         self._preview_coordinator = preview_coordinator
         self._preview_state = PreviewPublicState()
         self._preview_launch_allowed = False
+        self._preview_pending_after_effect = False
         self._preview_reduced_motion = False
         self._effect_generation = 0
         self._effect_context: _EffectContext | None = None
@@ -1079,6 +1080,11 @@ class DesktopController(QObject):
         else:
             self._set_capability_state("failed")
             self._set_capability_error("The capability did not complete successfully.")
+        if self._preview_pending_after_effect:
+            # The render slot is free again; start the preview that was queued behind the effect
+            # before any page reschedule can consume its launch permission.
+            self._preview_pending_after_effect = False
+            self._request_preview()
         is_current_page = (
             context.page_generation == self._generation
             and context.profile_id == self._current_profile_id
@@ -1504,6 +1510,12 @@ class DesktopController(QObject):
             or self._page_state != "ready"
             or not self._current_profile_id
         ):
+            return
+        if self._effect_future is not None and not self._effect_future.done():
+            # One exclusive render slot: a running capability may drive the packaged Ramses
+            # probe, so the preview is queued and re-requested when the effect completes.
+            self._preview_launch_allowed = allow_launch
+            self._preview_pending_after_effect = True
             return
         request_profile = getattr(coordinator, "request_profile", None)
         if not callable(request_profile):
