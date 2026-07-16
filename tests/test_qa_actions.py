@@ -311,6 +311,79 @@ class TestQaActions(unittest.TestCase):
             self.assertTrue(any("could not validate" in note for note in record.notes))
             self.assertFalse(any("see the probe evidence" in note for note in record.notes))
 
+    def test_bookkeeping_failure_never_reclassifies_a_truthful_result(self) -> None:
+        from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile, scene, action, parent, child = self._two_stage_fixture(root)
+            helper = root / "bundle" / "_internal" / "cpp" / "bin" / "probe.exe"
+            write_text(helper, "helper bytes")
+            evidence = root / "evidence.json"
+            write_text(evidence, "{}")
+            completed = ProbeRunResult(
+                outcome="completed", exit_code=0, rejections=(),
+                evidence_path=evidence,
+                native_report={"findings": [{"severity": "error"}, {"severity": "error"}]})
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.execute_profile_run", return_value=child))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.profiles.configured_reference_repo_root",
+                    return_value=root / "repositories" / "trunk"))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.resolve_packaged_probe_helper",
+                    return_value=ProbeHelperReadiness(
+                        ready=True, reason="", helper_path=helper, helper_sha256="a" * 64)))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.run_probe", return_value=completed))
+                from sg_preflight.qa_actions import _artifact as real_artifact
+
+                def probe_artifact_blocked(label, path):
+                    if "Ramses" in str(label):
+                        raise PermissionError("artifact bookkeeping blocked")
+                    return real_artifact(label, path)
+
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions._artifact", side_effect=probe_artifact_blocked))
+                record = execute_operator_action(action, root, record=parent)
+            stage = record.summary["ramses_r0"]
+            # The truthful classification and finding counts survive a bookkeeping failure.
+            self.assertEqual(stage["family"], "evidence")
+            self.assertEqual(stage["outcome"], "completed")
+            self.assertEqual(stage["finding_errors"], 2)
+            self.assertNotEqual(stage["outcome"], "stage_error")
+            self.assertTrue(record.notes)
+
+    def test_unavailable_outcome_note_never_points_at_evidence(self) -> None:
+        from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile, scene, action, parent, child = self._two_stage_fixture(root)
+            helper = root / "bundle" / "_internal" / "cpp" / "bin" / "probe.exe"
+            write_text(helper, "helper bytes")
+            evidence = root / "evidence.json"
+            write_text(evidence, "{}")
+            unavailable = ProbeRunResult(
+                outcome="scene_unavailable", exit_code=65, rejections=("scene_unavailable",),
+                evidence_path=evidence, native_report=None)
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.execute_profile_run", return_value=child))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.profiles.configured_reference_repo_root",
+                    return_value=root / "repositories" / "trunk"))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.resolve_packaged_probe_helper",
+                    return_value=ProbeHelperReadiness(
+                        ready=True, reason="", helper_path=helper, helper_sha256="a" * 64)))
+                stack.enter_context(mock.patch(
+                    "sg_preflight.qa_actions.run_probe", return_value=unavailable))
+                record = execute_operator_action(action, root, record=parent)
+            self.assertEqual(record.summary["ramses_r0"]["family"], "unavailable")
+            self.assertFalse(any("evidence retained" in note.lower() for note in record.notes))
+
     def test_unretained_evidence_is_never_reported_as_recorded(self) -> None:
         from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult
 

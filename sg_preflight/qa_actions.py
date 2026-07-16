@@ -862,6 +862,7 @@ _R0_EXECUTION_FAILURES = frozenset({
     "untrusted_helper", "malformed_report", "partial_report", "mismatched_profile",
     "mismatched_source", "escaped_path", "stale_report", "source_mutated",
     "worktree_status_changed", "roots_not_disjoint", "helper_crash", "helper_timeout",
+    "environment_error",
 })
 
 
@@ -934,8 +935,17 @@ def _execute_ramses_r0_stage(
             1 for item in findings if isinstance(item, dict) and item.get("severity") == "error")
         stage["finding_warnings"] = sum(
             1 for item in findings if isinstance(item, dict) and item.get("severity") == "warning")
-        artifacts: list[dict[str, str]] = []
-        notes: list[str] = []
+    except Exception as exc:
+        stage["family"] = "execution_failure"
+        stage["outcome"] = "stage_error"
+        stage["reason"] = type(exc).__name__
+        stage["detail"] = str(exc)[:160]
+        return stage, [], []
+    # The classification above is final; bookkeeping below may degrade but never reclassify a
+    # truthful result into a stage error.
+    artifacts: list[dict[str, str]] = []
+    notes: list[str] = []
+    try:
         if result.evidence_path is not None:
             stage["evidence_recorded"] = True
             artifacts.append(_artifact("Ramses probe evidence", Path(result.evidence_path)))
@@ -968,15 +978,14 @@ def _execute_ramses_r0_stage(
                 "could not be retained."
             )
         else:
-            pointer = " Probe evidence retained." if stage["evidence_recorded"] else ""
+            # Only an execution failure points at retained evidence; the unavailable family adds
+            # nothing anywhere by design, so its note stays plain even when a stub was written.
+            pointer = " Probe evidence retained." if (
+                stage["evidence_recorded"] and stage["family"] == "execution_failure") else ""
             notes.append(f"Ramses probe {stage['family']}: {result.outcome}.{pointer}")
-        return stage, artifacts, notes
-    except Exception as exc:
-        stage["family"] = "execution_failure"
-        stage["outcome"] = "stage_error"
-        stage["reason"] = type(exc).__name__
-        stage["detail"] = str(exc)[:160]
-        return stage, [], []
+    except Exception:
+        notes = [f"Ramses probe {stage['family']}: {stage['outcome'] or stage['reason']}."]
+    return stage, artifacts, notes
 
 
 def _execute_sgfx_preflight(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:

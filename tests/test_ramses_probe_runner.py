@@ -614,6 +614,27 @@ class RamsesProbeRunnerLaunchTests(unittest.TestCase):
         process = captured["process"]
         self.assertIsNotNone(process.poll())
 
+    def test_environmental_failures_classify_instead_of_raising(self) -> None:
+        from unittest import mock
+
+        import sg_preflight.ramses_probe_runner as runner_module
+
+        helper, digest = self._success_helper()
+        request = self._request(helper, digest)
+        # The pinned helper vanishing (or being blocked) between the digest check and the launch
+        # is an environmental failure, not a crash of the runner.
+        with mock.patch.object(runner_module.subprocess, "Popen",
+                               side_effect=FileNotFoundError("helper blocked at launch")):
+            result = run_probe(request)
+        self.assertEqual(result.outcome, "environment_error")
+        self.assertEqual(result.rejections, ("environment_error",))
+
+    def test_evidence_write_failure_degrades_to_unretained(self) -> None:
+        from sg_preflight.ramses_probe_runner import _write_evidence_atomically
+
+        missing_root = self.root / "does-not-exist"
+        self.assertIsNone(_write_evidence_atomically(missing_root, {"schemaVersion": 1}))
+
     def test_os_denied_direct_kill_still_returns_bounded_and_classified(self) -> None:
         from unittest import mock
 

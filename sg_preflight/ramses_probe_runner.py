@@ -267,7 +267,62 @@ def _write_evidence_atomically(output_root: Path, payload: dict[str, Any]) -> Pa
     return target
 
 
+def _environment_failure(request: ProbeRunRequest) -> ProbeRunResult:
+    evidence = {
+        "schemaVersion": 1,
+        "banner": EVIDENCE_ONLY_BANNER,
+        "request": {
+            "profile": request.profile,
+            "backend": request.backend,
+            "scenePath": str(request.scene_path),
+            "outputRoot": str(request.output_root),
+            "perspectivePath": str(request.perspective_path) if request.perspective_path else None,
+            "perspectiveId": request.perspective_id,
+        },
+        "helper": {
+            "path": str(request.helper_path),
+            "sha256Expected": request.helper_sha256,
+            "sha256Actual": "",
+        },
+        "digests": {
+            "sceneBefore": "",
+            "sceneAfter": "",
+            "perspective": None,
+            "worktreeStatusBefore": None,
+            "worktreeStatusAfter": None,
+        },
+        "helperExitCode": -1,
+        "outcome": "environment_error",
+        "rejections": ["environment_error"],
+        "nativeReport": None,
+    }
+    evidence_path = None
+    try:
+        if request.output_root.is_dir():
+            evidence_path = _write_evidence_atomically(request.output_root, evidence)
+    except OSError:
+        evidence_path = None
+    return ProbeRunResult(
+        outcome="environment_error",
+        exit_code=-1,
+        rejections=("environment_error",),
+        evidence_path=evidence_path,
+        native_report=None,
+    )
+
+
 def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
+    # Filesystem state can change under the run at any point (ACL flips, scanner locks, network
+    # shares lapsing, files vanishing between a check and its use). Any such OSError escaping the
+    # specific handlers below is classified as an environmental failure instead of crashing the
+    # caller and losing the evidence trail; programming errors still propagate.
+    try:
+        return _run_probe_inner(request)
+    except OSError:
+        return _environment_failure(request)
+
+
+def _run_probe_inner(request: ProbeRunRequest) -> ProbeRunResult:
     rejections: list[str] = []
     native_report: dict[str, Any] | None = None
     exit_code = -1
@@ -308,8 +363,12 @@ def run_probe(request: ProbeRunRequest) -> ProbeRunResult:
             "nativeReport": native_report,
         }
         evidence_path = None
-        if request.output_root.is_dir():
-            evidence_path = _write_evidence_atomically(request.output_root, evidence)
+        try:
+            if request.output_root.is_dir():
+                evidence_path = _write_evidence_atomically(request.output_root, evidence)
+        except OSError:
+            # A root that became inaccessible must not change the classification being returned.
+            evidence_path = None
         return ProbeRunResult(
             outcome=outcome,
             exit_code=exit_code,
