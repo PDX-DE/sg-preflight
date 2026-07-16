@@ -241,9 +241,11 @@ def create_qt_quick_runtime(
             raise RuntimeError(_LOAD_ERROR)
         grafiks_host.hideRequested.connect(lambda: _hide_qt_windows(engine))
         grafiks_host.restoreRequested.connect(lambda: _restore_qt_windows(engine))
-    except Exception:
+    except Exception as exc:
         _shutdown_created(controller, task_coordinator, grafiks_host, preview_coordinator)
-        raise RuntimeError(_LOAD_ERROR) from None
+        # Keep the public message stable but preserve the cause: masking it hid a test-order
+        # defect (a bare QCoreApplication created earlier in the process) for three full runs.
+        raise RuntimeError(_LOAD_ERROR) from exc
 
     return QtQuickRuntime(
         application=application,

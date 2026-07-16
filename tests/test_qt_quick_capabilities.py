@@ -208,11 +208,14 @@ class TestUiCapabilityInventory(unittest.TestCase):
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_home_publishes_only_selected_profile_preflight(self) -> None:
         from PySide6.QtCore import QCoreApplication
+        from PySide6.QtGui import QGuiApplication
         from sg_preflight.desktop.qt_quick_controller import DesktopController
         from sg_preflight.qa_operator_actions import OperatorAction
         from tests.test_qt_quick_core import _FakeTaskCoordinator, _pump_until
 
-        application = QCoreApplication.instance() or QCoreApplication([])
+        # A bare QCoreApplication would poison later in-process Qt Quick tests: the runtime
+        # requires a graphical application and Qt allows only one instance per process.
+        application = QCoreApplication.instance() or QGuiApplication([])
         self.assertIsNotNone(application)
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -507,8 +510,9 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         from PySide6.QtCore import QCoreApplication
+        from PySide6.QtGui import QGuiApplication
 
-        cls.application = QCoreApplication.instance() or QCoreApplication([])
+        cls.application = QCoreApplication.instance() or QGuiApplication([])
 
     @staticmethod
     def _delivery_page(workbook: Path | None = None) -> dict[str, object]:

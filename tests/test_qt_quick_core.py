@@ -18,6 +18,13 @@ import weakref
 try:
     from PySide6.QtCore import QCoreApplication, QModelIndex, QObject, QThreadPool, Signal, Slot, Qt
     from PySide6.QtTest import QSignalSpy
+
+    def _gui_application():
+        # A bare QCoreApplication would poison later in-process Qt Quick tests: the runtime
+        # requires a graphical application and Qt allows only one instance per process.
+        from PySide6.QtGui import QGuiApplication
+
+        return QGuiApplication([])
 except ModuleNotFoundError as error:
     if error.name != "PySide6":
         raise
@@ -274,7 +281,7 @@ class TestShellRegistryModel(unittest.TestCase):
 class TestPageTaskCoordinator(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.application = QCoreApplication.instance() or QCoreApplication([])
+        cls.application = QCoreApplication.instance() or _gui_application()
 
     def _coordinator(self, *, max_thread_count: int = 2):
         from sg_preflight.desktop.task_pool import PageTaskCoordinator
@@ -761,7 +768,7 @@ class TestPayloadAdapter(unittest.TestCase):
 class TestDesktopController(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.application = QCoreApplication.instance() or QCoreApplication([])
+        cls.application = QCoreApplication.instance() or _gui_application()
 
     def _controller(
         self,
@@ -1366,7 +1373,7 @@ class TestDesktopController(unittest.TestCase):
 class TestTask10ControllerPresentation(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.application = QCoreApplication.instance() or QCoreApplication([])
+        cls.application = QCoreApplication.instance() or _gui_application()
 
     @staticmethod
     def _error_values(controller: QObject) -> tuple[object, ...]:
@@ -1770,7 +1777,7 @@ class TestTask10ControllerPresentation(unittest.TestCase):
 class TestQtShellRoute(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.application = QCoreApplication.instance() or QCoreApplication([])
+        cls.application = QCoreApplication.instance() or _gui_application()
 
     @staticmethod
     def _error_values(controller: QObject) -> tuple[object, ...]:
