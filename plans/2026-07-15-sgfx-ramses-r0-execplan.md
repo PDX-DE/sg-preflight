@@ -53,11 +53,11 @@
 ## Task 5 — Synthetic end-to-end and package/process gates
 
 - [x] Step 1: Synthetic scene end-to-end: native suite drives a saved synthetic scene through every phase including a real-renderer black frame; runner suite drives a fake helper through success/crash/classified/mutation paths; fixtures BMW-free (req 24).
-- [ ] Step 2: Package/process/exact-tree gates: unittest aggregate for the touched modules, process-lifecycle check (no orphan helper), `git diff --check`, diff review confirming no unrelated cinematic/UI refactor and no new mandatory dependency (req 28, 25).
-- [ ] Step 3: Commit.
+- [x] Step 2: Package/process/exact-tree gates DONE: focused aggregates green (runner 41/41, bundle-manifest + native-scaffold + runner 108 combined, cine CTest 3/3 Release); process-lifecycle pinned by `test_helper_is_fully_awaited_no_detached_child` (single blocking launch, terminating timeout); `git diff --check` clean; diff review of `e016e91..7a472fd`: no unrelated cinematic/UI refactor, no new mandatory dependency (acceptance-walk rows 25/28); exclusive full-tree footer Ran 1140, OK (8 skips), DISCOVERY_EXIT=0 at `7a472fd`.
+- [x] Step 3: Committed (fix arc `7403690`..`7a472fd`).
 
 ## Task 6 — Real local smoke and acceptance
 
 - [x] Step 1: Real local smoke DONE against two real staging exports (G50, G78) with the real `perspectives_CID_2to1.json` view `CID_CCM_FRONT`: all eight phases completed with truthful evidence (72/68 real findings, full inventories, executed logic, complete lifecycles ~2-2.9 s, frames classified black — a documented scene-state diagnostic, not visual approval). One G78 helper crash under concurrent load was classified truthfully and did not reproduce (OPEN flake). Budgets measured, remain OPEN (req 27). Evidence under `out/r0-smoke/`.
-- [ ] Step 2: Walk all 28 section-24 requirements with an evidence row each; independent review of the full diff; resolve findings.
-- [ ] Step 3: Ledger checkpoint, changelog note, final commit. Standalone Acceptance Gate passes; the separate one-button integration slice may then be planned.
+- [x] Step 2: DONE — 28-row acceptance walk finalized at `7a472fd` (`.superpowers/sdd/r0-acceptance-walk.md`); ten-round independent adversarial review to a zero-finding closure verdict; all findings resolved RED-first; the recurring full-suite error root-caused (bare-QCoreApplication test fixtures) and fixed.
+- [x] Step 3: DONE — ledger beat, changelog already carries the probe entry, declaration commit. **STANDALONE ACCEPTANCE GATE PASSED 2026-07-16 07:00 +02:00**; the one-button integration slice begins.
