@@ -354,6 +354,10 @@ class TestQaActions(unittest.TestCase):
             self.assertEqual(stage["finding_errors"], 2)
             self.assertNotEqual(stage["outcome"], "stage_error")
             self.assertTrue(record.notes)
+            # The recorded flag must describe what actually happened: the artifact append
+            # failed, so nothing may claim retained evidence.
+            self.assertFalse(stage["evidence_recorded"])
+            self.assertNotIn("ramses_r0_evidence", record.paths)
 
     def test_unavailable_outcome_note_never_points_at_evidence(self) -> None:
         from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult
@@ -383,6 +387,11 @@ class TestQaActions(unittest.TestCase):
                 record = execute_operator_action(action, root, record=parent)
             self.assertEqual(record.summary["ramses_r0"]["family"], "unavailable")
             self.assertFalse(any("evidence retained" in note.lower() for note in record.notes))
+            # The unavailable family adds nothing on any surface: no artifact, no path, no flag.
+            self.assertFalse(record.summary["ramses_r0"]["evidence_recorded"])
+            self.assertNotIn("ramses_r0_evidence", record.paths)
+            labels = [item.get("label", "") for item in record.artifacts]
+            self.assertNotIn("Ramses probe evidence", labels)
 
     def test_unretained_evidence_is_never_reported_as_recorded(self) -> None:
         from sg_preflight.ramses_probe_runner import ProbeHelperReadiness, ProbeRunResult

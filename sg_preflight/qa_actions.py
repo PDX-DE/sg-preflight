@@ -946,10 +946,13 @@ def _execute_ramses_r0_stage(
     artifacts: list[dict[str, str]] = []
     notes: list[str] = []
     try:
-        if result.evidence_path is not None:
-            stage["evidence_recorded"] = True
+        # The unavailable family adds nothing on any surface (design section 13) - the stub the
+        # runner may have written stays on disk under the run root but is not surfaced. The
+        # recorded flag is set only after the bookkeeping it describes has actually succeeded.
+        if result.evidence_path is not None and stage["family"] != "unavailable":
             artifacts.append(_artifact("Ramses probe evidence", Path(result.evidence_path)))
             record.paths["ramses_r0_evidence"] = str(result.evidence_path)
+            stage["evidence_recorded"] = True
         # Console streams stay protected under the run root: recorded as paths for the operator,
         # never as reveal artifacts, so raw native output cannot reach the shell (reqs 18/19).
         for stream_name in ("stdout", "stderr"):
