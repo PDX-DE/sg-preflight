@@ -415,10 +415,22 @@ def _merge_move_into_held(source: Path, dest: Path) -> None:
     # (a file where a directory belongs, or vice versa), it is cleared rather than crashing the swap.
     dest.mkdir(parents=True, exist_ok=True)
     for child in sorted(source.iterdir()):
+        if _is_link(child):
+            # PyInstaller output never contains links; relocating one would either merge foreign
+            # content through it or leave a live reparse point inside the shipped bundle.
+            raise OSError(f"unexpected link in build output: {child}")
         target = dest / child.name
-        child_is_dir = child.is_dir() and not child.is_symlink()
+        child_is_dir = child.is_dir()
         target_exists = target.exists() or target.is_symlink()
-        target_is_dir = target_exists and target.is_dir() and not target.is_symlink()
+        if target_exists and _is_link(target):
+            # A stale link at the destination is cleared as a reparse point; its target is
+            # foreign and stays untouched.
+            if target.is_dir():
+                target.rmdir()
+            else:
+                target.unlink()
+            target_exists = False
+        target_is_dir = target_exists and target.is_dir()
         if child_is_dir:
             if target_exists and not target_is_dir:
                 target.unlink()

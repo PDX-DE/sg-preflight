@@ -862,6 +862,65 @@ class TestHeldStagingDirectories(unittest.TestCase):
             finally:
                 module.STAGING_DIST_PATH = saved
 
+    def test_merge_refuses_source_links_and_never_moves_foreign_content(self) -> None:
+        import subprocess as subprocess_module
+
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "foreign_victim"
+            victim.mkdir()
+            (victim / "precious.txt").write_text("must survive", encoding="utf-8")
+            source = root / "src"
+            source.mkdir()
+            completed = subprocess_module.run(
+                ["cmd", "/c", "mklink", "/J", str(source / "linked_child"), str(victim)],
+                capture_output=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            # Case 1: same-named real directory at the destination - merging through the
+            # junction would move foreign files; the build must fail closed instead.
+            dest = root / "dst"
+            (dest / "linked_child").mkdir(parents=True)
+            with self.assertRaises(OSError):
+                module.relocate_fresh_bundle(source, dest)
+            self.assertEqual((victim / "precious.txt").read_text(encoding="utf-8"),
+                             "must survive")
+            self.assertFalse((dest / "linked_child" / "precious.txt").exists())
+            # Case 2: no destination counterpart - the link must not survive into the bundle
+            # either (a later copy would materialize the foreign contents inside it).
+            dest2 = root / "dst2"
+            dest2.mkdir()
+            with self.assertRaises(OSError):
+                module.relocate_fresh_bundle(source, dest2)
+            self.assertEqual((victim / "precious.txt").read_text(encoding="utf-8"),
+                             "must survive")
+            self.assertFalse((dest2 / "linked_child").exists())
+
+    def test_merge_clears_a_stale_destination_link_without_touching_its_target(self) -> None:
+        import subprocess as subprocess_module
+
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "foreign_victim"
+            victim.mkdir()
+            (victim / "precious.txt").write_text("must survive", encoding="utf-8")
+            source = root / "src"
+            (source / "widget").mkdir(parents=True)
+            (source / "widget" / "fresh.dll").write_text("fresh", encoding="utf-8")
+            dest = root / "dst"
+            dest.mkdir()
+            completed = subprocess_module.run(
+                ["cmd", "/c", "mklink", "/J", str(dest / "widget"), str(victim)],
+                capture_output=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            module.relocate_fresh_bundle(source, dest)
+            # The stale link was replaced by the real directory; its target is untouched.
+            self.assertEqual((dest / "widget" / "fresh.dll").read_text(encoding="utf-8"), "fresh")
+            self.assertEqual((victim / "precious.txt").read_text(encoding="utf-8"),
+                             "must survive")
+            self.assertFalse((victim / "fresh.dll").exists())
+
     def test_sweep_skips_a_leftover_that_is_itself_a_junction(self) -> None:
         import os as os_module
         import subprocess as subprocess_module
