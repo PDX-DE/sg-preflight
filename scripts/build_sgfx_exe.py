@@ -326,8 +326,9 @@ def _is_link(path: Path) -> bool:
 
 
 def _iter_tree(root: Path):
-    # Every entry beneath root, never descending into symlinks or junctions.
-    pending = [root]
+    # Every entry beneath root, never descending into symlinks or junctions — including a root
+    # that is itself a link.
+    pending = [] if _is_link(root) else [root]
     while pending:
         directory = pending.pop()
         try:
@@ -379,7 +380,9 @@ def clean_staging_outputs() -> None:
         cutoff = time.time() - 2.0 * 3600.0
         for leftover in STAGING_DIST_PATH.parent.glob(f"{FRESH_DISTPATH_PREFIX}*"):
             try:
-                if not leftover.is_dir() or leftover.is_symlink():
+                # A link with our prefix was never created by this build; sweeping it would
+                # walk straight through the reparse point into a foreign target.
+                if not leftover.is_dir() or _is_link(leftover):
                     continue
                 if _tree_newest_mtime(leftover) > cutoff:
                     continue

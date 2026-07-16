@@ -862,6 +862,36 @@ class TestHeldStagingDirectories(unittest.TestCase):
             finally:
                 module.STAGING_DIST_PATH = saved
 
+    def test_sweep_skips_a_leftover_that_is_itself_a_junction(self) -> None:
+        import os as os_module
+        import subprocess as subprocess_module
+        import time as time_module
+
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            saved = module.STAGING_DIST_PATH
+            module.STAGING_DIST_PATH = root / "b"
+            try:
+                victim = root / "victim"
+                victim.mkdir()
+                (victim / "precious.txt").write_text("must survive", encoding="utf-8")
+                three_hours_ago = time_module.time() - 3.0 * 3600.0
+                for path in (victim, victim / "precious.txt"):
+                    os_module.utime(path, (three_hours_ago, three_hours_ago))
+                # The leftover entry is ITSELF a junction: never ours (the build creates real
+                # directories), so the sweep must not walk or delete through it.
+                evil = root / f"{module.FRESH_DISTPATH_PREFIX}evil0001"
+                completed = subprocess_module.run(
+                    ["cmd", "/c", "mklink", "/J", str(evil), str(victim)],
+                    capture_output=True, check=False)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                module.clean_staging_outputs()
+                self.assertEqual((victim / "precious.txt").read_text(encoding="utf-8"),
+                                 "must survive")
+            finally:
+                module.STAGING_DIST_PATH = saved
+
     def test_clean_staging_outputs_skips_an_undeletable_stale_leftover(self) -> None:
         import os as os_module
         import time as time_module
