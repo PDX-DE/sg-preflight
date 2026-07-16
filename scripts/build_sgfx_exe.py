@@ -43,6 +43,7 @@ WORK_PATH = ROOT / "build" / "pyinstaller"
 STAGING_DIST_PATH = ROOT / "build" / "b"
 BACKUP_BUNDLE_PATH = ROOT / "build" / "p"
 BACKUP_SINGLE_FILE_PATH = ROOT / "build" / "p.exe"
+FRESH_DISTPATH_PREFIX = "s-"
 ICON_PATH = ROOT / "desktop_native" / "resources" / "exe_ico.ico"
 GRAFIKS_RUNTIME_ENV = "SGFX_GRAFIKS_RUNTIME_DIR"
 GRAFIKS_PROVENANCE_ENV = "SGFX_GRAFIKS_PROVENANCE_RECORD"
@@ -345,6 +346,12 @@ def _rmtree_tolerating_held_dirs(root: Path) -> None:
 def clean_staging_outputs() -> None:
     if STAGING_DIST_PATH.exists():
         _rmtree_tolerating_held_dirs(STAGING_DIST_PATH)
+    # Failed builds deliberately leave their fresh distpath behind (so a partial relocate never
+    # destroys assembled output); sweep those leftovers here instead of letting them accumulate.
+    if STAGING_DIST_PATH.parent.is_dir():
+        for leftover in STAGING_DIST_PATH.parent.glob(f"{FRESH_DISTPATH_PREFIX}*"):
+            if leftover.is_dir() and not leftover.is_symlink():
+                _rmtree_tolerating_held_dirs(leftover)
 
 
 def _merge_move_into_held(source: Path, dest: Path) -> None:
@@ -394,11 +401,12 @@ def relocate_fresh_bundle(source_bundle: Path, dest_bundle: Path) -> Path:
 
 def _fresh_staging_distpath() -> Path:
     # A never-before-used distpath so PyInstaller's own --noconfirm rmtree never has to touch a
-    # held canonical output directory. Kept as short as an 8-character unique name allows, because
-    # the entire bundle (including the deep QtQuick QML assets) is assembled beneath it and Windows
-    # still caps most build tools near MAX_PATH.
+    # held canonical output directory. Kept as short as a unique name allows, because the entire
+    # bundle (including the deep QtQuick QML assets) is assembled beneath it and Windows still
+    # caps most build tools near MAX_PATH; the fixed prefix makes leftovers from failed builds
+    # identifiable so clean_staging_outputs can sweep them.
     STAGING_DIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return Path(tempfile.mkdtemp(prefix="", dir=str(STAGING_DIST_PATH.parent)))
+    return Path(tempfile.mkdtemp(prefix=FRESH_DISTPATH_PREFIX, dir=str(STAGING_DIST_PATH.parent)))
 
 
 def _grafiks_runtime_source() -> Path | None:
@@ -592,10 +600,20 @@ def swap_staged_bundle(staged_bundle: Path) -> None:
         if staged_bundle.exists():
             _rmtree_tolerating_held_dirs(staged_bundle)
     except Exception:
-        _remove_existing(final_bundle)
-        if moved_bundle and backup_bundle.exists():
+        # The merge is per-child, so a mid-swap failure can leave fresh content split across both
+        # directories. Move what already migrated back into the staged bundle so a transient lock
+        # costs a retry, not a rebuild; only a fully emptied destination is removed.
+        restored = False
+        try:
+            if final_bundle.exists():
+                _merge_move_into_held(final_bundle, staged_bundle)
+                _rmtree_tolerating_held_dirs(final_bundle)
+            restored = not final_bundle.exists()
+        except OSError:
+            pass
+        if restored and moved_bundle and backup_bundle.exists():
             _rename_existing(backup_bundle, final_bundle)
-        if moved_single_file and backup_single_file.exists():
+        if moved_single_file and backup_single_file.exists() and not final_single_file.exists():
             _rename_existing(backup_single_file, final_single_file)
         raise
     _remove_existing(backup_bundle)

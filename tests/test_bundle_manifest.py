@@ -787,9 +787,69 @@ class TestHeldStagingDirectories(unittest.TestCase):
             # Much shorter than the earlier 19-char "sgfx-stage-<8 random>" name, preserving
             # Windows MAX_PATH headroom during the PyInstaller assembly phase.
             self.assertLessEqual(len(distpath.name), 10)
+            self.assertTrue(distpath.name.startswith(module.FRESH_DISTPATH_PREFIX))
             self.assertTrue(distpath.is_dir())
         finally:
             distpath.rmdir()
+
+    def test_clean_staging_outputs_sweeps_leftover_fresh_distpaths(self) -> None:
+        module = _load_build_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            saved = module.STAGING_DIST_PATH
+            module.STAGING_DIST_PATH = root / "b"
+            try:
+                leftover = root / f"{module.FRESH_DISTPATH_PREFIX}old1234"
+                (leftover / "sgfx-preflight").mkdir(parents=True)
+                (leftover / "sgfx-preflight" / "stale.dll").write_text("x", encoding="utf-8")
+                unrelated = root / "cine-c0"
+                unrelated.mkdir()
+                (unrelated / "keep.txt").write_text("keep", encoding="utf-8")
+                module.clean_staging_outputs()
+                self.assertFalse(leftover.exists())
+                self.assertTrue((unrelated / "keep.txt").is_file())
+            finally:
+                module.STAGING_DIST_PATH = saved
+
+    def test_swap_failure_recovers_migrated_content_and_old_bundle(self) -> None:
+        import ctypes
+
+        module = _load_build_script()
+        kernel32 = ctypes.windll.kernel32
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staged = root / "b" / "sgfx-preflight"
+            (staged / "_internal").mkdir(parents=True)
+            (staged / "_internal" / "new.dll").write_text("fresh build content", encoding="utf-8")
+            # 'zz-locked.exe' sorts after '_internal' so the directory migrates first, then the
+            # locked file fails the merge partway through.
+            locked = staged / "zz-locked.exe"
+            locked.write_text("exe", encoding="utf-8")
+            saved = (module.DIST_PATH, module.WORK_PATH,
+                     module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH)
+            module.DIST_PATH = root / "dist"
+            module.WORK_PATH = root / "work"
+            module.BACKUP_BUNDLE_PATH = root / "p"
+            module.BACKUP_SINGLE_FILE_PATH = root / "p.exe"
+            old_bundle = root / "dist" / "sgfx-preflight"
+            old_bundle.mkdir(parents=True)
+            (old_bundle / "old.txt").write_text("accepted bundle", encoding="utf-8")
+            # No FILE_SHARE_DELETE: the file can be read but not moved/deleted.
+            handle = kernel32.CreateFileW(str(locked), 0x80000000, 0x1, None, 3, 0x80, None)
+            self.assertNotEqual(handle, -1)
+            try:
+                with self.assertRaises(OSError):
+                    module.swap_staged_bundle(staged)
+                # The already-migrated fresh content must be recoverable in the staged bundle,
+                # and the previously accepted bundle must survive (in place or at the backup).
+                self.assertTrue((staged / "_internal" / "new.dll").is_file())
+                old_recovered = (old_bundle / "old.txt").is_file() or \
+                    (root / "p" / "old.txt").is_file()
+                self.assertTrue(old_recovered)
+            finally:
+                kernel32.CloseHandle(handle)
+                (module.DIST_PATH, module.WORK_PATH,
+                 module.BACKUP_BUNDLE_PATH, module.BACKUP_SINGLE_FILE_PATH) = saved
 
     def test_swap_staged_bundle_tolerates_held_staged_source(self) -> None:
         import ctypes

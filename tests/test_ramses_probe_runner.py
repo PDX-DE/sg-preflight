@@ -193,6 +193,39 @@ class RamsesProbeRunnerValidationTests(unittest.TestCase):
         report["failure"]["phase"] = "not_a_real_phase"
         self.assertIn("partial_report", self._rejections(report))
 
+    def test_legitimate_perspective_failure_reason_is_accepted(self) -> None:
+        for reason in ("perspective_unreadable", "perspective_too_large", "perspective_malformed",
+                       "perspective_id_missing", "perspective_values_invalid"):
+            report = _native_report(
+                profile="G45", scene_path=self.scene_path,
+                failure={"phase": "perspective", "reason": reason})
+            self.assertEqual(self._rejections(report), [], reason)
+
+    def test_legitimate_frame_failure_reason_is_accepted(self) -> None:
+        for reason in ("lifecycle_timeout", "renderer_unavailable", "readback_failed",
+                       "logic_update_failed", "frame_too_large"):
+            report = _native_report(
+                profile="G45", scene_path=self.scene_path,
+                failure={"phase": "frame", "reason": reason})
+            self.assertEqual(self._rejections(report), [], reason)
+
+    def test_unexpected_exception_is_accepted_on_any_phase(self) -> None:
+        for phase in ("arguments", "metadata", "validation", "inventory", "logic"):
+            report = _native_report(
+                profile="G45", scene_path=self.scene_path,
+                failure={"phase": phase, "reason": "unexpected_exception"})
+            self.assertEqual(self._rejections(report), [], phase)
+
+    def test_cross_phase_failure_reason_is_rejected(self) -> None:
+        report = _native_report(
+            profile="G45", scene_path=self.scene_path,
+            failure={"phase": "scene_load", "reason": "perspective_malformed"})
+        self.assertIn("partial_report", self._rejections(report))
+        report = _native_report(
+            profile="G45", scene_path=self.scene_path,
+            failure={"phase": "perspective", "reason": "lifecycle_timeout"})
+        self.assertIn("partial_report", self._rejections(report))
+
 
 class RamsesProbeRunnerLaunchTests(unittest.TestCase):
     def setUp(self) -> None:

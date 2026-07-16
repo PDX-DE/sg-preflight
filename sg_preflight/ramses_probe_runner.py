@@ -32,8 +32,25 @@ _FRAME_OUTCOMES = {"readback_complete", "missing_contract", "renderer_unavailabl
                    "lifecycle_timeout", "readback_failed", "frame_write_failed", "frame_too_large"}
 _FRAME_CLASSIFICATIONS = {"content", "black", "undetermined"}
 _FRAME_KEYS = {"outcome", "classification", "file", "drivenInputs"}
-_FAILURE_REASONS = {"scene_unavailable", "scene_incompatible", "framework_unavailable",
-                    "unexpected_exception"}
+# Exactly the classified reasons the native probe emits per phase; every phase can additionally
+# carry the probe's unexpected_exception catch-all. Anything else (including reserved outcome
+# words like "completed") fails closed.
+_FAILURE_REASONS_BY_PHASE = {
+    "scene_load": {"scene_unavailable", "scene_incompatible", "framework_unavailable"},
+    "perspective": {"perspective_unreadable", "perspective_too_large", "perspective_malformed",
+                    "perspective_id_missing", "perspective_values_invalid"},
+    "frame": _FRAME_OUTCOMES - {"readback_complete", "missing_contract"},
+}
+
+
+def _failure_record_valid(failure: dict[str, Any]) -> bool:
+    phase = failure["phase"]
+    reason = failure["reason"]
+    if phase not in _PHASE_NAMES:
+        return False
+    if reason == "unexpected_exception":
+        return True
+    return reason in _FAILURE_REASONS_BY_PHASE.get(phase, set())
 
 
 @dataclass(frozen=True)
@@ -153,7 +170,7 @@ def validate_native_report(report: object, *, expected_profile: str,
         failure = report["failure"]
         failure_valid = failure is None or (
             isinstance(failure, dict) and set(failure.keys()) == {"phase", "reason"}
-            and failure["phase"] in _PHASE_NAMES and failure["reason"] in _FAILURE_REASONS)
+            and _failure_record_valid(failure))
         if not failure_valid or has_failed_phase != (failure is not None):
             rejections.append("partial_report")
 
