@@ -862,6 +862,31 @@ class TestHeldStagingDirectories(unittest.TestCase):
             finally:
                 module.STAGING_DIST_PATH = saved
 
+    def test_link_detection_works_without_python_312_apis(self) -> None:
+        import subprocess as subprocess_module
+
+        module = _load_build_script()
+        # Path.is_junction only exists on Python 3.12+, newer than the project's supported
+        # floor; the detector must never rely on it (a silent getattr fallback disables every
+        # junction guard on supported interpreters).
+        source_text = Path(module.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("is_junction", source_text)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target"
+            target.mkdir()
+            junction = root / "junction"
+            completed = subprocess_module.run(
+                ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+                capture_output=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            plain_file = root / "plain.txt"
+            plain_file.write_text("x", encoding="utf-8")
+            self.assertTrue(module._is_link(junction))
+            self.assertFalse(module._is_link(target))
+            self.assertFalse(module._is_link(plain_file))
+            self.assertFalse(module._is_link(root / "missing"))
+
     def test_metadata_removal_never_unlinks_through_a_junction(self) -> None:
         import subprocess as subprocess_module
 

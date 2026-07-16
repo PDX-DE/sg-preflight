@@ -5,6 +5,7 @@ import importlib
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -98,7 +99,7 @@ def qml_package_inputs(qml_root: Path | None = None) -> tuple[Path, ...]:
 
 def product_font_package_inputs(font_root: Path | None = None) -> tuple[Path, ...]:
     root = font_root or ROOT / "cpp" / "assets" / "fonts"
-    if not root.is_dir() or root.is_symlink() or getattr(root, "is_junction", lambda: False)():
+    if not root.is_dir() or _is_link(root):
         raise RuntimeError("The audited product font directory is unavailable.")
     files = tuple(sorted(root.iterdir()))
     if tuple(path.name for path in files) != tuple(PRODUCT_FONT_SHA256) or any(
@@ -106,7 +107,7 @@ def product_font_package_inputs(font_root: Path | None = None) -> tuple[Path, ..
     ):
         raise RuntimeError("The product font directory contains an unaudited asset set.")
     for path in files:
-        if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+        if _is_link(path):
             raise RuntimeError("A product font asset is linked.")
         if any(token in path.name.casefold() for token in PROTECTED_FONT_TOKENS):
             raise RuntimeError("A protected font asset is not permitted.")
@@ -127,14 +128,11 @@ def copy_preview_runtime(
     if target.exists():
         shutil.rmtree(target)
     source = Path(source_dir)
-    if not source.is_dir() or source.is_symlink() or getattr(source, "is_junction", lambda: False)():
+    if not source.is_dir() or _is_link(source):
         return False
     entries = tuple(sorted(source.iterdir()))
     if {path.name for path in entries} != set(PREVIEW_RUNTIME_FILES) or any(
-        not path.is_file()
-        or path.is_symlink()
-        or getattr(path, "is_junction", lambda: False)()
-        for path in entries
+        not path.is_file() or _is_link(path) for path in entries
     ):
         return False
     source_hashes = {path.name: sha256_file(path) for path in entries}
@@ -181,8 +179,7 @@ def prune_staged_qml_roots(
     qml_root = bundle / "_internal" / "PySide6" / "qml"
     if (
         not qml_root.is_dir()
-        or qml_root.is_symlink()
-        or getattr(qml_root, "is_junction", lambda: False)()
+        or _is_link(qml_root)
         or not qml_imports
         or any(not isinstance(item, QmlImport) for item in qml_imports)
     ):
@@ -201,11 +198,7 @@ def prune_staged_qml_roots(
         )
     )
     for candidate in candidates:
-        if (
-            candidate.is_symlink()
-            or getattr(candidate, "is_junction", lambda: False)()
-            or not candidate.resolve().is_relative_to(qml_root)
-        ):
+        if _is_link(candidate) or not candidate.resolve().is_relative_to(qml_root):
             raise RuntimeError("The staged Qt QML roots are unavailable.")
     for candidate in candidates:
         shutil.rmtree(candidate)
@@ -322,10 +315,20 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
     return args
 
 
+_MOUNT_POINT_TAG = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+
+
 def _is_link(path: Path) -> bool:
-    # NTFS junctions report is_dir() true and is_symlink() FALSE, so both spellings are needed
-    # before any tree walk may descend; following a junction can cycle or escape the tree.
-    return path.is_symlink() or getattr(path, "is_junction", lambda: False)()
+    # NTFS junctions report is_dir() true and is_symlink() FALSE, and pathlib's junction probe
+    # only exists on Python 3.12+, which is newer than this project's supported floor. Read the
+    # reparse tag directly so the guard holds on every supported interpreter.
+    try:
+        if path.is_symlink():
+            return True
+        entry = os.lstat(path)
+    except OSError:
+        return False
+    return getattr(entry, "st_reparse_tag", 0) == _MOUNT_POINT_TAG
 
 
 def _iter_tree(root: Path):
