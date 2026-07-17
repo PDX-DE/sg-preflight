@@ -226,7 +226,7 @@ int main()
             return 1;
 
         request.height = 270u;
-        request.frame_count = 25u;
+        request.frame_count = 49u;
         if (!expectRejected(request, "request_out_of_bounds"))
             return 1;
 

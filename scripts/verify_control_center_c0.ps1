@@ -157,7 +157,7 @@ $maxFrames = 0
 if ($cacheFiles.Count -gt 0) {
     $maxFrames = [int](($cacheFiles | Group-Object DirectoryName | ForEach-Object Count | Measure-Object -Maximum).Maximum)
 }
-if ($cacheBytes -gt $cacheLimit -or $maxFrames -gt 24) {
+if ($cacheBytes -gt $cacheLimit -or $maxFrames -gt 48) {
     throw "The preview cache exceeds the C0 bounds."
 }
 $cache = [ordered]@{
@@ -165,7 +165,7 @@ $cache = [ordered]@{
     bytes = $cacheBytes
     byte_limit = $cacheLimit
     maximum_frames_per_entry = $maxFrames
-    frame_limit = 24
+    frame_limit = 48
 }
 Add-Gate "preview-cache" "bounded inventory of out/preview-cache/frame-*.png" "PASS" "" $ArtifactJson
 

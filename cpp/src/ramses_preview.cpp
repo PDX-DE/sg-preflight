@@ -77,7 +77,7 @@ void validateRequest(const RamsesPreviewRequest& request)
 {
     if (request.width == 0u || request.width > 960u ||
         request.height == 0u || request.height > 540u ||
-        request.frame_count == 0u || request.frame_count > 24u ||
+        request.frame_count == 0u || request.frame_count > 48u ||
         (request.reduced_motion && request.frame_count != 1u))
     {
         throw PreviewFailure("request_out_of_bounds");

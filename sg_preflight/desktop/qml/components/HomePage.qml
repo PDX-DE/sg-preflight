@@ -180,13 +180,13 @@ FocusScope {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 300
+                Layout.preferredHeight: 336
                 spacing: Theme.space3
 
                 QaContextPreview {
                     id: contextPreview
 
-                    Layout.preferredWidth: 384
+                    Layout.preferredWidth: 470
                     Layout.fillHeight: true
                     selectedProfile: root.selectedProfile
                     latestLocalRun: root.latestLocalRun

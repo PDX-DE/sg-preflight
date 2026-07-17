@@ -119,7 +119,7 @@ class TestNativePreviewHelper(unittest.TestCase):
                 state = coordinator.public_state()
 
                 self.assertEqual(state.state, "ready")
-                self.assertEqual(state.frame_count, 24)
+                self.assertEqual(state.frame_count, 48)
                 self.assertRegex(state.token, re.compile(r"^[A-Za-z0-9_-]{16,}$"))
                 self.assertNotIn(str(scene), asdict(state).values())
                 self.assertEqual(self._sha256(scene), before)
@@ -155,7 +155,7 @@ class TestPreviewCoordinator(unittest.TestCase):
             reduced_motion = "--reduced-motion" in command
             frame_count = 1 if reduced_motion else min(3, requested_count)
             if self.mode == "too_many_frames":
-                frame_count = 25
+                frame_count = 49
             if self.mode == "oversized_frame":
                 width = width + 1
             output_root.mkdir(parents=True, exist_ok=True)

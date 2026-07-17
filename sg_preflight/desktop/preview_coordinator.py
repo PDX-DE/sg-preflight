@@ -22,7 +22,7 @@ from sg_preflight.desktop.preview_image_provider import PreviewImageProvider
 from sg_preflight.profiles import RunProfile
 
 
-PREVIEW_FRAME_LIMIT = 24
+PREVIEW_FRAME_LIMIT = 48
 PREVIEW_WIDTH = 960
 PREVIEW_HEIGHT = 540
 PREVIEW_TIMEOUT_SECONDS = 30.0

@@ -76,34 +76,20 @@ FocusScope {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             anchors.margins: Theme.space3
-            anchors.topMargin: 46
-            anchors.bottomMargin: 58
+            anchors.topMargin: 40
+            anchors.bottomMargin: 48
             visible: root.previewReady
 
-            // A quiet radial stage glow and a floor shadow: the frames carry real transparency,
-            // so the car floats over the card instead of arriving inside a rendered slab.
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.verticalCenterOffset: parent.height * 0.08
-                width: parent.width * 0.9
-                height: parent.height * 0.72
-                radius: height / 2
-                opacity: 0.5
-                gradient: Gradient {
-                    GradientStop { position: 0.0; color: "#1d2c31" }
-                    GradientStop { position: 1.0; color: "#14191c" }
-                }
-            }
+            // The frames carry real transparency; only a soft floor shadow grounds the car.
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
-                anchors.bottomMargin: parent.height * 0.04
-                width: parent.width * 0.62
-                height: 14
-                radius: 7
-                color: "#0b0f11"
-                opacity: 0.85
+                anchors.bottomMargin: parent.height * 0.05
+                width: parent.width * 0.5
+                height: 10
+                radius: 5
+                color: "#000000"
+                opacity: 0.45
             }
 
             Item {
@@ -111,8 +97,9 @@ FocusScope {
 
                 anchors.fill: parent
                 // Drift breathes with the turntable itself: the scale follows the played frame,
-                // so all motion stays timer-driven and stops exactly when playback stops.
-                scale: root.previewReady && root.motionMode === 2 && !root.reducedMotion ? 1.0 + 0.05 * Math.sin((root.previewFrameIndex / Math.max(1, root.previewFrameCount)) * Math.PI * 2) : 1.0
+                // so all motion stays timer-driven and stops exactly when playback stops. The
+                // baseline zoom fills the stage; frame borders are transparent, so nothing crops.
+                scale: (root.previewReady && root.motionMode === 2 && !root.reducedMotion ? 1.0 + 0.05 * Math.sin((root.previewFrameIndex / Math.max(1, root.previewFrameCount)) * Math.PI * 2) : 1.0) * 1.22
 
                 Behavior on scale {
                     NumberAnimation {
@@ -133,41 +120,6 @@ FocusScope {
                     smooth: true
                     mipmap: true
                 }
-
-                Image {
-                    id: fadeFrame
-
-                    property int heldIndex: -1
-
-                    anchors.fill: parent
-                    source: heldIndex >= 0 && root.previewReady ? "image://sgfx-preview/" + root.previewToken + "/" + heldIndex : ""
-                    fillMode: Image.PreserveAspectFit
-                    asynchronous: false
-                    cache: true
-                    smooth: true
-                    mipmap: true
-                    opacity: 0
-
-                    NumberAnimation on opacity {
-                        id: fadeOut
-
-                        from: 0.85
-                        to: 0
-                        duration: 340
-                        running: false
-                    }
-                }
-            }
-
-            HoverHandler {
-                cursorShape: Qt.PointingHandCursor
-            }
-            TapHandler {
-                enabled: root.previewReady && !root.reducedMotion
-                onTapped: {
-                    root.motionMode = (root.motionMode + 1) % root.motionNames.length;
-                    root.sweepDirection = 1;
-                }
             }
         }
 
@@ -181,8 +133,6 @@ FocusScope {
             onTriggered: {
                 // The cached revolution plays continuously as a cosmetic loop; rendering stays a
                 // single bounded pass and playbackComplete marks the first full revolution.
-                fadeFrame.heldIndex = root.previewFrameIndex;
-                fadeOut.restart();
                 if (root.motionMode === 1) {
                     let next = root.previewFrameIndex + root.sweepDirection;
                     if (next >= root.previewFrameCount) {
@@ -233,7 +183,7 @@ FocusScope {
                 visible: root.previewReady || root.hasSelection
                 text: {
                     if (root.previewReady)
-                        return root.reducedMotion ? root.previewLabel : root.previewLabel + " · " + root.motionNames[root.motionMode];
+                        return root.reducedMotion ? root.previewLabel : "Motion: " + root.motionNames[root.motionMode] + " · click the car to change";
                     if (!root.hasSelection)
                         return "";
                     if (root.previewState === "loading")
@@ -268,6 +218,27 @@ FocusScope {
                     event.accepted = true;
                 }
                 onClicked: root.inspectionRequested()
+            }
+        }
+
+        Item {
+            // Topmost interaction layer over the turntable: nothing in the layout can swallow
+            // the tap, and the cursor advertises the gesture.
+            x: previewStage.x
+            y: previewStage.y
+            width: previewStage.width
+            height: previewStage.height
+            visible: root.previewReady
+
+            HoverHandler {
+                cursorShape: Qt.PointingHandCursor
+            }
+            TapHandler {
+                enabled: root.previewReady && !root.reducedMotion
+                onTapped: {
+                    root.motionMode = (root.motionMode + 1) % root.motionNames.length;
+                    root.sweepDirection = 1;
+                }
             }
         }
     }
