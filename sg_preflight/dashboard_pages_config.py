@@ -946,9 +946,9 @@ def _risk_score_page(
     page["confluence_anchors"] = list(payload.get("confluence_anchors", []))
     if page.get("status") == "not_run":
         page["empty_state_note"] = RISK_SCORE_EMPTY_NOTE
-    # internal milestone Part C wiring: attach the internal milestone sparkline to the risk-score page so
-    # the dashboard live UI surfaces the same trend signal that already lands
-    # in the internal milestone HTML + the internal milestone-extended risk-score CLI text output.
+    # Attach the risk sparkline to the risk-score page so the dashboard live UI
+    # surfaces the same trend signal that already lands in the profile summary
+    # HTML + the risk-score CLI text output.
     try:
         from sg_preflight.full_qa_history import read_full_qa_run_list
         from sg_preflight.risk_sparkline import (

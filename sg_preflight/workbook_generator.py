@@ -1,4 +1,4 @@
-"""internal milestone size-analysis workbook auto-generation.
+"""Size-analysis workbook auto-generation.
 
 When `workbook_finder.resolve_workbook` returns `unavailable` for a profile but
 the BMW pipeline has produced raw export-size data locally (CSV or JSON), this

@@ -1,3 +1,22 @@
+"""Detects and, where possible, installs the external tools the BMW 3D Car
+pipeline needs: the RaCo GUI and RaCoHeadless installs, Blender 4.1 + SG
+Toolkit, the digital-3d-car-repo BMW Git clone (main checkout plus the
+optional IDC23 worktree), and the BMW CI Python venv/requirements.
+
+Detected or operator-registered paths persist to
+`<workspace>/operator_state/dependency_onboarding.json`, guarded by a file
+lock at `dependency_onboarding.lock` so the dashboard and CLI don't race each
+other reading or writing the same state file.
+
+"Detect" (`build_dependency_onboarding_status` and the `_*_status` helpers)
+only inspects the filesystem, PATH, and Windows registry to report what is
+already present — it never changes anything. "Install" (the `_run_*_setup`
+functions launched through `run_dependency_setup_action` /
+`start_dependency_setup_action`) is the only path that downloads, clones, or
+builds a dependency and then records its resulting path via
+`record_dependency_path`.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Iterator

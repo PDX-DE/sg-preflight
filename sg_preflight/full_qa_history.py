@@ -77,9 +77,9 @@ def record_full_qa_run_history(
         "risk_score": payload.get("risk_score") if isinstance(payload.get("risk_score"), (int, float)) else None,
         "risk_level": str(payload.get("risk_level", "") or ""),
     }
-    # internal milestone/internal milestone: keep a bounded list of historical runs so the sparkline +
-    # profile summary HTML can render trends. Preserves the legacy single-
-    # record top-level fields for backward compatibility with internal milestone readers.
+    # Keep a bounded list of historical runs so the sparkline + profile
+    # summary HTML can render trends. Preserves the legacy single-record
+    # top-level fields for backward compatibility with existing readers.
     existing = read_full_qa_run_history(profile_id, home=home)
     existing_runs = existing.get("runs") if isinstance(existing, dict) else None
     runs: list[dict[str, Any]] = list(existing_runs) if isinstance(existing_runs, list) else []

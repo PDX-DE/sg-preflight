@@ -1,3 +1,23 @@
+"""Stateful, operator-triggered dashboard workflows and their panel renderers.
+
+Companion to dashboard_pages_config.py (which owns the read-only report
+pages); this module owns the pages that launch a background action, track its
+progress, and require a manual review verdict:
+
+- Full QA Pass and Batch Full QA Pass: page payloads, the reconnect-storm
+  trigger dedup, step/draft helpers, and panel rendering.
+- The manual review wizard: session state and page rendering.
+- Review-package build, Quality-Hero report generation, and the QA pass
+  report / screenshot review viewer output paths.
+- Live-state snapshot publishing and desktop completion notifications shared
+  across the workflows above.
+
+Most functions here run against globals defined in dashboard/main.py
+(`_sync_main_globals` / `_with_main_globals` bridge that namespace in) rather
+than importing them directly, so this module can be developed and tested
+without a circular import on dashboard/main.py.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -230,6 +250,7 @@ _MAIN_GLOBAL_NAMES = (
 )
 
 
+# --- Shared state bridge to dashboard/main.py ---
 def _sync_main_globals() -> None:
     from sg_preflight.dashboard import main as dashboard_main
 
@@ -247,6 +268,7 @@ def _with_main_globals(func: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
+# --- Full QA Pass & Batch Full QA Pass page payloads ---
 def _full_qa_pass_page(
     profile_id: str,
     workspace: Path,
@@ -324,6 +346,7 @@ def _batch_full_qa_pass_page(profile_id: str, workspace: Path) -> dict[str, Any]
     }
 
 
+# --- Trigger-flag parsing & Full QA Pass dedup ---
 _TRUTHY_TRIGGERS = frozenset({"1", "true", "yes", "on"})
 
 
@@ -332,11 +355,11 @@ def _is_truthy_trigger(value: str | None, *, default: str = "") -> bool:
     return raw in _TRUTHY_TRIGGERS
 
 
-# internal milestone: process-local dedup for the Full QA Pass trigger so a NiceGUI WebSocket
-# reconnect storm cannot re-fire `build_full_qa_pass` after the internal milestone ui.navigate.to
-# redirect (the storm re-hits the page handler with the cached `?full_qa_run=1`
-# URL before the redirect lands client-side, observed 2026-05-29 07:17:28-31:
-# 5 fires for G70 within 2.4s).
+# Process-local dedup for the Full QA Pass trigger so a NiceGUI WebSocket
+# reconnect storm cannot re-fire `build_full_qa_pass` after the ui.navigate.to
+# redirect below (the storm re-hits the page handler with the cached
+# `?full_qa_run=1` URL before the redirect lands client-side, observed
+# 2026-05-29 07:17:28-31: 5 fires for G70 within 2.4s).
 #
 # The dedup key is per-profile (not per-second) so even storms that span
 # multiple wall-clock seconds collide on the same recorded token. The 30s
@@ -351,7 +374,7 @@ FULL_QA_PASS_DEDUP_BUCKET_SECONDS = 5
 
 
 def _full_qa_pass_token(profile_id: str, ts_seconds: int | None = None) -> str:
-    """Audit-trail token. internal milestone Part B widens the timestamp suffix from per-second
+    """Audit-trail token. Widens the timestamp suffix from per-second
     to per-5-second buckets so back-to-back fires that cross a second boundary
     (observed in testing: a 12:09:14.x / 12:09:15.x burst on one profile — three log entries
     inside 1.1s) collapse to the same token rather than three distinct ones.
@@ -395,6 +418,7 @@ def _reset_full_qa_pass_dedup() -> None:
         _full_qa_pass_dedup_tokens.clear()
 
 
+# --- Live-state snapshot publishing ---
 def _publish_live_state(
     workspace: Path | str,
     *,
@@ -407,7 +431,7 @@ def _publish_live_state(
     last_operator_action: tuple[str, str] | None = None,
     last_error: str | None = None,
 ) -> None:
-    """internal milestone hookpoint: best-effort debounced write to live_state.json.
+    """Best-effort debounced write to live_state.json.
 
     All failures are swallowed — observability must never crash an operator
     surface. The debounced writer batches updates so a sub-250ms burst becomes
@@ -466,6 +490,7 @@ def _snapshot_with_full_qa_payload(snapshot: dict[str, Any], payload: dict[str, 
     return {**snapshot, "pages": pages}
 
 
+# --- QA pass report & screenshot review viewer output paths ---
 def _screenshot_review_viewer_output_root(workspace: Path, profile_id: str) -> Path:
     safe_profile = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile_id.strip().lower() or "profile")
     return operator_ui_root(workspace) / "screenshot-review-viewer" / safe_profile
@@ -580,6 +605,7 @@ def _materialize_screenshot_review_viewer_for_dashboard(
     )
 
 
+# --- Desktop completion notifications ---
 def _notify_completion_safe(
     *,
     title: str,
@@ -662,6 +688,7 @@ _DAILY_DIGEST_PARTIAL_SECTION_KEYS = (
 )
 
 
+# --- Manual review wizard session state & page ---
 def _manual_review_profile_token(profile_id: str) -> str:
     token = "".join(ch.lower() if ch.isalnum() else "_" for ch in profile_id.strip())
     token = "_".join(part for part in token.split("_") if part)
@@ -805,6 +832,7 @@ _BATCH_FULL_QA_TIMEOUT_SECONDS = 600
 _BATCH_FULL_QA_TYPICAL_RANGE_LABEL = "Typical 1-3 min per profile"
 
 
+# --- Background job dataclasses ---
 @dataclass
 class ReviewPackageBuildJob:
     ticket_id: str
@@ -844,6 +872,7 @@ class BatchFullQaPassJob:
     result_payload: dict[str, Any] | None = None
 
 
+# --- Review package build, Batch Full QA Pass, and Quality-Hero report process orchestration ---
 def _validate_review_package_inputs(workspace: Path | str, profile_id: str, ticket_id: str) -> tuple[Path, str, str]:
     clean_ticket = ticket_id.strip()
     if not clean_ticket:
@@ -1575,6 +1604,7 @@ def build_dashboard_quality_hero_report(
         "is_approval": False,
     }
 
+# --- Action-result visual & technical-detail rendering ---
 def _build_action_visual_payload(result: dict[str, Any]) -> dict[str, Any]:
     workbook_preview = result.get("workbook_preview", {})
     if not isinstance(workbook_preview, dict):
@@ -1690,6 +1720,7 @@ def _render_action_technical_details(ui: Any, result: dict[str, Any], *, details
                 "full-width sgfx-technical-details-text"
             )
 
+# --- Full QA Pass step/draft helpers ---
 _FULL_QA_DRAFT_STEP_IDS = ("risk-score", "manual-review-assist", "operator-handoff")
 
 
@@ -1898,6 +1929,7 @@ def _full_qa_bulk_ack_drafts(profile_id: str, steps: list[dict[str, Any]]) -> di
         "operator-handoff": _full_qa_handoff_draft(profile_id, steps),
     }
 
+# --- Workflow panel renderers (daily digest, operator handoff, manual review, batch Full QA Pass, Full QA Pass) ---
 def _render_daily_digest_panel(ui: Any, snapshot: dict[str, Any], workspace: Path) -> None:
     page = next(page for page in snapshot["pages"] if page["id"] == "daily-digest")
     with ui.column().classes("sgfx-page-panel"):

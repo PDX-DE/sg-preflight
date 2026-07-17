@@ -1,4 +1,4 @@
-# SWARD To SGFX Boundary
+# External R&D Boundary
 
 Date: 30 April 2026
 
@@ -6,7 +6,7 @@ Date: 30 April 2026
 
 SGFX / Project Quality-Hero is the team-facing internal QA/preflight framework for Seriengrafik 3D Car workflows.
 
-SWARD is a separate personal UI/UX R&D lab. It is not the team-facing product.
+Personal R&D reference projects are separate, personal UI/UX exploration work. They are observed dev-side only and are not the team-facing product. Nothing from them — assets, names, or code — enters this repository. Only behavioral notes (what a pattern does and why it is useful) may cross the boundary.
 
 ## What May Transfer
 
@@ -39,7 +39,7 @@ Use:
 - RaCo/Blender manual review support
 - structured decision tracking
 
-Avoid naming the personal R&D source when preparing Jana/team messages. If a pattern came from R&D, describe the SGFX behavior and its QA value instead.
+Avoid naming the personal R&D source or project when preparing Jana/team messages. If a pattern came from R&D, describe the SGFX behavior and its QA value instead.
 
 ## Acceptance Criteria
 

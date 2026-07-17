@@ -1,3 +1,27 @@
+"""NiceGUI operator dashboard: assembles the page snapshot and serves it.
+
+Owns `build_dashboard_snapshot` and the navigation/page shell, the `ui.page` /
+`app.get` routes (the `/` index and the `/sgfx-dashboard-api/full-qa-pass`
+JSON endpoint), the panel renderers for most report pages (setup status,
+delivery checklist, screenshot test state, risk score, cross-car comparison,
+team digest board, about/first-run/changed-profiles), the feedback composer
+(email + Teams deep-link), and the native-window/browser launch entry point
+`run_dashboard`.
+
+`dashboard_pages_config.py` owns the payload builders for the read-only report
+pages: delivery checklist, disabled tests, API/country-variant coverage,
+export-size trend, setup doctor, QA workflows, BMW process, home/onboarding,
+screenshot test state, risk score, cross-car comparison, daily digest, team
+digest board, and operator handoff.
+
+`dashboard_pages_workflows.py` owns the stateful, operator-triggered
+workflows — Full QA Pass, Batch Full QA Pass, the manual review wizard,
+review-package build, and Quality-Hero report generation — including their
+dedup/background-job machinery and the panel renderers for those workflow
+pages. The daily digest and operator handoff panels also render from there,
+since those panels host workflow actions rather than just displaying data.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -2585,9 +2609,9 @@ def _render_risk_score_panel(ui: Any, snapshot: dict[str, Any]) -> None:
         if ownership_note:
             _attach_tooltip(ui, standing_note, ownership_note)
         _render_empty_state_note(ui, page)
-        # internal milestone Part C wiring: internal milestone sparkline next to the risk-score numbers so
-        # the dashboard live UI surfaces the same trend signal that lands in
-        # the internal milestone HTML + the internal milestone-extended risk-score CLI text output.
+        # Risk-score sparkline wiring: renders the trend sparkline next to the risk-score
+        # numbers so the dashboard live UI surfaces the same trend signal that lands in
+        # the profile summary HTML output and the risk-score CLI text output.
         sparkline = page.get("risk_sparkline") if isinstance(page.get("risk_sparkline"), dict) else {}
         if sparkline:
             with ui.row().classes("items-center sgfx-risk-sparkline"):
@@ -3033,11 +3057,11 @@ def _render_dashboard(
     async def _full_qa_pass_api(profile: str = "", trusted_tool_mode: str = "1") -> dict[str, Any]:
         requested_profile = str(profile or base_snapshot.get("profile_id") or initial_profile_id).strip()
         trusted = str(trusted_tool_mode).strip().casefold() in {"1", "true", "yes", "on"}
-        # internal milestone Part B: same per-profile 30s dedup as the `_index` page handler.
-        # Pre-fix this JSON API was an unguarded second entry point for the same
+        # Same per-profile 30s dedup as the `_index` page handler. Pre-fix, this
+        # JSON API was an unguarded second entry point for the same
         # build_full_qa_pass invocation; NiceGUI's WebSocket reconnect or any
         # client polling against this URL would re-fire the side effect even
-        # when the internal milestone dashboard gate was holding.
+        # when the dashboard gate was holding.
         if not _should_fire_full_qa_pass(requested_profile):
             _publish_live_state(
                 workspace,
@@ -3082,8 +3106,8 @@ def _render_dashboard(
             profile_for_trigger = str(
                 snapshot.get("profile_id", query_profile or initial_profile_id)
             )
-            # internal milestone: dedup BEFORE firing so a NiceGUI WebSocket reconnect storm
-            # cannot re-execute build_full_qa_pass with the cached trigger URL.
+            # Dedup BEFORE firing so a NiceGUI WebSocket reconnect storm cannot
+            # re-execute build_full_qa_pass with the cached trigger URL.
             if not _should_fire_full_qa_pass(profile_for_trigger):
                 _publish_live_state(
                     workspace,
@@ -3961,7 +3985,7 @@ def _render_dashboard(
                         return `mailto:${{feedbackContext.to || ''}}?subject=${{encodeURIComponent(composed.subject)}}&body=${{encodeURIComponent(composed.body)}}`;
                     }};
                     window.sgfxBuildFeedbackTeams = () => {{
-                        // internal milestone: Microsoft Teams native deep-link. Opens a 1:1 chat with
+                        // Microsoft Teams native deep-link. Opens a 1:1 chat with
                         // the configured recipient + a pre-filled message. Body length
                         // capped at ~1800 chars per Teams URL practicality limits with
                         // an explicit "continue in Teams" suffix.
@@ -3991,10 +4015,10 @@ def _render_dashboard(
                         document.body.appendChild(link);
                         link.click();
                         setTimeout(() => link.remove(), 100);
-                        // internal milestone Part B: clipboard fallback so the operator's
-                        // prefilled message is never lost even if Teams doesn't
-                        // open (msteams:// protocol handler unregistered, browser
-                        // blocking schemes, packaged exe restrictions, etc.).
+                        // Clipboard fallback so the operator's prefilled message is
+                        // never lost even if Teams doesn't open (msteams:// protocol
+                        // handler unregistered, browser blocking schemes, packaged
+                        // exe restrictions, etc.).
                         try {{
                             const composed = window.sgfxBuildFeedbackBody();
                             const fullMessage = composed.subject + '\\r\\n\\r\\n' + composed.body;
@@ -4326,7 +4350,7 @@ def _render_dashboard(
                             ),
                             "Open a prefilled email draft. Nothing is sent until the operator reviews it.",
                         )
-                        # internal milestone: Teams direct-message option. msteams:// deep-link opens
+                        # Teams direct-message option. msteams:// deep-link opens
                         # the Teams app to a 1:1 chat with the configured recipient
                         # plus a pre-filled message. Falls back gracefully to the
                         # email button next to it if Teams isn't installed.

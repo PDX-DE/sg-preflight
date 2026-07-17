@@ -1,3 +1,18 @@
+"""Standalone FastAPI operator UI: `create_app` builds the app, `run_ui` serves it with uvicorn.
+
+Exposes the JSON API for launching profile runs and reading their results
+(`/ui/api/runs`, `/ui/api/actions`, `/ui/api/review-board/latest`,
+`/ui/api/delivery-readiness`, `/ui/api/setup-doctor`, review decisions and
+external findings), plus a small set of server-rendered Jinja2 pages under
+`/ui/...` for browsing runs, evidence, and actions without the JSON layer.
+
+This is a separate web app from the NiceGUI operator dashboard in
+dashboard/main.py — the two are not layered on top of each other and serve
+different audiences. dashboard_webserver.py is unrelated to this module: it
+holds launch/window-management helpers (startup log, WebView2 detection,
+native-window fallback) for that NiceGUI dashboard, not for this FastAPI app.
+"""
+
 from __future__ import annotations
 
 from collections import Counter

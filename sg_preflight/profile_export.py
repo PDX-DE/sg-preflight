@@ -1,11 +1,11 @@
-"""internal milestone export-all-as-zip — bundles per-profile evidence into a shareable zip.
+"""Export-all-as-zip — bundles per-profile evidence into a shareable zip.
 
 The CLI surface is `sgfx-preflight.exe profile-summary export --profile X
 --workspace Y --output-path X_YYYYMMDD.zip`. Bundle contents:
 
-- `summary.html` — the internal milestone consolidated profile dashboard HTML
+- `summary.html` — the consolidated profile dashboard HTML
 - `screenshot-review/` — PNG thumbnails + viewer HTML if found locally
-- `delivery-workbook/` — resolved or auto-generated workbook from internal milestone
+- `delivery-workbook/` — resolved or auto-generated workbook from workbook_finder / workbook_generator
 - `activity_log.jsonl` — filtered to this profile + last 7 days
 - `full_qa_history.json` — profile-scoped run history
 - `manifest.json` — schema version + commit SHA + build date + sanitization log
@@ -34,7 +34,7 @@ from sg_preflight.profile_summary import (
 
 EXPORT_SCHEMA_VERSION = 1
 
-# Match the internal milestone PAT regex.
+# Match the profile_summary PAT regex.
 _PAT_RE = re.compile(r"\b([A-Za-z0-9_\-]{32,})\b")
 _OPERATOR_HOME_PREFIX_RE = re.compile(r"(?i)^[A-Z]:\\Users\\<operator>(?=\\|$)")
 _OPERATOR_SGFX_OUTPUTS_RE = re.compile(r"(?i)^[A-Z]:\\Users\\<operator>\\sgfx_outputs(?=\\|$)")
@@ -233,7 +233,7 @@ def export_profile_evidence(
 ) -> ExportResult:
     """Bundle per-profile evidence into one operator-shareable zip.
 
-    `summary_html` is the rendered internal milestone page (passed in by the CLI so the
+    `summary_html` is the rendered profile summary page (passed in by the CLI so the
     exporter and the build command share the exact same rendered output).
     """
     profile = str(profile_id or "").strip().upper()
@@ -251,7 +251,7 @@ def export_profile_evidence(
     cutoff = datetime.now(timezone.utc) - timedelta(days=max(activity_log_window_days, 0))
 
     with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # 1. Summary HTML (from internal milestone — caller passes pre-rendered).
+        # 1. Summary HTML (from profile_summary — caller passes pre-rendered).
         if summary_html:
             scrubbed_html, scrub_count = _scrub_text_file(summary_html)
             zf.writestr("summary.html", scrubbed_html.encode("utf-8"))

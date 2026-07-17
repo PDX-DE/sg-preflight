@@ -1,4 +1,4 @@
-"""internal milestone feedback routing — operator-configurable target for the dashboard
+"""Feedback routing — operator-configurable target for the dashboard
 feedback button.
 
 Reads an optional config at `~/sgfx_operator_state/feedback_routing.json`

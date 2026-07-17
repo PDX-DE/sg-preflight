@@ -1,19 +1,19 @@
-"""internal milestone consolidated profile dashboard HTML composer.
+"""Consolidated profile dashboard HTML composer.
 
 Builds a self-contained dark-theme HTML page summarising one BMW profile:
 
 - Header: profile id + last successful run timestamp + risk score chip
-- Workbook section (from internal milestone workbook_finder + classification)
-- Active Jira tickets (from internal milestone read-only REST search)
-- Last N Full QA Pass runs (from internal milestone + internal milestone list-based history)
+- Workbook section (from workbook_finder + classification)
+- Active Jira tickets (from read-only REST search)
+- Last N Full QA Pass runs (from full_qa_history's list-based history)
 - Manual review state summary
 - Escalation contacts + Confluence anchors
 
 The page is fully operator-local: no PAT in the HTML, no personal Windows
 paths in any cell (`C:\\Users\\<name>\\…` redacted to `~\\…`), no embedded
 external resources. All CSS is inlined. PNG thumbnails may be embedded as
-base64 (operator flag) or referenced relatively (default — internal milestone zip bundles
-the PNGs alongside).
+base64 (operator flag) or referenced relatively (default — the export zip
+bundles the PNGs alongside).
 """
 from __future__ import annotations
 
@@ -337,8 +337,8 @@ def render_profile_summary_html(
 ) -> str:
     """Return a fully self-contained dark-theme HTML page for one profile.
 
-    `sparkline_svg` + `sparkline_fallback_text` come from internal milestone; passing them
-    empty here keeps internal milestone standalone-usable until internal milestone wires the trend signal.
+    `sparkline_svg` + `sparkline_fallback_text` come from risk_sparkline; passing them
+    empty here keeps this function standalone-usable until the caller wires the trend signal.
     """
     title = html_escape(f"SGFX profile summary — {summary.profile_id}")
     risk_chip = _risk_chip_html(summary.risk_score)
@@ -392,8 +392,9 @@ def build_profile_summary(
     jira_max_results: int = 5,
     notes: list[str] | None = None,
 ) -> ProfileSummary:
-    """Compose the data layer for one profile by stitching internal milestone / internal milestone / internal milestone /
-    internal milestone / internal milestone sources together. Operator-local; no PAT crosses any boundary."""
+    """Compose the data layer for one profile by stitching workbook-finder, risk-scoring,
+    Jira-ticket, Full QA Pass history, and manual-review sources together. Operator-local;
+    no PAT crosses any boundary."""
     profile = str(profile_id or "").strip().upper()
     if not profile:
         raise ValueError("profile_id is required")
@@ -431,10 +432,10 @@ def build_profile_summary(
         full_qa_runs = read_full_qa_run_list(profile, home=home_path, limit=history_limit)
     except Exception:
         full_qa_runs = []
-    # internal milestone: manual-review state surfaces via the dashboard wizard today (per internal milestone);
-    # the profile summary defers to "no session recorded" until internal milestone / a follow-up
-    # exposes a per-profile session reader. Honest empty state, never silent
-    # collapse to a passing claim.
+    # Manual-review state surfaces via the dashboard wizard today; the profile
+    # summary defers to "no session recorded" until a follow-up exposes a
+    # per-profile session reader. Honest empty state, never silent collapse to
+    # a passing claim.
     manual_payload: dict[str, Any] = {}
     return ProfileSummary(
         profile_id=profile,

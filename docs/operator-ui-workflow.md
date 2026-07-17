@@ -33,7 +33,7 @@ Future desktop-shell notes belong under `docs/research/` so the main workflow do
 From the repository root:
 
 ```bash
-python -m sg_preflight ui --reload
+python -m sg_preflight dashboard run --workspace <path> --ui-mode clean
 ```
 
 Grafiks cinematic shell:
@@ -46,12 +46,6 @@ PowerShell launcher:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowser
-```
-
-Default address:
-
-```text
-http://127.0.0.1:8765/ui
 ```
 
 The Grafiks shell does not replace the Clean dashboard flow.

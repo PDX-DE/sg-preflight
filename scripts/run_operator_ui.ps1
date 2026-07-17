@@ -29,7 +29,7 @@ function Invoke-Check {
 }
 
 Write-Host "Repository root: $repoRoot"
-Write-Host "Operator UI target: http://$BindHost`:$Port/ui"
+Write-Host "Operator UI target: http://$BindHost`:$Port"
 
 Invoke-Check -Name "list-profiles" -Command @("python", "-m", "sg_preflight", "list-profiles", "--json")
 Invoke-Check -Name "ui-import" -Command @(
@@ -45,10 +45,10 @@ if ($CheckOnly) {
 }
 
 if ($OpenBrowser) {
-    Start-Process "http://$BindHost`:$Port/ui" | Out-Null
+    Start-Process "http://$BindHost`:$Port" | Out-Null
 }
 
 Write-Host ""
 Write-Host "Starting operator UI. Press Ctrl+C to stop." -ForegroundColor Green
-& python -m sg_preflight ui --host $BindHost --port $Port --reload
+& python -m sg_preflight dashboard run --workspace $repoRoot --ui-mode clean --host $BindHost --port $Port --no-native --reload
 exit $LASTEXITCODE

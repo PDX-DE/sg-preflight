@@ -1,4 +1,4 @@
-# SGFX QA Preflight - Local Alpha
+# Seriengrafik: Project Quality-Hero - Local Alpha
 
 This folder is a local-alpha QA workflow support bundle for the Seriengrafik 3D Car team. It helps operators inspect local state, prepare evidence, prioritize review work, and run read-only checks against operator-local SVN and BMW Git content.
 
@@ -29,10 +29,11 @@ It is not a production deployment, not a delivery package, and not a replacement
 - `sg_preflight/desktop/` - PySide6 host kept only for the packaged Clean window and shared desktop-state helpers.
 - `sg_preflight/desktop_original_pyside6_backup/` - preserved copy of the original PySide6 shell source.
 - `desktop_native/` - deprecated native shell reference source kept in Git history; excluded from the standard SVN-stage alpha bundle.
+- `cpp/` - C++ preview/probe helper track; see `cpp/README.md`.
 - `scripts/` - helper scripts for build, smoke, packaging, and verification.
 - `tests/` - automated tests shipped with the curated bundle.
 - `config/` - SGFX rule and profile configuration.
-- `docs/` - curated team-facing docs only.
+- `docs/` - a mix of curated operator guides (CLI and JSON workflow references) and internal working notes, handoffs, and research; not every file in `docs/` is team-facing.
 - `dist\sgfx-preflight\sgfx-preflight.exe` - optional packaged Windows executable when the bundle is prepared from a built onedir executable folder.
 - SGFX icons and logos: `sgfx_icon.png`, `framework_sgfx_logo.png`, `logo_sgfx.png`, `exe_ico.png`, `exe_ico.ico`, and `debug_icon.ico` support the Windows executable, Clean dashboard, Grafiks shell, and web favicon.
 - Optional shortcuts: `SGFX Preflight - Clean Mode.lnk` and `SGFX Preflight - Grafiks Mode.lnk` can be generated during bundle packaging when the executable exists.
@@ -73,6 +74,12 @@ Grafiks mode launches the experimental C++ cinematic shell when `sgfx_cine_cinem
 python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
 ```
 
+`--ui-mode qt-quick` launches the native Qt Quick desktop shell. It is the mode the packaged executable opens by default on double-click (see below):
+
+```powershell
+python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode qt-quick
+```
+
 When `dist\sgfx-preflight\sgfx-preflight.exe` is included in a prepared bundle, the same surfaces are available from one executable:
 
 ```powershell
@@ -82,9 +89,9 @@ When `dist\sgfx-preflight\sgfx-preflight.exe` is included in a prepared bundle, 
 .\dist\sgfx-preflight\sgfx-preflight.exe list-profiles --format json
 ```
 
-Double-clicking the executable without arguments opens the embedded NiceGUI Clean layout in a desktop window. `--no-native` is reserved for local server diagnostics. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
+Double-clicking the executable without arguments opens the native Qt Quick shell (`--ui-mode qt-quick`). The NiceGUI Clean layout remains reachable with `dashboard run --ui-mode clean`. `--no-native` is reserved for local server diagnostics. Other commands keep the same CLI behaviour as `python -m sg_preflight`.
 
-The legacy `python -m sg_preflight ui` command and `/ui` routes are deprecated compatibility surfaces. Use the packaged `.exe` Clean window or `dashboard run --ui-mode clean` for operator work.
+The legacy `python -m sg_preflight ui` command and `/ui` routes are deprecated compatibility surfaces. Use `dashboard run --ui-mode clean` (packaged `.exe` or from source) for operator work.
 
 ## Copy-Paste CLI Examples
 
@@ -108,6 +115,8 @@ python scripts\build_sgfx_exe.py
 ```
 
 The build writes the folder `dist\sgfx-preflight\` with `sgfx-preflight.exe` and its support files. This avoids one-file extraction delays on launch. The executable embeds the SGFX app icon and includes the SGFX logo assets used by Clean, Grafiks, and the web review board. Generated `dist\` and `build\` folders remain local build outputs and are not source files.
+
+The build also reads a few optional environment variables to bundle the Grafiks C++ track, none of which are required for a Clean / Qt Quick build: `SGFX_GRAFIKS_RUNTIME_DIR` (source folder for the Grafiks cinematic shell runtime), `SGFX_GRAFIKS_OPERATOR_CONSOLE_DIST` (source folder for the Grafiks operator console build), and `SGFX_GRAFIKS_PROVENANCE_RECORD` (the provenance record that must accept a runtime or console build before it is copied in). When these are unset or the referenced build is not present, the script prints a message such as "not found; skipping optional copy" and continues without them.
 
 ## Optional OpenHTF Station Smoke
 

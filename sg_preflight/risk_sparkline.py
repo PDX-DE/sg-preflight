@@ -1,4 +1,4 @@
-"""internal milestone risk score sparkline — visual trend signal for one profile.
+"""Risk score sparkline — visual trend signal for one profile.
 
 Pulls the last N risk scores from `full_qa_history.read_full_qa_run_list`,
 renders an inline SVG bar chart (no external charting library), and exposes

@@ -1,8 +1,8 @@
 # SG Preflight CLI Overview
 
-This page is the short operator-facing map for running SGFX QA Preflight from a terminal.
+This page is the short operator-facing map for running Seriengrafik: Project Quality-Hero from a terminal.
 
-SGFX QA Preflight is an opt-in local QA support tool. CLI output is evidence and review guidance, not approval. Manual RaCo, Blender, screenshot, rack, and delivery review remain human-owned.
+Seriengrafik: Project Quality-Hero is an opt-in local QA support tool. CLI output is evidence and review guidance, not approval. Manual RaCo, Blender, screenshot, rack, and delivery review remain human-owned.
 
 ## Command Shape
 
@@ -55,7 +55,7 @@ python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode
 python -m sg_preflight dashboard run --workspace C:\repositories\trunk --ui-mode grafiks
 ```
 
-Clean mode launches the NiceGUI dashboard. Grafiks mode launches the experimental C++ cinematic shell when it is installed. Both modes read the same SGFX backend state and keep manual review human-owned.
+Clean mode launches the NiceGUI dashboard. Grafiks mode launches the experimental C++ cinematic shell when it is installed. A third option, `--ui-mode qt-quick`, launches the native Qt Quick shell, which is now the packaged double-click default. All three modes read the same SGFX backend state and keep manual review human-owned.
 
 ### Operator-local command templates
 

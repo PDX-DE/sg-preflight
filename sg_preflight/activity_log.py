@@ -21,7 +21,7 @@ VALID_VERBS = {
     "refreshed",
     "switched-profile",
     "switched-mode",
-    # internal milestone lifecycle event verbs (granular observability per [[feedback-real-bmw-pipeline-must-be-run]]).
+    # Lifecycle event verbs (granular observability per [[feedback-real-bmw-pipeline-must-be-run]]).
     # Each pairs with a surface like `subprocess:start` / `modal:open` / `wizard:step-enter`
     # / `button:click` and operator-readable payload context.
     "started",
@@ -166,7 +166,7 @@ def _cutoff_for_since(since: str, now: datetime) -> datetime | None:
     if normalized in {"this-week", "week"}:
         start = current.replace(hour=0, minute=0, second=0, microsecond=0)
         return start - timedelta(days=start.weekday())
-    # internal milestone: free-form duration strings such as "5m", "5 min ago", "30s", "1h", "2 hours".
+    # Free-form duration strings such as "5m", "5 min ago", "30s", "1h", "2 hours".
     match = _DURATION_PATTERN.match(normalized)
     if match:
         amount = int(match.group(1))

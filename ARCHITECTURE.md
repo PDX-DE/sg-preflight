@@ -68,8 +68,10 @@ Two flavors:
 
 ### 4. Surfaces — present to the operator
 - **CLI** (`cli.py`) routes the full command surface across every subsystem.
-- **Desktop host** (`desktop/`) is a PySide6 operator shell with an evidence model,
-  theme, and file operations.
+- **Desktop host** (`desktop/`) hosts two native shells over the same evidence model,
+  theme, and file operations: the PySide6/QtWebEngine Clean window
+  (`desktop/clean_app.py`, selected by `--ui-mode clean`) and the Qt Quick QML shell
+  (`desktop/qml/` and `desktop/qt_quick_app.py`, selected by `--ui-mode qt-quick`).
 - **Web dashboard** (`dashboard/`) renders the aggregated boards and workflow pages.
 - **Reporting** (`reporting.py`, plus per-module renderers) produces HTML, JSON, and
   Markdown output.

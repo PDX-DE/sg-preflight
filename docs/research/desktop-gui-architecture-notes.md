@@ -82,17 +82,17 @@ The native shell scaffold extends that with:
 - broader copy-ready export buttons from the same shared evidence and report payloads
 - a Windows-first Dear ImGui shell that can move closer to the eventual broader 3D-department operator surface
 - repo-root and local-Python auto-discovery so the built exe can still call the Python backend when launched from `build\...\Release`
-- runtime discovery of the local `UnleashedRecompResources` bundle so the native shell can use real DDS chrome instead of only procedural approximations
+- runtime discovery of a local reference-resource bundle so the native shell can use real DDS chrome instead of only procedural approximations
 - borderless fullscreen startup by default plus a calmer installer-style screen flow, so the native shell behaves more like a dedicated operator surface than a debug dashboard
-- local WAV-based UI cues plus an optional looping installer-music toggle, both fed from the same local Unleashed resource bundle when it exists
-- the native shell now keeps the reference language abstract instead of rendering Sonic/cast art directly inside the SG operator workflow
+- local WAV-based UI cues plus an optional looping installer-music toggle, both fed from the same local reference-resource bundle when it exists
+- the native shell now keeps the reference language abstract instead of rendering source-inspiration character art directly inside the SG operator workflow
 
 What it still does not try to do:
 
 - replace the browser UI
 - replace report generation or handoff generation
 - automate BMW-only stages that are still blocked here
-- consume Unleashed's prebuilt font-atlas snapshot directly; the current native shell keeps direct OTF font loading for now because the upstream atlas is generated through a custom snapshot path and version-coupled ImGui data layout
+- consume the reference project's prebuilt font-atlas snapshot directly; the current native shell keeps direct OTF font loading for now because the upstream atlas is generated through a custom snapshot path and version-coupled ImGui data layout
 
 ## What should not change
 

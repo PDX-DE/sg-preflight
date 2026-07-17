@@ -63,7 +63,7 @@ GRAFIKS_RUNTIME_FILES = (
 # The operator console (Grafiks mode) — its whole dist travels under _internal/grafiks_shell/
 # so the double-clicked exe opens it instead of the cinematic R&D shell.
 OPERATOR_CONSOLE_DIST_ENV = "SGFX_GRAFIKS_OPERATOR_CONSOLE_DIST"
-OPERATOR_CONSOLE_DIST_SOURCE = Path(r"C:\swardbuild\sgfx_ui\dist")
+OPERATOR_CONSOLE_DIST_SOURCE: Path | None = None
 OPERATOR_CONSOLE_SHELL_EXE_NAME = "sgfx_screens.exe"
 GRAFIKS_BUNDLED_SHELL_DIR_NAME = "grafiks_shell"
 PROTECTED_FONT_TOKENS = ("dynafont", "rodin", "sonic", "sega", "gamefont")
@@ -591,7 +591,8 @@ def copy_grafiks_runtime(
 def _operator_console_dist_source() -> Path | None:
     configured = os.environ.get(OPERATOR_CONSOLE_DIST_ENV, "").strip()
     candidates = [Path(configured)] if configured else []
-    candidates.append(OPERATOR_CONSOLE_DIST_SOURCE)
+    if OPERATOR_CONSOLE_DIST_SOURCE is not None:
+        candidates.append(OPERATOR_CONSOLE_DIST_SOURCE)
     for candidate in candidates:
         dist_dir = candidate.resolve()
         if (dist_dir / OPERATOR_CONSOLE_SHELL_EXE_NAME).is_file():
