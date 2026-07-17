@@ -29,12 +29,27 @@ Rectangle {
         anchors.margins: 18
         spacing: 12
 
-        Label {
+        RowLayout {
             Layout.fillWidth: true
-            text: "SGFX QA Preflight"
-            color: Theme.text
-            font.pixelSize: 18
-            font.weight: Font.DemiBold
+            spacing: 10
+
+            Image {
+                Layout.preferredWidth: 34
+                Layout.preferredHeight: 34
+                source: "../assets/logo_sgfx.png"
+                sourceSize.width: 68
+                sourceSize.height: 68
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "SGFX QA Preflight"
+                color: Theme.text
+                font.pixelSize: 18
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
         }
         Label {
             Layout.fillWidth: true

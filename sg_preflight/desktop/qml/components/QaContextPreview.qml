@@ -23,6 +23,7 @@ FocusScope {
     readonly property bool hasSelection: Boolean(selectedProfile && selectedProfile.id)
     readonly property bool previewReady: previewState === "ready" && previewToken.length > 0 && previewFrameCount > 0
     readonly property bool playbackActive: root.visible && root.Window.window !== null && root.Window.window.active
+    readonly property bool scrubberRevealed: root.previewReady && root.previewFrameCount > 1 && (cardHover.hovered || previewScrubber.activeFocus || previewScrubber.hovered)
     readonly property bool allAccessibleNamesPresent: inspectionAction.Accessible.name.length > 0 && (!previewScrubber.visible || previewScrubber.Accessible.name.length > 0)
     property bool playbackComplete: false
 
@@ -53,6 +54,10 @@ FocusScope {
         border.color: root.activeFocus ? Theme.accent : Theme.border
         border.width: root.activeFocus ? 2 : 1
 
+        HoverHandler {
+            id: cardHover
+        }
+
         Rectangle {
             anchors.centerIn: parent
             width: Math.min(parent.width * 0.82, 300)
@@ -62,24 +67,76 @@ FocusScope {
             border.color: "#26363b"
             border.width: 1
             opacity: 0.75
+            visible: !root.previewReady
         }
 
-        Image {
-            id: profilePreview
+        Item {
+            id: previewStage
 
-            objectName: "profilePreviewImage"
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             anchors.margins: Theme.space3
-            anchors.topMargin: 64
-            anchors.bottomMargin: 88
+            anchors.topMargin: 46
+            anchors.bottomMargin: 62
             visible: root.previewReady
-            source: root.previewReady ? "image://sgfx-preview/" + root.previewToken + "/" + root.previewFrameIndex : ""
-            fillMode: Image.PreserveAspectFit
-            asynchronous: false
-            cache: true
+
+            Image {
+                id: profilePreview
+
+                objectName: "profilePreviewImage"
+                anchors.fill: parent
+                source: root.previewReady ? "image://sgfx-preview/" + root.previewToken + "/" + root.previewFrameIndex : ""
+                fillMode: Image.PreserveAspectFit
+                asynchronous: false
+                cache: true
+            }
+
+            // The rendered frames carry an opaque black backdrop; feathering every edge into the
+            // card colour makes the turntable float instead of sitting in a hard slab.
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 26
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "#14191c" }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
+            }
+            Rectangle {
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 26
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 1.0; color: "#14191c" }
+                }
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: 20
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#14191c" }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 20
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 1.0; color: "#14191c" }
+                }
+            }
         }
 
         Item {
@@ -138,12 +195,16 @@ FocusScope {
             objectName: "previewPlayback"
             interval: Math.max(80, Math.round(2400 / Math.max(1, root.previewFrameCount - 1)))
             repeat: true
-            running: root.playbackActive && root.previewReady && !root.reducedMotion && root.previewFrameCount > 1 && !root.playbackComplete
+            running: root.playbackActive && root.previewReady && !root.reducedMotion && root.previewFrameCount > 1
             onTriggered: {
-                const next = Math.min(root.previewFrameCount - 1, root.previewFrameIndex + 1);
-                root.requestFrame(next);
-                if (next >= root.previewFrameCount - 1)
+                // The cached revolution loops continuously; playbackComplete still marks that at
+                // least one full revolution has been shown. Rendering stays a single bounded pass.
+                if (root.previewFrameIndex >= root.previewFrameCount - 1) {
                     root.playbackComplete = true;
+                    root.requestFrame(0);
+                } else {
+                    root.requestFrame(root.previewFrameIndex + 1);
+                }
             }
         }
 
@@ -174,9 +235,17 @@ FocusScope {
             }
             Label {
                 Layout.fillWidth: true
-                visible: root.previewReady
-                text: root.previewLabel + " · " + String(root.previewFrameIndex + 1) + "/" + String(root.previewFrameCount)
-                color: Theme.accent
+                visible: root.previewReady || root.hasSelection
+                text: {
+                    if (root.previewReady)
+                        return root.scrubberRevealed ? root.previewLabel + " · " + String(root.previewFrameIndex + 1) + "/" + String(root.previewFrameCount) : root.previewLabel;
+                    if (!root.hasSelection)
+                        return "";
+                    if (root.previewState === "loading")
+                        return "Preparing the 3D preview…";
+                    return "No exported 3D scene found for this car - showing the placeholder.";
+                }
+                color: root.previewReady ? Theme.accent : Theme.muted
                 font.family: Theme.operationalFont
                 font.pixelSize: 10
                 elide: Text.ElideRight
@@ -186,13 +255,18 @@ FocusScope {
 
                 objectName: "previewScrubber"
                 Layout.fillWidth: true
+                Layout.preferredHeight: root.scrubberRevealed ? implicitHeight : 6
                 visible: root.previewReady && root.previewFrameCount > 1
+                opacity: root.scrubberRevealed ? 1 : 0
                 from: 0
                 to: Math.max(0, root.previewFrameCount - 1)
                 stepSize: 1
                 value: root.previewFrameIndex
                 focusPolicy: Qt.StrongFocus
                 Accessible.name: "3D preview frame"
+                Behavior on opacity {
+                    NumberAnimation { duration: 120 }
+                }
                 Keys.onTabPressed: event => {
                     inspectionAction.forceActiveFocus();
                     event.accepted = true;
