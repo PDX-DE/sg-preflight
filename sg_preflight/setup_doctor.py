@@ -33,6 +33,11 @@ from sg_preflight.tool_version_pins import (
 
 DOCTOR_SCHEMA_VERSION = 1
 
+# PDX 3D-Car "How to screenshottest" page: BMW screenshot tests render to the operator's monitor
+# resolution; below this the output is cropped and comparisons fail (multi-monitor widths add up).
+SCREENSHOT_MIN_DISPLAY_WIDTH = 3340
+SCREENSHOT_MIN_DISPLAY_HEIGHT = 1440
+
 
 _WIZARD_STEP_GROUPS: tuple[dict[str, object], ...] = (
     {
@@ -709,6 +714,115 @@ def _qt_webengine_candidates(root: Path) -> list[Path]:
     ]
 
 
+def _check_git_ignorecase(root: Path) -> SetupDoctorItem:
+    # PDX onboarding (How-to-set-up-your-Laptop) requires `git config core.ignorecase false` so
+    # case-only file differences in the BMW Git repos are tracked on Windows. Advisory only.
+    label = "Git case sensitivity (core.ignorecase)"
+    fix = "Run: git config core.ignorecase false --global (per the SG laptop-setup onboarding page)."
+    env_path = _env_path("Digital-3D-Car-Repo", "SG_BMW_MODELS_REPO", "SG_CARMODELS_REPO")
+    repo_path = env_path if env_path is not None else discover_bmw_models_repo(root)
+    git = shutil.which("git")
+    if git is None:
+        return _missing_item(
+            key="git_ignorecase", label=label, category="BMW", required=False, path="",
+            detail="git was not found on PATH, so case sensitivity could not be verified.", fix=fix)
+    anchor = repo_path if repo_path.exists() else root
+    value = _version_from_command(
+        [git, "-C", str(anchor), "config", "--get", "core.ignorecase"]).strip().casefold()
+    if value == "false":
+        return _found_item(
+            key="git_ignorecase", label=label, category="BMW", required=False, path=anchor,
+            detail="core.ignorecase is false; case-only file differences are tracked.",
+            fix="Keep core.ignorecase set to false.")
+    observed = value or "unset"
+    return _missing_item(
+        key="git_ignorecase", label=label, category="BMW", required=False, path=anchor,
+        detail=f"core.ignorecase is {observed}; case-only file changes may go untracked on Windows.",
+        fix=fix)
+
+
+def _check_bmw_ci_python_version(root: Path) -> SetupDoctorItem:
+    # PDX Tools page (CI update 25.11.2025): the 3D-Car screenshot tests need Python 3.12+.
+    label = "BMW pipeline Python version"
+    recommended = "3.12"
+    fix = "Point the BMW pipeline Python at 3.12+ (SG Tools page: screenshot tests need Python 3.12)."
+    python_path, detail = _resolve_bmw_ci_python(root)
+    if python_path is None:
+        # Absence of a pipeline Python is already surfaced by _check_bmw_ci_python_deps
+        # (required). This advisory only speaks up when a Python exists but is below 3.12, so
+        # stay quiet here rather than double-nagging.
+        return _found_item(
+            key="bmw_ci_python_version", label=label, category="BMW", required=False, path="",
+            recommended_version=recommended,
+            detail="No separate BMW pipeline Python is resolved yet; the 3.12 screenshot-test "
+                   "pin is checked once one is provisioned.")
+    raw = _version_from_command([str(python_path), "--version"])
+    digits = "".join(c if c.isdigit() or c == "." else " " for c in raw).split()
+    version = digits[0] if digits else ""
+    # compare_python_requirement returns "drift" when confidently below the spec, "ok" when it
+    # satisfies it, and "unknown"/"not_pinned" when it cannot tell. Only nag on a confident "drift";
+    # advisory, so an unverifiable version stays quietly "found". Deliberately does NOT populate the
+    # item's version_status/version_check_detail — those feed _version_validation_summary, which
+    # tracks pinned graphics-tool versions (RaCo/Blender), not this interpreter check.
+    requirement_status, _ = compare_python_requirement(version, ">=3.12") if version else ("unknown", "")
+    if requirement_status != "drift":
+        return _found_item(
+            key="bmw_ci_python_version", label=label, category="BMW", required=False,
+            path=python_path, version=version, recommended_version=recommended,
+            detail=f"BMW pipeline Python is {version or 'unknown'}, at or above the 3.12 "
+                   "screenshot-test pin." if version else
+                   "The BMW pipeline Python did not report a version; 3.12+ is recommended.")
+    return _missing_item(
+        key="bmw_ci_python_version", label=label, category="BMW", required=False, path=python_path,
+        version=version, recommended_version=recommended,
+        detail=f"BMW pipeline Python is {version}; the 3D-car screenshot tests want 3.12+.", fix=fix)
+
+
+def _virtual_screen_size() -> tuple[int, int] | None:
+    # Full virtual-desktop bounding box across all monitors (Win32 SM_CXVIRTUALSCREEN /
+    # SM_CYVIRTUALSCREEN). Returns None when it cannot be read (non-Windows, headless, no ctypes) so
+    # the caller can stay quiet rather than nag on a machine where the check does not apply.
+    # Deliberately does not touch process DPI awareness — that would be a global side effect on Qt.
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        width = int(user32.GetSystemMetrics(78))
+        height = int(user32.GetSystemMetrics(79))
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def _check_screenshot_display_resolution(root: Path) -> SetupDoctorItem:
+    # PDX 3D-Car "How to screenshottest" page: BMW screenshot tests render to the operator's monitor
+    # resolution; below 3340x1440 the output is cropped and comparisons fail as if content drifted.
+    # Multi-monitor widths add up; height takes the tallest monitor. Advisory pre-check so this is
+    # caught before a run, not from a confusing failure afterwards.
+    label = "Screenshot display resolution"
+    fix = ("Use a display of at least 3340 x 1440 for BMW screenshot tests (multi-monitor widths add "
+           "up; one monitor must be 1440+ tall), otherwise generated screenshots are cropped.")
+    size = _virtual_screen_size()
+    if size is None:
+        return _found_item(
+            key="screenshot_display_resolution", label=label, category="BMW", required=False, path="",
+            detail="Display resolution could not be read on this host; the 3340 x 1440 screenshot "
+                   "minimum is checked when running with a desktop session.")
+    width, height = size
+    if width >= SCREENSHOT_MIN_DISPLAY_WIDTH and height >= SCREENSHOT_MIN_DISPLAY_HEIGHT:
+        return _found_item(
+            key="screenshot_display_resolution", label=label, category="BMW", required=False, path="",
+            detail=f"Desktop is {width} x {height}, at or above the 3340 x 1440 screenshot minimum.")
+    return _missing_item(
+        key="screenshot_display_resolution", label=label, category="BMW", required=False, path="",
+        detail=f"Desktop is {width} x {height}; below the 3340 x 1440 screenshot minimum, generated "
+               "screenshots will be cropped and the tests fail.", fix=fix)
+
+
 def _check_qt_webengine(root: Path) -> SetupDoctorItem:
     candidate = _first_existing(_qt_webengine_candidates(root))
     if not candidate.exists():
@@ -861,7 +975,10 @@ def build_setup_doctor_report(workspace: Path | None = None) -> SetupDoctorRepor
         _check_blender(root),
         _check_bmw_git(root),
         _check_idc23_worktree(),
+        _check_git_ignorecase(root),
         _check_bmw_ci_python_deps(root),
+        _check_bmw_ci_python_version(root),
+        _check_screenshot_display_resolution(root),
         _check_qt_webengine(root),
         _check_ramses_sdk(root),
         _check_python_runtime(),

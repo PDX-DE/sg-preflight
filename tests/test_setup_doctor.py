@@ -22,6 +22,19 @@ def _write_stub(path: Path, text: str = "stub") -> Path:
     return path
 
 
+def _healthy_subprocess(cmd, *args, **kwargs):
+    # Models a fully-provisioned environment: RaCo reports its pinned version, git case
+    # sensitivity is set (core.ignorecase false), and the pipeline Python is 3.12+.
+    parts = [str(part) for part in (cmd if isinstance(cmd, (list, tuple)) else [cmd])]
+    joined = " ".join(parts)
+    if "core.ignorecase" in joined:
+        return mock.Mock(stdout="false\n", stderr="", returncode=0)
+    first = parts[0].casefold() if parts else ""
+    if first.endswith("python.exe") or first.endswith("python"):
+        return mock.Mock(stdout="Python 3.13.0\n", stderr="", returncode=0)
+    return mock.Mock(stdout="RaCo Headless 2.9.0\n", stderr="", returncode=0)
+
+
 def _bmw_ci_python_path(repo_root: Path) -> Path:
     scripts_dir = "Scripts" if os.name == "nt" else "bin"
     executable = "python.exe" if os.name == "nt" else "python"
@@ -57,6 +70,14 @@ def _doctor_fixture(root: Path) -> dict[str, str]:
 
 
 class TestSetupDoctor(unittest.TestCase):
+    def setUp(self) -> None:
+        # Pin the display-resolution advisory to a healthy value so the real host's monitor size
+        # cannot leak into these deterministic report assertions.
+        patcher = mock.patch(
+            "sg_preflight.setup_doctor._virtual_screen_size", return_value=(3840, 2160))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_report_uses_real_paths_and_does_not_require_optional_jira_pat(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -68,8 +89,8 @@ class TestSetupDoctor(unittest.TestCase):
 
             with mock.patch.dict(os.environ, env, clear=False):
                 with mock.patch("sg_preflight.setup_doctor.Path.home", return_value=root / "home"):
-                    with mock.patch("sg_preflight.setup_doctor.subprocess.run") as run:
-                        run.return_value = mock.Mock(stdout="RaCo Headless 2.9.0\n", stderr="", returncode=0)
+                    with mock.patch("sg_preflight.setup_doctor.subprocess.run",
+                                    side_effect=_healthy_subprocess):
                         report = build_setup_doctor_report(root).to_dict()
 
         self.assertTrue(report["ready"])
@@ -236,6 +257,105 @@ class TestSetupDoctor(unittest.TestCase):
         self.assertEqual(api.status_code, 200)
         self.assertTrue(api.json()["ready"])
         self.assertEqual(api.json()["mode"], "detect_and_validate")
+
+
+class TestConfluenceGroundedChecks(unittest.TestCase):
+    def test_git_ignorecase_false_is_found_and_true_is_advised(self) -> None:
+        from sg_preflight.setup_doctor import _check_git_ignorecase
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "digital-3d-car-models").mkdir(parents=True)
+            with mock.patch.dict(os.environ,
+                                 {"Digital-3D-Car-Repo": str(root / "digital-3d-car-models")},
+                                 clear=False):
+                with mock.patch("sg_preflight.setup_doctor.shutil.which", return_value="git"):
+                    with mock.patch("sg_preflight.setup_doctor._version_from_command",
+                                    return_value="false"):
+                        good = _check_git_ignorecase(root)
+                    with mock.patch("sg_preflight.setup_doctor._version_from_command",
+                                    return_value="true"):
+                        bad = _check_git_ignorecase(root)
+                    with mock.patch("sg_preflight.setup_doctor._version_from_command",
+                                    return_value=""):
+                        unset = _check_git_ignorecase(root)
+        self.assertEqual(good.status, "found")
+        self.assertFalse(good.required)
+        self.assertNotEqual(bad.status, "found")
+        self.assertNotEqual(unset.status, "found")
+        self.assertIn("ignorecase", bad.fix)
+        # Advisory only: it must never make the report not-ready.
+        self.assertFalse(bad.required)
+
+    def test_bmw_python_version_flags_below_312_only(self) -> None:
+        from sg_preflight.setup_doctor import _check_bmw_ci_python_version
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_python = _bmw_ci_python_path(root / "digital-3d-car-models")
+            _write_stub(fake_python)
+            with mock.patch("sg_preflight.setup_doctor._resolve_bmw_ci_python",
+                            return_value=(fake_python, "resolved")):
+                with mock.patch("sg_preflight.setup_doctor._version_from_command",
+                                return_value="Python 3.12.7"):
+                    ok = _check_bmw_ci_python_version(root)
+                with mock.patch("sg_preflight.setup_doctor._version_from_command",
+                                return_value="Python 3.9.13"):
+                    old = _check_bmw_ci_python_version(root)
+                with mock.patch("sg_preflight.setup_doctor._version_from_command",
+                                return_value="Python 3.13.1"):
+                    newer = _check_bmw_ci_python_version(root)
+        self.assertEqual(ok.status, "found")
+        self.assertEqual(newer.status, "found")
+        self.assertNotEqual(old.status, "found")
+        self.assertEqual(old.version, "3.9.13")
+        self.assertFalse(old.required)
+
+    def test_screenshot_resolution_flags_only_below_the_documented_minimum(self) -> None:
+        from sg_preflight.setup_doctor import _check_screenshot_display_resolution
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with mock.patch("sg_preflight.setup_doctor._virtual_screen_size",
+                            return_value=(3840, 2160)):
+                ample = _check_screenshot_display_resolution(root)
+            with mock.patch("sg_preflight.setup_doctor._virtual_screen_size",
+                            return_value=(3340, 1440)):
+                exactly = _check_screenshot_display_resolution(root)
+            with mock.patch("sg_preflight.setup_doctor._virtual_screen_size",
+                            return_value=(1920, 1080)):
+                small = _check_screenshot_display_resolution(root)
+            with mock.patch("sg_preflight.setup_doctor._virtual_screen_size",
+                            return_value=None):
+                unknown = _check_screenshot_display_resolution(root)
+        self.assertEqual(ample.status, "found")
+        self.assertEqual(exactly.status, "found")
+        self.assertNotEqual(small.status, "found")
+        self.assertFalse(small.required)
+        self.assertIn("3340", small.fix)
+        # Unreadable display (headless / non-Windows) must stay quiet, not nag.
+        self.assertEqual(unknown.status, "found")
+
+    def test_new_advisory_checks_are_in_the_report_and_never_block_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            env = _doctor_fixture(root)
+            with mock.patch.dict(os.environ, env, clear=False):
+                with mock.patch("sg_preflight.setup_doctor._virtual_screen_size",
+                                return_value=(1280, 720)):
+                    with mock.patch("sg_preflight.setup_doctor.subprocess.run") as run:
+                        run.return_value = mock.Mock(stdout="Python 3.13.0\n", stderr="", returncode=0)
+                        report = build_setup_doctor_report(root).to_dict()
+        keys = {item["key"] for item in report["items"]}
+        self.assertIn("git_ignorecase", keys)
+        self.assertIn("bmw_ci_python_version", keys)
+        self.assertIn("screenshot_display_resolution", keys)
+        advisory = {"git_ignorecase", "bmw_ci_python_version", "screenshot_display_resolution"}
+        for item in report["items"]:
+            if item["key"] in advisory:
+                self.assertFalse(item["required"])
+        # A tiny display and everything advisory being missing must never block readiness.
+        self.assertTrue(report["ready"])
 
 
 if __name__ == "__main__":
