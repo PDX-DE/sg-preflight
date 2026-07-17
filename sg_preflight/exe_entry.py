@@ -14,7 +14,7 @@ import traceback
 from sg_preflight.live_state import sanitize_payload
 
 
-DEFAULT_DOUBLE_CLICK_ARGS = ["dashboard", "run", "--ui-mode", "clean"]
+DEFAULT_DOUBLE_CLICK_ARGS = ["dashboard", "run", "--ui-mode", "qt-quick"]
 DEFAULT_OPERATOR_WORKSPACE = Path(r"C:\repositories\trunk")
 WORKSPACE_ENV = "SGFX_PREFLIGHT_WORKSPACE"
 PACKAGING_IMPORT_PROBE_ENV = "SGFX_PACKAGING_IMPORT_PROBE"

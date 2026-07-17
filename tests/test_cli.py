@@ -222,7 +222,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual((comparison.left_profile, comparison.right_profile), ("", ""))
         self.assertEqual(digest.profile, [])
 
-    def test_frozen_exe_entry_defaults_to_clean_dashboard_when_double_clicked(self) -> None:
+    def test_frozen_exe_entry_defaults_to_qt_quick_dashboard_when_double_clicked(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 
         with mock.patch("sg_preflight.cli.main", return_value=17) as runner:
@@ -231,7 +231,7 @@ class TestCLI(unittest.TestCase):
                     result = module.main([])
 
         self.assertEqual(result, 17)
-        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "clean", "--workspace", r"C:\bundle"])
+        runner.assert_called_once_with(["dashboard", "run", "--ui-mode", "qt-quick", "--workspace", r"C:\bundle"])
 
     def test_frozen_exe_entry_keeps_explicit_clean_dashboard_mode(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
