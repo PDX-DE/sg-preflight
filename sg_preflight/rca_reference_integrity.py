@@ -18,6 +18,8 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.adapters.common import walk_files
+
 RCA_SUFFIX = ".rca"
 STATUS_RESOLVED = "resolved"
 STATUS_MISSING = "missing"
@@ -89,13 +91,13 @@ def _iter_rca_files(root: Path, *, limit: int) -> tuple[list[Path], bool]:
         return ([root] if root.suffix.lower() == RCA_SUFFIX else []), False
     if not root.is_dir():
         return [], False
-    found: list[Path] = []
-    truncated = False
-    for path in sorted(root.rglob(f"*{RCA_SUFFIX}")):
-        if len(found) >= limit:
-            truncated = True
-            break
-        found.append(path)
+    # Route through the shared pruned walk: raw rglob re-descends .svn/out/build/operator_state
+    # trees the rest of the tool already skips, which made this report take 70-90s on a full
+    # SVN mirror. Those directories never hold authored reference assets, so pruning is
+    # result-preserving. Size filtering stays off so large .rca files are still found.
+    matches = sorted(walk_files(root, suffixes={RCA_SUFFIX}, max_bytes=None))
+    found = matches[:limit]
+    truncated = len(matches) > limit
     return found, truncated
 
 

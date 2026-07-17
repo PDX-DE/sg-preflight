@@ -1007,7 +1007,7 @@ _MAIN_ACTION_MAP: tuple[tuple[str, str, str], ...] = (
         r"sgfx-preflight.exe bmw-pipeline-diagnostics missing-actuals --profile F70 --workspace C:\repositories\trunk --format json",
     ),
     ("screenshot-triage", "Run deterministic screenshot triage.", r"sgfx-preflight.exe screenshot-triage --profile F70 --workspace C:\repositories\trunk --json"),
-    ("materialize", "Create a normalized validation bundle from SG-shaped inputs.", r"sgfx-preflight.exe materialize --output-bundle out\bundle --repo-root C:\repositories\trunk"),
+    ("materialize", "Create a normalized validation bundle from SG-shaped inputs.", r"sgfx-preflight.exe materialize --output-bundle out\bundle --repo-root C:\repositories\trunk --project-root C:\repositories\trunk\Cars\BMW\G45"),
     ("probe", "Discover SG-style repository roots and likely inputs.", r"sgfx-preflight.exe probe --search-root C:\repositories\trunk"),
     # internal milestone: `demo-good`, `demo-broken`, `ui`, `retro-extract` subcommands stay
     # registered for backward compat but are hidden from the operator-facing
