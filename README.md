@@ -27,7 +27,6 @@ It is not a production deployment, not a delivery package, and not a replacement
 
 - `sg_preflight/` - Python backend, CLI, state readers, digest generation, review support.
 - `sg_preflight/desktop/` - PySide6 host kept only for the packaged Clean window and shared desktop-state helpers.
-- `sg_preflight/desktop_original_pyside6_backup/` - preserved copy of the original PySide6 shell source.
 - `desktop_native/` - deprecated native shell reference source kept in Git history; excluded from the standard SVN-stage alpha bundle.
 - `cpp/` - C++ preview/probe helper track; see `cpp/README.md`.
 - `scripts/` - helper scripts for build, smoke, packaging, and verification.
