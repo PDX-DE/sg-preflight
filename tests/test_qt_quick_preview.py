@@ -654,6 +654,25 @@ class TestPreviewControllerAndQml(unittest.TestCase):
             self.assertEqual(preview.preemptions, 1)
             controller.shutdown()
 
+    def test_frozen_shutdown_wiring_needs_no_weak_reference(self) -> None:
+        from sg_preflight.desktop.qt_quick_app import _wire_shutdown, create_qt_quick_runtime
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = create_qt_quick_runtime(
+                workspace=temp_dir,
+                initial_profile_id="",
+                argv=["sgfx-shutdown-wire-test"],
+            )
+            try:
+                # The slotted runtime cannot be weak-referenced, so connecting the bound method
+                # directly fails - exactly the frozen-exe startup crash an operator hit live.
+                with self.assertRaises((SystemError, TypeError)):
+                    runtime.application.aboutToQuit.connect(runtime.close)
+                handler = _wire_shutdown(runtime)
+                runtime.application.aboutToQuit.disconnect(handler)
+            finally:
+                runtime.close()
+
     def test_preview_requests_defer_while_the_render_slot_is_held(self) -> None:
         import threading
 

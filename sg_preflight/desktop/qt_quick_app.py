@@ -271,8 +271,19 @@ def run_qt_quick_app(
         initial_profile_id=initial_profile_id,
         bmw_root=bmw_root,
     )
-    runtime.application.aboutToQuit.connect(runtime.close)
+    _wire_shutdown(runtime)
     try:
         return runtime.application.exec()
     finally:
         runtime.close()
+
+
+def _wire_shutdown(runtime: QtQuickRuntime) -> Callable[[], None]:
+    # The slotted runtime cannot be weak-referenced, and connecting a bound method makes Qt take
+    # a weak reference to its receiver - which only fails in the frozen launch path, since tests
+    # drive create_qt_quick_runtime directly. A closure holds a strong reference and needs none.
+    def close_runtime() -> None:
+        runtime.close()
+
+    runtime.application.aboutToQuit.connect(close_runtime)
+    return close_runtime
