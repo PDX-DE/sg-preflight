@@ -33,7 +33,7 @@ $notify.Icon = [System.Drawing.SystemIcons]::Information
 $notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
 $notify.BalloonTipTitle = {json.dumps(title)}
 $notify.BalloonTipText = {json.dumps(message)}
-$notify.Text = "SGFX QA Preflight"
+$notify.Text = "Seriengrafik: Project Quality-Hero"
 $notify.Visible = $true
 $notify.ShowBalloonTip({max(timeout_ms, 1200)})
 Start-Sleep -Milliseconds {max(timeout_ms, 1200)}

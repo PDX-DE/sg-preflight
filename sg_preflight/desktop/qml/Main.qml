@@ -96,7 +96,7 @@ ApplicationWindow {
     minimumWidth: 1024
     minimumHeight: 640
     visible: true
-    title: "SGFX QA Preflight"
+    title: "Seriengrafik: Project Quality-Hero"
     color: Theme.canvas
 
     onFrameSwapped: {

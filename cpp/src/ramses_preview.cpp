@@ -75,8 +75,8 @@ bool isLinked(const fs::path& path)
 
 void validateRequest(const RamsesPreviewRequest& request)
 {
-    if (request.width == 0u || request.width > 480u ||
-        request.height == 0u || request.height > 270u ||
+    if (request.width == 0u || request.width > 960u ||
+        request.height == 0u || request.height > 540u ||
         request.frame_count == 0u || request.frame_count > 24u ||
         (request.reduced_motion && request.frame_count != 1u))
     {
@@ -345,7 +345,9 @@ RamsesPreviewResult render_ramses_preview(const RamsesPreviewRequest& request)
         if (!offscreen.isValid())
             throw PreviewFailure("renderer_unavailable");
         handler.setBuffer(offscreen);
-        renderer->setDisplayBufferClearColor(display, offscreen, ramses::vec4f{0.01f, 0.02f, 0.04f, 1.0f});
+        // Fully transparent clear: the readback keeps its alpha channel through the PNG, so the
+        // shell composites the car itself instead of a rendered backdrop slab.
+        renderer->setDisplayBufferClearColor(display, offscreen, ramses::vec4f{0.0f, 0.0f, 0.0f, 0.0f});
         renderer->flush();
         waitFor(*renderer, *sceneControl, handler, [&] { return handler.bufferReady(); }, [] {}, deadline);
 

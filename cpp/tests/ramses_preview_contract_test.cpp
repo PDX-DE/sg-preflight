@@ -216,12 +216,12 @@ int main()
             return 1;
 
         request.output_root = output;
-        request.width = 481u;
+        request.width = 961u;
         if (!expectRejected(request, "request_out_of_bounds"))
             return 1;
 
         request.width = 480u;
-        request.height = 271u;
+        request.height = 541u;
         if (!expectRejected(request, "request_out_of_bounds"))
             return 1;
 

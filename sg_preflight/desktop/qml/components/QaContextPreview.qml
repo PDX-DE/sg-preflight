@@ -23,9 +23,11 @@ FocusScope {
     readonly property bool hasSelection: Boolean(selectedProfile && selectedProfile.id)
     readonly property bool previewReady: previewState === "ready" && previewToken.length > 0 && previewFrameCount > 0
     readonly property bool playbackActive: root.visible && root.Window.window !== null && root.Window.window.active
-    readonly property bool scrubberRevealed: root.previewReady && root.previewFrameCount > 1 && (cardHover.hovered || previewScrubber.activeFocus || previewScrubber.hovered)
-    readonly property bool allAccessibleNamesPresent: inspectionAction.Accessible.name.length > 0 && (!previewScrubber.visible || previewScrubber.Accessible.name.length > 0)
+    readonly property bool allAccessibleNamesPresent: inspectionAction.Accessible.name.length > 0
+    readonly property var motionNames: ["Orbit", "Sway", "Drift"]
     property bool playbackComplete: false
+    property int motionMode: 0
+    property int sweepDirection: 1
 
     objectName: "qaContextPreview"
     activeFocusOnTab: false
@@ -38,13 +40,13 @@ FocusScope {
     }
 
     function focusFirstAction() {
-        if (previewScrubber.visible)
-            previewScrubber.forceActiveFocus();
-        else
-            inspectionAction.forceActiveFocus();
+        inspectionAction.forceActiveFocus();
     }
 
-    onPreviewTokenChanged: playbackComplete = false
+    onPreviewTokenChanged: {
+        playbackComplete = false;
+        sweepDirection = 1;
+    }
     onPreviewFrameCountChanged: playbackComplete = false
 
     Rectangle {
@@ -53,10 +55,6 @@ FocusScope {
         color: "#14191c"
         border.color: root.activeFocus ? Theme.accent : Theme.border
         border.width: root.activeFocus ? 2 : 1
-
-        HoverHandler {
-            id: cardHover
-        }
 
         Rectangle {
             anchors.centerIn: parent
@@ -79,112 +77,96 @@ FocusScope {
             anchors.bottom: parent.bottom
             anchors.margins: Theme.space3
             anchors.topMargin: 46
-            anchors.bottomMargin: 62
+            anchors.bottomMargin: 58
             visible: root.previewReady
 
-            Image {
-                id: profilePreview
+            // A quiet radial stage glow and a floor shadow: the frames carry real transparency,
+            // so the car floats over the card instead of arriving inside a rendered slab.
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.verticalCenterOffset: parent.height * 0.08
+                width: parent.width * 0.9
+                height: parent.height * 0.72
+                radius: height / 2
+                opacity: 0.5
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#1d2c31" }
+                    GradientStop { position: 1.0; color: "#14191c" }
+                }
+            }
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: parent.height * 0.04
+                width: parent.width * 0.62
+                height: 14
+                radius: 7
+                color: "#0b0f11"
+                opacity: 0.85
+            }
 
-                objectName: "profilePreviewImage"
+            Item {
+                id: turntable
+
                 anchors.fill: parent
-                source: root.previewReady ? "image://sgfx-preview/" + root.previewToken + "/" + root.previewFrameIndex : ""
-                fillMode: Image.PreserveAspectFit
-                asynchronous: false
-                cache: true
-            }
+                // Drift breathes with the turntable itself: the scale follows the played frame,
+                // so all motion stays timer-driven and stops exactly when playback stops.
+                scale: root.previewReady && root.motionMode === 2 && !root.reducedMotion ? 1.0 + 0.05 * Math.sin((root.previewFrameIndex / Math.max(1, root.previewFrameCount)) * Math.PI * 2) : 1.0
 
-            // The rendered frames carry an opaque black backdrop; feathering every edge into the
-            // card colour makes the turntable float instead of sitting in a hard slab.
-            Rectangle {
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                width: 26
-                gradient: Gradient {
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: "#14191c" }
-                    GradientStop { position: 1.0; color: "transparent" }
+                Behavior on scale {
+                    NumberAnimation {
+                        duration: 420
+                        easing.type: Easing.InOutSine
+                    }
+                }
+
+                Image {
+                    id: profilePreview
+
+                    objectName: "profilePreviewImage"
+                    anchors.fill: parent
+                    source: root.previewReady ? "image://sgfx-preview/" + root.previewToken + "/" + root.previewFrameIndex : ""
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: false
+                    cache: true
+                    smooth: true
+                    mipmap: true
+                }
+
+                Image {
+                    id: fadeFrame
+
+                    property int heldIndex: -1
+
+                    anchors.fill: parent
+                    source: heldIndex >= 0 && root.previewReady ? "image://sgfx-preview/" + root.previewToken + "/" + heldIndex : ""
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: false
+                    cache: true
+                    smooth: true
+                    mipmap: true
+                    opacity: 0
+
+                    NumberAnimation on opacity {
+                        id: fadeOut
+
+                        from: 0.85
+                        to: 0
+                        duration: 340
+                        running: false
+                    }
                 }
             }
-            Rectangle {
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                width: 26
-                gradient: Gradient {
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: "transparent" }
-                    GradientStop { position: 1.0; color: "#14191c" }
-                }
-            }
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                height: 20
-                gradient: Gradient {
-                    GradientStop { position: 0.0; color: "#14191c" }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
-            }
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 20
-                gradient: Gradient {
-                    GradientStop { position: 0.0; color: "transparent" }
-                    GradientStop { position: 1.0; color: "#14191c" }
-                }
-            }
-        }
 
-        Item {
-            id: vehicleFigure
-
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.verticalCenterOffset: -4
-            width: Math.min(parent.width * 0.72, 250)
-            height: 92
-            visible: !root.previewReady
-            opacity: root.hasSelection ? 1 : 0.42
-
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 17
-                width: parent.width
-                height: 36
-                radius: 18
-                color: "#253238"
-                border.color: root.hasSelection ? Theme.accent : Theme.border
+            HoverHandler {
+                cursorShape: Qt.PointingHandCursor
             }
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 43
-                width: parent.width * 0.58
-                height: 30
-                radius: 15
-                color: "#1d282d"
-                border.color: root.hasSelection ? "#6edbc5" : Theme.border
-            }
-            Repeater {
-                model: [-1, 1]
-
-                delegate: Rectangle {
-                    id: wheel
-
-                    required property real modelData
-                    x: wheel.modelData < 0 ? vehicleFigure.width * 0.14 : vehicleFigure.width * 0.70
-                    y: vehicleFigure.height - 36
-                    width: 34
-                    height: 34
-                    radius: 17
-                    color: Theme.canvas
-                    border.color: Theme.muted
-                    border.width: 3
+            TapHandler {
+                enabled: root.previewReady && !root.reducedMotion
+                onTapped: {
+                    root.motionMode = (root.motionMode + 1) % root.motionNames.length;
+                    root.sweepDirection = 1;
                 }
             }
         }
@@ -193,13 +175,26 @@ FocusScope {
             id: previewPlayback
 
             objectName: "previewPlayback"
-            interval: Math.max(80, Math.round(2400 / Math.max(1, root.previewFrameCount - 1)))
+            interval: Math.max(160, Math.round(9600 / Math.max(1, root.previewFrameCount - 1)))
             repeat: true
             running: root.playbackActive && root.previewReady && !root.reducedMotion && root.previewFrameCount > 1
             onTriggered: {
-                // The cached revolution loops continuously; playbackComplete still marks that at
-                // least one full revolution has been shown. Rendering stays a single bounded pass.
-                if (root.previewFrameIndex >= root.previewFrameCount - 1) {
+                // The cached revolution plays continuously as a cosmetic loop; rendering stays a
+                // single bounded pass and playbackComplete marks the first full revolution.
+                fadeFrame.heldIndex = root.previewFrameIndex;
+                fadeOut.restart();
+                if (root.motionMode === 1) {
+                    let next = root.previewFrameIndex + root.sweepDirection;
+                    if (next >= root.previewFrameCount) {
+                        root.sweepDirection = -1;
+                        next = root.previewFrameCount - 2;
+                        root.playbackComplete = true;
+                    } else if (next < 0) {
+                        root.sweepDirection = 1;
+                        next = 1;
+                    }
+                    root.requestFrame(next);
+                } else if (root.previewFrameIndex >= root.previewFrameCount - 1) {
                     root.playbackComplete = true;
                     root.requestFrame(0);
                 } else {
@@ -238,7 +233,7 @@ FocusScope {
                 visible: root.previewReady || root.hasSelection
                 text: {
                     if (root.previewReady)
-                        return root.scrubberRevealed ? root.previewLabel + " · " + String(root.previewFrameIndex + 1) + "/" + String(root.previewFrameCount) : root.previewLabel;
+                        return root.reducedMotion ? root.previewLabel : root.previewLabel + " · " + root.motionNames[root.motionMode];
                     if (!root.hasSelection)
                         return "";
                     if (root.previewState === "loading")
@@ -249,29 +244,6 @@ FocusScope {
                 font.family: Theme.operationalFont
                 font.pixelSize: 10
                 elide: Text.ElideRight
-            }
-            Slider {
-                id: previewScrubber
-
-                objectName: "previewScrubber"
-                Layout.fillWidth: true
-                Layout.preferredHeight: root.scrubberRevealed ? implicitHeight : 6
-                visible: root.previewReady && root.previewFrameCount > 1
-                opacity: root.scrubberRevealed ? 1 : 0
-                from: 0
-                to: Math.max(0, root.previewFrameCount - 1)
-                stepSize: 1
-                value: root.previewFrameIndex
-                focusPolicy: Qt.StrongFocus
-                Accessible.name: "3D preview frame"
-                Behavior on opacity {
-                    NumberAnimation { duration: 120 }
-                }
-                Keys.onTabPressed: event => {
-                    inspectionAction.forceActiveFocus();
-                    event.accepted = true;
-                }
-                onMoved: root.requestFrame(Math.round(value))
             }
             Label {
                 Layout.fillWidth: true

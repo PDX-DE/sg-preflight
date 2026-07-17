@@ -299,7 +299,7 @@ def show_startup_error(exc: BaseException, log_path: Path) -> None:
             f"{detail}\n\n"
             f"Details were written to:\n{log_path}"
         )
-        ctypes.windll.user32.MessageBoxW(None, message, "SGFX QA Preflight - Startup Error", 0x10)
+        ctypes.windll.user32.MessageBoxW(None, message, "Seriengrafik: Project Quality-Hero - Startup Error", 0x10)
     except Exception:
         return
 

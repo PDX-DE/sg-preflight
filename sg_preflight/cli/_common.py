@@ -1119,7 +1119,7 @@ def _subparser_actions(parser: argparse.ArgumentParser) -> list[argparse._SubPar
 
 def _install_cli_discoverability(parser: argparse.ArgumentParser) -> None:
     parser.description = (
-        "SGFX QA Preflight local command line. Commands read local evidence by default; Jira and SVN writes stay gated."
+        "Seriengrafik: Project Quality-Hero local command line. Commands read local evidence by default; Jira and SVN writes stay gated."
         f"\n\n{_main_help_epilog()}"
     )
     parser.epilog = None

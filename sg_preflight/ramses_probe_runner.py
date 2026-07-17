@@ -153,12 +153,14 @@ def _worktree_status(anchor: Path, exclude: Path | None = None) -> str | None:
     try:
         toplevel = subprocess.run(
             [git, "-C", str(anchor), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=30, check=False)
+            capture_output=True, text=True, timeout=30, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if toplevel.returncode != 0:
             return None
         status = subprocess.run(
             [git, "-C", str(anchor), "status", "--porcelain"],
-            capture_output=True, text=True, timeout=60, check=False)
+            capture_output=True, text=True, timeout=60, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if status.returncode != 0:
             return None
     except (OSError, subprocess.TimeoutExpired):
@@ -418,6 +420,7 @@ def _run_probe_inner(request: ProbeRunRequest) -> ProbeRunResult:
         [str(request.helper_path), *build_helper_arguments(request)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     try:
         stdout_bytes, stderr_bytes = process.communicate(timeout=request.timeout_seconds)
@@ -430,7 +433,8 @@ def _run_probe_inner(request: ProbeRunRequest) -> ProbeRunResult:
         if os.name == "nt":
             try:
                 subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
-                               capture_output=True, check=False)
+                               capture_output=True, check=False,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except OSError:
                 # Even launching taskkill can be blocked; the direct-child reap below still runs.
                 pass

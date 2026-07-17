@@ -64,7 +64,7 @@ class TestNativePreviewHelper(unittest.TestCase):
             request = (
                 "--scene", str(output / "missing.ramses"),
                 "--output-root", str(output),
-                "--width", "481",
+                "--width", "961",
                 "--height", "270",
                 "--frames", "1",
             )
@@ -157,7 +157,7 @@ class TestPreviewCoordinator(unittest.TestCase):
             if self.mode == "too_many_frames":
                 frame_count = 25
             if self.mode == "oversized_frame":
-                width = 481
+                width = width + 1
             output_root.mkdir(parents=True, exist_ok=True)
             frames: list[str] = []
             for index in range(frame_count):
@@ -255,7 +255,7 @@ class TestPreviewCoordinator(unittest.TestCase):
         self.assertEqual(provider.token_count, 1)
         image = provider.requestImage(f"{state.token}/0", QSize(), QSize())
         self.assertFalse(image.isNull())
-        self.assertEqual((image.width(), image.height()), (480, 270))
+        self.assertEqual((image.width(), image.height()), (960, 540))
         self.assertEqual(len(helper.calls), 1)
         rendered = repr(asdict(state))
         self.assertNotIn(str(self.root), rendered)

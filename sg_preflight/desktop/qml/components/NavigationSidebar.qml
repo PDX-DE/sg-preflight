@@ -44,7 +44,7 @@ Rectangle {
             }
             Label {
                 Layout.fillWidth: true
-                text: "SGFX QA Preflight"
+                text: "Seriengrafik: Project Quality-Hero"
                 color: Theme.text
                 font.pixelSize: 18
                 font.weight: Font.DemiBold

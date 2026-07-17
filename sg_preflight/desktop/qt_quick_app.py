@@ -27,7 +27,7 @@ from sg_preflight.desktop.task_pool import PageTaskCoordinator
 from sg_preflight.profiles import RunProfile
 
 
-APPLICATION_NAME = "SGFX QA Preflight"
+APPLICATION_NAME = "Seriengrafik: Project Quality-Hero"
 APPLICATION_ORGANIZATION = "Paradox Cat"
 QML_ENTRY_POINT = "sg_preflight/desktop/qml/Main.qml"
 PREVIEW_HELPER_ASSET = "cpp/bin/sgfx_cine_ramses_preview_cli.exe"
