@@ -407,6 +407,25 @@ def _rmtree_tolerating_held_dirs(root: Path) -> None:
             raise
 
 
+def _abort_if_bundle_running() -> None:
+    # Cleaning the staging bundle while an instance runs deletes files up to the first locked
+    # DLL and leaves a corpse that crashes at startup; refuse to build instead.
+    if os.name != "nt":
+        return
+    try:
+        listing = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq sgfx-preflight.exe", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except OSError:
+        return
+    if "sgfx-preflight.exe" in (listing.stdout or ""):
+        raise SystemExit(
+            "Seriengrafik: Project Quality-Hero is still running. "
+            "Close every open window of the tool, then rebuild."
+        )
+
+
 def clean_staging_outputs() -> None:
     if STAGING_DIST_PATH.exists():
         _rmtree_tolerating_held_dirs(STAGING_DIST_PATH)
@@ -751,6 +770,7 @@ def main(argv: list[str] | None = None) -> int:
     except ImportError as exc:
         raise SystemExit("PyInstaller is required. Install with `pip install -e .[packaging]`.") from exc
 
+    _abort_if_bundle_running()
     clean_staging_outputs()
     fresh_dist = _fresh_staging_distpath()
     PyInstaller.__main__.run(build_pyinstaller_args(dist_path=fresh_dist))

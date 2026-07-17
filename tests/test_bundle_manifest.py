@@ -1200,6 +1200,26 @@ class TestHeldStagingDirectories(unittest.TestCase):
             finally:
                 module.STAGING_DIST_PATH = saved
 
+    def test_build_refuses_while_the_bundle_is_running(self) -> None:
+        module = _load_build_script()
+
+        class _Running:
+            returncode = 0
+            stdout = '"sgfx-preflight.exe","1234","Console","1","120,000 K"'
+            stderr = ""
+
+        with mock.patch.object(module.subprocess, "run", return_value=_Running()):
+            with self.assertRaises(SystemExit):
+                module._abort_if_bundle_running()
+
+        class _Idle:
+            returncode = 0
+            stdout = "INFO: No tasks are running which match the specified criteria."
+            stderr = ""
+
+        with mock.patch.object(module.subprocess, "run", return_value=_Idle()):
+            module._abort_if_bundle_running()
+
     def test_clean_staging_outputs_skips_an_undeletable_stale_leftover(self) -> None:
         import os as os_module
         import time as time_module
