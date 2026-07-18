@@ -22,7 +22,7 @@ TEAM_FACING_FILES = (
     Path("docs/TEAM_DEMO_PLAN.md"),
     Path("docs/JANA_SYNC_PREP.md"),
     Path("docs/ROADMAP_NEXT.md"),
-    Path("docs") / _term("SW", "ARD_TO_SGFX_BOUNDARY.md"),
+    Path("docs/EXTERNAL_RND_BOUNDARY.md"),
     Path("docs/AGENT_HANDOFF.md"),
     Path("docs/TEAM_FEEDBACK_CAPTURE.md"),
     Path("docs/TEAMS_DAILY_STATUS.md"),

@@ -197,36 +197,37 @@ class IntegrationCoverageAuditTests(unittest.TestCase):
     visible surfaces, not just behind the CLI subparsers."""
 
     def test_h29_primary_dashboard_has_no_jira_inline_render(self) -> None:
-        source = (
-            Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py"
-        ).read_text(encoding="utf-8")
+        base = Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard"
+        helper_source = (base / "panels_common.py").read_text(encoding="utf-8")
+        source = (base / "main.py").read_text(encoding="utf-8") + helper_source
         self.assertNotIn("_render_jira_profile_tickets_card", source)
         self.assertNotIn("data-sgfx-jira-profile-tickets", source)
         self.assertNotIn("Active tickets for this profile", source)
-        self.assertIn("def _copy_dashboard_link_to_clipboard", source)
-        helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
-        helper_end = source.find("\n\ndef _render_selected_page", helper_idx)
-        self.assertNotEqual(helper_end, -1, "clipboard helper end marker not found")
-        helper_body = source[helper_idx:helper_end]
+        self.assertIn("def _copy_dashboard_link_to_clipboard", helper_source)
+        helper_idx = helper_source.find("def _copy_dashboard_link_to_clipboard")
+        helper_end = helper_source.find("\n\ndef ", helper_idx)
+        if helper_end == -1:
+            helper_end = len(helper_source)
+        helper_body = helper_source[helper_idx:helper_end]
         self.assertNotIn("webbrowser.open", helper_body)
         self.assertIn("navigator.clipboard.writeText", helper_body)
         self.assertIn("document.execCommand('copy')", helper_body)
         self.assertIn("Copied to clipboard:", helper_body)
 
     def test_h31_sparkline_renders_in_dashboard_risk_score_page(self) -> None:
-        source = (
-            Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py"
-        ).read_text(encoding="utf-8")
+        pkg = Path(__file__).resolve().parents[1] / "sg_preflight"
+        page_source = (pkg / "dashboard_pages_config.py").read_text(encoding="utf-8")
+        panel_source = (pkg / "dashboard" / "panels_scoring.py").read_text(encoding="utf-8")
         # The page builder must populate `risk_sparkline`.
-        page_idx = source.find("def _risk_score_page")
+        page_idx = page_source.find("def _risk_score_page")
         self.assertNotEqual(page_idx, -1)
-        page_body = source[page_idx:page_idx + 2500]
+        page_body = page_source[page_idx:page_idx + 2500]
         self.assertIn("from sg_preflight.risk_sparkline import", page_body)
         self.assertIn('page["risk_sparkline"]', page_body)
         # The panel renderer must surface either the SVG or the fallback.
-        panel_idx = source.find("def _render_risk_score_panel")
+        panel_idx = panel_source.find("def _render_risk_score_panel")
         self.assertNotEqual(panel_idx, -1)
-        panel_body = source[panel_idx:panel_idx + 3500]
+        panel_body = panel_source[panel_idx:panel_idx + 3500]
         self.assertIn("risk_sparkline", panel_body)
         self.assertIn("Risk trend (last N runs)", panel_body)
 
@@ -260,7 +261,7 @@ class IntegrationCoverageAuditTests(unittest.TestCase):
 
     def test_h30_and_h32_promoted_to_daily_use_action_map(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1] / "sg_preflight" / "cli" / "_common.py"
+            Path(__file__).resolve().parents[1] / "sg_preflight" / "cli" / "discoverability.py"
         ).read_text(encoding="utf-8")
         action_map_idx = source.find("_MAIN_ACTION_MAP")
         self.assertNotEqual(action_map_idx, -1)

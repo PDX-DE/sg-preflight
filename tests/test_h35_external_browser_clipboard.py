@@ -52,15 +52,16 @@ class JiraClipboardOnlyTests(unittest.TestCase):
         self.assertEqual(notifies[0], "Couldn't start clipboard copy. Link: https://example/browse/X-1")
 
     def test_dashboard_source_has_no_jira_webbrowser_open_path(self) -> None:
-        source = (
-            Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py"
-        ).read_text(encoding="utf-8")
+        base = Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard"
+        helper_source = (base / "panels_common.py").read_text(encoding="utf-8")
+        source = (base / "main.py").read_text(encoding="utf-8") + helper_source
         self.assertNotIn("import webbrowser", source)
-        jira_helper_idx = source.find("def _copy_dashboard_link_to_clipboard")
+        jira_helper_idx = helper_source.find("def _copy_dashboard_link_to_clipboard")
         self.assertNotEqual(jira_helper_idx, -1, "clipboard helper not found")
-        helper_end = source.find("\n\ndef _render_selected_page", jira_helper_idx)
-        self.assertNotEqual(helper_end, -1, "clipboard helper end marker not found")
-        helper_body = source[jira_helper_idx:helper_end]
+        helper_end = helper_source.find("\n\ndef ", jira_helper_idx)
+        if helper_end == -1:
+            helper_end = len(helper_source)
+        helper_body = helper_source[jira_helper_idx:helper_end]
         self.assertNotIn("webbrowser.open", helper_body)
         self.assertIn("navigator.clipboard.writeText", helper_body)
         self.assertIn("document.execCommand('copy')", helper_body)
