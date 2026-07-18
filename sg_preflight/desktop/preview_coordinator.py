@@ -4,6 +4,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -45,6 +46,9 @@ _MANIFEST_KEYS = {
 
 class PreviewRejected(RuntimeError):
     pass
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +167,7 @@ class PreviewCoordinator(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
+        self._last_rejection = ""
         if cache_limit_bytes < 1:
             raise ValueError("cache_limit_bytes must be positive")
         if timeout_seconds <= 0:
@@ -610,7 +615,13 @@ class PreviewCoordinator(QObject):
     ) -> None:
         try:
             accepted = future.result()
-        except Exception:
+        except Exception as error:
+            # A swallowed exception here once cost a full-suite bisection just to name the
+            # failing call. Record the failure class (and PreviewRejected's constant, path-free
+            # reason) so a single log line identifies the rejection site next time.
+            reason = str(error) if isinstance(error, PreviewRejected) else ""
+            self._last_rejection = f"{type(error).__name__}:{reason}" if reason else type(error).__name__
+            _LOGGER.warning("preview run rejected (%s)", self._last_rejection)
             accepted = None
         with self._lock:
             self._futures.discard(future)
