@@ -46,3 +46,6 @@ operator_state/
 /cpp/**/*.obj
 /cpp/**/*.ilk
 /cpp/**/*.exp
+
+# Local attic for kept-but-untracked material
+/_attic/
