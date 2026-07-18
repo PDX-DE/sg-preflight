@@ -16,6 +16,17 @@ from unittest import mock
 from tests.operator_helpers import write_text
 
 
+def _dashboard_shell_source() -> str:
+    base = Path(__file__).resolve().parents[1] / "sg_preflight"
+    parts = [base / "dashboard" / "main.py"]
+    parts += sorted((base / "dashboard").glob("panels_*.py"))
+    parts += [base / "dashboard" / "snapshot.py", base / "dashboard" / "load_tokens.py",
+              base / "dashboard" / "manual_review_state.py",
+              base / "dashboard_pages_workflows.py"]
+    parts += sorted((base / "dashboard_workflows").glob("*.py"))
+    return "\n".join(p.read_text(encoding="utf-8") for p in parts if p.exists())
+
+
 EXPECTED_SURFACE_IDS = (
     "full-qa-pass",
     "batch-full-qa-pass",
@@ -529,9 +540,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         transport.assert_not_called()
 
     def test_clean_shell_preserves_navigation_interactions_and_spacing(self) -> None:
-        source = (Path(__file__).parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
 
         for token in (
             "def _render_jump_options",
@@ -1032,9 +1041,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 self.assertEqual(len(snapshot["pages"]), 19)
 
     def test_dashboard_source_wires_sgfx_icon_and_header_logo(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
 
         self.assertIn("runtime_asset_path", source)
         self.assertIn("sgfx_icon.png", source)
@@ -1055,9 +1062,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("/sgfx-dashboard-assets", source)
 
     def test_dashboard_source_removes_redundant_headers_and_enables_dark_mode(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
 
         self.assertNotIn("SGFX: Project Quality-Hero", source)
         self.assertNotIn("Welcome to SGFX QA Preflight", source)
@@ -1111,9 +1116,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn('page_id in {"daily-digest", "team-digest-board"}', source)
 
     def test_dashboard_source_offloads_blocking_handlers(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
-        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+        source = _dashboard_shell_source()
+        workflow_source = _dashboard_shell_source()
 
         self.assertIn("from nicegui import background_tasks, run as nicegui_run", source)
         self.assertIn('async def _index(profile: str = "", full_qa_run: str = "", automatic_mode: str = "1")', source)
@@ -1123,9 +1127,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn('background_tasks.create(_run_full_pass_async(), name="sgfx-full-qa-pass")', workflow_source)
 
     def test_dashboard_source_offloads_render_path_blockers(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
-        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+        source = _dashboard_shell_source()
+        workflow_source = _dashboard_shell_source()
 
         visual_renderer = workflow_source[
             workflow_source.find("def _render_action_visuals"):
@@ -1145,9 +1148,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn("next_payload = payload_builder(", source_reader)
 
     def test_dashboard_source_offloads_subprocess_lifecycle_timers(self) -> None:
-        root = Path(__file__).resolve().parents[1] / "sg_preflight"
-        source = (root / "dashboard" / "main.py").read_text(encoding="utf-8")
-        workflow_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+        source = _dashboard_shell_source()
+        workflow_source = _dashboard_shell_source()
         combined = source + "\n" + workflow_source
 
         helper_start = source.find("def _start_io_bound_poll_timer(")
@@ -1213,9 +1215,11 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         }
         for path in sorted((root / "dashboard").glob("*.py")):
             source_paths[f"sg_preflight/dashboard/{path.name}"] = path
+        for path in sorted((root / "dashboard_workflows").glob("*.py")):
+            source_paths[f"sg_preflight/dashboard_workflows/{path.name}"] = path
         sources = {relative_path: path.read_text(encoding="utf-8") for relative_path, path in source_paths.items()}
 
-        workflow_source = sources["sg_preflight/dashboard_pages_workflows.py"]
+        workflow_source = sources["sg_preflight/dashboard_workflows/notifications.py"]
         notify_start = workflow_source.find("def _notify_completion_safe(")
         notify_end = workflow_source.find("\n\ndef _full_qa_completion_notification", notify_start)
         self.assertNotEqual(notify_start, -1)
@@ -1448,9 +1452,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertEqual(_status_tone(""), "neutral")
 
     def test_status_surfaces_carry_semantic_tone_classes(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
         self.assertIn('sgfx-status sgfx-tone-', source)
         self.assertIn("body-cell-status", source)
         self.assertIn(".sgfx-status.sgfx-tone-bad", source)
@@ -1463,7 +1465,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
             self.assertNotIn(
                 '"summary": f"Missing-actual diagnostic chain failed: {exc}"', source, relative
             )
-        workflows_source = (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8")
+        workflows_source = _dashboard_shell_source()
         self.assertIn("MISSING_ACTUAL_CHAIN_UNAVAILABLE_SUMMARY", workflows_source)
         self.assertIn(
             '"diagnostic_detail": f"Missing-actual diagnostic chain failed: {exc}"', workflows_source
@@ -1554,9 +1556,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 self.assertEqual(dashboard_grafiks._resolve_grafiks_shell_exe(workspace), env_exe.resolve())
 
     def test_dashboard_doc_links_are_copy_only(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
 
         self.assertNotIn("new_tab=True", source)
         anchor_idx = source.find("def _render_confluence_anchor")
@@ -1568,9 +1568,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
     def test_dashboard_confluence_dump_anchor_uses_sergfx_key(self) -> None:
         from sg_preflight.dashboard import main as dashboard_main
 
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
 
         self.assertIn('CONFLUENCE_DUMP_SPACE_KEY = "PDX_SERGFX"', source)
         self.assertNotIn('"PDX_" + "SER" + "GFX"', source)
@@ -1904,9 +1902,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 create_task.assert_not_called()
 
     def test_dashboard_source_routes_delivery_page_to_live_generation_renderer(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
 
         self.assertIn('active_page_id == "delivery-checklist"', source)
         self.assertIn("on_setup_completed=_refresh_snapshot", source)
@@ -1915,9 +1911,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("typical 1-10 min", source)
 
     def test_dashboard_source_opens_screenshot_viewer_inline_for_operator_path(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
 
         self.assertIn("data-sgfx-inline-viewer", source)
         self.assertIn("sgfx-viewer-dialog-card", source)
@@ -2260,9 +2254,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         )
 
     def test_dashboard_source_renders_dependency_setup_consent_panel(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
 
         self.assertIn("Dependency setup", source)
         self.assertIn("System changes", source)
@@ -2291,9 +2283,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("typical 1-5 min", source)
 
     def test_dashboard_source_uses_parentless_poll_timer_for_long_running_jobs(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py").read_text(
-            encoding="utf-8"
-        )
+        source = _dashboard_shell_source()
 
         self.assertIn("from nicegui.timer import Timer", source)
         self.assertIn("_start_background_poll_timer", source)
