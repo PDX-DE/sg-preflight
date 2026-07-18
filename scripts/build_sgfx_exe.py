@@ -736,7 +736,17 @@ def swap_staged_bundle(staged_bundle: Path) -> None:
         if final_single_file.exists():
             _rename_existing(final_single_file, backup_single_file)
             moved_single_file = True
-        staged_copy.rename(final_bundle)
+        # Antivirus/indexer scans hold handles inside the freshly copied tree for a short
+        # window after the copy, which makes this rename fail with WinError 5 (observed twice
+        # on real builds). Retry with a settle delay before treating it as a failed swap.
+        for attempt in range(6):
+            try:
+                staged_copy.rename(final_bundle)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(10)
     except Exception:
         if moved_bundle and backup_bundle.exists() and not final_bundle.exists():
             _rename_existing(backup_bundle, final_bundle)
