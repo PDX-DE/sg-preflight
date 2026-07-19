@@ -61,6 +61,92 @@ Item {
                     wrapMode: Text.WordWrap
                 }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root.capabilityBusy
+                spacing: 10
+
+                BusyIndicator {
+                    running: root.capabilityBusy
+                    Layout.preferredWidth: 28
+                    Layout.preferredHeight: 28
+                }
+                Label {
+                    objectName: "runningActionText"
+                    Layout.fillWidth: true
+                    text: root.controller !== null && root.controller.activeActionLabel.length > 0 ? "Running: " + root.controller.activeActionLabel + "…" : "Running…"
+                    color: Theme.text
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.WordWrap
+                }
+                Button {
+                    objectName: "cancelDiagnosticControl"
+                    text: "Cancel queued diagnostic"
+                    visible: root.controller !== null && root.controller.diagnosticCanCancel
+                    enabled: visible
+                    Accessible.name: text
+                    onClicked: root.controller.cancelDiagnostic()
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root.controller !== null && (root.controller.capabilityState !== "idle" || root.controller.capabilityError.length > 0) && !root.capabilityBusy && !actionResultPanel.visible
+                spacing: 10
+
+                Label {
+                    objectName: "capabilityLifecycleText"
+                    Layout.fillWidth: true
+                    text: root.controller.capabilityError || ("Action state: " + root.controller.capabilityState)
+                    color: root.controller.capabilityError.length > 0 ? Theme.statusBad : Theme.muted
+                    wrapMode: Text.WordWrap
+                }
+            }
+            Rectangle {
+                id: actionResultPanel
+                objectName: "actionResultPanel"
+                Layout.fillWidth: true
+                visible: root.controller !== null && !root.capabilityBusy && root.controller.lastActionStatus.length > 0
+                implicitHeight: actionResultColumn.implicitHeight + 20
+                radius: 8
+                color: Theme.raised
+                border.color: root.controller !== null && root.controller.lastActionStatus === "completed" ? Theme.statusGood : Theme.statusBad
+
+                ColumnLayout {
+                    id: actionResultColumn
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.margins: 10
+                    spacing: 4
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.controller !== null && root.controller.lastActionResult.label ? root.controller.lastActionResult.label + " — " + root.controller.lastActionResult.status : ""
+                        color: root.controller !== null && root.controller.lastActionStatus === "completed" ? Theme.statusGood : Theme.statusBad
+                        font.weight: Font.DemiBold
+                        wrapMode: Text.WordWrap
+                    }
+                    Repeater {
+                        model: root.controller !== null && root.controller.lastActionResult.lines ? root.controller.lastActionResult.lines : []
+                        delegate: Label {
+                            id: resultLineDelegate
+                            required property var modelData
+                            Layout.fillWidth: true
+                            text: "• " + resultLineDelegate.modelData
+                            color: Theme.text
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.controller !== null && root.controller.lastActionResult.outputRoot ? "Evidence: " + root.controller.lastActionResult.outputRoot : ""
+                        visible: text.length > 0
+                        color: Theme.muted
+                        font.pixelSize: 11
+                        wrapMode: Text.WrapAnywhere
+                    }
+                }
+            }
             Repeater {
                 model: root.page.visibleItems || []
                 delegate: RowLayout {
@@ -131,27 +217,6 @@ Item {
                     text: diagnosticDelegate.modelData.label || "Run audited diagnostic"
                     Accessible.name: text
                     onClicked: root.controller.runDiagnostic(diagnosticDelegate.modelData.actionId, [root.controller.currentProfileId])
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                visible: root.controller !== null && (root.controller.capabilityState !== "idle" || root.controller.capabilityError.length > 0)
-                spacing: 10
-
-                Label {
-                    objectName: "capabilityLifecycleText"
-                    Layout.fillWidth: true
-                    text: root.controller.capabilityError || ("Action state: " + root.controller.capabilityState)
-                    color: root.controller.capabilityError.length > 0 ? Theme.statusBad : Theme.muted
-                    wrapMode: Text.WordWrap
-                }
-                Button {
-                    objectName: "cancelDiagnosticControl"
-                    text: "Cancel queued diagnostic"
-                    visible: root.controller !== null && root.controller.diagnosticCanCancel
-                    enabled: visible
-                    Accessible.name: text
-                    onClicked: root.controller.cancelDiagnostic()
                 }
             }
             ColumnLayout {

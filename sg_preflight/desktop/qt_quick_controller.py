@@ -348,6 +348,7 @@ class DesktopController(QObject):
     capabilityStateChanged = Signal()
     capabilityErrorChanged = Signal()
     diagnosticCanCancelChanged = Signal()
+    actionFeedbackChanged = Signal()
     previewChanged = Signal()
     _effectStarted = Signal(int)
     _effectFinished = Signal(int, bool, object)
@@ -439,6 +440,8 @@ class DesktopController(QObject):
         self._effect_context: _EffectContext | None = None
         self._effect_future: Future[object] | None = None
         self._capability_state = "idle"
+        self._active_action_label = ""
+        self._last_action_result: dict[str, Any] = {}
         self._capability_error = ""
         self._diagnostic_can_cancel = False
         self._closed = False
@@ -522,6 +525,18 @@ class DesktopController(QObject):
     @Property(bool, notify=diagnosticCanCancelChanged)
     def diagnosticCanCancel(self) -> bool:
         return self._diagnostic_can_cancel
+
+    @Property(str, notify=actionFeedbackChanged)
+    def activeActionLabel(self) -> str:
+        return self._active_action_label
+
+    @Property(str, notify=actionFeedbackChanged)
+    def lastActionStatus(self) -> str:
+        return str(self._last_action_result.get("status", ""))
+
+    @Property("QVariantMap", notify=actionFeedbackChanged)
+    def lastActionResult(self) -> dict[str, Any]:
+        return dict(self._last_action_result)
 
     @Property(str, notify=previewChanged)
     def previewState(self) -> str:
@@ -776,6 +791,9 @@ class DesktopController(QObject):
         ):
             self._set_capability_error("This diagnostic is unavailable.")
             return False
+        self._active_action_label = str(getattr(action, "label", "") or clean_action_id)
+        self._last_action_result = {}
+        self.actionFeedbackChanged.emit()
         self._preempt_preview()
         return self._submit_effect(
             "diagnostic.run",
@@ -1077,6 +1095,8 @@ class DesktopController(QObject):
         if succeeded:
             self._set_capability_error("")
             self._set_capability_state("completed")
+            if context.capability_id == "diagnostic.run":
+                self._publish_diagnostic_result(result)
         elif result == "cancelled":
             self._set_capability_error("")
             self._set_capability_state("cancelled")
@@ -1262,6 +1282,11 @@ class DesktopController(QObject):
                                     action_id=str(getattr(action, "action_id", "")),
                                 )
                             )
+                    accepted_actions.sort(
+                        key=lambda item: 0
+                        if str(item.get("actionId", "")).startswith("sgfx_preflight__")
+                        else 1
+                    )
                     diagnostic_actions = tuple(accepted_actions)
             if artifact_candidates or diagnostic_actions:
                 return _PresentedPageResult(
@@ -1465,6 +1490,21 @@ class DesktopController(QObject):
                 )
             )
         return actions
+
+    def _publish_diagnostic_result(self, record: object) -> None:
+        summary = getattr(record, "summary", None)
+        lines: list[str] = []
+        if isinstance(summary, Mapping):
+            lines = [str(item) for item in summary.get("lines", []) if str(item).strip()][:12]
+        paths = getattr(record, "paths", None)
+        output_root = str(paths.get("output_root", "")) if isinstance(paths, Mapping) else ""
+        self._last_action_result = {
+            "label": self._active_action_label,
+            "status": str(getattr(record, "status", "") or "completed"),
+            "lines": lines,
+            "outputRoot": output_root,
+        }
+        self.actionFeedbackChanged.emit()
 
     def _set_capability_state(self, state: str) -> None:
         if state == self._capability_state:

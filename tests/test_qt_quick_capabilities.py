@@ -125,7 +125,7 @@ class TestUiCapabilityInventory(unittest.TestCase):
                     owning_page_id="home",
                 )
             )
-            self.assertFalse(
+            self.assertTrue(
                 audit_ui_diagnostic_action(
                     preflight,
                     read_only_roots=(source,),
@@ -204,6 +204,72 @@ class TestUiCapabilityInventory(unittest.TestCase):
                         owning_page_id="home",
                     )
                 )
+
+    def test_full_qa_pages_bind_actions_to_the_selected_profile(self) -> None:
+        from sg_preflight.desktop.ui_capabilities import audit_ui_diagnostic_action
+        from sg_preflight.qa_operator_actions import OperatorAction
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            project = source / "Cars" / "G45"
+            output = root / "out" / "operator-ui" / "actions"
+            project.mkdir(parents=True)
+            output.mkdir(parents=True)
+            preflight = OperatorAction(
+                action_id="sgfx_preflight__g45",
+                label="Run local QA checks",
+                description="Four deterministic packs",
+                kind="sgfx_preflight",
+                scope="profile",
+                ready=True,
+                profile_id="G45",
+                project_root=str(project),
+            )
+            delivery = OperatorAction(
+                action_id="delivery_checklist__g45",
+                label="Delivery readiness",
+                description="Local delivery readiness",
+                kind="delivery_checklist",
+                scope="profile",
+                ready=True,
+                profile_id="G45",
+                project_root=str(project),
+            )
+
+            for page_id in ("full-qa-pass", "batch-full-qa-pass"):
+                with self.subTest(page_id=page_id):
+                    self.assertTrue(
+                        audit_ui_diagnostic_action(
+                            preflight,
+                            read_only_roots=(source,),
+                            output_root=output,
+                            allowed_output_root=root / "out",
+                            expected_profile_id="G45",
+                            owning_page_id=page_id,
+                        )
+                    )
+                    for action in (preflight, delivery):
+                        self.assertFalse(
+                            audit_ui_diagnostic_action(
+                                action,
+                                read_only_roots=(source,),
+                                output_root=output,
+                                allowed_output_root=root / "out",
+                                expected_profile_id="G65",
+                                owning_page_id=page_id,
+                            )
+                        )
+            self.assertFalse(
+                audit_ui_diagnostic_action(
+                    replace(preflight, ready=False),
+                    read_only_roots=(source,),
+                    output_root=output,
+                    allowed_output_root=root / "out",
+                    expected_profile_id="G45",
+                    owning_page_id="full-qa-pass",
+                )
+            )
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_home_publishes_only_selected_profile_preflight(self) -> None:
@@ -937,6 +1003,67 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertFalse(output.exists())
             controller.shutdown()
 
+    def test_completed_diagnostic_publishes_running_label_and_result(self) -> None:
+        from types import SimpleNamespace
+
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.qa_operator_actions import OperatorAction
+        from tests.test_qt_quick_core import _FakeTaskCoordinator, _pump_until
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            source = root / "source"
+            project = source / "Cars" / "G65"
+            output = workspace / "out" / "operator-ui" / "actions"
+            project.mkdir(parents=True)
+            action = OperatorAction(
+                action_id="delivery_checklist__g65",
+                label="Delivery readiness",
+                description="Local delivery readiness",
+                kind="delivery_checklist",
+                scope="profile",
+                ready=True,
+                profile_id="G65",
+                project_root=str(project),
+            )
+            record = SimpleNamespace(
+                status="completed",
+                label="Delivery readiness",
+                summary={"lines": ["4/4 assets found", "BMW repo available"]},
+                paths={
+                    "output_root": str(output / "run-1"),
+                    "run_record": str(output / "run-1" / "action.json"),
+                },
+            )
+            coordinator = _FakeTaskCoordinator()
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=mock.Mock(return_value=self._full_qa_page()),
+                diagnostic_read_roots=(source,),
+                diagnostic_output_root=output,
+                action_lister=lambda _workspace: [action],
+                action_getter=lambda _action_id, _workspace: action,
+                action_executor=lambda _action, _workspace: record,
+            )
+            self.addCleanup(controller.shutdown)
+            controller.navigate("full-qa-pass")
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+
+            self.assertEqual(controller.lastActionStatus, "")
+            self.assertTrue(controller.runDiagnostic(action.action_id, ["G65"]))
+            self.assertEqual(controller.activeActionLabel, "Delivery readiness")
+            self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
+            self.assertTrue(_pump_until(lambda: controller.lastActionStatus == "completed"))
+            result = controller.lastActionResult
+            self.assertEqual(result["label"], "Delivery readiness")
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["lines"], ["4/4 assets found", "BMW repo available"])
+            self.assertTrue(str(result["outputRoot"]).startswith(str(output)))
+
     def test_diagnostic_output_root_must_stay_beneath_workspace_output(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import DesktopController
         from sg_preflight.qa_operator_actions import OperatorAction
@@ -1386,6 +1513,10 @@ class TestCapabilityQmlBindings(unittest.TestCase):
         self.assertIn('objectName: "cancelDiagnosticControl"', workflow)
         self.assertIn("controller.capabilityState", workflow)
         self.assertIn("controller.capabilityError", workflow)
+        self.assertIn("controller.activeActionLabel", workflow)
+        self.assertIn("controller.lastActionResult", workflow)
+        self.assertIn('objectName: "runningActionText"', workflow)
+        self.assertIn('objectName: "actionResultPanel"', workflow)
         self.assertIn("controller.recordOperatorHandoff", workflow)
         self.assertIn('capabilityId === "operator_handoff.record"', workflow)
         self.assertIn("controller.recordManualReview", review)

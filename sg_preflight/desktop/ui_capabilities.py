@@ -274,10 +274,18 @@ def audit_ui_diagnostic_action(
         ):
             return False
     elif owning_page_id in {"full-qa-pass", "batch-full-qa-pass"}:
-        if (
-            action.kind != "delivery_checklist"
-            or action.action_id.casefold() != f"delivery_checklist__{profile_id.casefold()}"
-        ):
+        if expected_profile and profile_id.casefold() != expected_profile.casefold():
+            return False
+        if action.kind == "delivery_checklist":
+            if action.action_id.casefold() != f"delivery_checklist__{profile_id.casefold()}":
+                return False
+        elif action.kind == "sgfx_preflight":
+            if (
+                action.action_id.casefold() != f"sgfx_preflight__{profile_id.casefold()}"
+                or not action.ready
+            ):
+                return False
+        else:
             return False
     else:
         return False
