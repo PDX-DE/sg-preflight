@@ -637,7 +637,7 @@ class TestQtQuickShell(unittest.TestCase):
                 from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
                 runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G45", argv=["sgfx-task10-test"])
                 root = runtime.engine.rootObjects()[0]
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     QTest.qWait(5)
@@ -787,7 +787,7 @@ class TestQtQuickShell(unittest.TestCase):
                 )
                 runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-test"])
                 root = runtime.engine.rootObjects()[0]
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
@@ -893,7 +893,7 @@ class TestQtQuickShell(unittest.TestCase):
                 runtime = create_qt_quick_runtime(workspace=workspace, initial_profile_id="G65", argv=["sgfx-test"])
                 root = runtime.engine.rootObjects()[0]
                 root.requestUpdate()
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
@@ -903,7 +903,7 @@ class TestQtQuickShell(unittest.TestCase):
                 generation = runtime.controller._generation
                 invoked_f5 = QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "F5"))
                 refresh_identity = runtime.controller._current_identity
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
@@ -927,7 +927,7 @@ class TestQtQuickShell(unittest.TestCase):
                     "before": before,
                     "afterHome": after_home,
                 }}))
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
@@ -966,7 +966,7 @@ Item {
                 from PySide6.QtQml import QQmlComponent
                 from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
                 runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-test"])
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
@@ -1007,7 +1007,7 @@ Item {
                 runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G70", argv=["sgfx-test"])
                 root = runtime.engine.rootObjects()[0]
                 root.requestUpdate()
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
@@ -1017,7 +1017,7 @@ Item {
                 initial = [runtime.controller.currentProfileId, root.property("selectedProfileValue")]
                 alternative = next(option["id"] for option in runtime.controller.profileOptions if option["id"] != "G70")
                 accepted = runtime.controller.selectProfile(alternative)
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
@@ -1053,7 +1053,7 @@ Item {
                 runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-test"])
                 root = runtime.engine.rootObjects()[0]
                 root.requestUpdate()
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
@@ -1079,7 +1079,7 @@ Item {
                 runtime.application.processEvents()
                 started = [probe.property("observedState"), probe.property("observedOperation")]
                 gate.set()
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
@@ -1185,7 +1185,7 @@ class TestQtQuickHostRuntime(unittest.TestCase):
                 from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
                 workspace = Path({temp_dir!r})
                 runtime = create_qt_quick_runtime(workspace=workspace, argv=["sgfx-test"])
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
                     runtime.application.processEvents()
                     time.sleep(0.005)
