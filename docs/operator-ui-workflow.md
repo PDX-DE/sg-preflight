@@ -23,14 +23,21 @@ It is the deterministic front end of that workflow:
 See [qa-workflow-alignment.md](qa-workflow-alignment.md) for the current workflow fit, manual stages, and BMW-side blockers.
 See [sg-checker-coverage-matrix.md](sg-checker-coverage-matrix.md) for the real SG checker inventory and current integration coverage.
 
-The Clean dashboard is the current lightweight operator surface for guided checks, report viewing, evidence, handoff, and teammate demos.
+The native Qt Quick shell is what a double-click on the packaged executable opens; it is the default operator surface.
+The Clean dashboard remains the lightweight browser surface for guided checks, report viewing, evidence, handoff, and teammate demos, reachable via `--ui-mode clean`.
 Grafiks is now the experimental C++ cinematic shell launched through `dashboard run --ui-mode grafiks`; the old PySide6 desktop console is no longer a user-facing command.
 Both surfaces still wrap the same Python core, actions, reports, and evidence model rather than introducing a second engine.
 Future desktop-shell notes belong under `docs/research/` so the main workflow docs stay focused on SG QA reality, `.pdx/checkers`, evidence, readiness, and BMW blocker visibility.
 
 ## Start
 
-From the repository root:
+Native Qt Quick shell (what the packaged exe opens on double-click):
+
+```bash
+python -m sg_preflight dashboard run --workspace <path> --ui-mode qt-quick
+```
+
+Clean browser dashboard:
 
 ```bash
 python -m sg_preflight dashboard run --workspace <path> --ui-mode clean
@@ -60,6 +67,17 @@ Shared shell:
 - the header `What is this for?` helper gives the shortest explanation for first-time users or PM demos
 
 The default Clean dashboard keeps Home plus 19 registered navigation descriptors: 18 operational pages and nav-only About. It does not register personal-ticket, duplicate readiness, parked analysis, or settings pages. Default page construction and local report generation do not load Jira credentials, query Jira, or expose report-attachment controls; the independent Jira CLI remains separate and explicitly gated.
+
+## Qt Quick shell (packaged default)
+
+The Full QA Pass page binds its actions to the car selected in the profile dropdown:
+
+- the local QA run control ("Run local QA checks") appears first for that car, followed by its delivery-checklist readiness check
+- clicking an action shows a busy banner naming the running action, with a cancel control while it is still queued
+- completion shows a persistent result panel above the actions: status, the action's summary lines, and the evidence folder path
+- errors surface in the same top slot instead of failing silently
+
+Switching the car in the dropdown switches the actions with it. The sections below describe the Clean dashboard views.
 
 ## Views
 

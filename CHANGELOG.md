@@ -12,6 +12,7 @@ outside this bundle.
 - Pinned Python launcher (`scripts/run_sgfx_python.ps1`) so test and evidence commands always run on the intended local interpreter.
 - The C0 Control Center entries describe a staged local candidate that has since become the installed default; see the double-click cutover entry below.
 - Cut the installed/default double-click path over to the native Qt Quick shell (`dashboard run --ui-mode qt-quick`); the NiceGUI Clean dashboard remains available via `--ui-mode clean`.
+- The Qt Quick Full QA Pass and batch pages bind their actions to the car selected in the profile dropdown: the local QA run control appears first for that car, a busy banner names the action while it runs, and a persistent result panel shows the status, summary lines, and evidence path after it completes.
 - Profile-neutral QA Control Center startup with explicit operator selection instead of an invented default profile.
 - One selected-profile local preflight action limited to Anchors, Constants, Carpaints, and Project Sanity.
 - Seven truthful Home and Full QA gates with bounded copy-ready evidence and a deterministic next safe action.
@@ -55,6 +56,8 @@ outside this bundle.
 - Advanced `integration jira` previews load no credentials and make no network request. `--confirm-network` permits Jira verification and weekly-ticket GETs; a Jira write also needs its action-specific confirmation.
 
 ### Fixed
+- Operator actions now work when the workspace is the SVN trunk checkout itself, not only a wrapper folder holding a nested `repositories/trunk` mirror: mirror-path resolution recognizes a flat checkout, profile rules configs fall back to the packaged copy when the workspace carries none, and the exe bundle ships `config/`.
+- On a flat trunk checkout the post-run source-protection guard no longer treats the workspace's own `out/` evidence writes as a source mutation, so completed diagnostics stop being misreported as failed.
 - The selected-profile 3D turntable preview now works with current-generation IDCevo exports as well as older ones: the camera interface accepts both authored aspect-property generations, verified against a real staged export.
 - A 3D shell that closes immediately after launch is now always reported as a failed launch, even when it exits with code 0, so the operator sees an honest fallback message instead of a silent no-op.
 - Kept dashboard/profile evidence local and current: stale page or refresh completions are ignored, profile summaries do not run Jira lookup, legacy Jira credential reads remain non-mutating, and dependency registrations use atomic cross-process transactions.
