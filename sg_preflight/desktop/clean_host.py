@@ -1,5 +1,5 @@
 """Qt main window that spawns the embedded NiceGUI dashboard server as a child process
-and hosts it in a QWebEngineView once it responds, with startup polling and a status label."""
+and hosts it in an embedded web view once it responds, with startup polling and a status label."""
 
 from __future__ import annotations
 
