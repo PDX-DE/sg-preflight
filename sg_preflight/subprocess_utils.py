@@ -1,3 +1,6 @@
+"""Windows console-hiding subprocess helpers and the canonical sgfx CLI command
+builder."""
+
 from __future__ import annotations
 
 import os

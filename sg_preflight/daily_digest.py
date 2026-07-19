@@ -1,3 +1,5 @@
+"""Builds the team daily digest board by combining delivery checklist, BMW screenshot, BMW Git readiness, export size, QA Hero, and manual review evidence per profile."""
+
 from __future__ import annotations
 
 import subprocess

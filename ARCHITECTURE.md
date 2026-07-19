@@ -67,7 +67,10 @@ Two flavors:
   surface state, checks Git delivery readiness, and runs pipeline diagnostics.
 
 ### 4. Surfaces — present to the operator
-- **CLI** (`cli.py`) routes the full command surface across every subsystem.
+- **CLI** (`sg_preflight/cli/` package) routes the full command surface across every subsystem:
+  `_common.py` holds the parser and `main()`, `discoverability.py` the action/example map,
+  `console_render.py` the console output, `session_activity.py` the CLI activity log, and one
+  module per command family (`jira.py`, `dashboard.py`, `evidence.py`, ...).
 - **Desktop host** (`desktop/`) hosts two native shells over the same evidence model,
   theme, and file operations: the PySide6/QtWebEngine Clean window
   (`desktop/clean_app.py`, selected by `--ui-mode clean`) and the Qt Quick QML shell
@@ -143,7 +146,7 @@ downstream is "run check X under profile P."
 | domain — readers | `activity_log.py`, `delivery_checklist.py`, `delivery_readiness.py`, `export_size_*.py`, `full_qa_history.py`, `review_state.py`, `risk_scoring.py`, `api_version_coverage.py`, `country_variant_coverage.py` |
 | domain — builders | `daily_snapshot.py`, `daily_digest.py`, `delivery_workbook_generation.py`, `manual_review.py`, `screenshot_*.py`, `ticket_review.py`, `visual_review.py`, `full_qa_pass.py`, `qa_actions.py`, `qa_hero_readiness.py`, `quality_hero_report.py`, `setup_doctor.py`, `onboarding_assistant.py`, `dependency_onboarding.py`, `cross_car_comparison.py` |
 | domain — BMW-specific | `bmw_delivery.py`, `bmw_process.py`, `bmw_git_readiness.py`, `bmw_pipeline_diagnostics.py`, `bmw_pipeline_auto_fix.py`, `checker_catalog.py`, `checker_evidence.py`, `tool_readiness.py` |
-| surfaces — CLI / entry | `cli.py`, `exe_entry.py`, `__main__.py`, `ui.py`, `live_state.py` |
+| surfaces — CLI / entry | `cli/` (package), `exe_entry.py`, `__main__.py`, `ui.py`, `live_state.py` |
 | surfaces — desktop | `desktop/app.py`, `evidence_model.py`, `clean_host.py`, `file_ops.py`, `theme.py`, `desktop_notifications.py` |
 | surfaces — dashboard | `dashboard/main.py`, `dashboard/dependency.py` |
 | reporting | `reporting.py`, `review_tracking.py`, `retro.py`, `feedback_routing.py` |
@@ -152,9 +155,12 @@ downstream is "run check X under profile P."
 
 ## Notable size hotspots
 
-The largest modules concentrate orchestration and presentation. `dashboard/main.py`
-(~9,900 lines) renders every board and workflow page; `cli.py` (~4,660 lines) dispatches
-all commands; `ticket_review.py`, `ui.py`, `daily_snapshot.py`, and `qa_actions.py`
-(2,200–3,800 lines) each compose several data sources. These are the natural targets for
-incremental, behavior-preserving decomposition; the rest of the tree is already
-well-factored at the module level.
+The former monoliths were decomposed behavior-preservingly: the CLI is the `cli/` package
+(parser in `_common.py`, ~2,200 lines, with the action map, console rendering, and session
+logging in focused siblings), the Clean dashboard is `dashboard/main.py` (~2,300 lines, render
+route + facade) plus focused siblings (`snapshot.py`, `panels_*.py`) and the
+`dashboard_workflows/` package. The remaining large files have honest structural floors:
+`dashboard_workflows/renderers.py` (~3,400 lines, dominated by one closure-bound panel tree),
+`ui.py` (~3,000 lines, deprecated legacy web view kept for compatibility), and
+`dependency_onboarding.py` (~2,500 lines). Further splitting of those would require
+behavior-changing restructures and is deliberately deferred.

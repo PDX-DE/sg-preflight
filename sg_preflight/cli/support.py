@@ -1,3 +1,5 @@
+"""CLI handlers for profile/action/checker listings, setup doctor, run-profile, operator handoff, and desktop notifications."""
+
 from __future__ import annotations
 
 import argparse

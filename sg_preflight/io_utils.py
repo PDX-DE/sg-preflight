@@ -1,3 +1,5 @@
+"""Shared text/JSON/JSONL file read-write helpers used across sg_preflight."""
+
 from __future__ import annotations
 
 import json

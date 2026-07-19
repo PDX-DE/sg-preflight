@@ -1,3 +1,6 @@
+"""Handles the full-qa-pass, bmw-pipeline-diagnostics, bmw-git-readiness, and
+qa-hero-readiness CLI commands."""
+
 from __future__ import annotations
 
 import argparse

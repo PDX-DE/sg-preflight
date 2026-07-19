@@ -1,3 +1,10 @@
+"""Quality-Hero manual-review step guidance and brand/lane review templates.
+
+Holds the fixed step list (Blender check, constants verification, final-look
+comparison, etc.) and the BMW/MINI template definitions used to build a review
+session for a given profile.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

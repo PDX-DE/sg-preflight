@@ -1,3 +1,5 @@
+"""CLI handlers for listing, reading, and exporting local session activity logs."""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,6 @@
+"""Resolves and runs the BMW pipeline's screenshot-capture command for a profile,
+including preflight checks, job polling/cancellation, and evidence copy-out."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

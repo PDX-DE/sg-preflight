@@ -1,3 +1,5 @@
+"""Validates anchor-point node naming and position-metadata consistency against configured rule groups in the exported scene hierarchy."""
+
 from __future__ import annotations
 
 from itertools import product

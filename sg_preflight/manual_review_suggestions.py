@@ -1,3 +1,9 @@
+"""Evidence-based auto-checks and Review Assist suggestions for manual-review steps.
+
+Scans local project files (Blender scenes, constants, screenshots, workbooks) to
+surface suggested starting points; the operator still records every verdict.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

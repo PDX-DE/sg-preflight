@@ -1,3 +1,5 @@
+"""Cross-domain delivery and version tracking read from each domain's CHANGELOG, README, and RCA files."""
+
 from __future__ import annotations
 
 from collections import Counter

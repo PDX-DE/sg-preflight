@@ -1,3 +1,6 @@
+"""Locates and reads the BMW delivery-documentation workbook (size-analysis / export-size
+Excel) for a profile, as read-only evidence — never a checklist executor or approval."""
+
 from __future__ import annotations
 
 from datetime import date, datetime

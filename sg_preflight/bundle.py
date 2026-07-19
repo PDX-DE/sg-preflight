@@ -1,3 +1,5 @@
+"""Loads a materialized adapter bundle (scene, constants, carpaints, project manifest) back off disk."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

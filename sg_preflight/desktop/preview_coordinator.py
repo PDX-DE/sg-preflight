@@ -1,3 +1,6 @@
+"""Orchestrates the sandboxed Ramses preview-render helper subprocess per profile: cache-key
+derivation, manifest/frame validation, disk-cache eviction, and the emitted preview state."""
+
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, wait

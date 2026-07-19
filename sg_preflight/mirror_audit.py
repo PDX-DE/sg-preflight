@@ -1,3 +1,9 @@
+"""Fast and deep drift audits comparing a working mirror tree against its reference repo.
+
+Hashes files/directories on both sides to report match/drift status per profile
+target (fast mode) or across a full trunk (deep mode), with a cacheable report.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -45,6 +51,8 @@ def _directory_index(root: Path) -> dict[str, dict[str, Any]]:
 
 @dataclass
 class MirrorAuditEntry:
+    """Match/drift result for one compared file or directory between mirror and reference."""
+
     label: str
     relative_path: str
     status: str
@@ -90,6 +98,8 @@ class MirrorAuditEntry:
 
 @dataclass
 class MirrorAuditReport:
+    """Full audit run result: all compared entries plus overall match/drift status."""
+
     mode: str
     created_at_utc: str
     mirror_root: str
@@ -265,6 +275,7 @@ def compare_relative_path(
     relative_path: str,
     label: str,
 ) -> MirrorAuditEntry:
+    """Compare one relative path under both roots, dispatching to file or directory comparison."""
     relative = Path(relative_path)
     mirror_path = mirror_root / relative
     reference_path = reference_root / relative
@@ -283,6 +294,11 @@ def _overall_status(entries: list[MirrorAuditEntry]) -> str:
 
 
 def run_fast_mirror_audit(profiles: list[RunProfile]) -> MirrorAuditReport:
+    """Audit each profile's configured live mirror-audit targets against its reference root.
+
+    Uses the first profile's repo/reference roots for the report header; returns an
+    ``unknown``-status report with a note if no profiles are given.
+    """
     entries: list[MirrorAuditEntry] = []
     notes: list[str] = []
     if not profiles:
@@ -325,6 +341,7 @@ def run_fast_mirror_audit(profiles: list[RunProfile]) -> MirrorAuditReport:
 
 
 def run_deep_mirror_audit(mirror_root: Path, reference_root: Path) -> MirrorAuditReport:
+    """Hash-compare the full mirror and reference trees and flag whether drift is Playground-only."""
     entry = _compare_directory("Full trunk", ".", mirror_root, reference_root)
     notes = []
     if entry.sample_differences:
@@ -349,6 +366,7 @@ def run_deep_mirror_audit(mirror_root: Path, reference_root: Path) -> MirrorAudi
 
 
 def load_cached_audit(cache_path: Path) -> MirrorAuditReport | None:
+    """Load a previously saved audit report from disk, or None if missing/unreadable."""
     if not cache_path.exists():
         return None
     payload = load_json(cache_path)
@@ -358,4 +376,5 @@ def load_cached_audit(cache_path: Path) -> MirrorAuditReport | None:
 
 
 def save_cached_audit(cache_path: Path, report: MirrorAuditReport) -> None:
+    """Persist an audit report as JSON to cache_path, creating parent directories as needed."""
     _write_json(cache_path, report.to_dict())

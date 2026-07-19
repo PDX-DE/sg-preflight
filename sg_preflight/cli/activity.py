@@ -1,3 +1,6 @@
+"""Handles the activity-log and live-state CLI commands, including polling tail modes for
+the operator-local activity log and the dashboard live-state file."""
+
 from __future__ import annotations
 
 import argparse

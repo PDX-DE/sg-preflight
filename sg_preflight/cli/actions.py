@@ -1,3 +1,6 @@
+"""Handles the run-action, launch-action, run-action-worker, and dependency-setup-worker
+CLI commands that execute or background-launch a single operator action."""
+
 from __future__ import annotations
 
 import argparse

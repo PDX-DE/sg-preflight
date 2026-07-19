@@ -1,3 +1,5 @@
+"""Local Lua override snippets and status sentinels used to drive battery test scenarios and screenshot capture for the daily snapshot."""
+
 from __future__ import annotations
 
 import re

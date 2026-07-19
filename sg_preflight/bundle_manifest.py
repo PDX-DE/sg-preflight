@@ -1,3 +1,7 @@
+"""Builds, writes, and validates the Qt desktop bundle manifest: QML import inventory,
+runtime/tooling versions, and Ramses preview/probe helper state, checked against the
+actual staged bundle contents before packaging."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

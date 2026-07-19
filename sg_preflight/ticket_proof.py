@@ -1,3 +1,5 @@
+"""Builds read-only HTML/JSON evidence packets ("ticket proofs") for delivery, screenshot, digest, manual-review, observability, demo, and Jira/BMW integration themes, from live workspace scans."""
+
 from __future__ import annotations
 
 import base64
@@ -107,6 +109,7 @@ document.querySelectorAll('input.filter').forEach(function(input){
 
 
 def render_proof_html(payload: dict[str, Any]) -> str:
+    """Renders a proof payload (title, sections, provenance) into a self-contained, sortable/filterable dark-themed HTML report."""
     parts: list[str] = []
     parts.append(f"<title>{html.escape(str(payload.get('title', 'Evidence report')))}</title>")
     parts.append(f"<style>{_PROOF_CSS}</style>")
@@ -621,6 +624,12 @@ def build_ticket_proof(
     output_root: Path | str | None = None,
     profiles: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    """Builds the proof payload for `theme` from a live scan of `workspace`; raises ValueError for an unknown theme.
+
+    Each section builder degrades to a single "unavailable" section on failure rather than raising, so a
+    missing local dependency never blocks the rest of the report. When `output_root` is given, also writes the
+    HTML and JSON report files there and returns their paths alongside the payload.
+    """
     if theme not in PROOF_THEMES:
         raise ValueError(f"Unknown proof theme: {theme}. Known: {', '.join(sorted(PROOF_THEMES))}")
     workspace_path = Path(workspace).resolve() if workspace is not None else Path.cwd()

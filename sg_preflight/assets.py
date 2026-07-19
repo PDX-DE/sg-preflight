@@ -1,3 +1,5 @@
+"""Resolves runtime asset paths across dev, PyInstaller-frozen, and bundled execution contexts."""
+
 from __future__ import annotations
 
 import sys

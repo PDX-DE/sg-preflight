@@ -1,3 +1,5 @@
+"""Small path and value helpers shared by the validator packs: dotted-path lookup, numeric type check, and Windows/POSIX path normalization."""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,3 +1,6 @@
+"""Session-scoped JSONL event log — records UI/subprocess/exception events, installs
+crash hooks, and exports a scrubbed session bundle."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -1,3 +1,5 @@
+"""Verdict and review-priority scoring for daily snapshot battery results: risk keywords, ranking, and baseline gap detection."""
+
 from __future__ import annotations
 
 import re

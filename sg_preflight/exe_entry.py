@@ -1,3 +1,6 @@
+"""Packaged .exe double-click entry point: resolves the workspace and launch args and
+verifies the bundled Qt Quick runtime is complete before starting the dashboard."""
+
 from __future__ import annotations
 
 from datetime import datetime

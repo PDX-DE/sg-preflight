@@ -1,3 +1,6 @@
+"""Handles the confirmation-gated Jira REST CLI commands: register, status,
+weekly-tickets, post-comment, update-issue, attach-file, and post."""
+
 from __future__ import annotations
 
 import argparse

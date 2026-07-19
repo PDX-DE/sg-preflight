@@ -1,3 +1,6 @@
+"""Setup Doctor — detects and version-validates local tool and environment
+prerequisites, and builds the readiness report and setup-wizard steps."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

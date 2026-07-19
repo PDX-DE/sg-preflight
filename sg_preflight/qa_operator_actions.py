@@ -1,3 +1,5 @@
+"""Catalog of available operator QA actions (preflight, repo checker, unused resources, delivery checklist, BMW smoke) and their per-profile resolution."""
+
 from __future__ import annotations
 
 import sys

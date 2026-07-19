@@ -1,3 +1,6 @@
+"""Builds the Rack Pre-Flash Readiness board: asset-side auto checks for documented
+IDCevo rack targets plus the rack-inventory and KPI reference tables."""
+
 from __future__ import annotations
 
 from collections import Counter

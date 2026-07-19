@@ -1,3 +1,6 @@
+"""Boots the NiceGUI dashboard server: port selection, WebView2 runtime detection,
+native-vs-browser launch decisions, and the browser-fallback child process."""
+
 from __future__ import annotations
 
 from datetime import datetime

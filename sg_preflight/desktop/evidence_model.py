@@ -1,3 +1,6 @@
+"""Builds the desktop shell's presentation dataclasses — profile/action choices, evidence
+items, environment doctor, blockers, manual-review cards, and recent runs — from backend state."""
+
 from __future__ import annotations
 
 import importlib.util

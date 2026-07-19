@@ -1,3 +1,6 @@
+"""Builds the export-size trend board by comparing size_analysis workbooks across
+delivery versions."""
+
 from __future__ import annotations
 
 from collections import Counter, defaultdict

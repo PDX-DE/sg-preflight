@@ -1,3 +1,5 @@
+"""Persists operator-action runs on disk: ActionRecord build/save/load, progress events, and manual evidence attachments."""
+
 from __future__ import annotations
 
 import json

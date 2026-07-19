@@ -1,3 +1,6 @@
+"""Builds safe launch specs for the Grafiks 3D inspection subprocess and hosts its
+process lifecycle for the Qt Quick shell."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

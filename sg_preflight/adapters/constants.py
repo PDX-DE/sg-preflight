@@ -1,3 +1,5 @@
+"""Normalizes pivot/constants sources (Pivot_Master JSON, Module_constants Lua) into one canonical schema."""
+
 from __future__ import annotations
 
 import re

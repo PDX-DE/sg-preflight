@@ -4,7 +4,8 @@ Builds a self-contained dark-theme HTML page summarising one BMW profile:
 
 - Header: profile id + last successful run timestamp + risk score chip
 - Workbook section (from workbook_finder + classification)
-- Active Jira tickets (from read-only REST search)
+- Jira tickets only when an opt-in lookup supplied them (the default local build runs no
+  Jira lookup and renders no Jira card; use `integration jira` explicitly when needed)
 - Last N Full QA Pass runs (from full_qa_history's list-based history)
 - Manual review state summary
 - Escalation contacts + Confluence anchors
@@ -161,6 +162,11 @@ def _workbook_section_html(workbook: dict[str, Any]) -> str:
 
 
 def _jira_section_html(jira: dict[str, Any]) -> str:
+    # The default local build never runs a Jira lookup (status "not_run"); per the team
+    # direction Jira stays off the main path, so the default page renders no Jira card at all.
+    # Explicitly supplied ticket payloads (opt-in flows) still render.
+    if isinstance(jira, dict) and jira.get("status") == "not_run":
+        return ""
     if not isinstance(jira, dict) or jira.get("status") != "available":
         summary = sanitize_text(jira.get("summary", "Jira tickets unavailable.") if isinstance(jira, dict) else "Jira tickets unavailable.")
         return (
@@ -389,7 +395,6 @@ def build_profile_summary(
     history_limit: int = 5,
     build_commit: str = "",
     exe_sha256: str = "",
-    jira_max_results: int = 5,
     notes: list[str] | None = None,
 ) -> ProfileSummary:
     """Compose the data layer for one profile by stitching workbook-finder, risk-scoring,

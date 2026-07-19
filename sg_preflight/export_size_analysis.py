@@ -1,3 +1,6 @@
+"""Reads operator-local export size_analysis workbooks, read-only, into evidence
+data for the export-size surfaces."""
+
 from __future__ import annotations
 
 from datetime import date, datetime

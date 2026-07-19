@@ -1,3 +1,5 @@
+"""Normalizes carpaint sources (legacy JSON, live JSON, or XLSX workbooks) into one canonical carpaint schema."""
+
 from __future__ import annotations
 
 import json

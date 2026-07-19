@@ -1,3 +1,6 @@
+"""Qt Quick image provider that serves cached preview frames to QML by opaque token,
+holding only the single most recently registered frame set at a time."""
+
 from __future__ import annotations
 
 from pathlib import Path

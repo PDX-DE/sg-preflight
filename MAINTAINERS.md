@@ -21,7 +21,8 @@ It supports manual review — it does not replace it, and no check auto-approves
    - **Clean window** (`desktop/clean_app.py`) — the NiceGUI dashboard (`sg_preflight/dashboard/`)
      hosted in a QtWebEngine window. Reachable with `--ui-mode clean`.
 3. **CLI** (`sg_preflight/cli/`) — every action the GUIs can run, plus operator utilities.
-   `python -m sg_preflight --help`; the action/example map lives in `cli/_common.py`.
+   `python -m sg_preflight --help`; the action/example map lives in `cli/discoverability.py`
+   (re-exported through the `cli/_common.py` facade).
 
 ## Module map (the ones you will actually touch)
 

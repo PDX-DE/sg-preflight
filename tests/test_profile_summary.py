@@ -118,6 +118,15 @@ class RenderTests(unittest.TestCase):
         self.assertIn("Auto-generated locally", html)
         self.assertIn("sgfx-classification-auto_generated_locally", html)
 
+    def test_render_omits_the_jira_card_when_no_lookup_ran(self) -> None:
+        summary = self._minimal_summary(jira_tickets={
+            "status": "not_run",
+            "summary": "Jira ticket lookup is not run as part of this local profile summary.",
+            "tickets": [],
+        })
+        html = render_profile_summary_html(summary)
+        self.assertNotIn("Active Jira tickets", html)
+
     def test_render_jira_tickets_with_url_renders_clickable_anchor(self) -> None:
         summary = self._minimal_summary(jira_tickets={
             "status": "available",

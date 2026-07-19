@@ -1,3 +1,7 @@
+"""Handles the station and dashboard CLI commands, launching the OpenHTF station, the
+desktop Qt shell, Grafiks mode, or the NiceGUI dashboard, with a browser fallback when the
+native shell can't start."""
+
 from __future__ import annotations
 
 import argparse

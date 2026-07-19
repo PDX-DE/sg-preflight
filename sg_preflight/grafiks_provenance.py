@@ -1,3 +1,6 @@
+"""Verifies the provenance of a distributed Grafiks binary — hash, license
+manifest, dependency inventory — before it is approved for distribution."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, fields

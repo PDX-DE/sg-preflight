@@ -1,3 +1,5 @@
+"""Definition-of-Done reference data and markdown catalogs (QA capability matrix, 3D QA playbook, repo topology, delivery surfaces and targets), plus the ReviewEvidence/TicketDoDItem dataclasses consumed by the ticket review bundle."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

@@ -1,3 +1,6 @@
+"""Renders and writes the SG Preflight JSON, Markdown, and HTML reports, including
+finding grouping, owner/action hints, and HTML re-theming of prior reports."""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,8 @@
+"""Handles the read-only board CLI commands: disabled tests, API-version coverage,
+country-variant coverage, cross-domain delivery, perspectives inventory, rack readiness,
+export-size trend, RCA references, RAMSES stamps, pivot mapping, rack performance, LFS
+pointer scan, and authoring assets."""
+
 from __future__ import annotations
 
 import argparse

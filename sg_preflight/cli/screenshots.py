@@ -1,3 +1,5 @@
+"""CLI handlers for screenshot-test-state, screenshot-triage, and screenshot review-viewer commands."""
+
 from __future__ import annotations
 
 import argparse

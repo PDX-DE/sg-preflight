@@ -1,3 +1,5 @@
+"""BMW/MINI models repo discovery, profile-ID resolution against models_build_config.yaml, and read-only screenshot-test surface inspection."""
+
 from __future__ import annotations
 
 import os

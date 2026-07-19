@@ -1,3 +1,5 @@
+"""Starts and drives the local OpenHTF station server and SGFX test run for a profile."""
+
 from __future__ import annotations
 
 from contextlib import contextmanager

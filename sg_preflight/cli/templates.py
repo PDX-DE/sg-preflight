@@ -1,3 +1,5 @@
+"""CLI handlers for saving, listing, showing, deleting, and running saved command templates."""
+
 from __future__ import annotations
 
 import argparse

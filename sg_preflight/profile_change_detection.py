@@ -1,3 +1,5 @@
+"""Detects which profiles have BMW Git or SVN config changes newer than their last successful local QA run."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

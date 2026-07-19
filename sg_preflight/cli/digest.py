@@ -1,3 +1,6 @@
+"""Handles the whats-new, daily-qa-snapshot, daily-digest, and team-digest-board
+CLI commands."""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,5 @@
+"""Qt list model exposing the desktop shell's navigation routes and hub tiles to QML."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

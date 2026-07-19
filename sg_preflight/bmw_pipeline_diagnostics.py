@@ -1,3 +1,5 @@
+"""Loads known BMW pipeline failure diagnostic patterns and extracts failure-line digests from run logs."""
+
 from __future__ import annotations
 
 from importlib import resources
@@ -11,6 +13,7 @@ DIAGNOSTICS_DATA_FILE = "bmw_pipeline_diagnostics.json"
 
 
 def load_bmw_pipeline_diagnostics() -> dict[str, Any]:
+    """Load the bundled diagnostics JSON; returns an empty-patterns payload if the data file is missing or invalid."""
     try:
         path = resources.files(DIAGNOSTICS_DATA_PACKAGE).joinpath(DIAGNOSTICS_DATA_FILE)
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -20,6 +23,7 @@ def load_bmw_pipeline_diagnostics() -> dict[str, Any]:
 
 
 def bmw_pipeline_diagnostic_patterns() -> tuple[dict[str, Any], ...]:
+    """Return all known diagnostic pattern records as a tuple, dropping any malformed (non-dict) entries."""
     payload = load_bmw_pipeline_diagnostics()
     patterns = payload.get("patterns", [])
     if not isinstance(patterns, list):
@@ -28,6 +32,7 @@ def bmw_pipeline_diagnostic_patterns() -> tuple[dict[str, Any], ...]:
 
 
 def bmw_pipeline_diagnostic_pattern(pattern_id: str) -> dict[str, Any] | None:
+    """Return the diagnostic pattern matching pattern_id, or None if pattern_id is blank or unmatched."""
     needle = str(pattern_id or "").strip()
     if not needle:
         return None
@@ -38,6 +43,7 @@ def bmw_pipeline_diagnostic_pattern(pattern_id: str) -> dict[str, Any] | None:
 
 
 def diagnostic_pattern_anchors(*pattern_ids: str) -> tuple[str, ...]:
+    """Collect the Confluence anchors for the given pattern IDs, including each pattern's possible-cause anchors, de-duplicated in first-seen order."""
     anchors: list[str] = []
     for pattern_id in pattern_ids:
         pattern = bmw_pipeline_diagnostic_pattern(pattern_id)
@@ -68,6 +74,10 @@ _FAILURE_LINE_RE = re.compile(
 def extract_failure_digest(
     log_text: str, *, context_lines: int = 6, max_chars: int = 1200
 ) -> dict[str, Any]:
+    """Find the first failure/error/traceback marker line in log_text and return it with surrounding context.
+
+    If no marker line is found, falls back to a tail excerpt of the log with found=False.
+    """
     lines = str(log_text or "").splitlines()
     if not lines:
         return {"found": False, "line_number": 0, "marker_line": "", "excerpt": ""}

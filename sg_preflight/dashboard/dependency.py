@@ -1,3 +1,5 @@
+"""NiceGUI dependency pin and the guard that raises with install guidance when it is missing."""
+
 from __future__ import annotations
 
 from typing import Any

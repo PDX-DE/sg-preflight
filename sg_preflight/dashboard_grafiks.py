@@ -1,3 +1,5 @@
+"""Locates and launches the Grafiks native shell (cinematic or operator console) from the dashboard."""
+
 from __future__ import annotations
 
 import os

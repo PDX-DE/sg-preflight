@@ -1,3 +1,5 @@
+"""Side-by-side risk-score comparison between two car profiles, as evidence only."""
+
 from __future__ import annotations
 
 from pathlib import Path

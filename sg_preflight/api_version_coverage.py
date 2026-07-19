@@ -1,3 +1,5 @@
+"""Builds the shared-API/HMI-interface-family coverage board and cautious rename/split impact hints per car."""
+
 from __future__ import annotations
 
 from collections import Counter, defaultdict

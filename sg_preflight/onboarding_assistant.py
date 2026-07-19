@@ -1,3 +1,5 @@
+"""Builds the step-by-step onboarding guide for a profile from dependency setup and review-template state."""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,3 +1,5 @@
+"""Builds the project-sanity manifest: path references, Lua reference graph, RaCo version, glTF import diff."""
+
 from __future__ import annotations
 
 import json

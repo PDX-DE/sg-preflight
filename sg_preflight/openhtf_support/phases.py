@@ -1,3 +1,5 @@
+"""OpenHTF phase definitions wrapping SGFX evidence sources (delivery checklist, screenshot state, daily digest, manual review) as station measurements."""
+
 from __future__ import annotations
 
 from typing import Any

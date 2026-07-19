@@ -1,3 +1,5 @@
+"""Qt stylesheet (QSS) for the desktop operator shell."""
+
 from __future__ import annotations
 
 

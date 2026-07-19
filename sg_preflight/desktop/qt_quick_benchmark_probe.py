@@ -1,3 +1,6 @@
+"""Out-of-process benchmark runner that drives the Qt Quick app through startup, navigation,
+and reader-stress scenarios and writes timing samples back to the requesting harness."""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,6 @@
+"""Windows balloon notifications for desktop operator runs, with each notification
+recorded to a local log."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

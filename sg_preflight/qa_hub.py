@@ -1,3 +1,5 @@
+"""Builds the QA Hub snapshot: gate states, next-action suggestions, and activity/evidence summaries for the operator UI."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

@@ -1,3 +1,5 @@
+"""Country-variant Lua test coverage against the BMW country table and captured screenshots, as review evidence."""
+
 from __future__ import annotations
 
 from collections import Counter

@@ -1,3 +1,5 @@
+"""Gathers changelog, screenshot, SVN, and delivery-task context into a visual review prep bundle for manual review, and materializes it as JSON/markdown/HTML."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

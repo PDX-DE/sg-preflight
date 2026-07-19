@@ -1,3 +1,5 @@
+"""Operator-local activity log: append/read/render factual verb+surface entries, never Jira/SVN/BMW-visible."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

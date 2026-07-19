@@ -1,3 +1,6 @@
+"""Handles developer-facing CLI commands — run, ui, demo-good, demo-broken, probe,
+materialize, retro-extract — for local bundle validation and workspace tooling."""
+
 from __future__ import annotations
 
 import argparse

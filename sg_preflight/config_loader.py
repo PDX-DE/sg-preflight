@@ -1,3 +1,5 @@
+"""JSON config file loading with error messages that point at the offending line and column."""
+
 from __future__ import annotations
 
 import json

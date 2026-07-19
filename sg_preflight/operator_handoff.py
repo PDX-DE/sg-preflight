@@ -1,3 +1,5 @@
+"""Records and reads local, append-only operator handoff notes (stopping point, next step) per profile."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

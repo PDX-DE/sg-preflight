@@ -1,3 +1,7 @@
+"""Registry of UI capabilities exposed to QML pages, describing each action's input
+schema, effect class, and backend binding, plus the executor that runs their effects
+off the UI thread."""
+
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor

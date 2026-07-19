@@ -1,3 +1,6 @@
+"""Re-exports every symbol from `sg_preflight.cli._common` as this package's public surface,
+so command-handler modules can `import sg_preflight.cli as common`."""
+
 from __future__ import annotations
 
 import sys

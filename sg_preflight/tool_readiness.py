@@ -1,3 +1,5 @@
+"""Probes whether a local RaCo/RaCoHeadless executable can load a representative SG .rca scene, for setup-doctor readiness checks."""
+
 from __future__ import annotations
 
 import re

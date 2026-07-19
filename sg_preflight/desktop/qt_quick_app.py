@@ -1,3 +1,6 @@
+"""Builds and tears down the Qt Quick desktop runtime: application, QML engine, controller,
+and the surface/shell registry models wired into the QML context."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, replace

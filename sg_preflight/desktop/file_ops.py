@@ -1,3 +1,6 @@
+"""Cross-platform helpers for normalizing local paths and opening or revealing them
+in the OS file manager from the desktop shell."""
+
 from __future__ import annotations
 
 import os

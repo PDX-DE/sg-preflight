@@ -1,3 +1,5 @@
+"""Reads and writes the dashboard's persisted operator preferences: run mode, active ticket, theme, and desktop notification settings."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

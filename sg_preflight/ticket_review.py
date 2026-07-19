@@ -1,3 +1,5 @@
+"""Assembles the ticket review bundle across profiles -- visual review prep, BMW screenshot surface, DoD items, daily snapshot results -- and materializes it to disk as a package of markdown/JSON artifacts plus a zip."""
+
 from __future__ import annotations
 
 from collections import Counter

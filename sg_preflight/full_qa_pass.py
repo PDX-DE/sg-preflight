@@ -1,3 +1,6 @@
+"""Assembles the full QA pass board from the individual QA gate/source boards and
+their Confluence anchors."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

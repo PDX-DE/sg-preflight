@@ -1,3 +1,6 @@
+"""Assembles the manual-review assist board and markdown from the review
+templates, suggestions, and session modules."""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,3 +1,6 @@
+"""Sanitizes backend page payloads before they cross into the desktop UI: strips commands
+and secrets, redacts sensitive keys, and rewrites absolute paths as workspace-relative labels."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

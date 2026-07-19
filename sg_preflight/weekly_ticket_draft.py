@@ -1,3 +1,5 @@
+"""Builds the draft weekly "tickets I worked on" summary by combining Jira's assigned/updated tickets with the local SGFX activity log."""
+
 from __future__ import annotations
 
 from collections import Counter, defaultdict

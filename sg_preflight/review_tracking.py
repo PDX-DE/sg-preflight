@@ -1,3 +1,6 @@
+"""Tracks per-ticket review-owner decisions and externally reported findings as
+paired JSON/Markdown records."""
+
 from __future__ import annotations
 
 import json

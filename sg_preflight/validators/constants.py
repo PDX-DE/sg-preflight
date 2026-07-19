@@ -1,3 +1,5 @@
+"""Compares exported constants against the expected constants file by numeric tolerance and exact match on configured paths."""
+
 from __future__ import annotations
 
 from typing import Any

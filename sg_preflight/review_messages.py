@@ -1,3 +1,6 @@
+"""Builds the review-owner status update and daily QA digest (JSON and text) from
+the local review-board state."""
+
 from __future__ import annotations
 
 from datetime import datetime

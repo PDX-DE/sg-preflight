@@ -1,3 +1,6 @@
+"""Runs page operations off the Qt UI thread and reports completion or cancellation
+back through Qt signals."""
+
 from __future__ import annotations
 
 from collections.abc import Callable

@@ -1,3 +1,6 @@
+"""Launches the PySide6 "Clean" desktop shell: startup splash, window icon/stylesheet,
+and the controller that owns the embedded dashboard window's lifecycle."""
+
 from __future__ import annotations
 
 import sys

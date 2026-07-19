@@ -1,3 +1,5 @@
+"""Syncs page-building globals from sg_preflight.dashboard.main and holds the empty-state field defaults for each dashboard page."""
+
 from __future__ import annotations
 
 from functools import wraps

@@ -1,3 +1,7 @@
+"""Parses raw checker tool output (style checker, executeChecks, scene_check, unused-resource
+scan, delivery checklist log) into structured per-file issue evidence, and merges evidence
+from multiple checker runs into one payload."""
+
 from __future__ import annotations
 
 import ast

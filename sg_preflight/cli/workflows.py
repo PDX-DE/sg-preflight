@@ -1,3 +1,5 @@
+"""CLI handlers for workflow-status, listing, validating, and running QA workflow definitions."""
+
 from __future__ import annotations
 
 import argparse

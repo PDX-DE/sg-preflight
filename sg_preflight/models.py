@@ -1,3 +1,5 @@
+"""Shared preflight check result model: findings grouped into pack results and an overall report."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict

@@ -1,3 +1,6 @@
+"""Pre-flight checks and operator-confirmed subprocess orchestration for triggering the BMW
+export pipeline to generate a delivery workbook, including progress polling and evidence copy-out."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

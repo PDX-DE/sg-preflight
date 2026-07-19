@@ -1,3 +1,5 @@
+"""Shared filesystem and JSON helpers used by the adapter modules: directory walking, glob matching, I/O."""
+
 from __future__ import annotations
 
 import json

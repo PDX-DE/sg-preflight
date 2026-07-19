@@ -1,3 +1,5 @@
+"""Runs the daily 3D Car QA snapshot: launches smoke and battery captures via local Lua overrides and assembles the resulting report."""
+
 from __future__ import annotations
 
 import json

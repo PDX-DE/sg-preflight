@@ -1,3 +1,7 @@
+"""Builds the full SGFX CLI argument parser covering every subcommand, and owns `main()`,
+which dispatches each parsed command to its handler in the sibling `sg_preflight.cli.*`
+modules."""
+
 from __future__ import annotations
 
 import argparse

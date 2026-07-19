@@ -1,3 +1,5 @@
+"""CLI handlers for review-board, review-priority, daily-delta, and review-decisions commands."""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,6 @@
+"""Reads and writes the local full-QA-pass run history per profile under the
+operator's sgfx_outputs directory."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

@@ -1,3 +1,5 @@
+"""Guards optional OpenHTF imports and raises with install guidance when the package is missing."""
+
 from __future__ import annotations
 
 import importlib

@@ -1,3 +1,6 @@
+"""Builds the screenshot triage report: discovers baseline/candidate/diff roots,
+classifies each pair, and evaluates BMW-comparator parity tiers."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field

@@ -1,3 +1,5 @@
+"""Validates exported carpaint entries against configured required keys, uniqueness, value ranges, array lengths, and finish-type rules."""
+
 from __future__ import annotations
 
 from typing import Any

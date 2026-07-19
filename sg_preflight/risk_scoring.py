@@ -1,3 +1,6 @@
+"""Computes the per-car risk score from local screenshot-state and manual-review
+evidence, and renders it as text/Markdown."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -240,6 +243,9 @@ def read_per_car_risk_score(
     workspace: Path | str | None = None,
     bmw_root: Path | str | None = None,
 ) -> dict[str, Any]:
+    """Return the 0-100 risk score, level, active signals, and manual-review/delta
+    context for one profile, from local screenshot-state and manual-review evidence.
+    This is a triage signal only; it never stands in for the operator's own review."""
     workspace_path = Path(workspace).resolve() if workspace is not None else Path.cwd()
     clean_profile = profile_id.strip() or "profile"
     screenshot_state = read_bmw_screenshot_state(
@@ -314,6 +320,8 @@ def read_per_car_risk_score(
 
 
 def render_risk_score_text(payload: dict[str, Any]) -> str:
+    """Render a `read_per_car_risk_score` payload as plain-text lines, including the
+    risk-trend sparkline when at least three prior runs are available."""
     current = payload.get("current_snapshot", {}) if isinstance(payload.get("current_snapshot"), dict) else {}
     latest = payload.get("latest_review", {}) if isinstance(payload.get("latest_review"), dict) else {}
     delta = payload.get("delta_since_last_review", {}) if isinstance(payload.get("delta_since_last_review"), dict) else {}
@@ -376,6 +384,8 @@ def _risk_score_sparkline_line(payload: dict[str, Any]) -> str:
 
 
 def render_risk_score_markdown(payload: dict[str, Any]) -> str:
+    """Render a `read_per_car_risk_score` payload as a Markdown report with
+    guardrails and per-signal detail."""
     current = payload.get("current_snapshot", {}) if isinstance(payload.get("current_snapshot"), dict) else {}
     latest = payload.get("latest_review", {}) if isinstance(payload.get("latest_review"), dict) else {}
     delta = payload.get("delta_since_last_review", {}) if isinstance(payload.get("delta_since_last_review"), dict) else {}

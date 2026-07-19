@@ -1,3 +1,5 @@
+"""Builds the local team-standup digest board, combining per-profile risk scores with the daily digest's landed/workflow/manual-review sections."""
+
 from __future__ import annotations
 
 from pathlib import Path

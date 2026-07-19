@@ -1,3 +1,5 @@
+"""Normalizes anchor/scene-hierarchy sources (RCA archives, anchor or hierarchy JSON) into one tree schema."""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,6 @@
+"""Validates page-declared file paths against approved roots (rejecting symlinks, reparse
+points, and path escapes) and hands out opaque artifact IDs the desktop UI can reveal."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

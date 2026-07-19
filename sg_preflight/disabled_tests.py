@@ -1,3 +1,6 @@
+"""Parses the exported Lua test config for disabled/added test declarations and
+builds the disabled-tests evidence board."""
+
 from __future__ import annotations
 
 from collections import Counter

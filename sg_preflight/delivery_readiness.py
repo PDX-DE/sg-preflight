@@ -1,3 +1,6 @@
+"""Scans the source repo for car/model CHANGELOG.md entries, classifies each as delivered,
+not-delivered-yet, or unknown, and reconciles the result against the BMW models catalog."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -56,6 +59,9 @@ _BRAND_ALIASES = {
 
 @dataclass(frozen=True)
 class ChangelogClassification:
+    """Delivery-status verdict derived from a CHANGELOG.md's latest `## [version]` header,
+    plus the matched version, delivery date, and header text used as evidence."""
+
     status: str
     status_label: str
     version: str
@@ -76,6 +82,8 @@ class ChangelogClassification:
 
 @dataclass(frozen=True)
 class CatalogTarget:
+    """One model entry parsed from the BMW models catalog (`models_build_config.yaml`)."""
+
     name: str
     brand: str
     target_type: str
@@ -97,6 +105,9 @@ class CatalogTarget:
 
 @dataclass(frozen=True)
 class CatalogTargetMapping:
+    """A catalog target reduced to its model-directory id, with the relative paths of the
+    discovered model directories (if any) that match it."""
+
     target_name: str
     catalog_brand: str
     target_type: str
@@ -115,6 +126,9 @@ class CatalogTargetMapping:
 
 @dataclass(frozen=True)
 class CatalogReconciliation:
+    """Cross-check between the BMW models catalog and the model directories found on disk:
+    which catalog targets mapped to a directory, which didn't, and which directories are uncataloged."""
+
     catalog_state: str
     catalog_path: str
     catalog_target_count: int
@@ -143,6 +157,9 @@ class CatalogReconciliation:
 
 @dataclass(frozen=True)
 class DeliveryReadinessEntry:
+    """Delivery status for one discovered car/model directory: its changelog classification
+    plus the names of any BMW catalog targets it matches."""
+
     source_root: str
     brand: str
     model_id: str
@@ -177,6 +194,9 @@ class DeliveryReadinessEntry:
 
 @dataclass(frozen=True)
 class DeliveryReadinessBoard:
+    """Full delivery-readiness snapshot for a source repo root: every discovered entry,
+    catalog reconciliation, and per-status counts. Evidence only — never an approval signal."""
+
     repo_root: Path
     source_state: str
     generated_at_utc: str
@@ -231,6 +251,8 @@ class _ModelCandidate:
 
 
 def classify_changelog_text(text: str) -> ChangelogClassification:
+    """Classifies a CHANGELOG.md's latest version header as delivered, not-delivered-yet,
+    or unknown, based on a delivery date or status wording in the header line."""
     match = _HEADER_RE.search(text)
     if match is None:
         return ChangelogClassification(
@@ -597,6 +619,9 @@ def build_delivery_readiness_board(
     workspace_root: Path | None = None,
     bmw_repo_root: Path | None = None,
 ) -> DeliveryReadinessBoard:
+    """Scans `Cars` and `Cars_IDCevo` under the source repo root for model directories with a
+    CHANGELOG.md or catalog match, classifies each entry, and reconciles against the BMW
+    models catalog when one is found."""
     source_root = (repo_root or resolve_source_repo_root(workspace_root)).resolve()
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     catalog_state, catalog_path, catalog_targets, catalog_notes = _load_catalog_targets(
@@ -644,6 +669,8 @@ def build_delivery_readiness_board(
 
 
 def delivery_readiness_markdown(board: DeliveryReadinessBoard) -> str:
+    """Renders a `DeliveryReadinessBoard` as a Markdown report: counts, a per-car status
+    table, and sections for catalog targets with no matching directory and vice versa."""
     payload = board.to_dict()
     counts = payload["counts"]
     catalog = payload["catalog"]
@@ -704,6 +731,8 @@ def write_delivery_readiness_board(
     board: DeliveryReadinessBoard,
     output_root: Path,
 ) -> dict[str, str]:
+    """Writes the board's JSON and Markdown renderings under `output_root` and returns
+    their resulting file paths."""
     output_root.mkdir(parents=True, exist_ok=True)
     json_path = output_root / "delivery-readiness.json"
     markdown_path = output_root / "delivery-readiness.md"

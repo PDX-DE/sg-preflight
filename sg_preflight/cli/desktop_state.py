@@ -1,3 +1,7 @@
+"""Handles the desktop-state CLI command family that surfaces read-only operator dashboard
+state — profiles, actions, blockers, manual cards, surfaces, boards, snapshots — to the
+desktop shell."""
+
 from __future__ import annotations
 
 import argparse

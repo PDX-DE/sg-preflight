@@ -1,3 +1,6 @@
+"""Handles the delivery-documentation, delivery-workbook, export-size-analysis, and
+delivery-readiness CLI commands."""
+
 from __future__ import annotations
 
 import argparse

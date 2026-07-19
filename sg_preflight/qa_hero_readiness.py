@@ -1,3 +1,10 @@
+"""Read-only presence/count snapshot of Quality Hero subsystems for a BMW/MINI profile.
+
+Inspects the local digital-3d-car-models clone (LightFX, WelcomeFX, ShadesFX,
+CarPaint, anchor points, constants, perspectives) and renders digest/markdown
+summaries; it never records a manual-review verdict.
+"""
+
 from __future__ import annotations
 
 import json
@@ -177,6 +184,11 @@ def read_qa_hero_readiness(
     workspace: Path | str | None = None,
     bmw_root: Path | str | None = None,
 ) -> dict[str, Any]:
+    """Resolve profile_id to a BMW/MINI car folder and report which Quality Hero subsystems exist.
+
+    Returns a payload with status ``no_bmw_root``/``no_profile_folder``/``available``
+    depending on what's found; never records a manual-review verdict.
+    """
     workspace_path = Path(workspace).resolve() if workspace is not None else None
     repo_root = Path(bmw_root).resolve() if bmw_root is not None else discover_bmw_models_repo(workspace_path).resolve()
     requested = profile_id.strip()
@@ -226,6 +238,7 @@ def read_qa_hero_readiness_for_profiles(
     workspace: Path | str | None = None,
     bmw_root: Path | str | None = None,
 ) -> list[dict[str, Any]]:
+    """Return one readiness payload per distinct, non-empty profile id (case-insensitive dedupe)."""
     seen: set[str] = set()
     payloads: list[dict[str, Any]] = []
     for profile_id in profile_ids:
@@ -238,6 +251,7 @@ def read_qa_hero_readiness_for_profiles(
 
 
 def qa_hero_readiness_digest_items(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten stored qa_hero_readiness payload(s) from state into digest-row dicts for the UI."""
     raw_items = state.get("qa_hero_readiness", [])
     if isinstance(raw_items, dict):
         raw_items = [raw_items]
@@ -277,6 +291,7 @@ def _subsystem_markdown_line(item: dict[str, Any]) -> str:
 
 
 def render_qa_hero_readiness_markdown(payload: dict[str, Any]) -> str:
+    """Render a read_qa_hero_readiness payload as a Markdown report with a per-subsystem section."""
     lines = [
         QA_HERO_READINESS_BANNER,
         "",
@@ -304,6 +319,7 @@ def render_qa_hero_readiness_markdown(payload: dict[str, Any]) -> str:
 
 
 def render_qa_hero_readiness_text(payload: dict[str, Any]) -> str:
+    """Render a read_qa_hero_readiness payload as a short plain-text summary."""
     lines = [
         QA_HERO_READINESS_BANNER,
         str(payload.get("summary", "QA Hero readiness unavailable.")),

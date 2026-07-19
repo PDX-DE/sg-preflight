@@ -1,3 +1,6 @@
+"""Parses a retro-board HTML export (plus its comments JSON) into categorized notes,
+themes, and actions, and writes the resulting pain-map report."""
+
 from __future__ import annotations
 
 import json

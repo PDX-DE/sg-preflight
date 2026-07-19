@@ -1,3 +1,5 @@
+"""Reference helpers for BMW process conventions: Lackcode normalization, smoke commands, and workflow contracts."""
+
 from __future__ import annotations
 
 from copy import deepcopy

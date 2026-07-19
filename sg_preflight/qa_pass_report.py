@@ -1,3 +1,6 @@
+"""Builds the Full QA Pass HTML report and its exportable evidence ZIP, including
+screenshot-diff row collection and rendering."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

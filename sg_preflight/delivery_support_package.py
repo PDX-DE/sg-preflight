@@ -1,3 +1,6 @@
+"""Assembles the delivery-support package: grounded ticket bundles plus ready-to-send
+progress/coordinator/review-owner briefs, zipped for handoff during a delivery week."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

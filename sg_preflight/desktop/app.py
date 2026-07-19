@@ -1,3 +1,5 @@
+"""Entry point that dispatches to the requested desktop UI mode, Clean or Qt Quick."""
+
 from __future__ import annotations
 
 from pathlib import Path

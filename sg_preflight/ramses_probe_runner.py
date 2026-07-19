@@ -1,3 +1,6 @@
+"""Runs the packaged Ramses R0 probe helper against a scene, validates its native
+report, and publishes local evidence under helper-trust and worktree-mutation guards."""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,5 @@
+"""Resolves adapter input sources and writes the normalized scene/constants/carpaints/manifest bundle to disk."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -1,3 +1,6 @@
+"""QObject bridge between QML and the backend: page/shell-context loading, capability
+invocation, diagnostics execution, manual-review/handoff recording, and preview-state relay."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

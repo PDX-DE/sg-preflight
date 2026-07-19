@@ -1,3 +1,6 @@
+"""Builds the side-by-side screenshot review viewer (HTML/JSON) with diff-delta
+badges, run-over-run regression badges, and positional diff histograms."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

@@ -1,3 +1,5 @@
+"""Probes the filesystem for SG/BMW car-model repo checkouts and the known SG assets inside them."""
+
 from __future__ import annotations
 
 import os
@@ -35,6 +37,7 @@ DISCOVERY_PATTERNS = {
 
 
 def default_search_roots() -> list[Path]:
+    """Return the existing directories to search for SG/BMW repo checkouts, from env vars then common drive paths."""
     workspace_root = Path(__file__).resolve().parents[2]
     raw_candidates = [
         os.environ.get("SG_REPO"),
@@ -127,6 +130,10 @@ def _inspect_candidate(root: Path) -> dict[str, Any]:
 
 
 def probe_workspace(search_roots: list[Path] | None = None) -> dict[str, Any]:
+    """Walk search_roots (or the defaults) for candidate repo directories, scored and sorted by marker presence.
+
+    Only candidates scoring >= 6 (i.e. both a Cars dir and a .pdx dir) are kept as repo_candidates.
+    """
     roots = search_roots or default_search_roots()
     repo_candidates: list[dict[str, Any]] = []
     seen: set[str] = set()

@@ -1,3 +1,5 @@
+"""Missing-actual diagnostic auto-fix chain: asset doctor, gated read-refresh, and gated retry screenshot capture."""
+
 from __future__ import annotations
 
 from pathlib import Path

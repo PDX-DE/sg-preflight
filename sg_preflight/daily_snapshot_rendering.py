@@ -1,3 +1,5 @@
+"""Markdown rendering for the daily QA snapshot: review priority ranking, daily delta, battery baseline gaps, and the candidate review gallery."""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,7 @@
+"""Handles the manual-review CLI command family: session creation from scratch or
+template, templates listing, auto-checks, assist, step recording, and RaCo/Blender
+tool launch."""
+
 from __future__ import annotations
 
 import argparse

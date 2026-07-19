@@ -1,3 +1,7 @@
+"""Builds the catalog of BMW/SG checkers (style checker, executeChecks, checkall/checkcars
+batch wrappers, unused-resource scan, delivery checklist, scene check, BMW smoke) with each
+checker's local readiness state, blockers, and prerequisites."""
+
 from __future__ import annotations
 
 import os

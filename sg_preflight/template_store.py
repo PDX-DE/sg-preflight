@@ -1,3 +1,5 @@
+"""Operator-local JSON store for saved CLI command templates: validation, save/load/list/delete, and run-outcome tracking."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

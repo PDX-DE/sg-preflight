@@ -1,3 +1,5 @@
+"""Static registry of operator-dashboard surfaces (id, titles, navigation grouping, renderer kind), validated at import time."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

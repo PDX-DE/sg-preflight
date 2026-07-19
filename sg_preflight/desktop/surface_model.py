@@ -1,3 +1,5 @@
+"""Qt list model exposing the surface registry's page/panel descriptors to QML."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

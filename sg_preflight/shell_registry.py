@@ -1,3 +1,6 @@
+"""Defines the operator shell's home-hub tiles, navigation group order, and
+keyboard-shortcut listing."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

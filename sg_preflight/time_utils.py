@@ -1,3 +1,5 @@
+"""UTC timestamp formatting helpers shared across the tool, always Z-suffixed."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

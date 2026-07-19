@@ -1,3 +1,6 @@
+"""Builds the Raw vs Models Parity board comparing folder structure between the raw
+authoring-workfiles repository and the models delivery repository."""
+
 from __future__ import annotations
 
 import json

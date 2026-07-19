@@ -1,3 +1,5 @@
+"""Markdown renderers for the ticket review bundle's surfaces: BMW screenshot surface, DoD matrix, DoD update draft, Teams/stakeholder updates, review protocol, owner matrix, and manual review companion."""
+
 from __future__ import annotations
 
 from pathlib import Path

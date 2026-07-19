@@ -1,3 +1,5 @@
+"""Validates the project manifest for OneDrive roots, suspicious absolute paths, cross-brand/cross-car references, unused Lua files, and glTF import drift."""
+
 from __future__ import annotations
 
 from typing import Any

@@ -1,3 +1,6 @@
+"""Creates, stores, and updates local manual-review session records (steps,
+verdicts) per profile and ticket."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

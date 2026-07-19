@@ -1,3 +1,5 @@
+"""Normalizes SGFX payload status strings into a fixed vocabulary and maps them to OpenHTF phase outcomes."""
+
 from __future__ import annotations
 
 from typing import Any

@@ -1,3 +1,5 @@
+"""OpenHTF plugs exposing the active SGFX profile context and read-only evidence lookups to station phases."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

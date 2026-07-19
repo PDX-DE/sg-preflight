@@ -34,7 +34,7 @@ It is not a production deployment, not a delivery package, and not a replacement
 - `config/` - SGFX rule and profile configuration.
 - `docs/` - a mix of curated operator guides (CLI and JSON workflow references) and internal working notes, handoffs, and research; not every file in `docs/` is team-facing.
 - `dist\sgfx-preflight\sgfx-preflight.exe` - optional packaged Windows executable when the bundle is prepared from a built onedir executable folder.
-- SGFX icons and logos: `sgfx_icon.png`, `framework_sgfx_logo.png`, `logo_sgfx.png`, `exe_ico.png`, `exe_ico.ico`, and `debug_icon.ico` support the Windows executable, Clean dashboard, Grafiks shell, and web favicon.
+- SGFX icons and logos: `sgfx_icon.png`, `framework_sgfx_logo.png`, `logo_sgfx.png`, and `exe_ico.png` at the repo root, plus `desktop_native/resources/exe_ico.ico` and `desktop_native/resources/debug_icon.ico`, support the Windows executable, Clean dashboard, Grafiks shell, and web favicon.
 - Optional shortcuts: `SGFX Preflight - Clean Mode.lnk` and `SGFX Preflight - Grafiks Mode.lnk` can be generated during bundle packaging when the executable exists.
 - Root metadata: `pyproject.toml`, `LICENSE`, `NOTICE.md`, `SECURITY.md`, `CONTRIBUTING.md`, this `README.md`, and a clean local-alpha `CHANGELOG.md`.
 
@@ -177,7 +177,7 @@ From the bundle root:
 python -m unittest discover -s tests -v
 ```
 
-The curated bundle test count can differ from the source alpha test count because internal guard-only tests are excluded from the team-facing bundle. The latest bundle verification ran successfully with 190 tests OK and 3 skipped; the source alpha verification for the same tip ran 196 tests OK and 3 skipped.
+The curated bundle test count can differ from the source test count because internal guard-only tests are excluded from the team-facing bundle. The most recent full source verification for this tree ran 1,177 tests OK with 8 skipped (exclusive `unittest discover` run).
 
 ## Deprecated C++ Reference Build
 

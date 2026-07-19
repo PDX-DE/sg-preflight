@@ -1,3 +1,8 @@
+"""Reads local perspectives_*.json files across cars, checks scene structural completeness, and flags peer-comparison outliers.
+
+Evidence-only inventory; it never records or implies a manual-review verdict.
+"""
+
 from __future__ import annotations
 
 from collections import Counter

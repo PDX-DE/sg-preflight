@@ -1,3 +1,6 @@
+"""Builds the read-only "What's new in this build" payload from a car's CHANGELOG.md
+sections, and renders it as text or markdown."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

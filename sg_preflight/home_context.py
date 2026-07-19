@@ -1,3 +1,5 @@
+"""Builds the home page's recent-activity summary from the local activity log."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

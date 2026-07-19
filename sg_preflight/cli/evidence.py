@@ -1,3 +1,6 @@
+"""Handles the risk-score, cross-car-comparison, profile-summary, ticket-review, and
+quality-hero-report CLI commands."""
+
 from __future__ import annotations
 
 import argparse

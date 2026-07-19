@@ -1,3 +1,5 @@
+"""Read-only per-profile readiness surface (README, main scene, test config, changelog) from the local BMW Git checkout."""
+
 from __future__ import annotations
 
 from pathlib import Path

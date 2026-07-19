@@ -1,3 +1,6 @@
+"""Converts backend page payloads into the fixed, allow-listed item/section shape the Qt Quick
+UI renders, rejecting any payload carrying forbidden fields (commands, URLs, credentials) or an unregistered surface."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

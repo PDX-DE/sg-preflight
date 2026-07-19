@@ -1,3 +1,6 @@
+"""Opt-in, confirmation-gated Jira REST client for reading and posting tickets
+against the BMW Jira instance."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

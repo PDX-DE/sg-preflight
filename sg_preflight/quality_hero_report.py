@@ -1,3 +1,6 @@
+"""Assembles the Quality-Hero review report (Markdown, HTML, JSON) from delivery
+checklist, export-size, screenshot-viewer, and manual-review evidence."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

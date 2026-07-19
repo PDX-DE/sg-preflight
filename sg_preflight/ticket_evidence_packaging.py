@@ -1,3 +1,5 @@
+"""Packages operator action-record evidence -- snapshot results, manual review notes, screenshots -- into a ticket review output folder, including the manual evidence index, sent-package manifest, and zip."""
+
 from __future__ import annotations
 
 from collections import Counter

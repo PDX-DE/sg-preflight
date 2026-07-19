@@ -1,3 +1,6 @@
+"""Core run-orchestration services: executes preflight bundle validation runs,
+tracks run records/progress, and reports local tool/workflow readiness."""
+
 from __future__ import annotations
 
 import importlib.util

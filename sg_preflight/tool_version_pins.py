@@ -1,3 +1,5 @@
+"""Reads BMW's documented RaCo interface-version pins and Python requires-python, and compares them against installed versions for drift."""
+
 from __future__ import annotations
 
 from importlib import metadata

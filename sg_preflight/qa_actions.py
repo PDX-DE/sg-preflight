@@ -1,3 +1,5 @@
+"""Executes operator-triggered QA actions (preflight, repo checker, unused resources, delivery checklist, BMW smoke, scene check, daily live matrix, profile stack, Ramses R0 stage) and writes their progress and evidence into ActionRecord."""
+
 from __future__ import annotations
 
 import json

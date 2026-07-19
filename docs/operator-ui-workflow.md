@@ -50,7 +50,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_operator_ui.ps1 -OpenBrowse
 
 The Grafiks shell does not replace the Clean dashboard flow.
 It is a cinematic wrapper over the same action/run records for cases where the planet overview is useful.
-A second experimental native shell scaffold now exists under `desktop_native/`; it uses the same `launch-action` and `desktop-state` backend contract over the Python core.
+An earlier experimental native shell scaffold remains under `desktop_native/` for reference only; it is deprecated (see the README) and superseded by the Qt Quick shell.
 
 Shared shell:
 

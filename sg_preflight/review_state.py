@@ -1,3 +1,7 @@
+"""Loads and assembles the review-board state — review packages, daily snapshot,
+review-priority ranking, daily delta, owner decisions, and external findings — for
+the review UI."""
+
 from __future__ import annotations
 
 import hashlib

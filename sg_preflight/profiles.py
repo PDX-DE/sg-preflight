@@ -1,3 +1,5 @@
+"""RunProfile model and profile registry: resolves BMW/MINI car profiles from the dynamic registry or static fallback specs."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
