@@ -1064,6 +1064,121 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertEqual(result["lines"], ["4/4 assets found", "BMW repo available"])
             self.assertTrue(str(result["outputRoot"]).startswith(str(output)))
 
+    def test_evidence_writes_inside_a_flat_workspace_read_root_do_not_fail_the_run(self) -> None:
+        from types import SimpleNamespace
+
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.qa_operator_actions import OperatorAction
+        from tests.test_qt_quick_core import _FakeTaskCoordinator, _pump_until
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            project = workspace / "Cars" / "G65"
+            output = workspace / "out" / "operator-ui" / "actions"
+            project.mkdir(parents=True)
+            action = OperatorAction(
+                action_id="delivery_checklist__g65",
+                label="Delivery readiness",
+                description="Local delivery readiness",
+                kind="delivery_checklist",
+                scope="profile",
+                ready=True,
+                profile_id="G65",
+                project_root=str(project),
+            )
+
+            def executor(_action: object, _workspace: object) -> object:
+                run_dir = output / "run-1"
+                run_dir.mkdir(parents=True)
+                (run_dir / "action.json").write_text("{}", encoding="utf-8")
+                return SimpleNamespace(
+                    status="completed",
+                    summary={"lines": ["ok"]},
+                    paths={"output_root": str(run_dir)},
+                )
+
+            coordinator = _FakeTaskCoordinator()
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=mock.Mock(return_value=self._full_qa_page()),
+                diagnostic_read_roots=(workspace,),
+                diagnostic_output_root=output,
+                action_lister=lambda _workspace: [action],
+                action_getter=lambda _action_id, _workspace: action,
+                action_executor=executor,
+            )
+            self.addCleanup(controller.shutdown)
+            controller.navigate("full-qa-pass")
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+
+            self.assertTrue(controller.runDiagnostic(action.action_id, ["G65"]))
+            self.assertTrue(
+                _pump_until(lambda: controller.capabilityState in {"completed", "failed"})
+            )
+            self.assertEqual(controller.capabilityState, "completed")
+            self.assertEqual(controller.lastActionStatus, "completed")
+
+    def test_source_mutations_outside_the_output_area_still_fail_the_run(self) -> None:
+        from types import SimpleNamespace
+
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.qa_operator_actions import OperatorAction
+        from tests.test_qt_quick_core import _FakeTaskCoordinator, _pump_until
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            project = workspace / "Cars" / "G65"
+            output = workspace / "out" / "operator-ui" / "actions"
+            project.mkdir(parents=True)
+            action = OperatorAction(
+                action_id="delivery_checklist__g65",
+                label="Delivery readiness",
+                description="Local delivery readiness",
+                kind="delivery_checklist",
+                scope="profile",
+                ready=True,
+                profile_id="G65",
+                project_root=str(project),
+            )
+
+            def executor(_action: object, _workspace: object) -> object:
+                run_dir = output / "run-1"
+                run_dir.mkdir(parents=True)
+                (project / "injected.lua").write_text("-- mutated", encoding="utf-8")
+                return SimpleNamespace(
+                    status="completed",
+                    summary={"lines": ["ok"]},
+                    paths={"output_root": str(run_dir)},
+                )
+
+            coordinator = _FakeTaskCoordinator()
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=mock.Mock(return_value=self._full_qa_page()),
+                diagnostic_read_roots=(workspace,),
+                diagnostic_output_root=output,
+                action_lister=lambda _workspace: [action],
+                action_getter=lambda _action_id, _workspace: action,
+                action_executor=executor,
+            )
+            self.addCleanup(controller.shutdown)
+            controller.navigate("full-qa-pass")
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+
+            self.assertTrue(controller.runDiagnostic(action.action_id, ["G65"]))
+            self.assertTrue(
+                _pump_until(lambda: controller.capabilityState in {"completed", "failed"})
+            )
+            self.assertEqual(controller.capabilityState, "failed")
+
     def test_diagnostic_output_root_must_stay_beneath_workspace_output(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import DesktopController
         from sg_preflight.qa_operator_actions import OperatorAction

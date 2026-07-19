@@ -971,12 +971,19 @@ class DesktopController(QObject):
         )
 
     @staticmethod
-    def _snapshot_read_only_roots(roots: tuple[Path, ...]) -> dict[str, tuple[int, int]]:
+    def _snapshot_read_only_roots(
+        roots: tuple[Path, ...],
+        excluded_root: Path,
+    ) -> dict[str, tuple[int, int]]:
+        # A flat trunk checkout is both the read root and the workspace, so the
+        # workspace's own out/ area must not count as source content.
         snapshot: dict[str, tuple[int, int]] = {}
         for root in roots:
             if not root.is_dir():
                 continue
             for path in sorted(item for item in root.rglob("*") if item.is_file()):
+                if excluded_root == path or excluded_root in path.parents:
+                    continue
                 try:
                     stat_result = path.stat()
                 except OSError:
@@ -993,14 +1000,15 @@ class DesktopController(QObject):
         read_only_roots: tuple[Path, ...],
         output_root: Path,
     ) -> object:
-        before = self._snapshot_read_only_roots(read_only_roots)
+        excluded_output_area = (self._workspace / "out").resolve()
+        before = self._snapshot_read_only_roots(read_only_roots, excluded_output_area)
         if self._action_executor is not None:
             record = self._action_executor(action, self._workspace)
         else:
             from sg_preflight.qa_actions import execute_operator_action
 
             record = execute_operator_action(action, self._workspace)
-        after = self._snapshot_read_only_roots(read_only_roots)
+        after = self._snapshot_read_only_roots(read_only_roots, excluded_output_area)
         if after != before:
             raise RuntimeError("The diagnostic modified a read-only source root.")
         paths = getattr(record, "paths", None)
