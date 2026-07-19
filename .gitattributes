@@ -1,0 +1,4 @@
+# The QML format gate compares pyside6-qmlformat stdout against the file bytes;
+# CRLF working copies double every newline through that pipeline, so QML must
+# stay LF on disk regardless of core.autocrlf.
+*.qml text eol=lf
