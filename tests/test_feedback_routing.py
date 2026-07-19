@@ -1,4 +1,4 @@
-"""internal milestone tests for the operator-configurable feedback routing module."""
+"""Tests for the operator-configurable feedback routing module."""
 from __future__ import annotations
 
 import json
@@ -16,7 +16,7 @@ class FeedbackRoutingDefaultsTests(unittest.TestCase):
             DEFAULT_TEAMS_RECIPIENT,
         )
 
-        # internal milestone: switched from personal gmail to work email so feedback lands in
+        # Switched from personal gmail to work email so feedback lands in
         # the PDX inbox by default.
         self.assertEqual(DEFAULT_EMAIL_RECIPIENT, "david-erik.garcia-arenas@paradoxcat.com")
         self.assertEqual(DEFAULT_TEAMS_RECIPIENT, "david-erik.garcia-arenas@paradoxcat.com")
@@ -116,7 +116,7 @@ class FeedbackRoutingOverrideTests(unittest.TestCase):
 
 
 class FeedbackRoutingDashboardWiringTests(unittest.TestCase):
-    """internal milestone source guards on the dashboard wiring — the buttons must exist + the
+    """Source guards on the dashboard wiring — the buttons must exist and the
     JS must read the routing context."""
 
     def test_dashboard_source_has_open_email_and_open_teams_buttons(self) -> None:

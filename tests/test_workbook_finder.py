@@ -1,4 +1,4 @@
-"""internal milestone tests for workbook_finder + workbook_generator + delivery_checklist wiring."""
+"""Tests for the workbook_finder, workbook_generator, and their wiring into delivery_checklist."""
 from __future__ import annotations
 
 import json
@@ -37,7 +37,7 @@ class WorkbookFinderHelperTests(unittest.TestCase):
         self.assertEqual(_format_hint(Path("G65_20251002.xlsx")), WORKBOOK_FORMAT_A_DATE_STAMPED)
         self.assertEqual(_format_hint(Path("F70_vx.xlsx")), WORKBOOK_FORMAT_B_VERSION_TAGGED)
         self.assertEqual(_format_hint(Path("U10_v9.xlsx")), WORKBOOK_FORMAT_B_VERSION_TAGGED)
-        # Auto-generated workbooks always emit Format A shape per internal milestone spec.
+        # Auto-generated workbooks always emit Format A shape, per the finder's documented spec.
         self.assertEqual(_format_hint(Path("G70_auto_20260529.xlsx")), WORKBOOK_FORMAT_A_DATE_STAMPED)
         # Unknown filenames fall through.
         self.assertEqual(_format_hint(Path("random_workbook.xlsx")), WORKBOOK_FORMAT_UNKNOWN)
@@ -59,7 +59,7 @@ class WorkbookFinderHelperTests(unittest.TestCase):
                 "bmw_git_export_size_analysis",
                 "bmw_git_evo_size_analysis_dash",
             ):
-                self.assertIn(key, source_keys, f"internal milestone directive slot {key!r} missing from search locations")
+                self.assertIn(key, source_keys, f"directive slot {key!r} missing from search locations")
             # operator_local_auto_gen is bonus (search the auto-gen output dir on re-runs).
             self.assertIn("operator_local_auto_gen", source_keys)
 
@@ -281,7 +281,7 @@ class WorkbookGeneratorTests(unittest.TestCase):
 
 class DeliveryChecklistWiringTests(unittest.TestCase):
     def test_delivery_checklist_falls_through_to_finder_when_legacy_lookup_misses(self) -> None:
-        """internal milestone wiring: when the legacy single-path lookup returns None, the new
+        """When the legacy single-path lookup returns None, the new
         multi-location finder must take over and pick up a workbook in any of the
         eight documented slots."""
         from sg_preflight.delivery_checklist import resolve_delivery_checklist_workbook

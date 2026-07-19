@@ -1,4 +1,4 @@
-"""internal milestone tests for the consolidated profile dashboard HTML composer."""
+"""Tests for the consolidated profile dashboard HTML composer."""
 from __future__ import annotations
 
 import json
@@ -270,7 +270,7 @@ class BuildTests(unittest.TestCase):
 
 
 class FullQaHistoryListTests(unittest.TestCase):
-    """internal milestone needs an append-only run list rather than the internal milestone single-record shape."""
+    """Full QA history needs an append-only run list rather than a single-record shape."""
 
     def test_record_appends_to_runs_list_and_keeps_legacy_top_level_fields(self) -> None:
         from sg_preflight.full_qa_history import read_full_qa_run_list, record_full_qa_run_history
@@ -311,7 +311,7 @@ class FullQaHistoryListTests(unittest.TestCase):
             self.assertEqual(runs[0]["completed_at_utc"], "2026-05-29T14:00:00Z")
 
     def test_legacy_single_record_history_falls_back_to_synthetic_list(self) -> None:
-        """Pre-internal milestone history files have no `runs` key; the reader must still
+        """Legacy history files have no `runs` key; the reader must still
         surface their single record so the sparkline/profile summary work
         out-of-the-box on existing operator state."""
         from sg_preflight.full_qa_history import full_qa_run_history_path, read_full_qa_run_list

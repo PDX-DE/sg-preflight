@@ -1,4 +1,4 @@
-"""internal milestone tests for the risk score sparkline (SVG + ASCII + honest fallback)."""
+"""Tests for the risk score sparkline (SVG + ASCII + honest fallback)."""
 from __future__ import annotations
 
 import re
@@ -112,7 +112,7 @@ class SparklineRenderTests(unittest.TestCase):
 
 class SparklineIntegrationWithFullQaHistoryTests(unittest.TestCase):
     def test_sparkline_consumes_read_full_qa_run_list_directly(self) -> None:
-        """End-to-end internal milestone + internal milestone wiring: history list → sparkline data → SVG."""
+        """End-to-end wiring: history list → sparkline data → SVG."""
         from sg_preflight.full_qa_history import (
             read_full_qa_run_list,
             record_full_qa_run_history,

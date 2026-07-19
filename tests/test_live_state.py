@@ -1,4 +1,4 @@
-"""internal milestone tests for the live observability surface."""
+"""Tests for the live observability surface."""
 from __future__ import annotations
 
 import json
@@ -174,8 +174,8 @@ class ActivityLogH26EnrichmentTests(unittest.TestCase):
         self.assertIsNone(_cutoff_for_since("all", now))
 
     def test_full_qa_pass_run_writes_one_entry_per_simulated_click(self) -> None:
-        """Carry-forward from internal milestone: ensure the lifecycle verbs do not regress the
-        internal milestone idempotency guarantee — one click stays one entry."""
+        """Ensure the lifecycle verbs do not regress the idempotency guarantee —
+        one click stays one entry."""
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             (workspace / "operator_state").mkdir(parents=True, exist_ok=True)

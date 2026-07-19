@@ -1,4 +1,4 @@
-"""internal milestone Part A — regression tests for the delivery_checklist → internal milestone wiring."""
+"""Regression tests for wiring the delivery-checklist reader through to the size-analysis workbook finder."""
 from __future__ import annotations
 
 import json
@@ -10,10 +10,10 @@ from unittest import mock
 
 class DeliveryChecklistResolverWiresBmwRootTests(unittest.TestCase):
     def test_read_delivery_checklist_passes_bmw_root_through_to_finder(self) -> None:
-        """Pre-internal milestone regression repro: a workbook lives only in the BMW Git slot
+        """Regression repro: a workbook lives only in the BMW Git slot
         (`<bmw_root>/cars/BMW/G70_EVO/export/size_analysis/`) which the legacy
-        single-path lookup never visited. With internal milestone wiring + bmw_root passed
-        through, read_delivery_checklist must resolve it via the internal milestone finder."""
+        single-path lookup never visited. With bmw_root threaded through to the
+        workbook finder, read_delivery_checklist must resolve it there instead."""
         from sg_preflight.delivery_checklist import read_delivery_checklist
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -40,7 +40,7 @@ class DeliveryChecklistResolverWiresBmwRootTests(unittest.TestCase):
                     bmw_root=br,
                     enable_auto_generate=False,
                 )
-            # internal milestone: when the finder resolves a workbook the status flips off
+            # When the finder resolves a workbook, the status flips off
             # `unavailable`; pre-fix the call always returned `unavailable` for
             # G70 because the BMW Git slot was never walked.
             self.assertNotEqual(payload.get("status"), "unavailable")
@@ -102,13 +102,13 @@ class MissingSummaryReportsFinderResults(unittest.TestCase):
 
 
 class DedupWidenTests(unittest.TestCase):
-    """internal milestone Part B — dedup widening (token bucket + JSON API gate)."""
+    """Dedup widening tests (token bucket + JSON API gate)."""
 
     def test_audit_token_uses_5_second_bucket_so_storm_collapses_to_one_token(self) -> None:
         """An observed reconnect produced three fires within 1.1s at seconds 14-15. With the
         original ts_floor_seconds the audit log carries 2 distinct tokens
-        (second 14, second 15); internal milestone Part B widens to 5-second buckets so the
-        three entries collapse to ONE token in the log."""
+        (second 14, second 15); widening the bucket to 5 seconds collapses the
+        three entries into ONE token in the log."""
         from sg_preflight.dashboard import main as dashboard_main
 
         token_for = getattr(dashboard_main, "_full_qa_pass_token")
@@ -146,9 +146,9 @@ class DedupWidenTests(unittest.TestCase):
         self.assertFalse(should_fire("G70", now=1.1))
 
     def test_full_qa_pass_api_route_now_gates_on_dedup(self) -> None:
-        """internal milestone Part B fix: the JSON API at `/sgfx-dashboard-api/full-qa-pass`
+        """Fix: the JSON API at `/sgfx-dashboard-api/full-qa-pass`
         was an unguarded second entry point that NiceGUI's WebSocket reconnect
-        could hit, bypassing the internal milestone dashboard gate. Source guard asserts the
+        could hit, bypassing the dashboard's dedup gate. Source guard asserts the
         gate now lives in the API handler."""
         source = (
             Path(__file__).resolve().parents[1] / "sg_preflight" / "dashboard" / "main.py"
@@ -163,7 +163,7 @@ class DedupWidenTests(unittest.TestCase):
 
 class DashboardAndFullQaPassPassThroughTests(unittest.TestCase):
     """Source guards: the dashboard + full_qa_pass callers must pass bmw_root +
-    enable_auto_generate so the internal milestone finder + auto-gen fire in operator-flow."""
+    enable_auto_generate so the workbook finder + auto-gen fire in operator-flow."""
 
     def test_dashboard_delivery_checklist_reader_threads_bmw_root(self) -> None:
         source = (
@@ -174,7 +174,7 @@ class DashboardAndFullQaPassPassThroughTests(unittest.TestCase):
             # Older builds inline the lambda; just grep the source for the call.
             block_start = 0
         snippet = source[block_start:block_start + 3000]
-        # internal milestone: the reader lambda must pass bmw_root + enable_auto_generate.
+        # The reader lambda must pass bmw_root + enable_auto_generate.
         self.assertIn("read_delivery_checklist(", snippet)
         self.assertIn("bmw_root=bmw_root", snippet)
         self.assertIn("enable_auto_generate=True", snippet)
@@ -193,7 +193,7 @@ class DashboardAndFullQaPassPassThroughTests(unittest.TestCase):
 
 
 class IntegrationCoverageAuditTests(unittest.TestCase):
-    """internal milestone Part C — verify shipped packs actually activate at the operator-
+    """Verify that previously shipped fixes actually activate at the operator-
     visible surfaces, not just behind the CLI subparsers."""
 
     def test_h29_primary_dashboard_has_no_jira_inline_render(self) -> None:
@@ -271,7 +271,7 @@ class IntegrationCoverageAuditTests(unittest.TestCase):
         self.assertIn("profile-summary build --profile G70", action_map_block)
 
     def test_h27_workbook_finder_invokable_from_top_level_help(self) -> None:
-        """Ensure the internal milestone `delivery-workbook find` subcommand still parses."""
+        """Ensure the `delivery-workbook find` subcommand still parses."""
         from sg_preflight.cli import build_parser
 
         parser = build_parser()
