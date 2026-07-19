@@ -1430,6 +1430,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
                 (root / "dashboard" / "main.py").read_text(encoding="utf-8"),
                 (root / "dashboard_pages_workflows.py").read_text(encoding="utf-8"),
                 (root / "jira_client.py").read_text(encoding="utf-8"),
+                (root / "jira_client_search.py").read_text(encoding="utf-8"),
             )
         )
 
