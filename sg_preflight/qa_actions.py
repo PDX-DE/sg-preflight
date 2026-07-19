@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sg_preflight.bmw_process import bmw_interface_smoke_commands
 from sg_preflight.checker_evidence import (
     merge_checker_evidence,
     parse_delivery_checklist_log,

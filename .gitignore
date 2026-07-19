@@ -49,3 +49,9 @@ operator_state/
 
 # Local attic for kept-but-untracked material
 /_attic/
+
+# MSVC / CMake artifacts for the desktop_native scaffold
+.vs/
+CMakeCache.txt
+CMakeFiles/
+*.vcxproj.user
