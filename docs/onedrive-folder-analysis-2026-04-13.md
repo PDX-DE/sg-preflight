@@ -47,22 +47,22 @@ Most of the SG-shaped clues are in missing-file placeholder logs under `___All_E
 This is the pack that benefits the most from this archive.
 
 Useful surviving inputs:
-- [U25_BEV_SPEZ.fbx.texturePath](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/CAD Data/U25/20230320/Interieur/U25_BEV_SPEZ.fbx.texturePath>)
-- [U25_BEV_SPEZ.fbx.texturePath](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/CAD Data/U25/20230222/BEV/U25_BEV/Interieur/U25_BEV_SPEZ.fbx.texturePath>)
-- [U25_BEV_SPEZ.fbx.texturePath](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/CAD Data/U25/20221117/U25_BEV/Interieur/U25_BEV_SPEZ.fbx.texturePath>)
-- [U11_INT_Serie.fbx.texturePath](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/CAD Data/U11/U11_ICE/Interieur/U11_INT_Serie.fbx.texturePath>)
+- [U25_BEV_SPEZ.fbx.texturePath](<../OneDrive_1_13-04-2026/CAD Data/U25/20230320/Interieur/U25_BEV_SPEZ.fbx.texturePath>)
+- [U25_BEV_SPEZ.fbx.texturePath](<../OneDrive_1_13-04-2026/CAD Data/U25/20230222/BEV/U25_BEV/Interieur/U25_BEV_SPEZ.fbx.texturePath>)
+- [U25_BEV_SPEZ.fbx.texturePath](<../OneDrive_1_13-04-2026/CAD Data/U25/20221117/U25_BEV/Interieur/U25_BEV_SPEZ.fbx.texturePath>)
+- [U11_INT_Serie.fbx.texturePath](<../OneDrive_1_13-04-2026/CAD Data/U11/U11_ICE/Interieur/U11_INT_Serie.fbx.texturePath>)
 
 Observed path signal:
 - three `U25` texture-path files point to `P:\30_Querschnitt\34_Nutzererlebnismodelle_XR\01_Fahrzeugprojekte_(DTK)\LU_M\U25\15_SERIENGRAFIK\INTERIEUR`
 - this is useful for path-risk / environment / absolute-reference heuristics
 
 Useful real glTF inputs for generic topology checks:
-- [AD_Santa_Simple_V3.gltf](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/_source/AD_Santa_NoTexture_V3/AD_Santa_Simple_V3.gltf>)
-- [AD_SantaClaus_20210727.gltf](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/_source/AD_SantaClaus_V1/AD_SantaClaus_20210727.gltf>)
-- [Christmas_Santa.gltf](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/_source/AD_Christmas_Santa_Simplified_V2/Christmas_Santa.gltf>)
-- [shadowplane.gltf](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/export/meshes/shadowplane.gltf>)
-- [santaA.gltf](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/export/meshes/santaA.gltf>)
-- [santaB.gltf](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/export/meshes/santaB.gltf>)
+- [AD_Santa_Simple_V3.gltf](<../OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/_source/AD_Santa_NoTexture_V3/AD_Santa_Simple_V3.gltf>)
+- [AD_SantaClaus_20210727.gltf](<../OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/_source/AD_SantaClaus_V1/AD_SantaClaus_20210727.gltf>)
+- [Christmas_Santa.gltf](<../OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/_source/AD_Christmas_Santa_Simplified_V2/Christmas_Santa.gltf>)
+- [shadowplane.gltf](<../OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/export/meshes/shadowplane.gltf>)
+- [santaA.gltf](<../OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/export/meshes/santaA.gltf>)
+- [santaB.gltf](<../OneDrive_1_13-04-2026/Additional 3D Assets/Festival Mode/export/meshes/santaB.gltf>)
 
 These are not 3D Car SG files, but they are real glTFs and can help exercise generic glTF object-set / topology checks.
 
@@ -91,7 +91,7 @@ Not found as real files:
 - `carmodel_data.json`
 
 The only nearby structured survivor is:
-- [Öffnungswinkel_U10.csv](</c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/OneDrive_1_13-04-2026/Confluence Uploads/02_3D Car/02_3DCar - BMW/02_BMW Cars/U10/Opening Angle/Öffnungswinkel_U10.csv>)
+- [Öffnungswinkel_U10.csv](<../OneDrive_1_13-04-2026/Confluence Uploads/02_3D Car/02_3DCar - BMW/02_BMW Cars/U10/Opening Angle/Öffnungswinkel_U10.csv>)
 
 Its content is a single semicolon-separated line:
 - `23;52;64;67;72`

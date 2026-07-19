@@ -257,7 +257,7 @@ Current results:
 
 Reference summary:
 
-- [out/real-live-matrix/latest/SUMMARY.md](/c:/Users/DavidErikGarciaArena/Documents/GitHub/sg-preflight/out/real-live-matrix/latest/SUMMARY.md)
+- [out/real-live-matrix/latest/SUMMARY.md](../out/real-live-matrix/latest/SUMMARY.md)
 
 ## Workflow Boundary To Explain In The Session
 

@@ -11,13 +11,13 @@ Prepare SGFX / Project Quality-Hero as a team-feedback-ready alpha for Seriengra
 Use:
 
 ```text
-C:\Users\DavidErikGarciaArena\Downloads\sg-preflight
+<local working checkout of sg-preflight>
 ```
 
 The GitHub sync folder is separate:
 
 ```text
-C:\Users\DavidErikGarciaArena\Documents\GitHub\sg-preflight
+<GitHub sync checkout of sg-preflight>
 ```
 
 Do not work from the sync folder for this alpha pass.
