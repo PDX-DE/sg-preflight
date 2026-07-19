@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from sg_preflight.assets import runtime_asset_path
 from sg_preflight.bmw_delivery import (
     LANE_IDC23,
     LANE_IDCEVO,
@@ -133,8 +134,25 @@ def _workspace_root(explicit_root: Path | None = None) -> Path:
     return (explicit_root or Path(__file__).resolve().parents[1]).resolve()
 
 
+def _resolve_profile_config_path(root: Path, relative: Path) -> Path:
+    workspace_copy = root / relative
+    if workspace_copy.is_file():
+        return workspace_copy
+    # Deployed workspaces (SVN checkouts) carry no SGFX rules configs; those ship
+    # with the application itself.
+    fallback = runtime_asset_path(relative)
+    if fallback.is_file():
+        return fallback
+    return workspace_copy
+
+
 def mirror_repo_root(workspace_root: Path | None = None) -> Path:
-    return _workspace_root(workspace_root) / "repositories" / "trunk"
+    root = _workspace_root(workspace_root)
+    # A deployed workspace may BE the SVN trunk checkout (C:\repositories\trunk) rather
+    # than a wrapper folder holding a nested repositories/trunk mirror copy.
+    if root.name.casefold() == "trunk" and root.parent.name.casefold() == "repositories":
+        return root
+    return root / "repositories" / "trunk"
 
 
 def resolve_source_repo_root(
@@ -345,7 +363,7 @@ def _profile_from_spec(
         repo_root=repo_root,
         project_root=repo_root / project_relative,
         project_relative=project_relative,
-        config_path=root / Path(spec["config_relative"]),
+        config_path=_resolve_profile_config_path(root, Path(spec["config_relative"])),
         bmw_smoke_target=str(spec.get("bmw_smoke_target", "")),
         bmw_smoke_runner=str(spec.get("bmw_smoke_runner", "car_manager.py")),
         default_context=default_context,

@@ -18,6 +18,7 @@ from sg_preflight.qa_actions import (
     list_operator_actions,
     load_action_record,
 )
+from sg_preflight.profiles import REFERENCE_REPO_ROOT_ENV_KEYS
 from tests.operator_helpers import create_temp_g65_profile, isolated_missing_external_dependencies, write_text
 
 
@@ -506,6 +507,22 @@ class TestQaActions(unittest.TestCase):
         self.assertIn("RaCoHeadless.exe", action_map["scene_check__g65"].blocker_message)
         self.assertIn("digital-3d-car-models", action_map["bmw_screenshot_smoke__g65"].blocker_message)
 
+    def test_action_registry_is_ready_when_the_workspace_is_the_trunk_checkout_itself(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            _create_checker_files(root)
+            trunk_workspace = root / "repositories" / "trunk"
+
+            with isolated_missing_external_dependencies(root):
+                actions = list_operator_actions(trunk_workspace, profiles=[profile])
+
+        action_map = {action.action_id: action for action in actions}
+        self.assertTrue(action_map["repo_checker_all"].ready)
+        self.assertTrue(action_map["repo_checker_profile__g65"].ready)
+        self.assertTrue(action_map["unused_resources__g65"].ready)
+        self.assertTrue(action_map["delivery_checklist__g65"].ready)
+
     def test_execute_repo_checker_action_persists_log_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -765,6 +782,10 @@ starting  luacheck on  12  files
                 {
                     "SG_RACO_HEADLESS": str(root / "missing" / "RaCoHeadless.exe"),
                     **_missing_bmw_repo_env(root),
+                    **{
+                        key: str(root / "repositories" / "trunk")
+                        for key in REFERENCE_REPO_ROOT_ENV_KEYS
+                    },
                 },
                 clear=False,
             ):

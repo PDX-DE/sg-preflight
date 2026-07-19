@@ -23,7 +23,12 @@ from sg_preflight.checker_evidence import (
     parse_unused_resources_output,
 )
 from sg_preflight.io_utils import write_text as _write_text
-from sg_preflight.profiles import RunProfile, list_run_profiles, resolve_source_repo_root
+from sg_preflight.profiles import (
+    RunProfile,
+    list_run_profiles,
+    mirror_repo_root,
+    resolve_source_repo_root,
+)
 from sg_preflight.ramses_probe_runner import (
     ProbeRunRequest,
     resolve_packaged_probe_helper,
@@ -1062,7 +1067,7 @@ def _execute_sgfx_preflight(record: ActionRecord, root: Path) -> tuple[dict[str,
 
 
 def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
-    mirror_root = root / "repositories" / "trunk"
+    mirror_root = mirror_repo_root(root)
     source_root = resolve_source_repo_root(root)
     style_script, checker_script = _repo_checker_paths(mirror_root)
     target = _repo_checker_target(record, source_root)
@@ -1177,7 +1182,7 @@ def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, A
 
 
 def _execute_unused_resources(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
-    mirror_root = root / "repositories" / "trunk"
+    mirror_root = mirror_repo_root(root)
     script_path = _unused_resources_script_path(mirror_root)
     project_root = Path(record.project_root)
     resources_root, rca_root = _unused_resources_inputs(project_root)
@@ -1258,7 +1263,7 @@ def _execute_delivery_checklist(
     record: ActionRecord,
     root: Path,
 ) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:
-    mirror_root = root / "repositories" / "trunk"
+    mirror_root = mirror_repo_root(root)
     checklist_paths = _delivery_checklist_paths(mirror_root)
     status_map = _status_map(root)
     bmw_repo = _path_from_status(status_map, "bmw_models_repo")
@@ -1492,7 +1497,7 @@ def _execute_scene_check(record: ActionRecord, root: Path) -> tuple[dict[str, An
 
     status_map = _status_map(root)
     raco_exe = _path_from_status(status_map, "raco_headless")
-    scene_checker = root / "repositories" / "trunk" / "check_scenes.py"
+    scene_checker = mirror_repo_root(root) / "check_scenes.py"
     if _status_value(status_map, "raco_headless") != "available":
         raise RuntimeError(_scene_runtime_blocker_message(status_map))
     project_root = Path(record.project_root)

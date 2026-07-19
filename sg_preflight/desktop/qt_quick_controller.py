@@ -311,11 +311,11 @@ def _resolve_diagnostic_read_roots(
 ) -> tuple[Path, ...]:
     if configured_roots:
         return configured_roots
-    from sg_preflight.profiles import resolve_source_repo_root
+    from sg_preflight.profiles import mirror_repo_root, resolve_source_repo_root
 
     candidates = (
         resolve_source_repo_root(workspace),
-        workspace / "repositories" / "trunk",
+        mirror_repo_root(workspace),
     )
     roots: list[Path] = []
     for candidate in candidates:

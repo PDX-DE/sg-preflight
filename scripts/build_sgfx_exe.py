@@ -309,6 +309,7 @@ def build_pyinstaller_args(*, dist_path: Path = DIST_PATH) -> list[str]:
         ("sg_preflight/dashboard", "sg_preflight/dashboard"),
         ("sg_preflight/data", "sg_preflight/data"),
         ("sg_preflight/desktop/qml", "sg_preflight/desktop/qml"),
+        ("config", "config"),
     ) + tuple(
         (path.relative_to(ROOT).as_posix(), "cpp/assets/fonts")
         for path in product_fonts

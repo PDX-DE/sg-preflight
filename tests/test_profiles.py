@@ -6,7 +6,12 @@ import tempfile
 import unittest
 from unittest import mock
 
-from sg_preflight.profiles import PROFILE_SCOPE_DEFAULT, list_run_profiles, resolve_source_repo_root
+from sg_preflight.profiles import (
+    PROFILE_SCOPE_DEFAULT,
+    list_run_profiles,
+    mirror_repo_root,
+    resolve_source_repo_root,
+)
 from tests.operator_helpers import write_text
 
 
@@ -21,6 +26,59 @@ class TestProfiles(unittest.TestCase):
 
         self.assertTrue({"G70", "G65", "G45"}.issubset(profile_ids))
         self.assertTrue({"G50", "G58", "G78", "NA5", "PINT", "PINT_RUEKO", "F70", "PINT_SUV", "U10", "G68"}.issubset(profile_ids))
+
+
+class TestMirrorRepoRoot(unittest.TestCase):
+    def test_wrapper_workspace_keeps_the_nested_mirror_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            self.assertEqual(mirror_repo_root(root), root.resolve() / "repositories" / "trunk")
+
+    def test_flat_trunk_checkout_is_its_own_mirror_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trunk = Path(temp_dir) / "Repositories" / "Trunk"
+            trunk.mkdir(parents=True)
+
+            self.assertEqual(mirror_repo_root(trunk), trunk.resolve())
+
+
+class TestProfileConfigResolution(unittest.TestCase):
+    def test_profile_config_falls_back_to_the_application_copy_when_workspace_has_none(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            profiles = list_run_profiles(root)
+
+        self.assertTrue(profiles)
+        for profile in profiles:
+            self.assertTrue(
+                profile.config_path.is_file(),
+                f"{profile.profile_id}: {profile.config_path} does not exist",
+            )
+            self.assertNotEqual(
+                profile.config_path.resolve(),
+                (root / "config" / profile.config_path.name).resolve(),
+            )
+
+    def test_workspace_config_copy_wins_over_the_application_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_text(root / "config" / "sg_rules_live.json", "{}\n")
+
+            profiles = list_run_profiles(root)
+
+        live_slice = [
+            profile
+            for profile in profiles
+            if profile.config_path.name == "sg_rules_live.json"
+        ]
+        self.assertTrue(live_slice)
+        for profile in live_slice:
+            self.assertEqual(
+                profile.config_path.resolve(),
+                (root / "config" / "sg_rules_live.json").resolve(),
+            )
 
 
 class TestDynamicProfiles(unittest.TestCase):

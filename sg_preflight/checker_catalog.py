@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from sg_preflight.bmw_delivery import discover_bmw_models_repo
-from sg_preflight.profiles import RunProfile, list_run_profiles
+from sg_preflight.profiles import RunProfile, list_run_profiles, mirror_repo_root
 from sg_preflight.tool_readiness import probe_raco_runtime, representative_raco_scene
 
 
@@ -79,7 +79,7 @@ def _env_or_default_path(env_keys: tuple[str, ...], default_paths: tuple[Path, .
 
 
 def _mirror_root(root: Path) -> Path:
-    return root / "repositories" / "trunk"
+    return mirror_repo_root(root)
 
 
 def _checkers_root(root: Path) -> Path:

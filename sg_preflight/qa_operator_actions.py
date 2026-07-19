@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from sg_preflight.bmw_process import bmw_interface_smoke_commands
-from sg_preflight.profiles import RunProfile, list_run_profiles, resolve_source_repo_root
+from sg_preflight.profiles import (
+    RunProfile,
+    list_run_profiles,
+    mirror_repo_root,
+    resolve_source_repo_root,
+)
 from sg_preflight.services import prerequisite_status, workspace_root
 
 
@@ -162,7 +167,7 @@ def list_operator_actions(
     live_profiles = profiles or list_run_profiles(root)
     status_map = _status_map(root)
     source_root = resolve_source_repo_root(root)
-    mirror_root = root / "repositories" / "trunk"
+    mirror_root = mirror_repo_root(root)
     style_script, checker_script = _repo_checker_paths(mirror_root)
     unused_resources_script = _unused_resources_script_path(mirror_root)
     delivery_checklist_paths = _delivery_checklist_paths(mirror_root)
