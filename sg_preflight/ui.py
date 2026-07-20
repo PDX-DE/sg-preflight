@@ -3003,11 +3003,6 @@ def create_app(
             except UnicodeDecodeError:
                 content = target.read_text(encoding="utf-8", errors="replace")
             rendered = retheme_html_report(content)
-            if rendered != content:
-                try:
-                    target.write_text(rendered, encoding="utf-8")
-                except OSError:
-                    pass
             return HTMLResponse(rendered, headers=cache_headers)
         return FileResponse(target, headers=cache_headers)
 

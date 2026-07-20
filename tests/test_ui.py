@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 from pathlib import Path
@@ -807,7 +808,7 @@ class TestOperatorUI(unittest.TestCase):
         self.assertIn("Running G65", page.text)
         self.assertIn("NOW LOADING...", page.text)
 
-    def test_file_route_rethemes_generated_html_reports(self) -> None:
+    def test_file_route_rethemes_html_without_mutating_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             profile = create_temp_g65_profile(root)
@@ -840,21 +841,33 @@ class TestOperatorUI(unittest.TestCase):
             report_path = root / "out" / "operator-ui" / "runs" / "demo" / "report.html"
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(legacy_report_html, encoding="utf-8")
+            original_bytes = report_path.read_bytes()
+            original_stat = report_path.stat()
+            original_sha256 = hashlib.sha256(original_bytes).hexdigest()
 
-            page = client.get(
-                f"/ui/files?path={report_path}&ts={report_path.stat().st_mtime_ns}"
+            url = f"/ui/files?path={report_path}&ts={original_stat.st_mtime_ns}"
+            first_page = client.get(url)
+            second_page = client.get(url)
+            raw_page = client.get(
+                f"/ui/files?path={report_path}&raw=true&ts={original_stat.st_mtime_ns}"
             )
-            upgraded = report_path.read_text(encoding="utf-8")
+            final_bytes = report_path.read_bytes()
+            final_stat = report_path.stat()
 
-        self.assertEqual(page.status_code, 200)
-        self.assertIn("Operator report", page.text)
-        self.assertIn("report-route", page.text)
-        self.assertIn("This report is the printable operator summary for one SG check", page.text)
-        self.assertIn("--bg: #040811", page.text)
-        self.assertNotIn("--bg: #f6f3eb", page.text)
-        self.assertEqual(page.headers.get("cache-control"), "no-store, max-age=0")
-        self.assertIn("--bg: #040811", upgraded)
-        self.assertNotIn("--bg: #f6f3eb", upgraded)
+        for page in (first_page, second_page):
+            self.assertEqual(page.status_code, 200)
+            self.assertIn("Operator report", page.text)
+            self.assertIn("report-route", page.text)
+            self.assertIn("This report is the printable operator summary for one SG check", page.text)
+            self.assertIn("--bg: #040811", page.text)
+            self.assertNotIn("--bg: #f6f3eb", page.text)
+            self.assertEqual(page.headers.get("cache-control"), "no-store, max-age=0")
+        self.assertEqual(raw_page.status_code, 200)
+        self.assertEqual(raw_page.content, original_bytes)
+        self.assertEqual(final_bytes, original_bytes)
+        self.assertEqual(hashlib.sha256(final_bytes).hexdigest(), original_sha256)
+        self.assertEqual(final_stat.st_size, original_stat.st_size)
+        self.assertEqual(final_stat.st_mtime_ns, original_stat.st_mtime_ns)
 
     def test_operator_css_keeps_loading_overlay_hidden_by_default(self) -> None:
         css = (ROOT / "sg_preflight" / "static" / "operator.css").read_text(encoding="utf-8")
