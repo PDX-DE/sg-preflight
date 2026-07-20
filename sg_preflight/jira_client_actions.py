@@ -568,3 +568,22 @@ def _multipart_attachment(path: Path) -> tuple[bytes, str]:
     ).encode("utf-8")
     suffix = f"\r\n--{boundary}--\r\n".encode("utf-8")
     return prefix + path.read_bytes() + suffix, f"multipart/form-data; boundary={boundary}"
+
+
+# Facade patch targets stay interceptable (see jira_client_credentials).
+from sg_preflight.jira_client_credentials import _with_jira_globals
+post_jira_comment_action = _with_jira_globals(post_jira_comment_action)
+update_jira_issue_action = _with_jira_globals(update_jira_issue_action)
+attach_jira_file_action = _with_jira_globals(attach_jira_file_action)
+extract_numbered_section_text = _with_jira_globals(extract_numbered_section_text)
+default_wording_file = _with_jira_globals(default_wording_file)
+load_jira_comment_source = _with_jira_globals(load_jira_comment_source)
+post_jira_comment = _with_jira_globals(post_jira_comment)
+_first_fenced_text = _with_jira_globals(_first_fenced_text)
+_require_body = _with_jira_globals(_require_body)
+_require_ticket = _with_jira_globals(_require_ticket)
+_comment_payload = _with_jira_globals(_comment_payload)
+_require_available_verification = _with_jira_globals(_require_available_verification)
+_jira_action_common = _with_jira_globals(_jira_action_common)
+_recorded_action_result = _with_jira_globals(_recorded_action_result)
+_multipart_attachment = _with_jira_globals(_multipart_attachment)

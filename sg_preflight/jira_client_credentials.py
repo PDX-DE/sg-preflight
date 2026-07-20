@@ -2,11 +2,42 @@
 
 from __future__ import annotations
 
+from functools import wraps
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+
+def _sync_jira_globals(target_globals: dict[str, Any]) -> None:
+    """Refresh names this module shares with the facade before a call runs.
+
+    Sibling modules keep their own copies of every helper they import from
+    each other (Python globals are per-module). A test that does
+    `mock.patch.object(jira_client, "load_jira_credentials", ...)` only
+    rebinds the facade's copy, so a moved function calling it as a bare name
+    would silently miss the patch. Re-syncing the calling module's globals
+    from the live facade right before the call keeps every existing
+    `sg_preflight.jira_client.*` mock.patch target intercepting, exactly as
+    it did when everything lived in one module.
+    """
+    from sg_preflight import jira_client as _jira_facade
+
+    for name in list(target_globals.keys()):
+        if name.startswith("__"):
+            continue
+        if hasattr(_jira_facade, name):
+            target_globals[name] = getattr(_jira_facade, name)
+
+
+def _with_jira_globals(func: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(func)
+    def _wrapper(*args: Any, **kwargs: Any) -> Any:
+        _sync_jira_globals(func.__globals__)
+        return func(*args, **kwargs)
+
+    return _wrapper
 
 
 JIRA_OPERATOR_STATE_ENV = "SGFX_OPERATOR_STATE_DIR"
@@ -238,3 +269,22 @@ def _unloaded_jira_credential() -> dict[str, Any]:
         "pat_fingerprint": "",
         "pat_loaded": False,
     }
+
+
+# Facade patch targets stay interceptable (see jira_client_credentials).
+jira_credentials_candidate_paths = _with_jira_globals(jira_credentials_candidate_paths)
+_display_operator_path = _with_jira_globals(_display_operator_path)
+default_jira_credentials_path = _with_jira_globals(default_jira_credentials_path)
+_require_https = _with_jira_globals(_require_https)
+_jira_keyring_account = _with_jira_globals(_jira_keyring_account)
+_keyring_module = _with_jira_globals(_keyring_module)
+_store_jira_pat_in_keyring = _with_jira_globals(_store_jira_pat_in_keyring)
+_load_jira_pat_from_keyring = _with_jira_globals(_load_jira_pat_from_keyring)
+_delete_jira_pat_from_keyring = _with_jira_globals(_delete_jira_pat_from_keyring)
+_legacy_pat_from_payload = _with_jira_globals(_legacy_pat_from_payload)
+_write_jira_url_config = _with_jira_globals(_write_jira_url_config)
+_migrate_legacy_jira_pat = _with_jira_globals(_migrate_legacy_jira_pat)
+load_jira_credentials = _with_jira_globals(load_jira_credentials)
+write_jira_credentials = _with_jira_globals(write_jira_credentials)
+redact_jira_credentials = _with_jira_globals(redact_jira_credentials)
+_unloaded_jira_credential = _with_jira_globals(_unloaded_jira_credential)

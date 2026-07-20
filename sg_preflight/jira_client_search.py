@@ -786,3 +786,37 @@ def _my_ticket_rows(response: Any, base_url: str) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+# Facade patch targets stay interceptable (see jira_client_credentials).
+from sg_preflight.jira_client_credentials import _with_jira_globals
+_jira_verification_not_run = _with_jira_globals(_jira_verification_not_run)
+jira_status = _with_jira_globals(jira_status)
+clear_jira_profile_ticket_cache = _with_jira_globals(clear_jira_profile_ticket_cache)
+clear_jira_my_tickets_cache = _with_jira_globals(clear_jira_my_tickets_cache)
+build_profile_ticket_jql = _with_jira_globals(build_profile_ticket_jql)
+build_my_unresolved_ticket_jql = _with_jira_globals(build_my_unresolved_ticket_jql)
+_normalize_weekly_ticket_since = _with_jira_globals(_normalize_weekly_ticket_since)
+build_my_weekly_ticket_jql = _with_jira_globals(build_my_weekly_ticket_jql)
+search_jira_profile_tickets = _with_jira_globals(search_jira_profile_tickets)
+search_my_unresolved_tickets = _with_jira_globals(search_my_unresolved_tickets)
+search_my_weekly_tickets = _with_jira_globals(search_my_weekly_tickets)
+_jira_total_available = _with_jira_globals(_jira_total_available)
+verify_jira_access = _with_jira_globals(verify_jira_access)
+_require_profile_id = _with_jira_globals(_require_profile_id)
+_jql_quote = _with_jira_globals(_jql_quote)
+_api_base = _with_jira_globals(_api_base)
+_myself_endpoint = _with_jira_globals(_myself_endpoint)
+_issue_endpoint = _with_jira_globals(_issue_endpoint)
+_comment_endpoint = _with_jira_globals(_comment_endpoint)
+_search_endpoint = _with_jira_globals(_search_endpoint)
+_attachments_endpoint = _with_jira_globals(_attachments_endpoint)
+_preview = _with_jira_globals(_preview)
+_parse_response = _with_jira_globals(_parse_response)
+_request_json = _with_jira_globals(_request_json)
+_safe_request_json = _with_jira_globals(_safe_request_json)
+_normalize_api_version = _with_jira_globals(_normalize_api_version)
+_response_summary = _with_jira_globals(_response_summary)
+_copy_profile_ticket_payload = _with_jira_globals(_copy_profile_ticket_payload)
+_profile_ticket_rows = _with_jira_globals(_profile_ticket_rows)
+_my_ticket_rows = _with_jira_globals(_my_ticket_rows)

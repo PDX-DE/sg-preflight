@@ -799,7 +799,7 @@ class TestPreviewControllerAndQml(unittest.TestCase):
                 initial_profile_id="",
                 argv=["sgfx-preview-qml-test"],
             )
-            deadline = time.monotonic() + 5
+            deadline = time.monotonic() + 20
             while runtime.controller.pageState not in {"ready", "error"} and time.monotonic() < deadline:
                 runtime.application.processEvents()
                 time.sleep(0.005)

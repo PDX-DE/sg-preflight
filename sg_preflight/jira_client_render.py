@@ -133,3 +133,11 @@ def render_jira_action_markdown(payload: dict[str, Any]) -> str:
         if body_preview:
             lines.extend(["", "```text", body_preview, "```"])
     return "\n".join(lines)
+
+
+# Facade patch targets stay interceptable (see jira_client_credentials).
+from sg_preflight.jira_client_credentials import _with_jira_globals
+render_jira_post_text = _with_jira_globals(render_jira_post_text)
+render_jira_post_markdown = _with_jira_globals(render_jira_post_markdown)
+render_jira_action_text = _with_jira_globals(render_jira_action_text)
+render_jira_action_markdown = _with_jira_globals(render_jira_action_markdown)

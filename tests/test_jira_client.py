@@ -949,3 +949,24 @@ Other text
         self.assertEqual(attach_preview["status"], "skipped")
         self.assertEqual(attach_preview["attachments"][0]["name"], "evidence.txt")
         self.assertEqual([method for method, _url in calls], ["GET", "GET", "GET", "GET"])
+
+
+class TestFacadePatchTargets(unittest.TestCase):
+    def test_facade_level_credential_patch_intercepts_sibling_calls(self) -> None:
+        from sg_preflight import jira_client, jira_client_search
+
+        calls: list[bool] = []
+
+        def fake_load(*args: object, **kwargs: object) -> object:
+            calls.append(True)
+            raise jira_client.ConfigError("patched out for the facade contract test")
+
+        def no_network(*args: object, **kwargs: object) -> object:
+            raise AssertionError("the network path must not be reached")
+
+        with mock.patch.object(jira_client_search, "_JIRA_MY_TICKETS_CACHE", {}):
+            with mock.patch.object(jira_client, "load_jira_credentials", fake_load):
+                result = jira_client.search_my_unresolved_tickets(transport=no_network)
+
+        self.assertTrue(calls, "the facade-level patch was not honored by the search sibling")
+        self.assertEqual(result["status"], "missing")

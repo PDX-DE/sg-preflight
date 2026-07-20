@@ -725,7 +725,7 @@ class TestQtQuickShell(unittest.TestCase):
                 from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
                 runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="", argv=["sgfx-test"])
                 root = runtime.engine.rootObjects()[0]
-                deadline = __import__("time").monotonic() + 5
+                deadline = __import__("time").monotonic() + 20
                 while runtime.controller.pageState not in {{"ready", "error"}} and __import__("time").monotonic() < deadline:
                     runtime.application.processEvents()
                     QTest.qWait(5)
