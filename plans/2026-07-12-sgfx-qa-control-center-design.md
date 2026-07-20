@@ -98,7 +98,7 @@ Every central item must reduce a real lookup, duplicate entry, ambiguous ownersh
 - The existing SGFX C++ viewer resolves a selected profile to an available `exported.ramses`, preserves the authored Ramses pass graph, drives the exported camera-crane interface for QA perspectives and orbit, and can read back a real rendered frame. The cinematic proof already uses a render-on-demand local texture cache rather than a perpetual shell-frame readback.
 - The current `sgfx::cine` library contains a small Ramses link probe, while the proven metadata, inventory, logic, lifecycle, and readback logic still lives in the real-scene and cinematic app files. The companion Ramses design grows that existing boundary by extraction; it does not create another renderer.
 - The local C++ track pins Ramses 28.16.0 and has loaded a real Ramses 28.15.1/exporter 2.9.0/feature-level-2 scene. That is evidence for the current profile only, not a universal compatibility promise.
-- The repository already carries Inter and Fredoka font files with SIL Open Font License 1.1 texts. The local Unleashed font files are not part of this product boundary and are not distributable through SGFX without separate proven licensing.
+- The repository already carries Inter and Fredoka font files with SIL Open Font License 1.1 texts. The local third-party game font files are not part of this product boundary and are not distributable through SGFX without separate proven licensing.
 - Local action records and run records already provide bounded persisted history.
 - Existing specialist surfaces cover setup, disabled tests, API version, country variants, size, screenshot evidence, risk, manual review, handoff, delivery documentation, workflow guidance, and digests.
 
@@ -522,11 +522,11 @@ SGFX has one professional daily-driver visual system. It combines the Control Ce
 - no fake telemetry, completion rings, decorative percentages, or marketing badges;
 - Inter for operational text and data, with Fredoka restricted to the product mark, major profile/scene labels, and short display accents; both come from the repository's existing SIL Open Font License 1.1 assets;
 - no network font, restricted local DynaFont, game font, new image pack, copied icon set, shader, web asset, or unreviewed production dependency; and
-- no copied BMW infotainment, Nintendo, SEGA, Valve, Sonic, or other third-party layout or asset.
+- no copied BMW infotainment, Nintendo, SEGA, Valve, or other third-party game layout or asset.
 
 Game-menu and in-car influence is limited to abstract interaction qualities: one central focus, decisive selection feedback, spatially stable navigation, readable hierarchy, layered depth, and a compact command guide.
 
-The local Unleashed installer implementation is a behavior reference only. SGFX independently implements the general choreography of structure first, focus/title second, and content third. No installer code, exact coordinate system, shader, artwork, sound, music, restricted font, or proprietary game asset enters SGFX. GPL-licensed reference code is not copied into the proprietary/internal product.
+The local third-party game installer implementation is a behavior reference only. SGFX independently implements the general choreography of structure first, focus/title second, and content third. No installer code, exact coordinate system, shader, artwork, sound, music, restricted font, or proprietary game asset enters SGFX. GPL-licensed reference code is not copied into the proprietary/internal product.
 
 ## 19. Motion, input, and accessibility
 
@@ -673,7 +673,7 @@ Acceptance requires:
 - Warm and first-run acceptance on the exact current tree remains open under workstation load.
 - External approvals remain outside SGFX until separately designed, authorized, and evidenced.
 - The real-car preview is proven for compatible locally available Ramses exports, not every present or future profile; unsupported profiles retain the generic fallback.
-- The local Unleashed installer and restricted font files are reference material, not product dependencies or redistributable assets.
+- The local third-party game installer and restricted font files are reference material, not product dependencies or redistributable assets.
 - The operator-value baseline has not yet been measured with the Seriengrafik team; reduced workload, cognitive load, and BMW ticket-preparation time remain hypotheses until that pilot.
 - The companion Ramses program is approved as a direction, but R0–R5 remain separate implementation claims. This document cannot be cited as evidence that any Ramses validator, cross-backend check, performance fingerprint, guided review, or GPU diagnostic already exists.
 

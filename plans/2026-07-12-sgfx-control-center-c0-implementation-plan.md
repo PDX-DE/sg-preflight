@@ -1270,7 +1270,7 @@ Tab order is profile, primary action, gates, check rows, context actions, then n
 
 - [x] **Step 6: Package fonts plus OFL texts and scan provenance**
 
-Add all four exact files to the PyInstaller data inputs. Extend the manifest/provenance scan to require both OFL texts and reject filenames or hashes associated with DynaFont, Sonic/game fonts, copied installer resources, URLs, and unaudited external assets.
+Add all four exact files to the PyInstaller data inputs. Extend the manifest/provenance scan to require both OFL texts and reject filenames or hashes associated with DynaFont, third-party game fonts, copied installer resources, URLs, and unaudited external assets.
 
 - [x] **Step 7: Format QML and run interaction gates**
 
@@ -1402,7 +1402,7 @@ git commit -m "build: verify QA control center bundle"
 - Create: `docs/pilots/sgfx-control-center-c0-pilot.md`
 - Modify: `CHANGELOG.md`
 - Modify: `out/agent-control/STATE.md` in the main SGFX checkout only as the final durable pointer
-- Append: `out/agent-handoffs/codex_to_claude.md` in the main SGFX checkout only
+- Append: the agent handoff notes file under `out/agent-handoffs/` in the main SGFX checkout only
 
 **Interfaces:**
 - Consumes: accepted commits, test commands/results, verification JSON/Markdown, artifact hashes, actual local timestamps, and explicit OPEN items.
@@ -1482,7 +1482,7 @@ git commit -m "docs: record control center delivery evidence"
 
 - [x] **Step 7: Update durable recovery files after the commit**
 
-Append a physically-last beat to the main checkout's `out/agent-control/STATE.md` and `out/agent-handoffs/codex_to_claude.md` with:
+Append a physically-last beat to the main checkout's `out/agent-control/STATE.md` and its agent handoff notes file under `out/agent-handoffs/` with:
 
 - active worktree, branch, and exact HEAD;
 - accepted C0 task/commit list;
@@ -1511,4 +1511,4 @@ After C0 acceptance, write a separate RED-first R0 implementation plan from `pla
 
 ## Execution Mode
 
-The user delegated the implementation approach to Lexus and asked for end-to-end completion. Use **Inline Execution** with `superpowers:executing-plans`, in task order, with RED/GREEN and commit checkpoints. Do not dispatch subagents unless the user explicitly changes that instruction.
+The user delegated the implementation approach to the implementing engineer and asked for end-to-end completion. Use **Inline Execution** with `superpowers:executing-plans`, in task order, with RED/GREEN and commit checkpoints. Do not dispatch subagents unless the user explicitly changes that instruction.

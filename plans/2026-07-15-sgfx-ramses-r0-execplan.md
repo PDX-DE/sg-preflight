@@ -12,7 +12,7 @@
 
 ## Global constraints
 
-- Worktree `C:\Users\DavidErikGarciaArena\Downloads\sg-preflight-v02-qt-integration`, branch `feature/sgfx-v02-qt-integration-20260710`. Local commits only; no push, no SVN.
+- Worktree `<repo-root>`, branch `feature/sgfx-v02-qt-integration-20260710`. Local commits only; no push, no SVN.
 - All acceptance Python commands run through `scripts/run_sgfx_python.ps1` (pinned interpreter: `SGFX_PYTHON` or repo `.venv`, refuses the WindowsApps store stub, enforces CPython ≥ 3.10, runs `-B` with `PYTHONDONTWRITEBYTECODE=1` and prints the resolved interpreter as evidence).
 - One backend only: CLI token `opengl`, mapped exactly to the proven `EDeviceType::GLES_3_0` path. GL 4.x / Vulkan comparison belongs to R2.
 - Native probe binaries and native tests build and run in the `Release` configuration of `build/cine-c0`. The installed Ramses 28.16.0 SDK ships release-only DLLs; Debug-config consumers silently corrupt STL-carrying SDK returns (verified 2026-07-15: empty `ValidationReport`s and a segfault in Debug, correct findings in Release). Scenes are validated only after a successful flush or file load; direct `validate()` on structurally incomplete client objects is not exercised.
