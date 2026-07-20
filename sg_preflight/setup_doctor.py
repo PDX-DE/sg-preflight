@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -710,11 +711,21 @@ def _check_bmw_ci_python_deps(root: Path) -> SetupDoctorItem:
 
 
 def _qt_webengine_candidates(root: Path) -> list[Path]:
-    return [
-        root / "dist" / "sgfx-preflight" / "_internal" / "PySide6" / "Qt6WebEngineCore.dll",
-        root / ".venv" / "Lib" / "site-packages" / "PySide6" / "Qt6WebEngineCore.dll",
-        root / ".venv_bmw_ci" / "Lib" / "site-packages" / "PySide6" / "Qt6WebEngineCore.dll",
-    ]
+    candidates: list[Path] = []
+    # The running runtime's own PySide6 is what actually loads the DLL — inside the
+    # frozen bundle the workspace-relative candidates below never exist, which used to
+    # report a false blocking "missing" while the DLL sat in the bundle itself.
+    spec = importlib.util.find_spec("PySide6")
+    if spec is not None and spec.origin:
+        candidates.append(Path(spec.origin).resolve().parent / "Qt6WebEngineCore.dll")
+    candidates.extend(
+        [
+            root / "dist" / "sgfx-preflight" / "_internal" / "PySide6" / "Qt6WebEngineCore.dll",
+            root / ".venv" / "Lib" / "site-packages" / "PySide6" / "Qt6WebEngineCore.dll",
+            root / ".venv_bmw_ci" / "Lib" / "site-packages" / "PySide6" / "Qt6WebEngineCore.dll",
+        ]
+    )
+    return candidates
 
 
 def _check_git_ignorecase(root: Path) -> SetupDoctorItem:

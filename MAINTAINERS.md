@@ -52,6 +52,11 @@ It supports manual review — it does not replace it, and no check auto-approves
   killed build never corrupts the shipped bundle. Optional Grafiks binaries are included only when
   their env vars are set (see README, "Building the Windows Executable"); "not found; skipping
   optional copy" is normal.
+- **Facade splits and mock.patch:** the large modules (dashboard, dependency onboarding, Jira
+  client, evidence model) are facades re-exporting from focused sibling modules. Always patch at
+  the facade (`sg_preflight.jira_client.X`, `sg_preflight.dependency_onboarding.X`) — a globals-sync
+  wrapper re-reads the facade before each call, so facade patches work and sibling-level patches of
+  facade-shared names are silently overwritten.
 - **Launch health, not window titles:** a startup crash still shows a titled error dialog. To verify
   a build launches, check the process stays alive AND no new `%TEMP%\sgfx-preflight-startup-*.log`
   appeared.

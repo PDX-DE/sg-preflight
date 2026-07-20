@@ -21,6 +21,10 @@ def _sync_jira_globals(target_globals: dict[str, Any]) -> None:
     from the live facade right before the call keeps every existing
     `sg_preflight.jira_client.*` mock.patch target intercepting, exactly as
     it did when everything lived in one module.
+
+    The sync is one-directional: patch at the facade, never at a sibling —
+    a sibling-level patch of a facade-shared name is silently overwritten
+    here the moment any wrapped function runs.
     """
     from sg_preflight import jira_client as _jira_facade
 

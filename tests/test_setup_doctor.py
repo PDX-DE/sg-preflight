@@ -360,3 +360,13 @@ class TestConfluenceGroundedChecks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestQtWebEngineRuntimeFallback(unittest.TestCase):
+    def test_webengine_is_found_via_the_running_runtime_when_workspace_has_none(self) -> None:
+        from sg_preflight.setup_doctor import _check_qt_webengine
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            item = _check_qt_webengine(Path(temp_dir))
+
+        self.assertEqual(item.status, "found")
