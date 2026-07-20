@@ -384,6 +384,58 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         notify.assert_not_called()
         finish_transition.assert_not_called()
 
+    def test_load_single_page_current_exception_persists_retryable_error_and_stale_state(self) -> None:
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        complete = getattr(main, "_complete_dashboard_page_load", None)
+        self.assertIsNotNone(token_type)
+        self.assertIsNotNone(complete)
+        state = {
+            "load_generation": 8,
+            "requested_profile_id": "G65",
+            "active_page_id": "disabled-tests",
+            "loading_message": "Loading current data...",
+            "snapshot": {
+                "profile_id": "G65",
+                "pages": [
+                    {"id": "disabled-tests", "summary": "last good", "deferred": False}
+                ],
+            },
+        }
+        render = mock.Mock()
+        notify = mock.Mock()
+        finish_transition = mock.Mock()
+
+        applied = complete(
+            token_type(generation=8, profile_id="G65", page_id="disabled-tests"),
+            state=state,
+            page=None,
+            error=RuntimeError(r"private C:\operator\source failed"),
+            render_current_page=render,
+            notify=notify,
+            finish_transition=finish_transition,
+            transition_page_id="disabled-tests",
+        )
+
+        self.assertTrue(applied)
+        self.assertEqual(state["loading_message"], "")
+        self.assertEqual(
+            state["load_error"],
+            {
+                "kind": "page",
+                "page_id": "disabled-tests",
+                "profile_id": "G65",
+                "title": "Page could not load",
+                "summary": "The selected page could not load. Retry the read-only request.",
+                "stale": True,
+            },
+        )
+        self.assertNotIn("private", repr(state["load_error"]).casefold())
+        render.assert_called_once_with()
+        notify.assert_called_once_with("Page load failed. Use Retry in the page.")
+        finish_transition.assert_called_once_with("disabled-tests")
+
     def test_finish_snapshot_refresh_stale_success_has_no_visible_effects(self) -> None:
         from sg_preflight.dashboard import main
 
@@ -450,6 +502,136 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         refresh_labels.assert_not_called()
         notify.assert_not_called()
         finish_transition.assert_not_called()
+
+    def test_snapshot_refresh_current_exception_persists_error_without_cross_profile_stale_data(self) -> None:
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        complete = getattr(main, "_complete_dashboard_snapshot_refresh", None)
+        self.assertIsNotNone(token_type)
+        self.assertIsNotNone(complete)
+        state = {
+            "load_generation": 9,
+            "requested_profile_id": "G65",
+            "active_page_id": "risk-score",
+            "loading_message": "Refreshing current data...",
+            "snapshot": {
+                "profile_id": "G70",
+                "pages": [{"id": "risk-score", "summary": "other profile"}],
+            },
+        }
+        render = mock.Mock()
+        refresh_labels = mock.Mock()
+        notify = mock.Mock()
+        finish_transition = mock.Mock()
+
+        applied = complete(
+            token_type(generation=9, profile_id="G65", page_id="risk-score"),
+            state=state,
+            snapshot=None,
+            error=RuntimeError("refresh failed"),
+            render_current_page=render,
+            refresh_labels=refresh_labels,
+            notify=notify,
+            finish_transition=finish_transition,
+        )
+
+        self.assertTrue(applied)
+        self.assertEqual(
+            state["load_error"],
+            {
+                "kind": "snapshot",
+                "page_id": "risk-score",
+                "profile_id": "G65",
+                "title": "Dashboard refresh failed",
+                "summary": "The latest dashboard data could not load. Retry the read-only refresh.",
+                "stale": False,
+            },
+        )
+        render.assert_called_once_with()
+        refresh_labels.assert_not_called()
+        notify.assert_called_once_with("Dashboard refresh failed. Use Retry in the page.")
+        finish_transition.assert_called_once_with("")
+
+    def test_snapshot_refresh_current_exception_marks_same_profile_last_good_data_stale(self) -> None:
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        complete = getattr(main, "_complete_dashboard_snapshot_refresh", None)
+        self.assertIsNotNone(token_type)
+        self.assertIsNotNone(complete)
+        state = {
+            "load_generation": 5,
+            "requested_profile_id": "G65",
+            "active_page_id": "risk-score",
+            "loading_message": "Refreshing current data...",
+            "snapshot": {
+                "profile_id": "G65",
+                "pages": [{"id": "risk-score", "summary": "last good", "deferred": False}],
+            },
+        }
+
+        complete(
+            token_type(generation=5, profile_id="G65", page_id="risk-score"),
+            state=state,
+            snapshot=None,
+            error=RuntimeError("refresh failed"),
+            render_current_page=mock.Mock(),
+            refresh_labels=mock.Mock(),
+            notify=mock.Mock(),
+            finish_transition=mock.Mock(),
+        )
+
+        self.assertTrue(state["load_error"]["stale"])
+
+    def test_load_error_clears_on_success_and_navigation(self) -> None:
+        from sg_preflight.dashboard import main
+
+        token_type = getattr(main, "DashboardLoadToken", None)
+        complete = getattr(main, "_complete_dashboard_page_load", None)
+        next_token = getattr(main, "_next_dashboard_load_token", None)
+        self.assertIsNotNone(token_type)
+        self.assertIsNotNone(complete)
+        self.assertIsNotNone(next_token)
+        state = {
+            "load_generation": 4,
+            "requested_profile_id": "G65",
+            "active_page_id": "disabled-tests",
+            "loading_message": "",
+            "load_error": {"kind": "page"},
+            "snapshot": {
+                "profile_id": "G65",
+                "pages": [{"id": "disabled-tests", "deferred": True}],
+            },
+        }
+
+        complete(
+            token_type(generation=4, profile_id="G65", page_id="disabled-tests"),
+            state=state,
+            page={"id": "disabled-tests", "summary": "fresh", "deferred": False},
+            error=None,
+            render_current_page=mock.Mock(),
+            notify=mock.Mock(),
+            finish_transition=mock.Mock(),
+        )
+
+        self.assertNotIn("load_error", state)
+        state["load_error"] = {"kind": "page"}
+        next_token(
+            state,
+            profile_id="G65",
+            page_id="risk-score",
+            reason="navigation",
+        )
+        self.assertNotIn("load_error", state)
+
+    def test_dashboard_renders_durable_load_error_retry_and_stale_label(self) -> None:
+        source = _dashboard_shell_source()
+
+        self.assertIn("sgfx-load-error", source)
+        self.assertIn("Showing the last successfully loaded data. It may be stale.", source)
+        self.assertIn('ui.button("Retry", on_click=_retry_current_load)', source)
+        self.assertIn('str(load_error.get("kind", "snapshot")) == "page"', source)
 
     def test_primary_shell_contract_preserves_home_without_extra_surfaces(self) -> None:
         from sg_preflight.dashboard.main import build_dashboard_snapshot

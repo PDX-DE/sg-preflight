@@ -39,6 +39,7 @@ def _next_dashboard_load_token(
     state["load_generation"] = generation
     state["requested_profile_id"] = str(profile_id)
     state["active_page_id"] = str(page_id)
+    state.pop("load_error", None)
     return DashboardLoadToken(generation, str(profile_id), str(page_id))
 
 
@@ -49,6 +50,42 @@ def _dashboard_load_token_is_current(token: DashboardLoadToken, state: dict[str,
         profile_id=str(state.get("requested_profile_id", "")),
         page_id=str(state.get("active_page_id", "")),
     )
+
+
+def _has_scoped_last_good_page(state: dict[str, Any], token: DashboardLoadToken) -> bool:
+    snapshot = state.get("snapshot", {})
+    if not isinstance(snapshot, dict) or str(snapshot.get("profile_id", "")) != token.profile_id:
+        return False
+    pages = snapshot.get("pages", [])
+    if not isinstance(pages, list):
+        return False
+    return any(
+        str(page.get("id", "")) == token.page_id and not bool(page.get("deferred", False))
+        for page in pages
+        if isinstance(page, dict)
+    )
+
+
+def _set_dashboard_load_error(
+    state: dict[str, Any],
+    token: DashboardLoadToken,
+    *,
+    kind: str,
+) -> None:
+    if kind == "page":
+        title = "Page could not load"
+        summary = "The selected page could not load. Retry the read-only request."
+    else:
+        title = "Dashboard refresh failed"
+        summary = "The latest dashboard data could not load. Retry the read-only refresh."
+    state["load_error"] = {
+        "kind": kind,
+        "page_id": token.page_id,
+        "profile_id": token.profile_id,
+        "title": title,
+        "summary": summary,
+        "stale": _has_scoped_last_good_page(state, token),
+    }
 
 
 def _complete_dashboard_page_load(
@@ -67,9 +104,10 @@ def _complete_dashboard_page_load(
         return False
     if error is not None:
         state["loading_message"] = ""
+        _set_dashboard_load_error(state, token, kind="page")
         render_current_page()
         finish_transition(transition_page_id)
-        notify(f"Page load failed: {error}")
+        notify("Page load failed. Use Retry in the page.")
         return True
     if page is None:
         raise ValueError("Dashboard page completion requires a page or an error")
@@ -82,6 +120,7 @@ def _complete_dashboard_page_load(
     ]
     state["snapshot"] = {**snapshot, "pages": updated_pages}
     state["loading_message"] = ""
+    state.pop("load_error", None)
     render_current_page()
     finish_transition(transition_page_id)
     if notify_message:
@@ -106,15 +145,17 @@ def _complete_dashboard_snapshot_refresh(
         return False
     if error is not None:
         state["loading_message"] = ""
+        _set_dashboard_load_error(state, token, kind="snapshot")
         render_current_page()
         finish_transition(transition_page_id)
-        notify(f"Dashboard refresh failed: {error}")
+        notify("Dashboard refresh failed. Use Retry in the page.")
         return True
     if snapshot is None:
         raise ValueError("Dashboard snapshot completion requires a snapshot or an error")
     state["snapshot"] = snapshot
     state["requested_profile_id"] = str(snapshot.get("profile_id", token.profile_id))
     state["loading_message"] = ""
+    state.pop("load_error", None)
     refresh_labels()
     render_current_page()
     finish_transition(transition_page_id)

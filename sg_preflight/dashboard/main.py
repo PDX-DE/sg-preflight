@@ -986,6 +986,8 @@ def _render_dashboard(
             .sgfx-doc-link { color: var(--sgfx-accent) !important; font-size: 13px; text-decoration: none; border-bottom: 1px solid rgba(78, 201, 176, 0.45); }
             .sgfx-summary { color: var(--sgfx-fg); font-size: 14px; line-height: 1.55; }
             .sgfx-warning { border: 1px solid var(--sgfx-warning-border); background: var(--sgfx-warning-bg); color: var(--sgfx-warning-fg); border-radius: 6px; padding: 9px 12px; }
+            .sgfx-load-error { width: 100%; gap: 8px; border: 1px solid var(--sgfx-warning-border); border-radius: 8px; padding: 14px; background: var(--sgfx-warning-bg); }
+            .sgfx-load-error .q-btn { align-self: flex-start; }
             .sgfx-mode-toggle { gap: 4px; padding: 3px; border: 1px solid var(--sgfx-border); border-radius: 8px; background: var(--sgfx-bg-elev); }
             .sgfx-mode-button { min-height: 30px; border-radius: 6px; color: var(--sgfx-fg) !important; }
             .sgfx-mode-button-active { background: var(--sgfx-accent-soft) !important; color: var(--sgfx-accent) !important; }
@@ -1306,6 +1308,27 @@ def _render_dashboard(
                         "window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();",
                     )
                     return
+                load_error = state.get("load_error")
+                if isinstance(load_error, dict):
+                    with ui.column().classes("sgfx-page-panel sgfx-load-error"):
+                        ui.label(str(load_error.get("title", "Dashboard data could not load"))).classes(
+                            "sgfx-panel-title"
+                        )
+                        ui.label(str(load_error.get("summary", "Retry the read-only request."))).classes(
+                            "sgfx-summary"
+                        )
+                        if bool(load_error.get("stale", False)):
+                            ui.label(
+                                "Showing the last successfully loaded data. It may be stale."
+                            ).classes("sgfx-muted")
+                        ui.button("Retry", on_click=_retry_current_load).props("no-caps")
+                    if not bool(load_error.get("stale", False)):
+                        content.update()
+                        _run_javascript_if_client_alive(
+                            ui,
+                            "window.sgfxApplyFirstLaunchState && window.sgfxApplyFirstLaunchState();",
+                        )
+                        return
                 warning = str(state["snapshot"].get("profile_warning", "") or "")
                 if warning:
                     ui.label(warning).classes("sgfx-warning")
@@ -1557,6 +1580,23 @@ def _render_dashboard(
                 ),
                 name=f"sgfx-dashboard-page-{page_id}",
             )
+
+        def _retry_current_load() -> None:
+            load_error = state.get("load_error")
+            if not isinstance(load_error, dict):
+                return
+            page_id = str(load_error.get("page_id", state.get("active_page_id", "home")))
+            profile_id = str(
+                load_error.get("profile_id", state.get("requested_profile_id", ""))
+            )
+            if str(load_error.get("kind", "snapshot")) == "page":
+                _start_single_page_load(
+                    page_id,
+                    profile_id=profile_id,
+                    reason="refresh",
+                )
+                return
+            _refresh_snapshot(profile_id=profile_id, reason="refresh")
 
         def _open_page(page_id: str) -> None:
             state["active_page_id"] = page_id
