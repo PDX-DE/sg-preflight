@@ -235,8 +235,12 @@ class TestSurfaceRegistryModel(unittest.TestCase):
 
 class TestShellRegistryModel(unittest.TestCase):
     def test_roles_order_and_immutable_shell_metadata_are_exact(self) -> None:
-        from sg_preflight.desktop.shell_model import ShellRegistryModel, ShellRole
-        from sg_preflight.shell_registry import HOME_HUB_TILES, SHORTCUT_ACTIONS
+        from sg_preflight.desktop.shell_model import (
+            QT_QUICK_SHORTCUT_ACTIONS,
+            ShellRegistryModel,
+            ShellRole,
+        )
+        from sg_preflight.shell_registry import HOME_HUB_TILES
 
         model = ShellRegistryModel()
         roles = tuple((int(role), bytes(name)) for role, name in model.roleNames().items())
@@ -272,8 +276,9 @@ class TestShellRegistryModel(unittest.TestCase):
         )
         self.assertEqual(
             tuple((item["key"], item["label"]) for item in model.shortcuts),
-            SHORTCUT_ACTIONS,
+            QT_QUICK_SHORTCUT_ACTIONS,
         )
+        self.assertEqual(dict(QT_QUICK_SHORTCUT_ACTIONS)["Esc"], "Close the topmost overlay or return Home")
         meta_object = model.metaObject()
         own_methods = tuple(
             bytes(meta_object.method(index).methodSignature())

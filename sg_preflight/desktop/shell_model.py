@@ -19,6 +19,12 @@ from sg_preflight.shell_registry import (
 from sg_preflight.surface_registry import SURFACE_DESCRIPTORS
 
 
+QT_QUICK_SHORTCUT_ACTIONS = tuple(
+    (key, "Close the topmost overlay or return Home" if key == "Esc" else label)
+    for key, label in SHORTCUT_ACTIONS
+)
+
+
 class ShellRole(IntEnum):
     RouteId = int(Qt.ItemDataRole.UserRole) + 1
     Title = RouteId + 1
@@ -95,7 +101,7 @@ class ShellRegistryModel(QAbstractListModel):
         )
         self._shortcuts = tuple(
             {"key": key, "label": label}
-            for key, label in SHORTCUT_ACTIONS
+            for key, label in QT_QUICK_SHORTCUT_ACTIONS
         )
         self._routes = tuple(
             {

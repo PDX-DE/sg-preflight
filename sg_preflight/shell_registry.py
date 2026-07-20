@@ -61,5 +61,5 @@ SHORTCUT_ACTIONS = (
     ("F5", "Refresh the active page"),
     ("/", "Jump to page"),
     ("F12", "Open local diagnostics"),
-    ("Esc", "Close the topmost overlay or return Home"),
+    ("Esc", "Close the topmost overlay or sidebar"),
 )
