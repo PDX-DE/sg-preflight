@@ -144,19 +144,32 @@ def _safe_timing_sequence(value: object) -> bool:
 
 def _validate_raw_schema(scenario: str, raw: Mapping[str, object]) -> None:
     if scenario == "warm-start":
-        if set(raw) != {"priming_ms", "launch_ms"}:
+        legacy_fields = {"priming_ms", "launch_ms"}
+        enriched_fields = {
+            *legacy_fields,
+            "priming_page_ready_ms",
+            "launch_page_ready_ms",
+        }
+        if set(raw) not in (legacy_fields, enriched_fields):
             raise ValueError("Warm-start sample fields are invalid.")
         if not _safe_timing_scalar(raw.get("priming_ms")) or not _safe_timing_sequence(
             raw.get("launch_ms")
+        ):
+            raise ValueError("Warm-start sample fields are invalid.")
+        if set(raw) == enriched_fields and (
+            not _safe_timing_scalar(raw.get("priming_page_ready_ms"))
+            or not _safe_timing_sequence(raw.get("launch_page_ready_ms"))
         ):
             raise ValueError("Warm-start sample fields are invalid.")
         return
     if scenario == "first-run":
         if set(raw) != {"launches"} or not isinstance(raw.get("launches"), list):
             raise ValueError("First-run sample fields are invalid.")
+        launch_shapes: set[frozenset[str]] = set()
         for item in raw["launches"]:
-            if not isinstance(item, Mapping) or set(item) != {"stage_id", "duration_ms"}:
+            if not isinstance(item, Mapping):
                 raise ValueError("First-run sample fields are invalid.")
+            launch_shapes.add(frozenset(item))
             stage_id = item.get("stage_id")
             if (
                 not isinstance(stage_id, str)
@@ -164,6 +177,13 @@ def _validate_raw_schema(scenario: str, raw: Mapping[str, object]) -> None:
                 or not _safe_timing_scalar(item.get("duration_ms"))
             ):
                 raise ValueError("First-run sample fields are invalid.")
+            if "page_ready_ms" in item and not _safe_timing_scalar(item.get("page_ready_ms")):
+                raise ValueError("First-run sample fields are invalid.")
+        if launch_shapes not in (
+            {frozenset({"stage_id", "duration_ms"})},
+            {frozenset({"stage_id", "duration_ms", "page_ready_ms"})},
+        ):
+            raise ValueError("First-run sample fields are invalid.")
         return
     if scenario == "navigation":
         if set(raw) != {"renderers"} or not isinstance(raw.get("renderers"), Mapping):
@@ -229,6 +249,33 @@ def _evaluate_warm_start(evidence: dict[str, Any], raw: Mapping[str, object]) ->
         "p95_ms": nearest_rank_percentile(samples, 95),
         "maximum_ms": max(samples),
     }
+    if "launch_page_ready_ms" in raw:
+        page_ready = _duration_samples(raw.get("launch_page_ready_ms"), required_count=20)
+        priming_page_ready = _duration_samples(
+            [raw.get("priming_page_ready_ms")],
+            required_count=1,
+        )
+        if page_ready is None or priming_page_ready is None:
+            failures.append("Page-ready timings are invalid.")
+        else:
+            evidence["metrics"].update(
+                {
+                    "first_paint_p50_ms": evidence["metrics"]["p50_ms"],
+                    "first_paint_p95_ms": evidence["metrics"]["p95_ms"],
+                    "first_paint_maximum_ms": evidence["metrics"]["maximum_ms"],
+                    "page_ready_p50_ms": nearest_rank_percentile(page_ready, 50),
+                    "page_ready_p95_ms": nearest_rank_percentile(page_ready, 95),
+                    "page_ready_maximum_ms": max(page_ready),
+                }
+            )
+            if (
+                isinstance(priming, (int, float))
+                and not isinstance(priming, bool)
+                and float(priming_page_ready[0]) < float(priming)
+            ):
+                failures.append("Priming page ready precedes first paint.")
+            if any(ready < paint for paint, ready in zip(samples, page_ready, strict=True)):
+                failures.append("A page-ready milestone precedes first paint.")
     if evidence["metrics"]["p95_ms"] > 2500:
         failures.append("Warm-start p95 exceeds 2500 ms.")
 
@@ -241,6 +288,7 @@ def _evaluate_first_run(evidence: dict[str, Any], raw: Mapping[str, object]) -> 
         return
     stage_ids: set[str] = set()
     samples: list[float] = []
+    page_ready_samples: list[float] = []
     for launch in launches:
         if not isinstance(launch, Mapping):
             failures.append("First-run launch data is invalid.")
@@ -256,6 +304,14 @@ def _evaluate_first_run(evidence: dict[str, Any], raw: Mapping[str, object]) -> 
             return
         stage_ids.add(stage_id)
         samples.extend(parsed)
+        if "page_ready_ms" in launch:
+            parsed_page_ready = _duration_samples([launch.get("page_ready_ms")], required_count=1)
+            if parsed_page_ready is None:
+                failures.append("First-run page-ready durations are invalid.")
+                return
+            page_ready_samples.extend(parsed_page_ready)
+            if parsed_page_ready[0] < parsed[0]:
+                failures.append("A first-run page-ready milestone precedes first paint.")
     if len(stage_ids) != 5:
         failures.append("Five unique staged directories are required.")
     evidence["sample_count"] = len(samples)
@@ -263,6 +319,15 @@ def _evaluate_first_run(evidence: dict[str, Any], raw: Mapping[str, object]) -> 
         "median_ms": float(statistics.median(samples)),
         "maximum_ms": max(samples),
     }
+    if page_ready_samples:
+        evidence["metrics"].update(
+            {
+                "first_paint_median_ms": evidence["metrics"]["median_ms"],
+                "first_paint_maximum_ms": evidence["metrics"]["maximum_ms"],
+                "page_ready_median_ms": float(statistics.median(page_ready_samples)),
+                "page_ready_maximum_ms": max(page_ready_samples),
+            }
+        )
     if evidence["metrics"]["median_ms"] > 4000:
         failures.append("First-run median exceeds 4000 ms.")
     if evidence["metrics"]["maximum_ms"] > 5000:
@@ -624,6 +689,29 @@ def _stop_cpu_load(processes: Sequence[subprocess.Popen[bytes]]) -> None:
             process.wait(timeout=5)
 
 
+def _startup_milestones(result: Mapping[str, object]) -> tuple[object, object | None]:
+    duration = result.get("duration_ms")
+    milestone_fields = {"first_paint_ms", "page_ready_ms", "page_outcome"}
+    present = milestone_fields.intersection(result)
+    if not present:
+        return duration, None
+    if present != milestone_fields:
+        raise RuntimeError("The Qt Quick startup worker returned partial milestone data.")
+    first_paint = _duration_samples([result.get("first_paint_ms")], required_count=1)
+    page_ready = _duration_samples([result.get("page_ready_ms")], required_count=1)
+    duration_sample = _duration_samples([duration], required_count=1)
+    if (
+        first_paint is None
+        or page_ready is None
+        or duration_sample is None
+        or duration_sample[0] != first_paint[0]
+        or page_ready[0] < first_paint[0]
+        or result.get("page_outcome") != "ready"
+    ):
+        raise RuntimeError("The Qt Quick startup worker returned invalid milestone data.")
+    return duration, result.get("page_ready_ms")
+
+
 def collect_scenario(
     scenario: str,
     *,
@@ -637,10 +725,23 @@ def collect_scenario(
             _run_benchmark_worker("startup", target=selected, runner=runner)
             for _index in range(20)
         ]
-        return {
-            "priming_ms": priming.get("duration_ms"),
-            "launch_ms": [item.get("duration_ms") for item in measured],
+        priming_duration, priming_page_ready = _startup_milestones(priming)
+        milestones = [_startup_milestones(item) for item in measured]
+        page_ready_values = [page_ready for _duration, page_ready in milestones]
+        if (priming_page_ready is None) != all(value is None for value in page_ready_values):
+            raise RuntimeError("The Qt Quick startup workers returned mixed milestone data.")
+        if any(value is None for value in page_ready_values) and not all(
+            value is None for value in page_ready_values
+        ):
+            raise RuntimeError("The Qt Quick startup workers returned mixed milestone data.")
+        raw: dict[str, object] = {
+            "priming_ms": priming_duration,
+            "launch_ms": [duration for duration, _page_ready in milestones],
         }
+        if priming_page_ready is not None:
+            raw["priming_page_ready_ms"] = priming_page_ready
+            raw["launch_page_ready_ms"] = page_ready_values
+        return raw
     if scenario == "first-run":
         if selected.bundle_directory is None or not selected.bundle_directory.is_dir():
             raise RuntimeError("First-run measurement requires a staged bundle.")
@@ -658,7 +759,13 @@ def collect_scenario(
                     staged_bundle,
                 )
                 result = _run_benchmark_worker("startup", target=staged_target, runner=runner)
-                launches.append({"stage_id": stage_id, "duration_ms": result.get("duration_ms")})
+                duration, page_ready = _startup_milestones(result)
+                launch: dict[str, object] = {"stage_id": stage_id, "duration_ms": duration}
+                if page_ready is not None:
+                    launch["page_ready_ms"] = page_ready
+                if launches and ("page_ready_ms" in launches[0]) != (page_ready is not None):
+                    raise RuntimeError("The Qt Quick startup workers returned mixed milestone data.")
+                launches.append(launch)
                 shutil.rmtree(staged_bundle)
         return {"launches": launches}
     if scenario in {"navigation", "reader-stress"}:

@@ -27,7 +27,7 @@ class TaskFailure:
 
 
 class _TaskSignals(QObject):
-    completed = Signal(object, bool, object)
+    completed = Signal(object, object, bool, object)
 
 
 class _PageTask(QRunnable):
@@ -76,7 +76,7 @@ class _PageTask(QRunnable):
         if self._cancelled.is_set() or not outcome:
             return
         succeeded, payload = outcome[0]
-        self.signals.completed.emit(self.identity, succeeded, payload)
+        self.signals.completed.emit(self, self.identity, succeeded, payload)
 
 
 class PageTaskCoordinator(QObject):
@@ -111,10 +111,26 @@ class PageTaskCoordinator(QObject):
         self._pool.start(task)
         return True
 
-    @Slot(object, bool, object)
-    def _complete(self, identity: TaskIdentity, succeeded: bool, payload: Any) -> None:
-        if self._active.pop(identity, None) is None:
+    def cancel(self, identity: TaskIdentity) -> bool:
+        task = self._active.pop(identity, None)
+        if task is None:
+            return False
+        task.cancel()
+        self._pool.tryTake(task)
+        self.active_count_changed.emit()
+        return True
+
+    @Slot(object, object, bool, object)
+    def _complete(
+        self,
+        task: _PageTask,
+        identity: TaskIdentity,
+        succeeded: bool,
+        payload: Any,
+    ) -> None:
+        if self._active.get(identity) is not task:
             return
+        self._active.pop(identity)
         self.active_count_changed.emit()
         if succeeded:
             self.task_succeeded.emit(identity, payload)

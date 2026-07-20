@@ -89,6 +89,7 @@ class _FakeTaskCoordinator(QObject):
         super().__init__()
         self.requests: list[tuple[object, object]] = []
         self.active: set[object] = set()
+        self.cancelled: list[object] = []
         self.reject_next = False
         self.shutdown_calls: list[int] = []
 
@@ -109,6 +110,13 @@ class _FakeTaskCoordinator(QObject):
     def fail(self, identity: object, failure: object) -> None:
         self.active.discard(identity)
         self.task_failed.emit(identity, failure)
+
+    def cancel(self, identity: object) -> bool:
+        if identity not in self.active:
+            return False
+        self.active.remove(identity)
+        self.cancelled.append(identity)
+        return True
 
     def shutdown(self, timeout_ms: int = 1000) -> bool:
         self.shutdown_calls.append(timeout_ms)
@@ -462,6 +470,46 @@ class TestPageTaskCoordinator(unittest.TestCase):
         task.run()
 
         self.assertFalse(executed.is_set())
+
+    def test_cancel_releases_one_identity_and_ignores_its_late_completion(self) -> None:
+        from sg_preflight.desktop.task_pool import TaskIdentity
+
+        coordinator = self._coordinator(max_thread_count=1)
+        identity = TaskIdentity(4, "G65", "full-qa-pass", "action_readiness")
+        started = threading.Event()
+        release = threading.Event()
+        spy = QSignalSpy(coordinator.task_succeeded)
+
+        def gated_reader() -> str:
+            started.set()
+            release.wait(3)
+            return "stale"
+
+        self.assertTrue(coordinator.submit(identity, gated_reader))
+        stale_task = coordinator._active[identity]
+        self.assertTrue(started.wait(1))
+        self.assertTrue(coordinator.cancel(identity))
+        self.assertEqual(coordinator.active_count, 0)
+        self.assertFalse(coordinator.cancel(identity))
+        current_release = threading.Event()
+        self.assertTrue(
+            coordinator.submit(
+                identity,
+                lambda: current_release.wait(3) and "current",
+            )
+        )
+        coordinator._complete(stale_task, identity, True, "stale")
+        self.assertEqual(coordinator.active_count, 1)
+        self.assertEqual(spy.count(), 0)
+
+        current_release.set()
+        self.assertTrue(_pump_until(lambda: spy.count() == 1))
+        self.assertEqual(spy.at(0), [identity, "current"])
+
+        release.set()
+        self.assertTrue(coordinator.wait_for_done(1000))
+        self.application.processEvents()
+        self.assertEqual(spy.count(), 1)
 
     def test_shutdown_cancels_queued_work_is_bounded_and_rejects_new_tasks(self) -> None:
         from sg_preflight.desktop.task_pool import TaskIdentity

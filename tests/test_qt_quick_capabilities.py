@@ -660,6 +660,14 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def _complete_action_readiness(coordinator: object) -> object:
+        identity, operation = coordinator.requests[-1]
+        if identity.operation != "action_readiness":
+            raise AssertionError(f"Expected action_readiness, received {identity.operation}")
+        coordinator.succeed(identity, operation())
+        return identity
+
     def test_batch_evidence_page_does_not_enumerate_selected_car_diagnostics(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import DesktopController
         from tests.test_qt_quick_core import _FakeTaskCoordinator
@@ -755,6 +763,259 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertFalse(controller.revealArtifact(first["artifactId"]))
             self.assertTrue(controller.revealArtifact(second["artifactId"]))
             controller.shutdown()
+
+    def test_selected_car_checks_publish_before_action_readiness_and_preserve_evidence_on_failure(
+        self,
+    ) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.desktop.task_pool import TaskFailure
+        from sg_preflight.qa_operator_actions import OperatorAction
+        from tests.test_qt_quick_core import _FakeTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            project = root / "source" / "Cars" / "G65"
+            output = workspace / "out" / "operator-ui" / "actions"
+            project.mkdir(parents=True)
+            action = OperatorAction(
+                action_id="sgfx_preflight__g65",
+                label="Run local QA checks",
+                description="Local selected-car checks",
+                kind="sgfx_preflight",
+                scope="profile",
+                ready=True,
+                profile_id="G65",
+                project_root=str(project),
+            )
+            action_lister = mock.Mock(return_value=[action])
+            coordinator = _FakeTaskCoordinator()
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=mock.Mock(return_value=self._full_qa_page()),
+                diagnostic_read_roots=(root / "source",),
+                diagnostic_output_root=output,
+                action_lister=action_lister,
+            )
+            self.addCleanup(controller.shutdown)
+
+            self.assertTrue(controller.navigate("full-qa-pass"))
+            base_identity, base_operation = coordinator.requests[-1]
+            base_payload = base_operation()
+            action_lister.assert_not_called()
+            coordinator.succeed(base_identity, base_payload)
+
+            self.assertEqual(controller.pageState, "ready")
+            self.assertEqual(controller.errorCode, "")
+            self.assertEqual(controller.currentPayload["actionReadinessState"], "loading")
+            self.assertEqual(controller.currentPayload["surfaceId"], "full-qa-pass")
+            self.assertEqual(
+                [item["capabilityId"] for item in controller.currentPayload["actions"]],
+                ["page.refresh"],
+            )
+            readiness_identity, readiness_operation = coordinator.requests[-1]
+            self.assertEqual(readiness_identity.operation, "action_readiness")
+            self.assertEqual(readiness_identity.generation, base_identity.generation)
+            admitted = readiness_operation()
+            action_lister.assert_called_once_with(workspace.resolve())
+            self.assertEqual(controller.pageState, "ready")
+            self.assertEqual(controller.currentPayload["actionReadinessState"], "loading")
+
+            coordinator.succeed(readiness_identity, admitted)
+            self.assertEqual(controller.pageState, "ready")
+            self.assertEqual(controller.currentPayload["actionReadinessState"], "ready")
+            self.assertEqual(
+                [
+                    item["actionId"]
+                    for item in controller.currentPayload["actions"]
+                    if item["capabilityId"] == "diagnostic.run"
+                ],
+                [action.action_id],
+            )
+
+            self.assertTrue(controller.refresh())
+            refresh_identity, refresh_operation = coordinator.requests[-1]
+            coordinator.succeed(refresh_identity, refresh_operation())
+            before_failure = {
+                key: value
+                for key, value in controller.currentPayload.items()
+                if key not in {"actions", "actionReadinessState", "actionReadinessMessage"}
+            }
+            failed_identity, _failed_operation = coordinator.requests[-1]
+            self.assertEqual(failed_identity.operation, "action_readiness")
+            coordinator.fail(
+                failed_identity,
+                TaskFailure(
+                    "page_reader_failed",
+                    r"raw C:\private\readiness failure",
+                    "PrivateError",
+                ),
+            )
+
+            self.assertEqual(controller.pageState, "ready")
+            self.assertEqual(controller.errorCode, "")
+            self.assertEqual(controller.currentPayload["actionReadinessState"], "unavailable")
+            self.assertNotIn("private", controller.currentPayload["actionReadinessMessage"].casefold())
+            self.assertEqual(
+                {
+                    key: value
+                    for key, value in controller.currentPayload.items()
+                    if key not in {"actions", "actionReadinessState", "actionReadinessMessage"}
+                },
+                before_failure,
+            )
+            self.assertEqual(
+                [item["capabilityId"] for item in controller.currentPayload["actions"]],
+                ["page.refresh"],
+            )
+
+    def test_stale_action_readiness_is_cancelled_and_ignored(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.desktop.task_pool import TaskFailure
+        from tests.test_qt_quick_core import _FakeTaskCoordinator
+
+        def assert_transition(transition: str) -> None:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                coordinator = _FakeTaskCoordinator()
+                controller = DesktopController(
+                    workspace=temp_dir,
+                    initial_profile_id="G65",
+                    task_coordinator=coordinator,
+                    page_loader=mock.Mock(return_value=self._full_qa_page()),
+                    action_lister=mock.Mock(return_value=[]),
+                )
+                controller._set_profile_options(
+                    [{"id": "G65", "label": "G65"}, {"id": "G70", "label": "G70"}]
+                )
+                self.assertTrue(controller.navigate("full-qa-pass"))
+                base_identity, base_operation = coordinator.requests[-1]
+                coordinator.succeed(base_identity, base_operation())
+                readiness_identity, readiness_operation = coordinator.requests[-1]
+                readiness_payload = readiness_operation()
+
+                if transition == "navigation":
+                    self.assertTrue(controller.navigate("risk-score"))
+                elif transition == "profile":
+                    self.assertTrue(controller.selectProfile("G70"))
+                elif transition == "refresh":
+                    self.assertTrue(controller.refresh())
+                else:
+                    controller.shutdown()
+
+                self.assertIn(readiness_identity, coordinator.cancelled)
+                before = (
+                    controller.currentRouteId,
+                    controller.currentProfileId,
+                    controller.pageState,
+                    dict(controller.currentPayload),
+                    dict(controller._cache),
+                    controller.errorCode,
+                )
+                coordinator.succeed(readiness_identity, readiness_payload)
+                coordinator.fail(
+                    readiness_identity,
+                    TaskFailure("page_reader_failed", "stale", "RuntimeError"),
+                )
+                self.assertEqual(
+                    (
+                        controller.currentRouteId,
+                        controller.currentProfileId,
+                        controller.pageState,
+                        dict(controller.currentPayload),
+                        dict(controller._cache),
+                        controller.errorCode,
+                    ),
+                    before,
+                )
+                controller.shutdown()
+
+        for transition in ("navigation", "profile", "refresh", "shutdown"):
+            with self.subTest(transition=transition):
+                assert_transition(transition)
+
+    def test_gated_action_readiness_does_not_block_page_or_rotate_artifacts(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.desktop.task_pool import PageTaskCoordinator
+        from sg_preflight.qa_operator_actions import OperatorAction
+        from tests.test_qt_quick_core import _pump_until
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            project = root / "source" / "Cars" / "G65"
+            output = workspace / "out" / "operator-ui" / "actions"
+            summary = workspace / "out" / "full-qa" / "summary.json"
+            project.mkdir(parents=True)
+            summary.parent.mkdir(parents=True)
+            summary.write_text("{}", encoding="utf-8")
+            page = self._full_qa_page()
+            page["payload"]["summary_json"] = str(summary)
+            action = OperatorAction(
+                action_id="sgfx_preflight__g65",
+                label="Run local QA checks",
+                description="Local selected-car checks",
+                kind="sgfx_preflight",
+                scope="profile",
+                ready=True,
+                profile_id="G65",
+                project_root=str(project),
+            )
+            readiness_started = threading.Event()
+            release_readiness = threading.Event()
+            revealed: list[Path] = []
+
+            def gated_lister(_workspace: Path) -> list[OperatorAction]:
+                readiness_started.set()
+                release_readiness.wait(5)
+                return [action]
+
+            coordinator = PageTaskCoordinator()
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=mock.Mock(return_value=page),
+                diagnostic_read_roots=(root / "source",),
+                diagnostic_output_root=output,
+                action_lister=gated_lister,
+                artifact_revealer=lambda path: revealed.append(path),
+            )
+            states: list[str] = []
+            controller.pageStateChanged.connect(lambda: states.append(controller.pageState))
+            try:
+                self.assertTrue(controller.navigate("full-qa-pass"))
+                self.assertTrue(
+                    _pump_until(
+                        lambda: controller.pageState == "ready" and readiness_started.is_set(),
+                        timeout_ms=3000,
+                    )
+                )
+                self.assertEqual(controller.currentPayload["actionReadinessState"], "loading")
+                self.assertEqual(
+                    [item["capabilityId"] for item in controller.currentPayload["actions"]],
+                    ["page.refresh", "artifact.reveal"],
+                )
+                artifact = dict(controller.currentPayload["artifacts"][0])
+                self.assertEqual(states.count("loading"), 1)
+
+                release_readiness.set()
+                self.assertTrue(
+                    _pump_until(
+                        lambda: controller.currentPayload.get("actionReadinessState") == "ready",
+                        timeout_ms=3000,
+                    )
+                )
+                self.assertEqual(controller.pageState, "ready")
+                self.assertEqual(controller.currentPayload["artifacts"], [artifact])
+                self.assertEqual(states.count("loading"), 1)
+                self.assertTrue(controller.revealArtifact(artifact["artifactId"]))
+                self.assertEqual(revealed, [summary.resolve()])
+            finally:
+                release_readiness.set()
+                controller.shutdown()
+                coordinator.shutdown(timeout_ms=1000)
 
     def test_profile_change_clears_completed_feedback_before_loading_the_new_car(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import DesktopController
@@ -1022,6 +1283,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertTrue(controller.navigate("full-qa-pass"))
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
+            self._complete_action_readiness(coordinator)
             diagnostic_actions = [
                 item for item in controller.currentPayload["actions"]
                 if item["capabilityId"] == "diagnostic.run"
@@ -1075,6 +1337,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             controller.navigate("full-qa-pass")
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
+            self._complete_action_readiness(coordinator)
 
             diagnostic = next(
                 item
@@ -1144,6 +1407,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             controller.navigate("full-qa-pass")
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
+            self._complete_action_readiness(coordinator)
 
             self.assertTrue(controller.runDiagnostic(action.action_id, ["G65"]))
             self.assertTrue(controller.diagnosticCanCancel)
@@ -1317,6 +1581,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             controller.navigate("full-qa-pass")
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
+            self._complete_action_readiness(coordinator)
 
             self.assertEqual(controller.lastActionStatus, "")
             self.assertTrue(controller.runDiagnostic(action.action_id, ["G65"]))
@@ -1387,6 +1652,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             controller.navigate("full-qa-pass")
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
+            self._complete_action_readiness(coordinator)
 
             self.assertTrue(controller.runDiagnostic(action.action_id, ["G65"]))
             self.assertTrue(
@@ -1445,6 +1711,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             controller.navigate("full-qa-pass")
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
+            self._complete_action_readiness(coordinator)
 
             self.assertTrue(controller.runDiagnostic(action.action_id, ["G65"]))
             self.assertTrue(
@@ -1648,6 +1915,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             controller.navigate("full-qa-pass")
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
+            self._complete_action_readiness(coordinator)
             accepted = controller.runDiagnostic(action.action_id, ["G65"])
             output_exists = output.exists()
             release.set()
@@ -1696,6 +1964,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             controller.navigate("full-qa-pass")
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
+            self._complete_action_readiness(coordinator)
             self.assertIn(
                 "diagnostic.run",
                 [item["capabilityId"] for item in controller.currentPayload["actions"]],
@@ -1711,6 +1980,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertEqual(len(coordinator.requests), request_count + 1)
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
+            self._complete_action_readiness(coordinator)
             self.assertNotIn(
                 "diagnostic.run",
                 [item["capabilityId"] for item in controller.currentPayload["actions"]],
@@ -1768,6 +2038,12 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
                 read_roots.assert_not_called()
                 output_root.assert_not_called()
                 identity, operation = coordinator.requests[-1]
+                result = operation()
+                read_roots.assert_not_called()
+                output_root.assert_not_called()
+                coordinator.succeed(identity, result)
+                identity, operation = coordinator.requests[-1]
+                self.assertEqual(identity.operation, "action_readiness")
                 result = operation()
                 read_roots.assert_called_once_with(
                     workspace.resolve(),
@@ -1929,6 +2205,23 @@ class TestCapabilityQmlBindings(unittest.TestCase):
             'visible: root.pageState === "ready" && root.page.artifacts && root.page.artifacts.length > 0',
             qml,
         )
+
+    def test_selected_car_action_area_exposes_bounded_progress_and_unavailable_feedback(self) -> None:
+        qml = (
+            Path(__file__).resolve().parents[1]
+            / "sg_preflight"
+            / "desktop"
+            / "qml"
+            / "components"
+            / "PageFrame.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("actionReadinessState", qml)
+        self.assertIn('objectName: "actionReadinessProgress"', qml)
+        self.assertIn('objectName: "actionReadinessMessage"', qml)
+        self.assertIn('root.actionReadinessState === "loading"', qml)
+        self.assertIn('root.actionReadinessState === "unavailable"', qml)
+        self.assertIn("Accessible.name: text", qml)
 
     def test_qml_binds_only_typed_capabilities_and_artifact_handles(self) -> None:
         root = Path(__file__).resolve().parents[1] / "sg_preflight" / "desktop" / "qml"

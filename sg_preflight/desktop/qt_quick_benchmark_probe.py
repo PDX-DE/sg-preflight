@@ -141,16 +141,28 @@ def _run_startup(request: Mapping[str, Any]) -> dict[str, object]:
     acknowledged = False
     response: dict[str, object] = {}
     root = runtime.engine.rootObjects()[0]
+    frame_count = 0
+    first_paint_ms: float | None = None
 
-    def complete() -> None:
-        nonlocal acknowledged
+    def observe_frame() -> None:
+        nonlocal acknowledged, first_paint_ms, frame_count
         if acknowledged:
+            return
+        frame_count += 1
+        elapsed_ms = (time.perf_counter_ns() - request["start_ns"]) / 1_000_000
+        if first_paint_ms is None:
+            first_paint_ms = elapsed_ms
+        page_outcome = runtime.controller.pageState
+        if frame_count < 2 or page_outcome not in {"ready", "error"}:
             return
         acknowledged = True
         response.update(
             {
                 "acknowledged": True,
-                "duration_ms": (time.perf_counter_ns() - request["start_ns"]) / 1_000_000,
+                "duration_ms": first_paint_ms,
+                "first_paint_ms": first_paint_ms,
+                "page_ready_ms": elapsed_ms,
+                "page_outcome": page_outcome,
             }
         )
         runtime.application.quit()
@@ -159,8 +171,9 @@ def _run_startup(request: Mapping[str, Any]) -> dict[str, object]:
         if not acknowledged:
             runtime.application.quit()
 
-    root.frameSwapped.connect(complete)
-    QTimer.singleShot(10_000, timeout)
+    root.frameSwapped.connect(observe_frame)
+    runtime.controller.pageStateChanged.connect(root.requestUpdate)
+    QTimer.singleShot(30_000, timeout)
     root.requestUpdate()
     try:
         runtime.application.exec()

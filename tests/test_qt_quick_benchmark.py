@@ -151,6 +151,27 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 self.assertFalse(module.evaluate_scenario("warm-start", invalid, self._fingerprint())["passed"])
 
+    def test_enriched_warm_start_separates_first_paint_from_page_ready(self) -> None:
+        module = _load_script()
+        first_paint = [1000.0 + index for index in range(20)]
+        page_ready = [1300.0 + index for index in range(20)]
+        raw = {
+            "priming_ms": 2200.0,
+            "launch_ms": first_paint,
+            "priming_page_ready_ms": 2500.0,
+            "launch_page_ready_ms": page_ready,
+        }
+
+        evidence = module.evaluate_scenario("warm-start", raw, self._fingerprint())
+
+        self.assertTrue(evidence["passed"])
+        self.assertEqual(evidence["metrics"]["first_paint_p95_ms"], 1018.0)
+        self.assertEqual(evidence["metrics"]["page_ready_p95_ms"], 1318.0)
+        reversed_order = dict(raw, launch_page_ready_ms=[900.0] * 20)
+        self.assertFalse(
+            module.evaluate_scenario("warm-start", reversed_order, self._fingerprint())["passed"]
+        )
+
     def test_first_run_requires_five_unique_stages_and_reports_median_maximum(self) -> None:
         module = _load_script()
         raw = {
@@ -167,6 +188,17 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
         self.assertEqual(evidence["metrics"]["maximum_ms"], 4000.0)
         duplicate = {"launches": [dict(item, stage_id="same") for item in raw["launches"]]}
         self.assertFalse(module.evaluate_scenario("first-run", duplicate, self._fingerprint())["passed"])
+
+        enriched = {
+            "launches": [
+                dict(item, page_ready_ms=float(item["duration_ms"]) + 500.0)
+                for item in raw["launches"]
+            ]
+        }
+        enriched_evidence = module.evaluate_scenario("first-run", enriched, self._fingerprint())
+        self.assertTrue(enriched_evidence["passed"])
+        self.assertEqual(enriched_evidence["metrics"]["first_paint_median_ms"], 3000.0)
+        self.assertEqual(enriched_evidence["metrics"]["page_ready_median_ms"], 3500.0)
 
     def test_navigation_requires_twenty_acknowledged_samples_per_renderer(self) -> None:
         module = _load_script()
@@ -277,6 +309,76 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
                 with self.assertRaises(ValueError) as captured:
                     module.evaluate_scenario(scenario, raw, self._fingerprint())
                 self.assertNotIn(unsafe, str(captured.exception))
+
+    def test_enriched_milestones_reject_partial_mixed_and_invalid_data(self) -> None:
+        module = _load_script()
+        legacy_launches = [
+            {"stage_id": f"stage-{index}", "duration_ms": 1000.0}
+            for index in range(1, 6)
+        ]
+        cases = (
+            (
+                "warm-start",
+                {
+                    "priming_ms": 1000.0,
+                    "launch_ms": [1000.0] * 20,
+                    "priming_page_ready_ms": 1200.0,
+                },
+            ),
+            (
+                "warm-start",
+                {
+                    "priming_ms": 1000.0,
+                    "launch_ms": [1000.0] * 20,
+                    "priming_page_ready_ms": 1200.0,
+                    "launch_page_ready_ms": [float("inf")] * 20,
+                },
+            ),
+            (
+                "first-run",
+                {
+                    "launches": [
+                        dict(item, **({"page_ready_ms": 1200.0} if index == 0 else {}))
+                        for index, item in enumerate(legacy_launches)
+                    ]
+                },
+            ),
+        )
+        for scenario, raw in cases:
+            with self.subTest(scenario=scenario):
+                with self.assertRaises(ValueError):
+                    module.evaluate_scenario(scenario, raw, self._fingerprint())
+
+        negative = {
+            "priming_ms": 1000.0,
+            "launch_ms": [1000.0] * 20,
+            "priming_page_ready_ms": 1200.0,
+            "launch_page_ready_ms": [-1.0] * 20,
+        }
+        self.assertFalse(module.evaluate_scenario("warm-start", negative, self._fingerprint())["passed"])
+
+        for payload in (
+            {
+                "duration_ms": 1000.0,
+                "first_paint_ms": 1000.0,
+                "page_ready_ms": 1200.0,
+            },
+            {
+                "duration_ms": 1000.0,
+                "first_paint_ms": 1000.0,
+                "page_ready_ms": 900.0,
+                "page_outcome": "ready",
+            },
+            {
+                "duration_ms": 1000.0,
+                "first_paint_ms": 1000.0,
+                "page_ready_ms": 1200.0,
+                "page_outcome": "error",
+            },
+        ):
+            with self.subTest(worker_payload=payload):
+                with self.assertRaises(RuntimeError):
+                    module._startup_milestones(payload)
 
     def test_bundle_fingerprint_uses_the_measured_manifest_versions(self) -> None:
         module = _load_script()
@@ -394,7 +496,15 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
             request = json.loads(request_path.read_text(encoding="utf-8"))
             output_path = Path(request["output_path"])
             output_path.write_text(
-                json.dumps({"duration_ms": 1000.0 + len(calls), "acknowledged": True}),
+                json.dumps(
+                    {
+                        "duration_ms": 1000.0 + len(calls),
+                        "first_paint_ms": 1000.0 + len(calls),
+                        "page_ready_ms": 1200.0 + len(calls),
+                        "page_outcome": "ready",
+                        "acknowledged": True,
+                    }
+                ),
                 encoding="utf-8",
             )
             calls.append({"command": command, "kwargs": kwargs, "request": request})
@@ -404,6 +514,8 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
 
         self.assertEqual(raw["priming_ms"], 1000.0)
         self.assertEqual(len(raw["launch_ms"]), 20)
+        self.assertEqual(raw["priming_page_ready_ms"], 1200.0)
+        self.assertEqual(len(raw["launch_page_ready_ms"]), 20)
         self.assertEqual(len(calls), 21)
         self.assertTrue(all(item["command"] == ["bundle.exe"] for item in calls))
         for item in calls:
@@ -468,7 +580,15 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
                 request_path = Path(kwargs["env"][module.BENCHMARK_REQUEST_ENV])
                 request = json.loads(request_path.read_text(encoding="utf-8"))
                 Path(request["output_path"]).write_text(
-                    json.dumps({"duration_ms": 2000.0, "acknowledged": True}),
+                    json.dumps(
+                        {
+                            "duration_ms": 2000.0,
+                            "first_paint_ms": 2000.0,
+                            "page_ready_ms": 2500.0,
+                            "page_outcome": "ready",
+                            "acknowledged": True,
+                        }
+                    ),
                     encoding="utf-8",
                 )
                 commands.append(command)
@@ -477,6 +597,7 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
             raw = module.collect_scenario("first-run", target=target, runner=run)
 
         self.assertEqual(len(raw["launches"]), 5)
+        self.assertTrue(all(item["page_ready_ms"] == 2500.0 for item in raw["launches"]))
         self.assertEqual(len({item["stage_id"] for item in raw["launches"]}), 5)
         self.assertEqual(len(commands), 5)
         self.assertEqual(len({str(Path(command[0]).parent) for command in commands}), 5)
@@ -496,6 +617,9 @@ class TestQtQuickBenchmarkStatistics(unittest.TestCase):
 
         self.assertTrue(result["acknowledged"])
         self.assertGreater(result["duration_ms"], 0)
+        self.assertEqual(result["duration_ms"], result["first_paint_ms"])
+        self.assertGreaterEqual(result["page_ready_ms"], result["first_paint_ms"])
+        self.assertEqual(result["page_outcome"], "ready")
 
     @staticmethod
     def _fingerprint() -> dict[str, object]:

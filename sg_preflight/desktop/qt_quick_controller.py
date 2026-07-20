@@ -43,6 +43,9 @@ _QT_READ_ONLY_EMPTY_STATES = {
 }
 _REFRESH_LABEL = "Refresh local evidence"
 _REFRESH_FAILURE = "The local evidence could not be refreshed."
+_ACTION_READINESS_LOADING = "Checking local actions…"
+_ACTION_READINESS_UNAVAILABLE = "Local actions are unavailable. Refresh local evidence to retry."
+_ACTION_READINESS_EMPTY = "No audited local actions are available for the selected car."
 
 
 class PageLoader(Protocol):
@@ -427,6 +430,7 @@ class DesktopController(QObject):
         self._error = EMPTY_UI_ERROR
         self._generation = 0
         self._current_identity: TaskIdentity | None = None
+        self._action_readiness_identity: TaskIdentity | None = None
         self._cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._artifact_candidate_cache: dict[tuple[str, str], tuple[ArtifactCandidate, ...]] = {}
         self._diagnostic_action_cache: dict[tuple[str, str], tuple[dict[str, object], ...]] = {}
@@ -999,6 +1003,7 @@ class DesktopController(QObject):
         if self._closed:
             return
         self._closed = True
+        self._invalidate_action_readiness()
         if self._grafiks_host is not None:
             self._grafiks_host.shutdown()
         if self._preview_coordinator is not None:
@@ -1215,6 +1220,7 @@ class DesktopController(QObject):
     def _set_route(self, route_id: str) -> None:
         if route_id == self._current_route_id:
             return
+        self._invalidate_action_readiness()
         self._current_route_id = route_id
         self.currentRouteChanged.emit()
         self.currentPageChanged.emit()
@@ -1229,6 +1235,7 @@ class DesktopController(QObject):
         )
 
     def _prepare_schedule(self, identity: TaskIdentity) -> None:
+        self._invalidate_action_readiness()
         coordinator = self._preview_coordinator
         if coordinator is not None:
             invalidate = getattr(coordinator, "invalidate", None)
@@ -1310,10 +1317,6 @@ class DesktopController(QObject):
         bmw_root = self._bmw_root
 
         artifact_roots = self._artifact_roots
-        action_lister = self._action_lister
-        diagnostic_page = identity.page_id == "full-qa-pass"
-        configured_diagnostic_read_roots = self._configured_diagnostic_read_roots
-        configured_diagnostic_output_root = self._configured_diagnostic_output_root
 
         def read_page() -> dict[str, Any] | _InvalidPagePayload | _PresentedPageResult:
             raw = page_loader(
@@ -1337,55 +1340,122 @@ class DesktopController(QObject):
                 )
             except PagePresentationError:
                 return _InvalidPagePayload()
-            diagnostic_actions: tuple[dict[str, object], ...] = ()
-            if diagnostic_page:
-                diagnostic_read_roots = _resolve_diagnostic_read_roots(
-                    workspace,
-                    configured_diagnostic_read_roots,
-                )
-                diagnostic_output_root = _resolve_diagnostic_output_root(
-                    workspace,
-                    configured_diagnostic_output_root,
-                )
-                if action_lister is None:
-                    from sg_preflight.qa_actions import list_operator_actions
-
-                    raw_actions = list_operator_actions(workspace)
-                else:
-                    raw_actions = action_lister(workspace)
-                if isinstance(raw_actions, (list, tuple)):
-                    accepted_actions: list[dict[str, object]] = []
-                    for action in raw_actions:
-                        if bool(getattr(action, "ready", False)) and audit_ui_diagnostic_action(
-                            action,
-                            read_only_roots=diagnostic_read_roots,
-                            output_root=diagnostic_output_root,
-                            allowed_output_root=workspace / "out",
-                            expected_profile_id=identity.profile_id,
-                            owning_page_id=identity.page_id,
-                        ):
-                            accepted_actions.append(
-                                capability_descriptor(
-                                    "diagnostic.run",
-                                    label=_safe_diagnostic_label(getattr(action, "label", "")),
-                                    action_id=str(getattr(action, "action_id", "")),
-                                )
-                            )
-                    accepted_actions.sort(
-                        key=lambda item: 0
-                        if str(item.get("actionId", "")).startswith("sgfx_preflight__")
-                        else 1
-                    )
-                    diagnostic_actions = tuple(accepted_actions)
-            if artifact_candidates or diagnostic_actions:
+            if artifact_candidates:
                 return _PresentedPageResult(
                     presented,
                     artifact_candidates,
-                    diagnostic_actions,
                 )
             return presented
 
         return self._submit(identity, read_page)
+
+    def _schedule_action_readiness(self, base_identity: TaskIdentity) -> bool:
+        if (
+            self._closed
+            or base_identity.generation != self._generation
+            or base_identity.profile_id != self._current_profile_id
+            or base_identity.page_id != self._current_route_id
+            or base_identity.page_id != "full-qa-pass"
+        ):
+            return False
+        self._invalidate_action_readiness()
+        identity = TaskIdentity(
+            base_identity.generation,
+            base_identity.profile_id,
+            base_identity.page_id,
+            "action_readiness",
+        )
+        self._action_readiness_identity = identity
+        workspace = self._workspace
+        action_lister = self._action_lister
+        configured_read_roots = self._configured_diagnostic_read_roots
+        configured_output_root = self._configured_diagnostic_output_root
+
+        def read_actions() -> tuple[dict[str, object], ...]:
+            read_roots = _resolve_diagnostic_read_roots(workspace, configured_read_roots)
+            output_root = _resolve_diagnostic_output_root(workspace, configured_output_root)
+            if action_lister is None:
+                from sg_preflight.qa_actions import list_operator_actions
+
+                raw_actions = list_operator_actions(workspace)
+            else:
+                raw_actions = action_lister(workspace)
+            if not isinstance(raw_actions, (list, tuple)):
+                return ()
+            accepted_actions = [
+                capability_descriptor(
+                    "diagnostic.run",
+                    label=_safe_diagnostic_label(getattr(action, "label", "")),
+                    action_id=str(getattr(action, "action_id", "")),
+                )
+                for action in raw_actions
+                if bool(getattr(action, "ready", False))
+                and audit_ui_diagnostic_action(
+                    action,
+                    read_only_roots=read_roots,
+                    output_root=output_root,
+                    allowed_output_root=workspace / "out",
+                    expected_profile_id=identity.profile_id,
+                    owning_page_id=identity.page_id,
+                )
+            ]
+            accepted_actions.sort(
+                key=lambda item: 0
+                if str(item.get("actionId", "")).startswith("sgfx_preflight__")
+                else 1
+            )
+            return tuple(accepted_actions)
+
+        accepted = self._task_coordinator.submit(identity, read_actions)
+        if not accepted and self._action_readiness_identity == identity:
+            self._action_readiness_identity = None
+            self._publish_action_readiness((), unavailable_message=_ACTION_READINESS_UNAVAILABLE)
+        return accepted
+
+    def _invalidate_action_readiness(self) -> None:
+        identity = self._action_readiness_identity
+        if identity is None:
+            return
+        self._action_readiness_identity = None
+        cancel = getattr(self._task_coordinator, "cancel", None)
+        if callable(cancel):
+            cancel(identity)
+
+    def _action_readiness_is_current(self, identity: TaskIdentity) -> bool:
+        return (
+            not self._closed
+            and identity == self._action_readiness_identity
+            and identity.generation == self._generation
+            and identity.profile_id == self._current_profile_id
+            and identity.page_id == self._current_route_id
+            and identity.page_id == "full-qa-pass"
+            and self._page_state == "ready"
+        )
+
+    def _publish_action_readiness(
+        self,
+        diagnostic_actions: tuple[dict[str, object], ...],
+        *,
+        unavailable_message: str = "",
+    ) -> None:
+        if self._current_route_id != "full-qa-pass" or self._page_state != "ready":
+            return
+        normalized = dict(self._payload)
+        artifacts = normalized.get("artifacts", [])
+        if not isinstance(artifacts, list):
+            artifacts = []
+        normalized["actions"] = self._capability_actions_for_page(
+            self._current_route_id,
+            artifacts=artifacts,
+            diagnostic_actions=diagnostic_actions,
+        )
+        if diagnostic_actions:
+            normalized["actionReadinessState"] = "ready"
+            normalized["actionReadinessMessage"] = ""
+        else:
+            normalized["actionReadinessState"] = "unavailable"
+            normalized["actionReadinessMessage"] = unavailable_message or _ACTION_READINESS_EMPTY
+        self._set_payload(normalized)
 
     def _submit(self, identity: TaskIdentity, operation: Any) -> bool:
         accepted = self._task_coordinator.submit(identity, operation)
@@ -1398,6 +1468,22 @@ class DesktopController(QObject):
 
     @Slot(object, object)
     def _accept_success(self, identity: TaskIdentity, payload: object) -> None:
+        if identity == self._action_readiness_identity:
+            if not self._action_readiness_is_current(identity):
+                return
+            self._action_readiness_identity = None
+            if not isinstance(payload, tuple) or any(
+                not isinstance(item, Mapping) for item in payload
+            ):
+                self._publish_action_readiness(
+                    (),
+                    unavailable_message=_ACTION_READINESS_UNAVAILABLE,
+                )
+                return
+            diagnostic_actions = tuple(dict(item) for item in payload)
+            self._diagnostic_action_cache[(identity.profile_id, identity.page_id)] = diagnostic_actions
+            self._publish_action_readiness(diagnostic_actions)
+            return
         if identity != self._current_identity:
             return
         self._set_current_identity(None)
@@ -1422,6 +1508,9 @@ class DesktopController(QObject):
                 self._publish_refresh_failure()
             return
         normalized = dict(payload)
+        if identity.page_id == "full-qa-pass":
+            normalized["actionReadinessState"] = "loading"
+            normalized["actionReadinessMessage"] = _ACTION_READINESS_LOADING
         if identity.page_id == HOME_ROUTE_ID:
             if not self._accept_shell_profile(normalized):
                 self._set_payload({})
@@ -1439,6 +1528,8 @@ class DesktopController(QObject):
             artifact_candidates=artifact_candidates,
             diagnostic_actions=diagnostic_actions,
         )
+        if identity.page_id == "full-qa-pass":
+            self._schedule_action_readiness(identity)
         if identity.operation == "refresh":
             self._set_capability_error("")
             self._set_capability_state("completed")
@@ -1486,6 +1577,16 @@ class DesktopController(QObject):
 
     @Slot(object, object)
     def _accept_failure(self, identity: TaskIdentity, failure: object) -> None:
+        if identity == self._action_readiness_identity:
+            if not self._action_readiness_is_current(identity):
+                return
+            self._action_readiness_identity = None
+            self._diagnostic_action_cache[(identity.profile_id, identity.page_id)] = ()
+            self._publish_action_readiness(
+                (),
+                unavailable_message=_ACTION_READINESS_UNAVAILABLE,
+            )
+            return
         if identity != self._current_identity:
             return
         self._set_current_identity(None)

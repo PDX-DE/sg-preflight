@@ -18,6 +18,8 @@ Item {
     readonly property string rendererKind: root.page && root.page.rendererKind ? root.page.rendererKind : ""
     readonly property Item homeActionItem: homeControl
     readonly property bool capabilityBusy: root.desktopController !== null && (root.desktopController.capabilityState === "queued" || root.desktopController.capabilityState === "running")
+    readonly property string actionReadinessState: root.page && root.page.actionReadinessState ? root.page.actionReadinessState : ""
+    readonly property bool actionReadinessLoading: root.actionReadinessState === "loading"
     readonly property bool rendererOwnsPrimaryAction: {
         if (!root.page)
             return false;
@@ -176,17 +178,40 @@ Item {
         visible: Boolean(root.pageState === "ready" && root.page)
         spacing: 8
 
+        BusyIndicator {
+            id: actionReadinessProgress
+
+            objectName: "actionReadinessProgress"
+            visible: root.actionReadinessLoading
+            running: visible
+            Layout.preferredWidth: 24
+            Layout.preferredHeight: 24
+            Accessible.role: Accessible.Indicator
+            Accessible.name: "Checking local actions"
+        }
         Label {
+            id: actionReadinessMessage
+
+            objectName: "actionReadinessMessage"
             Layout.fillWidth: true
-            text: root.page && root.page.artifacts && root.page.artifacts.length > 0 ? "Local page actions and evidence" : "Local page actions"
+            text: {
+                if (root.actionReadinessState === "loading")
+                    return root.page.actionReadinessMessage || "Checking local actions…";
+                if (root.actionReadinessState === "unavailable")
+                    return root.page.actionReadinessMessage || "Local actions are unavailable.";
+                return root.page && root.page.artifacts && root.page.artifacts.length > 0 ? "Local page actions and evidence" : "Local page actions";
+            }
             color: Theme.muted
             font.pixelSize: 11
+            elide: Text.ElideRight
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
         }
         Button {
             id: refreshControl
 
             objectName: "pageRefreshControl"
-            property bool primaryAction: !root.rendererOwnsPrimaryAction
+            property bool primaryAction: !root.rendererOwnsPrimaryAction && !root.actionReadinessLoading
             text: "Refresh local evidence"
             highlighted: primaryAction
             enabled: root.desktopController !== null && !root.capabilityBusy
