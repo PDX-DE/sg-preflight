@@ -18,6 +18,13 @@ from sg_preflight.dashboard_pages_config import _payload_items
 from sg_preflight.dashboard_preferences import _payload_summary, _source_repo_root_from_value
 from sg_preflight.screenshot_review_viewer import compute_diff_delta_badge, compute_diff_regression_badge
 from sg_preflight.dashboard.snapshot import DASHBOARD_GUARDRAILS, SETUP_COMPLETE_NOTE
+from sg_preflight.status_presentation import (
+    BAD_STATUSES,
+    GOOD_STATUSES,
+    WARN_STATUSES,
+    status_label,
+    status_tone,
+)
 
 DASHBOARD_BRAND_LOGO_ASSET = "logo_sgfx.png"
 VERBOSE_TOOLTIP_ENV = "SGFX_DASHBOARD_VERBOSE_TOOLTIPS"
@@ -25,34 +32,18 @@ CONFLUENCE_DUMP_SPACE_KEY = "PDX_SERGFX"
 CONFLUENCE_DUMP_PREFIX = f"{CONFLUENCE_DUMP_SPACE_KEY}/"
 LONG_RUNNING_NOTIFICATION_SECONDS = 30
 
-_STATUS_TONE_BAD_TOKENS = (
-    "fail", "error", "blocked", "missing", "unavailable", "unreadable", "not_found", "violation",
-)
-_STATUS_TONE_WARN_TOKENS = (
-    "warn", "attention", "review", "incomplete", "pending", "stale", "drift", "outlier", "partial",
-    "mismatch",
-)
-_STATUS_TONE_GOOD_TOKENS = (
-    "available", "ready", "ok", "pass", "aligned", "clean", "done", "delivered", "success",
-)
+_STATUS_TONE_BAD_TOKENS = tuple(sorted(BAD_STATUSES))
+_STATUS_TONE_WARN_TOKENS = tuple(sorted(WARN_STATUSES))
+_STATUS_TONE_GOOD_TOKENS = tuple(sorted(GOOD_STATUSES))
 
 
 def _status_tone(status: str) -> str:
-    value = str(status or "").strip().casefold()
-    if not value:
-        return "neutral"
-    if any(token in value for token in _STATUS_TONE_BAD_TOKENS):
-        return "bad"
-    if any(token in value for token in _STATUS_TONE_WARN_TOKENS):
-        return "warn"
-    if any(token in value for token in _STATUS_TONE_GOOD_TOKENS):
-        return "good"
-    return "neutral"
+    return status_tone(status)
 
 
 def _render_status_chip(ui: Any, status: str) -> None:
-    label = status or "unknown"
-    ui.badge(label).classes(f"sgfx-status sgfx-tone-{_status_tone(label)}")
+    label = status_label(status)
+    ui.badge(label).classes(f"sgfx-status sgfx-tone-{_status_tone(status)}")
 
 
 def _page_confluence_anchors(page: dict[str, Any]) -> list[str]:
@@ -238,9 +229,12 @@ def _attach_tooltip(ui: Any, element: Any, text: str) -> Any:
 
 def _render_reader_rows(ui: Any, rows: list[dict[str, str]]) -> None:
     if rows:
-        toned_rows = [
-            {**row, "status_tone": _status_tone(str(row.get("status", "")))} for row in rows
-        ]
+        toned_rows = []
+        for row in rows:
+            status = str(row.get("status", ""))
+            toned_rows.append(
+                {**row, "status": status_label(status), "status_tone": _status_tone(status)}
+            )
         table = ui.table(
             columns=[
                 {"name": "label", "label": "Item", "field": "label", "align": "left"},

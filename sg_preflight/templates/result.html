@@ -83,7 +83,7 @@
     </p>
   </div>
   <div class="hero-actions hero-actions--stack">
-    <span class="badge {% if record.status == 'completed' %}ok{% elif record.status == 'running' %}info{% else %}warn{% endif %}" id="run-status-pill">{{ record.status }}</span>
+    <span class="badge {{ record.status | status_tone }}" id="run-status-pill">{{ record.status | status_label }}</span>
     <a class="button" href="/ui/runs/{{ record.run_id }}/evidence">Open files and proof</a>
     <a class="button subtle" href="{{ run_again_url if run_again_url is defined else '/ui/profiles/' ~ record.profile_id }}">Run again</a>
   </div>

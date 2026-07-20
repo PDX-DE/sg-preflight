@@ -1005,11 +1005,15 @@ def _render_dashboard(
             .sgfx-status.sgfx-tone-bad { background: rgba(241, 76, 76, 0.18); color: #f14c4c; }
             .sgfx-status.sgfx-tone-warn { background: rgba(204, 167, 0, 0.16); color: #cca700; }
             .sgfx-status.sgfx-tone-good { background: rgba(137, 209, 133, 0.15); color: #89d185; }
+            .sgfx-status.sgfx-tone-active { background: rgba(108, 182, 255, 0.16); color: #6cb6ff; }
+            .sgfx-status.sgfx-tone-evidence { background: rgba(78, 201, 176, 0.16); color: #4ec9b0; }
             .sgfx-status.sgfx-tone-neutral { background: rgba(128, 128, 128, 0.15); color: var(--sgfx-fg-muted); }
             .sgfx-status-cell { font-weight: 600; }
             .sgfx-status-cell.sgfx-tone-bad { color: #f14c4c; }
             .sgfx-status-cell.sgfx-tone-warn { color: #cca700; }
             .sgfx-status-cell.sgfx-tone-good { color: #89d185; }
+            .sgfx-status-cell.sgfx-tone-active { color: #6cb6ff; }
+            .sgfx-status-cell.sgfx-tone-evidence { color: #4ec9b0; }
             .sgfx-status-cell.sgfx-tone-neutral { color: var(--sgfx-fg-muted); font-weight: 400; }
             .sgfx-table { width: 100%; color: var(--sgfx-fg); }
             .sgfx-full-qa-controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0 14px 0; }

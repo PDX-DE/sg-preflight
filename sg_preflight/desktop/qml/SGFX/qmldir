@@ -1,2 +1,3 @@
 module SGFX
 singleton Theme 1.0 Theme.qml
+singleton StatusPresentation 1.0 StatusPresentation.qml

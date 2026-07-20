@@ -1437,18 +1437,29 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertNotIn('"summary": f"My Tickets unavailable: {exc}"', source)
         self.assertNotIn('"summary": f"Weekly Ticket Draft unavailable: {exc}"', source)
 
-    def test_status_tone_classifier_separates_fail_warn_pass(self) -> None:
+    def test_status_tone_classifier_uses_exact_semantic_states(self) -> None:
         from sg_preflight.dashboard.main import _status_tone
 
         self.assertEqual(_status_tone("failed"), "bad")
         self.assertEqual(_status_tone("unavailable"), "bad")
+        self.assertEqual(_status_tone("not_available"), "bad")
         self.assertEqual(_status_tone("missing_candidate"), "bad")
         self.assertEqual(_status_tone("needs_review"), "warn")
+        self.assertEqual(_status_tone("findings"), "warn")
+        self.assertEqual(_status_tone("human_review"), "warn")
         self.assertEqual(_status_tone("structural_likely_review"), "warn")
         self.assertEqual(_status_tone("dimension_mismatch"), "warn")
-        self.assertEqual(_status_tone("available"), "good")
+        self.assertEqual(_status_tone("queued"), "active")
+        self.assertEqual(_status_tone("running"), "active")
+        self.assertEqual(_status_tone("completed"), "active")
+        self.assertEqual(_status_tone("available"), "evidence")
+        self.assertEqual(_status_tone("recorded"), "evidence")
+        self.assertEqual(_status_tone("passed"), "good")
         self.assertEqual(_status_tone("cosmetic_likely_pass"), "good")
         self.assertEqual(_status_tone("not_run"), "neutral")
+        self.assertEqual(_status_tone("not_recorded"), "neutral")
+        self.assertEqual(_status_tone("external"), "neutral")
+        self.assertEqual(_status_tone("almost_available"), "neutral")
         self.assertEqual(_status_tone("read_only"), "neutral")
         self.assertEqual(_status_tone(""), "neutral")
 
@@ -1457,6 +1468,8 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn('sgfx-status sgfx-tone-', source)
         self.assertIn("body-cell-status", source)
         self.assertIn(".sgfx-status.sgfx-tone-bad", source)
+        self.assertIn(".sgfx-status.sgfx-tone-active", source)
+        self.assertIn(".sgfx-status.sgfx-tone-evidence", source)
         self.assertIn(".sgfx-status-cell.sgfx-tone-good", source)
 
     def test_diagnostic_chain_error_paths_hide_raw_exception(self) -> None:

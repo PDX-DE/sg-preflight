@@ -232,7 +232,7 @@
             {% endif %}
           </div>
           <div class="run-card-actions">
-            <span class="badge {% if item.status == 'completed' %}ok{% elif item.status == 'running' %}info{% else %}warn{% endif %}">{{ item.status }}</span>
+            <span class="badge {{ item.status | status_tone }}">{{ item.status | status_label }}</span>
             <a href="/ui/actions/{{ item.run_id }}">Open</a>
           </div>
         </div>
@@ -248,7 +248,7 @@
             {% endif %}
           </div>
           <div class="run-card-actions">
-            <span class="badge {% if run.status == 'completed' %}ok{% elif run.status == 'running' %}info{% else %}warn{% endif %}">{{ run.status }}</span>
+            <span class="badge {{ run.status | status_tone }}">{{ run.status | status_label }}</span>
             <a href="/ui/runs/{{ run.run_id }}">Open</a>
           </div>
         </div>
@@ -302,7 +302,7 @@
             <strong>{{ item.label }}</strong>
             <div class="muted path-text">{{ item.path }}</div>
           </div>
-          <span class="badge {% if item.status == 'available' %}ok{% else %}warn{% endif %}">{{ item.status }}</span>
+          <span class="badge {{ item.status | status_tone }}">{{ item.status | status_label }}</span>
         </div>
         {% endfor %}
       </div>

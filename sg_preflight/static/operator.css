@@ -25,6 +25,8 @@
   --accent-hot-soft: rgba(255, 161, 124, 0.16);
   --ok: #77dfb9;
   --ok-soft: rgba(119, 223, 185, 0.16);
+  --bad: #f14c4c;
+  --bad-soft: rgba(241, 76, 76, 0.16);
   --warn: #ffae86;
   --warn-soft: rgba(255, 174, 134, 0.18);
   --info: #89bfff;
@@ -61,6 +63,8 @@
   --accent-hot-soft: rgba(195, 107, 74, 0.12);
   --ok: #257255;
   --ok-soft: #d9ede4;
+  --bad: #a62929;
+  --bad-soft: #f6dada;
   --warn: #bb6b4f;
   --warn-soft: #f5dfd7;
   --info: #3f74a6;
@@ -856,6 +860,31 @@ pre {
 .badge.info {
   background: var(--info-soft);
   color: var(--info);
+}
+
+.badge.bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.badge.good {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge.active {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.badge.evidence {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.neutral {
+  background: var(--surface-muted);
+  color: var(--muted);
 }
 
 .badge.subtle {
@@ -2052,6 +2081,26 @@ details[id] {
 
 .badge.info {
   border-color: rgba(137, 191, 255, 0.28);
+}
+
+.badge.bad {
+  border-color: rgba(241, 76, 76, 0.28);
+}
+
+.badge.good {
+  border-color: rgba(119, 223, 185, 0.28);
+}
+
+.badge.active {
+  border-color: rgba(137, 191, 255, 0.28);
+}
+
+.badge.evidence {
+  border-color: rgba(123, 215, 255, 0.28);
+}
+
+.badge.neutral {
+  border-color: var(--border);
 }
 
 .primary-callout,

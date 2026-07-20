@@ -116,7 +116,7 @@ FocusScope {
                 Layout.minimumHeight: 48
                 activeFocusOnTab: checkRow.routing
                 Accessible.role: checkRow.routing ? Accessible.Button : Accessible.StaticText
-                Accessible.name: checkRow.checkData.label + ", " + checkRow.checkData.state
+                Accessible.name: checkRow.checkData.label + ", " + StatusPresentation.label(checkRow.checkData.state)
                 Keys.onReturnPressed: {
                     if (checkRow.checkData.routeId)
                         root.routeRequested(checkRow.checkData.routeId);
@@ -166,11 +166,10 @@ FocusScope {
                         elide: Text.ElideRight
                     }
                     Label {
-                        text: String(checkRow.checkData.state).replace(/_/g, " ")
-                        color: Theme.accent
+                        text: StatusPresentation.label(checkRow.checkData.state)
+                        color: StatusPresentation.color(checkRow.checkData.state)
                         font.family: Theme.operationalFont
                         font.pixelSize: 10
-                        font.capitalization: Font.AllUppercase
                     }
                 }
 

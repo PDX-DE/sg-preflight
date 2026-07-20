@@ -6,28 +6,9 @@ Rectangle {
     id: root
 
     required property string status
-    readonly property string statusText: {
-        const value = status.toLowerCase();
-        if (["error", "failed", "bad", "unavailable"].includes(value))
-            return "Needs attention";
-        if (["warning", "warn", "incomplete"].includes(value))
-            return "Review needed";
-        if (["available", "ready", "ok", "passed"].includes(value))
-            return "Available";
-        if (value === "loading")
-            return "Loading";
-        return "Not run";
-    }
-    readonly property color statusColor: {
-        const value = status.toLowerCase();
-        if (["error", "failed", "bad", "unavailable"].includes(value))
-            return Theme.statusBad;
-        if (["warning", "warn", "incomplete"].includes(value))
-            return Theme.statusWarn;
-        if (["available", "ready", "ok", "passed"].includes(value))
-            return Theme.statusGood;
-        return Theme.statusNeutral;
-    }
+    readonly property string statusText: StatusPresentation.label(status)
+    readonly property string statusTone: StatusPresentation.tone(status)
+    readonly property color statusColor: StatusPresentation.color(status)
 
     implicitWidth: badgeLabel.implicitWidth + 20
     implicitHeight: 30

@@ -71,7 +71,7 @@ FocusScope {
             height: gateList.height
             activeFocusOnTab: false
             Accessible.role: Accessible.Button
-            Accessible.name: gateItem.modelData.label + ", " + gateItem.modelData.state
+            Accessible.name: gateItem.modelData.label + ", " + StatusPresentation.label(gateItem.modelData.state)
             Keys.onReturnPressed: root.gateSelected(gateItem.modelData.id)
             Keys.onEnterPressed: root.gateSelected(gateItem.modelData.id)
             Keys.onSpacePressed: root.gateSelected(gateItem.modelData.id)
@@ -123,11 +123,10 @@ FocusScope {
                 }
                 Label {
                     width: parent.width
-                    text: String(gateItem.modelData.state).replace(/_/g, " ")
-                    color: gateItem.selected ? Theme.accent : Theme.muted
+                    text: StatusPresentation.label(gateItem.modelData.state)
+                    color: gateItem.selected ? StatusPresentation.color(gateItem.modelData.state) : Theme.muted
                     font.family: Theme.operationalFont
                     font.pixelSize: 10
-                    font.capitalization: Font.AllUppercase
                     elide: Text.ElideRight
                 }
             }

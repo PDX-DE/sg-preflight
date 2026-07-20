@@ -32,7 +32,7 @@ from sg_preflight.services import (
     load_run_record,
     save_run_record,
 )
-from sg_preflight.ui import create_app, _run_action_background, _run_profile_background
+from sg_preflight.ui import _run_action_background, _run_profile_background, _templates, create_app
 from tests.operator_helpers import create_review_package_fixture, create_temp_g65_profile, write_text
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +57,25 @@ def _checker_fixture(name: str) -> str:
 
 
 class TestOperatorUI(unittest.TestCase):
+    def test_legacy_templates_use_the_shared_exact_status_vocabulary(self) -> None:
+        templates = _templates()
+        self.assertEqual(templates.env.filters["status_label"]("not_available"), "Not available")
+        self.assertEqual(templates.env.filters["status_tone"]("not_available"), "bad")
+
+        for template_name in (
+            "action.html",
+            "delivery_readiness.html",
+            "home.html",
+            "result.html",
+            "run.html",
+            "setup.html",
+        ):
+            source = (ROOT / "sg_preflight" / "templates" / template_name).read_text(encoding="utf-8")
+            self.assertIn("| status_tone", source, template_name)
+        for template_name in ("action.html", "home.html", "result.html", "run.html", "setup.html"):
+            source = (ROOT / "sg_preflight" / "templates" / template_name).read_text(encoding="utf-8")
+            self.assertIn("| status_label", source, template_name)
+
     def test_web_ui_serves_sgfx_favicon_and_header_logo(self) -> None:
         if not (ROOT / "sgfx_icon.png").is_file():
             self.skipTest("curated source-review bundle excludes root branding assets")
@@ -619,10 +638,12 @@ class TestOperatorUI(unittest.TestCase):
         self.assertNotIn("Checker evidence", completed_page.text)
         self.assertIn("Show all generated files", completed_page.text)
         self.assertIn("Raw log", completed_page.text)
+        self.assertIn('class="badge active" id="action-status-pill">Completed</span>', completed_page.text)
         self.assertEqual(failed_page.status_code, 200)
         self.assertIn("This automation failed before completion", failed_page.text)
         self.assertIn("synthetic failure", failed_page.text)
         self.assertIn("Open the action log first.", failed_page.text)
+        self.assertIn('class="badge bad" id="action-status-pill">Failed</span>', failed_page.text)
 
     def test_action_and_evidence_pages_surface_checker_file_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

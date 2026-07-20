@@ -438,7 +438,13 @@ ApplicationWindow {
 
                         Components.StatusBadge {
                             objectName: "shellStatus"
-                            status: window.desktopController.pageState === "error" ? "error" : window.desktopController.currentPayload.status || window.desktopController.pageState
+                            status: {
+                                if (window.desktopController.pageState === "error")
+                                    return "error";
+                                if (window.desktopController.currentRouteId === "home")
+                                    return StatusPresentation.aggregate(window.desktopController.currentPayload.gates);
+                                return window.desktopController.currentPayload.status || window.desktopController.pageState;
+                            }
                         }
                         Label {
                             Layout.fillWidth: true

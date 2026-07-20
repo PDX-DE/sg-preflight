@@ -92,7 +92,7 @@
         <div class="muted"><code>{{ item.relative_path }}</code></div>
       </div>
       <div class="run-card-actions">
-        <span class="badge {% if item.status == 'delivered' %}ok{% elif item.status == 'not_delivered_yet' %}warn{% else %}info{% endif %}">
+        <span class="badge {{ item.status | status_tone }}">
           {{ item.status_label }}
         </span>
       </div>

@@ -61,8 +61,8 @@
           <p class="eyebrow">Wizard step</p>
           <strong>{{ loop.index }}. {{ step.label }}</strong>
         </div>
-        <span class="badge {% if step.status == 'found' %}ok{% elif step.status == 'missing' %}warn{% else %}info{% endif %}">
-          {{ step.status }}
+        <span class="badge {{ step.status | status_tone }}">
+          {{ step.status | status_label }}
         </span>
       </div>
       <p class="workflow-summary">{{ step.summary }}</p>
@@ -94,7 +94,7 @@
         <div class="path-text">{{ item.path }}</div>
         <div>{{ item.fix }}</div>
       </div>
-      <span class="badge warn">missing</span>
+      <span class="badge {{ 'missing' | status_tone }}">{{ 'missing' | status_label }}</span>
     </article>
     {% endfor %}
   </div>
@@ -116,8 +116,9 @@
           <p class="eyebrow">{{ item.category }}</p>
           <strong>{{ item.label }}</strong>
         </div>
-        <span class="badge {% if item.status == 'found' %}ok{% elif item.required %}warn{% else %}info{% endif %}">
-          {% if item.status == 'found' %}found{% elif item.required %}missing{% else %}optional{% endif %}
+        {% set display_status = item.status if item.status == 'found' or item.required else 'optional' %}
+        <span class="badge {{ display_status | status_tone }}">
+          {{ display_status | status_label }}
         </span>
       </div>
       {% if item.version %}

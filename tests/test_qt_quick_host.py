@@ -499,6 +499,7 @@ class TestQtQuickShell(unittest.TestCase):
             "components/ShortcutHelp.qml",
             "components/StatusBadge.qml",
             "SGFX/Theme.qml",
+            "SGFX/StatusPresentation.qml",
             "SGFX/qmldir",
         }
         self.assertTrue(all((qml_root / relative).is_file() for relative in expected))
@@ -550,7 +551,14 @@ class TestQtQuickShell(unittest.TestCase):
             self.assertIn(token, theme)
         for color in ("#f14c4c", "#cca700", "#89d185", "#8b949e"):
             self.assertIn(color, theme)
-        self.assertEqual(qmldir.splitlines(), ["module SGFX", "singleton Theme 1.0 Theme.qml"])
+        self.assertEqual(
+            qmldir.splitlines(),
+            [
+                "module SGFX",
+                "singleton Theme 1.0 Theme.qml",
+                "singleton StatusPresentation 1.0 StatusPresentation.qml",
+            ],
+        )
         for shortcut in ("F1", "F2", "F5", "F12", "Esc", 'sequence: "/"'):
             self.assertIn(shortcut, main)
 
@@ -1306,10 +1314,17 @@ class TestQtQuickShell(unittest.TestCase):
         probe_source = b"""import QtQuick
 import "components" as Components
 Item {
-    Components.StatusBadge { objectName: "bad"; status: "error" }
-    Components.StatusBadge { objectName: "warn"; status: "incomplete" }
-    Components.StatusBadge { objectName: "good"; status: "available" }
-    Components.StatusBadge { objectName: "neutral"; status: "not_run" }
+    Components.StatusBadge { objectName: "failed"; status: "failed" }
+    Components.StatusBadge { objectName: "findings"; status: "findings" }
+    Components.StatusBadge { objectName: "queued"; status: "queued" }
+    Components.StatusBadge { objectName: "running"; status: "running" }
+    Components.StatusBadge { objectName: "recorded"; status: "recorded" }
+    Components.StatusBadge { objectName: "notRecorded"; status: "not_recorded" }
+    Components.StatusBadge { objectName: "external"; status: "external" }
+    Components.StatusBadge { objectName: "humanReview"; status: "human_review" }
+    Components.StatusBadge { objectName: "passed"; status: "passed" }
+    Components.StatusBadge { objectName: "available"; status: "available" }
+    Components.StatusBadge { objectName: "unknown"; status: "custom<script> state" }
 }
 """
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1331,9 +1346,15 @@ Item {
                 if probe is None:
                     raise SystemExit(" | ".join(error.toString() for error in component.errors()))
                 values = {{}}
-                for name in ("bad", "warn", "good", "neutral"):
+                for name in (
+                    "failed", "findings", "queued", "running", "recorded", "notRecorded",
+                    "external", "humanReview", "passed", "available", "unknown"
+                ):
                     badge = probe.findChild(QObject, name)
-                    values[name] = [badge.property("statusText"), badge.property("statusColor").name()]
+                    values[name] = [
+                        badge.property("statusText"), badge.property("statusTone"),
+                        badge.property("statusColor").name()
+                    ]
                 print(json.dumps(values))
                 probe.deleteLater()
                 runtime.close()
@@ -1344,11 +1365,67 @@ Item {
         self.assertEqual(
             __import__("json").loads(result.stdout),
             {
-                "bad": ["Needs attention", "#f14c4c"],
-                "warn": ["Review needed", "#cca700"],
-                "good": ["Available", "#89d185"],
-                "neutral": ["Not run", "#8b949e"],
+                "failed": ["Failed", "bad", "#f14c4c"],
+                "findings": ["Findings", "warn", "#cca700"],
+                "queued": ["Queued", "active", "#6cb6ff"],
+                "running": ["Running", "active", "#6cb6ff"],
+                "recorded": ["Evidence recorded", "evidence", "#4ec9b0"],
+                "notRecorded": ["Not recorded", "neutral", "#8b949e"],
+                "external": ["External evidence", "neutral", "#8b949e"],
+                "humanReview": ["Human review", "warn", "#cca700"],
+                "passed": ["Passed", "good", "#89d185"],
+                "available": ["Available", "evidence", "#4ec9b0"],
+                "unknown": ["Custom script state", "neutral", "#8b949e"],
             },
+        )
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_home_status_aggregates_findings_without_claiming_availability(self) -> None:
+        snapshot = {
+            "schemaVersion": 1,
+            "scopeLabel": "BMW G65",
+            "selectedProfile": {"id": "G65", "label": "BMW G65"},
+            "gates": [
+                {"id": "context", "label": "Context", "state": "available", "checks": []},
+                {"id": "asset", "label": "Asset", "state": "findings", "checks": []},
+            ],
+            "selectedGateId": "asset",
+            "latestLocalRun": {},
+            "nextAction": {},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self._run_headless(
+                f"""
+                import json
+                from PySide6.QtCore import QObject
+                from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
+                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-status-test"])
+                root = runtime.engine.rootObjects()[0]
+                root.setProperty("shellInitializationStarted", True)
+                controller = runtime.controller
+                controller._generation += 1
+                controller._set_current_identity(None)
+                controller._accept_shell_profile({{
+                    "schemaVersion": 1,
+                    "profileOptions": [{{"id": "G65", "label": "BMW G65"}}],
+                    "selectedProfile": {{"id": "G65", "label": "BMW G65"}},
+                }})
+                controller._set_route("home")
+                controller._set_ready_payload({snapshot!r})
+                runtime.application.processEvents()
+                badge = root.findChild(QObject, "shellStatus")
+                print(json.dumps([
+                    badge.property("status"), badge.property("statusText"),
+                    badge.property("statusTone"), badge.property("statusColor").name()
+                ]))
+                runtime.close()
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertEqual(
+            __import__("json").loads(result.stdout),
+            ["findings", "Findings", "warn", "#cca700"],
         )
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")

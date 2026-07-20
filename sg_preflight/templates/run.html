@@ -227,7 +227,7 @@
         <article class="workflow-card">
           <div class="status-row">
             <strong>{{ item.label }}</strong>
-            <span class="badge {% if item.ready %}ok{% else %}warn{% endif %}">{{ item.status_label }}</span>
+            <span class="badge {{ item.status_label | status_tone }}">{{ item.status_label | status_label }}</span>
           </div>
           <p class="workflow-summary">{{ item.description }}</p>
           {% if item.blocker_message %}

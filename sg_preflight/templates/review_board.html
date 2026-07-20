@@ -147,7 +147,7 @@
     <div class="run-card">
       <div class="min-w-0">
         <strong>{{ item.label }}</strong>
-        <div class="muted">{{ item.status }}{% if item.detail %} / {{ item.detail }}{% endif %}</div>
+        <div class="muted">{{ item.status | status_label }}{% if item.detail %} / {{ item.detail }}{% endif %}</div>
         {% if item.path %}
         <div class="muted">{{ item.path }}</div>
         {% endif %}
@@ -313,7 +313,7 @@
       <div class="run-card">
         <div class="min-w-0">
           <strong>{{ item.finding }}</strong>
-          <div class="muted">{{ item.category }} / {{ item.status }} / {{ item.source }}</div>
+          <div class="muted">{{ item.category }} / {{ item.status | status_label }} / {{ item.source }}</div>
           <div class="muted">Scope: {{ item.scope|join(", ") if item.scope else "n/a" }}{% if item.owner %} / Owner: {{ item.owner }}{% endif %}</div>
           {% if item.note %}
           <div class="muted">{{ item.note }}</div>

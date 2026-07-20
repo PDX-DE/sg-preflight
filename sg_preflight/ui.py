@@ -75,12 +75,16 @@ from sg_preflight.services import (
     workspace_root,
 )
 from sg_preflight.setup_doctor import build_setup_doctor_report
+from sg_preflight.status_presentation import status_label, status_tone
 
 LOGGER = logging.getLogger(__name__)
 
 
 def _templates() -> Jinja2Templates:
-    return Jinja2Templates(directory=str(runtime_asset_dir("sg_preflight/templates")))
+    templates = Jinja2Templates(directory=str(runtime_asset_dir("sg_preflight/templates")))
+    templates.env.filters["status_label"] = status_label
+    templates.env.filters["status_tone"] = status_tone
+    return templates
 
 
 def _static_root() -> Path:

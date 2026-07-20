@@ -13,6 +13,8 @@ QtObject {
     readonly property color statusBad: "#f14c4c"
     readonly property color statusWarn: "#cca700"
     readonly property color statusGood: "#89d185"
+    readonly property color statusActive: "#6cb6ff"
+    readonly property color statusEvidence: accent
     readonly property color statusNeutral: "#8b949e"
     readonly property string operationalFont: typeof sgfxProductFonts !== "undefined" && sgfxProductFonts.operational ? sgfxProductFonts.operational : "sans-serif"
     readonly property string displayFont: typeof sgfxProductFonts !== "undefined" && sgfxProductFonts.display ? sgfxProductFonts.display : operationalFont
