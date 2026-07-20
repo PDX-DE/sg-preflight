@@ -2,7 +2,8 @@
 
 > **For agentic workers:** Use superpowers:executing-plans with superpowers:test-driven-development. Steps use checkbox (`- [ ]`) syntax for tracking. RED tests come first in every task.
 
-**Status:** ACTIVE. Supersedes `plans/2026-07-13-sgfx-ramses-r0-standalone-implementation-plan.md` (see its banner). The acceptance bar is unchanged: all 28 requirements in `plans/2026-07-12-sgfx-ramses-qa-observatory-design.md` section 24, plus the section 26 evidence boundaries.
+**Status (2026-07-20): HISTORICAL.** The standalone acceptance gate passed on 2026-07-16. This file
+preserves the executed acceptance record and superseded the earlier 2026-07-13 draft.
 
 **Goal:** Build and accept the standalone, noninteractive Ramses R0 probe: bounded metadata, native validation, structural inventory, one default-state logic update, lifecycle evidence (Available → Ready → Rendered), at most one 480×270 authored-frame readback, stable black/non-render classification, before/after source-mutation proof, and a versioned JSON report — without changing the four-pack action, Control Center truth, packaged default, or external systems.
 

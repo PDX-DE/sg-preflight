@@ -3,9 +3,8 @@
 > **For agentic workers:** Use superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. This plan
 > revives the historical Task 14 release contract (commit `ce7514e`) on the current tree.
 
-**Status:** ACTIVE after standalone R0 acceptance. This is the Jana-critical track: the team still runs the
-pre-simplification Clean default; everything Jana asked for ships only when the delivered QA Control Center
-becomes the double-click default.
+**Status (2026-07-20): HISTORICAL.** The Qt Quick shell is now the double-click default. This file
+preserves the original cutover checklist; current acceptance work is tracked in the dated 2026-07-20 plans.
 
 **Goal:** Flip the packaged no-argument default from Clean (NiceGUI) to the Qt Quick QA Control Center on a
 fully gated, evidence-backed release: exact-tree test footers, offline safety probes, QML gates, an exact

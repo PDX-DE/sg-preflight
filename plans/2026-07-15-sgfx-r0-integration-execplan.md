@@ -1,5 +1,8 @@
 # SGFX R0 One-Button Integration ExecPlan
 
+> **Status (2026-07-20): HISTORICAL.** The integration gate passed on 2026-07-16. This file preserves
+> the executed acceptance record; current work is tracked in the dated 2026-07-20 plans.
+
 > **For agentic workers:** Use superpowers:executing-plans with superpowers:test-driven-development.
 > Entry criterion: the Standalone R0 Acceptance Gate in `plans/2026-07-15-sgfx-ramses-r0-execplan.md` has
 > passed. This slice implements design §13 (one-button integration contract) and §14 (error/lifecycle
