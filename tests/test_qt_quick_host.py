@@ -946,6 +946,116 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertEqual(payload["before"], payload["afterHome"])
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_non_home_orientation_and_escape_keep_the_selected_car_and_return_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self._run_headless(
+                f"""
+                import json
+                import time
+                from PySide6.QtCore import QMetaObject, Q_ARG, QObject, Qt
+                from PySide6.QtTest import QTest
+                from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
+
+                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-orientation-test"])
+                root = runtime.engine.rootObjects()[0]
+                root.requestUpdate()
+
+                def wait_for_page():
+                    deadline = time.monotonic() + 20
+                    while runtime.controller.pageState == "loading" and time.monotonic() < deadline:
+                        runtime.application.processEvents()
+                        time.sleep(0.005)
+
+                initial_deadline = time.monotonic() + 20
+                while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < initial_deadline:
+                    runtime.application.processEvents()
+                    time.sleep(0.005)
+                runtime.controller.navigate("setup-doctor")
+                wait_for_page()
+                home_control = root.findChild(QObject, "pageHomeControl")
+                breadcrumb = root.findChild(QObject, "pageBreadcrumbText")
+                profile_badge = root.findChild(QObject, "pageProfileBadge")
+                before = {{
+                    "route": runtime.controller.currentRouteId,
+                    "homeVisible": home_control is not None and bool(home_control.property("visible")),
+                    "breadcrumb": "" if breadcrumb is None else breadcrumb.property("text"),
+                    "profile": "" if profile_badge is None else profile_badge.property("text"),
+                }}
+                profile_selector = root.findChild(QObject, "profileSelector")
+                profile_selector.forceActiveFocus(Qt.TabFocusReason)
+                runtime.application.processEvents()
+                focused_before_tab = runtime.application.focusObject()
+                tab_origin = "" if focused_before_tab is None else focused_before_tab.objectName()
+                profile_focus_state = {{
+                    "enabled": bool(profile_selector.property("enabled")),
+                    "visible": bool(profile_selector.property("visible")),
+                    "activeFocus": bool(profile_selector.property("activeFocus")),
+                }}
+                QTest.keyClick(root, Qt.Key_Tab)
+                runtime.application.processEvents()
+                focused = runtime.application.focusObject()
+                tab_target = "" if focused is None else focused.objectName()
+
+                QMetaObject.invokeMethod(root, "setPresentation", Q_ARG(bool, True))
+                runtime.application.processEvents()
+                presentation = {{
+                    "enabled": root.property("presentationView"),
+                    "homeVisible": home_control is not None and bool(home_control.property("visible")),
+                    "breadcrumbVisible": breadcrumb is not None and bool(breadcrumb.property("visible")),
+                    "profileVisible": profile_badge is not None and bool(profile_badge.property("visible")),
+                    "profile": "" if profile_badge is None else profile_badge.property("text"),
+                }}
+
+                QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "Esc"))
+                runtime.application.processEvents()
+                after_presentation = [
+                    runtime.controller.currentRouteId,
+                    root.property("presentationView"),
+                    root.property("sidebarOpen"),
+                ]
+                QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "Esc"))
+                runtime.application.processEvents()
+                after_home = [
+                    runtime.controller.currentRouteId,
+                    root.property("sidebarOpen"),
+                    root.property("exitGuidanceVisible"),
+                ]
+                print(json.dumps({{
+                    "before": before,
+                    "profileFocusState": profile_focus_state,
+                    "tabOrigin": tab_origin,
+                    "tabTarget": tab_target,
+                    "presentation": presentation,
+                    "afterPresentation": after_presentation,
+                    "afterHome": after_home,
+                }}))
+                runtime.close()
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = __import__("json").loads(result.stdout)
+        self.assertEqual(payload["before"]["route"], "setup-doctor")
+        self.assertTrue(payload["before"]["homeVisible"])
+        self.assertEqual(payload["before"]["breadcrumb"], "QA overview / Setup Doctor")
+        self.assertEqual(payload["before"]["profile"], "Selected car: G65")
+        self.assertEqual(payload["profileFocusState"], {"enabled": True, "visible": True, "activeFocus": True})
+        self.assertEqual(payload["tabOrigin"], "profileSelector", msg=payload)
+        self.assertEqual(payload["tabTarget"], "pageHomeControl")
+        self.assertEqual(
+            payload["presentation"],
+            {
+                "enabled": True,
+                "homeVisible": True,
+                "breadcrumbVisible": True,
+                "profileVisible": True,
+                "profile": "Selected car: G65",
+            },
+        )
+        self.assertEqual(payload["afterPresentation"], ["setup-doctor", False, True])
+        self.assertEqual(payload["afterHome"], ["home", True, False])
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_status_badges_map_semantic_text_and_color_at_runtime(self) -> None:
         qml_root = ROOT / "sg_preflight" / "desktop" / "qml"
         probe_source = b"""import QtQuick
@@ -1159,7 +1269,7 @@ class TestQtQuickHostRuntime(unittest.TestCase):
                 "19",
                 "home",
                 "",
-                "Home",
+                "QA overview",
                 "True",
                 "True",
                 "True",

@@ -431,7 +431,7 @@ def _gate_payloads(
             checks = [
                 {
                     "id": "local-preflight",
-                    "label": "Local QA checks",
+                    "label": "Open selected-car checks",
                     "state": asset_state,
                     "summary": summary,
                     "routeId": "full-qa-pass",

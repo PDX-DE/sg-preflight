@@ -7,8 +7,8 @@ from dataclasses import dataclass
 
 
 HOME_ROUTE_ID = "home"
-HOME_TITLE = "Home"
-HOME_SUBTITLE = "Start with the local checks and evidence needed for the selected car."
+HOME_TITLE = "QA overview"
+HOME_SUBTITLE = "Review the selected car and continue its next local QA action."
 NAVIGATION_GROUP_ORDER = (
     "Daily work",
     "Delivery",
@@ -27,7 +27,12 @@ class HomeTile:
 
 
 HOME_HUB_TILES = (
-    HomeTile("full-qa-pass", "Full QA Pass", "dashboard", "Run the whole preflight for one car profile."),
+    HomeTile(
+        "full-qa-pass",
+        "Selected-Car Checks",
+        "dashboard",
+        "Open checks and evidence for the selected car.",
+    ),
     HomeTile(
         "delivery-checklist",
         "Delivery documentation",
@@ -56,5 +61,5 @@ SHORTCUT_ACTIONS = (
     ("F5", "Refresh the active page"),
     ("/", "Jump to page"),
     ("F12", "Open local diagnostics"),
-    ("Esc", "Close the topmost overlay or sidebar"),
+    ("Esc", "Close the topmost overlay or return Home"),
 )

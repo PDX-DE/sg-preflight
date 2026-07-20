@@ -45,7 +45,7 @@ class TestUiCapabilityInventory(unittest.TestCase):
         )
         self.assertEqual(
             get_ui_capability("diagnostic.run").owning_pages,
-            ("home", "full-qa-pass", "batch-full-qa-pass"),
+            ("home", "full-qa-pass"),
         )
         self.assertEqual(len(UI_CAPABILITIES), 8)
         self.assertTrue(all(not hasattr(item, "__dict__") for item in UI_CAPABILITIES))
@@ -104,17 +104,26 @@ class TestUiCapabilityInventory(unittest.TestCase):
                     owning_page_id="home",
                 )
             )
-            for page_id in ("full-qa-pass", "batch-full-qa-pass"):
-                self.assertTrue(
-                    audit_ui_diagnostic_action(
-                        delivery,
-                        read_only_roots=(source,),
-                        output_root=output,
-                        allowed_output_root=root / "out",
-                        expected_profile_id="G45",
-                        owning_page_id=page_id,
-                    )
+            self.assertTrue(
+                audit_ui_diagnostic_action(
+                    delivery,
+                    read_only_roots=(source,),
+                    output_root=output,
+                    allowed_output_root=root / "out",
+                    expected_profile_id="G45",
+                    owning_page_id="full-qa-pass",
                 )
+            )
+            self.assertFalse(
+                audit_ui_diagnostic_action(
+                    delivery,
+                    read_only_roots=(source,),
+                    output_root=output,
+                    allowed_output_root=root / "out",
+                    expected_profile_id="G45",
+                    owning_page_id="batch-full-qa-pass",
+                )
+            )
             self.assertFalse(
                 audit_ui_diagnostic_action(
                     delivery,
@@ -237,29 +246,37 @@ class TestUiCapabilityInventory(unittest.TestCase):
                 project_root=str(project),
             )
 
-            for page_id in ("full-qa-pass", "batch-full-qa-pass"):
-                with self.subTest(page_id=page_id):
-                    self.assertTrue(
-                        audit_ui_diagnostic_action(
-                            preflight,
-                            read_only_roots=(source,),
-                            output_root=output,
-                            allowed_output_root=root / "out",
-                            expected_profile_id="G45",
-                            owning_page_id=page_id,
-                        )
+            self.assertTrue(
+                audit_ui_diagnostic_action(
+                    preflight,
+                    read_only_roots=(source,),
+                    output_root=output,
+                    allowed_output_root=root / "out",
+                    expected_profile_id="G45",
+                    owning_page_id="full-qa-pass",
+                )
+            )
+            self.assertFalse(
+                audit_ui_diagnostic_action(
+                    preflight,
+                    read_only_roots=(source,),
+                    output_root=output,
+                    allowed_output_root=root / "out",
+                    expected_profile_id="G45",
+                    owning_page_id="batch-full-qa-pass",
+                )
+            )
+            for action in (preflight, delivery):
+                self.assertFalse(
+                    audit_ui_diagnostic_action(
+                        action,
+                        read_only_roots=(source,),
+                        output_root=output,
+                        allowed_output_root=root / "out",
+                        expected_profile_id="G65",
+                        owning_page_id="full-qa-pass",
                     )
-                    for action in (preflight, delivery):
-                        self.assertFalse(
-                            audit_ui_diagnostic_action(
-                                action,
-                                read_only_roots=(source,),
-                                output_root=output,
-                                allowed_output_root=root / "out",
-                                expected_profile_id="G65",
-                                owning_page_id=page_id,
-                            )
-                        )
+                )
             self.assertFalse(
                 audit_ui_diagnostic_action(
                     replace(preflight, ready=False),
@@ -623,6 +640,51 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
                 "is_approval": False,
             },
         }
+
+    @staticmethod
+    def _batch_qa_page() -> dict[str, object]:
+        return {
+            "id": "batch-full-qa-pass",
+            "status": "not_run",
+            "data_available": True,
+            "summary": "No batch evidence recorded",
+            "payload": {
+                "status": "not_run",
+                "summary": "No batch evidence recorded",
+                "progress": {"completed_profiles": 0, "total_profiles": 0, "percent": 0},
+                "results": [],
+                "read_only": True,
+                "manual_review_required": True,
+                "records_operator_verdict": False,
+                "is_approval": False,
+            },
+        }
+
+    def test_batch_evidence_page_does_not_enumerate_selected_car_diagnostics(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from tests.test_qt_quick_core import _FakeTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = _FakeTaskCoordinator()
+            action_lister = mock.Mock(return_value=[])
+            controller = DesktopController(
+                workspace=temp_dir,
+                initial_profile_id="G45",
+                task_coordinator=coordinator,
+                page_loader=mock.Mock(return_value=self._batch_qa_page()),
+                action_lister=action_lister,
+            )
+            self.addCleanup(controller.shutdown)
+
+            self.assertTrue(controller.navigate("batch-full-qa-pass"))
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+
+            action_lister.assert_not_called()
+            self.assertNotIn(
+                "diagnostic.run",
+                [item["capabilityId"] for item in controller.currentPayload["actions"]],
+            )
 
     @staticmethod
     def _manual_page() -> dict[str, object]:

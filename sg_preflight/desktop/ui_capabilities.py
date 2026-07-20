@@ -119,7 +119,7 @@ UI_CAPABILITIES = (
     ),
     UiCapability(
         "diagnostic.run",
-        ("home", "full-qa-pass", "batch-full-qa-pass"),
+        ("home", "full-qa-pass"),
         (
             InputField("action_id", "audited_action_id", max_length=128),
             InputField("profile_ids", "canonical_profile_id_list"),
@@ -273,7 +273,7 @@ def audit_ui_diagnostic_action(
             or not action.ready
         ):
             return False
-    elif owning_page_id in {"full-qa-pass", "batch-full-qa-pass"}:
+    elif owning_page_id == "full-qa-pass":
         if expected_profile and profile_id.casefold() != expected_profile.casefold():
             return False
         if action.kind == "delivery_checklist":

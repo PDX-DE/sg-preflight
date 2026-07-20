@@ -21,15 +21,15 @@ class SurfaceDescriptor:
 SURFACE_DESCRIPTORS = (
     SurfaceDescriptor(
         "full-qa-pass",
-        "Full QA Pass",
-        "One local pass through setup, evidence, review assist, and handoff status.",
+        "Selected-Car Checks",
+        "Run audited local checks and review evidence for the selected car.",
         "Daily work",
         "workflow",
     ),
     SurfaceDescriptor(
         "batch-full-qa-pass",
-        "Batch Full QA Pass",
-        "Run selected profiles sequentially; one profile finishes before the next starts.",
+        "Batch QA Evidence",
+        "Review existing sequential-run evidence across car profiles.",
         "Daily work",
         "workflow",
     ),
@@ -112,8 +112,8 @@ SURFACE_DESCRIPTORS = (
     ),
     SurfaceDescriptor(
         "cross-car-comparison",
-        "Cross-Car Comparison",
-        "Choose two profiles to compare their risk-score evidence side by side.",
+        "Comparison Evidence",
+        "Read comparison evidence when a car-profile pair is available.",
         "Screenshots & coverage",
         "matrix",
     ),

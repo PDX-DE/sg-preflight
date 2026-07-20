@@ -37,6 +37,10 @@ from sg_preflight.surface_registry import get_surface_descriptor, is_registered_
 _PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _PREVIEW_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
 _PREVIEW_UNSAFE_LABEL = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://|[a-z]:[\\/]|\\\\[^\\/\s]+[\\/])")
+_QT_READ_ONLY_EMPTY_STATES = {
+    "batch-full-qa-pass": ("results", "No batch QA evidence is available for this session."),
+    "cross-car-comparison": ("comparison_rows", "No car-comparison evidence is available for this session."),
+}
 
 
 class PageLoader(Protocol):
@@ -174,6 +178,28 @@ def _ui_error(code: str) -> UiError:
     return UiError(code, title, safe_detail, retryable, recovery_action)
 
 
+def _with_qt_read_only_empty_state(page_id: str, page: Mapping[str, Any]) -> Mapping[str, Any]:
+    definition = _QT_READ_ONLY_EMPTY_STATES.get(page_id)
+    nested = page.get("payload")
+    if definition is None or not isinstance(nested, Mapping):
+        return page
+    evidence_key, summary = definition
+    if nested.get(evidence_key):
+        return page
+    adapted_page = dict(page)
+    adapted_payload = dict(nested)
+    adapted_page.update(
+        {
+            "summary": summary,
+            "empty_state_note": summary,
+            "data_available": False,
+            "payload": adapted_payload,
+        }
+    )
+    adapted_payload.update({"summary": summary, "data_available": False})
+    return adapted_page
+
+
 def load_dashboard_surface(
     page_id: str,
     profile_id: str,
@@ -191,7 +217,7 @@ def load_dashboard_surface(
             "tagline": descriptor.subtitle,
             "content": dict(ABOUT_CONTENT),
         }
-    return build_dashboard_page(
+    page = build_dashboard_page(
         page_id=page_id,
         profile_id=profile_id,
         workspace=Path(workspace),
@@ -199,6 +225,7 @@ def load_dashboard_surface(
         ui_mode="clean",
         persist_dependency_state=False,
     )
+    return _with_qt_read_only_empty_state(page_id, page)
 
 
 def resolve_dashboard_profile(
@@ -1230,7 +1257,7 @@ class DesktopController(QObject):
 
         artifact_roots = self._artifact_roots
         action_lister = self._action_lister
-        diagnostic_page = identity.page_id in {"full-qa-pass", "batch-full-qa-pass"}
+        diagnostic_page = identity.page_id == "full-qa-pass"
         configured_diagnostic_read_roots = self._configured_diagnostic_read_roots
         configured_diagnostic_output_root = self._configured_diagnostic_output_root
 

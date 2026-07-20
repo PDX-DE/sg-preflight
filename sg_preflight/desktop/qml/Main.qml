@@ -83,8 +83,8 @@ ApplicationWindow {
                 diagnosticsOpen = false;
             else if (presentationView)
                 setPresentation(false);
-            else if (sidebarOpen)
-                sidebarOpen = false;
+            else if (desktopController.currentRouteId !== "home")
+                desktopController.navigate("home");
             else
                 exitGuidanceVisible = true;
         }
@@ -230,7 +230,7 @@ ApplicationWindow {
                             focusPolicy: Qt.StrongFocus
                             Accessible.role: Accessible.ComboBox
                             Accessible.name: "Selected car profile"
-                            KeyNavigation.tab: homePage.primaryActionItem
+                            KeyNavigation.tab: window.desktopController.currentRouteId === "home" ? homePage.primaryActionItem : (pageContentHost.item ? pageContentHost.item.homeActionItem : presentationViewControl)
                             onActivated: window.desktopController.selectProfile(currentValue)
                             onCountChanged: Qt.callLater(syncProfileIndex)
 
@@ -393,7 +393,7 @@ ApplicationWindow {
                             font.pixelSize: 11
                         }
                         Label {
-                            text: "/ Jump · F1 Help · F12 Diagnostics · Esc Back · Presentation uses Esc"
+                            text: "/ Jump · F1 Help · F12 Diagnostics · Esc closes overlays or returns Home"
                             color: Theme.muted
                             font.pixelSize: 11
                         }

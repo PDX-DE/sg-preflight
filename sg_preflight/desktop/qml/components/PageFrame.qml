@@ -16,6 +16,62 @@ Item {
     required property bool reducedMotion
     property var desktopController: null
     readonly property string rendererKind: root.page && root.page.rendererKind ? root.page.rendererKind : ""
+    readonly property Item homeActionItem: homeControl
+
+    RowLayout {
+        id: orientationBar
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: 40
+        spacing: 10
+
+        Button {
+            id: homeControl
+
+            objectName: "pageHomeControl"
+            text: "Home"
+            enabled: root.desktopController !== null
+            focusPolicy: Qt.StrongFocus
+            Accessible.role: Accessible.Button
+            Accessible.name: "Return to QA overview"
+            onClicked: root.desktopController.navigate("home")
+        }
+        Label {
+            id: breadcrumbText
+
+            objectName: "pageBreadcrumbText"
+            Layout.fillWidth: true
+            text: "QA overview / " + (root.desktopController !== null ? root.desktopController.pageTitle : "")
+            color: Theme.muted
+            font.pixelSize: 12
+            elide: Text.ElideRight
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
+        }
+        Label {
+            id: profileBadge
+
+            objectName: "pageProfileBadge"
+            text: "Selected car: " + (root.desktopController !== null && root.desktopController.currentProfileId.length > 0 ? root.desktopController.currentProfileId : "Not selected")
+            color: Theme.text
+            font.pixelSize: 12
+            font.weight: Font.DemiBold
+            leftPadding: 10
+            rightPadding: 10
+            topPadding: 6
+            bottomPadding: 6
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
+
+            background: Rectangle {
+                radius: 8
+                color: Theme.raised
+                border.color: Theme.border
+            }
+        }
+    }
 
     Component {
         id: overviewComponent
@@ -59,7 +115,11 @@ Item {
     Loader {
         id: rendererLoader
         objectName: "readyRenderer"
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: orientationBar.bottom
+        anchors.bottom: parent.bottom
+        anchors.topMargin: 10
         anchors.bottomMargin: artifactBar.visible ? 52 : 0
         active: root.pageState === "ready"
         sourceComponent: {

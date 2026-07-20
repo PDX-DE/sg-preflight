@@ -934,7 +934,7 @@ class TestDesktopController(unittest.TestCase):
         self.assertEqual(controller.currentRouteId, "home")
         self.assertEqual(controller.currentPageId, "")
         self.assertEqual(controller.currentProfileId, "G65")
-        self.assertEqual(controller.pageTitle, "Home")
+        self.assertEqual(controller.pageTitle, "QA overview")
         self.assertTrue(controller.pageSubtitle)
         self.assertEqual(controller.pageState, "idle")
         self.assertEqual(controller.currentPayload, {})
@@ -1900,6 +1900,13 @@ class TestQtShellRoute(unittest.TestCase):
         self.assertEqual(payload["nextAction"]["kind"], "review")
         self.assertEqual(payload["nextAction"]["routeId"], "full-qa-pass")
         self.assertEqual(payload["latestLocalRun"]["warnings"], 1)
+        selected_car_check = next(
+            check
+            for gate in payload["gates"]
+            for check in gate["checks"]
+            if check.get("routeId") == "full-qa-pass"
+        )
+        self.assertEqual(selected_car_check["label"], "Open selected-car checks")
         action_records.assert_called_once_with(workspace.resolve(), limit=12)
         run_records.assert_called_once_with(workspace.resolve(), limit=12)
         action_lister.assert_called_once_with(workspace.resolve())
@@ -1913,7 +1920,7 @@ class TestQtShellRoute(unittest.TestCase):
 
             self.assertEqual(controller.currentRouteId, "home")
             self.assertEqual(controller.currentPageId, "")
-            self.assertEqual(controller.pageTitle, "Home")
+            self.assertEqual(controller.pageTitle, "QA overview")
             self.assertEqual(coordinator.requests, [])
             self.assertTrue(controller.initialize())
             self.assertFalse(controller.initialize())
@@ -2201,6 +2208,52 @@ class TestQtPageReadSafety(unittest.TestCase):
             ui_mode="clean",
             persist_dependency_state=False,
         )
+
+    def test_qt_read_only_pages_replace_unavailable_input_prompts_without_mutating_source(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import load_dashboard_surface
+
+        cases = (
+            (
+                "batch-full-qa-pass",
+                "results",
+                "Select multiple profiles and run.",
+                "No batch QA evidence is available for this session.",
+            ),
+            (
+                "cross-car-comparison",
+                "comparison_rows",
+                "Choose two profiles to compare.",
+                "No car-comparison evidence is available for this session.",
+            ),
+        )
+        for page_id, evidence_key, source_summary, expected_summary in cases:
+            with self.subTest(page_id=page_id), tempfile.TemporaryDirectory() as temp_dir:
+                source_payload = {
+                    "id": page_id,
+                    "summary": source_summary,
+                    "payload": {"summary": source_summary, evidence_key: []},
+                }
+                with mock.patch(
+                    "sg_preflight.dashboard.main.build_dashboard_page",
+                    return_value=source_payload,
+                ):
+                    payload = load_dashboard_surface(page_id, "G65", Path(temp_dir))
+
+                self.assertEqual(payload["summary"], expected_summary)
+                self.assertEqual(payload["empty_state_note"], expected_summary)
+                self.assertEqual(payload["payload"]["summary"], expected_summary)
+                self.assertFalse(payload["data_available"])
+                self.assertFalse(payload["payload"]["data_available"])
+                self.assertEqual(source_payload["summary"], source_summary)
+                self.assertEqual(source_payload["payload"]["summary"], source_summary)
+
+                source_payload["payload"][evidence_key] = [{"status": "recorded"}]
+                with mock.patch(
+                    "sg_preflight.dashboard.main.build_dashboard_page",
+                    return_value=source_payload,
+                ):
+                    recorded = load_dashboard_surface(page_id, "G65", Path(temp_dir))
+                self.assertIs(recorded, source_payload)
 
     def test_profile_resolver_uses_direct_read_only_profile_options_by_keyword(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import resolve_dashboard_profile

@@ -20,8 +20,8 @@ from sg_preflight.surface_registry import (
 
 
 EXPECTED_SURFACES = (
-    ("full-qa-pass", "Full QA Pass", "One local pass through setup, evidence, review assist, and handoff status.", "Daily work", "workflow", True),
-    ("batch-full-qa-pass", "Batch Full QA Pass", "Run selected profiles sequentially; one profile finishes before the next starts.", "Daily work", "workflow", True),
+    ("full-qa-pass", "Selected-Car Checks", "Run audited local checks and review evidence for the selected car.", "Daily work", "workflow", True),
+    ("batch-full-qa-pass", "Batch QA Evidence", "Review existing sequential-run evidence across car profiles.", "Daily work", "workflow", True),
     ("delivery-checklist", "Delivery documentation", "Read-only delivery workbook evidence for the selected profile.", "Delivery", "evidence", True),
     ("disabled-tests", "Disabled Tests", "Per-car disabled-test inventory from local test_config.lua files.", "Screenshots & coverage", "matrix", True),
     ("api-version-coverage", "API Version", "Shared MainInterfaces API reference with cautious impact hints.", "Screenshots & coverage", "matrix", True),
@@ -33,7 +33,7 @@ EXPECTED_SURFACES = (
     ("bmw-process", "BMW Process", "Read-only workflow contracts for BMW interface, triage, and visual review paths.", "Setup & help", "workflow", True),
     ("screenshot-test-state", "Screenshot Test State", "BMW + MINI baseline / actual / diff counts per brand.", "Screenshots & coverage", "matrix", True),
     ("risk-score", "Risk Score", "Per-car review focus signal with delta since latest local manual review.", "Screenshots & coverage", "evidence", True),
-    ("cross-car-comparison", "Cross-Car Comparison", "Choose two profiles to compare their risk-score evidence side by side.", "Screenshots & coverage", "matrix", True),
+    ("cross-car-comparison", "Comparison Evidence", "Read comparison evidence when a car-profile pair is available.", "Screenshots & coverage", "matrix", True),
     ("daily-digest", "Daily Digest", "Morning status snapshot for the SG Daily standup.", "Reviews & digests", "overview", True),
     ("team-digest-board", "Team Digest Board", "Local snapshot for standup review across selected car profiles.", "Reviews & digests", "overview", True),
     ("operator-handoff", "Operator Handoff", "Record the stopping point before a shift handoff.", "Reviews & digests", "workflow", True),
@@ -43,7 +43,7 @@ EXPECTED_SURFACES = (
 
 EXPECTED_SURFACE_IDS = tuple(item[0] for item in EXPECTED_SURFACES)
 EXPECTED_HOME_TILES = (
-    ("full-qa-pass", "Full QA Pass", "dashboard", "Run the whole preflight for one car profile."),
+    ("full-qa-pass", "Selected-Car Checks", "dashboard", "Open checks and evidence for the selected car."),
     ("delivery-checklist", "Delivery documentation", "fact_check", "Read delivery evidence for the selected car."),
     ("screenshot-test-state", "Screenshot Test State", "image", "Review expected, actual, and diff evidence."),
     ("manual-review", "Manual Review Companion", "rate_review", "Continue the operator-owned review steps."),
@@ -88,8 +88,8 @@ class TestSurfaceRegistry(unittest.TestCase):
 
     def test_shell_contract_keeps_home_outside_the_surface_registry(self) -> None:
         self.assertEqual(HOME_ROUTE_ID, "home")
-        self.assertEqual(HOME_TITLE, "Home")
-        self.assertEqual(HOME_SUBTITLE, "Start with the local checks and evidence needed for the selected car.")
+        self.assertEqual(HOME_TITLE, "QA overview")
+        self.assertEqual(HOME_SUBTITLE, "Review the selected car and continue its next local QA action.")
         self.assertNotIn(HOME_ROUTE_ID, EXPECTED_SURFACE_IDS)
         self.assertEqual(
             tuple((item.surface_id, item.title, item.icon_key, item.subtitle) for item in HOME_HUB_TILES),
@@ -110,7 +110,7 @@ class TestSurfaceRegistry(unittest.TestCase):
                 ("F5", "Refresh the active page"),
                 ("/", "Jump to page"),
                 ("F12", "Open local diagnostics"),
-                ("Esc", "Close the topmost overlay or sidebar"),
+                ("Esc", "Close the topmost overlay or return Home"),
             ),
         )
 
