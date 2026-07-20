@@ -428,6 +428,7 @@ def _render_first_run_welcome(
     snapshot: dict[str, Any],
     open_setup: Callable[[], None] | None = None,
     open_full_qa: Callable[[], None] | None = None,
+    dismiss: Callable[[], None] | None = None,
 ) -> None:
     welcome = snapshot.get("welcome", {})
     if not isinstance(welcome, dict) or not welcome.get("show"):
@@ -437,13 +438,10 @@ def _render_first_run_welcome(
             ui.label(str(welcome.get("title", "Welcome"))).classes("sgfx-panel-title")
             with ui.row().classes("items-center sgfx-first-launch-actions"):
                 _render_status_chip(ui, "incomplete")
-                ui.html(
-                    '<button type="button" class="sgfx-link-button" '
-                    'data-sgfx-dismiss-onboarding="true" '
-                    'onclick="window.sgfxDismissFirstLaunch && window.sgfxDismissFirstLaunch()">'
-                    "Don't show again</button>",
-                    sanitize=False,
-                )
+                if dismiss is not None:
+                    ui.button("Don't show again", on_click=dismiss).classes("sgfx-link-button").props(
+                        "flat no-caps dense data-sgfx-dismiss-onboarding=true"
+                    )
         ui.label(str(welcome.get("summary", ""))).classes("sgfx-summary")
         with ui.row().classes("sgfx-first-launch-actions"):
             if open_full_qa is not None:

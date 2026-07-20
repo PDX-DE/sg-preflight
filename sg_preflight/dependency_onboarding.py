@@ -93,6 +93,8 @@ from sg_preflight.dependency_onboarding_jobs import (
     cancel_dependency_setup_action,
     dependency_onboarding_state_lock_path,
     dependency_onboarding_state_path,
+    finish_first_run_guidance,
+    first_run_guidance_eligible,
     has_operator_state,
     load_dependency_onboarding_state,
     operator_state_root,
@@ -212,7 +214,7 @@ def build_dependency_onboarding_status(
     persist_auto_detected_paths: bool = True,
 ) -> dict[str, Any]:
     root = _workspace(workspace)
-    first_run = not has_operator_state(root)
+    first_run = first_run_guidance_eligible(root)
     state = load_dependency_onboarding_state(root)
     registered_paths_before_detection = _registered_paths_snapshot(state)
     raco_gui, raco_headless = _raco_status(state, root)

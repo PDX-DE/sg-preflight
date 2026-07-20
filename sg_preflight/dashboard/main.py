@@ -105,6 +105,7 @@ from sg_preflight.desktop_notifications import notify_desktop_completion
 from sg_preflight.dependency_onboarding import (
     build_dependency_onboarding_status,
     cancel_dependency_setup_action,
+    finish_first_run_guidance,
     poll_dependency_setup_action,
     start_dependency_setup_action,
 )
@@ -1197,8 +1198,12 @@ def _render_dashboard(
 
         def _header_text() -> str:
             active = state["snapshot"]
+            workspace_text = str(active.get("workspace_display_label", "Unresolved"))
+            if active.get("workspace_status") != "resolved":
+                candidate = str(active.get("workspace_candidate_label", "Local workspace"))
+                workspace_text = f"Unresolved (candidate: {candidate})"
             return (
-                f"Profile: {active['profile_id']} | Workspace: {active['workspace_label']} "
+                f"Profile: {active['profile_id']} | Workspace: {workspace_text} "
                 f"| Output: {active.get('output_root_label', '')}"
             )
 
@@ -1290,6 +1295,30 @@ def _render_dashboard(
             state["batch_profile_prefill"] = [str(profile).strip() for profile in profile_ids if str(profile).strip()]
             _open_page("batch-full-qa-pass")
 
+        def _finish_first_run(resolution: str) -> bool:
+            try:
+                finish_first_run_guidance(workspace=workspace, resolution=resolution)
+            except OSError:
+                ui.notify("First-run guidance preference could not be saved.")
+                return False
+            welcome = state["snapshot"].get("welcome", {})
+            if isinstance(welcome, dict):
+                welcome["show"] = False
+            return True
+
+        def _dismiss_first_run() -> None:
+            if not _finish_first_run("dismissed"):
+                return
+            _run_javascript_if_client_alive(
+                ui,
+                f"window.localStorage.setItem({json.dumps(FIRST_LAUNCH_DISMISS_STORAGE_KEY)}, '1');",
+            )
+            _render_current_page()
+
+        def _complete_first_run_and_open_full_qa() -> None:
+            if _finish_first_run("completed"):
+                _open_page("full-qa-pass")
+
         def _render_current_page() -> None:
             content = content_holder.get("content")
             if content is None:
@@ -1337,7 +1366,8 @@ def _render_dashboard(
                     ui,
                     state["snapshot"],
                     open_setup=lambda: _open_page("setup-doctor"),
-                    open_full_qa=lambda: _open_page("full-qa-pass"),
+                    open_full_qa=_complete_first_run_and_open_full_qa,
+                    dismiss=_dismiss_first_run,
                 )
                 if active_page_id == "home":
                     _render_changed_profiles_card(

@@ -282,6 +282,45 @@ class TestCLI(unittest.TestCase):
 
         self.assertEqual(Path(workspace), trunk.resolve())
 
+    def test_frozen_exe_entry_fallback_is_reported_as_an_unresolved_workspace_candidate(self) -> None:
+        module = importlib.import_module("sg_preflight.exe_entry")
+        from sg_preflight.workspace_orientation import describe_sg_workspace
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_root = Path(temp_dir) / "sgfx-preflight"
+            exe_path = bundle_root / "sgfx-preflight.exe"
+            bundle_root.mkdir(parents=True)
+            exe_path.write_text("fixture\n", encoding="utf-8")
+            missing_default = Path(temp_dir) / "missing-trunk"
+
+            with mock.patch.object(module.sys, "frozen", True, create=True):
+                with mock.patch.object(module.sys, "executable", str(exe_path)):
+                    with mock.patch.object(module, "DEFAULT_OPERATOR_WORKSPACE", missing_default):
+                        with mock.patch.dict(module.os.environ, {}, clear=True):
+                            candidate = Path(module.default_workspace())
+
+            orientation = describe_sg_workspace(candidate)
+
+            valid_workspace = Path(temp_dir) / "repositories" / "trunk"
+            (valid_workspace / ".pdx").mkdir(parents=True)
+            (valid_workspace / "Cars_IDCevo").mkdir()
+            resolved_orientation = describe_sg_workspace(valid_workspace)
+
+        self.assertEqual(candidate, bundle_root.resolve())
+        self.assertEqual(
+            orientation,
+            {
+                "status": "unresolved",
+                "resolved": False,
+                "display_label": "Unresolved",
+                "candidate_label": "sgfx-preflight",
+                "summary": "No SG workspace markers were found in the selected location.",
+            },
+        )
+        self.assertEqual(resolved_orientation["status"], "resolved")
+        self.assertTrue(resolved_orientation["resolved"])
+        self.assertEqual(resolved_orientation["display_label"], "trunk")
+
     def test_frozen_exe_entry_default_workspace_allows_operator_override(self) -> None:
         module = importlib.import_module("sg_preflight.exe_entry")
 

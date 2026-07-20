@@ -66,6 +66,9 @@ ONBOARDING_STATE_FILENAME = "dependency_onboarding.json"
 ONBOARDING_STATE_LOCK_FILENAME = "dependency_onboarding.lock"
 
 
+FIRST_RUN_GUIDANCE_RESOLUTIONS = frozenset({"completed", "dismissed"})
+
+
 DEPENDENCY_SETUP_TIMEOUT_SECONDS = 900
 
 
@@ -208,6 +211,34 @@ def has_operator_state(workspace: Path | str) -> bool:
         return any(root.iterdir())
     except OSError:
         return False
+
+
+def first_run_guidance_eligible(workspace: Path | str) -> bool:
+    state = load_dependency_onboarding_state(workspace)
+    guidance = state.get("first_run_guidance")
+    if isinstance(guidance, dict):
+        return guidance.get("finished") is not True
+    if isinstance(guidance, bool):
+        return not guidance
+    return True
+
+
+def finish_first_run_guidance(
+    *,
+    workspace: Path | str,
+    resolution: str,
+) -> dict[str, Any]:
+    clean_resolution = str(resolution or "").strip().casefold()
+    if clean_resolution not in FIRST_RUN_GUIDANCE_RESOLUTIONS:
+        raise ValueError("First-run guidance resolution must be completed or dismissed.")
+    with _dependency_state_transaction(workspace):
+        state = load_dependency_onboarding_state(workspace)
+        state["first_run_guidance"] = {
+            "finished": True,
+            "resolution": clean_resolution,
+            "finished_at_utc": _utc_now(),
+        }
+        return _write_dependency_onboarding_state(workspace, state)
 
 
 def load_dependency_onboarding_state(workspace: Path | str) -> dict[str, Any]:
@@ -787,6 +818,8 @@ _acquire_dependency_state_file_lock = _with_onboarding_globals(_acquire_dependen
 _release_dependency_state_file_lock = _with_onboarding_globals(_release_dependency_state_file_lock)
 _dependency_state_transaction = _with_onboarding_globals(_dependency_state_transaction)
 has_operator_state = _with_onboarding_globals(has_operator_state)
+first_run_guidance_eligible = _with_onboarding_globals(first_run_guidance_eligible)
+finish_first_run_guidance = _with_onboarding_globals(finish_first_run_guidance)
 load_dependency_onboarding_state = _with_onboarding_globals(load_dependency_onboarding_state)
 _write_dependency_onboarding_state = _with_onboarding_globals(_write_dependency_onboarding_state)
 record_dependency_path = _with_onboarding_globals(record_dependency_path)

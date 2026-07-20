@@ -1268,6 +1268,9 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertIn("sgfx-thinking-tooltip", source)
         self.assertIn("data-sgfx-first-launch-card", source)
         self.assertIn("sgfx.firstLaunch.dismissed", source)
+        self.assertIn("finish_first_run_guidance", source)
+        self.assertIn("dismiss=_dismiss_first_run", source)
+        self.assertIn("open_full_qa=_complete_first_run_and_open_full_qa", source)
         self.assertIn("window.__sgfxPerformanceTrace", source)
         self.assertIn("data-sgfx-nav-item", source)
         self.assertIn("functionKeys", source)
@@ -2327,6 +2330,27 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         delivery = next(page for page in snapshot["pages"] if page["id"] == "delivery-checklist")
         self.assertEqual(delivery["setup_status"], fake_setup)
         self.assertEqual(delivery["setup_status"]["actions"][0]["label"], "Set up RaCo")
+
+    def test_dashboard_snapshot_separates_workspace_candidate_from_validated_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from sg_preflight.dashboard.main import build_dashboard_snapshot
+
+            workspace = Path(tmp) / "sgfx-preflight"
+            workspace.mkdir()
+            snapshot = build_dashboard_snapshot(
+                "G70",
+                workspace,
+                defer_daily_digest=True,
+                defer_team_digest_board=True,
+                lazy_pages=True,
+                persist_dependency_state=False,
+            )
+
+        self.assertEqual(snapshot["workspace_label"], "sgfx-preflight")
+        self.assertEqual(snapshot["workspace_candidate_label"], "sgfx-preflight")
+        self.assertEqual(snapshot["workspace_display_label"], "Unresolved")
+        self.assertEqual(snapshot["workspace_status"], "unresolved")
+        self.assertFalse(snapshot["workspace_resolved"])
 
     def test_setup_doctor_page_surfaces_tool_version_validation_guidance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

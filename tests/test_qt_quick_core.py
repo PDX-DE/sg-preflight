@@ -987,6 +987,9 @@ class TestDesktopController(unittest.TestCase):
         self.assertEqual(controller.currentRouteId, "home")
         self.assertEqual(controller.currentPageId, "")
         self.assertEqual(controller.currentProfileId, "G65")
+        self.assertEqual(controller.workspaceStatus, "unresolved")
+        self.assertEqual(controller.workspaceDisplayLabel, "Unresolved")
+        self.assertEqual(controller.workspaceCandidateLabel, Path(temp_dir).name)
         self.assertEqual(controller.pageTitle, "QA overview")
         self.assertTrue(controller.pageSubtitle)
         self.assertEqual(controller.pageState, "idle")
@@ -1119,6 +1122,56 @@ class TestDesktopController(unittest.TestCase):
         loader.assert_not_called()
         self.assertEqual(controller.currentProfileId, "G70")
         self.assertEqual(controller.pageState, "ready")
+
+    def test_setup_and_onboarding_routes_are_reachable_without_a_selected_profile(self) -> None:
+        for route_id in ("setup-doctor", "onboarding-guide"):
+            with self.subTest(route_id=route_id), tempfile.TemporaryDirectory() as temp_dir:
+                workspace = Path(temp_dir)
+                shell_loader = mock.Mock(
+                    return_value={
+                        "status": "not_run",
+                        "profile_options": [{"id": "G65", "label": "G65"}],
+                        "selected_profile_id": "",
+                    }
+                )
+                controller, coordinator, loader, _resolver = self._controller(
+                    workspace,
+                    initial_profile_id="",
+                    shell_loader=shell_loader,
+                )
+                self.assertTrue(controller.initialize())
+                shell_identity, shell_operation = coordinator.requests[-1]
+                coordinator.succeed(shell_identity, shell_operation())
+                self.assertEqual(controller.currentProfileId, "")
+
+                self.assertTrue(controller.navigate(route_id))
+                page_identity, _page_operation = coordinator.requests[-1]
+
+                self.assertEqual(page_identity.profile_id, "")
+                self.assertEqual(page_identity.page_id, route_id)
+                self.assertEqual(controller.currentRouteId, route_id)
+                loader.assert_not_called()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            controller, coordinator, _loader, _resolver = self._controller(
+                Path(temp_dir),
+                initial_profile_id="",
+                shell_loader=mock.Mock(
+                    return_value={
+                        "status": "not_run",
+                        "profile_options": [{"id": "G65", "label": "G65"}],
+                        "selected_profile_id": "",
+                    }
+                ),
+            )
+            self.assertTrue(controller.initialize())
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+            request_count = len(coordinator.requests)
+
+            self.assertFalse(controller.navigate("delivery-checklist"))
+            self.assertEqual(controller.currentRouteId, "home")
+            self.assertEqual(len(coordinator.requests), request_count)
 
     def test_invalid_route_sets_all_error_properties_atomically(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2420,6 +2473,33 @@ class TestQtPageReadSafety(unittest.TestCase):
                 load_dashboard_surface("setup-doctor", "G65", workspace)
 
         self.assertFalse(status.call_args.kwargs["persist_auto_detected_paths"])
+
+    def test_qt_profile_free_loader_preserves_an_empty_profile(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import load_dashboard_surface
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            page = {
+                "id": "onboarding-guide",
+                "status": "incomplete",
+                "payload": {"profile_id": ""},
+            }
+            with mock.patch(
+                "sg_preflight.dashboard.main.build_dashboard_page",
+                return_value=page,
+            ) as page_builder:
+                loaded = load_dashboard_surface("onboarding-guide", "", workspace)
+
+        self.assertEqual(loaded["payload"]["profile_id"], "")
+        page_builder.assert_called_once_with(
+            page_id="onboarding-guide",
+            profile_id="",
+            workspace=workspace,
+            bmw_root=None,
+            ui_mode="clean",
+            persist_dependency_state=False,
+            preserve_empty_profile=True,
+        )
 
     def test_real_qt_read_leaves_the_temporary_workspace_file_set_unchanged(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import load_dashboard_surface

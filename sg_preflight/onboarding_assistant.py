@@ -61,12 +61,24 @@ def build_onboarding_guide(
     setup_status = dependency_status or build_dependency_onboarding_status(workspace=root, bmw_root=bmw_root)
     setup_counts = setup_status.get("counts", {}) if isinstance(setup_status.get("counts"), dict) else {}
     setup_actions = [action for action in setup_status.get("actions", []) if isinstance(action, dict)]
-    template = review_template_for_profile(clean_profile, workspace=root)
+    template = review_template_for_profile(clean_profile, workspace=root) if clean_profile else {}
     setup_step_status = str(setup_status.get("status", "unknown")).strip() or "unknown"
     setup_next_action = (
         "Open Delivery documentation -> Dependency setup and run only the confirmed setup action."
         if setup_actions
         else "No setup action is pending; continue to evidence pages."
+    )
+    profile_template_status = "available" if clean_profile else "not_recorded"
+    profile_template_detail = (
+        f"{template.get('title', 'Review template')} selected for "
+        f"{template.get('brand', '')} / {template.get('lane', '')}."
+        if clean_profile
+        else "No car-specific review template is selected yet."
+    )
+    profile_template_next_action = (
+        "Use the template checklist before recording manual-review verdicts."
+        if clean_profile
+        else "Choose a car profile before opening car-specific evidence or review steps."
     )
     steps = [
         _guide_step(
@@ -80,12 +92,9 @@ def build_onboarding_guide(
         _guide_step(
             key="profile-template",
             label="Profile review template",
-            status="available",
-            detail=(
-                f"{template.get('title', 'Review template')} selected for "
-                f"{template.get('brand', '')} / {template.get('lane', '')}."
-            ),
-            next_action="Use the template checklist before recording manual-review verdicts.",
+            status=profile_template_status,
+            detail=profile_template_detail,
+            next_action=profile_template_next_action,
             confluence_anchor=ONBOARDING_CONFLUENCE_ANCHOR,
         ),
         _guide_step(
@@ -120,11 +129,24 @@ def build_onboarding_guide(
         )
     )
     incomplete_steps = [step["key"] for step in steps if step["status"] != "available"]
+    summary = (
+        f"Onboarding guide prepared {len(steps)} local step(s) for {clean_profile}; "
+        f"{len(incomplete_steps)} step(s) still need operator action."
+        if clean_profile
+        else (
+            f"Choose a car profile to continue; {len(incomplete_steps)} of "
+            f"{len(steps)} local step(s) still need operator action."
+        )
+    )
     return {
         "schema_version": 1,
         "profile_id": clean_profile,
         "status": "available",
-        "onboarding_status": "available" if setup_step_status == "available" else "incomplete",
+        "onboarding_status": (
+            "available"
+            if setup_step_status == "available" and clean_profile
+            else "incomplete"
+        ),
         "workspace": str(root),
         "setup_status": setup_status,
         "setup_counts": dict(setup_counts),
@@ -145,10 +167,7 @@ def build_onboarding_guide(
         "operator_confirmation_required": bool(setup_actions),
         "records_operator_verdict": False,
         "is_approval": False,
-        "summary": (
-            f"Onboarding guide prepared {len(steps)} local step(s) for {clean_profile}; "
-            f"{len(incomplete_steps)} step(s) still need operator action."
-        ),
+        "summary": summary,
         "guardrails": list(ONBOARDING_GUIDE_GUARDRAILS),
         "confluence_anchors": anchors,
     }

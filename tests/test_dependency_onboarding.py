@@ -350,7 +350,7 @@ class TestDependencyOnboarding(unittest.TestCase):
                     with mock.patch.object(onboarding.subprocess, "run", return_value=_completed()):
                         payload = onboarding.build_dependency_onboarding_status(workspace=root)
 
-        self.assertFalse(payload["first_run"])
+        self.assertTrue(payload["first_run"])
         self.assertEqual(payload["status"], "available")
         self.assertEqual(payload["counts"]["available"], 6)
         self.assertFalse(payload["actions"])
@@ -441,7 +441,7 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertEqual(setup_payload["status"], "available")
         self.assertTrue(setup_payload["first_run"])
         self.assertEqual(second_setup_payload["status"], "available")
-        self.assertFalse(second_setup_payload["first_run"])
+        self.assertTrue(second_setup_payload["first_run"])
         self.assertEqual(second_state_text, state_text)
         self.assertEqual(Path(registered_paths["raco_gui"]), gui.resolve())
         self.assertEqual(Path(registered_paths["raco_headless"]), headless.resolve())
@@ -456,6 +456,49 @@ class TestDependencyOnboarding(unittest.TestCase):
         self.assertEqual(checks["raco"]["status"], "available")
         self.assertEqual(checks["raco_headless"]["status"], "available")
         self.assertEqual(checks["blender"]["status"], "available")
+
+    def test_only_explicit_dismissal_or_completion_ends_first_run_guidance(self) -> None:
+        from sg_preflight import dependency_onboarding as onboarding
+
+        for resolution in ("dismissed", "completed"):
+            with self.subTest(resolution=resolution), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                tool = root / "tools" / "RamsesComposer.exe"
+                write_text(tool, "fixture\n")
+
+                onboarding.record_dependency_path(workspace=root, key="raco_gui", path=tool)
+                self.assertTrue(onboarding.first_run_guidance_eligible(root))
+
+                onboarding.finish_first_run_guidance(
+                    workspace=root,
+                    resolution=resolution,
+                )
+                state = onboarding.load_dependency_onboarding_state(root)
+
+                self.assertFalse(onboarding.first_run_guidance_eligible(root))
+                self.assertEqual(
+                    state["first_run_guidance"],
+                    {
+                        "finished": True,
+                        "resolution": resolution,
+                        "finished_at_utc": mock.ANY,
+                    },
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with self.assertRaisesRegex(ValueError, "completed or dismissed"):
+                onboarding.finish_first_run_guidance(
+                    workspace=root,
+                    resolution="auto_detected",
+                )
+            self.assertFalse(onboarding.dependency_onboarding_state_path(root).exists())
+
+            onboarding._write_dependency_onboarding_state(
+                root,
+                {"first_run_guidance": {"finished": "true"}},
+            )
+            self.assertTrue(onboarding.first_run_guidance_eligible(root))
 
     def test_fast_path_detection_prefers_newly_detected_paths_over_old_registrations(self) -> None:
         from sg_preflight import dependency_onboarding as onboarding

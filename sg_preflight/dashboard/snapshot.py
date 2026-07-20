@@ -52,6 +52,7 @@ from sg_preflight.shell_registry import (
     SHORTCUT_ACTIONS,
 )
 from sg_preflight.surface_registry import SURFACE_DESCRIPTORS, get_surface_descriptor, is_registered_surface
+from sg_preflight.workspace_orientation import describe_sg_workspace
 
 DASHBOARD_TITLE = "Seriengrafik: Project Quality-Hero"
 DASHBOARD_GUARDRAILS = (
@@ -180,6 +181,7 @@ def build_dashboard_snapshot(
     lazy_pages: bool = False,
     materialize_page_ids: tuple[str, ...] = (),
     persist_dependency_state: bool = True,
+    preserve_empty_profile: bool = False,
 ) -> dict[str, Any]:
     from sg_preflight.dashboard import main as _main_mod
 
@@ -191,11 +193,15 @@ def build_dashboard_snapshot(
         if any(option.get("registry_source") == PROFILE_REGISTRY_DYNAMIC_SOURCE for option in profile_options_all)
         else "unavailable"
     )
-    resolved_profile_id = _resolve_dashboard_profile_id(
-        profile_id,
-        profile_options_all,
-        workspace=root,
-        fallback_options=profile_options,
+    resolved_profile_id = (
+        ""
+        if preserve_empty_profile and not str(profile_id or "").strip()
+        else _resolve_dashboard_profile_id(
+            profile_id,
+            profile_options_all,
+            workspace=root,
+            fallback_options=profile_options,
+        )
     )
     profile_known = _dashboard_profile_known(resolved_profile_id, profile_options_all)
     profile_in_default_view = _dashboard_profile_known(resolved_profile_id, profile_options)
@@ -227,6 +233,7 @@ def build_dashboard_snapshot(
         str(root),
         str(Path(bmw_root).resolve()) if bmw_root is not None else "",
     )
+    workspace_orientation = describe_sg_workspace(root)
     shortcuts = list(DASHBOARD_SHORTCUTS)
     shortcut_actions = [{"key": key, "message": message} for key, message in DASHBOARD_SHORTCUT_ACTIONS]
     return {
@@ -253,6 +260,11 @@ def build_dashboard_snapshot(
         },
         "workspace": str(root),
         "workspace_label": _path_label(root),
+        "workspace_candidate_label": workspace_orientation["candidate_label"],
+        "workspace_display_label": workspace_orientation["display_label"],
+        "workspace_status": workspace_orientation["status"],
+        "workspace_resolved": workspace_orientation["resolved"],
+        "workspace_summary": workspace_orientation["summary"],
         "output_root": str(output_root),
         "output_root_label": _path_label(output_root),
         "theme": theme,
@@ -379,12 +391,13 @@ def build_dashboard_page(
     bmw_root: Path | str | None = None,
     ui_mode: str | None = None,
     persist_dependency_state: bool = True,
+    preserve_empty_profile: bool = False,
 ) -> dict[str, Any]:
     # Resolve through the dashboard.main facade so tests patching
     # "sg_preflight.dashboard.main.build_dashboard_snapshot" keep intercepting this call.
     import sg_preflight.dashboard.main as _main_mod
 
-    snapshot = _main_mod.build_dashboard_snapshot(
+    snapshot_arguments: dict[str, Any] = dict(
         profile_id=profile_id,
         workspace=workspace,
         bmw_root=bmw_root,
@@ -395,6 +408,9 @@ def build_dashboard_page(
         materialize_page_ids=(page_id,),
         persist_dependency_state=persist_dependency_state,
     )
+    if preserve_empty_profile:
+        snapshot_arguments["preserve_empty_profile"] = True
+    snapshot = _main_mod.build_dashboard_snapshot(**snapshot_arguments)
     for page in snapshot["pages"]:
         if str(page.get("id")) == page_id:
             return page

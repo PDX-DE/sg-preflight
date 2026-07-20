@@ -12,6 +12,29 @@ from sg_preflight.onboarding_assistant import (
 
 
 class TestOnboardingAssistant(unittest.TestCase):
+    def test_onboarding_without_a_profile_stays_generic_and_prompts_for_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            payload = build_onboarding_guide(
+                "",
+                workspace=Path(temp_dir),
+                dependency_status={
+                    "status": "available",
+                    "summary": "All dependency items are available.",
+                    "items": [],
+                    "actions": [],
+                    "counts": {"available": 6, "missing": 0, "incomplete": 0},
+                    "confluence_anchors": [],
+                },
+            )
+
+        steps = {step["key"]: step for step in payload["steps"]}
+        self.assertEqual(payload["profile_id"], "")
+        self.assertEqual(payload["onboarding_status"], "incomplete")
+        self.assertIn("Choose a car profile", payload["summary"])
+        self.assertEqual(steps["profile-template"]["status"], "not_recorded")
+        self.assertIn("Choose a car profile", steps["profile-template"]["next_action"])
+        self.assertNotIn("BMW IDCevo", steps["profile-template"]["detail"])
+
     def test_onboarding_guide_wraps_dependency_status_without_recording_verdicts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

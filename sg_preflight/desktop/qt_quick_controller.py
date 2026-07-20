@@ -32,6 +32,7 @@ from sg_preflight.desktop.ui_capabilities import (
 )
 from sg_preflight.shell_registry import HOME_ROUTE_ID, HOME_SUBTITLE, HOME_TITLE
 from sg_preflight.surface_registry import get_surface_descriptor, is_registered_surface
+from sg_preflight.workspace_orientation import describe_sg_workspace
 
 
 _PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -46,6 +47,7 @@ _REFRESH_FAILURE = "The local evidence could not be refreshed."
 _ACTION_READINESS_LOADING = "Checking local actions…"
 _ACTION_READINESS_UNAVAILABLE = "Local actions are unavailable. Refresh local evidence to retry."
 _ACTION_READINESS_EMPTY = "No audited local actions are available for the selected car."
+_PROFILE_FREE_ROUTES = frozenset({"onboarding-guide", "setup-doctor"})
 
 
 class PageLoader(Protocol):
@@ -229,7 +231,7 @@ def load_dashboard_surface(
             "tagline": descriptor.subtitle,
             "content": dict(ABOUT_CONTENT),
         }
-    page = build_dashboard_page(
+    page_arguments: dict[str, object] = dict(
         page_id=page_id,
         profile_id=profile_id,
         workspace=Path(workspace),
@@ -237,6 +239,9 @@ def load_dashboard_surface(
         ui_mode="clean",
         persist_dependency_state=False,
     )
+    if not profile_id.strip() and page_id in _PROFILE_FREE_ROUTES:
+        page_arguments["preserve_empty_profile"] = True
+    page = build_dashboard_page(**page_arguments)
     return _with_qt_read_only_empty_state(page_id, page)
 
 
@@ -421,6 +426,7 @@ class DesktopController(QObject):
         if profile_id and not _PROFILE_ID_PATTERN.fullmatch(profile_id):
             raise ValueError("initial_profile_id must be empty or a canonical profile ID")
         self._workspace = Path(workspace).resolve()
+        self._workspace_orientation = describe_sg_workspace(self._workspace)
         self._bmw_root = Path(bmw_root).resolve() if bmw_root is not None else None
         self._current_route_id = HOME_ROUTE_ID
         self._current_profile_id = profile_id
@@ -505,6 +511,18 @@ class DesktopController(QObject):
     @Property(str, notify=currentProfileChanged)
     def currentProfileId(self) -> str:
         return self._current_profile_id
+
+    @Property(str, constant=True)
+    def workspaceStatus(self) -> str:
+        return str(self._workspace_orientation["status"])
+
+    @Property(str, constant=True)
+    def workspaceDisplayLabel(self) -> str:
+        return str(self._workspace_orientation["display_label"])
+
+    @Property(str, constant=True)
+    def workspaceCandidateLabel(self) -> str:
+        return str(self._workspace_orientation["candidate_label"])
 
     @Property("QVariantList", notify=profileOptionsChanged)
     def profileOptions(self) -> list[dict[str, str]]:
@@ -611,7 +629,7 @@ class DesktopController(QObject):
             self._set_route(HOME_ROUTE_ID)
             self._preview_launch_allowed = False
             return self._schedule_shell_context()
-        if not self._current_profile_id:
+        if not self._current_profile_id and candidate not in _PROFILE_FREE_ROUTES:
             self.initialize()
             return False
         if candidate == self._current_route_id and self._page_state == "loading":

@@ -250,6 +250,16 @@ ApplicationWindow {
                                 font.pixelSize: 14
                                 wrapMode: Text.WordWrap
                             }
+                            Label {
+                                objectName: "workspaceOrientationText"
+                                Layout.fillWidth: true
+                                text: window.desktopController.workspaceStatus === "resolved" ? "Workspace: " + window.desktopController.workspaceDisplayLabel : "Workspace unresolved · Candidate: " + window.desktopController.workspaceCandidateLabel
+                                color: window.desktopController.workspaceStatus === "resolved" ? Theme.muted : Theme.statusWarn
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                                Accessible.role: Accessible.StaticText
+                                Accessible.name: text
+                            }
                         }
                         ComboBox {
                             id: profileSelector
