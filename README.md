@@ -177,7 +177,7 @@ From the bundle root:
 python -m unittest discover -s tests -v
 ```
 
-The curated bundle test count can differ from the source test count because internal guard-only tests are excluded from the team-facing bundle. The most recent full source verification for this tree ran 1,187 tests OK with 8 skipped (exclusive `unittest discover` run, 2026-07-19).
+The curated bundle test count can differ from the source test count because internal guard-only tests are excluded from the team-facing bundle. The most recent full source verification for this tree ran 1,188 tests OK with 8 skipped (exclusive `unittest discover` run, 2026-07-20).
 
 ## Deprecated C++ Reference Build
 
