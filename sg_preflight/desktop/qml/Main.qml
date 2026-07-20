@@ -44,15 +44,60 @@ ApplicationWindow {
     property bool sidebarOpen: true
     property bool exitGuidanceVisible: false
     property bool shellInitializationStarted: false
+    property var overlayReturnFocus: null
 
     function setPresentation(enabled: bool) {
         presentationView = enabled;
         sidebarOpen = !enabled;
-        Qt.callLater(homePage.restoreFocus);
+        Qt.callLater(window.focusPagePrimary);
     }
 
     function focusProductStart() {
         profileSelector.forceActiveFocus();
+    }
+
+    function currentPagePrimaryAction() {
+        if (desktopController.currentRouteId === "home")
+            return homePage.primaryActionItem;
+        return pageContentHost.item ? pageContentHost.item.primaryActionItem : null;
+    }
+
+    function focusPagePrimary() {
+        const target = currentPagePrimaryAction();
+        if (target && target.visible && target.enabled) {
+            target.forceActiveFocus();
+        } else if (presentationView) {
+            exitPresentation.forceActiveFocus();
+        } else {
+            presentationViewControl.forceActiveFocus();
+        }
+    }
+
+    function restoreOverlayFocus() {
+        const target = overlayReturnFocus;
+        overlayReturnFocus = null;
+        Qt.callLater(() => {
+            if (target && target.visible && target.enabled)
+                target.forceActiveFocus();
+            else
+                presentationViewControl.forceActiveFocus();
+        });
+    }
+
+    function openOverlay(kind: string) {
+        if (!jumpOpen && !helpOpen && !diagnosticsOpen)
+            overlayReturnFocus = window.activeFocusItem;
+        jumpOpen = kind === "jump";
+        helpOpen = kind === "help";
+        diagnosticsOpen = kind === "diagnostics";
+        exitGuidanceVisible = false;
+    }
+
+    function closeOverlay() {
+        jumpOpen = false;
+        helpOpen = false;
+        diagnosticsOpen = false;
+        restoreOverlayFocus();
     }
 
     function openProfilePopover() {
@@ -65,22 +110,18 @@ ApplicationWindow {
 
     function handleShortcut(key: string) {
         if (key === "F1") {
-            helpOpen = true;
+            openOverlay("help");
         } else if (key === "F2") {
             profileSelector.forceActiveFocus();
         } else if (key === "F5") {
             desktopController.refresh();
         } else if (key === "F12") {
-            diagnosticsOpen = true;
+            openOverlay("diagnostics");
         } else if (key === "/") {
-            jumpOpen = true;
+            openOverlay("jump");
         } else if (key === "Esc") {
-            if (jumpOpen)
-                jumpOpen = false;
-            else if (helpOpen)
-                helpOpen = false;
-            else if (diagnosticsOpen)
-                diagnosticsOpen = false;
+            if (jumpOpen || helpOpen || diagnosticsOpen)
+                closeOverlay();
             else if (presentationView)
                 setPresentation(false);
             else if (desktopController.currentRouteId !== "home")
@@ -107,6 +148,10 @@ ApplicationWindow {
     }
 
     onReducedMotionChanged: desktopController.setPreviewReducedMotion(reducedMotion)
+    onDiagnosticsOpenChanged: {
+        if (diagnosticsOpen)
+            Qt.callLater(diagnosticsCloseControl.forceActiveFocus);
+    }
 
     Component.onCompleted: {
         desktopController.setPreviewReducedMotion(reducedMotion);
@@ -230,7 +275,7 @@ ApplicationWindow {
                             focusPolicy: Qt.StrongFocus
                             Accessible.role: Accessible.ComboBox
                             Accessible.name: "Selected car profile"
-                            KeyNavigation.tab: window.desktopController.currentRouteId === "home" ? homePage.primaryActionItem : (pageContentHost.item ? pageContentHost.item.homeActionItem : presentationViewControl)
+                            KeyNavigation.tab: presentationViewControl
                             onActivated: window.desktopController.selectProfile(currentValue)
                             onCountChanged: Qt.callLater(syncProfileIndex)
 
@@ -257,6 +302,15 @@ ApplicationWindow {
                             focusPolicy: Qt.StrongFocus
                             Accessible.role: Accessible.Button
                             Accessible.name: text
+                            KeyNavigation.tab: grafiksLaunchControl.enabled ? grafiksLaunchControl : window.currentPagePrimaryAction()
+                            KeyNavigation.backtab: profileSelector
+                            Keys.onTabPressed: event => {
+                                if (grafiksLaunchControl.enabled)
+                                    grafiksLaunchControl.forceActiveFocus();
+                                else
+                                    window.focusPagePrimary();
+                                event.accepted = true;
+                            }
                             onClicked: window.setPresentation(true)
                         }
                         Button {
@@ -279,6 +333,12 @@ ApplicationWindow {
                             focusPolicy: Qt.StrongFocus
                             Accessible.role: Accessible.Button
                             Accessible.name: text
+                            KeyNavigation.tab: window.currentPagePrimaryAction()
+                            KeyNavigation.backtab: presentationViewControl
+                            Keys.onTabPressed: event => {
+                                window.focusPagePrimary();
+                                event.accepted = true;
+                            }
                             onClicked: window.desktopController.invokeCapability("grafiks.launch", {
                                 "profile_id": window.desktopController.currentProfileId
                             })
@@ -410,9 +470,9 @@ ApplicationWindow {
             anchors.fill: parent
             open: window.jumpOpen
             routes: window.shellModel.routes
-            onCloseRequested: window.jumpOpen = false
+            onCloseRequested: window.closeOverlay()
             onNavigateRequested: routeId => {
-                window.jumpOpen = false;
+                window.closeOverlay();
                 window.desktopController.navigate(routeId);
             }
         }
@@ -424,14 +484,24 @@ ApplicationWindow {
             anchors.fill: parent
             open: window.helpOpen
             shortcuts: window.shellModel.shortcuts
-            onCloseRequested: window.helpOpen = false
+            onCloseRequested: window.closeOverlay()
         }
     }
-    Rectangle {
+    FocusScope {
+        id: diagnosticsOverlay
+
+        objectName: "diagnosticsOverlay"
         anchors.fill: parent
         visible: window.diagnosticsOpen
-        color: "#b0000000"
+        focus: visible
         z: 100
+        Accessible.role: Accessible.Dialog
+        Accessible.name: "Local diagnostics"
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#b0000000"
+        }
 
         Rectangle {
             anchors.centerIn: parent
@@ -478,11 +548,16 @@ ApplicationWindow {
                     Layout.fillHeight: true
                 }
                 Button {
+                    id: diagnosticsCloseControl
+
+                    objectName: "diagnosticsCloseControl"
                     text: "Close diagnostics"
                     focusPolicy: Qt.StrongFocus
                     Accessible.role: Accessible.Button
                     Accessible.name: text
-                    onClicked: window.diagnosticsOpen = false
+                    KeyNavigation.tab: diagnosticsCloseControl
+                    KeyNavigation.backtab: diagnosticsCloseControl
+                    onClicked: window.closeOverlay()
                 }
             }
         }

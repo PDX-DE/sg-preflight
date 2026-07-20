@@ -195,6 +195,11 @@ Item {
                     wrapMode: TextEdit.Wrap
                     enabled: root.canRecordHandoff
                     Accessible.name: "Handoff operator note"
+                    KeyNavigation.tab: recordHandoffControl
+                    Keys.onTabPressed: event => {
+                        recordHandoffControl.forceActiveFocus();
+                        event.accepted = true;
+                    }
                 }
                 Button {
                     id: recordHandoffControl

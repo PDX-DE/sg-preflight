@@ -5,7 +5,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SGFX 1.0
 
-Rectangle {
+FocusScope {
     id: root
 
     required property bool open
@@ -15,8 +15,20 @@ Rectangle {
     property string filterText: ""
 
     visible: open
-    color: "#b0000000"
+    focus: open
     z: 110
+    Accessible.role: Accessible.Dialog
+    Accessible.name: "Jump to page"
+
+    onOpenChanged: {
+        if (open)
+            Qt.callLater(filter.forceActiveFocus);
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: "#b0000000"
+    }
 
     function activateFirst() {
         for (let index = 0; index < routes.length; ++index) {
@@ -53,6 +65,8 @@ Rectangle {
                 focusPolicy: Qt.StrongFocus
                 Accessible.role: Accessible.EditableText
                 Accessible.name: "Filter pages"
+                KeyNavigation.tab: closeControl
+                KeyNavigation.backtab: closeControl
                 onTextChanged: root.filterText = text.toLowerCase()
                 Keys.onReturnPressed: root.activateFirst()
                 Keys.onEnterPressed: root.activateFirst()
@@ -71,17 +85,22 @@ Rectangle {
                     height: visible ? 50 : 0
                     visible: !root.filterText || routeData.title.toLowerCase().includes(root.filterText) || routeData.routeId.toLowerCase().includes(root.filterText)
                     text: routeData.title
-                    focusPolicy: Qt.StrongFocus
+                    focusPolicy: Qt.NoFocus
                     Accessible.role: Accessible.Button
                     Accessible.name: "Jump to " + routeData.title
                     onClicked: root.navigateRequested(routeData.routeId)
                 }
             }
             Button {
+                id: closeControl
+
+                objectName: "jumpCloseControl"
                 text: "Close"
                 focusPolicy: Qt.StrongFocus
                 Accessible.role: Accessible.Button
                 Accessible.name: "Close jump palette"
+                KeyNavigation.tab: filter
+                KeyNavigation.backtab: filter
                 onClicked: root.closeRequested()
             }
         }

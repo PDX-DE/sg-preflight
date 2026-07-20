@@ -23,16 +23,23 @@ FocusScope {
     }
 
     function focusFirstCheck() {
-        if (checkRows.count < 1)
-            return false;
-        checkRows.itemAt(0).forceActiveFocus();
-        return true;
+        for (let index = 0; index < checkRows.count; ++index) {
+            const row = checkRows.itemAt(index);
+            if (row.routing) {
+                row.forceActiveFocus();
+                return true;
+            }
+        }
+        return false;
     }
 
     function focusNextCheck(index: int) {
-        if (index + 1 < checkRows.count) {
-            checkRows.itemAt(index + 1).forceActiveFocus();
-            return;
+        for (let next = index + 1; next < checkRows.count; ++next) {
+            const row = checkRows.itemAt(next);
+            if (row.routing) {
+                row.forceActiveFocus();
+                return;
+            }
         }
         root.focusContextRequested();
     }
@@ -102,12 +109,13 @@ FocusScope {
 
                 required property int index
                 readonly property var checkData: root.checks[checkRow.index]
+                readonly property bool routing: Boolean(checkData.routeId)
 
                 objectName: "qaCheckRow" + checkRow.index
                 Layout.fillWidth: true
                 Layout.minimumHeight: 48
-                activeFocusOnTab: true
-                Accessible.role: Accessible.Button
+                activeFocusOnTab: checkRow.routing
+                Accessible.role: checkRow.routing ? Accessible.Button : Accessible.StaticText
                 Accessible.name: checkRow.checkData.label + ", " + checkRow.checkData.state
                 Keys.onReturnPressed: {
                     if (checkRow.checkData.routeId)
@@ -168,7 +176,7 @@ FocusScope {
 
                 MouseArea {
                     anchors.fill: parent
-                    enabled: Boolean(checkRow.checkData.routeId)
+                    enabled: checkRow.routing
                     onClicked: {
                         checkRow.forceActiveFocus();
                         root.routeRequested(checkRow.checkData.routeId);

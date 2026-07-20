@@ -2249,7 +2249,7 @@ class TestCapabilityQmlBindings(unittest.TestCase):
         self.assertIn("controller.recordManualReview", review)
         self.assertIn('capabilityId === "manual_review.record"', review)
         self.assertIn("selectedStepIndex", review)
-        self.assertIn("root.selectedStepIndex = reviewDelegate.index", review)
+        self.assertIn("root.selectReviewStep(reviewDelegate.index)", review)
         self.assertNotIn("command", (page_frame + feedback + workflow + review).casefold())
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")

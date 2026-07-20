@@ -26,6 +26,19 @@ Item {
     }
     readonly property string currentStepId: root.page.visibleItems && root.selectedStepIndex >= 0 && root.selectedStepIndex < root.page.visibleItems.length ? root.page.visibleItems[root.selectedStepIndex].itemId : ""
 
+    function focusReviewStep(index: int) {
+        if (index < 0 || index >= reviewRows.count)
+            return;
+        reviewRows.itemAt(index).forceActiveFocus();
+    }
+
+    function selectReviewStep(index: int) {
+        if (root.canRecord)
+            root.selectedStepIndex = index;
+    }
+
+    objectName: "reviewRenderer"
+
     onPageChanged: root.selectedStepIndex = 0
 
     ScrollView {
@@ -73,19 +86,47 @@ Item {
                 }
             }
             Repeater {
+                id: reviewRows
+
+                objectName: "reviewRows"
                 model: root.page.visibleItems || []
                 delegate: Rectangle {
                     id: reviewDelegate
                     required property int index
                     required property var modelData
+
+                    objectName: "reviewStepControl" + reviewDelegate.index
                     Layout.fillWidth: true
                     implicitHeight: reviewItem.implicitHeight + 20
+                    activeFocusOnTab: root.canRecord
+                    Accessible.role: root.canRecord ? Accessible.Button : Accessible.StaticText
+                    Accessible.name: (reviewDelegate.index + 1) + ". " + (reviewDelegate.modelData.label || "Review step")
+                    Accessible.selected: root.selectedStepIndex === reviewDelegate.index
                     radius: 8
                     color: Theme.raised
-                    border.color: root.canRecord && root.selectedStepIndex === reviewDelegate.index ? Theme.accent : Theme.border
+                    border.color: root.canRecord && (root.selectedStepIndex === reviewDelegate.index || reviewDelegate.activeFocus) ? Theme.accent : Theme.border
+                    border.width: reviewDelegate.activeFocus ? 2 : 1
+                    KeyNavigation.tab: reviewDelegate.index + 1 < reviewRows.count ? reviewRows.itemAt(reviewDelegate.index + 1) : verdictControl
+                    KeyNavigation.backtab: reviewDelegate.index > 0 ? reviewRows.itemAt(reviewDelegate.index - 1) : null
+                    Keys.onReturnPressed: root.selectReviewStep(reviewDelegate.index)
+                    Keys.onEnterPressed: root.selectReviewStep(reviewDelegate.index)
+                    Keys.onSpacePressed: root.selectReviewStep(reviewDelegate.index)
+                    Keys.onDownPressed: root.focusReviewStep(Math.min(reviewRows.count - 1, reviewDelegate.index + 1))
+                    Keys.onUpPressed: root.focusReviewStep(Math.max(0, reviewDelegate.index - 1))
+                    Keys.onTabPressed: event => {
+                        if (reviewDelegate.index + 1 < reviewRows.count)
+                            root.focusReviewStep(reviewDelegate.index + 1);
+                        else
+                            verdictControl.forceActiveFocus();
+                        event.accepted = true;
+                    }
+
                     TapHandler {
                         enabled: root.canRecord
-                        onTapped: root.selectedStepIndex = reviewDelegate.index
+                        onTapped: {
+                            reviewDelegate.forceActiveFocus();
+                            root.selectReviewStep(reviewDelegate.index);
+                        }
                     }
                     ColumnLayout {
                         id: reviewItem
@@ -136,6 +177,11 @@ Item {
                     readOnly: !root.canRecord
                     wrapMode: TextEdit.Wrap
                     Accessible.name: root.canRecord ? "Manual review note" : "Manual review note is read-only"
+                    KeyNavigation.tab: recordReviewControl
+                    Keys.onTabPressed: event => {
+                        recordReviewControl.forceActiveFocus();
+                        event.accepted = true;
+                    }
                 }
                 Button {
                     id: recordReviewControl

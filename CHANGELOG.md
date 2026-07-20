@@ -56,6 +56,7 @@ outside this bundle.
 - Advanced `integration jira` previews load no credentials and make no network request. `--confirm-network` permits Jira verification and weekly-ticket GETs; a Jira write also needs its action-specific confirmation.
 
 ### Fixed
+- Qt Quick keyboard flow now follows the visible header and page actions, modal overlays contain and restore focus, routed QA checks skip status-only rows, and manual-review steps support ordered keyboard selection.
 - The Qt Quick Selected-Car Checks page now renders its evidence before slower local-action readiness probes finish, keeps that evidence visible when action discovery is unavailable, and reports startup first paint separately from page ready in performance evidence.
 - Operator actions now work when the workspace is the SVN trunk checkout itself, not only a wrapper folder holding a nested `repositories/trunk` mirror: mirror-path resolution recognizes a flat checkout, profile rules configs fall back to the packaged copy when the workspace carries none, and the exe bundle ships `config/`.
 - On a flat trunk checkout the post-run source-protection guard no longer treats the workspace's own `out/` evidence writes as a source mutation, so completed diagnostics stop being misreported as failed.

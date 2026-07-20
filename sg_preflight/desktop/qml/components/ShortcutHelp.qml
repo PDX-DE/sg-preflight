@@ -5,7 +5,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import SGFX 1.0
 
-Rectangle {
+FocusScope {
     id: root
 
     required property bool open
@@ -13,8 +13,20 @@ Rectangle {
     signal closeRequested
 
     visible: open
-    color: "#b0000000"
+    focus: open
     z: 105
+    Accessible.role: Accessible.Dialog
+    Accessible.name: "Keyboard shortcuts"
+
+    onOpenChanged: {
+        if (open)
+            Qt.callLater(closeControl.forceActiveFocus);
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: "#b0000000"
+    }
 
     Rectangle {
         anchors.centerIn: parent
@@ -60,10 +72,15 @@ Rectangle {
                 Layout.fillHeight: true
             }
             Button {
+                id: closeControl
+
+                objectName: "helpCloseControl"
                 text: "Close help"
                 focusPolicy: Qt.StrongFocus
                 Accessible.role: Accessible.Button
                 Accessible.name: text
+                KeyNavigation.tab: closeControl
+                KeyNavigation.backtab: closeControl
                 onClicked: root.closeRequested()
             }
         }

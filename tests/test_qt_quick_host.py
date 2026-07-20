@@ -583,6 +583,43 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertIn("focusFirstCheck", combined)
         self.assertIn("focusFirstAction", preview)
 
+    def test_keyboard_modal_and_reduced_motion_sources_are_explicit(self) -> None:
+        qml_root = ROOT / "sg_preflight" / "desktop" / "qml"
+        main = (qml_root / "Main.qml").read_text(encoding="utf-8")
+        jump = (qml_root / "components" / "JumpPalette.qml").read_text(encoding="utf-8")
+        help_source = (qml_root / "components" / "ShortcutHelp.qml").read_text(encoding="utf-8")
+        gate = (qml_root / "components" / "QaGateDetail.qml").read_text(encoding="utf-8")
+        review = (qml_root / "renderers" / "ReviewRenderer.qml").read_text(encoding="utf-8")
+        workflow = (qml_root / "renderers" / "WorkflowRenderer.qml").read_text(encoding="utf-8")
+
+        self.assertIn("function openOverlay(kind: string)", main)
+        self.assertIn("function closeOverlay()", main)
+        self.assertIn("overlayReturnFocus", main)
+        self.assertIn("restoreOverlayFocus", main)
+        self.assertIn("KeyNavigation.tab: presentationViewControl", main)
+        self.assertIn("KeyNavigation.backtab: profileSelector", main)
+        self.assertIn('objectName: "diagnosticsCloseControl"', main)
+        self.assertIn("Accessible.role: Accessible.Dialog", main)
+        for source, close_name in (
+            (jump, "jumpCloseControl"),
+            (help_source, "helpCloseControl"),
+        ):
+            with self.subTest(close_name=close_name):
+                self.assertIn("FocusScope", source)
+                self.assertIn("Accessible.role: Accessible.Dialog", source)
+                self.assertIn(f'objectName: "{close_name}"', source)
+                self.assertIn("KeyNavigation.tab", source)
+                self.assertIn("KeyNavigation.backtab", source)
+        self.assertIn("activeFocusOnTab: checkRow.routing", gate)
+        self.assertIn("Accessible.StaticText", gate)
+        self.assertIn('objectName: "reviewStepControl" + reviewDelegate.index', review)
+        self.assertIn("activeFocusOnTab: root.canRecord", review)
+        self.assertIn("Accessible.selected", review)
+        self.assertIn("Keys.onSpacePressed", review)
+        self.assertIn("KeyNavigation.tab: recordReviewControl", review)
+        self.assertIn("KeyNavigation.tab: recordHandoffControl", workflow)
+        self.assertNotIn("Animation.Infinite", main + jump + help_source + gate + review + workflow)
+
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_control_center_viewports_accessibility_fonts_and_focus_order(self) -> None:
         checks = [
@@ -631,26 +668,34 @@ class TestQtQuickShell(unittest.TestCase):
             result = self._run_headless(
                 f"""
                 import json
-                import time
                 from PySide6.QtCore import QMetaObject, QObject, Qt
                 from PySide6.QtTest import QTest
                 from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
                 runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G45", argv=["sgfx-task10-test"])
                 root = runtime.engine.rootObjects()[0]
-                deadline = time.monotonic() + 20
-                while runtime.controller.pageState not in {{"ready", "error"}} and time.monotonic() < deadline:
-                    runtime.application.processEvents()
-                    QTest.qWait(5)
-                home = root.findChild(QObject, "qaControlCenterHome")
-                home.setProperty("payload", {snapshot!r})
+                root.setProperty("shellInitializationStarted", True)
+                runtime.application.processEvents()
+                QTest.qWait(0)
+                runtime.application.processEvents()
+                controller = runtime.controller
+                controller._generation += 1
+                controller._set_current_identity(None)
+                controller._accept_shell_profile({{
+                    "schemaVersion": 1,
+                    "profileOptions": [{{"id": "G45", "label": "BMW G45"}}],
+                    "selectedProfile": {{"id": "G45", "label": "BMW G45"}},
+                }})
+                controller._set_route("home")
+                controller._set_ready_payload({snapshot!r})
                 runtime.application.processEvents()
 
                 QMetaObject.invokeMethod(root, "focusProductStart")
                 runtime.application.processEvents()
                 focus_order = []
-                for _index in range(9):
+                for _index in range(8):
                     focused = runtime.application.focusObject()
-                    focus_order.append(focused.objectName() if focused is not None else "")
+                    focused_name = focused.objectName() if focused is not None else ""
+                    focus_order.append(focused_name)
                     QTest.keyClick(root, Qt.Key_Tab)
                     runtime.application.processEvents()
 
@@ -693,15 +738,15 @@ class TestQtQuickShell(unittest.TestCase):
             payload["focusOrder"],
             [
                 "profileSelector",
+                "presentationViewControl",
+                "grafiksLaunchControl",
                 "qaPrimaryAction",
                 "qaPipelineSpine",
                 "qaCheckRow0",
-                "qaCheckRow1",
-                "qaCheckRow2",
-                "qaCheckRow3",
                 "qaInspectionAction",
                 "navigationJumpAction",
             ],
+            msg=payload,
         )
         for viewport in payload["viewports"]:
             self.assertEqual(viewport["gateCount"], 7)
@@ -713,6 +758,206 @@ class TestQtQuickShell(unittest.TestCase):
             self.assertLessEqual(viewport["entranceDuration"], 700)
             self.assertEqual(viewport["reducedTravel"], 8)
             self.assertEqual(viewport["reducedStagger"], 0)
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_modal_overlays_trap_and_restore_focus(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self._run_headless(
+                f"""
+                import json
+                from PySide6.QtCore import QMetaObject, Q_ARG, QObject, Qt
+                from PySide6.QtTest import QTest
+                from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
+
+                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-modal-focus-test"])
+                root = runtime.engine.rootObjects()[0]
+                root.setProperty("shellInitializationStarted", True)
+                runtime.application.processEvents()
+                QTest.qWait(0)
+                runtime.application.processEvents()
+                controller = runtime.controller
+                controller._generation += 1
+                controller._set_current_identity(None)
+                controller._accept_shell_profile({{
+                    "schemaVersion": 1,
+                    "profileOptions": [{{"id": "G65", "label": "BMW G65"}}],
+                    "selectedProfile": {{"id": "G65", "label": "BMW G65"}},
+                }})
+                runtime.application.processEvents()
+
+                def focused_name():
+                    focused = runtime.application.focusObject()
+                    return "" if focused is None else focused.objectName()
+
+                profile = root.findChild(QObject, "profileSelector")
+                presentation = root.findChild(QObject, "presentationViewControl")
+
+                profile.forceActiveFocus(Qt.TabFocusReason)
+                QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "F1"))
+                runtime.application.processEvents()
+                help_open = focused_name()
+                QTest.keyClick(root, Qt.Key_Tab)
+                runtime.application.processEvents()
+                help_tab = focused_name()
+                QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "Esc"))
+                runtime.application.processEvents()
+                help_restored = focused_name()
+
+                presentation.forceActiveFocus(Qt.TabFocusReason)
+                QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "/"))
+                runtime.application.processEvents()
+                jump_open = focused_name()
+                QTest.keyClick(root, Qt.Key_Backtab)
+                runtime.application.processEvents()
+                jump_backtab = focused_name()
+                QTest.keyClick(root, Qt.Key_Tab)
+                runtime.application.processEvents()
+                jump_tab = focused_name()
+                QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "Esc"))
+                runtime.application.processEvents()
+                jump_restored = focused_name()
+
+                presentation.forceActiveFocus(Qt.TabFocusReason)
+                QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "F12"))
+                runtime.application.processEvents()
+                diagnostics_open = focused_name()
+                QTest.keyClick(root, Qt.Key_Tab)
+                runtime.application.processEvents()
+                diagnostics_tab = focused_name()
+                QMetaObject.invokeMethod(root, "handleShortcut", Q_ARG(str, "Esc"))
+                runtime.application.processEvents()
+                diagnostics_restored = focused_name()
+
+                print(json.dumps({{
+                    "help": [help_open, help_tab, help_restored],
+                    "jump": [jump_open, jump_backtab, jump_tab, jump_restored],
+                    "diagnostics": [diagnostics_open, diagnostics_tab, diagnostics_restored],
+                    "openStates": [root.property("jumpOpen"), root.property("helpOpen"), root.property("diagnosticsOpen")],
+                }}))
+                runtime.close()
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = __import__("json").loads(result.stdout)
+        self.assertEqual(payload["help"], ["helpCloseControl", "helpCloseControl", "profileSelector"])
+        self.assertEqual(
+            payload["jump"],
+            ["jumpFilter", "jumpCloseControl", "jumpFilter", "presentationViewControl"],
+        )
+        self.assertEqual(
+            payload["diagnostics"],
+            ["diagnosticsCloseControl", "diagnosticsCloseControl", "presentationViewControl"],
+        )
+        self.assertEqual(payload["openStates"], [False, False, False])
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_review_steps_have_truthful_keyboard_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self._run_headless(
+                f"""
+                import json
+                import time
+                from PySide6.QtCore import QObject, Qt
+                from PySide6.QtTest import QTest
+                from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
+
+                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G65", argv=["sgfx-keyboard-order-test"])
+                root = runtime.engine.rootObjects()[0]
+                root.setProperty("shellInitializationStarted", True)
+                runtime.application.processEvents()
+                QTest.qWait(0)
+                runtime.application.processEvents()
+                controller = runtime.controller
+                controller._generation += 1
+                controller._set_current_identity(None)
+                controller._accept_shell_profile({{
+                    "schemaVersion": 1,
+                    "profileOptions": [{{"id": "G65", "label": "BMW G65"}}],
+                    "selectedProfile": {{"id": "G65", "label": "BMW G65"}},
+                }})
+                items = [
+                    {{
+                        "itemId": "review-1", "sectionId": "main", "label": "Review 1",
+                        "value": "Pending", "detail": "", "status": "pending", "expected": "",
+                        "actual": "", "diff": "", "source": "", "revision": ""
+                    }},
+                    {{
+                        "itemId": "review-2", "sectionId": "main", "label": "Review 2",
+                        "value": "Pending", "detail": "", "status": "pending", "expected": "",
+                        "actual": "", "diff": "", "source": "", "revision": ""
+                    }},
+                ]
+                page = {{
+                    "surfaceId": "manual-review", "rendererKind": "review", "title": "Review",
+                    "subtitle": "Review", "status": "pending", "dataAvailable": True,
+                    "primaryText": "Review evidence", "visibleItems": items, "visibleItemCount": 2,
+                    "sections": [], "artifacts": [], "provenance": {{}}, "ownershipNote": "Operator owned",
+                    "readOnly": True, "isApproval": False, "manualReviewRequired": True,
+                    "recordsOperatorVerdict": True,
+                    "actions": [{{
+                        "capabilityId": "manual_review.record", "label": "Record", "enabled": True,
+                        "actionId": "", "effectClass": "tool_output_only"
+                    }}]
+                }}
+                controller._cache[(controller.currentProfileId, "manual-review")] = page
+                accepted = controller.navigate("manual-review")
+                deadline = time.monotonic() + 20
+                while controller.pageState == "loading" and time.monotonic() < deadline:
+                    runtime.application.processEvents()
+                    QTest.qWait(5)
+                rows_deadline = time.monotonic() + 2
+                repeater = root.findChild(QObject, "reviewRows")
+                while (repeater is None or repeater.property("count") < 2) and time.monotonic() < rows_deadline:
+                    runtime.application.processEvents()
+                    QTest.qWait(5)
+                    repeater = root.findChild(QObject, "reviewRows")
+                renderer = root.findChild(QObject, "reviewRenderer")
+                first_row = None
+                pending_items = [root.contentItem()]
+                while pending_items:
+                    visual_item = pending_items.pop()
+                    pending_items.extend(visual_item.childItems())
+                    if visual_item.objectName() == "reviewStepControl0":
+                        first_row = visual_item
+                if first_row is not None:
+                    first_row.forceActiveFocus(Qt.TabFocusReason)
+                    runtime.application.processEvents()
+                first_focus = runtime.application.focusObject()
+                first_focus_name = first_focus.objectName() if first_focus is not None else ""
+                review_result = [
+                    accepted,
+                    first_focus_name == "reviewStepControl0",
+                    repeater is not None and repeater.property("count") == 2,
+                ]
+                if all(review_result) and renderer is not None:
+                    QTest.keyClick(root, Qt.Key_Tab)
+                    runtime.application.processEvents()
+                    tab_focus = runtime.application.focusObject()
+                    QTest.keyClick(root, Qt.Key_Space)
+                    runtime.application.processEvents()
+                    note = root.findChild(QObject, "reviewNoteControl")
+                    note.forceActiveFocus(Qt.TabFocusReason)
+                    QTest.keyClick(root, Qt.Key_Tab)
+                    runtime.application.processEvents()
+                    note_tab = runtime.application.focusObject()
+                    review_result.extend([
+                        "" if tab_focus is None else tab_focus.objectName(),
+                        renderer.property("selectedStepIndex"),
+                        "" if note_tab is None else note_tab.objectName(),
+                    ])
+                print(json.dumps({{"review": review_result}}))
+                runtime.close()
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = __import__("json").loads(result.stdout)
+        self.assertEqual(
+            payload["review"],
+            [True, True, True, "reviewStepControl1", 1, "recordManualReviewControl"],
+            msg=payload,
+        )
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_runtime_shell_has_exact_groups_pipeline_geometry_and_overlay_precedence(self) -> None:
@@ -1041,7 +1286,7 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertEqual(payload["before"]["profile"], "Selected car: G65")
         self.assertEqual(payload["profileFocusState"], {"enabled": True, "visible": True, "activeFocus": True})
         self.assertEqual(payload["tabOrigin"], "profileSelector", msg=payload)
-        self.assertEqual(payload["tabTarget"], "pageHomeControl")
+        self.assertEqual(payload["tabTarget"], "presentationViewControl")
         self.assertEqual(
             payload["presentation"],
             {
