@@ -145,8 +145,9 @@ What this means:
 - reports and run records can be attached to triage and delivery discussions
 - grouped findings help make ownership and next action more explicit
 - the operator UI makes non-CLI inspection possible for teammates
-- the operator UI now also exposes workflow-stage starts such as before commit, pre-delivery, post-integration, and Jira / QA Hero evidence updates
-- staged runs now show a `Stage Readiness` summary so the remaining manual and blocked steps stay visible next to the actual proof
+- the deprecated `/ui` browser flow exposes workflow-stage starts such as before commit, pre-delivery, post-integration, and Jira / QA Hero evidence updates
+- the current Qt Quick and Clean shells do not expose that start control; restoring it requires Technical Owner and Product/Project Coordination approval
+- records created through the deprecated flow can still show a `Stage Readiness` summary so remaining manual and blocked steps stay visible next to the actual proof
 
 This addresses a concrete pain from the retro: weak handoff and vague comments.
 

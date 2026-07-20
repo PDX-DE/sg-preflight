@@ -78,6 +78,9 @@ The Full QA Pass page binds its actions to the car selected in the profile dropd
 - errors surface in the same top slot instead of failing silently
 
 Switching the car in the dropdown switches the actions with it. The sections below describe the Clean dashboard views.
+Workflow-stage start references are an exception: that start control exists only in the deprecated `/ui`
+browser flow. It is not present in the current Qt Quick or Clean shell. Restoring it requires Technical
+Owner and Product/Project Coordination approval.
 
 ## Views
 
@@ -90,7 +93,7 @@ Shows:
   - anchors
   - carpaints
   - files, Lua, or references
-- a workflow-stage launcher for:
+- in the deprecated `/ui` browser flow only, a workflow-stage launcher for:
   - before commit
   - before internal review
   - pre-delivery
@@ -102,7 +105,7 @@ Shows:
   - pick a car directly when you already know the slice
 - a short first-time guide strip so teammates can understand the path in one read:
   - start with the change type
-  - use workflow stage only if process context matters more than file type
+  - in the deprecated `/ui` browser flow, use workflow stage only if process context matters more than file type
   - open files and proof after the run
 - canonical live profiles kept lower on the page as a secondary direct-entry path
 - current live signal for the real `G70`, `G65`, and `G45` slices when the latest matrix output is present
@@ -117,7 +120,7 @@ For a selected kind of change, shows:
 - one direct button on that recommended card to run the smallest useful check
 - other cars in a separate secondary section
 - a link to the fuller per-car page when you need more control
-- when launched from a workflow stage, keeps that stage attached to the next page and the eventual run record
+- in the deprecated `/ui` browser flow, a workflow-stage launch keeps that stage attached to the next page and eventual run record
 
 ### Run
 
@@ -125,14 +128,14 @@ For a selected profile, shows:
 
 - one primary action only for that car
 - guided pack-specific defaults when you arrive from the "what changed?" launcher
-- stage-aware defaults when you arrive from the workflow-stage launcher
+- in the deprecated `/ui` browser flow, stage-aware defaults when you arrive from its workflow-stage launcher
 - why this profile is worth running
 - current live signal for that slice, if available
 - a visible `Files this check will use` block near the primary action
 - the quick-check-only form behind a foldout
 - the other actions for the car behind a foldout
 - detected `Pivot_Master`, `Module_constants`, `CarPaint`, and anchor scene paths without making the operator hunt for them
-- hidden context fields so stage-aware quick checks keep the same job/stage metadata as the primary button
+- in the deprecated `/ui` browser flow, hidden context fields keep the same job/stage metadata as the primary button
 - a first-time guide strip plus inline help popovers so the page explains when to trust the primary button and when to open the secondary foldouts
 
 ### Result
@@ -278,7 +281,8 @@ Current expectation:
 
 - use the UI to catch deterministic issues and produce evidence before manual review
 - use the "what changed?" launcher first when you already know what kind of file or workflow step you touched
-- use the workflow-stage launcher when the phase matters more than the file type, especially before commit, pre-delivery, after integration, or when you only need Jira / QA Hero evidence
+- the workflow-stage launcher for before-commit, pre-delivery, post-integration, and Jira / QA Hero evidence starts is available only in deprecated `/ui`; the current Qt Quick and Clean shells have no equivalent start control
+- restoration of that start control remains gated on Technical Owner and Product/Project Coordination approval
 - use the one-click QA actions when you want repo checker, delivery documentation readiness, scene check, or the recommended per-car QA stack without touching terminals
 - use `Show SG checker coverage` on Home when someone asks what real SG checker/tooling layer is available on this machine
 - the repo-checker action now wraps the real SG checker stack more truthfully by running `check_all_styles.py` before `executeChecks.py`, so style/license plus Lua/shader/formatting coverage live under one operator action
