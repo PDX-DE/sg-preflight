@@ -2084,7 +2084,7 @@ class TestQtShellRoute(unittest.TestCase):
                 (2, "G65", "risk-score", "load"),
                 (3, "G65", "home", "shell_context"),
                 (4, "G70", "home", "shell_context"),
-                (5, "G70", "home", "shell_context"),
+                (5, "G70", "home", "refresh"),
                 (6, "G70", "home", "shell_context"),
             ],
         )

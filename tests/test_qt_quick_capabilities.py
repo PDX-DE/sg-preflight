@@ -381,7 +381,7 @@ class TestUiCapabilityInventory(unittest.TestCase):
 
             self.assertTrue(controller.runDiagnostic("sgfx_preflight__g45", ["G45"]))
             self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
-            self.assertEqual(coordinator.requests[-1][0].operation, "shell_context")
+            self.assertEqual(coordinator.requests[-1][0].operation, "effect_refresh")
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
             self.assertEqual(
@@ -744,6 +744,10 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             )
             self.assertTrue(controller.revealArtifact(first["artifactId"]))
             self.assertEqual(revealed, [workbook.resolve()])
+            self.assertEqual(controller.lastActionResult["capabilityId"], "artifact.reveal")
+            self.assertFalse(controller.revealArtifact(r"C:\private\artifact.txt"))
+            self.assertEqual(controller.capabilityState, "failed")
+            self.assertEqual(controller.lastActionResult, {})
 
             self.assertTrue(controller.navigate("delivery-checklist"))
             second = controller.currentPayload["artifacts"][0]
@@ -751,6 +755,117 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertFalse(controller.revealArtifact(first["artifactId"]))
             self.assertTrue(controller.revealArtifact(second["artifactId"]))
             controller.shutdown()
+
+    def test_profile_change_clears_completed_feedback_before_loading_the_new_car(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from tests.test_qt_quick_core import _FakeTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            workbook = workspace / "out" / "delivery" / "delivery.xlsx"
+            workbook.parent.mkdir(parents=True)
+            workbook.write_bytes(b"xlsx")
+            coordinator = _FakeTaskCoordinator()
+
+            def shell_loader(*, profile_id: str, **_inputs: object) -> dict[str, object]:
+                return {
+                    "status": "not_run",
+                    "summary": "No local activity recorded yet.",
+                    "profile_options": [
+                        {"id": "G65", "label": "G65"},
+                        {"id": "G70", "label": "G70"},
+                    ],
+                    "selected_profile_id": profile_id,
+                }
+
+            controller = DesktopController(
+                workspace=workspace,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                shell_loader=shell_loader,
+                page_loader=mock.Mock(return_value=self._delivery_page(workbook)),
+                artifact_revealer=lambda _path: None,
+            )
+            self.addCleanup(controller.shutdown)
+            self.assertTrue(controller.initialize())
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+            self.assertTrue(controller.navigate("delivery-checklist"))
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+            artifact = controller.currentPayload["artifacts"][0]
+            self.assertTrue(controller.revealArtifact(artifact["artifactId"]))
+            self.assertEqual(controller.capabilityState, "completed")
+
+            self.assertTrue(controller.selectProfile("G70"))
+
+            self.assertEqual(controller.capabilityState, "idle")
+            self.assertEqual(controller.activeActionLabel, "")
+            self.assertEqual(controller.lastActionResult, {})
+
+    def test_old_profile_effect_completion_cannot_repopulate_new_car_feedback(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from tests.test_qt_quick_core import _FakeTaskCoordinator, _pump_until
+
+        for should_fail in (False, True):
+            with self.subTest(should_fail=should_fail), tempfile.TemporaryDirectory() as temp_dir:
+                started = threading.Event()
+                release = threading.Event()
+
+                def record(**_inputs: object) -> dict[str, str]:
+                    started.set()
+                    release.wait(5)
+                    if should_fail:
+                        raise RuntimeError("record failed")
+                    return {"status": "recorded"}
+
+                def shell_loader(*, profile_id: str, **_inputs: object) -> dict[str, object]:
+                    return {
+                        "status": "not_run",
+                        "summary": "No local activity recorded yet.",
+                        "profile_options": [
+                            {"id": "G65", "label": "G65"},
+                            {"id": "G70", "label": "G70"},
+                        ],
+                        "selected_profile_id": profile_id,
+                    }
+
+                coordinator = _FakeTaskCoordinator()
+                controller = DesktopController(
+                    workspace=temp_dir,
+                    initial_profile_id="G65",
+                    task_coordinator=coordinator,
+                    shell_loader=shell_loader,
+                    page_loader=mock.Mock(return_value=self._manual_page()),
+                    manual_review_recorder=record,
+                )
+                self.assertTrue(controller.initialize())
+                identity, operation = coordinator.requests[-1]
+                coordinator.succeed(identity, operation())
+                self.assertTrue(controller.navigate("manual-review"))
+                identity, operation = coordinator.requests[-1]
+                coordinator.succeed(identity, operation())
+                self.assertTrue(controller.recordManualReview("review-1", "passed", "Reviewed locally"))
+                self.assertTrue(started.wait(2))
+                effect_generation = controller._effect_context.effect_generation
+
+                self.assertTrue(controller.selectProfile("G70"))
+                identity, operation = coordinator.requests[-1]
+                coordinator.succeed(identity, operation())
+                request_count = len(coordinator.requests)
+                controller._accept_effect_started(effect_generation)
+                self.assertEqual(controller.capabilityState, "idle")
+                self.assertFalse(controller.cancelDiagnostic())
+                release.set()
+                self.assertTrue(_pump_until(lambda: controller._effect_future is None))
+
+                self.assertEqual(controller.currentProfileId, "G70")
+                self.assertEqual(controller.capabilityState, "idle")
+                self.assertEqual(controller.capabilityError, "")
+                self.assertEqual(controller.activeActionLabel, "")
+                self.assertEqual(controller.lastActionResult, {})
+                self.assertEqual(len(coordinator.requests), request_count)
+                controller.shutdown()
 
     def test_manual_review_effect_validates_current_step_and_republishes(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import DesktopController
@@ -778,6 +893,18 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertFalse(controller.recordManualReview("stale-step", "passed", "Reviewed locally"))
             self.assertTrue(controller.recordManualReview("review-1", "passed", "Reviewed locally"))
             self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
+            self.assertEqual(controller.activeActionLabel, "Record operator verdict")
+            self.assertEqual(controller.lastActionStatus, "completed")
+            self.assertEqual(
+                controller.lastActionResult,
+                {
+                    "capabilityId": "manual_review.record",
+                    "label": "Record operator verdict",
+                    "status": "completed",
+                    "lines": [],
+                    "outputRoot": "",
+                },
+            )
             recorder.assert_called_once_with(
                 profile_id="G65",
                 workspace=Path(temp_dir).resolve(),
@@ -786,8 +913,66 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
                 note="Reviewed locally",
                 suggested_verdict="",
             )
-            self.assertEqual(coordinator.requests[-1][0].operation, "refresh")
+            self.assertEqual(coordinator.requests[-1][0].operation, "effect_refresh")
+            refresh_identity, refresh_operation = coordinator.requests[-1]
+            coordinator.succeed(refresh_identity, refresh_operation())
+            self.assertEqual(controller.capabilityState, "completed")
+            self.assertEqual(controller.lastActionStatus, "completed")
             controller.shutdown()
+
+    def test_explicit_refresh_publishes_shared_feedback_for_success_and_failure(self) -> None:
+        from sg_preflight.desktop.qt_quick_controller import DesktopController
+        from sg_preflight.desktop.task_pool import TaskFailure
+        from tests.test_qt_quick_core import _FakeTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = _FakeTaskCoordinator()
+            controller = DesktopController(
+                workspace=temp_dir,
+                initial_profile_id="G65",
+                task_coordinator=coordinator,
+                page_loader=mock.Mock(return_value=self._manual_page()),
+            )
+            self.addCleanup(controller.shutdown)
+            self.assertTrue(controller.navigate("manual-review"))
+            identity, operation = coordinator.requests[-1]
+            coordinator.succeed(identity, operation())
+
+            self.assertTrue(controller.refresh())
+            refresh_identity, refresh_operation = coordinator.requests[-1]
+            self.assertEqual(refresh_identity.operation, "refresh")
+            self.assertEqual(controller.capabilityState, "queued")
+            self.assertEqual(controller.activeActionLabel, "Refresh local evidence")
+            self.assertEqual(controller.lastActionResult, {})
+
+            coordinator.succeed(refresh_identity, refresh_operation())
+            self.assertEqual(controller.capabilityState, "completed")
+            self.assertEqual(
+                controller.lastActionResult,
+                {
+                    "capabilityId": "page.refresh",
+                    "label": "Refresh local evidence",
+                    "status": "completed",
+                    "lines": [],
+                    "outputRoot": "",
+                },
+            )
+
+            self.assertTrue(controller.refresh())
+            failed_identity, _failed_operation = coordinator.requests[-1]
+            self.assertEqual(controller.capabilityState, "queued")
+            self.assertEqual(controller.lastActionResult, {})
+            coordinator.fail(
+                failed_identity,
+                TaskFailure(
+                    "page_reader_failed",
+                    "The local page evidence could not be loaded.",
+                    "RuntimeError",
+                ),
+            )
+            self.assertEqual(controller.capabilityState, "failed")
+            self.assertEqual(controller.capabilityError, "The local evidence could not be refreshed.")
+            self.assertEqual(controller.lastActionResult, {})
 
     def test_running_diagnostic_is_single_worker_non_cancellable_and_output_bounded(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import DesktopController
@@ -850,10 +1035,10 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertFalse(controller.runDiagnostic(action.action_id, ["G65"]))
             release.set()
             self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
-            self.assertEqual(coordinator.requests[-1][0].operation, "refresh")
+            self.assertEqual(coordinator.requests[-1][0].operation, "effect_refresh")
             controller.shutdown()
 
-    def test_diagnostic_requires_an_explicit_output_path_contract(self) -> None:
+    def test_diagnostic_requires_an_output_contract_and_a_safe_public_label(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import DesktopController
         from sg_preflight.qa_operator_actions import OperatorAction
         from tests.test_qt_quick_core import _FakeTaskCoordinator, _pump_until
@@ -867,7 +1052,7 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             project.mkdir(parents=True)
             action = OperatorAction(
                 action_id="delivery_checklist__g65",
-                label="Delivery readiness",
+                label=r"C:\private\diagnostic.txt",
                 description="Local delivery readiness",
                 kind="delivery_checklist",
                 scope="profile",
@@ -891,7 +1076,14 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
 
+            diagnostic = next(
+                item
+                for item in controller.currentPayload["actions"]
+                if item["capabilityId"] == "diagnostic.run"
+            )
+            self.assertEqual(diagnostic["label"], "Local diagnostic")
             self.assertTrue(controller.runDiagnostic(action.action_id, ["G65"]))
+            self.assertEqual(controller.activeActionLabel, "Local diagnostic")
             self.assertTrue(
                 _pump_until(lambda: controller.capabilityState in {"completed", "failed"})
             )
@@ -1008,6 +1200,10 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
                 )
             )
             self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
+            self.assertEqual(controller.activeActionLabel, "Record operator handoff")
+            self.assertEqual(controller.lastActionStatus, "completed")
+            self.assertEqual(controller.lastActionResult["capabilityId"], "operator_handoff.record")
+            self.assertNotIn("Stopped after review", repr(controller.lastActionResult))
             recorder.assert_called_once_with(
                 workspace=Path(temp_dir).resolve(),
                 profile_id="G65",
@@ -1092,7 +1288,14 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             record = SimpleNamespace(
                 status="completed",
                 label="Delivery readiness",
-                summary={"lines": ["4/4 assets found", "BMW repo available"]},
+                summary={
+                    "lines": [
+                        "4/4 assets found",
+                        "BMW repo available",
+                        r"C:\private\evidence.txt",
+                        "x" * 300,
+                    ]
+                },
                 paths={
                     "output_root": str(output / "run-1"),
                     "run_record": str(output / "run-1" / "action.json"),
@@ -1124,7 +1327,15 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertEqual(result["label"], "Delivery readiness")
             self.assertEqual(result["status"], "completed")
             self.assertEqual(result["lines"], ["4/4 assets found", "BMW repo available"])
-            self.assertTrue(str(result["outputRoot"]).startswith(str(output)))
+            self.assertEqual(result["outputRoot"], "out/operator-ui/actions/run-1")
+            self.assertNotIn(str(workspace), repr(result))
+            refresh_identity, refresh_operation = coordinator.requests[-1]
+            self.assertEqual(refresh_identity.operation, "effect_refresh")
+            self.assertFalse(controller.refresh())
+            self.assertEqual(controller.lastActionResult, result)
+            coordinator.succeed(refresh_identity, refresh_operation())
+            self.assertEqual(controller.capabilityState, "completed")
+            self.assertEqual(controller.lastActionResult, result)
 
     def test_evidence_writes_inside_a_flat_workspace_read_root_do_not_fail_the_run(self) -> None:
         from types import SimpleNamespace
@@ -1440,9 +1651,11 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             accepted = controller.runDiagnostic(action.action_id, ["G65"])
             output_exists = output.exists()
             release.set()
-            self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
+            self.assertTrue(_pump_until(lambda: controller._effect_future is None))
             self.assertFalse(accepted)
             self.assertFalse(output_exists)
+            self.assertEqual(controller.capabilityState, "idle")
+            self.assertEqual(controller.capabilityError, "Another capability is already running.")
 
     def test_cached_diagnostic_page_is_reaudited_before_actions_are_republished(self) -> None:
         from sg_preflight.desktop.qt_quick_controller import DesktopController
@@ -1610,11 +1823,19 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             identity, operation = coordinator.requests[-1]
             coordinator.succeed(identity, operation())
             artifact = controller.currentPayload["artifacts"][0]
+            self.assertEqual(controller.capabilityState, "idle")
+            self.assertEqual(controller.capabilityError, "")
+            self.assertEqual(controller.activeActionLabel, "")
+            self.assertEqual(controller.lastActionResult, {})
 
             release.set()
-            self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
+            self.assertTrue(_pump_until(lambda: controller._effect_future is None))
+            self.assertEqual(controller.capabilityState, "idle")
+            self.assertEqual(controller.lastActionResult, {})
             self.assertEqual(controller.currentPayload["artifacts"], [artifact])
             self.assertTrue(controller.revealArtifact(artifact["artifactId"]))
+            self.assertEqual(controller.activeActionLabel, "Reveal local artifact")
+            self.assertEqual(controller.lastActionStatus, "completed")
             self.assertEqual(revealed, [workbook.resolve()])
             controller.shutdown()
 
@@ -1649,15 +1870,50 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertTrue(controller.navigate("manual-review"))
             current_payload = dict(controller.currentPayload)
             request_count = len(coordinator.requests)
+            self.assertEqual(controller.capabilityState, "idle")
+            self.assertEqual(controller.activeActionLabel, "")
+            self.assertEqual(controller.lastActionResult, {})
             release.set()
-            self.assertTrue(_pump_until(lambda: controller.capabilityState == "completed"))
+            self.assertTrue(_pump_until(lambda: controller._effect_future is None))
 
             self.assertEqual(len(coordinator.requests), request_count)
+            self.assertEqual(controller.capabilityState, "idle")
+            self.assertEqual(controller.lastActionResult, {})
             self.assertEqual(controller.pageState, "ready")
             self.assertEqual(controller.currentPayload, current_payload)
 
 
 class TestCapabilityQmlBindings(unittest.TestCase):
+    def test_shared_feedback_and_primary_action_contract_is_centralized(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "sg_preflight" / "desktop" / "qml"
+        feedback_path = root / "components" / "ActionFeedback.qml"
+        self.assertTrue(feedback_path.is_file())
+        feedback = feedback_path.read_text(encoding="utf-8")
+        home = (root / "components" / "HomePage.qml").read_text(encoding="utf-8")
+        page_frame = (root / "components" / "PageFrame.qml").read_text(encoding="utf-8")
+        workflow = (root / "renderers" / "WorkflowRenderer.qml").read_text(encoding="utf-8")
+        review = (root / "renderers" / "ReviewRenderer.qml").read_text(encoding="utf-8")
+
+        for object_name in (
+            "pageActionFeedback",
+            "pageActionBusyBanner",
+            "actionResultPanel",
+            "pageActionErrorCard",
+        ):
+            self.assertIn(f'objectName: "{object_name}"', feedback)
+        self.assertIn("ActionFeedback", page_frame)
+        self.assertIn("ActionFeedback", home)
+        self.assertIn('objectName: "pageRefreshControl"', page_frame)
+        self.assertIn("property bool primaryAction: false", page_frame)
+        self.assertIn("primaryAction", page_frame + workflow + review)
+        self.assertNotIn('objectName: "runningActionText"', workflow)
+        self.assertNotIn('objectName: "actionResultPanel"', workflow)
+        self.assertNotIn('objectName: "capabilityLifecycleText"', workflow + review)
+        self.assertIn('Accessible.name: "Handoff stopping point"', workflow)
+        self.assertIn('Accessible.name: "Handoff next local step"', workflow)
+        self.assertIn('Accessible.name: "Handoff operator note"', workflow)
+        self.assertIn('capabilityId === "operator_handoff.record"', workflow)
+
     def test_artifact_visibility_is_always_a_boolean(self) -> None:
         qml = (
             Path(__file__).resolve().parents[1]
@@ -1678,6 +1934,7 @@ class TestCapabilityQmlBindings(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "sg_preflight" / "desktop" / "qml"
         main = (root / "Main.qml").read_text(encoding="utf-8")
         page_frame = (root / "components" / "PageFrame.qml").read_text(encoding="utf-8")
+        feedback = (root / "components" / "ActionFeedback.qml").read_text(encoding="utf-8")
         workflow = (root / "renderers" / "WorkflowRenderer.qml").read_text(encoding="utf-8")
         review = (root / "renderers" / "ReviewRenderer.qml").read_text(encoding="utf-8")
 
@@ -1686,21 +1943,21 @@ class TestCapabilityQmlBindings(unittest.TestCase):
         self.assertIn('objectName: "artifactRevealControl"', page_frame)
         self.assertIn("controller.runDiagnostic", workflow)
         self.assertIn('objectName: "diagnosticActionControl"', workflow)
-        self.assertIn("controller.cancelDiagnostic", workflow)
-        self.assertIn('objectName: "cancelDiagnosticControl"', workflow)
-        self.assertIn("controller.capabilityState", workflow)
-        self.assertIn("controller.capabilityError", workflow)
-        self.assertIn("controller.activeActionLabel", workflow)
-        self.assertIn("controller.lastActionResult", workflow)
-        self.assertIn('objectName: "runningActionText"', workflow)
-        self.assertIn('objectName: "actionResultPanel"', workflow)
+        self.assertIn("controller.cancelDiagnostic", feedback)
+        self.assertIn('objectName: "cancelDiagnosticControl"', feedback)
+        self.assertIn("controller.capabilityState", feedback)
+        self.assertIn("controller.capabilityError", feedback)
+        self.assertIn("controller.activeActionLabel", feedback)
+        self.assertIn("controller.lastActionResult", feedback)
+        self.assertIn('objectName: "runningActionText"', feedback)
+        self.assertIn('objectName: "actionResultPanel"', feedback)
         self.assertIn("controller.recordOperatorHandoff", workflow)
         self.assertIn('capabilityId === "operator_handoff.record"', workflow)
         self.assertIn("controller.recordManualReview", review)
         self.assertIn('capabilityId === "manual_review.record"', review)
         self.assertIn("selectedStepIndex", review)
         self.assertIn("root.selectedStepIndex = reviewDelegate.index", review)
-        self.assertNotIn("command", (page_frame + workflow + review).casefold())
+        self.assertNotIn("command", (page_frame + feedback + workflow + review).casefold())
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_qml_enables_only_declared_current_capabilities(self) -> None:
@@ -1776,6 +2033,7 @@ class TestCapabilityQmlBindings(unittest.TestCase):
                         "verdictEnabled": bool(verdict.property("enabled")),
                         "noteReadOnly": bool(note.property("readOnly")),
                         "recordEnabled": bool(record.property("enabled")),
+                        "recordPrimary": bool(record.property("primaryAction")),
                     }}))
                     review.deleteLater()
                     """
@@ -1792,8 +2050,245 @@ class TestCapabilityQmlBindings(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
         self.assertEqual(
             __import__("json").loads(result.stdout),
-            {"verdictEnabled": True, "noteReadOnly": False, "recordEnabled": True},
+            {
+                "verdictEnabled": True,
+                "noteReadOnly": False,
+                "recordEnabled": True,
+                "recordPrimary": True,
+            },
         )
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_page_frame_primary_feedback_and_handoff_completion_are_runtime_exact(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        qml_root = root / "sg_preflight" / "desktop" / "qml"
+        environment = os.environ.copy()
+        environment["QT_QPA_PLATFORM"] = "offscreen"
+        environment["QSG_RHI_BACKEND"] = "software"
+        environment["QT_QUICK_CONTROLS_STYLE"] = "Basic"
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                textwrap.dedent(
+                    f"""
+                    import json
+                    from PySide6.QtCore import QObject, Property, Signal, Slot, QUrl
+                    from PySide6.QtGui import QAccessible, QGuiApplication
+                    from PySide6.QtQml import QQmlComponent, QQmlEngine
+
+                    class Controller(QObject):
+                        capabilityStateChanged = Signal()
+                        capabilityErrorChanged = Signal()
+                        actionFeedbackChanged = Signal()
+                        diagnosticCanCancelChanged = Signal()
+
+                        def __init__(self):
+                            super().__init__()
+                            self._state = "idle"
+                            self._error = ""
+                            self._result = {{}}
+
+                        @Property(str, constant=True)
+                        def currentProfileId(self):
+                            return "G65"
+
+                        @Property(str, notify=capabilityStateChanged)
+                        def capabilityState(self):
+                            return self._state
+
+                        @Property(str, notify=capabilityErrorChanged)
+                        def capabilityError(self):
+                            return self._error
+
+                        @Property(str, notify=actionFeedbackChanged)
+                        def activeActionLabel(self):
+                            return "Local evidence action"
+
+                        @Property(str, notify=actionFeedbackChanged)
+                        def lastActionStatus(self):
+                            return str(self._result.get("status", ""))
+
+                        @Property("QVariantMap", notify=actionFeedbackChanged)
+                        def lastActionResult(self):
+                            return dict(self._result)
+
+                        @Property(bool, notify=diagnosticCanCancelChanged)
+                        def diagnosticCanCancel(self):
+                            return False
+
+                        def publish(self, state, error, result):
+                            self._state = state
+                            self._error = error
+                            self._result = dict(result)
+                            self.capabilityStateChanged.emit()
+                            self.capabilityErrorChanged.emit()
+                            self.actionFeedbackChanged.emit()
+
+                        @Slot(result=bool)
+                        def refresh(self):
+                            return True
+
+                        @Slot(str, result=bool)
+                        def revealArtifact(self, _artifact_id):
+                            return True
+
+                        @Slot(str, list, result=bool)
+                        def runDiagnostic(self, _action_id, _profiles):
+                            return True
+
+                        @Slot(str, str, str, result=bool)
+                        def recordOperatorHandoff(self, _stopping, _next, _note):
+                            return True
+
+                        @Slot(result=bool)
+                        def cancelDiagnostic(self):
+                            return True
+
+                    app = QGuiApplication(["sgfx-slice2-runtime-test"])
+                    engine = QQmlEngine()
+                    engine.addImportPath({str(qml_root)!r})
+                    controller = Controller()
+                    component = QQmlComponent(engine, QUrl.fromLocalFile({str(qml_root / 'components' / 'PageFrame.qml')!r}))
+
+                    item = {{
+                        "itemId": "item-1", "sectionId": "main", "label": "Evidence",
+                        "value": "Available", "detail": "", "status": "available",
+                        "expected": "", "actual": "", "diff": "", "source": "", "revision": ""
+                    }}
+
+                    def page(surface_id, renderer_kind, actions, artifacts=None):
+                        return {{
+                            "surfaceId": surface_id, "rendererKind": renderer_kind,
+                            "title": surface_id, "subtitle": "Local evidence", "status": "available",
+                            "dataAvailable": True, "primaryText": "Local evidence", "visibleItems": [item],
+                            "visibleItemCount": 1, "sections": [], "actions": actions,
+                            "artifacts": list(artifacts or []), "provenance": {{}}, "ownershipNote": "",
+                            "readOnly": True, "isApproval": False, "manualReviewRequired": False,
+                            "recordsOperatorVerdict": False
+                        }}
+
+                    def create_frame(payload):
+                        frame = component.createWithInitialProperties({{
+                            "pageState": "ready", "page": payload, "errorCode": "",
+                            "errorSummary": "", "reducedMotion": False, "desktopController": controller
+                        }})
+                        if frame is None:
+                            raise SystemExit(" | ".join(error.toString() for error in component.errors()))
+                        frame.setProperty("width", 900)
+                        frame.setProperty("height", 620)
+                        app.processEvents()
+                        return frame
+
+                    diagnostics = [
+                        {{"capabilityId": "diagnostic.run", "label": "Run selected-car checks", "enabled": True, "actionId": "diag-1", "effectClass": "tool_output_only"}},
+                        {{"capabilityId": "diagnostic.run", "label": "Run delivery readiness", "enabled": True, "actionId": "diag-2", "effectClass": "tool_output_only"}},
+                    ]
+                    full = create_frame(page("full-qa-pass", "workflow", diagnostics))
+                    handoff = create_frame(page("operator-handoff", "workflow", [
+                        {{"capabilityId": "operator_handoff.record", "label": "Record handoff", "enabled": True, "actionId": "", "effectClass": "local_write"}}
+                    ]))
+                    evidence = create_frame(page("delivery-checklist", "evidence", [
+                        {{"capabilityId": "page.refresh", "label": "Refresh", "enabled": True, "actionId": "", "effectClass": "read_only"}},
+                        {{"capabilityId": "artifact.reveal", "label": "Reveal", "enabled": True, "actionId": "", "effectClass": "local_reveal"}},
+                    ], [{{"artifactId": "opaque-handle", "label": "Local workbook", "type": "xlsx"}}]))
+
+                    full_controls = [full.findChild(QObject, "pageRefreshControl"), *full.findChildren(QObject, "diagnosticActionControl")]
+                    secondary_diagnostics = full.findChild(QObject, "secondaryDiagnosticRepeater")
+                    handoff_controls = [handoff.findChild(QObject, "pageRefreshControl"), handoff.findChild(QObject, "recordOperatorHandoffControl")]
+                    evidence_controls = [evidence.findChild(QObject, "pageRefreshControl"), evidence.findChild(QObject, "artifactRevealControl")]
+
+                    stopping = handoff.findChild(QObject, "handoffStoppingPointControl")
+                    next_step = handoff.findChild(QObject, "handoffNextStepControl")
+                    note = handoff.findChild(QObject, "handoffNoteControl")
+                    record = handoff.findChild(QObject, "recordOperatorHandoffControl")
+                    stopping.setProperty("text", "Stopped after review")
+                    next_step.setProperty("text", "Continue evidence review")
+                    note.setProperty("text", "Local note")
+                    app.processEvents()
+                    before_record_enabled = bool(record.property("enabled"))
+                    controller.publish("completed", "", {{"capabilityId": "diagnostic.run", "label": "Diagnostic", "status": "completed", "lines": [], "outputRoot": ""}})
+                    app.processEvents()
+                    after_unrelated = [stopping.property("text"), next_step.property("text"), note.property("text")]
+                    controller.publish("completed", "", {{"capabilityId": "operator_handoff.record", "label": "Record operator handoff", "status": "completed", "lines": [], "outputRoot": ""}})
+                    app.processEvents()
+                    after_handoff = [stopping.property("text"), next_step.property("text"), note.property("text"), bool(record.property("enabled"))]
+
+                    def accessible_name(control):
+                        interface = QAccessible.queryAccessibleInterface(control)
+                        return interface.text(QAccessible.Text.Name) if interface is not None else ""
+
+                    busy = evidence.findChild(QObject, "pageActionBusyBanner")
+                    result_card = evidence.findChild(QObject, "actionResultPanel")
+                    error_card = evidence.findChild(QObject, "pageActionErrorCard")
+                    controller.publish("queued", "", {{}})
+                    app.processEvents()
+                    busy_state = [bool(busy.property("visible")), bool(result_card.property("visible")), bool(error_card.property("visible"))]
+                    handoff_fields_enabled_while_busy = [bool(stopping.property("enabled")), bool(next_step.property("enabled")), bool(note.property("enabled"))]
+                    controller.publish("completed", "", {{"capabilityId": "artifact.reveal", "label": "Reveal local artifact", "status": "completed", "lines": [], "outputRoot": "out/evidence"}})
+                    app.processEvents()
+                    result_state = [bool(busy.property("visible")), bool(result_card.property("visible")), bool(error_card.property("visible"))]
+                    completed_tone = result_card.property("semanticColor")
+                    completed_tone_name = completed_tone.name() if hasattr(completed_tone, "name") else ""
+                    controller.publish("cancelled", "", {{}})
+                    app.processEvents()
+                    cancelled_state = [bool(busy.property("visible")), bool(result_card.property("visible")), bool(error_card.property("visible"))]
+                    cancelled_tone = result_card.property("semanticColor")
+                    cancelled_tone_name = cancelled_tone.name() if hasattr(cancelled_tone, "name") else ""
+                    controller.publish("failed", "Local action failed.", {{}})
+                    app.processEvents()
+                    error_state = [bool(busy.property("visible")), bool(result_card.property("visible")), bool(error_card.property("visible"))]
+
+                    def primary_count(controls):
+                        return sum(1 for control in controls if control is not None and bool(control.property("visible")) and bool(control.property("primaryAction")))
+
+                    print(json.dumps({{
+                        "primaryCounts": [primary_count(full_controls), primary_count(handoff_controls), primary_count(evidence_controls)],
+                        "fullPrimaryFlags": [bool(control.property("primaryAction")) for control in full_controls],
+                        "secondaryDiagnosticCount": int(secondary_diagnostics.property("count")),
+                        "evidencePrimaryFlags": [bool(control.property("primaryAction")) for control in evidence_controls if control is not None],
+                        "beforeRecordEnabled": before_record_enabled,
+                        "afterUnrelated": after_unrelated,
+                        "afterHandoff": after_handoff,
+                        "accessibleNames": [accessible_name(stopping), accessible_name(next_step), accessible_name(note)],
+                        "handoffFieldsEnabledWhileBusy": handoff_fields_enabled_while_busy,
+                        "feedbackStates": [busy_state, result_state, cancelled_state, error_state],
+                        "feedbackTones": [completed_tone_name, cancelled_tone_name],
+                    }}))
+                    for frame in (full, handoff, evidence):
+                        frame.deleteLater()
+                    """
+                ),
+            ],
+            cwd=root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=45,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = __import__("json").loads(result.stdout)
+        self.assertEqual(payload["primaryCounts"], [1, 1, 1])
+        self.assertEqual(payload["fullPrimaryFlags"], [False, True])
+        self.assertEqual(payload["secondaryDiagnosticCount"], 1)
+        self.assertEqual(payload["evidencePrimaryFlags"], [True])
+        self.assertTrue(payload["beforeRecordEnabled"])
+        self.assertEqual(payload["afterUnrelated"], ["Stopped after review", "Continue evidence review", "Local note"])
+        self.assertEqual(payload["afterHandoff"], ["", "", "", False])
+        self.assertEqual(
+            payload["accessibleNames"],
+            ["Handoff stopping point", "Handoff next local step", "Handoff operator note"],
+        )
+        self.assertEqual(payload["handoffFieldsEnabledWhileBusy"], [False, False, False])
+        self.assertEqual(
+            payload["feedbackStates"],
+            [[True, False, False], [False, True, False], [False, True, False], [False, False, True]],
+        )
+        self.assertNotEqual(payload["feedbackTones"][0], payload["feedbackTones"][1])
 
 
 if __name__ == "__main__":

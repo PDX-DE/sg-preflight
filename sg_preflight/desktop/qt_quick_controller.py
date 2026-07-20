@@ -41,6 +41,8 @@ _QT_READ_ONLY_EMPTY_STATES = {
     "batch-full-qa-pass": ("results", "No batch QA evidence is available for this session."),
     "cross-car-comparison": ("comparison_rows", "No car-comparison evidence is available for this session."),
 }
+_REFRESH_LABEL = "Refresh local evidence"
+_REFRESH_FAILURE = "The local evidence could not be refreshed."
 
 
 class PageLoader(Protocol):
@@ -176,6 +178,13 @@ def _ui_error(code: str) -> UiError:
         definition = UI_ERROR_DEFINITIONS[code]
     title, safe_detail, retryable, recovery_action = definition
     return UiError(code, title, safe_detail, retryable, recovery_action)
+
+
+def _safe_diagnostic_label(value: object) -> str:
+    try:
+        return validate_effect_text(value, required=True, max_length=160)
+    except ValueError:
+        return "Local diagnostic"
 
 
 def _with_qt_read_only_empty_state(page_id: str, page: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -594,6 +603,7 @@ class DesktopController(QObject):
             self._set_error(_ui_error("action_rejected"))
             return False
         if candidate == HOME_ROUTE_ID:
+            self._clear_action_feedback()
             self._set_route(HOME_ROUTE_ID)
             self._preview_launch_allowed = False
             return self._schedule_shell_context()
@@ -602,6 +612,7 @@ class DesktopController(QObject):
             return False
         if candidate == self._current_route_id and self._page_state == "loading":
             return False
+        self._clear_action_feedback()
         self._set_route(candidate)
         self._preempt_preview()
         cached = self._cache.get(self._cache_key())
@@ -640,6 +651,7 @@ class DesktopController(QObject):
             if self._current_route_id == HOME_ROUTE_ID and self._page_state == "ready":
                 self._request_preview()
             return True
+        self._clear_action_feedback()
         self._current_profile_id = canonical
         self.currentProfileChanged.emit()
         self._preview_launch_allowed = True
@@ -649,17 +661,31 @@ class DesktopController(QObject):
 
     @Slot(result=bool)
     def refresh(self) -> bool:
+        return self._refresh(preserve_feedback=False)
+
+    def _refresh(self, *, preserve_feedback: bool) -> bool:
         if self._closed:
             return False
+        if self._current_identity is not None and (
+            preserve_feedback or self._current_identity.operation == "effect_refresh"
+        ):
+            return False
+        operation = "effect_refresh" if preserve_feedback else "refresh"
+        if not preserve_feedback:
+            self._clear_action_feedback()
+            self._set_action_feedback(_REFRESH_LABEL, {})
+            self._set_capability_state("queued")
         if self._current_route_id == HOME_ROUTE_ID:
             self._preview_launch_allowed = False
-            return self._schedule_shell_context()
-        if self._current_identity is not None:
-            return False
-        self._cache.pop(self._cache_key(), None)
-        self._artifact_candidate_cache.pop(self._cache_key(), None)
-        self._diagnostic_action_cache.pop(self._cache_key(), None)
-        return self._schedule_page("refresh")
+            accepted = self._schedule_shell_context(operation)
+        else:
+            self._cache.pop(self._cache_key(), None)
+            self._artifact_candidate_cache.pop(self._cache_key(), None)
+            self._diagnostic_action_cache.pop(self._cache_key(), None)
+            accepted = self._schedule_page(operation)
+        if not accepted and not preserve_feedback:
+            self._publish_refresh_failure()
+        return accepted
 
     @Slot(result=bool)
     def initialize(self) -> bool:
@@ -722,18 +748,27 @@ class DesktopController(QObject):
 
     @Slot(result=bool)
     def launchGrafiks(self) -> bool:
+        if self._closed:
+            return False
+        self._set_action_feedback("Open 3D inspection", {})
+        self._set_capability_error("")
         host = self._grafiks_host
-        if self._closed or host is None or not self._current_profile_id:
+        if host is None or not self._current_profile_id:
+            self._set_capability_state("failed")
             self._set_capability_error("3D inspection is unavailable in this installation.")
             return False
+        self._set_capability_state("queued")
         try:
             accepted = host.launch(self._current_profile_id)
         except RuntimeError:
             accepted = False
         if not accepted:
+            self._set_capability_state("failed")
             self._set_capability_error("3D inspection could not be started.")
             return False
         self._set_capability_error("")
+        self._set_capability_state("completed")
+        self._publish_completed_action_result("grafiks.launch")
         return True
 
     @Slot(str, "QVariantList", result=bool)
@@ -818,20 +853,24 @@ class DesktopController(QObject):
         ):
             self._set_capability_error("This diagnostic is unavailable.")
             return False
-        self._active_action_label = str(getattr(action, "label", "") or clean_action_id)
-        self._last_action_result = {}
-        self.actionFeedbackChanged.emit()
+        action_label = _safe_diagnostic_label(getattr(action, "label", ""))
         self._preempt_preview()
         return self._submit_effect(
             "diagnostic.run",
             lambda: self._execute_diagnostic(action, read_only_roots, output_root),
+            label=action_label,
         )
 
     @Slot(result=bool)
     def cancelDiagnostic(self) -> bool:
         future = self._effect_future
         context = self._effect_context
-        if future is None or context is None or context.capability_id != "diagnostic.run":
+        if (
+            future is None
+            or context is None
+            or context.capability_id != "diagnostic.run"
+            or not self._effect_context_is_current(context)
+        ):
             return False
         if not future.cancel():
             self._set_diagnostic_can_cancel(False)
@@ -867,9 +906,11 @@ class DesktopController(QObject):
     def revealArtifact(self, artifact_id: str) -> bool:
         if self._closed or self._current_route_id == HOME_ROUTE_ID:
             return False
+        self._set_action_feedback("Reveal local artifact", {})
         try:
             clean_id = validate_effect_text(artifact_id, required=True, max_length=128)
         except ValueError:
+            self._set_capability_state("failed")
             self._set_capability_error("The artifact handle is invalid.")
             return False
         identity = ArtifactIdentity(
@@ -883,6 +924,7 @@ class DesktopController(QObject):
             return False
         self._set_capability_error("")
         self._set_capability_state("completed")
+        self._publish_completed_action_result("artifact.reveal")
         return True
 
     @Slot(str, str, str, result=bool)
@@ -919,6 +961,7 @@ class DesktopController(QObject):
                 note=clean_note,
                 suggested_verdict="",
             ),
+            label="Record operator verdict",
         )
 
     @Slot(str, str, str, result=bool)
@@ -948,6 +991,7 @@ class DesktopController(QObject):
                 next_step=clean_next,
                 note=clean_note,
             ),
+            label="Record operator handoff",
         )
 
     @Slot()
@@ -967,9 +1011,7 @@ class DesktopController(QObject):
         self._effect_executor.shutdown()
         self._effect_future = None
         self._effect_context = None
-        self._set_diagnostic_can_cancel(False)
-        self._set_capability_state("idle")
-        self._set_capability_error("")
+        self._clear_action_feedback()
         self._clear_artifacts()
         self._set_current_identity(None)
         self._set_payload({})
@@ -1066,10 +1108,17 @@ class DesktopController(QObject):
 
         return record_operator_handoff(**kwargs)
 
-    def _submit_effect(self, capability_id: str, operation: Callable[[], object]) -> bool:
+    def _submit_effect(
+        self,
+        capability_id: str,
+        operation: Callable[[], object],
+        *,
+        label: str,
+    ) -> bool:
         if self._closed or (self._effect_future is not None and not self._effect_future.done()):
             self._set_capability_error("Another capability is already running.")
             return False
+        self._set_action_feedback(label, {})
         self._effect_generation += 1
         generation = self._effect_generation
         context = _EffectContext(
@@ -1116,6 +1165,8 @@ class DesktopController(QObject):
         context = self._effect_context
         if context is None or generation != context.effect_generation:
             return
+        if not self._effect_context_is_current(context):
+            return
         self._set_capability_state("running")
         self._set_diagnostic_can_cancel(False)
 
@@ -1124,36 +1175,39 @@ class DesktopController(QObject):
         context = self._effect_context
         if context is None or generation != context.effect_generation:
             return
+        is_current_page = self._effect_context_is_current(context)
         self._effect_future = None
         self._effect_context = None
         self._set_diagnostic_can_cancel(False)
-        if succeeded:
-            self._set_capability_error("")
-            self._set_capability_state("completed")
-            if context.capability_id == "diagnostic.run":
-                self._publish_diagnostic_result(result)
-        elif result == "cancelled":
-            self._set_capability_error("")
-            self._set_capability_state("cancelled")
-        else:
-            self._set_capability_state("failed")
-            self._set_capability_error("The capability did not complete successfully.")
+        if is_current_page:
+            if succeeded:
+                self._set_capability_error("")
+                self._set_capability_state("completed")
+                if context.capability_id == "diagnostic.run":
+                    self._publish_diagnostic_result(result)
+                else:
+                    self._publish_completed_action_result(context.capability_id)
+            elif result == "cancelled":
+                self._set_capability_error("")
+                self._set_capability_state("cancelled")
+            else:
+                self._set_capability_state("failed")
+                self._set_capability_error("The capability did not complete successfully.")
         if self._preview_pending_after_effect:
             # The render slot is free again; start the preview that was queued behind the effect
             # before any page reschedule can consume its launch permission.
             self._preview_pending_after_effect = False
             self._request_preview()
-        is_current_page = (
+        if succeeded and is_current_page and self._current_identity is None:
+            self._clear_artifacts()
+            self._refresh(preserve_feedback=True)
+
+    def _effect_context_is_current(self, context: _EffectContext) -> bool:
+        return (
             context.page_generation == self._generation
             and context.profile_id == self._current_profile_id
             and context.page_id == self._current_route_id
         )
-        if succeeded and is_current_page and self._current_identity is None:
-            self._clear_artifacts()
-            if self._current_route_id == HOME_ROUTE_ID:
-                self._schedule_shell_context()
-            else:
-                self.refresh()
 
     def _cache_key(self) -> tuple[str, str]:
         return self._current_profile_id, self._current_route_id
@@ -1186,10 +1240,10 @@ class DesktopController(QObject):
         self._set_payload({})
         self._set_error(EMPTY_UI_ERROR)
 
-    def _schedule_shell_context(self) -> bool:
+    def _schedule_shell_context(self, operation: str = "shell_context") -> bool:
         if self._closed:
             return False
-        identity = self._next_identity("shell_context")
+        identity = self._next_identity(operation)
         self._prepare_schedule(identity)
         shell_loader = self._shell_loader
         workspace = self._workspace
@@ -1313,7 +1367,7 @@ class DesktopController(QObject):
                             accepted_actions.append(
                                 capability_descriptor(
                                     "diagnostic.run",
-                                    label=str(getattr(action, "label", "Run diagnostic")),
+                                    label=_safe_diagnostic_label(getattr(action, "label", "")),
                                     action_id=str(getattr(action, "action_id", "")),
                                 )
                             )
@@ -1351,6 +1405,8 @@ class DesktopController(QObject):
             self._set_payload({})
             self._set_state("error")
             self._set_error(_ui_error(payload.code))
+            if identity.operation == "refresh":
+                self._publish_refresh_failure()
             return
         artifact_candidates: tuple[ArtifactCandidate, ...] = ()
         diagnostic_actions: tuple[dict[str, object], ...] = ()
@@ -1362,13 +1418,17 @@ class DesktopController(QObject):
             self._set_payload({})
             self._set_state("error")
             self._set_error(_ui_error("page_payload_invalid"))
+            if identity.operation == "refresh":
+                self._publish_refresh_failure()
             return
         normalized = dict(payload)
-        if identity.operation == "shell_context":
+        if identity.page_id == HOME_ROUTE_ID:
             if not self._accept_shell_profile(normalized):
                 self._set_payload({})
                 self._set_state("error")
                 self._set_error(_ui_error("page_payload_invalid"))
+                if identity.operation == "refresh":
+                    self._publish_refresh_failure()
                 return
         else:
             self._cache[(identity.profile_id, identity.page_id)] = dict(normalized)
@@ -1379,6 +1439,10 @@ class DesktopController(QObject):
             artifact_candidates=artifact_candidates,
             diagnostic_actions=diagnostic_actions,
         )
+        if identity.operation == "refresh":
+            self._set_capability_error("")
+            self._set_capability_state("completed")
+            self._publish_completed_action_result("page.refresh")
 
     def _accept_shell_profile(self, payload: Mapping[str, Any]) -> bool:
         if payload.get("schemaVersion") == 1:
@@ -1434,6 +1498,8 @@ class DesktopController(QObject):
         self._clear_artifacts()
         self._set_state("error")
         self._set_error(_ui_error(code))
+        if identity.operation == "refresh":
+            self._publish_refresh_failure()
 
     def _set_ready_payload(
         self,
@@ -1530,16 +1596,64 @@ class DesktopController(QObject):
         summary = getattr(record, "summary", None)
         lines: list[str] = []
         if isinstance(summary, Mapping):
-            lines = [str(item) for item in summary.get("lines", []) if str(item).strip()][:12]
+            for item in summary.get("lines", []):
+                try:
+                    line = validate_effect_text(item, required=True, max_length=240, evidence_only=True)
+                except ValueError:
+                    continue
+                lines.append(line)
+                if len(lines) == 12:
+                    break
+        try:
+            status = validate_effect_text(
+                getattr(record, "status", "") or "completed",
+                required=True,
+                max_length=40,
+            )
+        except ValueError:
+            status = "completed"
         paths = getattr(record, "paths", None)
         output_root = str(paths.get("output_root", "")) if isinstance(paths, Mapping) else ""
-        self._last_action_result = {
+        output_label = ""
+        if output_root:
+            try:
+                output_label = Path(output_root).resolve().relative_to(self._workspace).as_posix()
+            except ValueError:
+                output_label = ""
+        self._set_action_feedback(self._active_action_label, {
+            "capabilityId": "diagnostic.run",
             "label": self._active_action_label,
-            "status": str(getattr(record, "status", "") or "completed"),
+            "status": status,
             "lines": lines,
-            "outputRoot": output_root,
-        }
+            "outputRoot": output_label,
+        })
+
+    def _publish_completed_action_result(self, capability_id: str) -> None:
+        self._set_action_feedback(self._active_action_label, {
+            "capabilityId": capability_id,
+            "label": self._active_action_label,
+            "status": "completed",
+            "lines": [],
+            "outputRoot": "",
+        })
+
+    def _publish_refresh_failure(self) -> None:
+        self._set_capability_state("failed")
+        self._set_capability_error(_REFRESH_FAILURE)
+
+    def _set_action_feedback(self, label: str, result: Mapping[str, Any]) -> None:
+        normalized_result = dict(result)
+        if label == self._active_action_label and normalized_result == self._last_action_result:
+            return
+        self._active_action_label = label
+        self._last_action_result = normalized_result
         self.actionFeedbackChanged.emit()
+
+    def _clear_action_feedback(self) -> None:
+        self._set_diagnostic_can_cancel(False)
+        self._set_capability_state("idle")
+        self._set_capability_error("")
+        self._set_action_feedback("", {})
 
     def _set_capability_state(self, state: str) -> None:
         if state == self._capability_state:

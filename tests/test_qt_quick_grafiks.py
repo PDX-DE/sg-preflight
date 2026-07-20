@@ -380,7 +380,25 @@ class TestGrafiksControllerAndHostBindings(unittest.TestCase):
         host.launch.assert_not_called()
         self.assertTrue(controller.invokeCapability("grafiks.launch", {"profile_id": "g65"}))
         self.assertEqual(controller.capabilityError, "")
+        self.assertEqual(controller.capabilityState, "completed")
+        self.assertEqual(controller.activeActionLabel, "Open 3D inspection")
+        self.assertEqual(
+            controller.lastActionResult,
+            {
+                "capabilityId": "grafiks.launch",
+                "label": "Open 3D inspection",
+                "status": "completed",
+                "lines": [],
+                "outputRoot": "",
+            },
+        )
         host.launch.assert_called_once_with("G65")
+
+        host.launch.return_value = False
+        self.assertFalse(controller.invokeCapability("grafiks.launch", {"profile_id": "G65"}))
+        self.assertEqual(controller.capabilityState, "failed")
+        self.assertEqual(controller.activeActionLabel, "Open 3D inspection")
+        self.assertEqual(controller.lastActionResult, {})
         controller.shutdown()
 
     def test_controller_exposes_only_the_typed_launch_slot(self) -> None:

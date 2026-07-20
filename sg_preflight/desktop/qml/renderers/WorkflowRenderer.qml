@@ -14,14 +14,27 @@ Item {
     readonly property int renderedItemCount: root.page.visibleItems ? root.page.visibleItems.length : 0
     readonly property string renderedStatus: root.page.status || ""
     readonly property bool capabilityBusy: root.controller !== null && (root.controller.capabilityState === "queued" || root.controller.capabilityState === "running")
-    readonly property bool canRecordHandoff: {
+    readonly property var diagnosticActions: {
+        const accepted = [];
+        const actions = root.page.actions || [];
+        for (let index = 0; index < actions.length; ++index) {
+            if (actions[index].capabilityId === "diagnostic.run" && actions[index].enabled)
+                accepted.push(actions[index]);
+        }
+        return accepted;
+    }
+    readonly property bool hasRecordHandoff: {
         const actions = root.page.actions || [];
         for (let index = 0; index < actions.length; ++index) {
             if (actions[index].capabilityId === "operator_handoff.record" && actions[index].enabled)
-                return root.controller !== null && !root.capabilityBusy;
+                return true;
         }
         return false;
     }
+    readonly property bool canRecordHandoff: {
+        return root.hasRecordHandoff && root.controller !== null && !root.capabilityBusy;
+    }
+    readonly property Item primaryActionItem: root.hasRecordHandoff ? recordHandoffControl : (primaryDiagnosticControl.visible ? primaryDiagnosticControl : null)
 
     ScrollView {
         id: scroll
@@ -59,92 +72,6 @@ Item {
                     color: Theme.muted
                     visible: text.length > 0
                     wrapMode: Text.WordWrap
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                visible: root.capabilityBusy
-                spacing: 10
-
-                BusyIndicator {
-                    running: root.capabilityBusy
-                    Layout.preferredWidth: 28
-                    Layout.preferredHeight: 28
-                }
-                Label {
-                    objectName: "runningActionText"
-                    Layout.fillWidth: true
-                    text: root.controller !== null && root.controller.activeActionLabel.length > 0 ? "Running: " + root.controller.activeActionLabel + "…" : "Running…"
-                    color: Theme.text
-                    font.weight: Font.DemiBold
-                    wrapMode: Text.WordWrap
-                }
-                Button {
-                    objectName: "cancelDiagnosticControl"
-                    text: "Cancel queued diagnostic"
-                    visible: root.controller !== null && root.controller.diagnosticCanCancel
-                    enabled: visible
-                    Accessible.name: text
-                    onClicked: root.controller.cancelDiagnostic()
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                visible: root.controller !== null && (root.controller.capabilityState !== "idle" || root.controller.capabilityError.length > 0) && !root.capabilityBusy && !actionResultPanel.visible
-                spacing: 10
-
-                Label {
-                    objectName: "capabilityLifecycleText"
-                    Layout.fillWidth: true
-                    text: root.controller.capabilityError || ("Action state: " + root.controller.capabilityState)
-                    color: root.controller.capabilityError.length > 0 ? Theme.statusBad : Theme.muted
-                    wrapMode: Text.WordWrap
-                }
-            }
-            Rectangle {
-                id: actionResultPanel
-                objectName: "actionResultPanel"
-                Layout.fillWidth: true
-                visible: root.controller !== null && !root.capabilityBusy && root.controller.lastActionStatus.length > 0
-                implicitHeight: actionResultColumn.implicitHeight + 20
-                radius: 8
-                color: Theme.raised
-                border.color: root.controller !== null && root.controller.lastActionStatus === "completed" ? Theme.statusGood : Theme.statusBad
-
-                ColumnLayout {
-                    id: actionResultColumn
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.margins: 10
-                    spacing: 4
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.controller !== null && root.controller.lastActionResult.label ? root.controller.lastActionResult.label + " — " + root.controller.lastActionResult.status : ""
-                        color: root.controller !== null && root.controller.lastActionStatus === "completed" ? Theme.statusGood : Theme.statusBad
-                        font.weight: Font.DemiBold
-                        wrapMode: Text.WordWrap
-                    }
-                    Repeater {
-                        model: root.controller !== null && root.controller.lastActionResult.lines ? root.controller.lastActionResult.lines : []
-                        delegate: Label {
-                            id: resultLineDelegate
-                            required property var modelData
-                            Layout.fillWidth: true
-                            text: "• " + resultLineDelegate.modelData
-                            color: Theme.text
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.controller !== null && root.controller.lastActionResult.outputRoot ? "Evidence: " + root.controller.lastActionResult.outputRoot : ""
-                        visible: text.length > 0
-                        color: Theme.muted
-                        font.pixelSize: 11
-                        wrapMode: Text.WrapAnywhere
-                    }
                 }
             }
             Repeater {
@@ -205,15 +132,32 @@ Item {
                     }
                 }
             }
+            Button {
+                id: primaryDiagnosticControl
+
+                objectName: "diagnosticActionControl"
+                property bool primaryAction: visible
+                Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                visible: root.diagnosticActions.length > 0
+                enabled: visible && root.controller !== null && !root.capabilityBusy
+                highlighted: primaryAction
+                text: visible ? root.diagnosticActions[0].label || "Run audited diagnostic" : ""
+                font.weight: Font.DemiBold
+                Accessible.name: text
+                onClicked: root.controller.runDiagnostic(root.diagnosticActions[0].actionId, [root.controller.currentProfileId])
+            }
             Repeater {
-                model: root.page.actions || []
+                objectName: "secondaryDiagnosticRepeater"
+                model: root.diagnosticActions.slice(1)
                 delegate: Button {
                     id: diagnosticDelegate
                     required property var modelData
                     objectName: "diagnosticActionControl"
+                    property bool primaryAction: false
                     Layout.fillWidth: true
-                    visible: diagnosticDelegate.modelData.capabilityId === "diagnostic.run"
-                    enabled: visible && diagnosticDelegate.modelData.enabled && root.controller !== null && !root.capabilityBusy
+                    enabled: root.controller !== null && !root.capabilityBusy
+                    highlighted: false
                     text: diagnosticDelegate.modelData.label || "Run audited diagnostic"
                     Accessible.name: text
                     onClicked: root.controller.runDiagnostic(diagnosticDelegate.modelData.actionId, [root.controller.currentProfileId])
@@ -221,7 +165,7 @@ Item {
             }
             ColumnLayout {
                 Layout.fillWidth: true
-                visible: root.canRecordHandoff
+                visible: root.hasRecordHandoff
                 spacing: 8
 
                 TextField {
@@ -230,6 +174,8 @@ Item {
                     Layout.fillWidth: true
                     placeholderText: "Stopping point"
                     maximumLength: 1000
+                    enabled: root.canRecordHandoff
+                    Accessible.name: "Handoff stopping point"
                 }
                 TextField {
                     id: nextStepControl
@@ -237,6 +183,8 @@ Item {
                     Layout.fillWidth: true
                     placeholderText: "Next local step"
                     maximumLength: 1000
+                    enabled: root.canRecordHandoff
+                    Accessible.name: "Handoff next local step"
                 }
                 TextArea {
                     id: handoffNoteControl
@@ -245,14 +193,34 @@ Item {
                     Layout.preferredHeight: 72
                     placeholderText: "Bounded operator note"
                     wrapMode: TextEdit.Wrap
+                    enabled: root.canRecordHandoff
+                    Accessible.name: "Handoff operator note"
                 }
                 Button {
+                    id: recordHandoffControl
+
                     objectName: "recordOperatorHandoffControl"
+                    property bool primaryAction: true
                     text: "Record handoff"
                     enabled: root.canRecordHandoff && stoppingPointControl.text.trim().length > 0
+                    highlighted: primaryAction
+                    Layout.preferredHeight: 44
+                    font.weight: Font.DemiBold
                     Accessible.name: text
                     onClicked: root.controller.recordOperatorHandoff(stoppingPointControl.text, nextStepControl.text, handoffNoteControl.text)
                 }
+            }
+        }
+    }
+
+    Connections {
+        target: root.controller
+
+        function onActionFeedbackChanged() {
+            if (root.controller.lastActionStatus === "completed" && root.controller.lastActionResult.capabilityId === "operator_handoff.record") {
+                stoppingPointControl.clear();
+                nextStepControl.clear();
+                handoffNoteControl.clear();
             }
         }
     }

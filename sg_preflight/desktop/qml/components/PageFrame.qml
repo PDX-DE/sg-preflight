@@ -17,6 +17,20 @@ Item {
     property var desktopController: null
     readonly property string rendererKind: root.page && root.page.rendererKind ? root.page.rendererKind : ""
     readonly property Item homeActionItem: homeControl
+    readonly property bool capabilityBusy: root.desktopController !== null && (root.desktopController.capabilityState === "queued" || root.desktopController.capabilityState === "running")
+    readonly property bool rendererOwnsPrimaryAction: {
+        if (!root.page)
+            return false;
+        if (root.page.surfaceId === "manual-review" || root.page.surfaceId === "operator-handoff")
+            return true;
+        const actions = root.page.actions || [];
+        for (let index = 0; index < actions.length; ++index) {
+            if (actions[index].capabilityId === "diagnostic.run" && actions[index].enabled)
+                return true;
+        }
+        return false;
+    }
+    readonly property Item primaryActionItem: root.rendererOwnsPrimaryAction && rendererLoader.item ? rendererLoader.item.primaryActionItem : refreshControl
 
     RowLayout {
         id: orientationBar
@@ -112,15 +126,26 @@ Item {
         }
     }
 
+    ActionFeedback {
+        id: actionFeedback
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: orientationBar.bottom
+        anchors.topMargin: 10
+        controller: root.desktopController
+        reducedMotion: root.reducedMotion
+    }
+
     Loader {
         id: rendererLoader
         objectName: "readyRenderer"
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: orientationBar.bottom
+        anchors.top: actionFeedback.visible ? actionFeedback.bottom : orientationBar.bottom
         anchors.bottom: parent.bottom
         anchors.topMargin: 10
-        anchors.bottomMargin: artifactBar.visible ? 52 : 0
+        anchors.bottomMargin: pageActionBar.visible ? 58 : 0
         active: root.pageState === "ready"
         sourceComponent: {
             switch (root.rendererKind) {
@@ -143,18 +168,32 @@ Item {
     }
 
     RowLayout {
-        id: artifactBar
+        id: pageActionBar
+
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        visible: Boolean(root.pageState === "ready" && root.page && root.page.artifacts && root.page.artifacts.length > 0)
+        visible: Boolean(root.pageState === "ready" && root.page)
         spacing: 8
 
         Label {
             Layout.fillWidth: true
-            text: "Local evidence artifacts"
+            text: root.page && root.page.artifacts && root.page.artifacts.length > 0 ? "Local page actions and evidence" : "Local page actions"
             color: Theme.muted
             font.pixelSize: 11
+        }
+        Button {
+            id: refreshControl
+
+            objectName: "pageRefreshControl"
+            property bool primaryAction: !root.rendererOwnsPrimaryAction
+            text: "Refresh local evidence"
+            highlighted: primaryAction
+            enabled: root.desktopController !== null && !root.capabilityBusy
+            Layout.preferredHeight: primaryAction ? 44 : 36
+            font.weight: primaryAction ? Font.DemiBold : Font.Normal
+            Accessible.name: text
+            onClicked: root.desktopController.refresh()
         }
         Repeater {
             model: root.page.artifacts || []
@@ -162,8 +201,10 @@ Item {
                 id: artifactDelegate
                 required property var modelData
                 objectName: "artifactRevealControl"
+                property bool primaryAction: false
                 text: artifactDelegate.modelData.label || "Reveal artifact"
-                enabled: root.desktopController !== null
+                highlighted: false
+                enabled: root.desktopController !== null && !root.capabilityBusy
                 Accessible.name: text
                 onClicked: root.desktopController.revealArtifact(artifactDelegate.modelData.artifactId)
             }

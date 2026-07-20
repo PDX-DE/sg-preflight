@@ -302,7 +302,7 @@ ApplicationWindow {
                             payload: window.desktopController.currentPayload
                             pageState: window.desktopController.pageState
                             capabilityState: window.desktopController.capabilityState
-                            capabilityError: window.desktopController.capabilityError
+                            desktopController: window.desktopController
                             previewState: window.desktopController.previewState
                             previewToken: window.desktopController.previewToken
                             previewFrameCount: window.desktopController.previewFrameCount

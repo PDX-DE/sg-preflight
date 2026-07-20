@@ -15,6 +15,7 @@ Item {
     readonly property string renderedStatus: root.page.status || ""
     property int selectedStepIndex: 0
     readonly property bool capabilityBusy: root.controller !== null && (root.controller.capabilityState === "queued" || root.controller.capabilityState === "running")
+    readonly property Item primaryActionItem: recordReviewControl
     readonly property bool canRecord: {
         const actions = root.page.actions || [];
         for (let index = 0; index < actions.length; ++index) {
@@ -137,20 +138,18 @@ Item {
                     Accessible.name: root.canRecord ? "Manual review note" : "Manual review note is read-only"
                 }
                 Button {
+                    id: recordReviewControl
+
                     objectName: "recordManualReviewControl"
+                    property bool primaryAction: true
                     text: "Record verdict"
                     enabled: root.canRecord && root.currentStepId.length > 0
+                    highlighted: primaryAction
+                    Layout.preferredHeight: 44
+                    font.weight: Font.DemiBold
                     Accessible.name: text
                     onClicked: root.controller.recordManualReview(root.currentStepId, verdictControl.currentText, noteControl.text)
                 }
-            }
-            Label {
-                objectName: "capabilityLifecycleText"
-                Layout.fillWidth: true
-                visible: root.controller !== null && (root.controller.capabilityState !== "idle" || root.controller.capabilityError.length > 0)
-                text: root.controller.capabilityError || ("Action state: " + root.controller.capabilityState)
-                color: root.controller.capabilityError.length > 0 ? Theme.statusBad : Theme.muted
-                wrapMode: Text.WordWrap
             }
         }
     }

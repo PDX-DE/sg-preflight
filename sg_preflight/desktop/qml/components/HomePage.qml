@@ -11,7 +11,7 @@ FocusScope {
     required property var payload
     required property string pageState
     required property string capabilityState
-    required property string capabilityError
+    required property var desktopController
     required property string previewState
     required property string previewToken
     required property int previewFrameCount
@@ -231,14 +231,10 @@ FocusScope {
                 }
             }
 
-            Label {
+            ActionFeedback {
                 Layout.fillWidth: true
-                visible: root.capabilityError.length > 0
-                text: root.capabilityError
-                color: Theme.statusBad
-                font.family: Theme.operationalFont
-                font.pixelSize: 11
-                elide: Text.ElideRight
+                controller: root.desktopController
+                reducedMotion: root.reducedMotion
             }
 
             SequentialAnimation {

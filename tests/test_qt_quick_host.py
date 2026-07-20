@@ -940,7 +940,7 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertEqual(payload["invoked"], [True, True, True])
         self.assertTrue(payload["f2Focused"])
         self.assertTrue(payload["generationAdvanced"])
-        self.assertEqual(payload["refreshTuple"], ["G65", "home", "shell_context"])
+        self.assertEqual(payload["refreshTuple"], ["G65", "home", "refresh"])
         self.assertTrue(payload["jumpClosed"])
         self.assertEqual((payload["route"], payload["activeRoute"]), ("risk-score", "risk-score"))
         self.assertEqual(payload["before"], payload["afterHome"])
@@ -1206,7 +1206,7 @@ Item {
             __import__("json").loads(result.stdout),
             {
                 "accepted": True,
-                "started": ["loading", "shell_context"],
+                "started": ["loading", "refresh"],
                 "completed": ["ready", ""],
             },
         )
