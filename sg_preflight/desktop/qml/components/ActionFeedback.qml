@@ -159,6 +159,40 @@ Item {
                         wrapMode: Text.WordWrap
                     }
                 }
+                Repeater {
+                    model: root.controller !== null && root.controller.lastActionResult.findings ? root.controller.lastActionResult.findings : []
+                    delegate: ColumnLayout {
+                        id: findingDelegate
+
+                        required property var modelData
+                        objectName: "actionFindingRow"
+                        Layout.fillWidth: true
+                        spacing: 1
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: findingDelegate.modelData.message
+                            color: findingDelegate.modelData.severity === "error" ? Theme.statusBad : findingDelegate.modelData.severity === "warning" ? Theme.statusWarn : Theme.muted
+                            font.weight: Font.DemiBold
+                            wrapMode: Text.WordWrap
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: {
+                                const parts = [];
+                                if (findingDelegate.modelData.location)
+                                    parts.push(findingDelegate.modelData.location);
+                                if (findingDelegate.modelData.expected !== "" && findingDelegate.modelData.actual !== "")
+                                    parts.push("expected " + findingDelegate.modelData.expected + ", exported " + findingDelegate.modelData.actual);
+                                return parts.join("  ·  ");
+                            }
+                            visible: text.length > 0
+                            color: Theme.muted
+                            font.pixelSize: 11
+                            wrapMode: Text.WrapAnywhere
+                        }
+                    }
+                }
                 Label {
                     Layout.fillWidth: true
                     text: root.controller !== null && root.controller.lastActionResult.outputRoot ? "Evidence: " + root.controller.lastActionResult.outputRoot : ""

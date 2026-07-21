@@ -1558,7 +1558,27 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
                         "BMW repo available",
                         r"C:\private\evidence.txt",
                         "x" * 300,
-                    ]
+                    ],
+                    "findings": [
+                        {
+                            "severity": "error",
+                            "pack": "constants",
+                            "code": "constants.out_of_tolerance",
+                            "message": "Value differs by 0.500, which is above tolerance 0.001",
+                            "location": "rim_diameter_in.Basis.front",
+                            "expected": "20.0",
+                            "actual": "19.5",
+                        },
+                        {
+                            "severity": "warning",
+                            "pack": "project_sanity",
+                            "code": "project_sanity.unused_lua",
+                            "message": "Lua file is present but not referenced",
+                            "location": r"C:\private\scripts\Logic_Spare.lua",
+                            "expected": "",
+                            "actual": "",
+                        },
+                    ],
                 },
                 paths={
                     "output_root": str(output / "run-1"),
@@ -1593,7 +1613,17 @@ class TestCapabilityControllerIntegration(unittest.TestCase):
             self.assertEqual(result["status"], "completed")
             self.assertEqual(result["lines"], ["4/4 assets found", "BMW repo available"])
             self.assertEqual(result["outputRoot"], "out/operator-ui/actions/run-1")
+            findings = result["findings"]
+            self.assertEqual(len(findings), 2)
+            self.assertEqual(findings[0]["severity"], "error")
+            self.assertEqual(findings[0]["message"], "Value differs by 0.500, which is above tolerance 0.001")
+            self.assertEqual(findings[0]["expected"], "20.0")
+            self.assertEqual(findings[0]["actual"], "19.5")
+            self.assertEqual(findings[0]["location"], "rim_diameter_in.Basis.front")
+            self.assertEqual(findings[1]["severity"], "warning")
+            self.assertEqual(findings[1]["location"], "")
             self.assertNotIn(str(workspace), repr(result))
+            self.assertNotIn("C:\\\\private", repr(result))
             refresh_identity, refresh_operation = coordinator.requests[-1]
             self.assertEqual(refresh_identity.operation, "effect_refresh")
             self.assertFalse(controller.refresh())

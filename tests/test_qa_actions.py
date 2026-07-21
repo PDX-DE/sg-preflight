@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -144,6 +145,81 @@ class TestQaActions(unittest.TestCase):
                 if str(value).strip()
             )
         )
+
+    def test_sgfx_preflight_summary_carries_top_findings_from_the_report(self) -> None:
+        from sg_preflight.services import RunRequest, build_run_record
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            profile = create_temp_g65_profile(root)
+            actions = {item.action_id: item for item in list_operator_actions(root, profiles=[profile])}
+            action = actions["sgfx_preflight__g65"]
+            parent = build_action_record(action, root)
+            child_output = Path(parent.paths["output_root"]) / "preflight"
+            child = build_run_record(
+                profile,
+                RunRequest(
+                    profile_id=profile.profile_id,
+                    packs=["anchors", "constants", "carpaints", "project_sanity"],
+                    fail_on="never",
+                    output_root=child_output,
+                    run_id=f"{parent.run_id}-preflight",
+                ),
+                root,
+            )
+            child.status = "completed"
+            child.exit_code = 0
+            child.summary = {"errors": 2, "warnings": 1, "info": 0}
+            report_payload = {
+                "results": [
+                    {
+                        "pack": "project_sanity",
+                        "findings": [
+                            {
+                                "severity": "warning",
+                                "pack": "project_sanity",
+                                "code": "project_sanity.unused_lua",
+                                "message": "Lua file is present but not referenced",
+                                "location": "scripts/Logic_Spare.lua",
+                            },
+                        ],
+                    },
+                    {
+                        "pack": "constants",
+                        "findings": [
+                            {
+                                "severity": "error",
+                                "pack": "constants",
+                                "code": "constants.out_of_tolerance",
+                                "message": "Value differs by 0.500, which is above tolerance 0.001",
+                                "location": "rim_diameter_in.Basis.front",
+                                "details": {"expected": 20.0, "exported": 19.5},
+                            },
+                            {
+                                "severity": "error",
+                                "pack": "carpaints",
+                                "code": "carpaints.duplicate_unique_value",
+                                "message": "Duplicate value for unique key 'id': '0C7W'",
+                                "location": "carpaint[153]",
+                            },
+                        ],
+                    },
+                ]
+            }
+            write_text(Path(child.paths["json_report"]), json.dumps(report_payload))
+            for key in ("html_report", "markdown_report", "run_record"):
+                write_text(Path(child.paths[key]), f"fixture {key}\n")
+            with mock.patch("sg_preflight.qa_actions.execute_profile_run", return_value=child):
+                record = execute_operator_action(action, root, record=parent)
+
+        findings = record.summary["findings"]
+        self.assertEqual([item["severity"] for item in findings], ["error", "error", "warning"])
+        self.assertEqual(findings[0]["message"], "Value differs by 0.500, which is above tolerance 0.001")
+        self.assertEqual(findings[0]["expected"], "20.0")
+        self.assertEqual(findings[0]["actual"], "19.5")
+        self.assertEqual(findings[0]["location"], "rim_diameter_in.Basis.front")
+        self.assertIn("0C7W", findings[1]["message"])
+        self.assertEqual(findings[2]["severity"], "warning")
 
     def _two_stage_fixture(self, root: Path):
         from sg_preflight.services import RunRequest, build_run_record

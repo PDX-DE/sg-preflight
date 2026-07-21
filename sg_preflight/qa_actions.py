@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from sg_preflight.checker_evidence import (
     merge_checker_evidence,
@@ -1043,6 +1044,7 @@ def _execute_sgfx_preflight(record: ActionRecord, root: Path) -> tuple[dict[str,
         "warnings": warnings,
         "info": info,
         "child_run_id": child.run_id,
+        "findings": _summarize_report_findings(Path(child.paths["json_report"])),
     }
     artifacts = [
         _artifact("Local QA HTML report", Path(child.paths["html_report"])),
@@ -1058,6 +1060,50 @@ def _execute_sgfx_preflight(record: ActionRecord, root: Path) -> tuple[dict[str,
     artifacts.extend(r0_artifacts)
     notes.extend(r0_notes)
     return summary, artifacts, notes
+
+
+_FINDING_SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
+
+
+def _walk_report_findings(node: object) -> Iterator[dict[str, Any]]:
+    if isinstance(node, dict):
+        if "severity" in node and ("message" in node or "title" in node):
+            yield node
+        for value in node.values():
+            yield from _walk_report_findings(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk_report_findings(item)
+
+
+def _summarize_report_findings(json_report_path: Path, limit: int = 10) -> list[dict[str, str]]:
+    # The report file was just written by the run; unreadable or foreign shapes must
+    # degrade to an empty preview, never fail the completed action.
+    try:
+        payload = json.loads(Path(json_report_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    findings: list[dict[str, str]] = []
+    for item in _walk_report_findings(payload):
+        severity = str(item.get("severity", "") or "").strip().lower()
+        if severity not in _FINDING_SEVERITY_ORDER:
+            continue
+        details = item.get("details") if isinstance(item.get("details"), dict) else {}
+        expected = details.get("expected", "")
+        actual = details.get("exported", details.get("actual", ""))
+        findings.append(
+            {
+                "severity": severity,
+                "pack": str(item.get("pack", "") or "")[:40],
+                "code": str(item.get("code", "") or "")[:80],
+                "message": str(item.get("message", "") or item.get("title", "") or "")[:200],
+                "location": str(item.get("location", "") or "")[:160],
+                "expected": "" if expected == "" else str(expected)[:80],
+                "actual": "" if actual == "" else str(actual)[:80],
+            }
+        )
+    findings.sort(key=lambda item: _FINDING_SEVERITY_ORDER[item["severity"]])
+    return findings[:limit]
 
 
 def _execute_repo_checker(record: ActionRecord, root: Path) -> tuple[dict[str, Any], list[dict[str, str]], list[str]]:

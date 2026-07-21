@@ -1739,12 +1739,35 @@ class DesktopController(QObject):
                 output_label = Path(output_root).resolve().relative_to(self._workspace).as_posix()
             except ValueError:
                 output_label = ""
+        findings: list[dict[str, str]] = []
+        raw_findings = summary.get("findings", []) if isinstance(summary, Mapping) else []
+        if isinstance(raw_findings, (list, tuple)):
+            for item in raw_findings[:10]:
+                if not isinstance(item, Mapping):
+                    continue
+                entry: dict[str, str] = {}
+                for key in ("severity", "pack", "code", "message", "location", "expected", "actual"):
+                    raw_value = str(item.get(key, "") or "")
+                    if not raw_value:
+                        entry[key] = ""
+                        continue
+                    try:
+                        entry[key] = validate_effect_text(
+                            raw_value, required=True, max_length=200, evidence_only=True
+                        )
+                    except ValueError:
+                        # A field that fails the safety validation (private path, URL,
+                        # credential-shaped text) blanks; the finding itself survives.
+                        entry[key] = ""
+                if entry.get("message"):
+                    findings.append(entry)
         self._set_action_feedback(self._active_action_label, {
             "capabilityId": "diagnostic.run",
             "label": self._active_action_label,
             "status": status,
             "lines": lines,
             "outputRoot": output_label,
+            "findings": findings,
         })
 
     def _publish_completed_action_result(self, capability_id: str) -> None:
