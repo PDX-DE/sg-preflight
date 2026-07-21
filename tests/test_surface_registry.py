@@ -20,25 +20,25 @@ from sg_preflight.surface_registry import (
 
 
 EXPECTED_SURFACES = (
-    ("full-qa-pass", "Selected-Car Checks", "Run audited local checks and review evidence for the selected car.", "Daily work", "workflow", True),
-    ("batch-full-qa-pass", "Batch QA Evidence", "Review existing sequential-run evidence across car profiles.", "Daily work", "workflow", True),
-    ("delivery-checklist", "Delivery documentation", "Read-only delivery workbook evidence for the selected profile.", "Delivery", "evidence", True),
-    ("disabled-tests", "Disabled Tests", "Per-car disabled-test inventory from local test_config.lua files.", "Screenshots & coverage", "matrix", True),
-    ("api-version-coverage", "API Version", "Shared MainInterfaces API reference with cautious impact hints.", "Screenshots & coverage", "matrix", True),
-    ("country-variant-coverage", "Country Variants", "Country-coding test matrix with expected, actual, and diff evidence slots.", "Screenshots & coverage", "matrix", True),
-    ("export-size-trend", "Size Trend", "Export-size workbook trends from local size_analysis evidence.", "Screenshots & coverage", "evidence", True),
-    ("onboarding-guide", "Onboarding Guide", "New-operator path through setup, evidence pages, manual review, and handoff.", "Setup & help", "workflow", True),
-    ("setup-doctor", "Setup Doctor", "Detect-only setup status for local SGFX dependencies.", "Setup & help", "overview", True),
-    ("qa-workflows", "QA Workflows", "Local JSON workflow catalog with manual-attestation gates preserved.", "Setup & help", "workflow", True),
-    ("bmw-process", "BMW Process", "Read-only workflow contracts for BMW interface, triage, and visual review paths.", "Setup & help", "workflow", True),
-    ("screenshot-test-state", "Screenshot Test State", "BMW + MINI baseline / actual / diff counts per brand.", "Screenshots & coverage", "matrix", True),
-    ("risk-score", "Risk Score", "Per-car review focus signal with delta since latest local manual review.", "Screenshots & coverage", "evidence", True),
-    ("cross-car-comparison", "Comparison Evidence", "Read comparison evidence when a car-profile pair is available.", "Screenshots & coverage", "matrix", True),
-    ("daily-digest", "Daily Digest", "Morning status snapshot for the SG Daily standup.", "Reviews & digests", "overview", True),
-    ("team-digest-board", "Team Digest Board", "Local snapshot for standup review across selected car profiles.", "Reviews & digests", "overview", True),
-    ("operator-handoff", "Operator Handoff", "Record the stopping point before a shift handoff.", "Reviews & digests", "workflow", True),
-    ("manual-review", "Manual Review Companion", "Step through the 7 Quality-Hero review steps. Operator verdict per step.", "Reviews & digests", "review", True),
-    ("about", "About", "Local SGFX preflight scope, evidence sources, and data-handling guardrails.", "Setup & help", "about", False),
+    ("full-qa-pass", "Selected-Car Checks", "Run audited local checks and review evidence for the selected car.", "Current Session", "workflow", True),
+    ("manual-review", "Manual Review Companion", "Step through the 7 Quality-Hero review steps. Operator verdict per step.", "Manual Review", "review", True),
+    ("screenshot-test-state", "Screenshot Test State", "BMW + MINI baseline / actual / diff counts per brand.", "Manual Review", "matrix", True),
+    ("country-variant-coverage", "Country Variants", "Country-coding test matrix with expected, actual, and diff evidence slots.", "Manual Review", "matrix", True),
+    ("delivery-checklist", "Delivery documentation", "Read-only delivery workbook evidence for the selected profile.", "Evidence", "evidence", True),
+    ("disabled-tests", "Disabled Tests", "Per-car disabled-test inventory from local test_config.lua files.", "Evidence", "matrix", True),
+    ("api-version-coverage", "API Version", "Shared MainInterfaces API reference with cautious impact hints.", "Evidence", "matrix", True),
+    ("export-size-trend", "Size Trend", "Export-size workbook trends from local size_analysis evidence.", "Evidence", "evidence", True),
+    ("operator-handoff", "Operator Handoff", "Record the stopping point before a shift handoff.", "Evidence", "workflow", True),
+    ("batch-full-qa-pass", "Batch QA Evidence", "Review existing sequential-run evidence across car profiles.", "History", "workflow", True),
+    ("cross-car-comparison", "Comparison Evidence", "Read comparison evidence when a car-profile pair is available.", "History", "matrix", True),
+    ("daily-digest", "Daily Digest", "Morning status snapshot for the SG Daily standup.", "History", "overview", True),
+    ("team-digest-board", "Team Digest Board", "Local snapshot for standup review across selected car profiles.", "History", "overview", True),
+    ("setup-doctor", "Setup Doctor", "Detect-only setup status for local SGFX dependencies.", "Tools", "overview", True),
+    ("onboarding-guide", "Onboarding Guide", "New-operator path through setup, evidence pages, manual review, and handoff.", "Tools", "workflow", True),
+    ("qa-workflows", "QA Workflows", "Local JSON workflow catalog with manual-attestation gates preserved.", "Tools", "workflow", True),
+    ("bmw-process", "BMW Process", "Read-only workflow contracts for BMW interface, triage, and visual review paths.", "Tools", "workflow", True),
+    ("risk-score", "Risk Score", "Per-car review focus signal with delta since latest local manual review.", "Tools", "evidence", True),
+    ("about", "About", "Local SGFX preflight scope, evidence sources, and data-handling guardrails.", "Tools", "about", False),
 )
 
 EXPECTED_SURFACE_IDS = tuple(item[0] for item in EXPECTED_SURFACES)
@@ -100,7 +100,7 @@ class TestSurfaceRegistry(unittest.TestCase):
     def test_shell_groups_and_shortcuts_match_the_approved_contract(self) -> None:
         self.assertEqual(
             NAVIGATION_GROUP_ORDER,
-            ("Daily work", "Delivery", "Screenshots & coverage", "Reviews & digests", "Setup & help"),
+            ("Current Session", "Manual Review", "Evidence", "History", "Tools"),
         )
         self.assertEqual(
             SHORTCUT_ACTIONS,

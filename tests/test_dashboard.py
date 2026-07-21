@@ -29,23 +29,23 @@ def _dashboard_shell_source() -> str:
 
 EXPECTED_SURFACE_IDS = (
     "full-qa-pass",
-    "batch-full-qa-pass",
+    "manual-review",
+    "screenshot-test-state",
+    "country-variant-coverage",
     "delivery-checklist",
     "disabled-tests",
     "api-version-coverage",
-    "country-variant-coverage",
     "export-size-trend",
-    "onboarding-guide",
-    "setup-doctor",
-    "qa-workflows",
-    "bmw-process",
-    "screenshot-test-state",
-    "risk-score",
+    "operator-handoff",
+    "batch-full-qa-pass",
     "cross-car-comparison",
     "daily-digest",
     "team-digest-board",
-    "operator-handoff",
-    "manual-review",
+    "setup-doctor",
+    "onboarding-guide",
+    "qa-workflows",
+    "bmw-process",
+    "risk-score",
     "about",
 )
 EXPECTED_HOME_TILE_IDS = (
@@ -642,7 +642,9 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         navigation = tuple(item["id"] for item in snapshot["navigation"])
         pages = tuple(item["id"] for item in snapshot["pages"])
         self.assertEqual(navigation, ("home",) + EXPECTED_SURFACE_IDS)
-        self.assertEqual(pages, ("home",) + EXPECTED_SURFACE_IDS[:-1])
+        self.assertEqual(pages[0], "home")
+        self.assertEqual(len(pages), len(EXPECTED_SURFACE_IDS))
+        self.assertEqual(set(pages[1:]), set(EXPECTED_SURFACE_IDS) - {"about"})
         self.assertNotIn("about", pages)
 
     def test_default_shell_excludes_quarantined_routes(self) -> None:
@@ -971,7 +973,7 @@ class NiceGuiDashboardModelTests(unittest.TestCase):
         self.assertTrue(groups)
         self.assertEqual(
             [group["title"] for group in groups],
-            ["Daily work", "Delivery", "Screenshots & coverage", "Reviews & digests", "Setup & help"],
+            ["Current Session", "Manual Review", "Evidence", "History", "Tools"],
         )
         self.assertNotIn("More", [group["title"] for group in groups])
         grouped_ids: list[str] = []

@@ -197,7 +197,7 @@ class TestSurfaceRegistryModel(unittest.TestCase):
         self.assertEqual(actual_rows, expected_rows)
         self.assertNotIn(HOME_ROUTE_ID, tuple(row[0] for row in actual_rows))
         self.assertEqual({row[3] for row in actual_rows}, set(NAVIGATION_GROUP_ORDER))
-        self.assertIn("Delivery", {row[3] for row in actual_rows})
+        self.assertIn("Evidence", {row[3] for row in actual_rows})
 
     def test_invalid_indexes_roles_and_default_display_role_return_none(self) -> None:
         first_role = self.role_items[0][0]
@@ -268,6 +268,31 @@ class TestShellRegistryModel(unittest.TestCase):
             if descriptor.navigation_group == group
         )
         self.assertEqual(route_ids, (HOME_ROUTE_ID,) + expected_descriptors)
+        self.assertEqual(
+            tuple((item["group"], item["routeId"]) for item in model.routes),
+            (
+                ("Current Session", "home"),
+                ("Current Session", "full-qa-pass"),
+                ("Manual Review", "manual-review"),
+                ("Manual Review", "screenshot-test-state"),
+                ("Manual Review", "country-variant-coverage"),
+                ("Evidence", "delivery-checklist"),
+                ("Evidence", "disabled-tests"),
+                ("Evidence", "api-version-coverage"),
+                ("Evidence", "export-size-trend"),
+                ("Evidence", "operator-handoff"),
+                ("History", "batch-full-qa-pass"),
+                ("History", "cross-car-comparison"),
+                ("History", "daily-digest"),
+                ("History", "team-digest-board"),
+                ("Tools", "setup-doctor"),
+                ("Tools", "onboarding-guide"),
+                ("Tools", "qa-workflows"),
+                ("Tools", "bmw-process"),
+                ("Tools", "risk-score"),
+                ("Tools", "about"),
+            ),
+        )
         self.assertEqual(model.count, 20)
         self.assertEqual(tuple(model.groupOrder), NAVIGATION_GROUP_ORDER)
         self.assertEqual(

@@ -632,6 +632,46 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertNotIn("Animation.Infinite", main + jump + help_source + gate + review + workflow)
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_sidebar_focus_starts_with_current_session_then_manual_review(self) -> None:
+        result = self._run_headless(
+            """
+            import json
+            from PySide6.QtCore import QMetaObject, QObject, Qt
+            from PySide6.QtTest import QTest
+            from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
+
+            runtime = create_qt_quick_runtime(workspace=".", initial_profile_id="G45", argv=["sgfx-sidebar-focus-test"])
+            root = runtime.engine.rootObjects()[0]
+            root.setProperty("shellInitializationStarted", True)
+            runtime.application.processEvents()
+            sidebar = root.findChild(QObject, "navigationSidebar")
+            QMetaObject.invokeMethod(sidebar, "focusFirst")
+            runtime.application.processEvents()
+            focus_order = []
+            for _index in range(6):
+                focused = runtime.application.focusObject()
+                focus_order.append(focused.property("text") if focused is not None else "")
+                QTest.keyClick(root, Qt.Key_Tab)
+                runtime.application.processEvents()
+            print(json.dumps(focus_order))
+            runtime.close()
+            """
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        self.assertEqual(
+            __import__("json").loads(result.stdout),
+            [
+                "Jump to page  /",
+                "QA overview",
+                "Selected-Car Checks",
+                "Manual Review Companion",
+                "Screenshot Test State",
+                "Country Variants",
+            ],
+        )
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_control_center_viewports_accessibility_fonts_and_focus_order(self) -> None:
         checks = [
             {
@@ -1013,7 +1053,7 @@ class TestQtQuickShell(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
         lines = result.stdout.splitlines()
         payload = __import__("json").loads(lines[0])
-        self.assertEqual(payload["groups"], ["Daily work", "Delivery", "Screenshots & coverage", "Reviews & digests", "Setup & help"])
+        self.assertEqual(payload["groups"], ["Current Session", "Manual Review", "Evidence", "History", "Tools"])
         self.assertEqual(payload["gates"], ["context", "asset", "interface", "variants", "visual", "review", "delivery"])
         self.assertFalse(payload["more"])
         self.assertEqual((payload["scale"], payload["offsetX"], payload["offsetY"]), (1, 0, 0))

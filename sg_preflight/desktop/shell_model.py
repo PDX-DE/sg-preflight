@@ -55,7 +55,14 @@ class _ShellRow:
 
 
 def _rows() -> tuple[_ShellRow, ...]:
-    home = _ShellRow(HOME_ROUTE_ID, HOME_TITLE, HOME_SUBTITLE, "", "home", True)
+    home = _ShellRow(
+        HOME_ROUTE_ID,
+        HOME_TITLE,
+        HOME_SUBTITLE,
+        NAVIGATION_GROUP_ORDER[0],
+        "home",
+        True,
+    )
     known = tuple(
         _ShellRow(
             descriptor.surface_id,

@@ -10,11 +10,11 @@ HOME_ROUTE_ID = "home"
 HOME_TITLE = "QA overview"
 HOME_SUBTITLE = "Review the selected car and continue its next local QA action."
 NAVIGATION_GROUP_ORDER = (
-    "Daily work",
-    "Delivery",
-    "Screenshots & coverage",
-    "Reviews & digests",
-    "Setup & help",
+    "Current Session",
+    "Manual Review",
+    "Evidence",
+    "History",
+    "Tools",
 )
 
 
