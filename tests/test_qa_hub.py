@@ -340,6 +340,64 @@ class TestQaHubSnapshot(unittest.TestCase):
                 self.assertEqual(snapshot["nextAction"]["routeId"], "full-qa-pass")
                 self.assertNotIn("overallStatus", snapshot)
 
+    def test_latest_findings_preview_is_bounded_and_sanitized(self) -> None:
+        record = self._record(errors=1, warnings=2, info=1)
+        record["summary"]["findings"] = [
+            {
+                "severity": "error",
+                "pack": "dimensions",
+                "code": "wheel-diameter",
+                "message": "Wheel diameter differs from the expected value",
+                "location": "rim_diameter_in.Basis.front",
+                "expected": "20.0",
+                "actual": "19.5",
+            },
+            {
+                "severity": "warning",
+                "pack": "materials",
+                "code": "duplicate-carpaint",
+                "message": "Carpaint identifier is duplicated",
+                "location": r"C:\operator\private\scene.json",
+                "expected": "unique",
+                "actual": "duplicate",
+            },
+            {
+                "severity": "error",
+                "message": r"Private report at C:\operator\private\report.json",
+            },
+            {
+                "severity": "info",
+                "pack": "naming",
+                "code": "review-name",
+                "message": "Review the exported wheel name",
+                "location": "wheel_front_left",
+                "expected": "",
+                "actual": "",
+            },
+            {
+                "severity": "info",
+                "message": "A fourth safe finding must stay outside the preview",
+            },
+        ]
+
+        snapshot = self._snapshot(action_records=[record])
+
+        findings = snapshot["latestLocalRun"]["findings"]
+        self.assertEqual(len(findings), 3)
+        self.assertEqual(
+            [item["message"] for item in findings],
+            [
+                "Wheel diameter differs from the expected value",
+                "Carpaint identifier is duplicated",
+                "Review the exported wheel name",
+            ],
+        )
+        self.assertEqual(findings[0]["location"], "rim_diameter_in.Basis.front")
+        self.assertEqual(findings[0]["expected"], "20.0")
+        self.assertEqual(findings[0]["actual"], "19.5")
+        self.assertEqual(findings[1]["location"], "")
+        self.assertSafe(snapshot)
+
     def test_execution_failure_retries_only_the_exact_audited_action(self) -> None:
         snapshot = self._snapshot(action_records=[self._record(status="failed")])
 

@@ -19,6 +19,8 @@ _CREDENTIAL_PATTERN = re.compile(
     r"(?i)(?:\bbearer\s+\S+|\b(?:token|password|secret|pat|api[_-]?key|authorization)\s*[:=])"
 )
 QA_HUB_SCHEMA_VERSION = 1
+_FINDING_SEVERITIES = frozenset({"error", "warning", "info"})
+_FINDING_PREVIEW_LIMIT = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +157,36 @@ def _count(summary: object, key: str) -> int | None:
     return value
 
 
+def _safe_findings(summary: object) -> list[dict[str, str]]:
+    if not isinstance(summary, Mapping):
+        return []
+    raw_findings = summary.get("findings", [])
+    if not isinstance(raw_findings, (list, tuple)):
+        return []
+    findings: list[dict[str, str]] = []
+    for item in raw_findings[:10]:
+        if not isinstance(item, Mapping):
+            continue
+        severity = _plain_text(item.get("severity", ""), max_length=16).casefold()
+        message = _plain_text(item.get("message", ""), max_length=200)
+        if severity not in _FINDING_SEVERITIES or not message:
+            continue
+        findings.append(
+            {
+                "severity": severity,
+                "pack": _plain_text(item.get("pack", ""), max_length=40),
+                "code": _plain_text(item.get("code", ""), max_length=80),
+                "message": message,
+                "location": _plain_text(item.get("location", ""), max_length=160),
+                "expected": _plain_text(item.get("expected", ""), max_length=80),
+                "actual": _plain_text(item.get("actual", ""), max_length=80),
+            }
+        )
+        if len(findings) == _FINDING_PREVIEW_LIMIT:
+            break
+    return findings
+
+
 def _matching_action_record(action_records: Sequence[object], profile_id: str) -> dict[str, Any] | None:
     expected_action_id = f"sgfx_preflight__{profile_id.casefold()}"
     for record in action_records[:12]:
@@ -205,6 +237,7 @@ def _matching_action_record(action_records: Sequence[object], profile_id: str) -
             "errors": errors or 0,
             "warnings": warnings or 0,
             "info": info or 0,
+            "findings": _safe_findings(summary),
             "ramsesProbe": probe,
         }
     return None
@@ -557,6 +590,7 @@ def build_qa_hub_snapshot(
             "errors": int(record.get("errors", 0)),
             "warnings": int(record.get("warnings", 0)),
             "info": int(record.get("info", 0)),
+            "findings": [dict(item) for item in record.get("findings", [])],
         }
     context_fields = [
         {

@@ -672,6 +672,146 @@ class TestQtQuickShell(unittest.TestCase):
         )
 
     @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
+    def test_home_emphasizes_selected_car_and_links_existing_work_areas(self) -> None:
+        snapshot = {
+            "schemaVersion": 1,
+            "scopeLabel": "3D Car QA",
+            "selectedProfile": {"id": "G45", "label": "BMW G45"},
+            "gates": [
+                {
+                    "id": "asset",
+                    "label": "Asset integrity",
+                    "state": "findings",
+                    "summary": "Local QA result: 1 errors, 1 warnings, 2 info.",
+                    "ownerLabel": "Seriengrafik",
+                    "checks": [
+                        {
+                            "id": "local-preflight",
+                            "label": "Open selected-car checks",
+                            "state": "findings",
+                            "summary": "Local QA result: 1 errors, 1 warnings, 2 info.",
+                            "routeId": "full-qa-pass",
+                        }
+                    ],
+                }
+            ],
+            "selectedGateId": "asset",
+            "latestLocalRun": {
+                "state": "findings",
+                "errors": 1,
+                "warnings": 1,
+                "info": 2,
+                "findings": [
+                    {
+                        "severity": "error",
+                        "message": "Wheel diameter differs from the expected value",
+                        "location": "rim_diameter_in.Basis.front",
+                        "expected": "20.0",
+                        "actual": "19.5",
+                    }
+                ],
+            },
+            "nextAction": {
+                "kind": "review",
+                "capabilityId": "page.navigate",
+                "actionId": "",
+                "routeId": "full-qa-pass",
+                "label": "Review local findings",
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self._run_headless(
+                f"""
+                import json
+                from PySide6.QtCore import QMetaObject, QObject
+                from PySide6.QtTest import QTest
+                from sg_preflight.desktop.qt_quick_app import create_qt_quick_runtime
+
+                runtime = create_qt_quick_runtime(workspace={temp_dir!r}, initial_profile_id="G45", argv=["sgfx-home-work-areas-test"])
+                root = runtime.engine.rootObjects()[0]
+                root.setProperty("shellInitializationStarted", True)
+                runtime.application.processEvents()
+                QTest.qWait(0)
+                runtime.application.processEvents()
+                controller = runtime.controller
+                controller._generation += 1
+                controller._set_current_identity(None)
+                controller._accept_shell_profile({{
+                    "schemaVersion": 1,
+                    "profileOptions": [{{"id": "G45", "label": "BMW G45"}}],
+                    "selectedProfile": {{"id": "G45", "label": "BMW G45"}},
+                }})
+                controller._set_route("home")
+                controller._set_ready_payload({snapshot!r})
+                runtime.application.processEvents()
+                QTest.qWait(0)
+                runtime.application.processEvents()
+
+                names = [
+                    "homeSelectedCarTitle",
+                    "homeLatestOutcome",
+                    "homeFindingsLink",
+                    "homeManualReviewLink",
+                    "homeEvidenceLink",
+                    "homeHistoryLink",
+                ]
+                objects = {{name: root.findChild(QObject, name) for name in names}}
+                primary = root.findChild(QObject, "qaPrimaryAction")
+                home = root.findChild(QObject, "qaControlCenterHome")
+                finding_preview = root.findChild(QObject, "homeFindingPreview")
+                requested_routes = []
+                home.routeRequested.connect(requested_routes.append)
+                present = {{name: objects[name] is not None for name in names}}
+                selected_car = "" if objects["homeSelectedCarTitle"] is None else objects["homeSelectedCarTitle"].property("text")
+                latest_outcome = "" if objects["homeLatestOutcome"] is None else objects["homeLatestOutcome"].property("text")
+                primary_text = primary.property("text")
+                primary_height = primary.property("height")
+                secondary_heights = [objects[name].property("height") for name in names[2:] if objects[name] is not None]
+                secondary_flat = [objects[name].property("flat") for name in names[2:] if objects[name] is not None]
+                accessible = root.property("allAccessibleNamesPresent")
+                finding_visible = finding_preview is not None and "Wheel diameter differs" in str(finding_preview.property("text"))
+                if all(objects.values()):
+                    for name in names[2:]:
+                        controller._generation += 1
+                        controller._set_current_identity(None)
+                        controller._set_route("home")
+                        controller._set_ready_payload({snapshot!r})
+                        runtime.application.processEvents()
+                        QMetaObject.invokeMethod(objects[name], "click")
+                        runtime.application.processEvents()
+                print(json.dumps({{
+                    "present": present,
+                    "selectedCar": selected_car,
+                    "latestOutcome": latest_outcome,
+                    "findingVisible": finding_visible,
+                    "primaryText": primary_text,
+                    "primaryHeight": primary_height,
+                    "secondaryHeights": secondary_heights,
+                    "secondaryFlat": secondary_flat,
+                    "routes": requested_routes,
+                    "accessible": accessible,
+                }}))
+                runtime.close()
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + "\n" + result.stderr)
+        payload = __import__("json").loads(result.stdout)
+        self.assertTrue(all(payload["present"].values()), msg=payload)
+        self.assertEqual(payload["selectedCar"], "BMW G45")
+        self.assertIn("1 error", payload["latestOutcome"])
+        self.assertIn("1 warning", payload["latestOutcome"])
+        self.assertTrue(payload["findingVisible"], msg=payload)
+        self.assertEqual(payload["primaryText"], "Review local findings")
+        self.assertTrue(all(payload["primaryHeight"] > height for height in payload["secondaryHeights"]))
+        self.assertEqual(payload["secondaryFlat"], [True, True, True, True])
+        self.assertEqual(
+            payload["routes"],
+            ["full-qa-pass", "manual-review", "delivery-checklist", "batch-full-qa-pass"],
+        )
+        self.assertTrue(payload["accessible"])
+
+    @unittest.skipUnless(PYSIDE_AVAILABLE, "PySide6 is not installed")
     def test_control_center_viewports_accessibility_fonts_and_focus_order(self) -> None:
         checks = [
             {
@@ -743,7 +883,7 @@ class TestQtQuickShell(unittest.TestCase):
                 QMetaObject.invokeMethod(root, "focusProductStart")
                 runtime.application.processEvents()
                 focus_order = []
-                for _index in range(8):
+                for _index in range(12):
                     focused = runtime.application.focusObject()
                     focused_name = focused.objectName() if focused is not None else ""
                     focus_order.append(focused_name)
@@ -792,6 +932,10 @@ class TestQtQuickShell(unittest.TestCase):
                 "presentationViewControl",
                 "grafiksLaunchControl",
                 "qaPrimaryAction",
+                "homeFindingsLink",
+                "homeManualReviewLink",
+                "homeEvidenceLink",
+                "homeHistoryLink",
                 "qaPipelineSpine",
                 "qaCheckRow0",
                 "qaInspectionAction",

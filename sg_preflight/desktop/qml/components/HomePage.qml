@@ -52,11 +52,12 @@ FocusScope {
     }
     readonly property var pipelineGateIds: pipeline.gateIds
     readonly property string primaryActionLabel: nextActionLabel
+    readonly property string selectedCarLabel: selectedProfile && selectedProfile.label ? selectedProfile.label : "Choose a car profile"
     readonly property bool capabilityBusy: capabilityState === "queued" || capabilityState === "running"
     readonly property bool primaryActionEnabled: Boolean(selectedProfile && selectedProfile.id && nextCapabilityId && pageState === "ready" && !capabilityBusy)
     readonly property bool primaryActionVisible: primaryAction.visible
     readonly property int visibleCheckRowCount: gateDetail.visibleCheckRowCount
-    readonly property bool allAccessibleNamesPresent: primaryAction.Accessible.name.length > 0 && pipeline.allAccessibleNamesPresent && gateDetail.allAccessibleNamesPresent && contextPreview.allAccessibleNamesPresent
+    readonly property bool allAccessibleNamesPresent: primaryAction.Accessible.name.length > 0 && findingsLink.Accessible.name.length > 0 && manualReviewLink.Accessible.name.length > 0 && evidenceLink.Accessible.name.length > 0 && historyLink.Accessible.name.length > 0 && pipeline.allAccessibleNamesPresent && gateDetail.allAccessibleNamesPresent && contextPreview.allAccessibleNamesPresent
     property alias primaryActionItem: primaryAction
 
     objectName: "qaControlCenterHome"
@@ -111,6 +112,37 @@ FocusScope {
         primaryAction.forceActiveFocus();
     }
 
+    function countLabel(value, singular) {
+        const count = Number(value || 0);
+        return count + " " + singular + (count === 1 ? "" : "s");
+    }
+
+    function latestOutcomeLabel() {
+        if (!latestLocalRun || !latestLocalRun.state)
+            return "Latest run · No local run recorded";
+        const counts = [countLabel(latestLocalRun.errors, "error"), countLabel(latestLocalRun.warnings, "warning"), countLabel(latestLocalRun.info, "info item")];
+        return "Latest run · " + StatusPresentation.label(latestLocalRun.state) + " · " + counts.join(", ");
+    }
+
+    function findingPreviewText(finding) {
+        if (!finding)
+            return "";
+        const parts = [finding.message || "Finding details unavailable"];
+        if (finding.location)
+            parts.push(finding.location);
+        if (finding.expected && finding.actual)
+            parts.push("expected " + finding.expected + ", exported " + finding.actual);
+        return parts.join(" · ");
+    }
+
+    function findingPreviewLines() {
+        const findings = latestLocalRun && latestLocalRun.findings ? latestLocalRun.findings : [];
+        const lines = [];
+        for (let index = 0; index < Math.min(3, findings.length); ++index)
+            lines.push("• " + findingPreviewText(findings[index]));
+        return lines.join("\n");
+    }
+
     onPayloadChanged: acceptPayload(root.payload)
 
     Component.onCompleted: acceptPayload(root.payload)
@@ -134,7 +166,7 @@ FocusScope {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "QA CONTROL CENTER"
+                        text: "SELECTED CAR · " + (root.snapshot.scopeLabel || "3D Car QA")
                         color: Theme.accent
                         font.family: Theme.operationalFont
                         font.pixelSize: 10
@@ -142,20 +174,31 @@ FocusScope {
                         font.letterSpacing: 1.8
                     }
                     Label {
+                        id: selectedCarTitle
+
+                        objectName: "homeSelectedCarTitle"
                         Layout.fillWidth: true
-                        text: root.snapshot.scopeLabel || "3D Car QA"
+                        text: root.selectedCarLabel
                         color: Theme.text
                         font.family: Theme.displayFont
-                        font.pixelSize: 25
+                        font.pixelSize: 30
                         font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: "Selected car: " + text
                     }
                     Label {
+                        id: latestOutcome
+
+                        objectName: "homeLatestOutcome"
                         Layout.fillWidth: true
-                        text: "One selected scope. One local check. Clear evidence for the next handoff."
-                        color: Theme.muted
+                        text: root.latestOutcomeLabel()
+                        color: root.latestLocalRun && root.latestLocalRun.state ? StatusPresentation.color(root.latestLocalRun.state) : Theme.muted
                         font.family: Theme.operationalFont
                         font.pixelSize: 11
                         elide: Text.ElideRight
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: text
                     }
                 }
 
@@ -163,18 +206,130 @@ FocusScope {
                     id: primaryAction
 
                     objectName: "qaPrimaryAction"
-                    Layout.preferredWidth: 276
-                    Layout.preferredHeight: 48
+                    Layout.preferredWidth: 300
+                    Layout.preferredHeight: 58
                     text: root.primaryActionLabel || "Choose profile"
                     enabled: root.primaryActionEnabled
+                    font.pixelSize: 14
+                    font.weight: Font.DemiBold
                     focusPolicy: Qt.StrongFocus
                     Accessible.role: Accessible.Button
                     Accessible.name: text
+                    KeyNavigation.tab: findingsLink
+                    Keys.onTabPressed: event => {
+                        findingsLink.forceActiveFocus();
+                        event.accepted = true;
+                    }
+                    onClicked: root.requestPrimaryAction()
+                }
+            }
+
+            ColumnLayout {
+                objectName: "homeFindingsPreview"
+                Layout.fillWidth: true
+                spacing: Theme.space1
+                visible: Boolean(root.latestLocalRun && root.latestLocalRun.findings && root.latestLocalRun.findings.length > 0)
+
+                Label {
+                    Layout.fillWidth: true
+                    text: "LATEST FINDINGS"
+                    color: Theme.muted
+                    font.family: Theme.operationalFont
+                    font.pixelSize: 10
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 1.2
+                }
+                Label {
+                    objectName: "homeFindingPreview"
+                    Layout.fillWidth: true
+                    text: root.findingPreviewLines()
+                    color: Theme.text
+                    font.family: Theme.operationalFont
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.space2
+
+                Label {
+                    text: "Open"
+                    color: Theme.muted
+                    font.family: Theme.operationalFont
+                    font.pixelSize: 11
+                }
+                Button {
+                    id: findingsLink
+
+                    objectName: "homeFindingsLink"
+                    Layout.preferredHeight: 36
+                    text: "Latest findings"
+                    flat: true
+                    enabled: Boolean(root.selectedProfile && root.selectedProfile.id)
+                    focusPolicy: Qt.StrongFocus
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Open latest findings for " + root.selectedCarLabel
+                    KeyNavigation.backtab: primaryAction
+                    KeyNavigation.tab: manualReviewLink
+                    onClicked: root.routeRequested("full-qa-pass")
+                }
+                Button {
+                    id: manualReviewLink
+
+                    objectName: "homeManualReviewLink"
+                    Layout.preferredHeight: 36
+                    text: "Manual Review"
+                    flat: true
+                    enabled: Boolean(root.selectedProfile && root.selectedProfile.id)
+                    focusPolicy: Qt.StrongFocus
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Open Manual Review for " + root.selectedCarLabel
+                    KeyNavigation.backtab: findingsLink
+                    KeyNavigation.tab: evidenceLink
+                    onClicked: root.routeRequested("manual-review")
+                }
+                Button {
+                    id: evidenceLink
+
+                    objectName: "homeEvidenceLink"
+                    Layout.preferredHeight: 36
+                    text: "Evidence"
+                    flat: true
+                    enabled: Boolean(root.selectedProfile && root.selectedProfile.id)
+                    focusPolicy: Qt.StrongFocus
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Open delivery evidence for " + root.selectedCarLabel
+                    KeyNavigation.backtab: manualReviewLink
+                    KeyNavigation.tab: historyLink
+                    onClicked: root.routeRequested("delivery-checklist")
+                }
+                Button {
+                    id: historyLink
+
+                    objectName: "homeHistoryLink"
+                    Layout.preferredHeight: 36
+                    text: "History"
+                    flat: true
+                    enabled: Boolean(root.selectedProfile && root.selectedProfile.id)
+                    focusPolicy: Qt.StrongFocus
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Open run history for " + root.selectedCarLabel
+                    KeyNavigation.backtab: evidenceLink
+                    KeyNavigation.tab: pipeline
                     Keys.onTabPressed: event => {
                         pipeline.forceActiveFocus();
                         event.accepted = true;
                     }
-                    onClicked: root.requestPrimaryAction()
+                    onClicked: root.routeRequested("batch-full-qa-pass")
+                }
+                Item {
+                    Layout.fillWidth: true
                 }
             }
 
@@ -221,6 +376,7 @@ FocusScope {
                 gates: root.gates
                 selectedGateId: root.selectedGateId
                 reducedMotion: root.reducedMotion
+                KeyNavigation.backtab: historyLink
                 onFocusChecksRequested: {
                     if (!gateDetail.focusFirstCheck())
                         contextPreview.focusFirstAction();

@@ -1974,7 +1974,22 @@ class TestQtShellRoute(unittest.TestCase):
                 "status": "completed",
                 "created_at_utc": "2026-07-12T20:00:00+00:00",
                 "completed_at_utc": "2026-07-12T20:01:00+00:00",
-                "summary": {"errors": 0, "warnings": 1, "info": 2},
+                "summary": {
+                    "errors": 0,
+                    "warnings": 1,
+                    "info": 2,
+                    "findings": [
+                        {
+                            "severity": "warning",
+                            "pack": "materials",
+                            "code": "duplicate-carpaint",
+                            "message": "Carpaint identifier is duplicated",
+                            "location": "materials.carpaint",
+                            "expected": "unique",
+                            "actual": "duplicate",
+                        }
+                    ],
+                },
             }
             action_records = mock.Mock(return_value=[record])
             run_records = mock.Mock(return_value=[])
@@ -2031,6 +2046,20 @@ class TestQtShellRoute(unittest.TestCase):
         self.assertEqual(payload["nextAction"]["kind"], "review")
         self.assertEqual(payload["nextAction"]["routeId"], "full-qa-pass")
         self.assertEqual(payload["latestLocalRun"]["warnings"], 1)
+        self.assertEqual(
+            payload["latestLocalRun"]["findings"],
+            [
+                {
+                    "severity": "warning",
+                    "pack": "materials",
+                    "code": "duplicate-carpaint",
+                    "message": "Carpaint identifier is duplicated",
+                    "location": "materials.carpaint",
+                    "expected": "unique",
+                    "actual": "duplicate",
+                }
+            ],
+        )
         selected_car_check = next(
             check
             for gate in payload["gates"]
